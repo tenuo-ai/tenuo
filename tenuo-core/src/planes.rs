@@ -2081,8 +2081,7 @@ impl Authorizer {
     ///
     /// Guard snapshots this at build time. Decision-time checks use the
     /// snapshot, not this field (S34).
-    #[cfg(feature = "sdk")]
-    pub(crate) fn installed_revocation_list(&self) -> Option<&SignedRevocationList> {
+    pub fn installed_revocation_list(&self) -> Option<&SignedRevocationList> {
         self.revocation_list.as_ref()
     }
 
@@ -5446,6 +5445,160 @@ mod tests {
         } else {
             panic!("expected ApprovalRequired, got: {}", err);
         }
+    }
+
+    #[test]
+    fn test_conditional_exempt_range_capability_vs_gate() {
+        use crate::approval_gate::{
+            encode_approval_gate_map, ApprovalGateInspection, ApprovalGateKind, ApprovalGateMap,
+            ApprovalRequirement, ArgApprovalGate, ToolApprovalGate,
+        };
+        use crate::constraints::Range;
+        use std::collections::BTreeMap;
+
+        let root_key = SigningKey::generate();
+        let approver_key = SigningKey::generate();
+
+        let mut amount_caps = ConstraintSet::new();
+        amount_caps.insert(
+            "amount",
+            Constraint::Range(Range::new(Some(0.0), Some(1000.0)).unwrap()),
+        );
+
+        let mut arg_gates = BTreeMap::new();
+        arg_gates.insert(
+            "amount".into(),
+            ArgApprovalGate::exempt(Constraint::Range(
+                Range::new(Some(0.0), Some(500.0)).unwrap(),
+            ))
+            .unwrap(),
+        );
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert(
+            "write_approval".into(),
+            ToolApprovalGate::with_args(arg_gates),
+        );
+
+        let warrant = Warrant::builder()
+            .capability("write_approval", amount_caps)
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver_key.public_key()])
+            .min_approvals(1)
+            .holder(root_key.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
+            .build(&root_key)
+            .unwrap();
+
+        match warrant.inspect_approval_gate("write_approval").unwrap() {
+            ApprovalGateInspection::Conditional { arguments, .. } => {
+                assert_eq!(arguments, vec!["amount".to_string()]);
+            }
+            other => panic!("expected conditional gate, got {other:?}"),
+        }
+
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+        // 456.50: capability passes, exemption matches, no approval.
+        let mut exempt_args = HashMap::new();
+        exempt_args.insert("amount".into(), ConstraintValue::Float(456.50));
+        assert_eq!(
+            warrant
+                .approval_requirement("write_approval", &exempt_args)
+                .unwrap(),
+            ApprovalRequirement::Exempt {
+                arguments: vec!["amount".into()],
+            }
+        );
+        let sig = warrant
+            .sign(&root_key, "write_approval", &exempt_args)
+            .unwrap();
+        authorizer
+            .authorize_one(&warrant, "write_approval", &exempt_args, Some(&sig), &[])
+            .expect("exempt in-range call must execute without approval");
+
+        // 650: capability passes, exemption misses, approval required.
+        let mut gated_args = HashMap::new();
+        gated_args.insert("amount".into(), ConstraintValue::Integer(650));
+        assert_eq!(
+            warrant
+                .approval_requirement("write_approval", &gated_args)
+                .unwrap(),
+            ApprovalRequirement::Required {
+                kind: ApprovalGateKind::Argument {
+                    name: "amount".into(),
+                },
+                message: "Approval required for tool 'write_approval'".into(),
+            }
+        );
+        let sig = warrant
+            .sign(&root_key, "write_approval", &gated_args)
+            .unwrap();
+        let err = authorizer
+            .authorize_one(&warrant, "write_approval", &gated_args, Some(&sig), &[])
+            .unwrap_err();
+        assert_eq!(err.code(), crate::error::ErrorCode::ApprovalRequired);
+        if let Error::ApprovalRequired { tool, request } = &err {
+            assert_eq!(tool, "write_approval");
+            assert_eq!(request.tool, "write_approval");
+            assert_eq!(request.warrant_id, warrant.id().to_string());
+            let expected_hash = crate::approval::compute_request_hash(
+                &warrant.id().to_string(),
+                "write_approval",
+                &gated_args,
+                Some(warrant.authorized_holder()),
+            );
+            assert_eq!(request.request_hash, expected_hash);
+            assert_eq!(request.min_approvals, 1);
+            assert_eq!(request.required_approvers.len(), 1);
+            assert_eq!(
+                request.args.get("amount"),
+                Some(&ConstraintValue::Integer(650))
+            );
+        } else {
+            panic!("expected ApprovalRequired, got: {}", err);
+        }
+
+        // 1200: capability fails — denied, not approval-gated.
+        let mut denied_args = HashMap::new();
+        denied_args.insert("amount".into(), ConstraintValue::Integer(1200));
+        match warrant
+            .approval_requirement("write_approval", &denied_args)
+            .unwrap()
+        {
+            ApprovalRequirement::Denied { code, .. } => {
+                assert_eq!(code, "constraint_violation");
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
+        let sig = warrant
+            .sign(&root_key, "write_approval", &denied_args)
+            .unwrap();
+        let err = authorizer
+            .authorize_one(&warrant, "write_approval", &denied_args, Some(&sig), &[])
+            .unwrap_err();
+        assert_eq!(err.code(), crate::error::ErrorCode::ConstraintViolation);
+        assert_ne!(err.code(), crate::error::ErrorCode::ApprovalRequired);
+    }
+
+    #[test]
+    fn test_malformed_approval_gates_extension_fails_closed() {
+        let root_key = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("write_approval", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .extension("tenuo.approval_gates", vec![0xff, 0x00, 0x01])
+            .build(&root_key)
+            .unwrap();
+
+        assert!(warrant.approval_gate_map().is_err());
+        assert!(warrant.inspect_approval_gate("write_approval").is_err());
+        assert!(warrant
+            .approval_requirement("write_approval", &HashMap::new())
+            .is_err());
     }
 
     #[test]

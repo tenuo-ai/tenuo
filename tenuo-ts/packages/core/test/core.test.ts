@@ -5,12 +5,15 @@ import {
   anyOf,
   ApprovalRequiredError,
   AuthorizationDeniedError,
+  approvalRequirement,
   cel,
   cidr,
   contains,
   createTenuo,
   email,
+  evaluateApprovalGates,
   exact,
+  inspectApprovalGate,
   max,
   min,
   notOneOf,
@@ -1040,5 +1043,41 @@ describe("root-anchored receipt verification", () => {
     const result = verifyReceiptChain(wire, [rootHex]);
     expect(result.signer_key).toHaveLength(64);
     expect(result.signer_key).toBe(verifyReceipt(wire) && result.signer_key);
+  });
+});
+
+describe("approvalRequirement", () => {
+  it("exempts 456.50 and gates 650 for a 0..500 Exempt range", async () => {
+    const { createRequire } = await import("node:module");
+    const require = createRequire(import.meta.url);
+    const wasm = require("../src/generated/tenuo_wasm.js") as {
+      create_warrant_from_config: (config: unknown) => { warrant_b64?: string; error?: string };
+    };
+    const minted = wasm.create_warrant_from_config({
+      tools: { write_approval: { amount: { range: "0-1000" } } },
+      ttl: 3600,
+      approval_gates: {
+        write_approval: { args: { amount: { exempt: { min: 0, max: 500 } } } },
+      },
+    });
+    if (minted.error || !minted.warrant_b64) {
+      throw new Error(minted.error ?? "missing warrant");
+    }
+    const warrant = minted.warrant_b64;
+    expect(inspectApprovalGate(warrant, "write_approval").kind).toBe("conditional");
+    const exempt = approvalRequirement(warrant, "write_approval", { amount: 456.5 });
+    expect(exempt.status).toBe("exempt");
+    expect(evaluateApprovalGates(warrant, "write_approval", { amount: 456.5 })).toBe(false);
+    const gated = approvalRequirement(warrant, "write_approval", { amount: 650 });
+    expect(gated.status).toBe("required");
+    expect(gated.kind).toBe("argument");
+    expect(evaluateApprovalGates(warrant, "write_approval", { amount: 650 })).toBe(true);
+    const denied = approvalRequirement(warrant, "write_approval", { amount: 1200 });
+    expect(denied.status).toBe("denied");
+    expect(denied.code).toBe("constraint_violation");
+    expect(evaluateApprovalGates(warrant, "write_approval", { amount: 1200 })).toBe(true);
+    const missing = approvalRequirement(warrant, "read_file", { path: "/x" });
+    expect(missing.status).toBe("denied");
+    expect(missing.code).toBe("tool_not_authorized");
   });
 });

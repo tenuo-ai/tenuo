@@ -306,6 +306,20 @@ type Generated = {
   sdkInspectRevocationList(wire: string): WasmSrlInfo;
   sdkVerifyReceipt(wire: string): WasmReceipt;
   sdkVerifyReceiptChain(wire: string, roots: string[]): WasmReceiptChain;
+  approval_requirement(
+    warrantB64: string,
+    tool: string,
+    args: unknown,
+  ): ApprovalRequirement & { error?: string };
+  inspect_approval_gate(
+    warrantB64: string,
+    tool: string,
+  ): ApprovalGateInspection & { error?: string };
+  evaluate_approval_gates(
+    warrantB64: string,
+    tool: string,
+    args: unknown,
+  ): { approval_required: boolean; tool: string; error?: string };
 };
 
 let loaded: Generated | undefined;
@@ -397,4 +411,73 @@ export function inspectParts(payloadHex: string, signatureHex: string): WasmInsp
 /** Hex public key for a 32-byte holder secret. Ed25519, derived in Rust. */
 export function publicKeyHexFromHolderKey(holderSecret: Uint8Array): string {
   return loadWasm().sdkPublicKeyFromHolderKey(holderSecret);
+}
+
+export type ApprovalRequirementStatus = "not_gated" | "exempt" | "required" | "denied";
+
+export type ApprovalRequirement = {
+  status: ApprovalRequirementStatus;
+  tool: string;
+  kind?: "whole_tool" | "argument";
+  argument?: string;
+  arguments: string[];
+  message?: string;
+  code?: string;
+  reason?: string;
+};
+
+export type ApprovalGateInspection = {
+  kind: "none" | "whole_tool" | "conditional" | "unknown";
+  tool: string;
+  arguments: string[];
+  message?: string;
+};
+
+function loadApprovalWasm() {
+  return loadWasm();
+}
+
+function throwIfGateError(error: string | undefined): void {
+  if (error) {
+    throw new TenuoConfigurationError(error);
+  }
+}
+
+/**
+ * Typed preflight of a warrant's approval gates for `(tool, args)`.
+ *
+ * Capability constraints are checked first. `denied` means the authorizer
+ * will refuse the call — do not collect approval. Malformed encodings throw
+ * (fail-closed).
+ */
+export function approvalRequirement(
+  warrantB64: string,
+  tool: string,
+  args: Record<string, unknown>,
+): ApprovalRequirement {
+  const result = loadApprovalWasm().approval_requirement(warrantB64, tool, args);
+  throwIfGateError(result.error);
+  return result;
+}
+
+/** Inspect how a warrant gates `tool`, without evaluating arguments. */
+export function inspectApprovalGate(warrantB64: string, tool: string): ApprovalGateInspection {
+  const result = loadApprovalWasm().inspect_approval_gate(warrantB64, tool);
+  throwIfGateError(result.error);
+  return result;
+}
+
+/**
+ * Gate-map-only boolean. Does not run capability checks, so split-view
+ * callers (PoP args vs constraint args) still see a firing gate. Prefer
+ * {@link approvalRequirement} when the caller must distinguish `denied`.
+ */
+export function evaluateApprovalGates(
+  warrantB64: string,
+  tool: string,
+  args: Record<string, unknown>,
+): boolean {
+  const result = loadApprovalWasm().evaluate_approval_gates(warrantB64, tool, args);
+  throwIfGateError(result.error);
+  return result.approval_required;
 }

@@ -406,6 +406,175 @@ pub fn encode_approval_gate_map(approval_gate_map: &ApprovalGateMap) -> Result<V
 // Evaluation
 // ---------------------------------------------------------------------------
 
+/// How a warrant describes approval for a tool, independent of concrete arguments.
+///
+/// Use this to distinguish "no gate", "always gated", and "gated only for
+/// some argument values" without parsing `tenuo.approval_gates` CBOR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalGateInspection {
+    /// Tool is absent from the gate map (or no map exists).
+    None,
+    /// Entire tool is gated (`args: None`).
+    WholeTool { message: Option<String> },
+    /// Per-argument gates (`All`, `Constraint`, or `Exempt`).
+    Conditional {
+        arguments: Vec<String>,
+        message: Option<String>,
+    },
+}
+
+/// Which kind of gate fired for a concrete call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalGateKind {
+    WholeTool,
+    Argument { name: String },
+}
+
+/// Result of evaluating a concrete `(tool, args)` pair against the warrant.
+///
+/// Capability constraints are checked first. A [`Denied`] result means the
+/// authorizer would refuse this call; adapters must not collect approval for
+/// it. Gate matching uses [`Constraint::matches`] — the same implementation
+/// the authorizer uses for Range, Exact, Pattern, OneOf, URLSafe, and every
+/// other constraint type. PoP, expiry, and collected approvals remain
+/// authorizer-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalRequirement {
+    /// No gate applies to this call (tool not listed, or a constrained gate
+    /// that does not match these arguments).
+    NotGated,
+    /// A per-argument `Exempt` gate is present and this call matches the
+    /// exemption set. Approval is not required.
+    Exempt { arguments: Vec<String> },
+    /// A gate fires for this call.
+    Required {
+        kind: ApprovalGateKind,
+        message: String,
+    },
+    /// The warrant does not grant this call. Adapters must not collect
+    /// approval — the authorizer will deny.
+    Denied { code: String, reason: String },
+}
+
+impl ApprovalRequirement {
+    /// `true` when adapters must collect a signed approval before retrying.
+    pub fn requires_approval(&self) -> bool {
+        matches!(self, Self::Required { .. })
+    }
+}
+
+/// Inspect how `tool` is gated, without evaluating arguments.
+pub fn inspect_approval_gate(
+    approval_gate_map: Option<&ApprovalGateMap>,
+    tool: &str,
+) -> ApprovalGateInspection {
+    let Some(map) = approval_gate_map else {
+        return ApprovalGateInspection::None;
+    };
+    match map.get(tool) {
+        None => ApprovalGateInspection::None,
+        Some(tg) if tg.is_whole_tool() => ApprovalGateInspection::WholeTool {
+            message: tg.message.clone(),
+        },
+        Some(tg) => ApprovalGateInspection::Conditional {
+            arguments: tg
+                .args
+                .as_ref()
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default(),
+            message: tg.message.clone(),
+        },
+    }
+}
+
+/// Evaluate whether a concrete tool invocation requires approval.
+///
+/// **Precondition for authorization**: `tool` is in `warrant.tools` and
+/// constraints are satisfied. This function does not enforce that
+/// precondition — callers that need a deny-vs-gate decision must still
+/// go through the authorizer.
+///
+/// Returns [`ApprovalRequirement::NotGated`] when no gate map is present.
+/// Malformed maps must be rejected by [`parse_approval_gate_map`] before
+/// calling this function (fail-closed).
+pub fn approval_requirement(
+    approval_gate_map: Option<&ApprovalGateMap>,
+    tool: &str,
+    args: &HashMap<String, ConstraintValue>,
+) -> Result<ApprovalRequirement> {
+    let Some(approval_gate_map) = approval_gate_map else {
+        return Ok(ApprovalRequirement::NotGated);
+    };
+
+    let Some(tool_gate) = approval_gate_map.get(tool) else {
+        return Ok(ApprovalRequirement::NotGated);
+    };
+
+    let message = resolve_approval_required_message(tool, tool_gate.message.as_deref());
+
+    if tool_gate.is_whole_tool() {
+        return Ok(ApprovalRequirement::Required {
+            kind: ApprovalGateKind::WholeTool,
+            message,
+        });
+    }
+
+    let mut exempted = Vec::new();
+    if let Some(arg_gates) = &tool_gate.args {
+        for (arg_name, arg_gate) in arg_gates {
+            let Some(arg_value) = args.get(arg_name) else {
+                // SECURITY: absent gated argument fires the gate (fail-safe).
+                return Ok(ApprovalRequirement::Required {
+                    kind: ApprovalGateKind::Argument {
+                        name: arg_name.clone(),
+                    },
+                    message,
+                });
+            };
+
+            match arg_gate {
+                ArgApprovalGate::All => {
+                    return Ok(ApprovalRequirement::Required {
+                        kind: ApprovalGateKind::Argument {
+                            name: arg_name.clone(),
+                        },
+                        message,
+                    });
+                }
+                ArgApprovalGate::Constraint(constraint) => {
+                    // Same Constraint::matches the authorizer uses.
+                    if constraint.matches(arg_value)? {
+                        return Ok(ApprovalRequirement::Required {
+                            kind: ApprovalGateKind::Argument {
+                                name: arg_name.clone(),
+                            },
+                            message,
+                        });
+                    }
+                }
+                ArgApprovalGate::Exempt(constraint) => {
+                    if !constraint.matches(arg_value)? {
+                        return Ok(ApprovalRequirement::Required {
+                            kind: ApprovalGateKind::Argument {
+                                name: arg_name.clone(),
+                            },
+                            message,
+                        });
+                    }
+                    exempted.push(arg_name.clone());
+                }
+            }
+        }
+    }
+
+    if !exempted.is_empty() {
+        return Ok(ApprovalRequirement::Exempt {
+            arguments: exempted,
+        });
+    }
+    Ok(ApprovalRequirement::NotGated)
+}
+
 /// Evaluate whether a tool invocation requires approval based on approval gates.
 ///
 /// **Precondition**: `tool` is in `warrant.tools` and constraints are satisfied.
@@ -413,56 +582,15 @@ pub fn encode_approval_gate_map(approval_gate_map: &ApprovalGateMap) -> Result<V
 /// Returns `Ok(true)` if approval is required, `Ok(false)` if the
 /// invocation is free (PoP only). Returns `Ok(false)` when no gate map
 /// is present — all approval requirements must be expressed in the gate map.
+///
+/// Boolean wrapper around [`approval_requirement`] so adapters that only
+/// need a yes/no answer cannot diverge from the typed evaluator.
 pub fn evaluate_approval_gates(
     approval_gate_map: Option<&ApprovalGateMap>,
     tool: &str,
     args: &HashMap<String, ConstraintValue>,
 ) -> Result<bool> {
-    let approval_gate_map = match approval_gate_map {
-        Some(gm) => gm,
-        None => return Ok(false),
-    };
-
-    // Tool not in gate map → no approval needed
-    let tool_gate = match approval_gate_map.get(tool) {
-        Some(tg) => tg,
-        None => return Ok(false),
-    };
-
-    // Entire tool gated
-    if tool_gate.is_whole_tool() {
-        return Ok(true);
-    }
-
-    // Per-argument gates
-    if let Some(arg_gates) = &tool_gate.args {
-        for (arg_name, arg_gate) in arg_gates {
-            let arg_value = match args.get(arg_name) {
-                Some(v) => v,
-                // SECURITY: absent gated argument fires the gate (fail-safe).
-                // A per-arg gate expresses "calls touching this argument need approval."
-                // If the argument is absent the tool's behaviour for that parameter is
-                // unknown, so we require approval rather than silently bypassing the gate.
-                None => return Ok(true),
-            };
-
-            match arg_gate {
-                ArgApprovalGate::All => return Ok(true),
-                ArgApprovalGate::Constraint(constraint) => {
-                    if constraint.matches(arg_value)? {
-                        return Ok(true);
-                    }
-                }
-                ArgApprovalGate::Exempt(constraint) => {
-                    if !constraint.matches(arg_value)? {
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(false)
+    Ok(approval_requirement(approval_gate_map, tool, args)?.requires_approval())
 }
 
 // ---------------------------------------------------------------------------
@@ -1396,6 +1524,88 @@ mod tests {
             evaluate_approval_gates(Some(&gm), "api_call", &args).unwrap(),
             "outside exempt range — gate must fire"
         );
+    }
+
+    #[test]
+    fn test_write_approval_exempt_range_float_456_50() {
+        use crate::constraints::Range;
+        let gate = ArgApprovalGate::exempt(Constraint::Range(
+            Range::new(Some(0.0), Some(500.0)).unwrap(),
+        ))
+        .unwrap();
+        let gm = exempt_gate_map("write_approval", "amount", gate);
+
+        let mut exempt_args = HashMap::new();
+        exempt_args.insert("amount".into(), ConstraintValue::Float(456.50));
+        assert_eq!(
+            approval_requirement(Some(&gm), "write_approval", &exempt_args).unwrap(),
+            ApprovalRequirement::Exempt {
+                arguments: vec!["amount".into()],
+            }
+        );
+        assert!(!evaluate_approval_gates(Some(&gm), "write_approval", &exempt_args).unwrap());
+
+        let mut gated_args = HashMap::new();
+        gated_args.insert("amount".into(), ConstraintValue::Integer(650));
+        assert_eq!(
+            approval_requirement(Some(&gm), "write_approval", &gated_args).unwrap(),
+            ApprovalRequirement::Required {
+                kind: ApprovalGateKind::Argument {
+                    name: "amount".into(),
+                },
+                message: "Approval required for tool 'write_approval'".into(),
+            }
+        );
+        assert!(evaluate_approval_gates(Some(&gm), "write_approval", &gated_args).unwrap());
+    }
+
+    #[test]
+    fn test_inspect_distinguishes_whole_tool_and_conditional() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("email.delete".into(), ToolApprovalGate::whole_tool());
+        let mut args = BTreeMap::new();
+        args.insert(
+            "amount".into(),
+            ArgApprovalGate::exempt(Constraint::Range(
+                crate::constraints::Range::new(Some(0.0), Some(500.0)).unwrap(),
+            ))
+            .unwrap(),
+        );
+        gm.insert("write_approval".into(), ToolApprovalGate::with_args(args));
+
+        assert_eq!(
+            inspect_approval_gate(Some(&gm), "email.read"),
+            ApprovalGateInspection::None
+        );
+        assert!(matches!(
+            inspect_approval_gate(Some(&gm), "email.delete"),
+            ApprovalGateInspection::WholeTool { .. }
+        ));
+        match inspect_approval_gate(Some(&gm), "write_approval") {
+            ApprovalGateInspection::Conditional { arguments, .. } => {
+                assert_eq!(arguments, vec!["amount".to_string()]);
+            }
+            other => panic!("expected conditional, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_unknown_constraint_in_gate_fails_closed() {
+        let mut args = BTreeMap::new();
+        args.insert(
+            "amount".into(),
+            ArgApprovalGate::Constraint(Constraint::Unknown {
+                type_id: 255,
+                payload: Vec::new(),
+            }),
+        );
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("write_approval".into(), ToolApprovalGate::with_args(args));
+
+        let mut call = HashMap::new();
+        call.insert("amount".into(), ConstraintValue::Integer(1));
+        assert!(approval_requirement(Some(&gm), "write_approval", &call).is_err());
+        assert!(evaluate_approval_gates(Some(&gm), "write_approval", &call).is_err());
     }
 
     #[test]

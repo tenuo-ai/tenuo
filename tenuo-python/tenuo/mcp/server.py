@@ -113,6 +113,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .._pop_canonicalize import strip_none_values
+from ..approval import ApprovalRequired
 from ..exceptions import (
     ApprovalExpired,
     ApprovalGateTriggered,
@@ -234,6 +235,9 @@ class MCPVerificationResult:
     approval_metadata: Optional[Dict[str, Any]] = field(default=None)
     """Structured approval counts for ``-32002`` responses (``got`` / ``need``)."""
 
+    error_type: Optional[str] = field(default=None)
+    """PEP ``error_type`` (``invalid_pop``, ``constraint_violation``, …)."""
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -272,6 +276,8 @@ class MCPVerificationResult:
                 data["got"] = self.approval_metadata["got"]
             if "need" in self.approval_metadata:
                 data["need"] = self.approval_metadata["need"]
+        if self.error_type:
+            data["error_type"] = self.error_type
         if data:
             error["data"] = data
         return error
@@ -354,6 +360,55 @@ class MCPApprovalRequired(MCPAuthorizationError):
             super().__init__(_result)
 
 
+def _mcp_result_from_enforcement(
+    enforcement: Any,
+    *,
+    tool_name: str,
+    clean_arguments: Dict[str, Any],
+    constraints: Dict[str, Any],
+    warrant_id: Optional[str],
+) -> MCPVerificationResult:
+    """Map a shared PEP result onto the MCP JSON-RPC denial shape."""
+    error_type = getattr(enforcement, "error_type", None) or ""
+    meta = getattr(enforcement, "approval_metadata", None) or {}
+    reason = getattr(enforcement, "denial_reason", None) or "Authorization denied"
+    if error_type == "invalid_pop":
+        reason = (
+            f"Access denied: {reason} PoP covers the raw tool arguments "
+            "(with None values stripped). Check that the client signs with "
+            "the same key bound in the warrant and that the timestamp has "
+            "not drifted beyond the PoP window."
+        )
+    elif error_type == "missing_signature":
+        reason = (
+            f"Access denied: {reason} Ensure the client sends a PoP signature "
+            "in _meta.tenuo.signature."
+        )
+    if error_type in ("insufficient_approvals", "approval_required", "approval_gate_misconfigured"):
+        return MCPVerificationResult(
+            allowed=False,
+            tool=tool_name,
+            clean_arguments=clean_arguments,
+            constraints=constraints,
+            warrant_id=warrant_id,
+            denial_reason=reason,
+            jsonrpc_error_code=-32002,
+            request_hash=meta.get("request_hash") or getattr(enforcement, "request_hash", None),
+            approval_metadata=meta or None,
+            error_type=error_type or None,
+        )
+    return MCPVerificationResult(
+        allowed=False,
+        tool=tool_name,
+        clean_arguments=clean_arguments,
+        constraints=constraints,
+        warrant_id=warrant_id,
+        denial_reason=reason,
+        jsonrpc_error_code=-32001,
+        error_type=error_type or None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # MCPVerifier
 # ---------------------------------------------------------------------------
@@ -402,17 +457,22 @@ class MCPVerifier:
 
     def __init__(
         self,
-        authorizer: Any,
+        authorizer: Any = None,
         config: Optional[Any] = None,
         require_warrant: bool = True,
         control_plane: Optional[Any] = None,
         nonce_store: Optional[Any] = None,
+        runtime: Optional[Any] = None,
     ) -> None:
         """
         Args:
             authorizer: ``tenuo_core.Authorizer`` configured with trusted issuer
                 public keys. Build one with
                 ``Authorizer(trusted_roots=[issuer_public_key])``.
+                Optional when ``runtime`` or ``Runtime.install()`` supplies one.
+            runtime: Optional holder ``Runtime``. When set (or installed as the
+                process default), inbound verify uses its authorizer unless
+                ``authorizer`` is passed explicitly, and receipts land on it.
             config: Optional ``tenuo_core.CompiledMcpConfig`` for constraint
                 extraction.  When provided, argument field names are mapped to
                 warrant constraint names according to the YAML config (type
@@ -435,6 +495,12 @@ class MCPVerifier:
         from tenuo._extension import require_extension
         require_extension("MCPVerifier")
 
+        self._runtime = runtime
+        if authorizer is None:
+            from tenuo.runtime import get_runtime
+            src = runtime or get_runtime()
+            if src is not None:
+                authorizer = src.authorizer()
         self._authorizer = authorizer
         self._config = config
         self._require_warrant = require_warrant
@@ -481,11 +547,27 @@ class MCPVerifier:
         # diverge the signed-bytes shape between sides.
         pop_args: Dict[str, Any] = strip_none_values(args)
 
+        presented: List[Any] = []
+
         def _emit_and_return(
             result: MCPVerificationResult,
             chain_result: Any = None,
             latency_us: int = 0,
         ) -> MCPVerificationResult:
+            try:
+                setattr(result, "authorizer", self._authorizer)
+                if presented:
+                    setattr(result, "presented_chain", list(presented))
+            except Exception:
+                pass
+            try:
+                from tenuo.receipts import collect_enforcement_receipt
+
+                collect_enforcement_receipt(
+                    result, chain_result, runtime=self._runtime
+                )
+            except Exception:
+                logger.warning("runtime receipt collection failed for '%s'", result.tool, exc_info=True)
             if self._control_plane:
                 try:
                     self._control_plane.emit_for_enforcement(
@@ -668,6 +750,7 @@ class MCPVerifier:
             ))
 
         warrant_id: Optional[str] = getattr(warrant, "id", None)
+        presented[:] = list(_chain_parents or []) + [warrant]
 
         # ------------------------------------------------------------------
         # Step 4: decode PoP signature
@@ -708,33 +791,43 @@ class MCPVerifier:
                 ))
 
         # ------------------------------------------------------------------
-        # Step 6: authorize
+        # Step 6: authorize through the shared inbound PEP
         # ------------------------------------------------------------------
         import time
         start_ns = time.perf_counter_ns()
         chain_result = None
         result: MCPVerificationResult
 
+        from tenuo._enforcement import verify_inbound_call
+        from tenuo.runtime import bind_runtime, get_runtime
+
+        runtime = self._runtime or get_runtime()
         try:
-            if _chain_parents:
-                full_chain = list(_chain_parents) + [warrant]
-                chain_result = self._authorizer.check_chain_with_pop_args(
-                    full_chain,
-                    tool_name,
-                    pop_args,
-                    constraints,
-                    pop_sig,
-                    approvals,
+            with bind_runtime(runtime):
+                enforcement = verify_inbound_call(
+                    tool_name=tool_name,
+                    tool_args=pop_args,
+                    warrant=warrant,
+                    pop_signature=pop_sig,
+                    authorizer=self._authorizer,
+                    warrant_chain=_chain_parents or [],
+                    approvals=approvals,
+                    pop_args=pop_args,
+                    constraint_args=constraints,
                 )
-            else:
-                chain_result = self._authorizer.authorize_one_with_pop_args(
-                    warrant,
-                    tool_name,
-                    pop_args,
-                    constraints,
-                    pop_sig,
-                    approvals,
+            if not enforcement.allowed:
+                result = _mcp_result_from_enforcement(
+                    enforcement,
+                    tool_name=tool_name,
+                    clean_arguments=clean_arguments,
+                    constraints=constraints,
+                    warrant_id=warrant_id,
                 )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                return _emit_and_return(
+                    result, chain_result=enforcement.chain_result, latency_us=latency_us
+                )
+            chain_result = enforcement.chain_result
 
             # ── Replay prevention ────────────────────────────────────────
             # Ed25519 PoP is deterministic, so an exact replay of the same
@@ -789,6 +882,27 @@ class MCPVerifier:
                 warrant_id=warrant_id,
                 request_hash=gate_exc.request_hash or None,
                 denial_reason=gate_exc.message,
+                jsonrpc_error_code=-32002,
+            )
+        except ApprovalRequired as req_exc:
+            req = req_exc.request
+            logger.info(
+                "Approval required for '%s' (warrant=%s) — approvals required",
+                tool_name,
+                warrant_id,
+            )
+            request_hash = getattr(req, "request_hash", None)
+            hex_fn = getattr(request_hash, "hex", None)
+            if callable(hex_fn):
+                request_hash = hex_fn()
+            result = MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments=clean_arguments,
+                constraints=constraints,
+                warrant_id=warrant_id,
+                request_hash=request_hash or None,
+                denial_reason=req.message or str(req_exc),
                 jsonrpc_error_code=-32002,
             )
         except InsufficientApprovals as insuf_exc:
@@ -936,11 +1050,12 @@ def verify_mcp_call(
     tool_name: str,
     arguments: Optional[Dict[str, Any]],
     *,
-    authorizer: Any,
+    authorizer: Any = None,
     config: Optional[Any] = None,
     require_warrant: bool = True,
     meta: Any = None,
     control_plane: Optional[Any] = None,
+    runtime: Optional[Any] = None,
 ) -> MCPVerificationResult:
     """Verify a single MCP tool call — convenience wrapper around :class:`MCPVerifier`.
 
@@ -978,6 +1093,7 @@ def verify_mcp_call(
         config=config,
         require_warrant=require_warrant,
         control_plane=control_plane,
+        runtime=runtime,
     ).verify(tool_name, arguments, meta=meta)
 
 

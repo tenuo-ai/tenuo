@@ -4199,6 +4199,35 @@ impl PyWarrant {
     // Use these to inspect warrant metadata. Safe for any use.
     // ========================================================================
 
+    /// Inspect how this warrant gates ``tool``, without evaluating arguments.
+    ///
+    /// Returns :class:`ApprovalGateInspection` with ``kind`` of ``none``,
+    /// ``whole_tool``, or ``conditional``. Raises on malformed gate encodings.
+    fn inspect_approval_gate(&self, tool: &str) -> PyResult<PyApprovalGateInspection> {
+        let insp = self.inner.inspect_approval_gate(tool).map_err(to_py_err)?;
+        Ok(inspection_to_py(tool, insp))
+    }
+
+    /// Evaluate whether a concrete tool call requires approval.
+    ///
+    /// Returns :class:`ApprovalRequirement` (``not_gated``, ``exempt``,
+    /// ``required``, or ``denied``). Capability constraints are checked first
+    /// so adapters do not collect approval for a call the authorizer will
+    /// refuse. PoP and collected approvals remain authorizer-only. Raises on
+    /// malformed or unknown gate encodings (fail-closed).
+    fn approval_requirement(
+        &self,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+    ) -> PyResult<PyApprovalRequirement> {
+        let rust_args = py_tool_args(args)?;
+        let req = self
+            .inner
+            .approval_requirement(tool, &rust_args)
+            .map_err(to_py_err)?;
+        Ok(requirement_to_py(tool, req))
+    }
+
     /// Get the agent ID if set on this warrant.
     fn agent_id(&self) -> Option<String> {
         self.inner.agent_id().map(|s| s.to_string())
@@ -5467,29 +5496,291 @@ fn py_verify_approvals(
     }))
 }
 
+/// Typed preflight of a warrant's approval gates for a concrete tool call.
+///
+/// Status is one of ``not_gated``, ``exempt``, ``required``, or ``denied``.
+/// ``denied`` means the warrant's own constraints refuse the call — do not
+/// collect approval. PoP and collected approvals remain authorizer-only.
+#[pyclass(name = "ApprovalRequirement")]
+#[derive(Clone, PartialEq, Eq)]
+pub struct PyApprovalRequirement {
+    status: String,
+    tool: String,
+    kind: Option<String>,
+    argument: Option<String>,
+    arguments: Vec<String>,
+    message: Option<String>,
+    code: Option<String>,
+    reason: Option<String>,
+}
+
+#[pymethods]
+impl PyApprovalRequirement {
+    /// ``not_gated``, ``exempt``, ``required``, or ``denied``.
+    #[getter]
+    fn status(&self) -> &str {
+        &self.status
+    }
+
+    #[getter]
+    fn tool(&self) -> &str {
+        &self.tool
+    }
+
+    /// ``whole_tool`` or ``argument`` when ``status == "required"``.
+    #[getter]
+    fn kind(&self) -> Option<&str> {
+        self.kind.as_deref()
+    }
+
+    /// Gated or exempted argument name, when the result is argument-scoped.
+    #[getter]
+    fn argument(&self) -> Option<&str> {
+        self.argument.as_deref()
+    }
+
+    /// All exempted (or gated) argument names for this result.
+    #[getter]
+    fn arguments(&self) -> Vec<String> {
+        self.arguments.clone()
+    }
+
+    /// Resolved display message when approval is required.
+    #[getter]
+    fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+
+    /// Stable denial code when ``status == "denied"``.
+    #[getter]
+    fn code(&self) -> Option<&str> {
+        self.code.as_deref()
+    }
+
+    /// Human-readable denial reason when ``status == "denied"``.
+    #[getter]
+    fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
+    fn requires_approval(&self) -> bool {
+        self.status == "required"
+    }
+
+    fn is_exempt(&self) -> bool {
+        self.status == "exempt"
+    }
+
+    fn is_not_gated(&self) -> bool {
+        self.status == "not_gated"
+    }
+
+    fn is_denied(&self) -> bool {
+        self.status == "denied"
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self == other
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ApprovalRequirement(status={:?}, tool={:?}, kind={}, argument={})",
+            self.status,
+            self.tool,
+            opt_debug(&self.kind),
+            opt_debug(&self.argument)
+        )
+    }
+}
+
+fn opt_debug(value: &Option<String>) -> String {
+    match value {
+        Some(inner) => format!("{inner:?}"),
+        None => "None".to_string(),
+    }
+}
+
+/// How a warrant gates a tool, independent of concrete arguments.
+#[pyclass(name = "ApprovalGateInspection")]
+#[derive(Clone)]
+pub struct PyApprovalGateInspection {
+    kind: String,
+    tool: String,
+    arguments: Vec<String>,
+    message: Option<String>,
+}
+
+#[pymethods]
+impl PyApprovalGateInspection {
+    /// ``none``, ``whole_tool``, or ``conditional``.
+    #[getter]
+    fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    #[getter]
+    fn tool(&self) -> &str {
+        &self.tool
+    }
+
+    #[getter]
+    fn arguments(&self) -> Vec<String> {
+        self.arguments.clone()
+    }
+
+    #[getter]
+    fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+
+    fn is_gated(&self) -> bool {
+        self.kind != "none"
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ApprovalGateInspection(kind={:?}, tool={:?}, arguments={:?})",
+            self.kind, self.tool, self.arguments
+        )
+    }
+}
+
+fn requirement_to_py(
+    tool: &str,
+    req: crate::approval_gate::ApprovalRequirement,
+) -> PyApprovalRequirement {
+    use crate::approval_gate::{ApprovalGateKind, ApprovalRequirement};
+    match req {
+        ApprovalRequirement::NotGated => PyApprovalRequirement {
+            status: "not_gated".into(),
+            tool: tool.into(),
+            kind: None,
+            argument: None,
+            arguments: Vec::new(),
+            message: None,
+            code: None,
+            reason: None,
+        },
+        ApprovalRequirement::Exempt { arguments } => PyApprovalRequirement {
+            status: "exempt".into(),
+            tool: tool.into(),
+            kind: None,
+            argument: arguments.first().cloned(),
+            arguments,
+            message: None,
+            code: None,
+            reason: None,
+        },
+        ApprovalRequirement::Required { kind, message } => {
+            let (kind_s, argument) = match kind {
+                ApprovalGateKind::WholeTool => (Some("whole_tool".into()), None),
+                ApprovalGateKind::Argument { name } => (Some("argument".into()), Some(name)),
+            };
+            PyApprovalRequirement {
+                status: "required".into(),
+                tool: tool.into(),
+                kind: kind_s,
+                arguments: argument.iter().cloned().collect(),
+                argument,
+                message: Some(message),
+                code: None,
+                reason: None,
+            }
+        }
+        ApprovalRequirement::Denied { code, reason } => PyApprovalRequirement {
+            status: "denied".into(),
+            tool: tool.into(),
+            kind: None,
+            argument: None,
+            arguments: Vec::new(),
+            message: None,
+            code: Some(code),
+            reason: Some(reason),
+        },
+    }
+}
+
+fn inspection_to_py(
+    tool: &str,
+    insp: crate::approval_gate::ApprovalGateInspection,
+) -> PyApprovalGateInspection {
+    use crate::approval_gate::ApprovalGateInspection;
+    match insp {
+        ApprovalGateInspection::None => PyApprovalGateInspection {
+            kind: "none".into(),
+            tool: tool.into(),
+            arguments: Vec::new(),
+            message: None,
+        },
+        ApprovalGateInspection::WholeTool { message } => PyApprovalGateInspection {
+            kind: "whole_tool".into(),
+            tool: tool.into(),
+            arguments: Vec::new(),
+            message,
+        },
+        ApprovalGateInspection::Conditional { arguments, message } => PyApprovalGateInspection {
+            kind: "conditional".into(),
+            tool: tool.into(),
+            arguments,
+            message,
+        },
+    }
+}
+
+fn py_tool_args(args: &Bound<'_, PyDict>) -> PyResult<HashMap<String, ConstraintValue>> {
+    let mut rust_args = HashMap::new();
+    for (key, value) in args.iter() {
+        let field: String = key.extract()?;
+        rust_args.insert(field, py_to_constraint_value(&value)?);
+    }
+    Ok(rust_args)
+}
+
 /// Evaluate whether a tool invocation requires approval based on the warrant's approval gates.
 ///
 /// Returns True if the approval gate fires (approval needed), False otherwise.
 /// Returns False when the warrant has no approval gate map.
+///
+/// Prefer :meth:`Warrant.approval_requirement` when the caller needs to
+/// distinguish an exemption from an ungated tool.
 #[pyfunction(name = "evaluate_approval_gates")]
 fn py_evaluate_approval_gates(
     warrant: &PyWarrant,
     tool: &str,
     args: &Bound<'_, PyDict>,
 ) -> PyResult<bool> {
-    let mut rust_args = HashMap::new();
-    for (key, value) in args.iter() {
-        let field: String = key.extract()?;
-        rust_args.insert(field, py_to_constraint_value(&value)?);
-    }
-    let approval_gate_map = crate::approval_gate::parse_approval_gate_map(
-        warrant
-            .inner
-            .extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
-    )
-    .map_err(to_py_err)?;
-    crate::approval_gate::evaluate_approval_gates(approval_gate_map.as_ref(), tool, &rust_args)
-        .map_err(to_py_err)
+    let rust_args = py_tool_args(args)?;
+    let map = warrant.inner.approval_gate_map().map_err(to_py_err)?;
+    crate::approval_gate::evaluate_approval_gates(map.as_ref(), tool, &rust_args).map_err(to_py_err)
+}
+
+/// Typed preflight of a warrant's approval gates for ``(tool, args)``.
+///
+/// Raises on malformed or unknown gate encodings (fail-closed). Capability
+/// constraints are checked first; a denied call is not treated as gated.
+#[pyfunction(name = "approval_requirement")]
+fn py_approval_requirement(
+    warrant: &PyWarrant,
+    tool: &str,
+    args: &Bound<'_, PyDict>,
+) -> PyResult<PyApprovalRequirement> {
+    let rust_args = py_tool_args(args)?;
+    let req = warrant
+        .inner
+        .approval_requirement(tool, &rust_args)
+        .map_err(to_py_err)?;
+    Ok(requirement_to_py(tool, req))
+}
+
+/// Inspect how a warrant gates ``tool``, without evaluating arguments.
+#[pyfunction(name = "inspect_approval_gate")]
+fn py_inspect_approval_gate(warrant: &PyWarrant, tool: &str) -> PyResult<PyApprovalGateInspection> {
+    let insp = warrant
+        .inner
+        .inspect_approval_gate(tool)
+        .map_err(to_py_err)?;
+    Ok(inspection_to_py(tool, insp))
 }
 
 /// Resolve the display string adapters copy when an approval gate fires.
@@ -5678,6 +5969,14 @@ impl PyAuthorizer {
     #[getter]
     fn srl_commitment(&self) -> Option<(Option<u64>, [u8; 32])> {
         self.srl_commitment
+    }
+
+    /// Currently installed signed revocation list, if any.
+    fn installed_revocation_list(&self) -> Option<PySignedRevocationList> {
+        self.inner
+            .installed_revocation_list()
+            .cloned()
+            .map(|inner| PySignedRevocationList { inner })
     }
 
     /// Install a signed revocation list from an already-trusted root.
@@ -6506,6 +6805,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyApprovalPayload>()?;
     m.add_class::<PySignedApproval>()?;
     m.add_class::<PyApprovalMetadata>()?;
+    m.add_class::<PyApprovalRequirement>()?;
+    m.add_class::<PyApprovalGateInspection>()?;
     // Revocation
     m.add_class::<PyRevocationRequest>()?;
     m.add_class::<PySignedRevocationList>()?;
@@ -6516,6 +6817,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::python_control_plane::PyControlPlaneClient>()?;
     #[cfg(feature = "python-server")]
     m.add_class::<crate::python_control_plane::PyConnectToken>()?;
+    #[cfg(feature = "python-server")]
+    m.add_class::<crate::python_control_plane::PyReceiptIssuer>()?;
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;
@@ -6538,6 +6841,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_trusted_roots_digest, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
     m.add_function(wrap_pyfunction!(py_evaluate_approval_gates, m)?)?;
+    m.add_function(wrap_pyfunction!(py_approval_requirement, m)?)?;
+    m.add_function(wrap_pyfunction!(py_inspect_approval_gate, m)?)?;
     m.add_function(wrap_pyfunction!(py_resolve_approval_required_message, m)?)?;
 
     Ok(())

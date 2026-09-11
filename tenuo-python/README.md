@@ -196,6 +196,34 @@ if result:
     run_infrastructure_action(args)
 ```
 
+## Holder Runtime
+
+`Runtime` owns identity, trusted roots, the current signed revocation list, and
+an optional receipt outbox so application code does not coordinate those pieces
+by hand.
+
+```python
+from tenuo import HolderIdentity, Runtime
+
+identity = HolderIdentity.load_or_create("holder.key")
+runtime = Runtime(
+    identity=identity,
+    trusted_roots=roots,
+    revocation_list=signed_srl,
+    receipts="collect",
+)
+session = runtime.session_from_wire(warrant)
+with runtime.session_scope(session):
+    protected_tool(...)
+
+batch = runtime.peek_receipts()
+# upload, then:
+runtime.acknowledge_receipts(len(batch))
+```
+
+`ConnectToken.parse` decodes a `tenuo_ct_…` token. It does not read
+environment variables.
+
 ## Key Management
 
 ### Loading Keys

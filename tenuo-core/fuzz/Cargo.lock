@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "base64 0.23.1",
  "chrono",

@@ -105,7 +105,11 @@ from tenuo_core import (
     py_compute_request_hash as compute_request_hash,
 )
 from tenuo_core import (
+    ApprovalGateInspection,
+    ApprovalRequirement,
+    approval_requirement,
     evaluate_approval_gates,
+    inspect_approval_gate,
 )
 from tenuo_core import (
     decode_warrant_stack_base64,
@@ -167,6 +171,11 @@ import tenuo.warrant_ext  # noqa: F401
 
 # BoundWarrant (common result of warrant.bind())
 from .bound_warrant import BoundWarrant
+
+# Holder runtime (identity, connect token, session lifecycle)
+from .connect import ConnectToken
+from .identity import HolderIdentity
+from .runtime import Runtime, Session, bind_runtime, get_runtime
 
 # Protection decorator
 from .decorators import (
@@ -253,6 +262,12 @@ __all__ = [
     "Warrant",
     # Core types
     "BoundWarrant",
+    "ConnectToken",
+    "HolderIdentity",
+    "Runtime",
+    "Session",
+    "get_runtime",
+    "bind_runtime",
     "Authorizer",
     # Chain verification (returned by Authorizer.authorize_one / check_chain)
     "ChainVerificationResult",
@@ -348,6 +363,10 @@ __all__ = [
     "AuthorizationDenied",  # Rich error with diff support
     "ApprovalGateTriggered",  # Approval gate fired — approval required
     "evaluate_approval_gates",  # Check if an approval gate would fire for a tool call
+    "approval_requirement",  # Typed gate preflight: not_gated / exempt / required
+    "inspect_approval_gate",  # none / whole_tool / conditional, without evaluating args
+    "ApprovalRequirement",
+    "ApprovalGateInspection",
     "ScopeViolation",  # Authorization scope exceeded
     # Error explanation
     "explain",
@@ -377,4 +396,4 @@ __all__ = [
     "get_default_nonce_store",
 ]
 
-__version__ = "0.2.5"
+__version__ = "0.2.6"

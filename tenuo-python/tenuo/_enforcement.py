@@ -52,6 +52,7 @@ if TYPE_CHECKING:
 from .bound_warrant import BoundWarrant
 from .exceptions import (
     ApprovalExpired,
+    ApprovalGateTriggered,
     ConfigurationError,
     ConstraintViolation,
     ExpiredError,
@@ -65,6 +66,7 @@ from .exceptions import (
     ToolNotAuthorized,
     UntrustedRoot,
 )
+from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 from .schemas import TOOL_SCHEMAS, ToolSchema
 
 logger = logging.getLogger("tenuo.enforcement")
@@ -163,6 +165,24 @@ class EnforcementResult:
                 required=meta.get("need", 0),
                 received=meta.get("got", 0),
                 detail=self.denial_reason or "",
+            )
+
+        if error_type == "invalid_approval":
+            raise InvalidApproval(self.denial_reason or "Invalid approval")
+
+        if error_type == "approval_required":
+            meta = self.approval_metadata or {}
+            raise ApprovalGateTriggered(
+                tool=self.tool,
+                request_hash=str(meta.get("request_hash", "") or ""),
+                min_approvals=int(meta.get("min_approvals", 1) or 1),
+                message=self.denial_reason,
+            )
+
+        if error_type == "revoked":
+            raise RevokedError(
+                self.warrant_id or "",
+                reason=self.denial_reason or "Warrant or issuer is revoked",
             )
 
         if error_type == "expired":
@@ -352,6 +372,46 @@ def _enforcement_result_from_chain_error(
     warrant: Optional[Any] = None,
 ) -> EnforcementResult:
     """Map a Rust/core authorization exception to an ``EnforcementResult``."""
+    if isinstance(exc, InvalidApproval):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="invalid_approval",
+            warrant_id=warrant_id,
+        )
+    if isinstance(exc, ApprovalGateTriggered):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="approval_required",
+            warrant_id=warrant_id,
+            approval_metadata={
+                "request_hash": getattr(exc, "request_hash", "") or "",
+                "min_approvals": getattr(exc, "min_approvals", 1) or 1,
+            },
+        )
+    if isinstance(exc, ApprovalRequired):
+        request = getattr(exc, "request", None)
+        request_hash = getattr(request, "request_hash", None) if request is not None else None
+        hex_fn = getattr(request_hash, "hex", None)
+        if callable(hex_fn):
+            request_hash = hex_fn()
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="approval_required",
+            warrant_id=warrant_id,
+            approval_metadata={
+                "request_hash": request_hash or "",
+                "min_approvals": getattr(request, "min_approvals", 1) or 1,
+            },
+        )
     if isinstance(exc, InsufficientApprovals):
         details = getattr(exc, "details", {}) or {}
         return EnforcementResult(
@@ -455,6 +515,12 @@ def _log_chain_enforcement_denial(
         logger.warning(msg)
     else:
         logger.debug(msg)
+
+
+def _reraise_sign_path_approval(exc: BaseException, verify_mode: str) -> None:
+    """Sign-path callers collect approvals via ``ApprovalRequired``; do not map it."""
+    if verify_mode == "sign" and isinstance(exc, ApprovalRequired):
+        raise exc
 
 
 def _enforcement_result_from_chain_error_with_logging(
@@ -568,6 +634,17 @@ def _get_allowed_tools(bound_warrant: BoundWarrant) -> Optional[List[str]]:
 # =============================================================================
 
 
+def _holder_for_request_hash(bound_warrant: Any) -> Any:
+    """Subject of the warrant, not the verify-mode dummy signing key."""
+    warrant = getattr(bound_warrant, "warrant", None)
+    if warrant is not None:
+        for attr in ("holder_key", "authorized_holder", "holder"):
+            holder = getattr(warrant, attr, None)
+            if holder is not None:
+                return holder
+    return getattr(bound_warrant, "holder_key", None)
+
+
 def _collect_approvals_for_approval_gate(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -602,7 +679,7 @@ def _collect_approvals_for_approval_gate(
         ApprovalVerificationError,
     )
 
-    holder_key = getattr(bound_warrant, "holder_key", None)
+    holder_key = _holder_for_request_hash(bound_warrant)
     warrant_id = getattr(bound_warrant, "id", None) or ""
     request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
     request = ApprovalRequest.for_warrant_gate(
@@ -687,7 +764,7 @@ async def _collect_approvals_for_approval_gate_async(
         ApprovalVerificationError,
     )
 
-    holder_key = getattr(bound_warrant, "holder_key", None)
+    holder_key = _holder_for_request_hash(bound_warrant)
     warrant_id = getattr(bound_warrant, "id", None) or ""
     request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
     request = ApprovalRequest.for_warrant_gate(
@@ -737,7 +814,29 @@ except ImportError:
     from typing_extensions import Literal  # type: ignore
 
 
-def enforce_tool_call(
+def _resolve_presented_parents(
+    warrant_chain: Optional[List[Any]],
+    *,
+    verify_mode: Literal["sign", "verify"] = "sign",
+) -> List[Any]:
+    """Use an explicit chain, otherwise the parents installed by session_scope.
+
+    Verify mode never inherits the ambient holder chain — a server checking a
+    client leaf must not pick up the process Runtime's parents.
+    """
+    if warrant_chain is not None:
+        return list(warrant_chain)
+    if verify_mode == "verify":
+        return []
+    try:
+        from .decorators import chain_scope
+    except Exception:  # pragma: no cover
+        return []
+    parents = chain_scope()
+    return list(parents) if parents else []
+
+
+def _enforce_tool_call_impl(
     tool_name: str,
     tool_args: Dict[str, Any],
     bound_warrant: BoundWarrant,
@@ -939,7 +1038,8 @@ def enforce_tool_call(
     # every except arm — including ones reached before the sign/verify branch
     # runs — can stamp the chain that was presented, and so a failure during
     # PoP signing cannot leave `_auth` unbound in the handler reporting it.
-    _presented_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+    warrant_chain = _resolve_presented_parents(warrant_chain, verify_mode=verify_mode)
+    _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
     # Overwritten with the stripped PoP view once derived; the fallback keeps
@@ -957,6 +1057,8 @@ def enforce_tool_call(
         from ._pop_canonicalize import strip_none_values as _strip_none_values
 
         _warrant_obj = bound_warrant.warrant
+        # Transport approvals (MCP _approvals, headers) are only consumed when
+        # this call's gate fires. Otherwise they must not reach Rust validate().
         _gate_approvals: Optional[List[Any]] = None
         _raw_pop_args = pop_args if pop_args is not None else tool_args
         _raw_constraint_args = (
@@ -1011,6 +1113,11 @@ def enforce_tool_call(
                     from .config import resolve_trusted_roots as _resolve_roots
                     trusted_roots = _resolve_roots(None)
                     if trusted_roots is None:
+                        from .runtime import get_runtime
+                        _rt = get_runtime()
+                        if _rt is not None:
+                            trusted_roots = list(_rt.trusted_roots)
+                    if trusted_roots is None:
                         raise ConfigurationError(
                             "enforce_tool_call requires trusted_roots in the sign path. "
                             "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
@@ -1035,6 +1142,8 @@ def enforce_tool_call(
                     _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
                 )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
+                from .runtime import apply_runtime_revocation
+                apply_runtime_revocation(_auth)
                 use_split_view = (
                     pop_args is not None
                     or constraint_args is not None
@@ -1099,6 +1208,7 @@ def enforce_tool_call(
                         authorizer=_auth,
                     )
             except Exception as _exc:
+                _reraise_sign_path_approval(_exc, verify_mode)
                 return _enforcement_result_from_chain_error_with_logging(
                     _exc,
                     tool_name,
@@ -1118,6 +1228,8 @@ def enforce_tool_call(
             # Defense in depth: re-check authorizer even though validated above
             if authorizer is None:
                 raise ConfigurationError("authorizer required for verify_mode='verify'")
+            from .runtime import apply_runtime_revocation
+            apply_runtime_revocation(authorizer)
             try:
                 # Build the full chain: [root, ..., parents, leaf]
                 # warrant_chain contains parent warrants in root-first order.
@@ -1144,9 +1256,27 @@ def enforce_tool_call(
                     or constraint_args is not None
                     or _pop_auth_args != _constraint_auth_args
                 )
-                if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
-                    _chain_result = authorizer.check_chain_with_pop_args(
-                        full_chain,
+                if warrant_chain or hasattr(authorizer, "check_chain"):
+                    if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
+                        _chain_result = authorizer.check_chain_with_pop_args(
+                            full_chain,
+                            tool_name,
+                            _pop_auth_args,
+                            _constraint_auth_args,
+                            signature=precomputed_signature,
+                            approvals=_gate_approvals or [],
+                        )
+                    else:
+                        _chain_result = authorizer.check_chain(
+                            full_chain,
+                            tool_name,
+                            _constraint_auth_args,
+                            signature=precomputed_signature,
+                            approvals=_gate_approvals or [],
+                        )
+                elif use_split_view and hasattr(authorizer, "authorize_one_with_pop_args"):
+                    _chain_result = authorizer.authorize_one_with_pop_args(
+                        bound_warrant.warrant,
                         tool_name,
                         _pop_auth_args,
                         _constraint_auth_args,
@@ -1154,8 +1284,8 @@ def enforce_tool_call(
                         approvals=_gate_approvals or [],
                     )
                 else:
-                    _chain_result = authorizer.check_chain(
-                        full_chain,
+                    _chain_result = authorizer.authorize_one(
+                        bound_warrant.warrant,
                         tool_name,
                         _constraint_auth_args,
                         signature=precomputed_signature,
@@ -1214,8 +1344,18 @@ def enforce_tool_call(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired):
+    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
         raise
+    except ApprovalRequired as e:
+        if verify_mode == "sign":
+            raise
+        mapped = _enforcement_result_from_chain_error(
+            e, tool_name, tool_args, warrant_id
+        )
+        mapped.presented_chain = _presented_chain
+        mapped.pop_auth_args = _pop_auth_args
+        mapped.authorizer = authorizer if authorizer is not None else _auth
+        return mapped
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         # Known authorization failures - expected behavior
         logger.debug(f"Authorization denied for {tool_name}: {e}")
@@ -1259,7 +1399,6 @@ def enforce_tool_call(
             verified_pop=_pop,
         )
     except Exception as e:
-        from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
         if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
             raise
 
@@ -1279,7 +1418,7 @@ def enforce_tool_call(
         )
 
 
-async def enforce_tool_call_async(
+async def _enforce_tool_call_async_impl(
     tool_name: str,
     tool_args: Dict[str, Any],
     bound_warrant: BoundWarrant,
@@ -1369,7 +1508,8 @@ async def enforce_tool_call_async(
     # every except arm — including ones reached before the sign/verify branch
     # runs — can stamp the chain that was presented, and so a failure during
     # PoP signing cannot leave `_auth` unbound in the handler reporting it.
-    _presented_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+    warrant_chain = _resolve_presented_parents(warrant_chain, verify_mode=verify_mode)
+    _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
     # Overwritten with the stripped PoP view once derived; the fallback keeps
@@ -1380,6 +1520,8 @@ async def enforce_tool_call_async(
         from ._pop_canonicalize import strip_none_values as _strip_none_values
 
         _warrant_obj = bound_warrant.warrant
+        # Transport approvals (MCP _approvals, headers) are only consumed when
+        # this call's gate fires. Otherwise they must not reach Rust validate().
         _gate_approvals: Optional[List[Any]] = None
         _raw_pop_args = pop_args if pop_args is not None else tool_args
         _raw_constraint_args = (
@@ -1422,6 +1564,11 @@ async def enforce_tool_call_async(
                     from .config import resolve_trusted_roots as _resolve_roots
                     trusted_roots = _resolve_roots(None)
                     if trusted_roots is None:
+                        from .runtime import get_runtime
+                        _rt = get_runtime()
+                        if _rt is not None:
+                            trusted_roots = list(_rt.trusted_roots)
+                    if trusted_roots is None:
                         raise ConfigurationError(
                             "enforce_tool_call requires trusted_roots in the sign path. "
                             "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
@@ -1441,6 +1588,8 @@ async def enforce_tool_call_async(
                     _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
                 )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
+                from .runtime import apply_runtime_revocation
+                apply_runtime_revocation(_auth)
                 use_split_view = (
                     pop_args is not None
                     or constraint_args is not None
@@ -1497,6 +1646,7 @@ async def enforce_tool_call_async(
                         authorizer=_auth,
                     )
             except Exception as _exc:
+                _reraise_sign_path_approval(_exc, verify_mode)
                 return _enforcement_result_from_chain_error_with_logging(
                     _exc,
                     tool_name,
@@ -1512,6 +1662,8 @@ async def enforce_tool_call_async(
         else:
             if authorizer is None:
                 raise ConfigurationError("authorizer required for verify_mode='verify'")
+            from .runtime import apply_runtime_revocation
+            apply_runtime_revocation(authorizer)
             try:
                 full_chain = list(warrant_chain or []) + [bound_warrant.warrant]
 
@@ -1530,9 +1682,27 @@ async def enforce_tool_call_async(
                     or constraint_args is not None
                     or _pop_auth_args != _constraint_auth_args
                 )
-                if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
-                    _chain_result = authorizer.check_chain_with_pop_args(
-                        full_chain,
+                if warrant_chain or hasattr(authorizer, "check_chain"):
+                    if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
+                        _chain_result = authorizer.check_chain_with_pop_args(
+                            full_chain,
+                            tool_name,
+                            _pop_auth_args,
+                            _constraint_auth_args,
+                            signature=precomputed_signature,
+                            approvals=_gate_approvals or [],
+                        )
+                    else:
+                        _chain_result = authorizer.check_chain(
+                            full_chain,
+                            tool_name,
+                            _constraint_auth_args,
+                            signature=precomputed_signature,
+                            approvals=_gate_approvals or [],
+                        )
+                elif use_split_view and hasattr(authorizer, "authorize_one_with_pop_args"):
+                    _chain_result = authorizer.authorize_one_with_pop_args(
+                        bound_warrant.warrant,
                         tool_name,
                         _pop_auth_args,
                         _constraint_auth_args,
@@ -1540,8 +1710,8 @@ async def enforce_tool_call_async(
                         approvals=_gate_approvals or [],
                     )
                 else:
-                    _chain_result = authorizer.check_chain(
-                        full_chain,
+                    _chain_result = authorizer.authorize_one(
+                        bound_warrant.warrant,
                         tool_name,
                         _constraint_auth_args,
                         signature=precomputed_signature,
@@ -1587,8 +1757,18 @@ async def enforce_tool_call_async(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired):
+    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
         raise
+    except ApprovalRequired as e:
+        if verify_mode == "sign":
+            raise
+        mapped = _enforcement_result_from_chain_error(
+            e, tool_name, tool_args, warrant_id
+        )
+        mapped.presented_chain = _presented_chain
+        mapped.pop_auth_args = _pop_auth_args
+        mapped.authorizer = authorizer if authorizer is not None else _auth
+        return mapped
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         logger.debug(f"Authorization denied for {tool_name}: {e}")
         if isinstance(e, ExpiredError):
@@ -1620,7 +1800,6 @@ async def enforce_tool_call_async(
             verified_pop=_pop,
         )
     except Exception as e:
-        from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
         if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
             raise
         logger.exception(f"Unexpected error during authorization for {tool_name}")
@@ -1705,11 +1884,94 @@ def filter_tools_by_warrant(
     return filtered
 
 
+def _collect_runtime_receipt(result: EnforcementResult) -> EnforcementResult:
+    from .receipts import collect_enforcement_receipt
+
+    collect_enforcement_receipt(result, getattr(result, "chain_result", None))
+    return result
+
+
+from functools import wraps as _wraps  # noqa: E402
+
+
+@_wraps(_enforce_tool_call_impl)
+def enforce_tool_call(*args, **kwargs):
+    return _collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs))
+
+
+@_wraps(_enforce_tool_call_async_impl)
+async def enforce_tool_call_async(*args, **kwargs):
+    return _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+
+
+def parents_from_presented_chain(
+    chain: Optional[List[Any]],
+    leaf: Any,
+) -> List[Any]:
+    """Return parent warrants from a full presented stack (leaf last)."""
+    if not chain:
+        return []
+    items = list(chain)
+    leaf_id = getattr(leaf, "id", None)
+    if items and leaf_id is not None and getattr(items[-1], "id", None) == leaf_id:
+        return items[:-1]
+    if items and items[-1] is leaf:
+        return items[:-1]
+    return items
+
+
+class VerificationOnlyKey:
+    """Sentinel used when binding a warrant for inbound verify. Never signs."""
+
+
+def verify_inbound_call(
+    *,
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    warrant: Any,
+    pop_signature: Optional[bytes],
+    authorizer: Any,
+    warrant_chain: Optional[List[Any]] = None,
+    approvals: Optional[List[Any]] = None,
+    pop_args: Optional[Dict[str, Any]] = None,
+    constraint_args: Optional[Dict[str, Any]] = None,
+    approval_handler: Optional[Any] = None,
+) -> EnforcementResult:
+    """Shared inbound PEP. Adapters must not call Authorizer directly."""
+    if authorizer is None:
+        raise ConfigurationError("verify_inbound_call requires an Authorizer")
+    if pop_signature is None:
+        raise MissingSignature(
+            "precomputed_signature is required when verify_mode='verify'"
+        )
+    bind = getattr(warrant, "bind", None)
+    if not callable(bind):
+        raise ConfigurationError("verify_inbound_call requires a Warrant with bind()")
+    bound = bind(VerificationOnlyKey())
+    return _enforce_tool_call_impl(
+        tool_name=tool_name,
+        tool_args=tool_args,
+        bound_warrant=bound,
+        verify_mode="verify",
+        precomputed_signature=pop_signature,
+        authorizer=authorizer,
+        warrant_chain=warrant_chain or [],
+        approvals=approvals,
+        pop_args=pop_args,
+        constraint_args=constraint_args,
+        approval_handler=approval_handler,
+    )
+
+
 __all__ = [
     "EnforcementResult",
     "DenialPolicy",
     "DenialResult",
+    "VerificationOnlyKey",
     "enforce_tool_call",
+    "enforce_tool_call_async",
+    "verify_inbound_call",
+    "parents_from_presented_chain",
     "filter_tools_by_warrant",
     "handle_denial",
 ]

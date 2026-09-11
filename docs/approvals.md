@@ -59,6 +59,8 @@ result = enforce_tool_call(
 
 Gates are evaluated per call. Listing `required_approvers` alone does **not** require approval unless a gate fires for that `(tool, args)`.
 
+Do **not** treat every tool listed in `tenuo.approval_gates` as unconditionally gated. A tool can be listed with a per-argument `Exempt` or `Constraint` gate; only some calls require approval. Inspect the signed extension with the typed API below instead of parsing the raw CBOR keys.
+
 ---
 
 ## Approval Gates
@@ -98,6 +100,84 @@ than from the wording alone.
 MCP clients still retry by attaching signatures in `_meta.tenuo.approvals`;
 that instruction is documented here rather than rewritten into the denial
 reason.
+
+### Inspecting gates (typed preflight)
+
+Adapters that need to know whether a **concrete call** requires approval should
+use `Warrant.approval_requirement(tool, args)` (or the module-level
+`approval_requirement`). It returns a typed result from the same
+`Constraint.matches` implementation the authorizer uses:
+
+| Status | Meaning |
+|--------|---------|
+| `not_gated` | Tool is granted and either absent from the gate map, or a constrained gate does not match these arguments |
+| `exempt` | A per-argument `Exempt` gate is present and this call matches the exemption |
+| `required` | The gate fires (`kind` is `whole_tool` or `argument`) |
+| `denied` | The warrant does not grant this call (missing tool or capability miss). Do not collect approval. |
+
+To inspect the **structure** without arguments, use
+`Warrant.inspect_approval_gate(tool)`:
+
+| `kind` | Meaning |
+|--------|---------|
+| `none` | Tool is not in the gate map |
+| `whole_tool` | Every invocation of this tool is gated |
+| `conditional` | Per-argument `All` / `Constraint` / `Exempt` gates (`arguments` lists the names) |
+
+```python
+from tenuo import Range, Warrant
+
+warrant = (Warrant.mint_builder()
+    .capability("write_approval", amount=Range(0, 1000))
+    .approval_gates({
+        "write_approval": {"amount": {"exempt": Range(0, 500)}},
+    })
+    .required_approvers([approver_key.public_key])
+    .min_approvals(1)
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(control_key)
+)
+
+assert warrant.inspect_approval_gate("write_approval").kind == "conditional"
+
+# 456.50 is inside 0..500 — capability passes, exemption matches, no approval.
+req = warrant.approval_requirement("write_approval", {"amount": 456.50})
+assert req.status == "exempt"
+assert not req.requires_approval()
+
+# 650 is inside 0..1000 but outside the exemption — approval required.
+req = warrant.approval_requirement("write_approval", {"amount": 650})
+assert req.status == "required"
+assert req.kind == "argument"
+
+# 1200 fails the capability Range(0, 1000). Preflight reports `denied`.
+req = warrant.approval_requirement("write_approval", {"amount": 1200})
+assert req.status == "denied"
+assert not req.requires_approval()
+```
+
+`evaluate_approval_gates(warrant, tool, args)` is the gate-map-only boolean
+(split-view safe: it does not run capability checks). Prefer
+`approval_requirement` so an exemption or a deny is not confused with "this
+tool is not gated."
+
+**Compatibility**
+
+- The boolean `evaluate_approval_gates` API is unchanged: it evaluates the
+  gate map only. Capability failures still return `True` when a gate fires.
+  Use `approval_requirement` for `denied`.
+- Malformed or unknown gate encodings raise (Python) or return
+  `status="required"` with `error` set (WASM, no fabricated `kind`). Treat
+  that as fail-closed — never as ungated.
+- This preflight does **not** replace the authorizer. PoP, expiry, and
+  collected approvals remain authorizer-only. An SDK-side `exempt` /
+  `not_gated` result must not allow a call the authorizer would deny.
+
+Rust: `warrant.approval_requirement(tool, args)` and
+`warrant.inspect_approval_gate(tool)`. TypeScript / WASM:
+`approvalRequirement(warrantB64, tool, args)`,
+`inspectApprovalGate(warrantB64, tool)`, and `evaluateApprovalGates`.
 
 ---
 
