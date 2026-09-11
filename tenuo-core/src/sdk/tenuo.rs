@@ -58,7 +58,7 @@ impl Tenuo {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[deprecated(
-        since = "0.2.6",
+        since = "0.3.0",
         note = "use `Runtime::builder()` for a long-lived holder process"
     )]
     pub fn local() -> LocalBuilder<NeedRoot> {

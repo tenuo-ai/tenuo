@@ -605,7 +605,7 @@ fn ensure_srl_not_replaced_or_rolled_back(
 
 #[derive(Debug)]
 #[deprecated(
-    since = "0.2.6",
+    since = "0.3.0",
     note = "use `Authorizer` or `tenuo::sdk::Runtime` as the primary entry point"
 )]
 pub struct DataPlane {
