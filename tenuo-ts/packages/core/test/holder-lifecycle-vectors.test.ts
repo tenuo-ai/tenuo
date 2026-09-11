@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createTenuo } from "../src/index.ts";
+import { createTenuo, under } from "../src/index.ts";
 import { parseConnectToken } from "../src/connect.ts";
 
 type TokenCase = {
@@ -94,7 +94,7 @@ describe("holder-lifecycle vectors", () => {
     const identity = createTenuo.generateIdentity();
     const issuer = createTenuo({ root: createTenuo.devRoot() });
     const minted = issuer.session({
-      allow: { read_file: {} },
+      allow: { read_file: { path: under("/data") } },
       holder: identity.publicKey,
     });
     const runtime = createTenuo.runtime({
@@ -105,11 +105,11 @@ describe("holder-lifecycle vectors", () => {
     });
     const session = runtime.sessionFromWire(minted.toWire());
     const readFile = runtime.tenuo.tool(
-      { execute: async () => "ok" },
-      { capability: "read_file" },
+      { execute: async ({ path }: { path: string }) => `ok:${path}` },
+      { capability: "read_file", allow: { path: under("/data") } },
     );
-    await readFile.execute({}, { session });
-    await readFile.execute({}, { session });
+    await readFile.execute({ path: "/data/a.pdf" }, { session });
+    await readFile.execute({ path: "/data/b.pdf" }, { session });
     const first = session.drainReceipts();
     expect(first).toHaveLength(1);
     expect(session.drainReceipts()).toEqual(first);

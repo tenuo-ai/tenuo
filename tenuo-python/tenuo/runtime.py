@@ -77,7 +77,14 @@ def apply_runtime_revocation(authorizer: Any) -> None:
 class Session:
     """One warrant bound to a Runtime's holder key and trust context."""
 
-    __slots__ = ("_bound", "_runtime", "_parents", "_runtime_token", "_chain_token")
+    __slots__ = (
+        "_bound",
+        "_runtime",
+        "_parents",
+        "_runtime_token",
+        "_chain_token",
+        "_enter_depth",
+    )
 
     def __init__(
         self,
@@ -90,6 +97,7 @@ class Session:
         self._parents = list(parents or [])
         self._runtime_token: Any = None
         self._chain_token: Any = None
+        self._enter_depth = 0
 
     @property
     def warrant(self) -> Warrant:
@@ -117,13 +125,18 @@ class Session:
         )
 
     def __enter__(self) -> "Session":
-        self._bound.__enter__()
-        self._runtime_token = _runtime_context.set(self._runtime)
-        # Always install parents (possibly empty) so an outer chain cannot leak in.
-        self._chain_token = _chain_context.set(list(self._parents))
+        if self._enter_depth == 0:
+            self._bound.__enter__()
+            self._runtime_token = _runtime_context.set(self._runtime)
+            # Always install parents (possibly empty) so an outer chain cannot leak in.
+            self._chain_token = _chain_context.set(list(self._parents))
+        self._enter_depth += 1
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self._enter_depth = max(0, self._enter_depth - 1)
+        if self._enter_depth > 0:
+            return False
         if self._chain_token is not None:
             _chain_context.reset(self._chain_token)
             self._chain_token = None
@@ -358,11 +371,12 @@ class Runtime:
         try:
             self._collector.push(wire)
         except ReceiptBufferFull:
-            logger.warning(
-                "receipt outbox is full (%s); authorized call continues, "
-                "receipt was not stored",
-                self._collector.maxsize,
-            )
+            if self._collector.overflowed == 1:
+                logger.warning(
+                    "receipt outbox is full (%s); further drops are counted on "
+                    "receipt_overflows and are not logged",
+                    self._collector.maxsize,
+                )
 
     def _decode_wire(self, warrant: SessionWarrant):
         if isinstance(warrant, Warrant):

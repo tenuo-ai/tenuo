@@ -117,12 +117,18 @@ def _mp_load_or_create(path_str: str, queue: multiprocessing.Queue) -> None:
 def _mp_paused_create(path_str: str, signal_path: str, queue: multiprocessing.Queue) -> None:
     import tenuo.identity as identity_mod
 
-    def _pause(_tmp, _dest) -> None:
+    original = identity_mod._claim_destination
+
+    def _pause(tmp, dest):
         Path(signal_path).touch()
         time.sleep(0.5)
+        return original(tmp, dest)
 
-    identity_mod._before_claim = _pause
-    _mp_load_or_create(path_str, queue)
+    identity_mod._claim_destination = _pause
+    try:
+        _mp_load_or_create(path_str, queue)
+    finally:
+        identity_mod._claim_destination = original
 
 
 def _mp_watch_for_partial(path_str: str, started: multiprocessing.Event, queue: multiprocessing.Queue) -> None:

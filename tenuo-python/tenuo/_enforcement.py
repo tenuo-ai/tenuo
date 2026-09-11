@@ -1033,7 +1033,9 @@ def _enforce_tool_call_impl(
         from ._pop_canonicalize import strip_none_values as _strip_none_values
 
         _warrant_obj = bound_warrant.warrant
-        _gate_approvals: Optional[List[Any]] = list(approvals or [])
+        # Transport approvals (MCP _approvals, headers) are only consumed when
+        # this call's gate fires. Otherwise they must not reach Rust validate().
+        _gate_approvals: Optional[List[Any]] = None
         _raw_pop_args = pop_args if pop_args is not None else tool_args
         _raw_constraint_args = (
             constraint_args if constraint_args is not None else tool_args
@@ -1485,7 +1487,9 @@ async def _enforce_tool_call_async_impl(
         from ._pop_canonicalize import strip_none_values as _strip_none_values
 
         _warrant_obj = bound_warrant.warrant
-        _gate_approvals: Optional[List[Any]] = list(approvals or [])
+        # Transport approvals (MCP _approvals, headers) are only consumed when
+        # this call's gate fires. Otherwise they must not reach Rust validate().
+        _gate_approvals: Optional[List[Any]] = None
         _raw_pop_args = pop_args if pop_args is not None else tool_args
         _raw_constraint_args = (
             constraint_args if constraint_args is not None else tool_args

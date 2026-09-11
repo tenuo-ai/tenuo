@@ -46,7 +46,7 @@ import queue
 import threading
 import time
 from pathlib import Path
-from typing import Callable, List, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, List, Optional, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 

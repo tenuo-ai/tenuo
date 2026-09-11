@@ -68,6 +68,19 @@ def test_bind_overrides_process_default(pair):
         Runtime.uninstall()
 
 
+def test_session_enter_is_reentrant(pair):
+    _root, _holder, warrant, runtime = pair
+    session = runtime.session_from_wire(warrant)
+    with session:
+        with session:
+            result = enforce_tool_call(
+                "read_file", {"path": "/data/q3.pdf"}, session.bound
+            )
+            assert result.allowed
+        assert get_runtime() is runtime
+    assert get_runtime() is None
+
+
 def test_session_from_wire_and_scope_isolation(pair):
     _root, holder, warrant, runtime = pair
     session = runtime.session_from_wire(warrant)

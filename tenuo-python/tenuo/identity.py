@@ -11,7 +11,7 @@ import os
 import secrets
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional, Union
 
 from tenuo_core import PublicKey, SigningKey
 
@@ -142,24 +142,23 @@ def _persist_new(dest: Path, key: SigningKey) -> None:
         parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(f"{dest.name}.tmp.{os.getpid()}.{secrets.token_hex(8)}")
     _write_complete_0600(tmp, key)
-    hook = _before_claim
-    if hook is not None:
-        hook(tmp, dest)
     if not _claim_destination(tmp, dest):
         raise FileExistsError(dest)
 
 
 def _write_complete_0600(path: Path, key: SigningKey) -> None:
-    secret = bytes(key.secret_key_bytes()).hex() + "\n"
+    secret = bytearray((bytes(key.secret_key_bytes()).hex() + "\n").encode("ascii"))
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
+    # Owner-only holder key file (0600). Path is chosen by the caller, not from
+    # unsanitized request input — CodeQL path-injection here is a false positive.
     fd = os.open(str(path), flags, 0o600)
     try:
         fchmod = getattr(os, "fchmod", None)
         if fchmod is not None:
             fchmod(fd, 0o600)
-        view = memoryview(secret.encode("ascii"))
+        view = memoryview(secret)
         while view:
             written = os.write(fd, view)
             view = view[written:]
@@ -173,6 +172,8 @@ def _write_complete_0600(path: Path, key: SigningKey) -> None:
         raise
     else:
         os.close(fd)
+    finally:
+        secret[:] = b"\x00" * len(secret)
 
 
 def _claim_destination(tmp: Path, dest: Path) -> bool:
@@ -189,7 +190,19 @@ def _claim_destination(tmp: Path, dest: Path) -> bool:
         if os.name != "nt":
             raise
         try:
-            os.rename(os.fspath(tmp), os.fspath(dest))
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            if hasattr(os, "O_CLOEXEC"):
+                flags |= os.O_CLOEXEC
+            claim_fd = os.open(os.fspath(dest), flags, 0o600)
+            os.close(claim_fd)
+        except FileExistsError:
+            return False
+        except OSError as claim_exc:
+            if claim_exc.errno == errno.EEXIST or getattr(claim_exc, "winerror", None) == 183:
+                return False
+            raise
+        try:
+            os.replace(os.fspath(tmp), os.fspath(dest))
             remove_tmp = False
             return True
         except FileExistsError:
@@ -204,9 +217,6 @@ def _claim_destination(tmp: Path, dest: Path) -> bool:
                 tmp.unlink()
             except OSError:
                 pass
-
-
-_before_claim: Optional[Callable[[Path, Path], None]] = None
 
 
 def _set_owner_only(path: Path) -> None:
