@@ -74,6 +74,7 @@ pub const CLOCK_SKEW_TOLERANCE_SECS: u64 = 30;
 /// - **EXECUTION**: Can invoke specific tools with specific constraints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum WarrantType {
     /// Execution warrant - can invoke tools.
     /// Wire value: 0
@@ -1012,11 +1013,11 @@ impl Warrant {
         if let Err(err) = self.check_constraints(tool, args) {
             let (code, reason) = match &err {
                 Error::ToolNotAuthorized { tool } => (
-                    "tool_not_authorized".to_string(),
+                    crate::ErrorCode::ToolNotAuthorized.name().to_string(),
                     format!("warrant does not authorize tool '{tool}'"),
                 ),
                 Error::ConstraintNotSatisfied { field, reason } => (
-                    "constraint_violation".to_string(),
+                    crate::ErrorCode::ConstraintViolation.name().to_string(),
                     format!("{field}: {reason}"),
                 ),
                 other => ("denied".to_string(), other.to_string()),

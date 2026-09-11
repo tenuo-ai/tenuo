@@ -743,6 +743,9 @@ pub struct HeartbeatConfig {
     /// Optional connect token for auto-claiming the agent before the first
     /// heartbeat. Stored so the heartbeat loop can call `claim_agent` at startup.
     pub connect_token: Option<crate::connect_token::ConnectToken>,
+    /// When set, fetched SRLs go through the tracker (freshness + file floor)
+    /// before they are installed on the authorizer.
+    pub revocation_tracker: Option<Arc<crate::revocation_tracker::RevocationTracker>>,
 }
 
 impl Default for HeartbeatConfig {
@@ -765,6 +768,7 @@ impl Default for HeartbeatConfig {
             id_notify: None,
             agent_id: None,
             connect_token: None,
+            revocation_tracker: None,
         }
     }
 }
@@ -784,7 +788,7 @@ impl HeartbeatConfig {
         let signing_key = SigningKey::generate();
 
         Ok(Self {
-            control_plane_url: ct.endpoint.clone(),
+            control_plane_url: crate::connect_token::normalize_control_plane_url(&ct.endpoint),
             api_key: ct.api_key.clone(),
             authorizer_name: authorizer_name.to_string(),
             authorizer_type: authorizer_type.to_string(),
@@ -1287,6 +1291,18 @@ async fn register_with_retry(client: &Client, config: &HeartbeatConfig) -> Optio
     for attempt in 1..=MAX_ATTEMPTS {
         match register(client, config).await {
             Ok(id) => return Some(id),
+            Err(e) if !e.is_retryable() => {
+                warn!(
+                    attempt = attempt,
+                    error = %e,
+                    "Registration failed with a non-retryable status"
+                );
+                eprintln!(
+                    "[tenuo] registration attempt {}/{} failed permanently: {}",
+                    attempt, MAX_ATTEMPTS, e,
+                );
+                break;
+            }
             Err(e) => {
                 let backoff = Duration::from_secs(2u64.pow(attempt));
                 warn!(
@@ -1480,6 +1496,19 @@ async fn fetch_and_apply_srl(
     let srl = SignedRevocationList::from_bytes(&srl_bytes)
         .map_err(|e| HeartbeatError::Parse(format!("Invalid SRL format: {}", e)))?;
 
+    if let Some(tracker) = &config.revocation_tracker {
+        let fetched_at = chrono::Utc::now();
+        tracker
+            .accept(
+                crate::revocation_tracker::RevocationUpdate {
+                    srl: srl.clone(),
+                    fetched_at,
+                },
+                fetched_at,
+            )
+            .map_err(|e| HeartbeatError::Parse(format!("SRL tracker rejected update: {}", e)))?;
+    }
+
     // Apply to authorizer (this also verifies the signature)
     let mut auth = authorizer.write().await;
     auth.set_revocation_list(srl, trusted_root)
@@ -1490,6 +1519,7 @@ async fn fetch_and_apply_srl(
 
 /// Errors that can occur during heartbeat operations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HeartbeatError {
     /// Network error (connection failed, timeout, etc.)
     Network(String),
@@ -1507,6 +1537,16 @@ impl std::fmt::Display for HeartbeatError {
                 write!(f, "API error ({}): {}", status, message)
             }
             HeartbeatError::Parse(msg) => write!(f, "Parse error: {}", msg),
+        }
+    }
+}
+
+impl HeartbeatError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            Self::Network(_) => true,
+            Self::Api { status, .. } if *status == 429 || *status >= 500 => true,
+            Self::Api { .. } | Self::Parse(_) => false,
         }
     }
 }
@@ -1535,6 +1575,7 @@ mod tests {
             id_notify: None,
             agent_id: None,
             connect_token: None,
+            revocation_tracker: None,
         }
     }
 

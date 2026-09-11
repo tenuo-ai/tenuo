@@ -57,6 +57,7 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tenuo::{
     approval::SignedApproval,
     constraints::ConstraintValue,
@@ -96,10 +97,14 @@ struct Cli {
     #[arg(long, env = "TENUO_REVOCATION_LIST")]
     revocation_list: Option<PathBuf>,
 
+    /// Persistent SRL floor file. Heartbeat fetches go through RevocationTracker.
+    #[arg(long, env = "TENUO_REVOCATION_FLOOR")]
+    revocation_floor: Option<PathBuf>,
+
     // === Control Plane Configuration ===
-    /// One-token onboarding for Tenuo Cloud.
-    /// Base64url-encoded JSON blob generated from the Tenuo Cloud dashboard.
-    /// Encodes the control plane endpoint, API key, and optional agent binding.
+    /// One-token onboarding for a control plane.
+    /// Base64url-encoded JSON blob that encodes the control plane endpoint,
+    /// API key, and optional agent binding.
     /// Explicit TENUO_CONTROL_PLANE_URL / TENUO_API_KEY take precedence when set.
     #[arg(long, env = "TENUO_CONNECT_TOKEN")]
     connect_token: Option<String>,
@@ -427,6 +432,47 @@ fn build_authorizer(
     Ok((authorizer, initial_srl_version))
 }
 
+fn parse_root_hex(hex_key: &str) -> Option<tenuo::crypto::PublicKey> {
+    let bytes = hex::decode(hex_key.trim()).ok()?;
+    let arr: [u8; 32] = bytes.try_into().ok()?;
+    tenuo::crypto::PublicKey::from_bytes(&arr).ok()
+}
+
+fn parse_first_root(keys: &str) -> Option<tenuo::crypto::PublicKey> {
+    keys.split(',').find_map(parse_root_hex)
+}
+
+fn apply_settings_trusted_roots(
+    authorizer: &mut Authorizer,
+    roots: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for hex_key in roots {
+        let Some(key) = parse_root_hex(hex_key) else {
+            return Err(format!("invalid trusted root hex: {hex_key}").into());
+        };
+        authorizer.add_trusted_root(key);
+    }
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+    }
+    info!("shutdown signal received");
+}
+
 fn load_signed_revocation_list(
     path: &PathBuf,
 ) -> Result<SignedRevocationList, Box<dyn std::error::Error>> {
@@ -575,6 +621,14 @@ async fn prepare_serve(
         }
     }
 
+    let mut authorizer = authorizer;
+    apply_settings_trusted_roots(&mut authorizer, &config.settings.trusted_roots)?;
+    let settings_first_root = config
+        .settings
+        .trusted_roots
+        .iter()
+        .find_map(|hex| parse_root_hex(hex));
+
     let debug_mode = config.settings.debug_mode;
     let compiled = CompiledGatewayConfig::compile(config)?;
 
@@ -636,12 +690,11 @@ async fn prepare_serve(
         Arc::new(tokio::sync::RwLock::new(None));
 
     // Parse trusted root key for SRL verification (first key is control plane key)
-    let trusted_root = cli.trusted_keys.as_ref().and_then(|keys| {
-        let first = keys.split(',').next()?;
-        let bytes = hex::decode(first.trim()).ok()?;
-        let arr: [u8; 32] = bytes.try_into().ok()?;
-        PublicKey::from_bytes(&arr).ok()
-    });
+    let trusted_root = cli
+        .trusted_keys
+        .as_ref()
+        .and_then(|keys| parse_first_root(keys))
+        .or(settings_first_root);
 
     // Create audit channel, metrics collector, and spawn heartbeat task if control plane is configured
     let (audit_tx, metrics) =
@@ -703,8 +756,34 @@ async fn prepare_serve(
                 }
             };
 
+            let revocation_tracker = trusted_root.as_ref().and_then(|root| {
+                let floor = cli.revocation_floor.clone().unwrap_or_else(|| {
+                    std::env::temp_dir().join("tenuo-srl-floors")
+                });
+                match tenuo::revocation_tracker::FileFloorStore::open(&floor) {
+                    Ok(store) => {
+                        match tenuo::revocation_tracker::RevocationTracker::new(
+                            vec![root.clone()],
+                            Duration::from_secs(300),
+                            Duration::from_secs(30),
+                            Arc::new(store),
+                        ) {
+                            Ok(tracker) => Some(Arc::new(tracker)),
+                            Err(e) => {
+                                warn!(error = %e, "revocation tracker unavailable; SRL fetch will skip the floor");
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, path = %floor.display(), "revocation floor unavailable");
+                        None
+                    }
+                }
+            });
+
             let heartbeat_config = HeartbeatConfig {
-                control_plane_url: url.clone(),
+                control_plane_url: tenuo::connect_token::normalize_control_plane_url(&url),
                 api_key: key.clone(),
                 authorizer_name: name.clone(),
                 authorizer_type: cli.authorizer_type.clone(),
@@ -720,6 +799,7 @@ async fn prepare_serve(
                 id_notify: None,
                 agent_id: resolved_agent_id,
                 connect_token: resolved_connect_token,
+                revocation_tracker,
             };
 
             // Clone shared_authorizer_id for the heartbeat task to update
@@ -820,7 +900,9 @@ async fn serve_http(
     let app = build_router(ready.state);
     let addr: SocketAddr = format!("{}:{}", bind, port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     Ok(())
 }
@@ -993,7 +1075,9 @@ async fn serve_unix(
     );
 
     let app = build_router(ready.state);
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     Ok(())
 }
@@ -1814,6 +1898,7 @@ fn parse_deny_reason(
                     ConstraintValue::List(l) => json!(l),
                     ConstraintValue::Object(o) => json!(o),
                     ConstraintValue::Null => json!(null),
+                    _ => json!(null),
                 })
                 .unwrap_or(json!(null));
 

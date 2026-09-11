@@ -29,6 +29,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// - 2100-2199: Reserved namespace errors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum ErrorCode {
     // Envelope errors (1000-1099)
     UnsupportedEnvelopeVersion = 1000,

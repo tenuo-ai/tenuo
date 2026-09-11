@@ -133,6 +133,7 @@ fn constraint_value_to_json(cv: &ConstraintValue) -> JsonValue {
                 .collect(),
         ),
         ConstraintValue::Null => JsonValue::Null,
+        _ => JsonValue::Null,
     }
 }
 
@@ -202,6 +203,9 @@ fn approval_gate_map_to_json(gm: &ApprovalGateMap) -> JsonValue {
                         }
                         ArgApprovalGate::Exempt(c) => {
                             args_map.insert(arg.clone(), json!({ "exempt": constraint_to_readable(c) }));
+                        }
+                        _ => {
+                            args_map.insert(arg.clone(), json!("unknown"));
                         }
                     }
                 }
@@ -1229,17 +1233,6 @@ pub fn sign_receipt(payload_json: JsValue, authorizer_key_hex: &str) -> JsValue 
 pub fn parse_connect_token(token: &str) -> JsValue {
     init_panic_hook();
 
-    #[derive(serde::Deserialize)]
-    struct RawToken {
-        v: Option<u32>,
-        e: String,
-        k: String,
-        #[serde(default)]
-        a: Option<String>,
-        #[serde(default, alias = "r", alias = "registration_token")]
-        t: Option<String>,
-    }
-
     #[derive(Serialize)]
     struct TokenResult {
         endpoint: Option<String>,
@@ -1263,46 +1256,17 @@ pub fn parse_connect_token(token: &str) -> JsValue {
         .unwrap()
     }
 
-    const PREFIX: &str = "tenuo_ct_";
-    let encoded = match token.trim().strip_prefix(PREFIX) {
-        Some(rest) => rest,
-        None => return fail("token must start with 'tenuo_ct_'".to_string()),
-    };
-
-    let bytes = match base64::Engine::decode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        encoded,
-    )
-    .or_else(|_| {
-        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, encoded)
-    }) {
-        Ok(b) => b,
-        Err(e) => return fail(format!("base64url decode: {}", e)),
-    };
-    let raw: RawToken = match serde_json::from_slice(&bytes) {
-        Ok(t) => t,
-        Err(e) => return fail(format!("JSON parse: {}", e)),
-    };
-    match raw.v {
-        None => return fail("version is required. This SDK supports version 1.".to_string()),
-        Some(1) => {}
-        Some(other) => return fail(format!("unsupported token version: {}", other)),
+    match tenuo::connect_token::ConnectToken::parse(token) {
+        Ok(ct) => serde_wasm_bindgen::to_value(&TokenResult {
+            endpoint: Some(ct.endpoint),
+            api_key: Some(ct.api_key),
+            agent_id: ct.agent_id,
+            registration_token: ct.registration_token,
+            error: None,
+        })
+        .unwrap(),
+        Err(e) => fail(e.to_string()),
     }
-    if raw.e.is_empty() || raw.k.is_empty() {
-        return fail("token missing required fields (e, k)".to_string());
-    }
-    let mut endpoint = raw.e.trim_end_matches('/').to_string();
-    if endpoint.ends_with("/v1") {
-        endpoint.truncate(endpoint.len() - 3);
-    }
-    serde_wasm_bindgen::to_value(&TokenResult {
-        endpoint: Some(endpoint),
-        api_key: Some(raw.k),
-        agent_id: raw.a,
-        registration_token: raw.t,
-        error: None,
-    })
-    .unwrap()
 }
 
 fn to_auth_error(msg: &str) -> JsValue {
@@ -2693,6 +2657,7 @@ fn requirement_to_js(
             let (kind_s, argument) = match kind {
                 ApprovalGateKind::WholeTool => (Some("whole_tool".into()), None),
                 ApprovalGateKind::Argument { name } => (Some("argument".into()), Some(name)),
+                _ => (Some("unknown".into()), None),
             };
             ApprovalRequirementResult {
                 status: "required".into(),
@@ -2716,6 +2681,17 @@ fn requirement_to_js(
             code: Some(code),
             reason: Some(reason),
             error: None,
+        },
+        _ => ApprovalRequirementResult {
+            status: "unknown".into(),
+            tool: tool.to_string(),
+            kind: None,
+            argument: None,
+            arguments: Vec::new(),
+            message: None,
+            code: None,
+            reason: None,
+            error: Some("unrecognized approval requirement".into()),
         },
     }
 }
@@ -2843,6 +2819,13 @@ pub fn inspect_approval_gate(warrant_b64: &str, tool: &str) -> JsValue {
                     arguments,
                     message,
                     error: None,
+                },
+                _ => ApprovalGateInspectionResult {
+                    kind: "unknown".into(),
+                    tool: tool.to_string(),
+                    arguments: Vec::new(),
+                    message: None,
+                    error: Some("unrecognized approval-gate inspection".into()),
                 },
             };
             serde_wasm_bindgen::to_value(&result).unwrap()

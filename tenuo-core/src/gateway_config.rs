@@ -354,6 +354,7 @@ fn validate_pattern(pattern: &str) -> Result<(), String> {
 
 /// Configuration parsing error.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConfigError {
     /// YAML parsing error
     YamlParse(serde_yaml::Error),
@@ -554,6 +555,7 @@ pub struct CompiledGatewayConfig {
 
 /// Error when compiling gateway configuration.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CompileError {
     /// Route pattern is invalid
     InvalidPattern {

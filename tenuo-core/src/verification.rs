@@ -59,6 +59,7 @@ impl<'a> VerificationContext<'a> {
 }
 
 /// How this decision treats revocation.
+#[non_exhaustive]
 pub enum RevocationState<'a> {
     /// This exact accepted snapshot decides.
     Snapshot(&'a RevocationSnapshot),

@@ -11,6 +11,7 @@ const DEFAULT_RECEIPT_CAPACITY: usize = 10_000;
 
 /// How receipt persistence interacts with the authorization outcome.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EvidencePolicy {
     #[default]
     /// Produce no receipts.
@@ -185,6 +186,7 @@ pub struct ReceiptRef {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Why a receipt could not be signed.
+#[non_exhaustive]
 pub enum ReceiptSignerError {
     /// The receipt signer could not be reached.
     Unavailable,
@@ -202,6 +204,7 @@ impl std::error::Error for ReceiptSignerError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Why a receipt could not be stored.
+#[non_exhaustive]
 pub enum ReceiptSinkError {
     /// The sink could not be reached.
     Unavailable,

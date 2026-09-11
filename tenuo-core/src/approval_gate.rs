@@ -148,6 +148,7 @@ pub fn resolve_approval_required_message(tool: &str, gate_message: Option<&str>)
 
 /// Approval gate specification for a single argument.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ArgApprovalGate {
     /// All values of this argument trigger the gate.
     All,
@@ -411,6 +412,7 @@ pub fn encode_approval_gate_map(approval_gate_map: &ApprovalGateMap) -> Result<V
 /// Use this to distinguish "no gate", "always gated", and "gated only for
 /// some argument values" without parsing `tenuo.approval_gates` CBOR.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ApprovalGateInspection {
     /// Tool is absent from the gate map (or no map exists).
     None,
@@ -425,6 +427,7 @@ pub enum ApprovalGateInspection {
 
 /// Which kind of gate fired for a concrete call.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ApprovalGateKind {
     WholeTool,
     Argument { name: String },
@@ -439,6 +442,7 @@ pub enum ApprovalGateKind {
 /// other constraint type. PoP, expiry, and collected approvals remain
 /// authorizer-only.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ApprovalRequirement {
     /// No gate applies to this call (tool not listed, or a constrained gate
     /// that does not match these arguments).
@@ -679,6 +683,7 @@ fn take_stricter_approval_gate(a: &ToolApprovalGate, b: &ToolApprovalGate) -> To
 
 /// Errors specific to approval gate monotonicity violations.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ApprovalGateError {
     /// Parent had approval gates but child stripped them while still holding a gated tool.
     GatesStripped,

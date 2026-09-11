@@ -206,6 +206,7 @@ impl VerifiedProjection {
 
 /// Structural failure constructing an owned call.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ArgumentError {
     /// The capability name was empty.
     EmptyCapability,

@@ -10,7 +10,9 @@
 use super::authority::{AuthorityError, PresentedAuthority};
 use super::call::Call;
 use super::decision::{Denial, DenialReporting, GuardError};
-use super::guard::{AuthorizedCall, Guard, GuardBuildError, Guarded};
+use super::delegation::{DelegationError, DelegationProfile};
+use super::diagnostics::Diagnostics;
+use super::guard::{AuthorizedCall, Guard, GuardBuildError, Guarded, RevocationMode};
 use super::identity::{IdentityError, PersistentIdentity};
 use super::signer::LocalSigner;
 use crate::crypto::{PublicKey, SigningKey};
@@ -42,6 +44,7 @@ pub struct Runtime {
     identity: PersistentIdentity,
     roots: Vec<PublicKey>,
     ttl_fallback: Duration,
+    revocation: Option<RevocationMode>,
     tracker: Arc<RevocationTracker>,
     denial_reporting: DenialReporting,
     #[cfg(feature = "receipts")]
@@ -64,6 +67,7 @@ pub struct RuntimeBuilder {
     identity: Option<PersistentIdentity>,
     roots: Vec<PublicKey>,
     ttl_fallback: Option<Duration>,
+    revocation: Option<RevocationMode>,
     srl_max_age: Duration,
     srl_clock_tolerance: Duration,
     floor_path: Option<PathBuf>,
@@ -81,6 +85,7 @@ impl Runtime {
             identity: None,
             roots: Vec::new(),
             ttl_fallback: None,
+            revocation: None,
             srl_max_age: DEFAULT_SRL_MAX_AGE,
             srl_clock_tolerance: DEFAULT_SRL_CLOCK_TOLERANCE,
             floor_path: None,
@@ -149,8 +154,18 @@ impl Runtime {
 
         let mut builder = Guard::builder()
             .authorizer(authorizer)
-            .denial_reporting(self.denial_reporting)
-            .ttl_until_signed_srl(self.ttl_fallback, self.tracker.clone());
+            .denial_reporting(self.denial_reporting);
+        builder = match &self.revocation {
+            None => builder.ttl_until_signed_srl(self.ttl_fallback, self.tracker.clone()),
+            Some(RevocationMode::TtlOnly { max_lifetime }) => {
+                builder.revocation(RevocationMode::TtlOnly {
+                    max_lifetime: *max_lifetime,
+                })
+            }
+            Some(RevocationMode::SignedSrl) => builder
+                .revocation(RevocationMode::SignedSrl)
+                .revocation_tracker(self.tracker.clone()),
+        };
 
         #[cfg(feature = "receipts")]
         let receipts = {
@@ -244,6 +259,28 @@ impl Session {
             .map(|sink| sink.overflowed())
             .unwrap_or(0)
     }
+
+    /// Operator-side explanation for this session's warrant.
+    pub fn diagnostics(&self) -> Diagnostics<'_> {
+        self.enforcer.diagnostics(&self.authority)
+    }
+
+    /// Mint a local child after confirming this session's parent is live.
+    pub fn delegate(
+        &self,
+        profile: &DelegationProfile,
+    ) -> Result<PresentedAuthority, DelegationError> {
+        self.enforcer.delegate(&self.authority, profile)
+    }
+
+    /// Mint a remote child after confirming this session's parent is live.
+    pub fn delegate_to(
+        &self,
+        child_holder: &PublicKey,
+        profile: &DelegationProfile,
+    ) -> Result<Vec<Warrant>, DelegationError> {
+        self.enforcer.delegate_to(&self.authority, child_holder, profile)
+    }
 }
 
 impl RuntimeBuilder {
@@ -273,6 +310,17 @@ impl RuntimeBuilder {
     /// Maximum warrant lifetime used when no signed SRL has been applied yet.
     pub fn ttl_fallback(mut self, max_lifetime: Duration) -> Self {
         self.ttl_fallback = Some(max_lifetime);
+        self
+    }
+
+    /// Explicit revocation policy. Required unless [`ttl_fallback`] set a
+    /// TTL-until-SRL window (treated as [`RevocationMode::TtlOnly`] plus a
+    /// tracker that upgrades after the first list).
+    pub fn revocation(mut self, mode: RevocationMode) -> Self {
+        if let RevocationMode::TtlOnly { max_lifetime } = &mode {
+            self.ttl_fallback = Some(*max_lifetime);
+        }
+        self.revocation = Some(mode);
         self
     }
 
@@ -323,7 +371,12 @@ impl RuntimeBuilder {
         if self.roots.is_empty() {
             return Err(RuntimeError::MissingRoots);
         }
-        let ttl_fallback = self.ttl_fallback.ok_or(RuntimeError::MissingTtlFallback)?;
+        let ttl_fallback = match (&self.revocation, self.ttl_fallback) {
+            (Some(RevocationMode::TtlOnly { max_lifetime }), _) => *max_lifetime,
+            (_, Some(ttl)) => ttl,
+            (Some(RevocationMode::SignedSrl), None) => Duration::from_secs(60),
+            (None, None) => return Err(RuntimeError::MissingTtlFallback),
+        };
         if ttl_fallback.is_zero() {
             return Err(RuntimeError::InvalidTtlFallback);
         }
@@ -341,6 +394,7 @@ impl RuntimeBuilder {
             identity,
             roots: self.roots,
             ttl_fallback,
+            revocation: self.revocation,
             tracker,
             denial_reporting: self.denial_reporting,
             #[cfg(feature = "receipts")]
@@ -406,6 +460,7 @@ impl SessionWarrant for String {
 
 /// Failure constructing a runtime or session, or applying an SRL.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RuntimeError {
     /// No holder identity was supplied.
     MissingIdentity,
@@ -475,7 +530,22 @@ impl fmt::Display for RuntimeError {
     }
 }
 
-impl std::error::Error for RuntimeError {}
+impl std::error::Error for RuntimeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Guard(err) => Some(err),
+            Self::Authority(err) => Some(err),
+            Self::Warrant(err) => Some(err),
+            Self::Revocation(err) => Some(err),
+            Self::Identity(err) => Some(err),
+            Self::MissingIdentity
+            | Self::MissingRoots
+            | Self::MissingTtlFallback
+            | Self::InvalidTtlFallback
+            | Self::InvalidSrlMaxAge => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

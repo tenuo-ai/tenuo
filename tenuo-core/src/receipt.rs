@@ -98,6 +98,7 @@ pub fn policy_commitment_digest(policy_bytes: &[u8]) -> [u8; 32] {
 /// non-conformant, which is why this is an enum rather than a `bool`: the wire
 /// form cannot drift from the spec without changing this type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Outcome {
     Allow,
     Deny,

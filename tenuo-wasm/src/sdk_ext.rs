@@ -753,6 +753,7 @@ impl SdkContext {
             kind: match leaf.r#type() {
                 WarrantType::Issuer => "issuer".into(),
                 WarrantType::Execution => "execution".into(),
+                _ => "execution".into(),
             },
         }))
     }

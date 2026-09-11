@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 //! # Tenuo Core
 //!
 //! Agent Capability Flow Control - Rust core library.
@@ -16,24 +18,74 @@
 
 //! ## Example
 //!
-//! ```rust,ignore
-//! use tenuo::{Warrant, Pattern, Keypair};
+//! ```rust
+//! use std::collections::HashMap;
 //! use std::time::Duration;
+//! use tenuo::{
+//!     Authorizer, Constraint, ConstraintSet, ConstraintValue, Pattern, SigningKey, Warrant,
+//! };
 //!
-//! // Create a keypair for the control plane
-//! let keypair = SigningKey::generate();
+//! let issuer_key = SigningKey::generate();
+//! let holder_key = SigningKey::generate();
 //!
-//! // Issue a warrant for cluster upgrades
+//! let mut constraints = ConstraintSet::new();
+//! constraints.insert(
+//!     "path",
+//!     Constraint::Pattern(Pattern::new("/data/*").expect("pattern")),
+//! );
 //! let warrant = Warrant::builder()
-//!     .capability("upgrade_cluster")
-//!     .constraint("cluster", Pattern::new("staging-*"))
-//!     .ttl(Duration::from_secs(600))
-//!     .build(&keypair)?;
+//!     .capability("read_file", constraints)
+//!     .holder(holder_key.public_key())
+//!     .ttl(Duration::from_secs(300))
+//!     .build(&issuer_key)
+//!     .expect("mint");
 //!
-//! // Attenuate to a narrower scope for a worker agent
-//! let worker_warrant = warrant.attenuate()
-//!     .constraint("cluster", Exact::new("staging-web"))
-//!     .build(&worker_keypair)?;
+//! let mut authorizer = Authorizer::new();
+//! authorizer.add_trusted_root(issuer_key.public_key());
+//! let mut args = HashMap::new();
+//! args.insert(
+//!     "path".into(),
+//!     ConstraintValue::String("/data/report.txt".into()),
+//! );
+//! let pop = warrant
+//!     .sign(&holder_key, "read_file", &args)
+//!     .expect("pop");
+//! authorizer
+//!     .authorize_one(&warrant, "read_file", &args, Some(&pop), &[])
+//!     .expect("authorize");
+//! ```
+//!
+//! With the `sdk` feature, [`Runtime`](crate::sdk::Runtime) is the holder entry:
+//!
+//! ```rust
+//! # #[cfg(feature = "sdk")]
+//! # {
+//! use std::collections::HashMap;
+//! use std::time::Duration;
+//! use tenuo::sdk::prelude::*;
+//! use tenuo::{ConstraintSet, Warrant};
+//!
+//! let issuer = SigningKey::generate();
+//! let holder = SigningKey::generate();
+//! let warrant = Warrant::builder()
+//!     .capability("read", ConstraintSet::new())
+//!     .holder(holder.public_key())
+//!     .ttl(Duration::from_secs(300))
+//!     .build(&issuer)
+//!     .expect("mint");
+//! let runtime = Runtime::builder()
+//!     .holder(holder)
+//!     .trusted_root(issuer.public_key())
+//!     .ttl_fallback(Duration::from_secs(600))
+//!     .build()
+//!     .expect("runtime");
+//! let session = runtime.session_from_warrant(warrant).expect("session");
+//! let args = HashMap::new();
+//! assert!(session
+//!     .diagnostics()
+//!     .why_denied(&Call::borrowed("write", &args))
+//!     .is_some());
+//! # }
 //! ```
 
 pub mod approval;
@@ -56,6 +108,7 @@ pub mod revocation_manager;
 pub mod revocation_tracker;
 #[cfg(feature = "sdk")]
 #[deny(missing_docs)]
+#[cfg_attr(docsrs, doc(cfg(feature = "sdk")))]
 pub mod sdk;
 pub mod verification;
 pub mod warrant;
@@ -79,7 +132,6 @@ pub use mcp::{CompiledMcpConfig, CompiledTool, McpConfig, McpSettings};
 #[cfg(feature = "python")]
 pub mod python;
 
-#[cfg(feature = "server")]
 pub mod connect_token;
 
 #[cfg(feature = "server")]
@@ -90,8 +142,8 @@ pub mod python_control_plane;
 
 // Re-exports for convenience
 pub use constraints::{
-    All, Any, CelConstraint, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains, Exact,
-    Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subset, UrlPattern, Wildcard,
+    All, Any, AnyOf, CelConstraint, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains,
+    Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subset, UrlPattern, Wildcard,
     MAX_CONSTRAINT_DEPTH,
 };
 pub use crypto::{PublicKey, Signature, SigningKey};

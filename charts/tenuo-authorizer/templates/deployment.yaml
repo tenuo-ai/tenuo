@@ -49,6 +49,20 @@ spec:
         env:
           - name: RUST_LOG
             value: "info"
+          {{- if .Values.config.trustedRoots }}
+          - name: TENUO_TRUSTED_KEYS
+            value: {{ join "," .Values.config.trustedRoots | quote }}
+          {{- end }}
+          {{- range .Values.env }}
+          - name: {{ .name }}
+            {{- if .value }}
+            value: {{ .value | quote }}
+            {{- end }}
+            {{- if .valueFrom }}
+            valueFrom:
+              {{- toYaml .valueFrom | nindent 14 }}
+            {{- end }}
+          {{- end }}
         ports:
           - name: http
             containerPort: {{ .Values.service.port }}

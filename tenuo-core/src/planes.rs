@@ -603,6 +603,10 @@ fn ensure_srl_not_replaced_or_rolled_back(
 }
 
 #[derive(Debug)]
+#[deprecated(
+    since = "0.2.6",
+    note = "use `Authorizer` or `tenuo::sdk::Runtime` as the primary entry point"
+)]
 pub struct DataPlane {
     /// Trusted issuer public keys, keyed by name.
     trusted_issuers: HashMap<String, PublicKey>,
@@ -5569,7 +5573,7 @@ mod tests {
             .unwrap()
         {
             ApprovalRequirement::Denied { code, .. } => {
-                assert_eq!(code, "constraint_violation");
+                assert_eq!(code, crate::ErrorCode::ConstraintViolation.name());
             }
             other => panic!("expected Denied, got {other:?}"),
         }

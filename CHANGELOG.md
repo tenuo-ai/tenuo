@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Authorizer trust from gateway YAML and Helm env.** `settings.trusted_roots`
+  is applied to the live `Authorizer`. The chart sets `TENUO_TRUSTED_KEYS` from
+  `config.trustedRoots` and passes through `env`.
+- **Shared control-plane URL normalizer and status-aware retry.** Trailing
+  `/v1` is stripped once. Registration retries 429/5xx/network only.
+- **`RuntimeBuilder::revocation` and Session delegation/diagnostics.**
+  `Tenuo::local` and `DataPlane` are deprecated; `Runtime` is the primary
+  holder entry.
+- **Rust SDK receipt parity.** Deny receipts, previous-receipt hash, and SRL
+  commitment on the guard path. TypeScript `Runtime` signs verifier receipts
+  with the holder identity.
+- **`connect_token` is always compiled.** WASM uses the core parser. Rust
+  `Debug`/`Serialize` redact secrets.
+
+### Changed
+
+- **`tenuo-wasm` 0.2.6.** `make version-check` runs in CI and covers the four
+  artifacts. Compatibility matrix lists Rust, WASM, Python, and TypeScript.
+- **Python `AnyValue`.** `Any = Wildcard` is a deprecated alias. The OR
+  combinator is `AnyOf` (Rust type alias, Python, TypeScript `anyOf`).
+  `email`, `min`, `max`, and `Shlex` stay product features.
+- **Public enums `#[non_exhaustive]`.** Wrapping errors implement `source()`.
+- **Sidecar graceful shutdown.** SIGTERM/ctrl-c drain the HTTP server. SRL
+  fetch goes through `RevocationTracker` with a file floor.
+
+## [0.2.6] - 2026-09-10
+
+### Added
+
 - **Typed approval-gate preflight.** `Warrant.approval_requirement(tool, args)`
   returns `NotGated`, `Exempt`, `Required`, or `Denied` using the same
   constraint matcher as the authorizer. Capability failures and ungranted

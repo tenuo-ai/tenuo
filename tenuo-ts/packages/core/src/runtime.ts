@@ -127,7 +127,10 @@ export function createRuntime(
   if (options.revocationList !== undefined) {
     tenuoOptions.revocationList = options.revocationList;
   }
-  const tenuo = createTenuo(tenuoOptions);
+  const tenuo = createTenuo({
+    ...tenuoOptions,
+    receiptSigner: options.identity.holderKey,
+  });
   if (
     options.receiptMax !== undefined &&
     (!Number.isInteger(options.receiptMax) || options.receiptMax <= 0)

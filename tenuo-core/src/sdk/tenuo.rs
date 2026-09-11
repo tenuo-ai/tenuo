@@ -57,6 +57,10 @@ impl Tenuo {
     /// assert!(guard.check(&authority, &refused).is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[deprecated(
+        since = "0.2.6",
+        note = "use `Runtime::builder()` for a long-lived holder process"
+    )]
     pub fn local() -> LocalBuilder<NeedRoot> {
         LocalBuilder {
             roots: Vec::new(),
@@ -255,6 +259,7 @@ impl EnforcementBuilder<Ready> {
 
 /// Failure constructing a quickstart `Guard` / `PresentedAuthority`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum TenuoBuildError {
     /// The guard could not be built.
     Guard(GuardBuildError),
@@ -283,7 +288,14 @@ impl std::fmt::Display for TenuoBuildError {
     }
 }
 
-impl std::error::Error for TenuoBuildError {}
+impl std::error::Error for TenuoBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Guard(err) => Some(err),
+            Self::Authority(err) => Some(err),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

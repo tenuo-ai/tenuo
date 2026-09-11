@@ -109,6 +109,7 @@ impl PresentedAuthority {
 
 #[derive(Debug)]
 /// Why a child could not be minted.
+#[non_exhaustive]
 pub enum DelegationError {
     /// The profile granted nothing. A child with no capabilities is a mistake, not a
     /// restriction.
@@ -162,7 +163,17 @@ impl fmt::Display for DelegationError {
     }
 }
 
-impl std::error::Error for DelegationError {}
+impl std::error::Error for DelegationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Denied(err) => Some(err),
+            Self::Signer(err) => Some(err),
+            Self::Authority(err) => Some(err),
+            Self::Core(err) => Some(err),
+            Self::EmptyProfile | Self::ChildMustBeDistinct => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

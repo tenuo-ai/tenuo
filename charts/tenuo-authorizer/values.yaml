@@ -137,6 +137,15 @@ volumes: []
 #     secretName: mysecret
 #     optional: false
 
+# Extra environment variables passed to the authorizer process
+# (TENUO_CONNECT_TOKEN, TENUO_CONTROL_PLANE_URL, TENUO_API_KEY, …).
+env: []
+# - name: TENUO_CONNECT_TOKEN
+#   valueFrom:
+#     secretKeyRef:
+#       name: tenuo-connect
+#       key: token
+
 # Additional volumeMounts on the output Deployment definition.
 volumeMounts: []
 # - name: foo

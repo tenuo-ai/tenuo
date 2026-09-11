@@ -37,6 +37,7 @@ use crate::wire::{encode_stack, WarrantStack};
 /// There is no default: the builder requires this choice, because the two
 /// modes accept different risk and neither is safe to pick silently.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum RevocationMode {
     /// No revocation list. A warrant stays valid until it expires, so the
     /// only bound on a leaked or misissued warrant is its lifetime.
@@ -122,6 +123,8 @@ impl Guard {
             Ok(authorized) => self.complete_allow(&authorized),
             Err(denial) => {
                 self.record_deny(&denial);
+                #[cfg(feature = "receipts")]
+                self.emit_deny_receipt(authority, attempt.call, &denial);
                 Err(denial)
             }
         }
@@ -402,6 +405,7 @@ impl Guard {
             authorized.invocation_id(),
             authorized.pop_signature().to_bytes(),
         );
+        self.commit_receipt_links(&mut payload);
         payload.request_hash = Some(compute_request_hash(
             &leaf.id().to_string(),
             authorized.capability(),
@@ -424,10 +428,14 @@ impl Guard {
         })?;
         if let Some(sink) = &self.evidence.sink {
             match sink.persist(&receipt) {
-                Ok(_) => Ok(Some(receipt)),
+                Ok(_) => {
+                    self.remember_receipt_link(&receipt);
+                    Ok(Some(receipt))
+                }
                 Err(ReceiptSinkError::Unavailable)
                     if self.evidence.policy == EvidencePolicy::BestEffort =>
                 {
+                    self.remember_receipt_link(&receipt);
                     Ok(Some(receipt))
                 }
                 Err(_) => Err(Denial::sdk(
@@ -437,8 +445,62 @@ impl Guard {
                 )),
             }
         } else {
+            self.remember_receipt_link(&receipt);
             Ok(Some(receipt))
         }
+    }
+
+    #[cfg(feature = "receipts")]
+    fn commit_receipt_links(&self, payload: &mut ReceiptPayload) {
+        if let Some(srl) = self.authorizer.installed_revocation_list() {
+            payload.srl_version = Some(srl.version());
+            if let Ok(bytes) = srl.to_bytes() {
+                payload.srl_hash = Some(crate::srl_commitment_digest(&bytes));
+            }
+        }
+        if let Ok(guard) = self.evidence.last_receipt_hash.lock() {
+            payload.prev_receipt_hash = *guard;
+        }
+    }
+
+    #[cfg(feature = "receipts")]
+    fn remember_receipt_link(&self, receipt: &crate::receipt::Receipt) {
+        if let (Ok(mut guard), Ok(digest)) =
+            (self.evidence.last_receipt_hash.lock(), receipt.digest())
+        {
+            *guard = Some(digest);
+        }
+    }
+
+    #[cfg(feature = "receipts")]
+    fn emit_deny_receipt(&self, authority: &PresentedAuthority, call: &Call<'_>, denial: &Denial) {
+        if self.evidence.policy == EvidencePolicy::Disabled {
+            return;
+        }
+        let Some(signer) = self.evidence.signer.as_ref() else {
+            return;
+        };
+        let Ok(stack) = encode_stack(&WarrantStack(authority.chain().to_vec())) else {
+            return;
+        };
+        let mut payload = ReceiptPayload::deny_before_pop(
+            stack,
+            format!("tool:{}", call.capability()),
+            self.now().timestamp(),
+            format!("deny:{}", denial.code()),
+            denial.code().to_string(),
+        );
+        self.commit_receipt_links(&mut payload);
+        let Ok(bytes) = payload.to_cbor() else {
+            return;
+        };
+        let Ok(receipt) = sign_payload(&bytes, signer.as_ref()) else {
+            return;
+        };
+        if let Some(sink) = &self.evidence.sink {
+            let _ = sink.persist(&receipt);
+        }
+        self.remember_receipt_link(&receipt);
     }
 
     pub(crate) fn authorize_holder<'a>(
@@ -784,6 +846,7 @@ struct EvidenceConfig {
     policy: EvidencePolicy,
     signer: Option<std::sync::Arc<dyn ReceiptSigner>>,
     sink: Option<std::sync::Arc<dyn ReceiptSink>>,
+    last_receipt_hash: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
 }
 
 #[cfg(feature = "receipts")]
@@ -793,6 +856,7 @@ impl EvidenceConfig {
             policy: EvidencePolicy::Disabled,
             signer: None,
             sink: None,
+            last_receipt_hash: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 }
@@ -1060,6 +1124,7 @@ impl GuardBuilder {
                         policy: EvidencePolicy::BestEffort,
                         signer: self.receipt_signer,
                         sink: self.receipt_sink,
+                        last_receipt_hash: std::sync::Arc::new(std::sync::Mutex::new(None)),
                     }
                 }
                 EvidencePolicy::RequiredBeforeExecution => {
@@ -1073,6 +1138,7 @@ impl GuardBuilder {
                         policy: EvidencePolicy::RequiredBeforeExecution,
                         signer: self.receipt_signer,
                         sink: self.receipt_sink,
+                        last_receipt_hash: std::sync::Arc::new(std::sync::Mutex::new(None)),
                     }
                 }
             }
@@ -1120,6 +1186,7 @@ impl GuardBuilder {
 
 /// Failure constructing a [`Guard`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum GuardBuildError {
     /// No authorizer was supplied.
     MissingAuthorizer,

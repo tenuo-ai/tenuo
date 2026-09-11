@@ -224,6 +224,7 @@ export type WasmSrlInfo = {
 };
 
 export type WasmContext = {
+  withReceiptSigner(secret: Uint8Array): WasmContext;
   mint(
     allow: unknown,
     ttlSeconds: number,
@@ -274,6 +275,7 @@ type Generated = {
     new (): WasmContext;
     fromTrustedRoots(roots: string[]): WasmContext;
     fromIssuerSecret(secret: Uint8Array, extraRoots?: string[]): WasmContext;
+    withReceiptSigner(secret: Uint8Array): WasmContext;
   };
   SdkSession: {
     fromWire(warrant: string, holder: Uint8Array): WasmSession;
@@ -367,9 +369,13 @@ export function protocolLimits(): WasmProtocolLimits {
 export function createVerifierContext(
   rootHexes: readonly string[],
   revocationList?: string,
+  receiptSigner?: Uint8Array,
 ): WasmContext {
   const { SdkContext } = loadWasm();
-  const context = SdkContext.fromTrustedRoots([...rootHexes]);
+  let context = SdkContext.fromTrustedRoots([...rootHexes]);
+  if (receiptSigner !== undefined) {
+    context = context.withReceiptSigner(receiptSigner);
+  }
   if (revocationList !== undefined && revocationList.length > 0) {
     context.loadRevocationList(revocationList);
   }

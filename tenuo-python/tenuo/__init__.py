@@ -116,9 +116,10 @@ from tenuo_core import (
     encode_warrant_stack,
 )
 
-# Semantic alias: Any() = Wildcard() for zero-trust constraint sets
-# Use Any() to explicitly allow any value for a field while in closed-world mode
-Any = Wildcard
+# Wildcard: allow any value for a field in a closed-world constraint set.
+# `Any` used to alias Wildcard and collided with the OR combinator (`AnyOf`).
+AnyValue = Wildcard
+Any = Wildcard  # deprecated alias for AnyValue; use Wildcard or AnyValue
 
 # =============================================================================
 # 80% API - What most users need
@@ -326,7 +327,8 @@ __all__ = [
     "Range",
     "Contains",
     "Wildcard",
-    "Any",  # Alias for Wildcard - use in zero-trust constraint sets
+    "AnyValue",  # Alias for Wildcard
+    "Any",  # Deprecated alias for AnyValue; do not confuse with AnyOf
     # Advanced constraints
     "AnyOf",  # OR composite (at least one must match)
     "All",  # AND composite (all must match)

@@ -324,7 +324,11 @@ class TenuoClient implements Tenuo {
       this.context = createIssuerContext(options.root.secret, rootHexes(options));
       this.canMint = true;
     } else {
-      this.context = createVerifierContext(rootHexes(options));
+      this.context = createVerifierContext(
+        rootHexes(options),
+        undefined,
+        options.receiptSigner,
+      );
       this.canMint = false;
     }
     if (options.revocationList !== undefined) {
