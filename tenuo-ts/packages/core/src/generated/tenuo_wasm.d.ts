@@ -172,6 +172,16 @@ export class SdkSession {
     warrantIds(): any;
 }
 
+/**
+ * Typed preflight of a warrant's approval gates for `(tool, args)`.
+ *
+ * Returns `{ status: "not_gated"|"exempt"|"required"|"denied", tool, kind?,
+ * argument?, arguments, message?, code?, reason?, error? }`. Parse errors
+ * fail closed with `status: "required"` and `error` set (no fabricated
+ * `kind`). `denied` means the warrant's constraints refuse the call.
+ */
+export function approval_requirement(warrant_b64: string, tool: string, args_json: any): any;
+
 export function check_access(warrant_b64: string, tool: string, args_json: any, trusted_root_hex: string, dry_run: boolean): any;
 
 /**
@@ -248,6 +258,9 @@ export function decode_warrant(base64_warrant: string): any;
  * Returns `{ approval_required: true/false, tool, error }`.
  * This reads `extensions["tenuo.approval_gates"]` from the warrant, parses it,
  * and runs the gate evaluation logic from tenuo-core.
+ *
+ * Malformed warrants, gate maps, or arguments fail closed (`approval_required: true`).
+ * Prefer `approval_requirement` when the caller must distinguish exemptions.
  */
 export function evaluate_approval_gates(warrant_b64: string, tool: string, args_json: any): any;
 
@@ -257,6 +270,15 @@ export function evaluate_approval_gates(warrant_b64: string, tool: string, args_
 export function generate_keypair(): any;
 
 export function init_panic_hook(): void;
+
+/**
+ * Inspect how a warrant gates `tool`, without evaluating arguments.
+ *
+ * Returns `{ kind: "none"|"whole_tool"|"conditional", tool, arguments, message?, error? }`.
+ * Parse errors fail closed with `kind: "unknown"` and `error` set so callers
+ * cannot treat a malformed map as ungated.
+ */
+export function inspect_approval_gate(warrant_b64: string, tool: string): any;
 
 /**
  * Parse a complete `tenuo_ct_…` token into its component fields.

@@ -1,4 +1,12 @@
 export type {
+  ApprovalGateInspection,
+  ApprovalRequirement,
+  ApprovalRequirementStatus,
+} from "./wasm.ts";
+
+export { approvalRequirement, evaluateApprovalGates, inspectApprovalGate } from "./wasm.ts";
+
+export type {
   AllConstraint,
   AllowPolicy,
   AnyOfConstraint,

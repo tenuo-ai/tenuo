@@ -105,7 +105,11 @@ from tenuo_core import (
     py_compute_request_hash as compute_request_hash,
 )
 from tenuo_core import (
+    ApprovalGateInspection,
+    ApprovalRequirement,
+    approval_requirement,
     evaluate_approval_gates,
+    inspect_approval_gate,
 )
 from tenuo_core import (
     decode_warrant_stack_base64,
@@ -359,6 +363,10 @@ __all__ = [
     "AuthorizationDenied",  # Rich error with diff support
     "ApprovalGateTriggered",  # Approval gate fired — approval required
     "evaluate_approval_gates",  # Check if an approval gate would fire for a tool call
+    "approval_requirement",  # Typed gate preflight: not_gated / exempt / required
+    "inspect_approval_gate",  # none / whole_tool / conditional, without evaluating args
+    "ApprovalRequirement",
+    "ApprovalGateInspection",
     "ScopeViolation",  # Authorization scope exceeded
     # Error explanation
     "explain",

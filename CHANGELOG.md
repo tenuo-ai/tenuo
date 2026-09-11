@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Typed approval-gate preflight.** `Warrant.approval_requirement(tool, args)`
+  returns `NotGated`, `Exempt`, `Required`, or `Denied` using the same
+  constraint matcher as the authorizer. Capability failures and ungranted
+  tools are `Denied` so an approval UI does not collect a signature the
+  authorizer will reject. `Warrant.inspect_approval_gate(tool)`
+  distinguishes no gate, an unconditional whole-tool gate, and a
+  per-argument conditional gate so SDKs do not parse raw
+  `tenuo.approval_gates` CBOR keys. Python: `approval_requirement` /
+  `inspect_approval_gate` (also on `Warrant`). TypeScript:
+  `approvalRequirement` / `inspectApprovalGate` / `evaluateApprovalGates`.
+  WASM: `approval_requirement` / `inspect_approval_gate`. Boolean
+  `evaluate_approval_gates` stays on the gate-map-only evaluator so
+  split-view callers (PoP args vs constraint args) still see a firing
+  gate. TypeScript also exports `evaluateApprovalGates`.
 - **Holder `Runtime` and `Session` (`sdk`).** Persist an Ed25519 identity,
   configure trust / TTL fallback / receipt policy once, and bind each
   warrant into a session. `drain_receipts` / `peek_receipts` are the same
@@ -95,6 +109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **WASM `evaluate_approval_gates` fails closed** on an invalid warrant,
+  malformed gate map, or unparseable arguments (`approval_required: true`
+  plus `error`). Previously those cases returned `approval_required: false`.
 - **Connect token version is required.** `ConnectToken::parse` rejects a
   missing `v`, `v=0`, and any version other than 1. Tokens issued without
   `v` fail at parse after upgrade. This is a breaking change from 0.2.5.
