@@ -268,6 +268,13 @@ impl RevocationTracker {
         }
         Ok(snapshot.clone())
     }
+
+    /// Whether [`accept`](Self::accept) has ever installed a list.
+    ///
+    /// A poisoned lock is treated as already populated so callers fail closed.
+    pub fn has_accepted(&self) -> bool {
+        self.latest.lock().map(|g| g.is_some()).unwrap_or(true)
+    }
 }
 
 fn content_hash(srl: &SignedRevocationList) -> [u8; 32] {
@@ -472,5 +479,28 @@ mod tests {
                 .unwrap(),
             RevocationError::FetchedInFuture
         );
+    }
+
+    #[test]
+    fn has_accepted_is_false_until_first_list() {
+        let issuer = SigningKey::generate();
+        let tracker = RevocationTracker::with_in_memory_floors(
+            vec![issuer.public_key()],
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(!tracker.has_accepted());
+        let now = Utc::now();
+        tracker
+            .accept(
+                RevocationUpdate {
+                    srl: srl(&issuer, 1, &[]),
+                    fetched_at: now,
+                },
+                now,
+            )
+            .unwrap();
+        assert!(tracker.has_accepted());
     }
 }

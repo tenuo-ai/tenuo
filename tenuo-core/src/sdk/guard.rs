@@ -106,13 +106,21 @@ pub(crate) fn verified_received_pop<'a>(
     denial: &Denial,
     pop: &'a Signature,
 ) -> Option<&'a Signature> {
+    // PoP is verified only after chain/temporal checks and tool lookup.
+    // Embed it only for denials that run after that point.
     match denial.protocol_code() {
         Some(
-            crate::ErrorCode::PopSignatureInvalid
-            | crate::ErrorCode::PopExpired
-            | crate::ErrorCode::SignatureInvalid,
-        ) => None,
-        _ => Some(pop),
+            crate::ErrorCode::ConstraintViolation
+            | crate::ErrorCode::ApprovalRequired
+            | crate::ErrorCode::InsufficientApprovals
+            | crate::ErrorCode::ApprovalInvalid
+            | crate::ErrorCode::ApproverNotAuthorized
+            | crate::ErrorCode::ApprovalExpired
+            | crate::ErrorCode::UnsupportedApprovalVersion
+            | crate::ErrorCode::ApprovalPayloadInvalid
+            | crate::ErrorCode::ApprovalRequestHashMismatch,
+        ) => Some(pop),
+        _ => None,
     }
 }
 
@@ -468,6 +476,22 @@ impl Guard {
     }
 
     #[cfg(feature = "receipts")]
+    fn recover_receipt_link(&self) -> std::sync::MutexGuard<'_, Option<[u8; 32]>> {
+        self.evidence
+            .last_receipt_hash
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[cfg(feature = "receipts")]
+    fn rollback_receipt_link(&self, digest: [u8; 32], prev: Option<[u8; 32]>) {
+        let mut link = self.recover_receipt_link();
+        if *link == Some(digest) {
+            *link = prev;
+        }
+    }
+
+    #[cfg(feature = "receipts")]
     fn seal_linked_receipt(
         &self,
         mut payload: ReceiptPayload,
@@ -479,49 +503,53 @@ impl Guard {
                 "receipt signer unavailable",
             ));
         };
-        let mut link = self.evidence.last_receipt_hash.lock().map_err(|_| {
-            Denial::sdk(
-                SdkDenialKind::EvidenceUnavailable,
-                Retryability::AfterBackoff,
-                "receipt link lock poisoned",
-            )
-        })?;
-        payload.prev_receipt_hash = *link;
-        let bytes = payload.to_cbor().map_err(|_| {
-            Denial::sdk(
-                SdkDenialKind::EvidenceUnavailable,
-                Retryability::AfterBackoff,
-                "receipt payload encoding failed",
-            )
-        })?;
-        let receipt = sign_payload(&bytes, signer.as_ref()).map_err(|_| {
-            Denial::sdk(
-                SdkDenialKind::EvidenceUnavailable,
-                Retryability::AfterBackoff,
-                "receipt signer unavailable",
-            )
-        })?;
-        if let Some(sink) = &self.evidence.sink {
-            match sink.persist(&receipt) {
-                Ok(_) => {
-                    if let Ok(digest) = receipt.digest() {
-                        *link = Some(digest);
-                    }
-                    Ok(receipt)
+        let (receipt, digest, prev) = {
+            let mut link = self.recover_receipt_link();
+            let prev = *link;
+            payload.prev_receipt_hash = prev;
+            let bytes = payload.to_cbor().map_err(|_| {
+                Denial::sdk(
+                    SdkDenialKind::EvidenceUnavailable,
+                    Retryability::AfterBackoff,
+                    "receipt payload encoding failed",
+                )
+            })?;
+            let receipt = sign_payload(&bytes, signer.as_ref()).map_err(|_| {
+                Denial::sdk(
+                    SdkDenialKind::EvidenceUnavailable,
+                    Retryability::AfterBackoff,
+                    "receipt signer unavailable",
+                )
+            })?;
+            let digest = receipt.digest().ok();
+            if let Some(digest) = digest {
+                *link = Some(digest);
+            }
+            (receipt, digest, prev)
+        };
+        let Some(sink) = &self.evidence.sink else {
+            return Ok(receipt);
+        };
+        match sink.persist(&receipt) {
+            Ok(_) => Ok(receipt),
+            Err(ReceiptSinkError::Unavailable)
+                if self.evidence.policy == EvidencePolicy::BestEffort =>
+            {
+                if let Some(digest) = digest {
+                    self.rollback_receipt_link(digest, prev);
                 }
-                Err(ReceiptSinkError::Unavailable)
-                    if self.evidence.policy == EvidencePolicy::BestEffort =>
-                {
-                    Ok(receipt)
+                Ok(receipt)
+            }
+            Err(_) => {
+                if let Some(digest) = digest {
+                    self.rollback_receipt_link(digest, prev);
                 }
-                Err(_) => Err(Denial::sdk(
+                Err(Denial::sdk(
                     SdkDenialKind::EvidenceUnavailable,
                     Retryability::AfterBackoff,
                     "receipt persistence failed",
-                )),
+                ))
             }
-        } else {
-            Ok(receipt)
         }
     }
 
@@ -582,24 +610,29 @@ impl Guard {
             )
         };
         self.commit_receipt_links(&mut payload);
-        let Ok(mut link) = self.evidence.last_receipt_hash.lock() else {
-            return;
-        };
-        payload.prev_receipt_hash = *link;
-        let Ok(bytes) = payload.to_cbor() else {
-            return;
-        };
-        let Ok(receipt) = sign_payload(&bytes, signer.as_ref()) else {
-            return;
-        };
-        if self
-            .evidence
-            .sink
-            .as_ref()
-            .is_some_and(|sink| sink.persist(&receipt).is_ok())
-        {
-            if let Ok(digest) = receipt.digest() {
+        let (receipt, digest, prev) = {
+            let mut link = self.recover_receipt_link();
+            let prev = *link;
+            payload.prev_receipt_hash = prev;
+            let Ok(bytes) = payload.to_cbor() else {
+                return;
+            };
+            let Ok(receipt) = sign_payload(&bytes, signer.as_ref()) else {
+                return;
+            };
+            let digest = receipt.digest().ok();
+            if let Some(digest) = digest {
                 *link = Some(digest);
+            }
+            (receipt, digest, prev)
+        };
+        match self.evidence.sink.as_ref() {
+            None => {}
+            Some(sink) if sink.persist(&receipt).is_ok() => {}
+            Some(_) => {
+                if let Some(digest) = digest {
+                    self.rollback_receipt_link(digest, prev);
+                }
             }
         }
     }
@@ -1911,5 +1944,115 @@ mod tests {
         let payload = stored[0].verify_signature().unwrap();
         assert!(payload.pop_signature.is_none());
         assert!(payload.request_hash.is_none());
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn received_untrusted_root_deny_receipt_omits_pop() {
+        use super::super::evidence::{EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink};
+
+        let issuer = SigningKey::generate();
+        let other_root = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let presented = authority(vec![warrant], holder.clone());
+        let client = guard_for(&issuer);
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        client.check(&presented, &call).expect("holder allow");
+        let junk = holder.sign_raw(b"unverified-wire-pop");
+        let received = ReceivedAuthorization::new(presented.chain(), &junk, &[]).unwrap();
+        let projection = VerifiedProjection::identical(HashMap::new());
+        let inbound = Call::from_transport("read", &projection);
+        let sink = Arc::new(MemoryReceiptSink::new());
+        let mut stranger = Authorizer::new();
+        stranger.add_trusted_root(other_root.public_key());
+        let server = Guard::builder()
+            .authorizer(stranger)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_signer(Arc::new(LocalReceiptSigner::for_development()))
+            .receipt_sink(sink.clone())
+            .build()
+            .unwrap();
+        let denial = server.check_received(&received, &inbound).err().unwrap();
+        assert!(matches!(
+            denial.protocol_code(),
+            Some(ErrorCode::UntrustedRoot | ErrorCode::SignatureInvalid)
+        ));
+        let stored = sink.stored();
+        assert_eq!(stored.len(), 1);
+        let payload = stored[0].verify_signature().unwrap();
+        assert!(payload.pop_signature.is_none());
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn signer_without_sink_advances_receipt_chain() {
+        use super::super::evidence::{EvidencePolicy, LocalReceiptSigner};
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let presented = authority(vec![warrant], holder);
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_signer(Arc::new(LocalReceiptSigner::for_development()))
+            .build()
+            .unwrap();
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        let first = guard.check(&presented, &call).unwrap();
+        let a = first.receipt.expect("first receipt");
+        let second = guard.check(&presented, &call).unwrap();
+        let b = second.receipt.expect("second receipt");
+        assert_eq!(
+            b.verify_signature().unwrap().prev_receipt_hash,
+            Some(a.digest().unwrap())
+        );
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn poisoned_receipt_link_recovers_under_best_effort() {
+        use super::super::evidence::{EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink};
+        use std::sync::Mutex;
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let presented = authority(vec![warrant], holder);
+        let link = Arc::new(Mutex::new(None));
+        let poison = link.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poison.lock().unwrap();
+            panic!("poison receipt link");
+        })
+        .join();
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_signer(Arc::new(LocalReceiptSigner::for_development()))
+            .receipt_sink(Arc::new(MemoryReceiptSink::new()))
+            .receipt_link(link)
+            .build()
+            .unwrap();
+        let args = HashMap::new();
+        assert!(guard
+            .check(&presented, &Call::borrowed("read", &args))
+            .is_ok());
     }
 }

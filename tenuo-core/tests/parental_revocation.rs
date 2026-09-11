@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::time::Duration;
 use tenuo::constraints::ConstraintSet;
 use tenuo::crypto::SigningKey;

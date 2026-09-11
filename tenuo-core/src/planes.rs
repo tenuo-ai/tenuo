@@ -28,6 +28,7 @@
 //! 3. Child.expires_at <= Parent.expires_at
 //! 4. Child.constraints ⊆ Parent.constraints
 //! 5. Signature is valid
+#![allow(deprecated)]
 
 use crate::approval::{AuditEvent, AuditEventType, WarrantTracker};
 use crate::audit::log_event;

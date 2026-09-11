@@ -133,9 +133,8 @@ assert!(session
 ```
 
 Receipt collection needs the `receipts` feature: set
-`evidence_policy(EvidencePolicy::BestEffort)`, then `peek_receipts` /
-`drain_receipts` (same snapshot) and `acknowledge_receipts` to drop uploaded
-items.
+`evidence_policy(EvidencePolicy::BestEffort)`, then `peek_receipts`
+and `acknowledge_receipts` to drop uploaded items.
 
 Callers that obtain warrants and SRLs over the network should not assemble `Authorizer`, `PresentedAuthority`, `LocalReceiptSigner`, or `MemoryReceiptSink`.
 

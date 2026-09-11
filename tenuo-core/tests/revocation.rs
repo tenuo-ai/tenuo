@@ -4,6 +4,7 @@
 //! - Single warrant revocation
 //! - Chain/cascading revocation
 //! - RevocationRequest and RevocationManager flow
+#![allow(deprecated)]
 
 use chrono::Utc;
 use std::time::Duration;

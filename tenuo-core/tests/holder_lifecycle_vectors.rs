@@ -111,10 +111,10 @@ fn receipt_contract() {
     let call = Call::borrowed("read", &args);
     assert!(session.check(&call).is_ok());
     assert!(session.check(&call).is_ok());
-    let first = session.drain_receipts();
+    let first = session.peek_receipts();
     assert_eq!(first.len(), 1);
-    assert_eq!(session.drain_receipts().len(), 1);
+    assert_eq!(session.peek_receipts().len(), 1);
     assert_eq!(session.receipt_overflows(), 1);
     assert_eq!(session.acknowledge_receipts(1), 1);
-    assert!(session.drain_receipts().is_empty());
+    assert!(session.peek_receipts().is_empty());
 }

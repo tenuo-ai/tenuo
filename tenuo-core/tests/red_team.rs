@@ -17,6 +17,7 @@
 //! 10. **ReDoS** - Regex denial of service attempts
 //!
 //! Run: cargo test --test red_team -- --nocapture
+#![allow(deprecated)]
 
 use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::{BTreeMap, HashMap};

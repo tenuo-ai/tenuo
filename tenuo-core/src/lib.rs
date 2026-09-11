@@ -149,8 +149,10 @@ pub use constraints::{
 pub use crypto::{PublicKey, Signature, SigningKey};
 pub use error::{Error, ErrorCode, Result};
 
+#[allow(deprecated)]
+pub use planes::DataPlane;
 pub use planes::{
-    Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
+    Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane,
     VerifiedApproval, DEFAULT_CLOCK_TOLERANCE_SECS,
 };
 pub use receipt::{

@@ -126,7 +126,12 @@ struct Cli {
     authorizer_type: String,
 
     /// Heartbeat interval in seconds
-    #[arg(long, env = "TENUO_HEARTBEAT_INTERVAL", default_value = "30")]
+    #[arg(
+        long,
+        env = "TENUO_HEARTBEAT_INTERVAL",
+        default_value = "30",
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
     heartbeat_interval: u64,
 
     /// Audit event batch size (flush when buffer reaches this size)
@@ -499,6 +504,11 @@ use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tracing::{debug, error, info, warn};
 
+/// Fixed warm-up: allow only when the tracker has never accepted a list.
+const SRL_WARMUP: Duration = Duration::from_secs(60);
+const DEFAULT_SRL_MAX_AGE_SECS: u64 = 300;
+const SRL_FRESHNESS_SLACK_SECS: u64 = 60;
+
 /// Shared state for the HTTP server
 struct AppState {
     authorizer: Arc<tokio::sync::RwLock<Authorizer>>,
@@ -514,7 +524,7 @@ struct AppState {
     started_at: std::time::Instant,
     /// Decision-time SRL freshness. `None` when no tracker was requested.
     revocation_tracker: Option<Arc<tenuo::revocation_tracker::RevocationTracker>>,
-    /// Skip the tracker gate until the first list is accepted or this elapses.
+    /// Allow requests only while no list has ever been accepted, up to this bound.
     srl_warmup: Duration,
 }
 
@@ -780,7 +790,7 @@ async fn prepare_serve(
                     })?;
                 let tracker = tenuo::revocation_tracker::RevocationTracker::new(
                     vec![root.clone()],
-                    Duration::from_secs(300),
+                    srl_max_age(cli.heartbeat_interval),
                     Duration::from_secs(30),
                     Arc::new(store),
                 )
@@ -861,7 +871,7 @@ async fn prepare_serve(
         metrics,
         started_at: std::time::Instant::now(),
         revocation_tracker,
-        srl_warmup: Duration::from_secs(cli.heartbeat_interval.saturating_mul(2).max(60)),
+        srl_warmup: SRL_WARMUP,
     });
 
     Ok(ServeReady {
@@ -882,6 +892,30 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/status", axum::routing::get(status_handler))
         .fallback(handle_request)
         .with_state(state)
+}
+
+/// Tracker freshness must outlast one heartbeat plus slack so a long
+/// interval cannot flap the per-request gate.
+fn srl_max_age(heartbeat_interval_secs: u64) -> Duration {
+    Duration::from_secs(
+        DEFAULT_SRL_MAX_AGE_SECS
+            .max(heartbeat_interval_secs.saturating_add(SRL_FRESHNESS_SLACK_SECS)),
+    )
+}
+
+/// Fail closed unless a fresh list is present. Warm-up covers only
+/// "never fetched yet" — a stale or failed tracker still denies.
+fn srl_freshness_allows(
+    tracker: &tenuo::revocation_tracker::RevocationTracker,
+    warmup_active: bool,
+) -> Result<(), tenuo::revocation_tracker::RevocationError> {
+    if tracker.has_accepted() {
+        tracker.latest(chrono::Utc::now()).map(|_| ())
+    } else if warmup_active {
+        Ok(())
+    } else {
+        Err(tenuo::revocation_tracker::RevocationError::Unavailable)
+    }
 }
 
 /// Print the shared portion of the startup banner.
@@ -1574,31 +1608,24 @@ async fn handle_request(
     let total_start = std::time::Instant::now();
 
     if let Some(tracker) = &state.revocation_tracker {
-        if let Err(e) = tracker.latest(chrono::Utc::now()) {
-            if state.started_at.elapsed() < state.srl_warmup {
-                warn!(
-                    request_id = %request_id,
-                    error = %e,
-                    "SRL tracker not ready; allowing during warm-up"
-                );
-            } else {
-                warn!(
-                    request_id = %request_id,
-                    event = "authorization_denied",
-                    reason = "revocation_stale",
-                    error = %e,
-                    "Signed revocation list is missing or stale"
-                );
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(json!({
-                        "error": "revocation_unavailable",
-                        "message": "signed revocation list is missing or stale",
-                        "request_id": request_id
-                    })),
-                )
-                    .into_response();
-            }
+        if let Err(e) = srl_freshness_allows(tracker, state.started_at.elapsed() < state.srl_warmup)
+        {
+            warn!(
+                request_id = %request_id,
+                event = "authorization_denied",
+                reason = "revocation_stale",
+                error = %e,
+                "Signed revocation list is missing or stale"
+            );
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "revocation_unavailable",
+                    "message": "signed revocation list is missing or stale",
+                    "request_id": request_id
+                })),
+            )
+                .into_response();
         }
     }
 
@@ -2584,6 +2611,138 @@ routes:
 
         let body = parse_body(resp).await;
         assert_eq!(body["authorized"], true);
+    }
+
+    fn empty_tracker(
+        root: &tenuo::crypto::PublicKey,
+    ) -> Arc<tenuo::revocation_tracker::RevocationTracker> {
+        Arc::new(
+            tenuo::revocation_tracker::RevocationTracker::with_in_memory_floors(
+                vec![root.clone()],
+                Duration::from_secs(60),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn build_test_app_tracked(
+        authorizer: Authorizer,
+        tracker: Arc<tenuo::revocation_tracker::RevocationTracker>,
+        started_at: std::time::Instant,
+        warmup: Duration,
+    ) -> Router {
+        let config = GatewayConfig::from_yaml(GATEWAY_YAML).unwrap();
+        let compiled = CompiledGatewayConfig::compile(config).unwrap();
+        let state = Arc::new(AppState {
+            authorizer: Arc::new(tokio::sync::RwLock::new(authorizer)),
+            config: compiled,
+            debug_mode: true,
+            audit_tx: None,
+            authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
+            metrics: None,
+            started_at,
+            revocation_tracker: Some(tracker),
+            srl_warmup: warmup,
+        });
+        Router::new()
+            .route("/health", axum::routing::get(health_check))
+            .fallback(handle_request)
+            .with_state(state)
+    }
+
+    async fn deploy_request(root_key: &SigningKey, app: Router) -> (StatusCode, Value) {
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .build(root_key)
+            .unwrap();
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(root_key, "deploy", &args).unwrap();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let status = resp.status();
+        (status, parse_body(resp).await)
+    }
+
+    #[test]
+    fn srl_max_age_outlasts_long_heartbeat() {
+        assert_eq!(srl_max_age(30), Duration::from_secs(300));
+        assert_eq!(srl_max_age(300), Duration::from_secs(360));
+        assert_eq!(srl_max_age(310), Duration::from_secs(370));
+    }
+
+    #[test]
+    fn warmup_allows_only_when_never_fetched() {
+        let issuer = SigningKey::generate();
+        let tracker = tenuo::revocation_tracker::RevocationTracker::with_in_memory_floors(
+            vec![issuer.public_key()],
+            Duration::from_secs(1),
+            Duration::from_secs(0),
+        )
+        .unwrap();
+        assert!(srl_freshness_allows(&tracker, true).is_ok());
+        assert!(srl_freshness_allows(&tracker, false).is_err());
+
+        let now = chrono::Utc::now();
+        tracker
+            .accept(
+                tenuo::revocation_tracker::RevocationUpdate {
+                    srl: tenuo::revocation::SignedRevocationList::builder()
+                        .version(1)
+                        .build(&issuer)
+                        .unwrap(),
+                    fetched_at: now - chrono::Duration::seconds(5),
+                },
+                now - chrono::Duration::seconds(5),
+            )
+            .unwrap();
+        assert!(tracker.has_accepted());
+        assert!(
+            srl_freshness_allows(&tracker, true).is_err(),
+            "stale list must deny even during warm-up"
+        );
+    }
+
+    #[tokio::test]
+    async fn warmup_never_fetched_allows_request() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let tracker = empty_tracker(&root_key.public_key());
+        let app = build_test_app_tracked(
+            authorizer,
+            tracker,
+            std::time::Instant::now(),
+            Duration::from_secs(60),
+        );
+        let (status, body) = deploy_request(&root_key, app).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["error"], "revocation_unavailable");
+    }
+
+    #[tokio::test]
+    async fn warmup_expired_without_list_denies() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let tracker = empty_tracker(&root_key.public_key());
+        let started = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(120))
+            .unwrap();
+        let app = build_test_app_tracked(authorizer, tracker, started, Duration::from_secs(60));
+        let (status, body) = deploy_request(&root_key, app).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "revocation_unavailable");
     }
 }
 

@@ -4,6 +4,7 @@
 //! the test vectors in docs/spec/test-vectors.md
 //!
 //! These tests ensure the specification and implementation stay in sync.
+#![allow(deprecated)]
 
 use std::collections::BTreeMap;
 use tenuo::*;

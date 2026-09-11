@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate. TypeScript also exports `evaluateApprovalGates`.
 - **Holder `Runtime` and `Session` (`sdk`).** Persist an Ed25519 identity,
   configure trust / TTL fallback / receipt policy once, and bind each
-  warrant into a session. `drain_receipts` / `peek_receipts` are the same
-  snapshot; only `acknowledge_receipts` removes items. Sessions created
+  warrant into a session. `peek_receipts` is the snapshot;
+  `acknowledge_receipts` removes items. `drain_receipts` is deprecated. Sessions created
   before the first SRL keep the TTL fallback until a list is applied, then
   enforce that list on the next check. `SignedRevocationList::{from_base64,
   to_base64}` is the decode API. `ConnectToken::resolve_endpoint` accepts a
@@ -36,8 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python holder Runtime.** `HolderIdentity`, `ConnectToken.parse`, and
   `Runtime` own identity, trusted roots, the current signed revocation list,
   `session_from_wire` / `session_scope`, and an aggregate receipt outbox
-  (`peek_receipts` / `drain_receipts` / `acknowledge_receipts`). Receipts
-  are removed only after acknowledgement. `Runtime.install()` is the
+  (`peek_receipts` / `acknowledge_receipts`). `drain_receipts` is a
+  deprecated alias of `peek_receipts`. Receipts are removed only after
+  acknowledgement. `Runtime.install()` is the
   process default when no session is in scope. MCP, FastAPI, A2A, and
   Temporal accept `runtime=` and authorize inbound calls through
   `verify_inbound_call`.
@@ -131,19 +132,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads the payload once; counters update on push and drop.
   `overflowed()` is the combined drop count. An undecodable payload is
   rejected without consuming a budget. Required-evidence callers must
-  `acknowledge_receipts` / drain or they are denied after the allow cap.
+  `acknowledge_receipts` or they are denied after the allow cap.
 - **Sidecar shutdown flush.** After HTTP drains, the audit sender is dropped
   and the flush loop is joined so queued events are delivered. A 429
-  records a not-before time and skips flushes until then; shutdown still
-  attempts one immediate flush.
-- **Receipt chain under concurrency.** Previous-hash, sign, and persist
-  share one lock. The link advances only after a successful persist, so a
-  verifier walking the outbox does not see a predecessor that was never
-  stored.
-- **Received-path deny receipts omit an unverified PoP.** A
-  signature-invalid denial no longer embeds the wire signature in the
-  shape reserved for a valid holder proof. Async holder denials now carry
-  the PoP after it is signed. Preflight cancellation and deadline denials
+  records a not-before time and skips flushes until then. The audit
+  buffer is capped on every enqueue, including during backoff. A failed
+  final drain logs the events actually dropped and does not say it will
+  retry.
+- **Receipt chain under concurrency.** Previous-hash and sign run under
+  the link lock; persist runs outside it. A sink panic does not poison
+  later checks. The lock recovers from poison. A signer without a sink
+  still advances the chain. Persist failure rolls the reserved link
+  back when this receipt is still the tip.
+- **Received-path deny receipts omit an unverified PoP.** The wire
+  signature is embedded only for denials that run after PoP verification
+  (constraint and approval). Chain, expiry, untrusted-root, and invalid
+  PoP denials use the before-PoP shape. Async holder denials carry the
+  PoP after it is signed. Preflight cancellation and deadline denials
   emit a deny receipt.
 - **TypeScript: published source maps are usable.** `@tenuo/core` and
   `@tenuo/mcp` JavaScript maps embed the original TypeScript
@@ -182,8 +187,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the audit flush. SRL fetch goes through `RevocationTracker` with a file
   floor; a file-loaded list is accepted into the tracker. The sidecar
   re-fetches on every heartbeat so an unchanged version does not go stale.
-  Request checks consult `latest()` after a warm-up window and deny when
-  the list is still missing or stale.
+  Request checks consult `latest()`. A fixed 60-second warm-up allows
+  only when the tracker has never accepted a list; a stale or failed
+  tracker still denies. Tracker max-age is `max(300s, heartbeat + 60s)`
+  so an interval at or above 300 seconds cannot flap the gate.
 
 ## [0.2.5] - 2026-09-06
 

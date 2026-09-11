@@ -238,11 +238,12 @@ impl Session {
     /// Snapshot of pending receipts. They are removed only by
     /// [`acknowledge_receipts`].
     #[cfg(feature = "receipts")]
+    #[deprecated(since = "0.2.6", note = "use `peek_receipts`")]
     pub fn drain_receipts(&self) -> Vec<Receipt> {
         self.peek_receipts()
     }
 
-    /// Snapshot of pending receipts. Same as [`drain_receipts`].
+    /// Snapshot of pending receipts. Removed only by [`acknowledge_receipts`].
     #[cfg(feature = "receipts")]
     pub fn peek_receipts(&self) -> Vec<Receipt> {
         let Some(sink) = self.receipts.as_ref() else {
@@ -740,15 +741,15 @@ mod tests {
         let call = Call::borrowed("read", &args);
         session.check(&call).unwrap();
         session.check(&call).unwrap();
-        let first = session.drain_receipts();
+        let first = session.peek_receipts();
         assert_eq!(first.len(), 2);
-        assert_eq!(session.drain_receipts().len(), 2);
+        assert_eq!(session.peek_receipts().len(), 2);
         assert_eq!(session.acknowledge_receipts(2), 2);
-        assert!(session.drain_receipts().is_empty());
+        assert!(session.peek_receipts().is_empty());
         session.check(&call).unwrap();
-        assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.peek_receipts().len(), 1);
         assert_eq!(session.acknowledge_receipts(1), 1);
-        assert!(session.drain_receipts().is_empty());
+        assert!(session.peek_receipts().is_empty());
     }
 
     #[cfg(feature = "receipts")]
@@ -768,7 +769,7 @@ mod tests {
         let call = Call::borrowed("read", &args);
         assert!(session.check(&call).is_ok());
         assert!(session.check(&call).is_ok());
-        assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.peek_receipts().len(), 1);
         assert_eq!(session.receipt_overflows(), 1);
     }
 
@@ -789,7 +790,7 @@ mod tests {
         let call = Call::borrowed("read", &args);
         assert!(session.check(&call).is_ok());
         assert!(session.check(&call).is_err());
-        assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.peek_receipts().len(), 1);
         assert_eq!(session.receipt_overflows(), 1);
     }
 
