@@ -161,7 +161,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 # CLI dependencies
 clap = { version = "4.6", features = ["derive", "env"] }
 hex = "0.4"
-pem = "3.0"
+pem = "4.0"
 pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
 spki = { version = "0.7", features = ["alloc", "pem"] }
 der = { version = "0.7", features = ["pem"] }
