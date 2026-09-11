@@ -28,7 +28,13 @@ import {
   under,
   urlPattern,
 } from "../src/index.ts";
-import type { ExecuteOptions, ProtectedTool, ToolLike } from "../src/index.ts";
+import type {
+  AllowPolicy,
+  ExecuteOptions,
+  ProtectedTool,
+  ToolLike,
+  ToolPolicy,
+} from "../src/index.ts";
 import {
   devContext,
   exportSession,
@@ -53,6 +59,157 @@ describe("ProtectedTool types", () => {
     expectTypeOf<Ctx>().toHaveProperty("session");
     expectTypeOf<Ctx>().toHaveProperty("abortSignal");
     expectTypeOf<ReturnType<Wrapped["execute"]>>().toEqualTypeOf<Promise<string>>();
+  });
+});
+
+describe("ToolPolicy types", () => {
+  it("binds allow fields to tool argument keys", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const wrapped = tenuo.tool(
+      {
+        execute: async (
+          { path }: { path: string; encoding?: string },
+          _options?: { abortSignal?: AbortSignal },
+        ) => path,
+      },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+
+    tenuo.tool(
+      { execute: async ({ encoding }: { path: string; encoding?: string }) => encoding },
+      { capability: "read_optional", allow: { encoding: exact("utf8") } },
+    );
+    tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_unrestricted", allow: {} },
+    );
+
+    type Ctx = NonNullable<Parameters<typeof wrapped.execute>[1]>;
+    expectTypeOf<Ctx>().toMatchTypeOf<ExecuteOptions & { abortSignal?: AbortSignal }>();
+    expectTypeOf<ReturnType<typeof wrapped.execute>>().toEqualTypeOf<Promise<string>>();
+  });
+
+  it("rejects unknown literal policy fields", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      {
+        capability: "read_file",
+        allow: {
+          // @ts-expect-error -- tool policies reject unknown literal fields
+          paht: under("/data"),
+        },
+      },
+    );
+  });
+
+  it("keeps bare and no-argument policies open without admitting undefined", () => {
+    const policy: ToolPolicy = { allow: { path: under("/data") } };
+    expectTypeOf(policy.allow).toEqualTypeOf<AllowPolicy>();
+
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async () => "ok" },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+
+    const invalid: ToolPolicy = {
+      allow: {
+        // @ts-expect-error -- bare policies reject undefined constraints
+        path: undefined,
+      },
+    };
+    expectTypeOf(invalid).toEqualTypeOf<ToolPolicy>();
+  });
+
+  it("rejects unknown fields when the whole argument is optional", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async (args?: { path: string }) => args?.path },
+      {
+        capability: "read_file",
+        allow: {
+          // @ts-expect-error -- optional tool arguments still restrict policy fields
+          paht: under("/data"),
+        },
+      },
+    );
+  });
+
+  it("keeps broad argument policies constraint-typed", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async (args: unknown) => args },
+      {
+        capability: "unknown_args",
+        allow: {
+          // @ts-expect-error -- broad arguments still require constraint expressions
+          bad: 1,
+        },
+      },
+    );
+    tenuo.tool(
+      { execute: async (args: {}) => args },
+      {
+        capability: "empty_args",
+        allow: {
+          // @ts-expect-error -- empty-key arguments fall back to AllowPolicy
+          bad: 1,
+        },
+      },
+    );
+    tenuo.tool(
+      { execute: async (args: Record<string, never>) => args },
+      {
+        capability: "indexed_args",
+        allow: {
+          // @ts-expect-error -- indexed arguments reject undefined constraints
+          bad: undefined,
+        },
+      },
+    );
+    tenuo.tool(
+      { execute: async (args: Record<number, never>) => args },
+      {
+        capability: "numeric_args",
+        allow: {
+          // @ts-expect-error -- numeric index arguments reject undefined constraints
+          0: undefined,
+        },
+      },
+    );
+  });
+
+  it("uses all keys from union argument types", () => {
+    type ReadArgs =
+      | { kind: "file"; path: string }
+      | { kind: "url"; url: string };
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async (args: ReadArgs) => args.kind },
+      {
+        capability: "read",
+        allow: { path: under("/data"), url: exact("https://example.com") },
+      },
+    );
+    tenuo.tool(
+      { execute: async (args: ReadArgs) => args.kind },
+      {
+        capability: "read",
+        allow: {
+          // @ts-expect-error -- union policies reject fields absent from every member
+          paht: under("/data"),
+        },
+      },
+    );
+  });
+
+  it("does not infer constraint compatibility from field value types", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async ({ count }: { count: number }) => count },
+      { capability: "count", allow: { count: under("/data") } },
+    );
   });
 });
 

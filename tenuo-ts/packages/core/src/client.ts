@@ -291,7 +291,7 @@ function hasTrustAnchor(options: CreateTenuoOptions): boolean {
   return (options.trustedRoots?.length ?? 0) > 0;
 }
 
-function capabilityName(inner: object, policy: ToolPolicy): string {
+function capabilityName(inner: object, policy: Pick<ToolPolicy, "capability">): string {
   if (policy.capability !== undefined && policy.capability.length > 0) {
     return policy.capability;
   }
@@ -371,7 +371,7 @@ class TenuoClient implements Tenuo {
 
   tool<T extends { execute: (args: never) => unknown }>(
     inner: T,
-    policy: ToolPolicy,
+    policy: ToolPolicy<Parameters<T["execute"]>[0]>,
   ): ProtectedTool<T> {
     if (toolPolicies.has(inner) || wrappedInners.has(inner)) {
       throw new TenuoConfigurationError("tenuo.tool() already wrapped this tool");
@@ -404,7 +404,7 @@ class TenuoClient implements Tenuo {
       execute,
     }) as ProtectedTool<T>;
     wrappedInners.add(inner);
-    toolPolicies.set(wrapped, { capability, allow: { ...policy.allow } });
+    toolPolicies.set(wrapped, { capability, allow: { ...policy.allow } as AllowPolicy });
     return wrapped;
   }
 
