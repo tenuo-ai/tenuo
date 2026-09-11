@@ -321,6 +321,7 @@ class DeferredEmitter:
         self._worker: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._shed_count = 0
+        self._retry_drops = 0
 
     # Called by ControlPlaneClient: the emitter signs with the client's own
     # key so both postures share one identity and one chain.
@@ -352,6 +353,11 @@ class DeferredEmitter:
         """Decisions dropped because the queue was full."""
         return self._shed_count
 
+    @property
+    def retry_drops(self) -> int:
+        """Signed receipts dropped after sink retries were exhausted."""
+        return self._retry_drops
+
     def qsize(self) -> int:
         return self._q.qsize()
 
@@ -381,15 +387,19 @@ class DeferredEmitter:
                     delay = 0.05
                     delivered = False
                     for _attempt in range(5):
-                        time.sleep(delay)
+                        if self._stop.wait(delay):
+                            break
                         if deliver(self._sink, wire, self._on_error):
                             delivered = True
                             break
                         delay = min(delay * 2, 1.0)
                     if not delivered:
+                        self._retry_drops += 1
                         logger.warning(
                             "deferred receipt sink failed after retries; "
-                            "this signed receipt was dropped (not re-queued)"
+                            "this signed receipt was dropped (not re-queued, "
+                            "retry_drops=%s)",
+                            self._retry_drops,
                         )
             except Exception as exc:  # noqa: BLE001 — one bad item must not kill the worker
                 logger.warning("deferred receipt emission failed", exc_info=exc)
@@ -416,13 +426,13 @@ class DeferredEmitter:
     def close(self, timeout: float = 10.0) -> None:
         if self._worker is None:
             return
+        self._stop.set()
         if not self.flush(timeout):
             logger.warning(
                 "deferred receipt emitter close abandoned queued or "
                 "in-flight receipts after %.1fs",
                 timeout,
             )
-        self._stop.set()
         # put() without a timeout hangs forever when the queue is full and
         # the worker is blocked in the sink — shutdown must not.
         try:

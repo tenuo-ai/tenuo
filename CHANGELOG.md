@@ -68,8 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DeferredEmitter` delivery contract.** A full queue no longer blocks
   the request thread. The newest decision is shed and counted on
   `shed_count`. Failed sink delivery is retried in place with backoff
-  (five attempts) and then dropped. It is not re-queued and not retried
-  in a tight loop.
+  (five attempts, interruptible by `close`) and then dropped and counted
+  on `retry_drops`. It is not re-queued and not retried in a tight loop.
 - **Python Runtime multi-hop sessions.** `session_scope` and `Session`
   install the decoded parent chain on `chain_scope`, so a root →
   intermediate → holder stack authorizes instead of failing as

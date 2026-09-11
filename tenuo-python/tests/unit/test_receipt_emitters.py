@@ -256,11 +256,6 @@ def test_deferred_sheds_newest_and_counts(decision):
     client = _client(receipt_emitter=emitter)
     client.bind_authorizer(authorizer)
     blocker = threading.Event()
-
-    class BlockingSink:
-        def persist(self, _wire):
-            blocker.wait(1.0)
-
     started = threading.Event()
 
     class BlockingSink:

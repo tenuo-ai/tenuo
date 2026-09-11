@@ -129,17 +129,13 @@ def test_shared_enforcement_raises_resolved_message():
     )
     bound = BoundWarrant(w, holder)
 
-    result = enforce_tool_call(
-        "email.delete",
-        {"id": "42"},
-        bound,
-        trusted_roots=[issuer.public_key],
-    )
-    assert not result.allowed
-    assert result.error_type == "approval_required"
-    assert result.denial_reason == CUSTOM
-    with pytest.raises(ApprovalGateTriggered) as exc_info:
-        result.raise_if_denied()
+    with pytest.raises(ApprovalRequired) as exc_info:
+        enforce_tool_call(
+            "email.delete",
+            {"id": "42"},
+            bound,
+            trusted_roots=[issuer.public_key],
+        )
     assert CUSTOM in str(exc_info.value)
 
 
