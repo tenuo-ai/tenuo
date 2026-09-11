@@ -128,7 +128,10 @@ export function createRuntime(
     tenuoOptions.revocationList = options.revocationList;
   }
   const tenuo = createTenuo(tenuoOptions);
-  if (options.receiptMax === 0) {
+  if (
+    options.receiptMax !== undefined &&
+    (!Number.isInteger(options.receiptMax) || options.receiptMax <= 0)
+  ) {
     throw new TenuoConfigurationError("createTenuo.runtime() receiptMax must be a positive integer.");
   }
   return new Runtime(

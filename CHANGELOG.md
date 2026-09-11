@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Runtime `acknowledgeReceipts` follows emission order.** Session and
-  host receipts share one outbox. Acking `n` removes the oldest emitted
-  wires by identity, not "host buffer then sessions." `receiptMax: 0`
-  is rejected.
+- **Runtime `acknowledgeReceipts` follows emission order.** Session
+  receipts always land on the runtime outbox, including when the tool was
+  built on another `createTenuo` instance. Acking `n` removes the oldest
+  emitted wires by identity. `receiptMax` must be a positive integer.
+  `Session` now requires `peekReceipts` / `drainReceipts` /
+  `acknowledgeReceipts` (empty snapshots are fine for non-runtime
+  implementers).
 
 ### Added
 

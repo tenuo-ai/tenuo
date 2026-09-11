@@ -126,7 +126,14 @@ export function collectReceipt(
     return;
   }
   sessionCollector(session)?.push(receipt);
-  hostCollector(host)?.push(receipt);
+  const linked = linkedHostCollector(session);
+  const hosted = hostCollector(host);
+  if (linked !== undefined) {
+    linked.push(receipt);
+  }
+  if (hosted !== undefined && hosted !== linked) {
+    hosted.push(receipt);
+  }
 }
 
 export function emitIsolatedReceipt(

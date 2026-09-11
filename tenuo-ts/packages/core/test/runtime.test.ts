@@ -276,6 +276,19 @@ describe("Runtime", () => {
     expect(runtime.drainReceipts()).toHaveLength(1);
   });
 
+  it("collects on the runtime outbox when the tool was built on another createTenuo", async () => {
+    const { issuer, runtime, session } = issuedRuntime();
+    const other = createTenuo({ trustedRoots: [issuer.issuerPublicKey()] });
+    const readFile = other.tool(
+      { execute: async ({ path }: { path: string }) => `ok:${path}` },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    await readFile.execute({ path: "/data/q3.pdf" }, { session });
+    expect(session.peekReceipts()).toHaveLength(1);
+    expect(runtime.peekReceipts()).toHaveLength(1);
+    expect(runtime.peekReceipts()[0]).toBe(session.peekReceipts()[0]);
+  });
+
   it("keeps explicit onReceipt compatible and still collects", async () => {
     const { session, readFile } = issuedRuntime();
     const hooked: string[] = [];
