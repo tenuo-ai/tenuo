@@ -80,7 +80,9 @@ pub struct Guard {
 
 #[derive(Clone)]
 enum ResolvedRevocation {
-    TtlOnly { max_lifetime: Duration },
+    TtlOnly {
+        max_lifetime: Duration,
+    },
     Snapshot(Arc<RevocationSnapshot>),
     Tracker(std::sync::Arc<RevocationTracker>),
     /// TTL until the shared tracker accepts its first SRL, then signed-SRL.
@@ -968,9 +970,7 @@ impl GuardBuilder {
         max_lifetime: Duration,
         tracker: std::sync::Arc<RevocationTracker>,
     ) -> Self {
-        self.revocation = Some(RevocationMode::TtlOnly {
-            max_lifetime,
-        });
+        self.revocation = Some(RevocationMode::TtlOnly { max_lifetime });
         self.ttl_until_srl = Some(max_lifetime);
         self.tracker = Some(tracker);
         self

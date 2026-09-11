@@ -149,7 +149,7 @@ export function parseConnectToken(rawToken: string): ConnectToken {
 
   const version = readVersion(payload.v);
   const endpointRaw = readRequiredString(payload.e, "endpoint");
-  const apiKey = readRequiredString(payload.k, "apiKey");
+  const apiKey = readRequiredString(payload.k, "api_key");
   const agentId = readOptionalString(payload.a);
   const registrationAliases = [payload.t, payload.r, payload.registration_token].filter(
     (value) => typeof value === "string" && value.length > 0,

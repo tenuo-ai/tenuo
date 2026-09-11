@@ -45,6 +45,8 @@ pub struct Runtime {
     denial_reporting: DenialReporting,
     #[cfg(feature = "receipts")]
     evidence: EvidencePolicy,
+    #[cfg(feature = "receipts")]
+    receipt_capacity: usize,
 }
 
 /// One warrant bound to this runtime's holder key.
@@ -66,6 +68,8 @@ pub struct RuntimeBuilder {
     denial_reporting: DenialReporting,
     #[cfg(feature = "receipts")]
     evidence: EvidencePolicy,
+    #[cfg(feature = "receipts")]
+    receipt_capacity: usize,
 }
 
 impl Runtime {
@@ -80,6 +84,8 @@ impl Runtime {
             denial_reporting: DenialReporting::Error,
             #[cfg(feature = "receipts")]
             evidence: EvidencePolicy::Disabled,
+            #[cfg(feature = "receipts")]
+            receipt_capacity: 10_000,
         }
     }
 
@@ -147,9 +153,9 @@ impl Runtime {
         let receipts = {
             let receipts = match self.evidence {
                 EvidencePolicy::Disabled => None,
-                EvidencePolicy::BestEffort | EvidencePolicy::RequiredBeforeExecution => {
-                    Some(Arc::new(MemoryReceiptSink::new()))
-                }
+                EvidencePolicy::BestEffort | EvidencePolicy::RequiredBeforeExecution => Some(
+                    Arc::new(MemoryReceiptSink::with_capacity(self.receipt_capacity)),
+                ),
             };
             if let Some(sink) = receipts.as_ref() {
                 builder = builder
@@ -226,6 +232,15 @@ impl Session {
         };
         sink.drop_prefix(count)
     }
+
+    /// Receipts dropped because this session's outbox was full.
+    #[cfg(feature = "receipts")]
+    pub fn receipt_overflows(&self) -> usize {
+        self.receipts
+            .as_ref()
+            .map(|sink| sink.overflowed())
+            .unwrap_or(0)
+    }
 }
 
 impl RuntimeBuilder {
@@ -283,6 +298,14 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Bound on the session receipt outbox. A full sink drops the new
+    /// receipt and counts it; the authorized call still proceeds.
+    #[cfg(feature = "receipts")]
+    pub fn receipt_capacity(mut self, max: usize) -> Self {
+        self.receipt_capacity = max.max(1);
+        self
+    }
+
     /// Build the runtime.
     pub fn build(self) -> Result<Runtime, RuntimeError> {
         let identity = self.identity.ok_or(RuntimeError::MissingIdentity)?;
@@ -310,6 +333,8 @@ impl RuntimeBuilder {
             denial_reporting: self.denial_reporting,
             #[cfg(feature = "receipts")]
             evidence: self.evidence,
+            #[cfg(feature = "receipts")]
+            receipt_capacity: self.receipt_capacity,
         })
     }
 }
@@ -611,6 +636,27 @@ mod tests {
         assert_eq!(session.drain_receipts().len(), 1);
         assert_eq!(session.acknowledge_receipts(1), 1);
         assert!(session.drain_receipts().is_empty());
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn overflow_does_not_deny_and_is_counted() {
+        let (issuer, holder, warrant) = mint_pair();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_capacity(1)
+            .build()
+            .unwrap();
+        let session = runtime.session_from_warrant(warrant).unwrap();
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        assert!(session.check(&call).is_ok());
+        assert!(session.check(&call).is_ok());
+        assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.receipt_overflows(), 1);
     }
 
     #[test]

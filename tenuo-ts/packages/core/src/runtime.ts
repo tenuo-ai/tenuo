@@ -23,6 +23,8 @@ export type RuntimeOptions = {
    * `drainReceipts()` is a snapshot. Default `off`.
    */
   readonly receipts?: ReceiptsMode;
+  /** Bound on each receipt outbox. Default 10_000. */
+  readonly receiptMax?: number;
 };
 
 export type SessionWarrant = string | readonly string[] | readonly WarrantPart[];
@@ -36,13 +38,21 @@ export class Runtime {
   readonly identity: HolderIdentity;
   readonly tenuo: Tenuo;
   readonly #collect: boolean;
+  readonly #max: number;
+  readonly #sessionCollectors: ReceiptCollector[] = [];
 
-  constructor(tenuo: Tenuo, identity: HolderIdentity, collect: boolean) {
+  constructor(
+    tenuo: Tenuo,
+    identity: HolderIdentity,
+    collect: boolean,
+    max = 10_000,
+  ) {
     this.tenuo = tenuo;
     this.identity = identity;
     this.#collect = collect;
+    this.#max = max;
     if (collect) {
-      bindHostCollector(tenuo, new ReceiptCollector());
+      bindHostCollector(tenuo, new ReceiptCollector(max));
     }
   }
 
@@ -56,14 +66,17 @@ export class Runtime {
       holderKey: this.identity.holderKey,
     });
     if (this.#collect) {
-      bindSessionCollector(session, new ReceiptCollector());
+      const collector = new ReceiptCollector(this.#max);
+      this.#sessionCollectors.push(collector);
+      bindSessionCollector(session, collector);
     }
     return session;
   }
 
   /** Undrained receipts from every session and presented call handled by this runtime. */
   peekReceipts(): string[] {
-    return hostCollector(this.tenuo)?.peek() ?? [];
+    const host = hostCollector(this.tenuo)?.peek() ?? [];
+    return [...host, ...this.#sessionCollectors.flatMap((collector) => collector.peek())];
   }
 
   /**
@@ -72,11 +85,35 @@ export class Runtime {
    * `acknowledgeReceipts`.
    */
   drainReceipts(): string[] {
-    return hostCollector(this.tenuo)?.drain() ?? [];
+    return this.peekReceipts();
   }
 
   acknowledgeReceipts(count: number): number {
-    return hostCollector(this.tenuo)?.acknowledge(count) ?? 0;
+    let left = count;
+    let removed = 0;
+    const host = hostCollector(this.tenuo);
+    if (host !== undefined && left > 0) {
+      const took = host.acknowledge(left);
+      removed += took;
+      left -= took;
+    }
+    for (const collector of this.#sessionCollectors) {
+      if (left <= 0) {
+        break;
+      }
+      const took = collector.acknowledge(left);
+      removed += took;
+      left -= took;
+    }
+    return removed;
+  }
+
+  /** Receipts dropped because an outbox was full. */
+  receiptOverflows(): number {
+    const host = hostCollector(this.tenuo)?.overflowed ?? 0;
+    return (
+      host + this.#sessionCollectors.reduce((sum, collector) => sum + collector.overflowed, 0)
+    );
   }
 }
 
@@ -100,7 +137,12 @@ export function createRuntime(
     tenuoOptions.revocationList = options.revocationList;
   }
   const tenuo = createTenuo(tenuoOptions);
-  return new Runtime(tenuo, options.identity, options.receipts === "collect");
+  return new Runtime(
+    tenuo,
+    options.identity,
+    options.receipts === "collect",
+    options.receiptMax ?? 10_000,
+  );
 }
 
 export function drainSessionReceipts(session: object): string[] {
