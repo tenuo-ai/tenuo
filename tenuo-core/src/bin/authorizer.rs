@@ -697,66 +697,67 @@ async fn prepare_serve(
         .or(settings_first_root);
 
     // Create audit channel, metrics collector, and spawn heartbeat task if control plane is configured
-    let (audit_tx, metrics) =
-        if let (Some(url), Some(key), Some(name)) = (resolved_url, resolved_key, resolved_name) {
-            // Create audit event channel (buffer 1000 events)
-            let (tx, rx) = create_audit_channel(1000);
+    let (audit_tx, metrics) = if let (Some(url), Some(key), Some(name)) =
+        (resolved_url, resolved_key, resolved_name)
+    {
+        // Create audit event channel (buffer 1000 events)
+        let (tx, rx) = create_audit_channel(1000);
 
-            // Create metrics collector for runtime stats
-            let metrics = MetricsCollector::new();
+        // Create metrics collector for runtime stats
+        let metrics = MetricsCollector::new();
 
-            // If SRL was loaded from file at startup, record its version in metrics
-            if let Some(version) = initial_srl_version {
-                metrics.record_srl_fetch(true, Some(version)).await;
-            }
+        // If SRL was loaded from file at startup, record its version in metrics
+        if let Some(version) = initial_srl_version {
+            metrics.record_srl_fetch(true, Some(version)).await;
+        }
 
-            // Get environment info from standard env vars; inject agent_id from
-            // connect token so the backend can bind this authorizer to the agent.
-            let mut environment = EnvironmentInfo::from_env();
-            if let Some(ref agent_id) = resolved_agent_id {
-                environment
-                    .metadata
-                    .insert("agent_id".to_string(), agent_id.clone());
-            }
+        // Get environment info from standard env vars; inject agent_id from
+        // connect token so the backend can bind this authorizer to the agent.
+        let mut environment = EnvironmentInfo::from_env();
+        if let Some(ref agent_id) = resolved_agent_id {
+            environment
+                .metadata
+                .insert("agent_id".to_string(), agent_id.clone());
+        }
 
-            // Parse signing key; auto-generate if not supplied so connect-token
-            // onboarding works without any additional key management step.
-            let signing_key = match &cli.signing_key {
-                Some(hex_key) => match hex::decode(hex_key) {
-                    Ok(bytes) if bytes.len() == 32 => {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&bytes);
-                        let key = SigningKey::from_bytes(&arr);
-                        info!(
-                            public_key = %hex::encode(key.public_key().to_bytes()),
-                            "Signing key configured"
-                        );
-                        key
-                    }
-                    Ok(bytes) => {
-                        error!(
-                            got_len = bytes.len(),
-                            "TENUO_SIGNING_KEY must be 32 bytes (64 hex chars)"
-                        );
-                        std::process::exit(1);
-                    }
-                    Err(e) => {
-                        error!(error = %e, "TENUO_SIGNING_KEY must be valid hex");
-                        std::process::exit(1);
-                    }
-                },
-                None => {
-                    let key = SigningKey::generate();
+        // Parse signing key; auto-generate if not supplied so connect-token
+        // onboarding works without any additional key management step.
+        let signing_key = match &cli.signing_key {
+            Some(hex_key) => match hex::decode(hex_key) {
+                Ok(bytes) if bytes.len() == 32 => {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&bytes);
+                    let key = SigningKey::from_bytes(&arr);
                     info!(
                         public_key = %hex::encode(key.public_key().to_bytes()),
-                        "No TENUO_SIGNING_KEY set — using ephemeral signing key. \
-                         Set TENUO_SIGNING_KEY to persist the key across restarts."
+                        "Signing key configured"
                     );
                     key
                 }
-            };
+                Ok(bytes) => {
+                    error!(
+                        got_len = bytes.len(),
+                        "TENUO_SIGNING_KEY must be 32 bytes (64 hex chars)"
+                    );
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    error!(error = %e, "TENUO_SIGNING_KEY must be valid hex");
+                    std::process::exit(1);
+                }
+            },
+            None => {
+                let key = SigningKey::generate();
+                info!(
+                    public_key = %hex::encode(key.public_key().to_bytes()),
+                    "No TENUO_SIGNING_KEY set — using ephemeral signing key. \
+                     Set TENUO_SIGNING_KEY to persist the key across restarts."
+                );
+                key
+            }
+        };
 
-            let revocation_tracker = trusted_root.as_ref().and_then(|root| {
+        let revocation_tracker = trusted_root.as_ref().and_then(|root| {
                 let floor = cli.revocation_floor.clone().unwrap_or_else(|| {
                     std::env::temp_dir().join("tenuo-srl-floors")
                 });
@@ -782,42 +783,42 @@ async fn prepare_serve(
                 }
             });
 
-            let heartbeat_config = HeartbeatConfig {
-                control_plane_url: tenuo::connect_token::normalize_control_plane_url(&url),
-                api_key: key.clone(),
-                authorizer_name: name.clone(),
-                authorizer_type: cli.authorizer_type.clone(),
-                version: authorizer_version(),
-                interval_secs: cli.heartbeat_interval,
-                authorizer: Some(shared_authorizer.clone()),
-                trusted_root: trusted_root.clone(),
-                audit_batch_size: cli.audit_batch_size,
-                audit_flush_interval_secs: cli.audit_flush_interval,
-                environment,
-                metrics: Some(metrics.clone()),
-                signing_key,
-                id_notify: None,
-                agent_id: resolved_agent_id,
-                connect_token: resolved_connect_token,
-                revocation_tracker,
-            };
-
-            // Clone shared_authorizer_id for the heartbeat task to update
-            let authorizer_id_writer = shared_authorizer_id.clone();
-            tokio::spawn(async move {
-                heartbeat::start_heartbeat_loop_with_audit_and_id(
-                    heartbeat_config,
-                    Some(rx),
-                    authorizer_id_writer,
-                )
-                .await;
-            });
-            info!("Heartbeat, metrics, and audit streaming enabled for control plane");
-
-            (Some(tx), Some(metrics))
-        } else {
-            (None, None)
+        let heartbeat_config = HeartbeatConfig {
+            control_plane_url: tenuo::connect_token::normalize_control_plane_url(&url),
+            api_key: key.clone(),
+            authorizer_name: name.clone(),
+            authorizer_type: cli.authorizer_type.clone(),
+            version: authorizer_version(),
+            interval_secs: cli.heartbeat_interval,
+            authorizer: Some(shared_authorizer.clone()),
+            trusted_root: trusted_root.clone(),
+            audit_batch_size: cli.audit_batch_size,
+            audit_flush_interval_secs: cli.audit_flush_interval,
+            environment,
+            metrics: Some(metrics.clone()),
+            signing_key,
+            id_notify: None,
+            agent_id: resolved_agent_id,
+            connect_token: resolved_connect_token,
+            revocation_tracker,
         };
+
+        // Clone shared_authorizer_id for the heartbeat task to update
+        let authorizer_id_writer = shared_authorizer_id.clone();
+        tokio::spawn(async move {
+            heartbeat::start_heartbeat_loop_with_audit_and_id(
+                heartbeat_config,
+                Some(rx),
+                authorizer_id_writer,
+            )
+            .await;
+        });
+        info!("Heartbeat, metrics, and audit streaming enabled for control plane");
+
+        (Some(tx), Some(metrics))
+    } else {
+        (None, None)
+    };
 
     let state = Arc::new(AppState {
         authorizer: shared_authorizer,

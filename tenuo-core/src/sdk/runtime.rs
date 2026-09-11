@@ -279,7 +279,8 @@ impl Session {
         child_holder: &PublicKey,
         profile: &DelegationProfile,
     ) -> Result<Vec<Warrant>, DelegationError> {
-        self.enforcer.delegate_to(&self.authority, child_holder, profile)
+        self.enforcer
+            .delegate_to(&self.authority, child_holder, profile)
     }
 }
 

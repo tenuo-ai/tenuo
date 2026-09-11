@@ -87,10 +87,7 @@ impl Serialize for ConnectToken {
         state.serialize_field("e", &self.endpoint)?;
         state.serialize_field("k", "[REDACTED]")?;
         state.serialize_field("a", &self.agent_id)?;
-        state.serialize_field(
-            "t",
-            &self.registration_token.as_ref().map(|_| "[REDACTED]"),
-        )?;
+        state.serialize_field("t", &self.registration_token.as_ref().map(|_| "[REDACTED]"))?;
         state.end()
     }
 }
