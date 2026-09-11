@@ -9,28 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`RuntimeBuilder::revocation_floor_path`.** Persist SRL floors at an
-  explicit path so a read-only or root-owned identity mount does not fail
-  `Runtime::build`. File-store errors name the path.
-
-### Fixed
-
-- **Receipt overflow under `RequiredBeforeExecution`.** A full memory sink
-  returns `Unavailable` so the guard denies. Best-effort still proceeds and
-  counts the overflow. The previous `Ok(overflow ref)` silently bypassed
-  the required-evidence check.
-
-### Changed
-
-- **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
-  (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
-  messages are unchanged. Code that catches `TenuoError` or switches on `code`
-  now sees builder mistakes too.
-
-## [0.2.6] - 2026-09-08
-
-### Added
-
 - **Holder `Runtime` and `Session` (`sdk`).** Persist an Ed25519 identity,
   configure trust / TTL fallback / receipt policy once, and bind each
   warrant into a session. `drain_receipts` / `peek_receipts` are the same
@@ -39,12 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enforce that list on the next check. `SignedRevocationList::{from_base64,
   to_base64}` is the decode API. `ConnectToken::resolve_endpoint` accepts a
   caller-provided base for relative `/v1` tokens.
+- **`RuntimeBuilder::revocation_floor_path`.** Persist SRL floors at an
+  explicit path so a read-only or root-owned identity mount does not fail
+  `Runtime::build`. File-store errors name the floor path.
+- **`Authorizer::installed_revocation_list`.** Public so adapters can refuse
+  to roll a newer verifier list back to a stale Runtime SRL.
+
+### Fixed
+
+- **Receipt overflow under `RequiredBeforeExecution`.** A full memory sink
+  returns `Unavailable` so the guard denies. Best-effort still proceeds and
+  counts the overflow. The previous `Ok(overflow ref)` silently bypassed
+  the required-evidence check. `MemoryReceiptSink` is now capped at 10,000
+  (unbounded in 0.2.5). Required-evidence callers must
+  `acknowledge_receipts` / drain or they are denied after the cap.
 
 ### Changed
 
 - **Connect token version is required.** `ConnectToken::parse` rejects a
   missing `v`, `v=0`, and any version other than 1. Tokens issued without
   `v` fail at parse after upgrade. This is a breaking change from 0.2.5.
+- **`RevocationError` is `#[non_exhaustive]`.** A new `UnavailableAt` arm
+  names the floor path; downstream matches need a wildcard.
+- **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
+  (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
+  messages are unchanged. Code that catches `TenuoError` or switches on `code`
+  now sees builder mistakes too.
 
 ## [0.2.5] - 2026-09-06
 

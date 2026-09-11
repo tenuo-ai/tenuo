@@ -147,7 +147,7 @@ fn write_floors(
     let json =
         serde_json::to_string(&encoded).map_err(|_| RevocationError::unavailable_at(path))?;
     let tmp = unique_tmp(path);
-    fs::write(&tmp, &json).map_err(|_| RevocationError::unavailable_at(&tmp))?;
+    fs::write(&tmp, &json).map_err(|_| RevocationError::unavailable_at(path))?;
     fs::rename(&tmp, path).map_err(|_| RevocationError::unavailable_at(path))
 }
 
@@ -283,6 +283,7 @@ fn content_hash(srl: &SignedRevocationList) -> [u8; 32] {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RevocationError {
     EmptyTrust,
     InvalidMaxAge,
