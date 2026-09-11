@@ -80,9 +80,16 @@ pub struct Guard {
 
 #[derive(Clone)]
 enum ResolvedRevocation {
-    TtlOnly { max_lifetime: Duration },
+    TtlOnly {
+        max_lifetime: Duration,
+    },
     Snapshot(Arc<RevocationSnapshot>),
     Tracker(std::sync::Arc<RevocationTracker>),
+    /// TTL until the shared tracker accepts its first SRL, then signed-SRL.
+    TtlUntilSrl {
+        max_lifetime: Duration,
+        tracker: std::sync::Arc<RevocationTracker>,
+    },
 }
 
 impl Guard {
@@ -639,24 +646,55 @@ impl Guard {
                 }
                 Ok(LoadedRevocation::Snapshot(snapshot.clone()))
             }
-            ResolvedRevocation::Tracker(tracker) => {
-                let snapshot = tracker.latest(at).map_err(|_| {
-                    Denial::sdk(
-                        SdkDenialKind::RevocationStateUnavailable,
-                        Retryability::AfterBackoff,
-                        "revocation state unavailable",
-                    )
-                })?;
-                if !snapshot.is_fresh_at(at) {
-                    return Err(Denial::sdk(
-                        SdkDenialKind::RevocationStateUnavailable,
-                        Retryability::AfterBackoff,
-                        "revocation snapshot is stale",
-                    ));
+            ResolvedRevocation::Tracker(tracker) => Self::snapshot_from_tracker(tracker, at),
+            ResolvedRevocation::TtlUntilSrl {
+                max_lifetime,
+                tracker,
+            } => match tracker.latest(at) {
+                Ok(snapshot) => {
+                    if !snapshot.is_fresh_at(at) {
+                        return Err(Denial::sdk(
+                            SdkDenialKind::RevocationStateUnavailable,
+                            Retryability::AfterBackoff,
+                            "revocation snapshot is stale",
+                        ));
+                    }
+                    Ok(LoadedRevocation::Snapshot(snapshot))
                 }
-                Ok(LoadedRevocation::Snapshot(snapshot))
-            }
+                Err(crate::revocation_tracker::RevocationError::Unavailable)
+                | Err(crate::revocation_tracker::RevocationError::UnavailableAt { .. }) => {
+                    Ok(LoadedRevocation::TtlOnly {
+                        max_lifetime: *max_lifetime,
+                    })
+                }
+                Err(_) => Err(Denial::sdk(
+                    SdkDenialKind::RevocationStateUnavailable,
+                    Retryability::AfterBackoff,
+                    "revocation state unavailable",
+                )),
+            },
         }
+    }
+
+    fn snapshot_from_tracker(
+        tracker: &RevocationTracker,
+        at: DateTime<Utc>,
+    ) -> Result<LoadedRevocation, Denial> {
+        let snapshot = tracker.latest(at).map_err(|_| {
+            Denial::sdk(
+                SdkDenialKind::RevocationStateUnavailable,
+                Retryability::AfterBackoff,
+                "revocation state unavailable",
+            )
+        })?;
+        if !snapshot.is_fresh_at(at) {
+            return Err(Denial::sdk(
+                SdkDenialKind::RevocationStateUnavailable,
+                Retryability::AfterBackoff,
+                "revocation snapshot is stale",
+            ));
+        }
+        Ok(LoadedRevocation::Snapshot(snapshot))
     }
 
     #[cfg(feature = "async")]
@@ -892,6 +930,7 @@ pub struct GuardBuilder {
     authorizer: Option<Authorizer>,
     revocation: Option<RevocationMode>,
     tracker: Option<std::sync::Arc<RevocationTracker>>,
+    ttl_until_srl: Option<Duration>,
     denial_reporting: DenialReporting,
     clock: Option<Arc<dyn Clock>>,
     approval_provider: Option<Arc<dyn ApprovalProvider>>,
@@ -922,6 +961,18 @@ impl GuardBuilder {
 
     /// Production SignedSrl path: snapshots come from the tracker, not a fallback.
     pub fn revocation_tracker(mut self, tracker: std::sync::Arc<RevocationTracker>) -> Self {
+        self.tracker = Some(tracker);
+        self
+    }
+
+    /// TTL until `tracker` accepts an SRL, then signed-SRL on later checks.
+    pub(crate) fn ttl_until_signed_srl(
+        mut self,
+        max_lifetime: Duration,
+        tracker: std::sync::Arc<RevocationTracker>,
+    ) -> Self {
+        self.revocation = Some(RevocationMode::TtlOnly { max_lifetime });
+        self.ttl_until_srl = Some(max_lifetime);
         self.tracker = Some(tracker);
         self
     }
@@ -1026,21 +1077,30 @@ impl GuardBuilder {
                 }
             }
         };
-        let revocation = match mode {
-            RevocationMode::TtlOnly { max_lifetime } => {
-                ResolvedRevocation::TtlOnly { max_lifetime }
+        let revocation = if let (Some(max_lifetime), Some(tracker)) =
+            (self.ttl_until_srl, self.tracker.clone())
+        {
+            ResolvedRevocation::TtlUntilSrl {
+                max_lifetime,
+                tracker,
             }
-            RevocationMode::SignedSrl => {
-                if let Some(tracker) = self.tracker {
-                    ResolvedRevocation::Tracker(tracker)
-                } else {
-                    let list = authorizer
-                        .installed_revocation_list()
-                        .cloned()
-                        .ok_or(GuardBuildError::SignedSrlUnavailable)?;
-                    ResolvedRevocation::Snapshot(Arc::new(RevocationSnapshot::from_accepted_list(
-                        list,
-                    )))
+        } else {
+            match mode {
+                RevocationMode::TtlOnly { max_lifetime } => {
+                    ResolvedRevocation::TtlOnly { max_lifetime }
+                }
+                RevocationMode::SignedSrl => {
+                    if let Some(tracker) = self.tracker {
+                        ResolvedRevocation::Tracker(tracker)
+                    } else {
+                        let list = authorizer
+                            .installed_revocation_list()
+                            .cloned()
+                            .ok_or(GuardBuildError::SignedSrlUnavailable)?;
+                        ResolvedRevocation::Snapshot(Arc::new(
+                            RevocationSnapshot::from_accepted_list(list),
+                        ))
+                    }
                 }
             }
         };
