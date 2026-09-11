@@ -2608,6 +2608,8 @@ pub struct ApprovalRequirementResult {
     #[serde(rename = "arguments")]
     pub arguments: Vec<String>,
     pub message: Option<String>,
+    pub code: Option<String>,
+    pub reason: Option<String>,
     pub error: Option<String>,
 }
 
@@ -2634,10 +2636,12 @@ fn fail_closed_requirement(tool: &str, error: String) -> JsValue {
     serde_wasm_bindgen::to_value(&ApprovalRequirementResult {
         status: "required".to_string(),
         tool: tool.to_string(),
-        kind: Some("whole_tool".to_string()),
+        kind: None,
         argument: None,
         arguments: Vec::new(),
         message: None,
+        code: None,
+        reason: None,
         error: Some(error),
     })
     .unwrap()
@@ -2656,6 +2660,8 @@ fn requirement_to_js(
             argument: None,
             arguments: Vec::new(),
             message: None,
+            code: None,
+            reason: None,
             error: None,
         },
         ApprovalRequirement::Exempt { arguments } => ApprovalRequirementResult {
@@ -2665,6 +2671,8 @@ fn requirement_to_js(
             argument: arguments.first().cloned(),
             arguments,
             message: None,
+            code: None,
+            reason: None,
             error: None,
         },
         ApprovalRequirement::Required { kind, message } => {
@@ -2679,9 +2687,22 @@ fn requirement_to_js(
                 arguments: argument.iter().cloned().collect(),
                 argument,
                 message: Some(message),
+                code: None,
+                reason: None,
                 error: None,
             }
         }
+        ApprovalRequirement::Denied { code, reason } => ApprovalRequirementResult {
+            status: "denied".into(),
+            tool: tool.to_string(),
+            kind: None,
+            argument: None,
+            arguments: Vec::new(),
+            message: None,
+            code: Some(code),
+            reason: Some(reason),
+            error: None,
+        },
     }
 }
 
@@ -2724,10 +2745,10 @@ pub fn evaluate_approval_gates(warrant_b64: &str, tool: &str, args_json: JsValue
 
 /// Typed preflight of a warrant's approval gates for `(tool, args)`.
 ///
-/// Returns `{ status: "not_gated"|"exempt"|"required", tool, kind?, argument?,
-/// arguments, message?, error? }`. Parse errors fail closed with
-/// `status: "required"` and `error` set. This is not an authorization
-/// decision — the authorizer remains the source of truth.
+/// Returns `{ status: "not_gated"|"exempt"|"required"|"denied", tool, kind?,
+/// argument?, arguments, message?, code?, reason?, error? }`. Parse errors
+/// fail closed with `status: "required"` and `error` set (no fabricated
+/// `kind`). `denied` means the warrant's constraints refuse the call.
 #[wasm_bindgen]
 pub fn approval_requirement(warrant_b64: &str, tool: &str, args_json: JsValue) -> JsValue {
     init_panic_hook();

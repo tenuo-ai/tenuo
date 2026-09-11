@@ -110,9 +110,10 @@ use `Warrant.approval_requirement(tool, args)` (or the module-level
 
 | Status | Meaning |
 |--------|---------|
-| `not_gated` | Tool is absent from the gate map, or a constrained gate does not match these arguments |
+| `not_gated` | Tool is granted and either absent from the gate map, or a constrained gate does not match these arguments |
 | `exempt` | A per-argument `Exempt` gate is present and this call matches the exemption |
 | `required` | The gate fires (`kind` is `whole_tool` or `argument`) |
+| `denied` | The warrant does not grant this call (missing tool or capability miss). Do not collect approval. |
 
 To inspect the **structure** without arguments, use
 `Warrant.inspect_approval_gate(tool)`:
@@ -150,29 +151,32 @@ req = warrant.approval_requirement("write_approval", {"amount": 650})
 assert req.status == "required"
 assert req.kind == "argument"
 
-# 1200 fails the capability Range(0, 1000). Preflight may still report
-# `required`; the authorizer denies. Never use preflight to override that.
+# 1200 fails the capability Range(0, 1000). Preflight reports `denied`.
+req = warrant.approval_requirement("write_approval", {"amount": 1200})
+assert req.status == "denied"
+assert not req.requires_approval()
 ```
 
 `evaluate_approval_gates(warrant, tool, args)` remains as a boolean wrapper
 (`True` iff `status == "required"`). Prefer the typed result so an exemption
-is not confused with "this tool is not gated."
+or a deny is not confused with "this tool is not gated."
 
 **Compatibility**
 
-- The boolean `evaluate_approval_gates` API is unchanged.
+- The boolean `evaluate_approval_gates` API is unchanged (`True` only for
+  `required`). Capability failures now return `False` because they are
+  `denied`, not `required`.
 - Malformed or unknown gate encodings raise (Python) or return
-  `status="required"` with `error` set (WASM). Treat that as fail-closed —
-  never as ungated.
-- This preflight does **not** replace the authorizer. Capability denial,
-  PoP, expiry, and collected approvals are authorizer-only. An SDK-side
-  `exempt` / `not_gated` result must not allow a call the authorizer would
-  deny.
+  `status="required"` with `error` set (WASM, no fabricated `kind`). Treat
+  that as fail-closed — never as ungated.
+- This preflight does **not** replace the authorizer. PoP, expiry, and
+  collected approvals remain authorizer-only. An SDK-side `exempt` /
+  `not_gated` result must not allow a call the authorizer would deny.
 
 Rust: `warrant.approval_requirement(tool, args)` and
 `warrant.inspect_approval_gate(tool)`. TypeScript / WASM:
-`approvalRequirement(warrantB64, tool, args)` and
-`inspectApprovalGate(warrantB64, tool)`.
+`approvalRequirement(warrantB64, tool, args)`,
+`inspectApprovalGate(warrantB64, tool)`, and `evaluateApprovalGates`.
 
 ---
 

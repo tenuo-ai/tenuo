@@ -10,14 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Typed approval-gate preflight.** `Warrant.approval_requirement(tool, args)`
-  returns `NotGated`, `Exempt`, or `Required` using the same
-  `Constraint::matches` implementation as the authorizer.
-  `Warrant.inspect_approval_gate(tool)` distinguishes no gate, an
-  unconditional whole-tool gate, and a per-argument conditional gate so
-  SDKs do not parse raw `tenuo.approval_gates` CBOR keys. Python:
-  `approval_requirement` / `inspect_approval_gate` (also on `Warrant`).
-  WASM/TS: `approval_requirement` / `inspect_approval_gate`. Boolean
-  `evaluate_approval_gates` is unchanged and wraps the typed evaluator.
+  returns `NotGated`, `Exempt`, `Required`, or `Denied` using the same
+  constraint matcher as the authorizer. Capability failures and ungranted
+  tools are `Denied` so an approval UI does not collect a signature the
+  authorizer will reject. `Warrant.inspect_approval_gate(tool)`
+  distinguishes no gate, an unconditional whole-tool gate, and a
+  per-argument conditional gate so SDKs do not parse raw
+  `tenuo.approval_gates` CBOR keys. Python: `approval_requirement` /
+  `inspect_approval_gate` (also on `Warrant`). TypeScript:
+  `approvalRequirement` / `inspectApprovalGate` / `evaluateApprovalGates`.
+  WASM: `approval_requirement` / `inspect_approval_gate`. Boolean
+  `evaluate_approval_gates` is `true` only for `Required`.
 
 ### Changed
 

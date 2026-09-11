@@ -430,16 +430,14 @@ pub enum ApprovalGateKind {
     Argument { name: String },
 }
 
-/// Result of evaluating a concrete `(tool, args)` pair against approval gates.
+/// Result of evaluating a concrete `(tool, args)` pair against the warrant.
 ///
-/// This is a **preflight** of the gate map only. It does not check capability
-/// constraints, PoP, expiry, or approvals. A [`NotGated`] or [`Exempt`] result
-/// can still be denied by the authorizer; a [`Required`] result is not an
-/// authorization decision.
-///
-/// Gate matching uses [`Constraint::matches`] — the same implementation the
-/// authorizer uses for Range, Exact, Pattern, OneOf, URLSafe, and every other
-/// constraint type.
+/// Capability constraints are checked first. A [`Denied`] result means the
+/// authorizer would refuse this call; adapters must not collect approval for
+/// it. Gate matching uses [`Constraint::matches`] — the same implementation
+/// the authorizer uses for Range, Exact, Pattern, OneOf, URLSafe, and every
+/// other constraint type. PoP, expiry, and collected approvals remain
+/// authorizer-only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalRequirement {
     /// No gate applies to this call (tool not listed, or a constrained gate
@@ -453,6 +451,9 @@ pub enum ApprovalRequirement {
         kind: ApprovalGateKind,
         message: String,
     },
+    /// The warrant does not grant this call. Adapters must not collect
+    /// approval — the authorizer will deny.
+    Denied { code: String, reason: String },
 }
 
 impl ApprovalRequirement {

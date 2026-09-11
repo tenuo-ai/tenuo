@@ -5565,11 +5565,15 @@ mod tests {
         // 1200: capability fails — denied, not approval-gated.
         let mut denied_args = HashMap::new();
         denied_args.insert("amount".into(), ConstraintValue::Integer(1200));
-        // Preflight still reports the gate (exemption missed) — authorizer denies first.
-        assert!(warrant
+        match warrant
             .approval_requirement("write_approval", &denied_args)
             .unwrap()
-            .requires_approval());
+        {
+            ApprovalRequirement::Denied { code, .. } => {
+                assert_eq!(code, "constraint_violation");
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
         let sig = warrant
             .sign(&root_key, "write_approval", &denied_args)
             .unwrap();

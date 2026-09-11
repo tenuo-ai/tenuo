@@ -532,18 +532,29 @@ class TestApprovalRequirementBinding:
             _authorize(w, holder, "write_approval", {"amount": 650}, root.public_key)
         err = exc_info.value
         assert err.tool == "write_approval"
-        assert err.request_hash
+        assert isinstance(err.request_hash, str) and len(err.request_hash) == 64
+        assert all(c in "0123456789abcdef" for c in err.request_hash)
         assert err.request_id
 
     def test_capability_failure_is_denied_not_gated(self, keys):
         root, holder, approver = keys
         w = _mint_write_approval(root, holder, approver)
 
-        # Preflight sees the missed exemption; authorizer denies on capability.
         preflight = w.approval_requirement("write_approval", {"amount": 1200})
-        assert preflight.requires_approval()
+        assert preflight.status == "denied"
+        assert preflight.is_denied()
+        assert not preflight.requires_approval()
+        assert preflight.code == "constraint_violation"
+        assert not _evaluate_approval_gates(w, "write_approval", {"amount": 1200})
         with pytest.raises(ConstraintViolation):
             _authorize(w, holder, "write_approval", {"amount": 1200}, root.public_key)
+
+        missing = w.approval_requirement("read_file", {"path": "/x"})
+        assert missing.status == "denied"
+        assert missing.code == "tool_not_authorized"
+        assert "Some(" not in repr(preflight)
+        assert "denied" in repr(preflight)
+        assert preflight == w.approval_requirement("write_approval", {"amount": 1200})
 
     def test_module_level_matches_warrant_method(self, keys):
         from tenuo import approval_requirement as module_requirement

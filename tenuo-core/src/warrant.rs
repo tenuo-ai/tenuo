@@ -997,17 +997,32 @@ impl Warrant {
 
     /// Evaluate whether a concrete tool call requires approval.
     ///
-    /// Uses the same [`crate::constraints::Constraint::matches`] implementation
-    /// as the authorizer. Does **not** check capability constraints, PoP,
-    /// expiry, or collected approvals — those remain authorizer-only.
+    /// Checks capability constraints first (same [`crate::constraints::Constraint::matches`]
+    /// path as the authorizer). A denied call is [`ApprovalRequirement::Denied`]
+    /// so adapters do not collect a signature the authorizer will reject.
     ///
-    /// Malformed or unknown gate encodings return `Err` (fail-closed). Do not
-    /// treat an error as "not gated".
+    /// Does **not** check PoP, expiry, or collected approvals — those remain
+    /// authorizer-only. Malformed or unknown gate encodings return `Err`
+    /// (fail-closed). Do not treat an error as "not gated".
     pub fn approval_requirement(
         &self,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
     ) -> Result<crate::approval_gate::ApprovalRequirement> {
+        if let Err(err) = self.check_constraints(tool, args) {
+            let (code, reason) = match &err {
+                Error::ToolNotAuthorized { tool } => (
+                    "tool_not_authorized".to_string(),
+                    format!("warrant does not authorize tool '{tool}'"),
+                ),
+                Error::ConstraintNotSatisfied { field, reason } => (
+                    "constraint_violation".to_string(),
+                    format!("{field}: {reason}"),
+                ),
+                other => ("denied".to_string(), other.to_string()),
+            };
+            return Ok(crate::approval_gate::ApprovalRequirement::Denied { code, reason });
+        }
         let map = self.approval_gate_map()?;
         crate::approval_gate::approval_requirement(map.as_ref(), tool, args)
     }

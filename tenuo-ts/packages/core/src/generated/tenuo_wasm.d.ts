@@ -175,10 +175,10 @@ export class SdkSession {
 /**
  * Typed preflight of a warrant's approval gates for `(tool, args)`.
  *
- * Returns `{ status: "not_gated"|"exempt"|"required", tool, kind?, argument?,
- * arguments, message?, error? }`. Parse errors fail closed with
- * `status: "required"` and `error` set. This is not an authorization
- * decision — the authorizer remains the source of truth.
+ * Returns `{ status: "not_gated"|"exempt"|"required"|"denied", tool, kind?,
+ * argument?, arguments, message?, code?, reason?, error? }`. Parse errors
+ * fail closed with `status: "required"` and `error` set (no fabricated
+ * `kind`). `denied` means the warrant's constraints refuse the call.
  */
 export function approval_requirement(warrant_b64: string, tool: string, args_json: any): any;
 

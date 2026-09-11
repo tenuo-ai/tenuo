@@ -4210,11 +4210,10 @@ impl PyWarrant {
 
     /// Evaluate whether a concrete tool call requires approval.
     ///
-    /// Returns :class:`ApprovalRequirement` (``not_gated``, ``exempt``, or
-    /// ``required``). Uses the same constraint matcher as the authorizer.
-    ///
-    /// This is a gate preflight only. It does not check capability constraints
-    /// or PoP and must not override an authorizer decision. Raises on
+    /// Returns :class:`ApprovalRequirement` (``not_gated``, ``exempt``,
+    /// ``required``, or ``denied``). Capability constraints are checked first
+    /// so adapters do not collect approval for a call the authorizer will
+    /// refuse. PoP and collected approvals remain authorizer-only. Raises on
     /// malformed or unknown gate encodings (fail-closed).
     fn approval_requirement(
         &self,
@@ -5499,11 +5498,11 @@ fn py_verify_approvals(
 
 /// Typed preflight of a warrant's approval gates for a concrete tool call.
 ///
-/// Status is one of ``not_gated``, ``exempt``, or ``required``. This is not an
-/// authorization decision — the authorizer remains the source of truth for
-/// capability constraints, PoP, and collected approvals.
+/// Status is one of ``not_gated``, ``exempt``, ``required``, or ``denied``.
+/// ``denied`` means the warrant's own constraints refuse the call — do not
+/// collect approval. PoP and collected approvals remain authorizer-only.
 #[pyclass(name = "ApprovalRequirement")]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PyApprovalRequirement {
     status: String,
     tool: String,
@@ -5511,11 +5510,13 @@ pub struct PyApprovalRequirement {
     argument: Option<String>,
     arguments: Vec<String>,
     message: Option<String>,
+    code: Option<String>,
+    reason: Option<String>,
 }
 
 #[pymethods]
 impl PyApprovalRequirement {
-    /// ``not_gated``, ``exempt``, or ``required``.
+    /// ``not_gated``, ``exempt``, ``required``, or ``denied``.
     #[getter]
     fn status(&self) -> &str {
         &self.status
@@ -5550,6 +5551,18 @@ impl PyApprovalRequirement {
         self.message.as_deref()
     }
 
+    /// Stable denial code when ``status == "denied"``.
+    #[getter]
+    fn code(&self) -> Option<&str> {
+        self.code.as_deref()
+    }
+
+    /// Human-readable denial reason when ``status == "denied"``.
+    #[getter]
+    fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
     fn requires_approval(&self) -> bool {
         self.status == "required"
     }
@@ -5562,11 +5575,29 @@ impl PyApprovalRequirement {
         self.status == "not_gated"
     }
 
+    fn is_denied(&self) -> bool {
+        self.status == "denied"
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self == other
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "ApprovalRequirement(status={:?}, tool={:?}, kind={:?}, argument={:?})",
-            self.status, self.tool, self.kind, self.argument
+            "ApprovalRequirement(status={:?}, tool={:?}, kind={}, argument={})",
+            self.status,
+            self.tool,
+            opt_debug(&self.kind),
+            opt_debug(&self.argument)
         )
+    }
+}
+
+fn opt_debug(value: &Option<String>) -> String {
+    match value {
+        Some(inner) => format!("{inner:?}"),
+        None => "None".to_string(),
     }
 }
 
@@ -5628,6 +5659,8 @@ fn requirement_to_py(
             argument: None,
             arguments: Vec::new(),
             message: None,
+            code: None,
+            reason: None,
         },
         ApprovalRequirement::Exempt { arguments } => PyApprovalRequirement {
             status: "exempt".into(),
@@ -5636,6 +5669,8 @@ fn requirement_to_py(
             argument: arguments.first().cloned(),
             arguments,
             message: None,
+            code: None,
+            reason: None,
         },
         ApprovalRequirement::Required { kind, message } => {
             let (kind_s, argument) = match kind {
@@ -5649,8 +5684,20 @@ fn requirement_to_py(
                 arguments: argument.iter().cloned().collect(),
                 argument,
                 message: Some(message),
+                code: None,
+                reason: None,
             }
         }
+        ApprovalRequirement::Denied { code, reason } => PyApprovalRequirement {
+            status: "denied".into(),
+            tool: tool.into(),
+            kind: None,
+            argument: None,
+            arguments: Vec::new(),
+            message: None,
+            code: Some(code),
+            reason: Some(reason),
+        },
     }
 }
 
@@ -5713,8 +5760,8 @@ fn py_evaluate_approval_gates(
 
 /// Typed preflight of a warrant's approval gates for ``(tool, args)``.
 ///
-/// Raises on malformed or unknown gate encodings (fail-closed). Does not
-/// check capability constraints — call the authorizer for that.
+/// Raises on malformed or unknown gate encodings (fail-closed). Capability
+/// constraints are checked first; a denied call is not treated as gated.
 #[pyfunction(name = "approval_requirement")]
 fn py_approval_requirement(
     warrant: &PyWarrant,

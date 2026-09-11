@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { TenuoConfigurationError, TenuoError } from "./errors.ts";
+import { TenuoConfigurationError } from "./errors.ts";
 import type { TenuoErrorCode } from "./api.ts";
 
 export type WasmDecision = {
@@ -399,7 +399,7 @@ export function publicKeyHexFromHolderKey(holderSecret: Uint8Array): string {
   return loadWasm().sdkPublicKeyFromHolderKey(holderSecret);
 }
 
-export type ApprovalRequirementStatus = "not_gated" | "exempt" | "required";
+export type ApprovalRequirementStatus = "not_gated" | "exempt" | "required" | "denied";
 
 export type ApprovalRequirement = {
   status: ApprovalRequirementStatus;
@@ -408,6 +408,8 @@ export type ApprovalRequirement = {
   argument?: string;
   arguments: string[];
   message?: string;
+  code?: string;
+  reason?: string;
 };
 
 export type ApprovalGateInspection = {
@@ -435,22 +437,21 @@ type ApprovalWasm = {
 };
 
 function loadApprovalWasm(): ApprovalWasm {
-  const require = createRequire(import.meta.url);
-  return require(generatedPath()) as ApprovalWasm;
+  return loadWasm() as unknown as ApprovalWasm;
 }
 
 function throwIfGateError(error: string | undefined): void {
   if (error) {
-    throw new TenuoError("TENUO_CONFIGURATION", error);
+    throw new TenuoConfigurationError(error);
   }
 }
 
 /**
  * Typed preflight of a warrant's approval gates for `(tool, args)`.
  *
- * Uses the same constraint matcher as the authorizer. This is not an
- * authorization decision — do not override a core deny with an exempt result.
- * Malformed encodings throw (fail-closed).
+ * Capability constraints are checked first. `denied` means the authorizer
+ * will refuse the call — do not collect approval. Malformed encodings throw
+ * (fail-closed).
  */
 export function approvalRequirement(
   warrantB64: string,
