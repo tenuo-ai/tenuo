@@ -112,6 +112,7 @@ export function createRuntime(
   createTenuo: (options: {
     trustedRoots: readonly PublicKeyHandle[];
     revocationList?: string | Uint8Array;
+    receiptSigner?: Uint8Array;
   }) => Tenuo,
   options: RuntimeOptions,
 ): Runtime {
@@ -123,11 +124,15 @@ export function createRuntime(
   const tenuoOptions: {
     trustedRoots: readonly PublicKeyHandle[];
     revocationList?: string | Uint8Array;
+    receiptSigner?: Uint8Array;
   } = { trustedRoots: options.trustedRoots };
   if (options.revocationList !== undefined) {
     tenuoOptions.revocationList = options.revocationList;
   }
-  const tenuo = createTenuo(tenuoOptions);
+  const tenuo = createTenuo({
+    ...tenuoOptions,
+    receiptSigner: options.identity.holderKey,
+  });
   if (
     options.receiptMax !== undefined &&
     (!Number.isInteger(options.receiptMax) || options.receiptMax <= 0)

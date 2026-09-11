@@ -277,6 +277,7 @@ fn set_owner_only(_path: &Path) -> Result<(), IdentityError> {
 
 /// Failure loading or persisting a holder identity.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum IdentityError {
     /// Filesystem operation failed. Includes the path and what was attempted.
     Io {

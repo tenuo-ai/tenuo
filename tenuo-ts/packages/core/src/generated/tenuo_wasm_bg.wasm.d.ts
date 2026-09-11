@@ -23,6 +23,7 @@ export const sdkcontext_narrow: (a: number, b: number, c: any, d: any) => [numbe
 export const sdkcontext_new: () => number;
 export const sdkcontext_signPop: (a: number, b: number, c: number, d: number, e: any) => [number, number, number, number];
 export const sdkcontext_signRevocationList: (a: number, b: any) => [number, number, number, number];
+export const sdkcontext_withReceiptSigner: (a: number, b: number, c: number) => [number, number, number];
 export const sdksession_dedupKey: (a: number, b: number, c: number, d: any) => [number, number, number, number];
 export const sdksession_describe: (a: number) => [number, number, number];
 export const sdksession_exportWire: (a: number) => [number, number, number];

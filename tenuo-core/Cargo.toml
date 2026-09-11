@@ -10,8 +10,9 @@ readme = "README.md"
 keywords = ["authorization", "capabilities", "agents", "security", "middleware"]
 categories = ["authentication", "cryptography", "network-programming", "web-programming", "security"]
 
-[lints.rust]
-deprecated = "allow"  # Allow Keypair usage during SigningKey migration
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lib]
 name = "tenuo"

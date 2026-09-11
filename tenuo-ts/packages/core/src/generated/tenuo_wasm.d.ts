@@ -118,6 +118,11 @@ export class SdkContext {
      * `loadRevocationList` anywhere this issuer is a trusted root.
      */
     signRevocationListVersioned(ids: any, version?: number | null): string;
+    /**
+     * Sign verifier receipts with this 32-byte holder secret instead of an
+     * ephemeral key. Used by the TypeScript `Runtime`.
+     */
+    withReceiptSigner(secret: Uint8Array): SdkContext;
 }
 
 /**

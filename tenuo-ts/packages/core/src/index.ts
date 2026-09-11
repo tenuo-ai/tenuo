@@ -65,6 +65,8 @@ export type {
   SignApprovalOptions,
   SubsetConstraint,
   Tenuo,
+  LegacyTenuoErrorCode,
+  ProtocolDenialCode,
   TenuoErrorCode,
   TenuoMcp,
   TenuoMcpMeta,

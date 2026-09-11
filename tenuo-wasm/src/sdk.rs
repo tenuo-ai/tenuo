@@ -316,6 +316,18 @@ impl SdkContext {
         })
     }
 
+    /// Sign verifier receipts with this 32-byte holder secret instead of an
+    /// ephemeral key. Used by the TypeScript `Runtime`.
+    #[wasm_bindgen(js_name = withReceiptSigner)]
+    pub fn with_receipt_signer(mut self, secret: &[u8]) -> Result<SdkContext, JsError> {
+        init_panic_hook();
+        let arr: [u8; 32] = secret
+            .try_into()
+            .map_err(|_| JsError::new("receipt signer must be a 32-byte Ed25519 seed"))?;
+        self.receipt_signer = SigningKey::from_bytes(&arr);
+        Ok(self)
+    }
+
     /// Load a published SignedRevocationList. The SRL must be signed by a trusted root.
     #[wasm_bindgen(js_name = loadRevocationList)]
     pub fn load_revocation_list(&mut self, wire: &str) -> Result<(), JsError> {

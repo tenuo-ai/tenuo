@@ -10,7 +10,9 @@
 use super::authority::{AuthorityError, PresentedAuthority};
 use super::call::Call;
 use super::decision::{Denial, DenialReporting, GuardError};
-use super::guard::{AuthorizedCall, Guard, GuardBuildError, Guarded};
+use super::delegation::{DelegationError, DelegationProfile};
+use super::diagnostics::Diagnostics;
+use super::guard::{AuthorizedCall, Guard, GuardBuildError, Guarded, RevocationMode};
 use super::identity::{IdentityError, PersistentIdentity};
 use super::signer::LocalSigner;
 use crate::crypto::{PublicKey, SigningKey};
@@ -42,12 +44,15 @@ pub struct Runtime {
     identity: PersistentIdentity,
     roots: Vec<PublicKey>,
     ttl_fallback: Duration,
+    revocation: Option<RevocationMode>,
     tracker: Arc<RevocationTracker>,
     denial_reporting: DenialReporting,
     #[cfg(feature = "receipts")]
     evidence: EvidencePolicy,
     #[cfg(feature = "receipts")]
     receipt_capacity: usize,
+    #[cfg(feature = "receipts")]
+    receipt_link: Arc<std::sync::Mutex<Option<[u8; 32]>>>,
 }
 
 /// One warrant bound to this runtime's holder key.
@@ -58,12 +63,14 @@ pub struct Session {
     receipts: Option<Arc<MemoryReceiptSink>>,
 }
 
-/// Builds a [`Runtime`]. Identity, at least one trusted root, and a TTL
-/// fallback are required. There is no implicit revocation mode.
+/// Builds a [`Runtime`]. Identity, at least one trusted root, and either
+/// [`Self::ttl_fallback`] (selects [`RevocationMode::TtlUntilSrl`]) or
+/// [`Self::revocation`] are required.
 pub struct RuntimeBuilder {
     identity: Option<PersistentIdentity>,
     roots: Vec<PublicKey>,
     ttl_fallback: Option<Duration>,
+    revocation: Option<RevocationMode>,
     srl_max_age: Duration,
     srl_clock_tolerance: Duration,
     floor_path: Option<PathBuf>,
@@ -81,6 +88,7 @@ impl Runtime {
             identity: None,
             roots: Vec::new(),
             ttl_fallback: None,
+            revocation: None,
             srl_max_age: DEFAULT_SRL_MAX_AGE,
             srl_clock_tolerance: DEFAULT_SRL_CLOCK_TOLERANCE,
             floor_path: None,
@@ -120,9 +128,12 @@ impl Runtime {
         srl: SignedRevocationList,
         fetched_at: DateTime<Utc>,
     ) -> Result<u64, RuntimeError> {
+        if matches!(self.revocation, Some(RevocationMode::TtlOnly { .. })) {
+            return Err(RuntimeError::TtlOnlyIgnoresSrl);
+        }
         let version = srl.version();
         self.tracker
-            .accept(RevocationUpdate { srl, fetched_at }, fetched_at)?;
+            .accept(RevocationUpdate { srl, fetched_at }, Utc::now())?;
         Ok(version)
     }
 
@@ -149,8 +160,20 @@ impl Runtime {
 
         let mut builder = Guard::builder()
             .authorizer(authorizer)
-            .denial_reporting(self.denial_reporting)
-            .ttl_until_signed_srl(self.ttl_fallback, self.tracker.clone());
+            .denial_reporting(self.denial_reporting);
+        builder = match &self.revocation {
+            None | Some(RevocationMode::TtlUntilSrl { .. }) => {
+                builder.ttl_until_signed_srl(self.ttl_fallback, self.tracker.clone())
+            }
+            Some(RevocationMode::TtlOnly { max_lifetime }) => {
+                builder.revocation(RevocationMode::TtlOnly {
+                    max_lifetime: *max_lifetime,
+                })
+            }
+            Some(RevocationMode::SignedSrl) => builder
+                .revocation(RevocationMode::SignedSrl)
+                .revocation_tracker(self.tracker.clone()),
+        };
 
         #[cfg(feature = "receipts")]
         let receipts = {
@@ -166,7 +189,8 @@ impl Runtime {
                     .receipt_signer(Arc::new(LocalReceiptSigner::new(
                         self.identity.signing_key().clone(),
                     )))
-                    .receipt_sink(sink.clone());
+                    .receipt_sink(sink.clone())
+                    .receipt_link(self.receipt_link.clone());
             }
             receipts
         };
@@ -214,11 +238,12 @@ impl Session {
     /// Snapshot of pending receipts. They are removed only by
     /// [`acknowledge_receipts`].
     #[cfg(feature = "receipts")]
+    #[deprecated(since = "0.2.6", note = "use `peek_receipts`")]
     pub fn drain_receipts(&self) -> Vec<Receipt> {
         self.peek_receipts()
     }
 
-    /// Snapshot of pending receipts. Same as [`drain_receipts`].
+    /// Snapshot of pending receipts. Removed only by [`acknowledge_receipts`].
     #[cfg(feature = "receipts")]
     pub fn peek_receipts(&self) -> Vec<Receipt> {
         let Some(sink) = self.receipts.as_ref() else {
@@ -243,6 +268,29 @@ impl Session {
             .as_ref()
             .map(|sink| sink.overflowed())
             .unwrap_or(0)
+    }
+
+    /// Operator-side explanation for this session's warrant.
+    pub fn diagnostics(&self) -> Diagnostics<'_> {
+        self.enforcer.diagnostics(&self.authority)
+    }
+
+    /// Mint a local child after confirming this session's parent is live.
+    pub fn delegate(
+        &self,
+        profile: &DelegationProfile,
+    ) -> Result<PresentedAuthority, DelegationError> {
+        self.enforcer.delegate(&self.authority, profile)
+    }
+
+    /// Mint a remote child after confirming this session's parent is live.
+    pub fn delegate_to(
+        &self,
+        child_holder: &PublicKey,
+        profile: &DelegationProfile,
+    ) -> Result<Vec<Warrant>, DelegationError> {
+        self.enforcer
+            .delegate_to(&self.authority, child_holder, profile)
     }
 }
 
@@ -270,9 +318,26 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Maximum warrant lifetime used when no signed SRL has been applied yet.
+    /// Selects [`RevocationMode::TtlUntilSrl`]: TTL ceiling until an SRL arrives.
     pub fn ttl_fallback(mut self, max_lifetime: Duration) -> Self {
         self.ttl_fallback = Some(max_lifetime);
+        if self.revocation.is_none() {
+            self.revocation = Some(RevocationMode::TtlUntilSrl { max_lifetime });
+        }
+        self
+    }
+
+    /// Explicit revocation policy. Required unless [`Self::ttl_fallback`] already
+    /// selected [`RevocationMode::TtlUntilSrl`].
+    pub fn revocation(mut self, mode: RevocationMode) -> Self {
+        match &mode {
+            RevocationMode::TtlOnly { max_lifetime }
+            | RevocationMode::TtlUntilSrl { max_lifetime } => {
+                self.ttl_fallback = Some(*max_lifetime);
+            }
+            RevocationMode::SignedSrl => {}
+        }
+        self.revocation = Some(mode);
         self
     }
 
@@ -323,7 +388,16 @@ impl RuntimeBuilder {
         if self.roots.is_empty() {
             return Err(RuntimeError::MissingRoots);
         }
-        let ttl_fallback = self.ttl_fallback.ok_or(RuntimeError::MissingTtlFallback)?;
+        let ttl_fallback = match (&self.revocation, self.ttl_fallback) {
+            (
+                Some(RevocationMode::TtlOnly { max_lifetime })
+                | Some(RevocationMode::TtlUntilSrl { max_lifetime }),
+                _,
+            ) => *max_lifetime,
+            (_, Some(ttl)) => ttl,
+            (Some(RevocationMode::SignedSrl), None) => Duration::from_secs(60),
+            (None, None) => return Err(RuntimeError::MissingTtlFallback),
+        };
         if ttl_fallback.is_zero() {
             return Err(RuntimeError::InvalidTtlFallback);
         }
@@ -341,12 +415,15 @@ impl RuntimeBuilder {
             identity,
             roots: self.roots,
             ttl_fallback,
+            revocation: self.revocation,
             tracker,
             denial_reporting: self.denial_reporting,
             #[cfg(feature = "receipts")]
             evidence: self.evidence,
             #[cfg(feature = "receipts")]
             receipt_capacity: self.receipt_capacity,
+            #[cfg(feature = "receipts")]
+            receipt_link: Arc::new(std::sync::Mutex::new(None)),
         })
     }
 }
@@ -406,6 +483,7 @@ impl SessionWarrant for String {
 
 /// Failure constructing a runtime or session, or applying an SRL.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RuntimeError {
     /// No holder identity was supplied.
     MissingIdentity,
@@ -427,6 +505,8 @@ pub enum RuntimeError {
     Revocation(RevocationError),
     /// Holder identity could not be loaded.
     Identity(IdentityError),
+    /// [`RevocationMode::TtlOnly`] does not consume signed revocation lists.
+    TtlOnlyIgnoresSrl,
 }
 
 impl From<GuardBuildError> for RuntimeError {
@@ -471,11 +551,30 @@ impl fmt::Display for RuntimeError {
             Self::Warrant(err) => write!(f, "{err}"),
             Self::Revocation(err) => write!(f, "{err}"),
             Self::Identity(err) => write!(f, "{err}"),
+            Self::TtlOnlyIgnoresSrl => {
+                write!(f, "TtlOnly runtime does not apply signed revocation lists")
+            }
         }
     }
 }
 
-impl std::error::Error for RuntimeError {}
+impl std::error::Error for RuntimeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Guard(err) => Some(err),
+            Self::Authority(err) => Some(err),
+            Self::Warrant(err) => Some(err),
+            Self::Revocation(err) => Some(err),
+            Self::Identity(err) => Some(err),
+            Self::MissingIdentity
+            | Self::MissingRoots
+            | Self::MissingTtlFallback
+            | Self::InvalidTtlFallback
+            | Self::InvalidSrlMaxAge
+            | Self::TtlOnlyIgnoresSrl => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -642,15 +741,15 @@ mod tests {
         let call = Call::borrowed("read", &args);
         session.check(&call).unwrap();
         session.check(&call).unwrap();
-        let first = session.drain_receipts();
+        let first = session.peek_receipts();
         assert_eq!(first.len(), 2);
-        assert_eq!(session.drain_receipts().len(), 2);
+        assert_eq!(session.peek_receipts().len(), 2);
         assert_eq!(session.acknowledge_receipts(2), 2);
-        assert!(session.drain_receipts().is_empty());
+        assert!(session.peek_receipts().is_empty());
         session.check(&call).unwrap();
-        assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.peek_receipts().len(), 1);
         assert_eq!(session.acknowledge_receipts(1), 1);
-        assert!(session.drain_receipts().is_empty());
+        assert!(session.peek_receipts().is_empty());
     }
 
     #[cfg(feature = "receipts")]
@@ -670,7 +769,7 @@ mod tests {
         let call = Call::borrowed("read", &args);
         assert!(session.check(&call).is_ok());
         assert!(session.check(&call).is_ok());
-        assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.peek_receipts().len(), 1);
         assert_eq!(session.receipt_overflows(), 1);
     }
 
@@ -691,7 +790,7 @@ mod tests {
         let call = Call::borrowed("read", &args);
         assert!(session.check(&call).is_ok());
         assert!(session.check(&call).is_err());
-        assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.peek_receipts().len(), 1);
         assert_eq!(session.receipt_overflows(), 1);
     }
 
@@ -736,5 +835,225 @@ mod tests {
                 .unwrap(),
             RuntimeError::MissingTtlFallback
         ));
+    }
+
+    #[test]
+    fn ttl_only_rejects_srl_and_still_allows_revoked_leaf() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("read", ConstraintSet::new())
+            .holder(holder.public_key())
+            .ttl(Duration::from_secs(300))
+            .build(&issuer)
+            .unwrap();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(600),
+            })
+            .build()
+            .unwrap();
+        let revoked = SignedRevocationList::builder()
+            .version(1)
+            .revoke(warrant.id().to_string())
+            .build(&issuer)
+            .unwrap();
+        assert!(matches!(
+            runtime.apply_signed_revocation_list_now(revoked),
+            Err(RuntimeError::TtlOnlyIgnoresSrl)
+        ));
+        let session = runtime.session_from_warrant(warrant).unwrap();
+        let args = HashMap::new();
+        assert!(session.check(&Call::borrowed("read", &args)).is_ok());
+    }
+
+    #[test]
+    fn ttl_until_srl_is_selected_by_ttl_fallback() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .build()
+            .unwrap();
+        assert!(matches!(
+            runtime.revocation,
+            Some(RevocationMode::TtlUntilSrl { .. })
+        ));
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn guard_deny_emits_receipt_with_roots_and_chain() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("read", ConstraintSet::new())
+            .holder(holder.public_key())
+            .ttl(Duration::from_secs(300))
+            .build(&issuer)
+            .unwrap();
+        let empty = SignedRevocationList::builder()
+            .version(4)
+            .build(&issuer)
+            .unwrap();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .build()
+            .unwrap();
+        runtime.apply_signed_revocation_list_now(empty).unwrap();
+        let first = runtime.session_from_warrant(warrant.clone()).unwrap();
+        let second = runtime.session_from_warrant(warrant).unwrap();
+        let args = HashMap::new();
+        let denied = first
+            .guard(&Call::borrowed("write", &args), |_| Ok::<_, &str>("no"))
+            .err()
+            .unwrap();
+        assert!(matches!(denied, crate::sdk::GuardError::Denied(_)));
+        let receipts = first.peek_receipts();
+        assert_eq!(receipts.len(), 1);
+        let payload = receipts[0].verify_signature().unwrap();
+        assert_eq!(payload.outcome, crate::receipt::Outcome::Deny);
+        assert!(payload.trusted_roots_hash.is_some());
+        assert_eq!(payload.srl_version, Some(4));
+        assert!(payload.srl_hash.is_some());
+        assert!(payload.prev_receipt_hash.is_none());
+        let before = receipts.len();
+        assert!(first
+            .diagnostics()
+            .why_denied(&Call::borrowed("write", &args))
+            .is_some());
+        assert_eq!(first.peek_receipts().len(), before);
+
+        assert!(second.check(&Call::borrowed("read", &args)).is_ok());
+        let chained = second.peek_receipts();
+        assert_eq!(chained.len(), 1);
+        let next = chained[0].verify_signature().unwrap();
+        assert_eq!(next.prev_receipt_hash, Some(receipts[0].digest().unwrap()));
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn deny_flood_does_not_starve_required_allow() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("read", ConstraintSet::new())
+            .holder(holder.public_key())
+            .ttl(Duration::from_secs(300))
+            .build(&issuer)
+            .unwrap();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .evidence_policy(EvidencePolicy::RequiredBeforeExecution)
+            .receipt_capacity(1)
+            .build()
+            .unwrap();
+        let session = runtime.session_from_warrant(warrant).unwrap();
+        let args = HashMap::new();
+        assert!(session.check(&Call::borrowed("write", &args)).is_err());
+        assert!(session.check(&Call::borrowed("write", &args)).is_err());
+        assert!(session.check(&Call::borrowed("read", &args)).is_ok());
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn persist_failure_does_not_advance_receipt_chain() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("read", ConstraintSet::new())
+            .holder(holder.public_key())
+            .ttl(Duration::from_secs(300))
+            .build(&issuer)
+            .unwrap();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_capacity(1)
+            .build()
+            .unwrap();
+        let session = runtime.session_from_warrant(warrant).unwrap();
+        let args = HashMap::new();
+        let first = session.check(&Call::borrowed("read", &args)).unwrap();
+        let a = first.receipt.clone().expect("first receipt");
+        let second = session.check(&Call::borrowed("read", &args)).unwrap();
+        assert!(second.receipt.is_some());
+        assert_eq!(session.peek_receipts().len(), 1);
+        session.acknowledge_receipts(1);
+        let third = session.check(&Call::borrowed("read", &args)).unwrap();
+        let c = third.receipt.expect("third receipt");
+        assert_eq!(
+            c.verify_signature().unwrap().prev_receipt_hash,
+            Some(a.digest().unwrap())
+        );
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn concurrent_receipts_share_one_predecessor_chain() {
+        use std::collections::HashSet;
+        use std::thread;
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("read", ConstraintSet::new())
+            .holder(holder.public_key())
+            .ttl(Duration::from_secs(300))
+            .build(&issuer)
+            .unwrap();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_capacity(128)
+            .build()
+            .unwrap();
+        let session = Arc::new(runtime.session_from_warrant(warrant).unwrap());
+        let threads = 8;
+        let per_thread = 10;
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                let session = session.clone();
+                thread::spawn(move || {
+                    let args = HashMap::new();
+                    for _ in 0..per_thread {
+                        session.check(&Call::borrowed("read", &args)).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("worker");
+        }
+        let receipts = session.peek_receipts();
+        assert_eq!(receipts.len(), threads * per_thread);
+        let digests: HashSet<_> = receipts.iter().map(|r| r.digest().unwrap()).collect();
+        assert_eq!(digests.len(), receipts.len());
+        let mut predecessors = HashSet::new();
+        let mut roots = 0usize;
+        for receipt in &receipts {
+            match receipt.verify_signature().unwrap().prev_receipt_hash {
+                None => roots += 1,
+                Some(prev) => assert!(predecessors.insert(prev), "duplicate predecessor"),
+            }
+        }
+        assert_eq!(roots, 1);
+        assert_eq!(predecessors.len(), receipts.len() - 1);
+        for prev in &predecessors {
+            assert!(digests.contains(prev), "link to unpublished receipt");
+        }
     }
 }

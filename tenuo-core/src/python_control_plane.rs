@@ -466,7 +466,7 @@ impl PyControlPlaneClient {
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
         let config = HeartbeatConfig {
-            control_plane_url: resolved_url,
+            control_plane_url: crate::connect_token::normalize_control_plane_url(&resolved_url),
             api_key: resolved_key,
             authorizer_name: resolved_name,
             authorizer_type: authorizer_type.to_string(),
@@ -482,6 +482,7 @@ impl PyControlPlaneClient {
             id_notify: None,
             agent_id,
             connect_token: parsed_token,
+            revocation_tracker: None,
         };
 
         let authorizer_id_async = Arc::new(RwLock::new(None::<String>));

@@ -20,27 +20,40 @@ Tenuo implements **capability tokens** (Warrants) for AI agent authorization:
 ## Quick Start
 
 ```rust
-use tenuo::{SigningKey, Warrant, Constraint, ConstraintSet, Authorizer};
+use std::collections::HashMap;
+use std::time::Duration;
+use tenuo::{
+    Authorizer, Constraint, ConstraintSet, ConstraintValue, Pattern, SigningKey, Warrant,
+};
 
-// Generate keys
 let issuer_key = SigningKey::generate();
 let holder_key = SigningKey::generate();
 
-// Issue a warrant
+let mut constraints = ConstraintSet::new();
+constraints.insert(
+    "path",
+    Constraint::Pattern(Pattern::new("/data/*").expect("pattern")),
+);
 let warrant = Warrant::builder()
-    .capability("read_file", ConstraintSet::new().insert("path", Constraint::pattern("/data/*")))
+    .capability("read_file", constraints)
     .holder(holder_key.public_key())
-    .ttl_secs(300)
-    .build(&issuer_key)?;
+    .ttl(Duration::from_secs(300))
+    .build(&issuer_key)
+    .expect("mint");
 
-// Verify and authorize
-let authorizer = Authorizer::new(vec![issuer_key.public_key()]);
-authorizer.verify_and_authorize(
-    &warrant,
-    "read_file",
-    &[("path", "/data/report.txt")],
-    Some(&holder_key.create_pop(&warrant, "read_file", &args)?),
-)?;
+let mut authorizer = Authorizer::new();
+authorizer.add_trusted_root(issuer_key.public_key());
+let mut args = HashMap::new();
+args.insert(
+    "path".into(),
+    ConstraintValue::String("/data/report.txt".into()),
+);
+let pop = warrant
+    .sign(&holder_key, "read_file", &args)
+    .expect("pop");
+authorizer
+    .authorize_one(&warrant, "read_file", &args, Some(&pop), &[])
+    .expect("authorize");
 ```
 
 ## Rust SDK (`sdk` feature)
@@ -48,47 +61,80 @@ authorizer.verify_and_authorize(
 Default-off. `Guard` enforces; `ObservingGuard` only assesses and is not a substitute.
 
 ```rust
-use tenuo::{args, Call, RevocationMode, Tenuo};
+# #[cfg(feature = "sdk")]
+# {
+use std::collections::HashMap;
 use std::time::Duration;
+use tenuo::sdk::prelude::*;
+use tenuo::{ConstraintSet, Warrant};
 
-let (guard, authority) = Tenuo::local()
-    .trusted_root(root)
-    .chain(chain)
-    .signer(holder_key)
-    .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(300) })
-    .build()?;
+let issuer = SigningKey::generate();
+let holder = SigningKey::generate();
+let warrant = Warrant::builder()
+    .capability("read_file", ConstraintSet::new())
+    .holder(holder.public_key())
+    .ttl(Duration::from_secs(300))
+    .build(&issuer)
+    .expect("mint");
 
-let args = args! { "path" => "/data/report.txt" };
+let runtime = Runtime::builder()
+    .holder(holder)
+    .trusted_root(issuer.public_key())
+    .revocation(RevocationMode::TtlOnly {
+        max_lifetime: Duration::from_secs(600),
+    })
+    .build()
+    .expect("runtime");
+let session = runtime.session_from_warrant(warrant).expect("session");
+let args = HashMap::new();
 let call = Call::borrowed("read_file", &args);
-guard.guard(&authority, &call, |_authorized| do_read())?;
+let out = session
+    .guard(&call, |_| Ok::<_, &str>("read"))
+    .expect("allow");
+assert_eq!(out.into_inner(), "read");
+# }
 ```
 
 An enforcement point uses `Tenuo::enforcement()` and `Guard::guard_received` on a `ReceivedAuthorization` decoded from `_meta.tenuo` or HTTP headers. The holder path always signs; the received path never does.
 
 A long-lived process that receives warrants over time uses `Runtime`: persist
 the holder key, apply signed revocation lists as they arrive, and bind each
-warrant into a `Session`.
+warrant into a `Session`. `Tenuo::local` is deprecated.
 
-```rust,ignore
+```rust
+# #[cfg(feature = "sdk")]
+# {
+use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::sdk::prelude::*;
+use tenuo::{ConstraintSet, Warrant};
 
-let identity = PersistentIdentity::load_or_generate(key_path)?;
+let issuer = SigningKey::generate();
+let holder = SigningKey::generate();
+let warrant = Warrant::builder()
+    .capability("read", ConstraintSet::new())
+    .holder(holder.public_key())
+    .ttl(Duration::from_secs(300))
+    .build(&issuer)
+    .expect("mint");
 let runtime = Runtime::builder()
-    .identity(identity)
-    .trusted_roots(roots)
+    .holder(holder)
+    .trusted_root(issuer.public_key())
     .ttl_fallback(Duration::from_secs(600))
-    .build()?;
-
-runtime.apply_signed_revocation_list_now(srl)?;
-let session = runtime.session_from_warrant(warrant)?;
-session.guard(&call, |_| perform_call())?;
+    .build()
+    .expect("runtime");
+let session = runtime.session_from_warrant(warrant).expect("session");
+let args = HashMap::new();
+assert!(session
+    .diagnostics()
+    .why_denied(&Call::borrowed("write", &args))
+    .is_some());
+# }
 ```
 
 Receipt collection needs the `receipts` feature: set
-`evidence_policy(EvidencePolicy::BestEffort)`, then `peek_receipts` /
-`drain_receipts` (same snapshot) and `acknowledge_receipts` to drop uploaded
-items.
+`evidence_policy(EvidencePolicy::BestEffort)`, then `peek_receipts`
+and `acknowledge_receipts` to drop uploaded items.
 
 Callers that obtain warrants and SRLs over the network should not assemble `Authorizer`, `PresentedAuthority`, `LocalReceiptSigner`, or `MemoryReceiptSink`.
 

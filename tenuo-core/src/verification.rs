@@ -59,6 +59,7 @@ impl<'a> VerificationContext<'a> {
 }
 
 /// How this decision treats revocation.
+#[non_exhaustive]
 pub enum RevocationState<'a> {
     /// This exact accepted snapshot decides.
     Snapshot(&'a RevocationSnapshot),
@@ -115,6 +116,10 @@ impl RevocationSnapshot {
 
     pub fn fetched_at(&self) -> Option<DateTime<Utc>> {
         self.fetched_at
+    }
+
+    pub(crate) fn srl(&self) -> &SignedRevocationList {
+        &self.srl
     }
 
     pub fn fresh_until(&self) -> Option<DateTime<Utc>> {

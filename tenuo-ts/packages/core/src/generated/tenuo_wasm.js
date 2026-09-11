@@ -371,6 +371,22 @@ class SdkContext {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
         }
     }
+    /**
+     * Sign verifier receipts with this 32-byte holder secret instead of an
+     * ephemeral key. Used by the TypeScript `Runtime`.
+     * @param {Uint8Array} secret
+     * @returns {SdkContext}
+     */
+    withReceiptSigner(secret) {
+        const ptr = this.__destroy_into_raw();
+        const ptr0 = passArray8ToWasm0(secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_withReceiptSigner(ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return SdkContext.__wrap(ret[0]);
+    }
 }
 if (Symbol.dispose) SdkContext.prototype[Symbol.dispose] = SdkContext.prototype.free;
 exports.SdkContext = SdkContext;

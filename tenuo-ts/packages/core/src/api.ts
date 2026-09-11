@@ -5,7 +5,22 @@
  * protocol vocabulary (`Warrant`, `mint`, `guard`) as the lead API.
  */
 
-export type TenuoErrorCode =
+/** Canonical kebab-case codes from Rust `ErrorCode::name()` / `Denial::code()`. */
+export type ProtocolDenialCode =
+  | "signature-invalid"
+  | "untrusted-root"
+  | "chain-broken"
+  | "depth-exceeded"
+  | "warrant-expired"
+  | "tool-not-authorized"
+  | "constraint-violation"
+  | "pop-signature-invalid"
+  | "approval-required"
+  | "insufficient-approvals"
+  | "warrant-revoked";
+
+/** Legacy SCREAMING_SNAKE aliases accepted by existing TypeScript callers. */
+export type LegacyTenuoErrorCode =
   | "TENUO_NOT_READY"
   | "TENUO_CONFIGURATION"
   | "TENUO_CONSTRAINT_VIOLATION"
@@ -21,6 +36,8 @@ export type TenuoErrorCode =
   | "TENUO_INSUFFICIENT_APPROVALS"
   | "TENUO_CANONICALIZATION"
   | "TENUO_NOT_IMPLEMENTED";
+
+export type TenuoErrorCode = ProtocolDenialCode | LegacyTenuoErrorCode;
 
 // ---------------------------------------------------------------------------
 // Constraints. Every kind is evaluated in the Rust core; TypeScript only
@@ -551,6 +568,8 @@ export type CreateTenuoOptions = {
   readonly root?: DevRoot | IssuerKey | PublicKeyHandle;
   /** Published SignedRevocationList (hex or standard base64). Verified against a trusted root. */
   readonly revocationList?: string | Uint8Array;
+  /** 32-byte holder seed used to sign verifier receipts. Runtime supplies this. */
+  readonly receiptSigner?: Uint8Array;
 };
 
 export type ApprovalRequestSummary = {

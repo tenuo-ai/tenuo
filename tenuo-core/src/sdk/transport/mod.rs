@@ -29,6 +29,7 @@ pub const MCP_APPROVAL_STRING_MAX: usize = 8 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Why a message could not be encoded or decoded. Checked before any decoding work.
+#[non_exhaustive]
 pub enum TransportError {
     /// A required field was absent.
     MissingField(&'static str),
@@ -57,7 +58,18 @@ impl fmt::Display for TransportError {
     }
 }
 
-impl std::error::Error for TransportError {}
+impl std::error::Error for TransportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Authority(err) => Some(err),
+            Self::MissingField(_)
+            | Self::PayloadTooLarge
+            | Self::InvalidEncoding
+            | Self::InvalidSignature
+            | Self::TooManyApprovals => None,
+        }
+    }
+}
 
 impl From<AuthorityError> for TransportError {
     fn from(value: AuthorityError) -> Self {

@@ -16,6 +16,15 @@ env:
   CARGO_INCREMENTAL: 0  # Faster CI builds (no incremental overhead)
 
 jobs:
+  version-check:
+    name: Version check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check crate and package versions
+        run: make version-check
+
   # ============================================================================
   # RUST CORE
   # ============================================================================

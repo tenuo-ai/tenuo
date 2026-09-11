@@ -4,6 +4,7 @@
 
 // PyO3 macros generate code that triggers false positive clippy warnings
 #![allow(clippy::useless_conversion)]
+#![allow(deprecated)]
 
 use crate::approval::{
     ApprovalMetadata as RustApprovalMetadata, ApprovalPayload as RustApprovalPayload,

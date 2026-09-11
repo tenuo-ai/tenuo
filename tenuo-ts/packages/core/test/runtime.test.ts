@@ -202,8 +202,14 @@ describe("Runtime", () => {
 
     const first = session.drainReceipts();
     expect(first).toHaveLength(2);
-    expect(verifyReceipt(first[0]!)).toMatchObject({ outcome: "allow" });
-    expect(verifyReceipt(first[1]!)).toMatchObject({ outcome: "deny" });
+    expect(verifyReceipt(first[0]!)).toMatchObject({
+      outcome: "allow",
+      signer_key: identity.publicKey.hex,
+    });
+    expect(verifyReceipt(first[1]!)).toMatchObject({
+      outcome: "deny",
+      signer_key: identity.publicKey.hex,
+    });
     expect(session.drainReceipts()).toEqual(first);
     expect(session.acknowledgeReceipts(2)).toBe(2);
     expect(session.drainReceipts()).toEqual([]);

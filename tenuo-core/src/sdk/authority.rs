@@ -226,6 +226,7 @@ impl OwnedReceivedAuthorization {
 
 /// Structural failure constructing presented or received authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AuthorityError {
     /// The chain was empty.
     EmptyChain,

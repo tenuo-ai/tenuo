@@ -57,6 +57,7 @@ use std::sync::Arc;
 /// Segments are parsed once at config load time, avoiding repeated
 /// string splitting and parsing during request handling.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PathSegment {
     /// Object field access: `"fieldName"`
     Field(Arc<str>),

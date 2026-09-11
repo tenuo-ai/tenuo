@@ -28,6 +28,7 @@
 //! 3. Child.expires_at <= Parent.expires_at
 //! 4. Child.constraints ⊆ Parent.constraints
 //! 5. Signature is valid
+#![allow(deprecated)]
 
 use crate::approval::{AuditEvent, AuditEventType, WarrantTracker};
 use crate::audit::log_event;
@@ -603,6 +604,10 @@ fn ensure_srl_not_replaced_or_rolled_back(
 }
 
 #[derive(Debug)]
+#[deprecated(
+    since = "0.2.6",
+    note = "use `Authorizer` or `tenuo::sdk::Runtime` as the primary entry point"
+)]
 pub struct DataPlane {
     /// Trusted issuer public keys, keyed by name.
     trusted_issuers: HashMap<String, PublicKey>,
@@ -1847,6 +1852,11 @@ impl Authorizer {
     /// Add a trusted root (mutable version).
     pub fn add_trusted_root(&mut self, key: PublicKey) {
         self.trusted_keys.push(key);
+    }
+
+    /// Trusted issuer public keys, in insertion order.
+    pub fn trusted_root_keys(&self) -> &[PublicKey] {
+        &self.trusted_keys
     }
 
     /// Set the PoP window (mutable version).
@@ -5569,7 +5579,7 @@ mod tests {
             .unwrap()
         {
             ApprovalRequirement::Denied { code, .. } => {
-                assert_eq!(code, "constraint_violation");
+                assert_eq!(code, crate::ErrorCode::ConstraintViolation.name());
             }
             other => panic!("expected Denied, got {other:?}"),
         }

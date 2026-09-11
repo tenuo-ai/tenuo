@@ -315,16 +315,24 @@ class TenuoClient implements Tenuo {
 
   constructor(options: CreateTenuoOptions) {
     if (options.root?.kind === "dev-root") {
-      this.context = createDevContext();
+      this.context = createDevContext(options.receiptSigner);
       this.canMint = true;
     } else if (options.root?.kind === "issuer-key") {
       if (!(options.root.secret instanceof Uint8Array) || options.root.secret.length !== 32) {
         throw new TenuoConfigurationError("root: issuer key must be a 32-byte secret");
       }
-      this.context = createIssuerContext(options.root.secret, rootHexes(options));
+      this.context = createIssuerContext(
+        options.root.secret,
+        rootHexes(options),
+        options.receiptSigner,
+      );
       this.canMint = true;
     } else {
-      this.context = createVerifierContext(rootHexes(options));
+      this.context = createVerifierContext(
+        rootHexes(options),
+        undefined,
+        options.receiptSigner,
+      );
       this.canMint = false;
     }
     if (options.revocationList !== undefined) {

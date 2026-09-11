@@ -3438,10 +3438,15 @@ impl From<All> for Constraint {
 }
 
 /// At least one constraint must match (OR).
+///
+/// Prefer the [`AnyOf`] alias in new code; it matches Python and TypeScript.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Any {
     pub constraints: Vec<Constraint>,
 }
+
+/// Canonical OR combinator name shared with Python `AnyOf` and TypeScript `anyOf`.
+pub type AnyOf = Any;
 
 impl Any {
     /// Create a new Any constraint.

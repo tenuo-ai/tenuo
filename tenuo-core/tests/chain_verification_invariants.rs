@@ -5,6 +5,7 @@
 //!
 //! The tests construct "forged" warrants by bypassing the builder's
 //! enforcement, to ensure the verifier provides defense-in-depth.
+#![allow(deprecated)]
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

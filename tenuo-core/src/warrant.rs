@@ -1012,11 +1012,11 @@ impl Warrant {
         if let Err(err) = self.check_constraints(tool, args) {
             let (code, reason) = match &err {
                 Error::ToolNotAuthorized { tool } => (
-                    "tool_not_authorized".to_string(),
+                    crate::ErrorCode::ToolNotAuthorized.name().to_string(),
                     format!("warrant does not authorize tool '{tool}'"),
                 ),
                 Error::ConstraintNotSatisfied { field, reason } => (
-                    "constraint_violation".to_string(),
+                    crate::ErrorCode::ConstraintViolation.name().to_string(),
                     format!("{field}: {reason}"),
                 ),
                 other => ("denied".to_string(), other.to_string()),

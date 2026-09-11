@@ -6,9 +6,8 @@
 //! `ObservingGuard` is an assessment window, not enforcement. Receipts, async,
 //! and OpenTelemetry are separate default-off features.
 //!
-//! [`Runtime`] is the long-lived holder surface: persist identity, apply SRLs,
-//! and bind warrants into [`Session`]s. [`Tenuo::local`] remains the one-shot
-//! constructor.
+//! [`Runtime`] is the primary holder entry: persist identity, apply SRLs,
+//! and bind warrants into [`Session`]s. [`Tenuo::local`] is deprecated.
 
 mod approvals;
 mod authority;

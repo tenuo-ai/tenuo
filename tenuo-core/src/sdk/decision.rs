@@ -32,6 +32,7 @@ pub struct DecisionMetadata {
 
 /// How a denial is reported. Changes log level only, never execution.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DenialReporting {
     #[default]
     /// Log denials at error level.
@@ -201,6 +202,7 @@ impl std::error::Error for Denial {}
 
 /// Conditions the protocol does not name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SdkDenialKind {
     /// Arguments failed bounds, shape, or conversion before any decision ran.
     ArgumentsRejected,
@@ -225,6 +227,7 @@ pub enum SdkDenialKind {
 
 /// What the caller may usefully do next. Never authorizes execution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Retryability {
     /// The identical call will be denied again.
     No,
@@ -236,6 +239,7 @@ pub enum Retryability {
 
 /// `guard` / `guard_attempt` failure.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum GuardError<E> {
     /// Tenuo denied. The operation did not run.
     Denied(Denial),
@@ -252,4 +256,11 @@ impl<E: fmt::Display> fmt::Display for GuardError<E> {
     }
 }
 
-impl<E: fmt::Debug + fmt::Display> std::error::Error for GuardError<E> {}
+impl<E: fmt::Debug + fmt::Display> std::error::Error for GuardError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Denied(denial) => Some(denial),
+            Self::Operation(_) => None,
+        }
+    }
+}

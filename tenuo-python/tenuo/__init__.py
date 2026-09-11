@@ -9,7 +9,7 @@ Tenuo Python SDK - Capability tokens for AI agents
         # Protection
         guard, guard_tools,
         # Constraints
-        Pattern, Range, OneOf, Exact, Any,  # Any = Wildcard for zero-trust
+        Pattern, Range, OneOf, Exact, AnyValue,  # AnyValue = Wildcard for zero-trust
         # Composites
         AnyOf, All, Not,  # AnyOf = OR, All = AND
         # Security (from Rust core - can be embedded in Warrants)
@@ -29,6 +29,8 @@ For advanced usage, import from submodules:
 # Extension guard — must run before any tenuo_core import so that
 # TENUO_REQUIRE_EXTENSION=1 fails at process start, not later.
 # =============================================================================
+import warnings
+
 from tenuo._extension import EXTENSION_AVAILABLE as _EXTENSION_AVAILABLE  # noqa: F401
 
 
@@ -116,9 +118,9 @@ from tenuo_core import (
     encode_warrant_stack,
 )
 
-# Semantic alias: Any() = Wildcard() for zero-trust constraint sets
-# Use Any() to explicitly allow any value for a field while in closed-world mode
-Any = Wildcard
+# Wildcard: allow any value for a field in a closed-world constraint set.
+# `Any` used to alias Wildcard and collided with the OR combinator (`AnyOf`).
+AnyValue = Wildcard
 
 # =============================================================================
 # 80% API - What most users need
@@ -326,7 +328,8 @@ __all__ = [
     "Range",
     "Contains",
     "Wildcard",
-    "Any",  # Alias for Wildcard - use in zero-trust constraint sets
+    "AnyValue",  # Alias for Wildcard
+    "Any",  # Deprecated alias for AnyValue; do not confuse with AnyOf
     # Advanced constraints
     "AnyOf",  # OR composite (at least one must match)
     "All",  # AND composite (all must match)
@@ -397,3 +400,14 @@ __all__ = [
 ]
 
 __version__ = "0.2.6"
+
+
+def __getattr__(name: str):
+    if name == "Any":
+        warnings.warn(
+            "tenuo.Any is deprecated; use tenuo.AnyValue or tenuo.Wildcard",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return Wildcard
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

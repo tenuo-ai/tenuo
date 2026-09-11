@@ -22,8 +22,20 @@ use serde::{Deserialize, Serialize};
 
 const TOKEN_PREFIX: &str = "tenuo_ct_";
 
+/// Strip trailing slashes and a trailing `/v1` so callers append `/v1/…` once.
+pub fn normalize_control_plane_url(url: &str) -> String {
+    let mut endpoint = url.trim().trim_end_matches('/').to_string();
+    if endpoint.ends_with("/v1") {
+        endpoint.truncate(endpoint.len() - 3);
+        endpoint = endpoint.trim_end_matches('/').to_string();
+    }
+    endpoint
+}
+
 /// Parsed connect token payload.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// `Debug` and `Serialize` redact `api_key` and `registration_token`.
+#[derive(Clone, Deserialize)]
 pub struct ConnectToken {
     /// Token format version. [`ConnectToken::parse`] accepts only version 1.
     #[serde(rename = "v")]
@@ -52,8 +64,37 @@ pub struct ConnectToken {
     pub registration_token: Option<String>,
 }
 
+impl std::fmt::Debug for ConnectToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectToken")
+            .field("version", &self.version)
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &"[REDACTED]")
+            .field("agent_id", &self.agent_id)
+            .field(
+                "registration_token",
+                &self.registration_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
+}
+
+impl Serialize for ConnectToken {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("ConnectToken", 5)?;
+        state.serialize_field("v", &self.version)?;
+        state.serialize_field("e", &self.endpoint)?;
+        state.serialize_field("k", "[REDACTED]")?;
+        state.serialize_field("a", &self.agent_id)?;
+        state.serialize_field("t", &self.registration_token.as_ref().map(|_| "[REDACTED]"))?;
+        state.end()
+    }
+}
+
 /// Errors specific to connect token operations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConnectTokenError {
     /// Token string does not start with the expected prefix.
     MissingPrefix,
@@ -138,16 +179,8 @@ impl ConnectToken {
             return Err(ConnectTokenError::MissingField("api_key"));
         }
 
-        // Normalize: strip trailing `/v1` (and trailing slashes) so all
-        // callers can uniformly prepend `/v1/…` paths without doubling.
-        let mut ep = token.endpoint;
-        ep = ep.trim_end_matches('/').to_string();
-        if ep.ends_with("/v1") {
-            ep.truncate(ep.len() - 3);
-        }
-
         Ok(ConnectToken {
-            endpoint: ep,
+            endpoint: normalize_control_plane_url(&token.endpoint),
             ..token
         })
     }
@@ -167,11 +200,7 @@ impl ConnectToken {
         if !self.needs_endpoint_base() {
             return Ok(());
         }
-        let mut origin = base.trim().trim_end_matches('/').to_string();
-        if origin.ends_with("/v1") {
-            origin.truncate(origin.len() - 3);
-            origin = origin.trim_end_matches('/').to_string();
-        }
+        let origin = normalize_control_plane_url(base);
         if origin.is_empty() || origin.starts_with('/') {
             return Err(ConnectTokenError::MissingField("endpoint"));
         }
@@ -189,6 +218,7 @@ impl ConnectToken {
     /// This is a no-op when `agent_id` or `registration_token` is absent.
     /// HTTP 409 (already claimed) is treated as success so the same token can
     /// be safely reused by multiple authorizer instances.
+    #[cfg(feature = "server")]
     pub async fn claim_agent(
         &self,
         signing_key: &crate::crypto::SigningKey,
@@ -409,5 +439,21 @@ mod tests {
             ct.resolve_endpoint(""),
             Err(ConnectTokenError::MissingField("endpoint"))
         ));
+    }
+
+    #[test]
+    fn debug_and_serialize_redact_secrets() {
+        let raw = make_token_str(
+            r#"{"v":1,"e":"https://control.example.com","k":"tc_secret","t":"reg_secret"}"#,
+        );
+        let ct = ConnectToken::parse(&raw).unwrap();
+        let debug = format!("{ct:?}");
+        assert!(!debug.contains("tc_secret"), "{debug}");
+        assert!(!debug.contains("reg_secret"), "{debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
+        let json = serde_json::to_string(&ct).unwrap();
+        assert!(!json.contains("tc_secret"), "{json}");
+        assert!(!json.contains("reg_secret"), "{json}");
+        assert!(json.contains("[REDACTED]"), "{json}");
     }
 }

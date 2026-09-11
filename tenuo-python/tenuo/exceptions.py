@@ -422,10 +422,17 @@ class TenuoError(Exception):
         """
         return ERROR_CODE_REGISTRY.get(type(self), 0)
 
+    @property
+    def code(self) -> str:
+        """Canonical kebab-case denial code (same vocabulary as Rust ``ErrorCode.name()``)."""
+        return self.get_wire_name()
+
     def get_wire_name(self) -> str:
         """Get kebab-case error name derived from wire code."""
         code = self.get_wire_code()
-        return ErrorCode.to_name(code) if code > 0 else self.error_code
+        if code > 0:
+            return ErrorCode.to_name(code)
+        return self.error_code.replace("_", "-")
 
     def get_http_status(self) -> int:
         """Get HTTP status code based on error category."""

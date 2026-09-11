@@ -22,15 +22,17 @@ fn main() {
     let holder = SigningKey::generate();
     let approver = SigningKey::generate();
 
-    let (client, authority) = Tenuo::local()
+    let runtime = Runtime::builder()
+        .holder(holder.clone())
         .trusted_root(issuer.public_key())
-        .chain(vec![mint_read(&issuer, &holder)])
-        .signer(holder.clone())
         .revocation(RevocationMode::TtlOnly {
             max_lifetime: Duration::from_secs(3600),
         })
         .build()
-        .expect("client");
+        .expect("runtime");
+    let session = runtime
+        .session_from_warrant(mint_read(&issuer, &holder))
+        .expect("session");
 
     let server = Tenuo::enforcement()
         .trusted_root(issuer.public_key())
@@ -40,8 +42,8 @@ fn main() {
         .build()
         .expect("server");
 
-    hop_allow(&client, &authority, &server);
-    hop_constraint_deny(&client, &authority);
+    hop_allow(session.enforcer(), session.authority(), &server);
+    hop_constraint_deny(session.enforcer(), session.authority());
     hop_missing_meta(&server);
     hop_approval_retry(&issuer, &holder, &approver, &server);
 
@@ -124,6 +126,7 @@ fn hop_constraint_deny(client: &Guard, authority: &PresentedAuthority) {
         }
         Ok(_) => panic!("expected constraint deny"),
         Err(GuardError::Operation(_)) => panic!("operation must not run"),
+        Err(_) => panic!("unexpected guard error"),
     }
 }
 
@@ -182,6 +185,7 @@ fn hop_approval_retry(
         }
         Ok(_) => panic!("expected approval-required"),
         Err(GuardError::Operation(_)) => panic!("operation must not run"),
+        Err(_) => panic!("unexpected guard error"),
     };
 
     let approvals = client.resolve_approvals(&request).expect("provider");

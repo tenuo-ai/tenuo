@@ -61,6 +61,7 @@ impl ApprovalProvider for LocalApprovalSigner {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Why approvals could not be obtained.
+#[non_exhaustive]
 pub enum ApprovalError {
     /// No provider is configured on the guard.
     NoProvider,

@@ -544,7 +544,7 @@ class TestApprovalRequirementBinding:
         assert preflight.status == "denied"
         assert preflight.is_denied()
         assert not preflight.requires_approval()
-        assert preflight.code == "constraint_violation"
+        assert preflight.code == "constraint-violation"
         # Boolean helper is gate-map only (split-view safe); typed API is Denied.
         assert _evaluate_approval_gates(w, "write_approval", {"amount": 1200})
         with pytest.raises(ConstraintViolation):
@@ -552,7 +552,7 @@ class TestApprovalRequirementBinding:
 
         missing = w.approval_requirement("read_file", {"path": "/x"})
         assert missing.status == "denied"
-        assert missing.code == "tool_not_authorized"
+        assert missing.code == "tool-not-authorized"
         assert "Some(" not in repr(preflight)
         assert "denied" in repr(preflight)
         assert preflight == w.approval_requirement("write_approval", {"amount": 1200})

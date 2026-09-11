@@ -139,6 +139,7 @@ impl fmt::Display for LocalSigner {
 
 /// Signer failure. Never includes key material.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SignerError {
     /// The signer could not be reached.
     Unavailable,
