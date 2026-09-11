@@ -650,8 +650,10 @@ jobs:
   # ============================================================================
   # TYPESCRIPT SDK (WASM-backed @tenuo/core)
   # ============================================================================
+  # Node 20 is the minimum in tenuo-ts/package.json engines. This lane
+  # rebuilds the Rust/WASM package and the Python binding.
   tenuo-ts:
-    name: TypeScript SDK
+    name: TypeScript SDK (Node 20)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -736,7 +738,7 @@ jobs:
             tenuo-ts/packages/core/src/generated/tenuo_wasm.js \
             tenuo-ts/packages/core/src/generated/tenuo_wasm.d.ts
 
-      - name: Pack smoke (Node 20)
+      - name: Build and pack smoke
         working-directory: tenuo-ts
         run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
 
@@ -746,8 +748,8 @@ jobs:
           NEXT_TELEMETRY_DISABLED: "1"
         run: node examples/nextjs-node/scripts/verify-packed.mjs
 
-  # Test the committed WASM package on every supported active Node line without
-  # rebuilding it. Node 20 above remains the reproducible Rust/WASM build lane.
+  # Test the committed WASM package on the remaining supported Node lines
+  # without rebuilding it. Node 24 is the active LTS.
   tenuo-ts-node-compat:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
