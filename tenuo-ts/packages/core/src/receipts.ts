@@ -43,13 +43,41 @@ export class ReceiptCollector {
     this.#items.splice(0, n);
     return n;
   }
+
+  /** Remove receipts by wire identity, preserving remaining order. */
+  removeMatching(wires: readonly string[]): number {
+    if (wires.length === 0) {
+      return 0;
+    }
+    const drop = new Set(wires);
+    const kept: string[] = [];
+    let removed = 0;
+    for (const item of this.#items) {
+      if (drop.has(item)) {
+        removed += 1;
+      } else {
+        kept.push(item);
+      }
+    }
+    this.#items.length = 0;
+    this.#items.push(...kept);
+    return removed;
+  }
 }
 
 const sessionCollectors = new WeakMap<object, ReceiptCollector>();
 const hostCollectors = new WeakMap<object, ReceiptCollector>();
+const linkedHostCollectors = new WeakMap<object, ReceiptCollector>();
 
-export function bindSessionCollector(session: object, collector: ReceiptCollector): void {
+export function bindSessionCollector(
+  session: object,
+  collector: ReceiptCollector,
+  host?: ReceiptCollector,
+): void {
   sessionCollectors.set(session, collector);
+  if (host !== undefined) {
+    linkedHostCollectors.set(session, host);
+  }
 }
 
 /** Derived sessions share the parent's outbox so acknowledge frees both. */
@@ -57,6 +85,10 @@ export function inheritSessionCollector(parent: object, child: object): void {
   const parentCollector = sessionCollectors.get(parent);
   if (parentCollector !== undefined) {
     sessionCollectors.set(child, parentCollector);
+  }
+  const host = linkedHostCollectors.get(parent);
+  if (host !== undefined) {
+    linkedHostCollectors.set(child, host);
   }
 }
 
@@ -78,6 +110,13 @@ export function hostCollector(host: object | undefined): ReceiptCollector | unde
   return hostCollectors.get(host);
 }
 
+export function linkedHostCollector(session: object | undefined): ReceiptCollector | undefined {
+  if (session === undefined) {
+    return undefined;
+  }
+  return linkedHostCollectors.get(session);
+}
+
 export function collectReceipt(
   receipt: string | undefined,
   session?: SessionContract,
@@ -86,11 +125,7 @@ export function collectReceipt(
   if (receipt === undefined) {
     return;
   }
-  const sessionCol = sessionCollector(session);
-  if (sessionCol !== undefined) {
-    sessionCol.push(receipt);
-    return;
-  }
+  sessionCollector(session)?.push(receipt);
   hostCollector(host)?.push(receipt);
 }
 

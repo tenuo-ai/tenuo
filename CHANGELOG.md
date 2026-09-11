@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Runtime `acknowledgeReceipts` follows emission order.** Session and
+  host receipts share one outbox. Acking `n` removes the oldest emitted
+  wires by identity, not "host buffer then sessions." `receiptMax: 0`
+  is rejected.
+
 ### Added
 
 - **TypeScript holder Runtime.** `createTenuo.runtime({ identity, trustedRoots,

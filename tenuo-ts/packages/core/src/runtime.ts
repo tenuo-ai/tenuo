@@ -5,6 +5,7 @@ import {
   bindHostCollector,
   bindSessionCollector,
   hostCollector,
+  linkedHostCollector,
   ReceiptCollector,
   sessionCollector,
 } from "./receipts.ts";
@@ -68,15 +69,14 @@ export class Runtime {
     if (this.#collect) {
       const collector = new ReceiptCollector(this.#max);
       this.#sessionCollectors.push(collector);
-      bindSessionCollector(session, collector);
+      bindSessionCollector(session, collector, hostCollector(this.tenuo));
     }
     return session;
   }
 
   /** Undrained receipts from every session and presented call handled by this runtime. */
   peekReceipts(): string[] {
-    const host = hostCollector(this.tenuo)?.peek() ?? [];
-    return [...host, ...this.#sessionCollectors.flatMap((collector) => collector.peek())];
+    return hostCollector(this.tenuo)?.peek() ?? [];
   }
 
   /**
@@ -89,31 +89,22 @@ export class Runtime {
   }
 
   acknowledgeReceipts(count: number): number {
-    let left = count;
-    let removed = 0;
     const host = hostCollector(this.tenuo);
-    if (host !== undefined && left > 0) {
-      const took = host.acknowledge(left);
-      removed += took;
-      left -= took;
+    if (host === undefined) {
+      return 0;
     }
+    const taken = host.peek().slice(0, count);
+    const removed = host.acknowledge(count);
+    const acked = taken.slice(0, removed);
     for (const collector of this.#sessionCollectors) {
-      if (left <= 0) {
-        break;
-      }
-      const took = collector.acknowledge(left);
-      removed += took;
-      left -= took;
+      collector.removeMatching(acked);
     }
     return removed;
   }
 
-  /** Receipts dropped because an outbox was full. */
+  /** Receipts dropped because the shared outbox was full. */
   receiptOverflows(): number {
-    const host = hostCollector(this.tenuo)?.overflowed ?? 0;
-    return (
-      host + this.#sessionCollectors.reduce((sum, collector) => sum + collector.overflowed, 0)
-    );
+    return hostCollector(this.tenuo)?.overflowed ?? 0;
   }
 }
 
@@ -137,6 +128,9 @@ export function createRuntime(
     tenuoOptions.revocationList = options.revocationList;
   }
   const tenuo = createTenuo(tenuoOptions);
+  if (options.receiptMax === 0) {
+    throw new TenuoConfigurationError("createTenuo.runtime() receiptMax must be a positive integer.");
+  }
   return new Runtime(
     tenuo,
     options.identity,
@@ -154,5 +148,12 @@ export function peekSessionReceipts(session: object): string[] {
 }
 
 export function acknowledgeSessionReceipts(session: object, count: number): number {
-  return sessionCollector(session)?.acknowledge(count) ?? 0;
+  const collector = sessionCollector(session);
+  if (collector === undefined) {
+    return 0;
+  }
+  const taken = collector.peek().slice(0, count);
+  const removed = collector.acknowledge(count);
+  linkedHostCollector(session)?.removeMatching(taken.slice(0, removed));
+  return removed;
 }

@@ -681,11 +681,13 @@ removed until `acknowledgeReceipts(n)`.
 |---|---|
 | `peekReceipts()` | Copy pending receipts. Does not remove them. |
 | `drainReceipts()` | Same as `peekReceipts()`. |
-| `acknowledgeReceipts(n)` | Remove the first `n` pending receipts. |
+| `acknowledgeReceipts(n)` | Remove the first `n` pending receipts from the shared outbox (emission order). Session copies of those wires are removed by identity. |
 
 Guarantees:
 
-- Emission order is preserved.
+- Emission order is preserved on the runtime outbox. Session and host
+  receipts share that outbox, so `runtime.acknowledgeReceipts(1)` acks the
+  oldest emitted receipt, not "host buffer first."
 - Two consecutive drains return the same items until acknowledge.
 - Unrelated sessions do not share a buffer. Presented-path verify / MCP
   handler receipts are on `runtime.peekReceipts()`.

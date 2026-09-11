@@ -213,6 +213,19 @@ describe("Runtime", () => {
     expect(otherSession.peekReceipts()).toEqual([]);
   });
 
+  it("acks runtime receipts in emission order, not host-then-session", async () => {
+    const { runtime, session, readFile } = issuedRuntime();
+    await readFile.execute({ path: "/data/a.pdf" }, { session });
+    const first = session.peekReceipts()[0];
+    expect(first).toBeDefined();
+    const presented = runtime.tenuo.present(session, "read_file", { path: "/data/q3.pdf" });
+    await runtime.tenuo.verify(presented, "read_file", { path: "/data/q3.pdf" });
+    expect(runtime.peekReceipts()[0]).toBe(first);
+    expect(runtime.acknowledgeReceipts(1)).toBe(1);
+    expect(session.peekReceipts()).not.toContain(first);
+    expect(runtime.peekReceipts()).not.toContain(first);
+  });
+
   it("acknowledges only successfully persisted receipts", async () => {
     const { runtime, session, readFile } = issuedRuntime();
     await readFile.execute({ path: "/data/a.pdf" }, { session });

@@ -114,7 +114,8 @@ impl MemoryReceiptSink {
     }
 
     /// Bound outbox. A full sink drops the new receipt, counts it, and
-    /// still reports success so an authorized call is not denied.
+    /// returns [`ReceiptSinkError::Unavailable`]. Best-effort evidence
+    /// swallows that error; RequiredBeforeExecution denies.
     pub fn with_capacity(max: usize) -> Self {
         Self {
             stored: Mutex::new(Vec::new()),
@@ -165,10 +166,8 @@ impl ReceiptSink for MemoryReceiptSink {
             .lock()
             .map_err(|_| ReceiptSinkError::Unavailable)?;
         if stored.len() >= self.max {
-            let n = self.overflowed.fetch_add(1, Ordering::Relaxed) + 1;
-            return Ok(ReceiptRef {
-                id: format!("mem:overflow:{n}"),
-            });
+            self.overflowed.fetch_add(1, Ordering::Relaxed);
+            return Err(ReceiptSinkError::Unavailable);
         }
         stored.push(receipt.clone());
         Ok(ReceiptRef {
@@ -272,13 +271,13 @@ mod tests {
     }
 
     #[test]
-    fn memory_sink_overflow_is_counted_and_does_not_fail() {
+    fn memory_sink_overflow_is_counted_and_unavailable() {
         let sink = MemoryReceiptSink::with_capacity(1);
         let signer = LocalReceiptSigner::for_development();
         let payload = ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64]);
         let receipt = sign_payload(&payload.to_cbor().unwrap(), &signer).unwrap();
         assert!(sink.persist(&receipt).is_ok());
-        assert!(sink.persist(&receipt).is_ok());
+        assert_eq!(sink.persist(&receipt), Err(ReceiptSinkError::Unavailable));
         assert_eq!(sink.stored().len(), 1);
         assert_eq!(sink.overflowed(), 1);
     }
