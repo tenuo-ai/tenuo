@@ -806,7 +806,9 @@ fails closed. Its `ttlSeconds` option defaults to 180 and, when provided, must
 be positive, finite, and small enough to represent in milliseconds.
 
 See the [`@tenuo/mcp` README](packages/mcp/README.md) for handler behavior,
-error mapping, and replay protection. A complete multi-agent scenario lives in
+error mapping, and replay protection. The smallest runnable v2 client/server
+pair is [`packages/mcp/examples/v2`](packages/mcp/examples/v2/README.md)
+(`pnpm example:mcp:v2`). A complete multi-agent scenario lives in
 [`packages/core/examples/mcp`](packages/core/examples/mcp/README.md).
 
 ## Packages and compatibility

@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@tenuo/core": fileURLToPath(new URL("../core/src/index.ts", import.meta.url)),
+      "@tenuo/mcp": fileURLToPath(new URL("./src/index.ts", import.meta.url)),
     },
   },
 });

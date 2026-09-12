@@ -63,6 +63,10 @@ failure returns the constant "Replay store unavailable"; pass
 `onNonceStoreError` for the original cause. Unknown option keys, including
 mixed typos like `{ allow, nonceStroe }`, throw at register time.
 
+A minimal runnable version of the above, with an in-memory v2 client and
+server, one allowed call, and one denied call, lives in
+[`examples/v2`](examples/v2/README.md). From `tenuo-ts`: `pnpm example:mcp:v2`.
+
 There is no FastMCP adapter and no v1 adapter package. For
 `@modelcontextprotocol/sdk` v1, copy the recipe in
 `packages/core/examples/mcp/host.ts`.
