@@ -37,6 +37,27 @@ try {
     /^dist\/[^/]+\.js\.map$/,
     /^dist\/[^/]+\.d\.ts$/,
   ]);
+  run("npm", ["install", "--save-dev", "typescript@~5.8.2", "@types/node@^20.0.0"], {
+    cwd: installDir,
+    stdio: "inherit",
+  });
+  writeFileSync(join(installDir, "consumer.ts"), `
+    import { McpServer } from "@modelcontextprotocol/server";
+    import { createTenuo, under } from "@tenuo/core";
+    import { guardHandler, guardTools, type GuardHandlerCallback } from "@tenuo/mcp";
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const callback: GuardHandlerCallback<{ path: string }> = async ({ path }) => ({
+      content: [{ type: "text", text: path }],
+    });
+    const guarded = guardHandler(tenuo, "read_file", { allow: { path: under("/data") } }, callback);
+    await guarded({ path: "/data/q3.pdf" });
+    const server = new McpServer({ name: "consumer", version: "1.0.0" });
+    guardTools(tenuo, server).register("health", {}, async () => ({
+      content: [{ type: "text", text: "ok" }],
+    }));
+  `);
+  typecheckConsumer(installDir);
+
   execFileSync(
     process.execPath,
     [
@@ -150,3 +171,25 @@ function assertPackageContents(root, packageName, allowed) {
     }
   }
 }
+
+function typecheckConsumer(cwd) {
+  writeFileSync(
+    join(cwd, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false,
+      },
+      files: ["consumer.ts"],
+    }),
+  );
+  run(process.execPath, [join(cwd, "node_modules", "typescript", "bin", "tsc"), "--noEmit"], {
+    cwd,
+    stdio: "inherit",
+  });
+}
+
