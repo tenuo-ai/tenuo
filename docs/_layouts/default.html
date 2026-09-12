@@ -10,6 +10,11 @@
   {% assign og_image_width = page.og_image_width | default: '1200' %}
   {% assign og_image_height = page.og_image_height | default: '630' %}
   {% assign og_image_alt = page.og_image_alt | default: page.title %}
+  {% if page.og_title %}
+    {% assign social_title = page.og_title %}
+  {% else %}
+    {% capture social_title %}{{ page.title }} | Tenuo{% endcapture %}
+  {% endif %}
   {% assign page_path = page.url | default: '/' %}
   {% assign canonical_path = page_path %}
   {% if canonical_path != '/' and canonical_path != '/index.html' and canonical_path contains '.html' %}
@@ -43,7 +48,7 @@
   
   <!-- Open Graph / Social Media -->
   <meta property="og:type" content="{{ og_type }}">
-  <meta property="og:title" content="{{ page.title }} | Tenuo">
+  <meta property="og:title" content="{{ social_title }}">
   <meta property="og:description" content="{{ page_description }}">
   <meta property="og:image" content="{{ og_image_url }}">
   <meta property="og:image:width" content="{{ og_image_width }}">
@@ -54,7 +59,7 @@
   
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{{ page.title }} | Tenuo">
+  <meta name="twitter:title" content="{{ social_title }}">
   <meta name="twitter:description" content="{{ page_description }}">
   <meta name="twitter:image" content="{{ og_image_url }}">
   <meta name="twitter:image:alt" content="{{ og_image_alt }}">
@@ -169,6 +174,10 @@
 
     .top-nav a:hover {
       color: var(--text);
+    }
+
+    .top-nav a:last-child {
+      margin-right: 0;
     }
 
     .top-nav .brand {
@@ -559,10 +568,12 @@
     /* Footer */
     footer {
       margin-top: 4rem;
-      padding: 2rem 0;
-      border-top: 1px solid var(--border);
+      padding: 48px 0;
+      border-top: 1px solid rgba(56, 189, 248, 0.07);
       color: var(--text-muted);
-      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
       text-align: center;
     }
 
@@ -575,13 +586,6 @@
       color: var(--text);
     }
 
-    .footer-tech {
-      margin-bottom: 12px;
-      font-size: 0.9rem;
-      color: var(--text);
-      opacity: 0.7;
-    }
-
     /* Mobile */
     @media (max-width: 900px) {
       .sidebar {
@@ -592,6 +596,17 @@
         padding: 32px 24px;
       }
     }
+
+    @media (max-width: 480px) {
+      .top-nav {
+        padding: 0 16px;
+      }
+
+      .top-nav a {
+        margin-right: 12px;
+        font-size: 0.75rem;
+      }
+    }
   </style>
 </head>
 
@@ -599,16 +614,10 @@
   <nav class="top-nav">
     <a href="{{ site.baseurl }}/" class="brand">tenuo</a>
     <span class="spacer"></span>
-    <a href="{{ site.baseurl }}/quickstart">Quick Start</a>
-    <a href="{{ site.baseurl }}/concepts">Concepts</a>
-    <a href="{{ site.baseurl }}/api-reference">API</a>
-    <a href="{{ site.baseurl }}/openai">OpenAI</a>
-    <a href="{{ site.baseurl }}/crewai">CrewAI</a>
-    <a href="{{ site.baseurl }}/langchain">LangChain</a>
-    <a href="{{ site.baseurl }}/temporal">Temporal</a>
-    <a href="{{ site.baseurl }}/google-adk">Google ADK</a>
-    <a href="{{ site.baseurl }}/early-access.html">Early Access</a>
+    <a href="{{ site.baseurl }}/quickstart">Docs</a>
+    <a href="{{ site.baseurl }}/explorer">Explorer</a>
     <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+    <a href="https://cloud.tenuo.ai">Tenuo Cloud</a>
   </nav>
 
   <div class="layout">
@@ -623,14 +632,11 @@
       </article>
 
       <footer>
-        <p class="footer-tech">🦀 Rust core • 🐍 Python SDK • ⚡ Sub-50μs verification</p>
         <p>
-          <a href="{{ site.baseurl }}/">Home</a> ·
-          <a href="{{ site.baseurl }}/quickstart">Quick Start</a> ·
-          <a href="{{ site.baseurl }}/api-reference">API</a> ·
-          <a href="{{ site.baseurl }}/security">Security</a> ·
-          <a href="{{ site.baseurl }}/in-the-wild">In the Wild</a> ·
-          <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+          © 2026 Tenuo ·
+          <a href="{{ site.baseurl }}/quickstart">Docs</a> ·
+          <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> ·
+          <a href="{{ site.baseurl }}/early-access.html">Early Access</a>
         </p>
       </footer>
     </main>

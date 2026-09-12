@@ -1,38 +1,83 @@
 export type {
+  ApprovalGateInspection,
+  ApprovalRequirement,
+  ApprovalRequirementStatus,
+} from "./wasm.ts";
+
+export { approvalRequirement, evaluateApprovalGates, inspectApprovalGate } from "./wasm.ts";
+
+export type {
+  AllConstraint,
   AllowPolicy,
+  AnyOfConstraint,
+  ApprovalContextAttestation,
+  ApprovalInfo,
   ApprovalRequest,
+  ApprovalRequestSummary,
+  ArgApprovalGate,
+  CelConstraint,
+  CidrConstraint,
+  Clearance,
   ConstraintExpr,
+  ContainsConstraint,
+  ControlPlaneApprovalRequestV1,
+  ControlPlaneApprovalResponseV1,
   CreateTenuoOptions,
   Decision,
   DevRoot,
   EmailConstraint,
   ExactConstraint,
   ExecuteOptions,
+  ExplainedField,
+  Explanation,
+  IssueInput,
+  IssuerKey,
   MaxConstraint,
   McpAttachOptions,
   McpCallParams,
   McpHandlerPolicy,
   McpJsonRpcError,
   McpVerifyOptions,
+  MinConstraint,
   NarrowInput,
+  NarrowOptions,
   NonceStore,
+  NotConstraint,
+  NotOneOfConstraint,
   OneOfConstraint,
   PatternConstraint,
+  PresentedCall,
   ProtectedTool,
   PublicKeyHandle,
+  RangeConstraint,
+  ReceiptChainInfo,
+  ReceiptInfo,
+  RegexConstraint,
   RequireApproval,
+  RevocationListInfo,
+  RevocationListInput,
   Session,
   SessionAllow,
   SessionFromWireInput,
+  SessionInfo,
   SessionInput,
+  ShlexConstraint,
+  SignApprovalOptions,
+  SubsetConstraint,
   Tenuo,
+  LegacyTenuoErrorCode,
+  ProtocolDenialCode,
   TenuoErrorCode,
   TenuoMcp,
   TenuoMcpMeta,
+  ToolApprovalGate,
   ToolLike,
-  WarrantPart,
   ToolPolicy,
   UnderConstraint,
+  UrlPatternConstraint,
+  UrlSafeConstraint,
+  WarrantPart,
+  WildcardConstraint,
 } from "./api.ts";
 
 export {
@@ -42,10 +87,40 @@ export {
   TenuoError,
 } from "./errors.ts";
 
-export { email, exact, max, oneOf, pattern, under } from "./constraints.ts";
+export {
+  all,
+  anyOf,
+  cel,
+  cidr,
+  contains,
+  email,
+  exact,
+  max,
+  min,
+  not,
+  notOneOf,
+  oneOf,
+  pattern,
+  range,
+  regex,
+  shlex,
+  subset,
+  under,
+  urlPattern,
+  urlSafe,
+  wildcard,
+} from "./constraints.ts";
 
 export { memoryNonceStore } from "./nonce.ts";
 
 export { Session as SessionHandle, isSession } from "./session.ts";
+
+export { ConnectToken, parseConnectToken } from "./connect.ts";
+export type { ResolveEndpointOptions } from "./connect.ts";
+
+export { HolderIdentity, generateIdentity, identityFromKey } from "./identity.ts";
+
+export { Runtime } from "./runtime.ts";
+export type { ReceiptsMode, RuntimeOptions, SessionWarrant } from "./runtime.ts";
 
 export { createTenuo } from "./client.ts";

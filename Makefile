@@ -210,6 +210,12 @@ version-check:
 	PYTHON_CARGO=$$(grep '^version = ' tenuo-python/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	CORE_CARGO=$$(grep '^version = ' tenuo-core/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	WASM_CARGO=$$(grep '^version = ' tenuo-wasm/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/'); \
+	if ! command -v node >/dev/null 2>&1; then \
+		echo "❌ version-check requires node to compare TypeScript packages"; \
+		exit 1; \
+	fi; \
+	TS_CORE=$$(node -p "require('./tenuo-ts/packages/core/package.json').version"); \
+	TS_MCP=$$(node -p "require('./tenuo-ts/packages/mcp/package.json').version"); \
 	if [ "$$PYPROJECT" != "$$PYTHON_CARGO" ] || [ "$$PYPROJECT" != "$$CORE_CARGO" ] || [ "$$PYPROJECT" != "$$WASM_CARGO" ]; then \
 		echo "❌ Version mismatch:"; \
 		echo "  pyproject.toml: $$PYPROJECT"; \
@@ -217,8 +223,18 @@ version-check:
 		echo "  tenuo-core/Cargo.toml: $$CORE_CARGO"; \
 		echo "  tenuo-wasm/Cargo.toml: $$WASM_CARGO"; \
 		exit 1; \
-	fi
-	@echo "✓ All versions in sync: $$PYPROJECT"
+	fi; \
+	if [ "$${TS_CORE%%-*}" != "$$CORE_CARGO" ]; then \
+		echo "❌ TypeScript version prefix mismatch:"; \
+		echo "  @tenuo/core: $$TS_CORE (expected prefix $$CORE_CARGO)"; \
+		exit 1; \
+	fi; \
+	if [ "$${TS_MCP%%-*}" != "$$CORE_CARGO" ]; then \
+		echo "❌ TypeScript version prefix mismatch:"; \
+		echo "  @tenuo/mcp: $$TS_MCP (expected prefix $$CORE_CARGO)"; \
+		exit 1; \
+	fi; \
+	echo "✓ All versions in sync: $$PYPROJECT ($$TS_CORE, $$TS_MCP)"
 
 # ============================================================================
 # EXPLORER SYNC CHECK

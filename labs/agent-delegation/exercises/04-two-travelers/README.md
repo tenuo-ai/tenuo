@@ -1,0 +1,82 @@
+# Stage 4: two travelers, one agent
+
+Bob is going to Seattle on DL331, with a flight budget of $450. His trip runs
+through the same `flight-agent` and `checkin-agent` as Alice's, at the same
+time.
+
+Your stage 3 policy describes only Alice's Cancún flight. Bob is outside its
+destination, flight budget, and reservation rules, so several steps are denied.
+Read **THE TRIP** from top to bottom: the first denial is the first assumption
+you need to change.
+
+The repair everyone reaches for first is to make each shared flight-chain role
+broad enough for both trips:
+
+```ts
+"flight-agent": {
+  // Omitting destination admits both CUN and SEA.
+  actions: ["traveler.read", "search_flights", "book_flight", "wallet.charge"],
+  maxPrice: 450,
+  maxCharge: 450,
+  profileFields: ["passportNumber"],
+},
+"checkin-agent": {
+  actions: ["get_reservation", "check_in", "issue_boarding_pass"],
+  reservations: ["UA214", "DL331"],
+},
+"boarding-agent": {
+  actions: ["issue_boarding_pass"],
+  reservations: ["UA214", "DL331"],
+},
+```
+
+The complete version is available with
+`npm run ambassador -- answers 4` if you want to compare. Once both trips
+complete, read the CROSS-TASK section of `npm run attack`.
+Alice's check-in agent can check Bob in. There is one `checkin-agent`, it is
+doing two jobs, and nothing in this file says which job a given call belongs
+to.
+
+You can fix this. Two ways work, and the lab accepts both.
+
+## Fix A: one identity per task
+
+Give the agent a different identity for each trip. A key of the form
+`agent:taskId` is used for that agent on that task instead of the plain entry:
+
+```ts
+"checkin-agent:trip-alice-cun": {
+  actions: ["get_reservation", "check_in"],
+  reservations: ["UA214"],
+},
+"checkin-agent:trip-bob-sea": {
+  actions: ["get_reservation", "check_in"],
+  reservations: ["DL331"],
+},
+```
+
+Do the same for `flight-agent` (destination and budget differ) and
+`boarding-agent`. It works. Now ask: who writes these entries, and when? The
+orchestrator writes them at the moment each task starts, and registers each
+identity before its first call; the chokepoint asks the registry whether an
+identity exists before it trusts a rule written for it. Look at
+`npm run trace`: registration at task start, then `central_calls: 1` on every
+call by a per-task identity.
+
+## Fix B: ask a service which task this is
+
+Flip `policyService: true`. Every flight and reservation check now asks a
+policy service which task is calling: its destination, its flight budget, and
+its reservations. Those fields in this file are ignored for that purpose, so
+you can drop `destination` and `maxPrice` from `flight-agent` and
+`reservations` from `checkin-agent` and `boarding-agent`. When a flight is
+booked, the service is told, and the task's reservation narrows to that one.
+It works. Look at `npm run trace`: every one of those calls now shows
+`central_calls: 1`, and the service holds state for every open task.
+
+## What both fixes have in common
+
+Some component outside the acting agent has to be told about every task before
+it starts and consulted while it runs, and its availability gates the trip.
+Neither fix can bring `central_calls` to zero; that is the whole point. Write down, in one sentence, what your fix depends on. You will compare
+it with stage 5.

@@ -134,9 +134,7 @@ fn test_unit_merge_per_arg_base_survives_conflict() {
     // Base's Constraint must survive — All from additional must not overwrite it.
     match args.get("path").unwrap() {
         ArgApprovalGate::Constraint(_) => {}
-        ArgApprovalGate::All | ArgApprovalGate::Exempt(_) => {
-            panic!("additional's All must not overwrite base's Constraint gate")
-        }
+        _ => panic!("additional's All must not overwrite base's Constraint gate"),
     }
 }
 
@@ -443,6 +441,33 @@ fn test_evaluate_approval_gates_fires_for_added_gate() {
 // ---------------------------------------------------------------------------
 // Integration tests via OwnedIssuanceBuilder
 // ---------------------------------------------------------------------------
+
+#[test]
+fn test_issuance_rejects_approvers_without_an_enforceable_gate() {
+    let issuer_kp = SigningKey::generate();
+    let holder_kp = SigningKey::generate();
+    let approver_kp = SigningKey::generate();
+    let issuer = Warrant::builder()
+        .r#type(WarrantType::Issuer)
+        .issuable_tools(vec!["exec".to_string()])
+        .ttl(Duration::from_secs(3600))
+        .holder(issuer_kp.public_key())
+        .build(&issuer_kp)
+        .unwrap();
+
+    let mut builder = OwnedIssuanceBuilder::new(issuer);
+    builder.set_tool("exec", ConstraintSet::new());
+    builder.set_holder(holder_kp.public_key());
+    builder.set_ttl(Duration::from_secs(1800));
+    builder.set_required_approvers(vec![approver_kp.public_key()]);
+    builder.set_min_approvals(1);
+
+    let error = builder.build(&issuer_kp).unwrap_err();
+    assert!(
+        error.to_string().contains("requires an approval gate map"),
+        "unexpected error: {error}"
+    );
+}
 
 #[test]
 fn test_issuance_builder_adds_gate() {

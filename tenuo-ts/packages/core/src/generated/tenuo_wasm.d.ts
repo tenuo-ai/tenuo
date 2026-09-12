@@ -9,6 +9,17 @@ export class SdkContext {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * Signed statement from this session's holder that it is the one asking
+     * for `tool(args)`. Carried inside a control-plane approval request so
+     * the approver can tell a genuine request from a forged one.
+     */
+    approvalContextAttestation(session: SdkSession, tool: string, args_json: any): any;
+    /**
+     * Everything an approval service needs to present `tool(args)` to a
+     * human and mint a matching `SignedApproval`. Not a signed artifact.
+     */
+    approvalRequest(session: SdkSession, tool: string, args_json: any): any;
+    /**
      * Sign PoP and authorize in one call. Never returns allow without a core allow.
      *
      * `tool_allow` is the wrapper ceiling (`tenuo.tool(..., { allow })`). Null/undefined
@@ -27,9 +38,35 @@ export class SdkContext {
      */
     authorizePresented(warrants: any, tool: string, args_json: any, pop: string, approvals: any, tool_allow: any, request_id?: string | null): any;
     /**
+     * Explain what the leaf would decide for `tool(args)`, field by field.
+     * No proof-of-possession is signed, so this works on any session,
+     * including one issued to another holder.
+     */
+    explain(session: SdkSession, tool: string, args_json: any): any;
+    /**
+     * Issuer context from a stable 32-byte Ed25519 secret. Its own public
+     * key is trusted; `extra_roots` (hex) are trusted as well, so one
+     * process can verify chains from several control planes.
+     */
+    static fromIssuerSecret(secret: Uint8Array, extra_roots: any): SdkContext;
+    /**
      * Authorizer-only context. `mint()` fails; import a session from the wire.
      */
     static fromTrustedRoots(roots: any): SdkContext;
+    /**
+     * Issue an execution session from an issuer session. The issuer
+     * session's holder signs; core checks the tools against
+     * `issuableTools`, constraints against `constraintBounds`, clearance,
+     * and issue depth. No control-plane key is involved.
+     */
+    issue(issuer: SdkSession, options: any): SdkSession;
+    /**
+     * Public key of the local issuer, hex. Verifier-only contexts have none.
+     *
+     * This is what other processes put in `trustedRoots` to accept warrants
+     * this context mints. It is a public key: sharing it grants nothing.
+     */
+    issuerPublicKey(): string;
     /**
      * Load a published SignedRevocationList. The SRL must be signed by a trusted root.
      */
@@ -40,12 +77,33 @@ export class SdkContext {
      *
      * `require_approval` is optional:
      * `{ "approvers": ["hex..."], "min": 2, "tools": ["transfer"] }`
+     *
+     * `holder_hex` binds the warrant to another agent's public key. The
+     * returned session then has no holder secret: export it with `toWire()`
+     * and let that agent import it. Omit it to mint a local session with a
+     * fresh holder key.
+     *
+     * `max_depth` caps how many times the authority may be delegated below
+     * the root (0 = terminal). Omit for the protocol maximum.
      */
-    mint(allow_json: any, ttl_seconds: number, require_approval: any): SdkSession;
+    mint(allow_json: any, ttl_seconds: number, require_approval: any, holder_hex?: string | null, max_depth?: number | null): SdkSession;
     /**
-     * Attenuate the leaf. The current holder signs; the same holder keeps the child.
+     * `mint()` with every option the protocol offers: kind, clearance,
+     * session and agent ids, approval gates with messages and per-argument
+     * triggers, and issuer-warrant fields. Keys are camelCase; unknown keys
+     * are rejected.
      */
-    narrow(session: SdkSession, allow_json: any): SdkSession;
+    mintExtended(options: any): SdkSession;
+    /**
+     * Attenuate the leaf. The current holder signs.
+     *
+     * Without `options.holder` the same holder keeps the child. With it, the
+     * child is bound to that public key: this is delegation to another agent,
+     * and the returned session carries no holder secret (see `SdkSession`).
+     * Core rejects any child that is not within its parent — tools,
+     * constraints, lifetime, and depth — before a token exists.
+     */
+    narrow(session: SdkSession, allow_json: any, options: any): SdkSession;
     constructor();
     /**
      * Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
@@ -55,10 +113,25 @@ export class SdkContext {
      * Test / host seam. Signs an SRL with the local issuer. Does not load it.
      */
     signRevocationList(ids: any): string;
+    /**
+     * Sign a revocation list with this context's issuer key. Load it with
+     * `loadRevocationList` anywhere this issuer is a trusted root.
+     */
+    signRevocationListVersioned(ids: any, version?: number | null): string;
+    /**
+     * Sign verifier receipts with this 32-byte holder secret instead of an
+     * ephemeral key. Used by the TypeScript `Runtime`.
+     */
+    withReceiptSigner(secret: Uint8Array): SdkContext;
 }
 
 /**
  * Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
+ *
+ * `holder` is `None` when the leaf was issued or delegated to another agent's
+ * key. Such a session can be exported with `toWire()` and handed over, but it
+ * cannot sign proof-of-possession here; the holder imports it with
+ * `SdkSession.fromWire` and its own secret.
  */
 export class SdkSession {
     private constructor();
@@ -69,6 +142,11 @@ export class SdkSession {
      * Not a PoP. MCP replay uses the PoP signature, not this key.
      */
     dedupKey(tool: string, args_json: any): string;
+    /**
+     * Public view of the leaf: holder public key, depth, ceiling, lifetime,
+     * tools. Never the holder secret.
+     */
+    describe(): any;
     /**
      * Test / interop seam. Not on the public TypeScript Session type.
      */
@@ -98,6 +176,16 @@ export class SdkSession {
      */
     warrantIds(): any;
 }
+
+/**
+ * Typed preflight of a warrant's approval gates for `(tool, args)`.
+ *
+ * Returns `{ status: "not_gated"|"exempt"|"required"|"denied", tool, kind?,
+ * argument?, arguments, message?, code?, reason?, error? }`. Parse errors
+ * fail closed with `status: "required"` and `error` set (no fabricated
+ * `kind`). `denied` means the warrant's constraints refuse the call.
+ */
+export function approval_requirement(warrant_b64: string, tool: string, args_json: any): any;
 
 export function check_access(warrant_b64: string, tool: string, args_json: any, trusted_root_hex: string, dry_run: boolean): any;
 
@@ -175,6 +263,9 @@ export function decode_warrant(base64_warrant: string): any;
  * Returns `{ approval_required: true/false, tool, error }`.
  * This reads `extensions["tenuo.approval_gates"]` from the warrant, parses it,
  * and runs the gate evaluation logic from tenuo-core.
+ *
+ * Malformed warrants, gate maps, or arguments fail closed (`approval_required: true`).
+ * Prefer `approval_requirement` when the caller must distinguish exemptions.
  */
 export function evaluate_approval_gates(warrant_b64: string, tool: string, args_json: any): any;
 
@@ -186,24 +277,57 @@ export function generate_keypair(): any;
 export function init_panic_hook(): void;
 
 /**
- * Parse a `TENUO_CONNECT_TOKEN` string into its component fields.
+ * Inspect how a warrant gates `tool`, without evaluating arguments.
  *
- * The token is a base64url-encoded JSON blob: `{ v, e, k, a?, t? }`.
- * This WASM binding keeps the parsing canonical so TypeScript doesn't need
- * to duplicate the decode logic.
+ * Returns `{ kind: "none"|"whole_tool"|"conditional", tool, arguments, message?, error? }`.
+ * Parse errors fail closed with `kind: "unknown"` and `error` set so callers
+ * cannot treat a malformed map as ungated.
+ */
+export function inspect_approval_gate(warrant_b64: string, tool: string): any;
+
+/**
+ * Parse a complete `tenuo_ct_…` token into its component fields.
+ *
+ * Accepts padded and unpadded Base64URL. Version must be 1; omitted `v`
+ * is an error. Trailing `/v1` is stripped from `e`.
+ * Registration-token aliases: `t`, `r`, `registration_token`.
  *
  * Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
  */
 export function parse_connect_token(token: string): any;
 
+/**
+ * Decode and check an approval envelope. Not authorization.
+ */
+export function sdkInspectApproval(envelope: string): any;
+
 export function sdkInspectParts(payload_hex: string, signature_hex: string): any;
 
+/**
+ * Decode a signed revocation list without loading it.
+ */
+export function sdkInspectRevocationList(wire: string): any;
+
 export function sdkInspectWarrant(wire: string): any;
+
+export function sdkProtocolLimits(): any;
+
+/**
+ * Public key (hex) for a 32-byte Ed25519 holder secret. What an agent hands
+ * to whoever will issue or delegate a warrant to it.
+ */
+export function sdkPublicKeyFromHolderKey(holder_secret: Uint8Array): string;
 
 /**
  * Test / host seam. Signs a SignedApproval envelope; does not authorize.
  */
 export function sdkSignApproval(session: SdkSession, tool: string, args_json: any, approver_secret: Uint8Array, external_id: string, as_of?: number | null): string;
+
+/**
+ * Sign an approval for a request hash. The approver never needs the
+ * warrant or the holder key; the hash already commits to both.
+ */
+export function sdkSignApprovalForRequest(request_hash_hex: string, approver_secret: Uint8Array, external_id: string, ttl_seconds?: number | null, warrant_expires_at?: number | null): string;
 
 /**
  * Test seam. Signs the published generator envelope (not the in-memory SRL codec).
@@ -214,6 +338,11 @@ export function sdkSignPublishedRevocationList(ids: any, version: number, issuer
  * Test / host seam. Signs an SRL with a provided issuer secret. Does not load it.
  */
 export function sdkSignRevocationList(ids: any, issuer_secret: Uint8Array): string;
+
+/**
+ * Sign a revocation list with an explicit issuer secret (control-plane path).
+ */
+export function sdkSignRevocationListVersioned(ids: any, version: number | null | undefined, issuer_secret: Uint8Array): string;
 
 /**
  * Signature authenticity only. Not authorization.

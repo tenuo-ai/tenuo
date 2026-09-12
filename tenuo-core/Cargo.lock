@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum",

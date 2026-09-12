@@ -37,6 +37,7 @@ use crate::wire::{encode_stack, WarrantStack};
 /// There is no default: the builder requires this choice, because the two
 /// modes accept different risk and neither is safe to pick silently.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum RevocationMode {
     /// No revocation list. A warrant stays valid until it expires, so the
     /// only bound on a leaked or misissued warrant is its lifetime.
@@ -62,6 +63,14 @@ pub enum RevocationMode {
     /// enforces freshness and a persistent rollback floor) or install one on
     /// the `Authorizer` before building.
     SignedSrl,
+    /// TTL ceiling until the tracker accepts an SRL, then signed enforcement.
+    ///
+    /// This is the explicit "until first SRL" mode. [`RuntimeBuilder::ttl_fallback`]
+    /// selects it. After a list is accepted, later checks use that list.
+    TtlUntilSrl {
+        /// Maximum `expires_at - issued_at` while no SRL has been accepted.
+        max_lifetime: Duration,
+    },
 }
 
 /// Enforcement surface. Holds configuration, nothing per-call.
@@ -80,9 +89,39 @@ pub struct Guard {
 
 #[derive(Clone)]
 enum ResolvedRevocation {
-    TtlOnly { max_lifetime: Duration },
+    TtlOnly {
+        max_lifetime: Duration,
+    },
     Snapshot(Arc<RevocationSnapshot>),
     Tracker(std::sync::Arc<RevocationTracker>),
+    /// TTL until the shared tracker accepts its first SRL, then signed-SRL.
+    TtlUntilSrl {
+        max_lifetime: Duration,
+        tracker: std::sync::Arc<RevocationTracker>,
+    },
+}
+
+#[cfg(feature = "receipts")]
+pub(crate) fn verified_received_pop<'a>(
+    denial: &Denial,
+    pop: &'a Signature,
+) -> Option<&'a Signature> {
+    // PoP is verified only after chain/temporal checks and tool lookup.
+    // Embed it only for denials that run after that point.
+    match denial.protocol_code() {
+        Some(
+            crate::ErrorCode::ConstraintViolation
+            | crate::ErrorCode::ApprovalRequired
+            | crate::ErrorCode::InsufficientApprovals
+            | crate::ErrorCode::ApprovalInvalid
+            | crate::ErrorCode::ApproverNotAuthorized
+            | crate::ErrorCode::ApprovalExpired
+            | crate::ErrorCode::UnsupportedApprovalVersion
+            | crate::ErrorCode::ApprovalPayloadInvalid
+            | crate::ErrorCode::ApprovalRequestHashMismatch,
+        ) => Some(pop),
+        _ => None,
+    }
 }
 
 impl Guard {
@@ -111,10 +150,12 @@ impl Guard {
         authority: &PresentedAuthority,
         attempt: AuthorizationAttempt<'_, '_>,
     ) -> Result<Decision, Denial> {
-        match self.authorize_holder(authority, &attempt) {
+        match self.try_authorize_holder(authority, &attempt) {
             Ok(authorized) => self.complete_allow(&authorized),
-            Err(denial) => {
+            Err((denial, pop)) => {
                 self.record_deny(&denial);
+                #[cfg(feature = "receipts")]
+                self.emit_deny_receipt(authority.chain(), attempt.call, &denial, pop.as_ref());
                 Err(denial)
             }
         }
@@ -138,15 +179,15 @@ impl Guard {
     ///     .ttl(Duration::from_secs(300))
     ///     .build(&root)?;
     ///
-    /// let (guard, authority) = Tenuo::local()
+    /// let runtime = Runtime::builder()
+    ///     .holder(holder)
     ///     .trusted_root(root.public_key())
-    ///     .chain(vec![warrant])
-    ///     .signer(holder)
     ///     .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(600) })
     ///     .build()?;
+    /// let session = runtime.session_from_warrant(warrant)?;
     ///
     /// let call = Call::owned("read_file", args! { "path" => "/data/x" })?;
-    /// let out = guard.guard(&authority, &call, |authorized| {
+    /// let out = session.guard(&call, |authorized| {
     ///     // Tag the downstream write with the decision that permitted it.
     ///     let _idempotency_key = authorized.dedup_key();
     ///     Ok::<_, std::io::Error>("ran")
@@ -170,12 +211,14 @@ impl Guard {
         attempt: AuthorizationAttempt<'_, '_>,
         op: impl FnOnce(&AuthorizedCall<'_>) -> Result<T, E>,
     ) -> Result<Guarded<T>, GuardError<E>> {
-        let authorized = self
-            .authorize_holder(authority, &attempt)
-            .map_err(|denial| {
-                self.record_deny(&denial);
-                GuardError::Denied(denial)
-            })?;
+        let authorized =
+            self.try_authorize_holder(authority, &attempt)
+                .map_err(|(denial, pop)| {
+                    self.record_deny(&denial);
+                    #[cfg(feature = "receipts")]
+                    self.emit_deny_receipt(authority.chain(), attempt.call, &denial, pop.as_ref());
+                    GuardError::Denied(denial)
+                })?;
         let decision = self
             .complete_allow(&authorized)
             .map_err(GuardError::Denied)?;
@@ -196,6 +239,13 @@ impl Guard {
             Ok(authorized) => self.complete_allow(&authorized),
             Err(denial) => {
                 self.record_deny(&denial);
+                #[cfg(feature = "receipts")]
+                self.emit_deny_receipt(
+                    received.chain(),
+                    call,
+                    &denial,
+                    verified_received_pop(&denial, received.signature()),
+                );
                 Err(denial)
             }
         }
@@ -210,6 +260,13 @@ impl Guard {
     ) -> Result<Guarded<T>, GuardError<E>> {
         let authorized = self.authorize_received(received, call).map_err(|denial| {
             self.record_deny(&denial);
+            #[cfg(feature = "receipts")]
+            self.emit_deny_receipt(
+                received.chain(),
+                call,
+                &denial,
+                verified_received_pop(&denial, received.signature()),
+            );
             GuardError::Denied(denial)
         })?;
         let decision = self
@@ -367,13 +424,6 @@ impl Guard {
         if self.evidence.policy == EvidencePolicy::Disabled {
             return Ok(None);
         }
-        let signer = self.evidence.signer.as_ref().ok_or_else(|| {
-            Denial::sdk(
-                SdkDenialKind::EvidenceUnavailable,
-                Retryability::AfterBackoff,
-                "receipt signer unavailable",
-            )
-        })?;
         let stack = encode_stack(&WarrantStack(authorized.chain().to_vec())).map_err(|_| {
             Denial::sdk(
                 SdkDenialKind::EvidenceUnavailable,
@@ -395,42 +445,195 @@ impl Guard {
             authorized.invocation_id(),
             authorized.pop_signature().to_bytes(),
         );
+        self.commit_receipt_links(&mut payload);
         payload.request_hash = Some(compute_request_hash(
             &leaf.id().to_string(),
             authorized.capability(),
             authorized.pop_args(),
             Some(leaf.authorized_holder()),
         ));
-        let bytes = payload.to_cbor().map_err(|_| {
-            Denial::sdk(
-                SdkDenialKind::EvidenceUnavailable,
-                Retryability::AfterBackoff,
-                "receipt payload encoding failed",
-            )
-        })?;
-        let receipt = sign_payload(&bytes, signer.as_ref()).map_err(|_| {
-            Denial::sdk(
+        self.seal_linked_receipt(payload).map(Some)
+    }
+
+    #[cfg(feature = "receipts")]
+    fn commit_receipt_links(&self, payload: &mut ReceiptPayload) {
+        let srl = self
+            .tracker_srl()
+            .or_else(|| self.authorizer.installed_revocation_list().cloned());
+        if let Some(srl) = srl {
+            payload.srl_version = Some(srl.version());
+            if let Ok(bytes) = srl.to_bytes() {
+                payload.srl_hash = Some(crate::srl_commitment_digest(&bytes));
+            }
+        }
+        let roots: Vec<[u8; 32]> = self
+            .authorizer
+            .trusted_root_keys()
+            .iter()
+            .map(|k| k.to_bytes())
+            .collect();
+        payload.trusted_roots_hash = Some(crate::trusted_roots_digest(&roots));
+    }
+
+    #[cfg(feature = "receipts")]
+    fn recover_receipt_link(&self) -> std::sync::MutexGuard<'_, Option<[u8; 32]>> {
+        self.evidence
+            .last_receipt_hash
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[cfg(feature = "receipts")]
+    fn rollback_receipt_link(&self, digest: [u8; 32], prev: Option<[u8; 32]>) {
+        let mut link = self.recover_receipt_link();
+        if *link == Some(digest) {
+            *link = prev;
+        }
+    }
+
+    #[cfg(feature = "receipts")]
+    fn seal_linked_receipt(
+        &self,
+        mut payload: ReceiptPayload,
+    ) -> Result<crate::receipt::Receipt, Denial> {
+        let Some(signer) = self.evidence.signer.as_ref() else {
+            return Err(Denial::sdk(
                 SdkDenialKind::EvidenceUnavailable,
                 Retryability::AfterBackoff,
                 "receipt signer unavailable",
-            )
-        })?;
-        if let Some(sink) = &self.evidence.sink {
-            match sink.persist(&receipt) {
-                Ok(_) => Ok(Some(receipt)),
-                Err(ReceiptSinkError::Unavailable)
-                    if self.evidence.policy == EvidencePolicy::BestEffort =>
-                {
-                    Ok(Some(receipt))
+            ));
+        };
+        let (receipt, digest, prev) = {
+            let mut link = self.recover_receipt_link();
+            let prev = *link;
+            payload.prev_receipt_hash = prev;
+            let bytes = payload.to_cbor().map_err(|_| {
+                Denial::sdk(
+                    SdkDenialKind::EvidenceUnavailable,
+                    Retryability::AfterBackoff,
+                    "receipt payload encoding failed",
+                )
+            })?;
+            let receipt = sign_payload(&bytes, signer.as_ref()).map_err(|_| {
+                Denial::sdk(
+                    SdkDenialKind::EvidenceUnavailable,
+                    Retryability::AfterBackoff,
+                    "receipt signer unavailable",
+                )
+            })?;
+            let digest = receipt.digest().ok();
+            if let Some(digest) = digest {
+                *link = Some(digest);
+            }
+            (receipt, digest, prev)
+        };
+        let Some(sink) = &self.evidence.sink else {
+            return Ok(receipt);
+        };
+        match sink.persist(&receipt) {
+            Ok(_) => Ok(receipt),
+            Err(ReceiptSinkError::Unavailable)
+                if self.evidence.policy == EvidencePolicy::BestEffort =>
+            {
+                if let Some(digest) = digest {
+                    self.rollback_receipt_link(digest, prev);
                 }
-                Err(_) => Err(Denial::sdk(
+                Ok(receipt)
+            }
+            Err(_) => {
+                if let Some(digest) = digest {
+                    self.rollback_receipt_link(digest, prev);
+                }
+                Err(Denial::sdk(
                     SdkDenialKind::EvidenceUnavailable,
                     Retryability::AfterBackoff,
                     "receipt persistence failed",
-                )),
+                ))
             }
+        }
+    }
+
+    fn tracker_srl(&self) -> Option<crate::revocation::SignedRevocationList> {
+        let tracker = match &self.revocation {
+            ResolvedRevocation::Tracker(tracker)
+            | ResolvedRevocation::TtlUntilSrl { tracker, .. } => tracker,
+            _ => return None,
+        };
+        tracker
+            .latest(self.now())
+            .ok()
+            .map(|snap| snap.srl().clone())
+    }
+
+    #[cfg(feature = "receipts")]
+    pub(crate) fn emit_deny_receipt(
+        &self,
+        chain: &[Warrant],
+        call: &Call<'_>,
+        denial: &Denial,
+        pop: Option<&Signature>,
+    ) {
+        if self.evidence.policy == EvidencePolicy::Disabled {
+            return;
+        }
+        let Some(signer) = self.evidence.signer.as_ref() else {
+            return;
+        };
+        let Ok(stack) = encode_stack(&WarrantStack(chain.to_vec())) else {
+            return;
+        };
+        let mut payload = if let Some(pop) = pop {
+            let mut payload = ReceiptPayload::deny(
+                stack,
+                format!("tool:{}", call.capability()),
+                self.now().timestamp(),
+                format!("deny:{}", denial.code()),
+                denial.code().to_string(),
+                pop.to_bytes(),
+            );
+            if let Some(leaf) = chain.last() {
+                payload.request_hash = Some(compute_request_hash(
+                    &leaf.id().to_string(),
+                    call.capability(),
+                    call.pop_args(),
+                    Some(leaf.authorized_holder()),
+                ));
+            }
+            payload
         } else {
-            Ok(Some(receipt))
+            ReceiptPayload::deny_before_pop(
+                stack,
+                format!("tool:{}", call.capability()),
+                self.now().timestamp(),
+                format!("deny:{}", denial.code()),
+                denial.code().to_string(),
+            )
+        };
+        self.commit_receipt_links(&mut payload);
+        let (receipt, digest, prev) = {
+            let mut link = self.recover_receipt_link();
+            let prev = *link;
+            payload.prev_receipt_hash = prev;
+            let Ok(bytes) = payload.to_cbor() else {
+                return;
+            };
+            let Ok(receipt) = sign_payload(&bytes, signer.as_ref()) else {
+                return;
+            };
+            let digest = receipt.digest().ok();
+            if let Some(digest) = digest {
+                *link = Some(digest);
+            }
+            (receipt, digest, prev)
+        };
+        match self.evidence.sink.as_ref() {
+            None => {}
+            Some(sink) if sink.persist(&receipt).is_ok() => {}
+            Some(_) => {
+                if let Some(digest) = digest {
+                    self.rollback_receipt_link(digest, prev);
+                }
+            }
         }
     }
 
@@ -439,14 +642,27 @@ impl Guard {
         authority: &'a PresentedAuthority,
         attempt: &AuthorizationAttempt<'a, 'a>,
     ) -> Result<AuthorizedCall<'a>, Denial> {
+        self.try_authorize_holder(authority, attempt)
+            .map_err(|(denial, _)| denial)
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn try_authorize_holder<'a>(
+        &'a self,
+        authority: &'a PresentedAuthority,
+        attempt: &AuthorizationAttempt<'a, 'a>,
+    ) -> Result<AuthorizedCall<'a>, (Denial, Option<Signature>)> {
         let as_of = self.now();
         let instant = VerificationInstant::new(as_of);
 
         if !authority.signer_matches_leaf() {
-            return Err(Denial::sdk(
-                SdkDenialKind::SignerUnavailable,
-                Retryability::AfterBackoff,
-                "holder signer does not match leaf",
+            return Err((
+                Denial::sdk(
+                    SdkDenialKind::SignerUnavailable,
+                    Retryability::AfterBackoff,
+                    "holder signer does not match leaf",
+                ),
+                None,
             ));
         }
 
@@ -460,40 +676,48 @@ impl Guard {
                 as_of.timestamp(),
                 window_secs,
             )
-            .map_err(Denial::from_core)?;
+            .map_err(|e| (Denial::from_core(e), None))?;
         let request = PopSigningRequest::new(preimage, call.capability(), leaf.id().to_string());
         let pop_signature = authority.signer().sign_pop(&request).map_err(|_| {
-            Denial::sdk(
-                SdkDenialKind::SignerUnavailable,
-                Retryability::AfterBackoff,
-                "holder signer unavailable",
+            (
+                Denial::sdk(
+                    SdkDenialKind::SignerUnavailable,
+                    Retryability::AfterBackoff,
+                    "holder signer unavailable",
+                ),
+                None,
             )
         })?;
 
         self.decide(
             authority.chain(),
-            pop_signature,
+            pop_signature.clone(),
             attempt.approvals,
             call,
             instant,
         )
+        .map_err(|denial| (denial, Some(pop_signature)))
     }
 
     #[cfg(feature = "async")]
+    #[allow(clippy::result_large_err)]
     pub(crate) async fn authorize_holder_async<'a>(
         &'a self,
         authority: &'a super::async_api::PresentedAsyncAuthority,
         attempt: &AuthorizationAttempt<'a, 'a>,
         control: &super::async_api::AttemptControl,
-    ) -> Result<AuthorizedCall<'a>, Denial> {
+    ) -> Result<AuthorizedCall<'a>, (Denial, Option<Signature>)> {
         let as_of = self.now();
         let instant = VerificationInstant::new(as_of);
 
         if !authority.signer_matches_leaf() {
-            return Err(Denial::sdk(
-                SdkDenialKind::SignerUnavailable,
-                Retryability::AfterBackoff,
-                "holder signer does not match leaf",
+            return Err((
+                Denial::sdk(
+                    SdkDenialKind::SignerUnavailable,
+                    Retryability::AfterBackoff,
+                    "holder signer does not match leaf",
+                ),
+                None,
             ));
         }
 
@@ -507,29 +731,33 @@ impl Guard {
                 as_of.timestamp(),
                 window_secs,
             )
-            .map_err(Denial::from_core)?;
+            .map_err(|e| (Denial::from_core(e), None))?;
         let request = PopSigningRequest::new(preimage, call.capability(), leaf.id().to_string());
         let pop_signature = authority
             .signer()
             .sign_pop(&request, control)
             .await
             .map_err(|_| {
-                Denial::sdk(
-                    SdkDenialKind::SignerUnavailable,
-                    Retryability::AfterBackoff,
-                    "holder signer unavailable",
+                (
+                    Denial::sdk(
+                        SdkDenialKind::SignerUnavailable,
+                        Retryability::AfterBackoff,
+                        "holder signer unavailable",
+                    ),
+                    None,
                 )
             })?;
 
         self.decide_async(
             authority.chain(),
-            pop_signature,
+            pop_signature.clone(),
             attempt.approvals,
             call,
             instant,
             control,
         )
         .await
+        .map_err(|denial| (denial, Some(pop_signature)))
     }
 
     pub(crate) fn authorize_received<'a>(
@@ -639,24 +867,55 @@ impl Guard {
                 }
                 Ok(LoadedRevocation::Snapshot(snapshot.clone()))
             }
-            ResolvedRevocation::Tracker(tracker) => {
-                let snapshot = tracker.latest(at).map_err(|_| {
-                    Denial::sdk(
-                        SdkDenialKind::RevocationStateUnavailable,
-                        Retryability::AfterBackoff,
-                        "revocation state unavailable",
-                    )
-                })?;
-                if !snapshot.is_fresh_at(at) {
-                    return Err(Denial::sdk(
-                        SdkDenialKind::RevocationStateUnavailable,
-                        Retryability::AfterBackoff,
-                        "revocation snapshot is stale",
-                    ));
+            ResolvedRevocation::Tracker(tracker) => Self::snapshot_from_tracker(tracker, at),
+            ResolvedRevocation::TtlUntilSrl {
+                max_lifetime,
+                tracker,
+            } => match tracker.latest(at) {
+                Ok(snapshot) => {
+                    if !snapshot.is_fresh_at(at) {
+                        return Err(Denial::sdk(
+                            SdkDenialKind::RevocationStateUnavailable,
+                            Retryability::AfterBackoff,
+                            "revocation snapshot is stale",
+                        ));
+                    }
+                    Ok(LoadedRevocation::Snapshot(snapshot))
                 }
-                Ok(LoadedRevocation::Snapshot(snapshot))
-            }
+                Err(crate::revocation_tracker::RevocationError::Unavailable)
+                | Err(crate::revocation_tracker::RevocationError::UnavailableAt { .. }) => {
+                    Ok(LoadedRevocation::TtlOnly {
+                        max_lifetime: *max_lifetime,
+                    })
+                }
+                Err(_) => Err(Denial::sdk(
+                    SdkDenialKind::RevocationStateUnavailable,
+                    Retryability::AfterBackoff,
+                    "revocation state unavailable",
+                )),
+            },
         }
+    }
+
+    fn snapshot_from_tracker(
+        tracker: &RevocationTracker,
+        at: DateTime<Utc>,
+    ) -> Result<LoadedRevocation, Denial> {
+        let snapshot = tracker.latest(at).map_err(|_| {
+            Denial::sdk(
+                SdkDenialKind::RevocationStateUnavailable,
+                Retryability::AfterBackoff,
+                "revocation state unavailable",
+            )
+        })?;
+        if !snapshot.is_fresh_at(at) {
+            return Err(Denial::sdk(
+                SdkDenialKind::RevocationStateUnavailable,
+                Retryability::AfterBackoff,
+                "revocation snapshot is stale",
+            ));
+        }
+        Ok(LoadedRevocation::Snapshot(snapshot))
     }
 
     #[cfg(feature = "async")]
@@ -746,6 +1005,7 @@ struct EvidenceConfig {
     policy: EvidencePolicy,
     signer: Option<std::sync::Arc<dyn ReceiptSigner>>,
     sink: Option<std::sync::Arc<dyn ReceiptSink>>,
+    last_receipt_hash: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
 }
 
 #[cfg(feature = "receipts")]
@@ -755,6 +1015,7 @@ impl EvidenceConfig {
             policy: EvidencePolicy::Disabled,
             signer: None,
             sink: None,
+            last_receipt_hash: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 }
@@ -903,6 +1164,8 @@ pub struct GuardBuilder {
     receipt_signer: Option<std::sync::Arc<dyn ReceiptSigner>>,
     #[cfg(feature = "receipts")]
     receipt_sink: Option<std::sync::Arc<dyn ReceiptSink>>,
+    #[cfg(feature = "receipts")]
+    receipt_link: Option<std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>>,
     #[cfg(feature = "async")]
     declared_sync_deadline: bool,
 }
@@ -922,6 +1185,17 @@ impl GuardBuilder {
 
     /// Production SignedSrl path: snapshots come from the tracker, not a fallback.
     pub fn revocation_tracker(mut self, tracker: std::sync::Arc<RevocationTracker>) -> Self {
+        self.tracker = Some(tracker);
+        self
+    }
+
+    /// TTL until `tracker` accepts an SRL, then signed-SRL on later checks.
+    pub(crate) fn ttl_until_signed_srl(
+        mut self,
+        max_lifetime: Duration,
+        tracker: std::sync::Arc<RevocationTracker>,
+    ) -> Self {
+        self.revocation = Some(RevocationMode::TtlUntilSrl { max_lifetime });
         self.tracker = Some(tracker);
         self
     }
@@ -977,6 +1251,16 @@ impl GuardBuilder {
         self
     }
 
+    /// Share previous-receipt hash across sessions of one runtime.
+    #[cfg(feature = "receipts")]
+    pub(crate) fn receipt_link(
+        mut self,
+        link: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
+    ) -> Self {
+        self.receipt_link = Some(link);
+        self
+    }
+
     /// Sync surface cannot enforce a deadline. Calling this makes `build` fail.
     #[cfg(feature = "async")]
     pub fn deadline(mut self, _deadline: Duration) -> Self {
@@ -999,6 +1283,9 @@ impl GuardBuilder {
         }
         #[cfg(feature = "receipts")]
         let evidence = {
+            let last_receipt_hash = self
+                .receipt_link
+                .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(None)));
             match self.evidence {
                 EvidencePolicy::Disabled => EvidenceConfig::disabled(),
                 EvidencePolicy::BestEffort => {
@@ -1009,6 +1296,7 @@ impl GuardBuilder {
                         policy: EvidencePolicy::BestEffort,
                         signer: self.receipt_signer,
                         sink: self.receipt_sink,
+                        last_receipt_hash,
                     }
                 }
                 EvidencePolicy::RequiredBeforeExecution => {
@@ -1022,6 +1310,7 @@ impl GuardBuilder {
                         policy: EvidencePolicy::RequiredBeforeExecution,
                         signer: self.receipt_signer,
                         sink: self.receipt_sink,
+                        last_receipt_hash,
                     }
                 }
             }
@@ -1029,6 +1318,13 @@ impl GuardBuilder {
         let revocation = match mode {
             RevocationMode::TtlOnly { max_lifetime } => {
                 ResolvedRevocation::TtlOnly { max_lifetime }
+            }
+            RevocationMode::TtlUntilSrl { max_lifetime } => {
+                let tracker = self.tracker.ok_or(GuardBuildError::SignedSrlUnavailable)?;
+                ResolvedRevocation::TtlUntilSrl {
+                    max_lifetime,
+                    tracker,
+                }
             }
             RevocationMode::SignedSrl => {
                 if let Some(tracker) = self.tracker {
@@ -1060,6 +1356,7 @@ impl GuardBuilder {
 
 /// Failure constructing a [`Guard`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum GuardBuildError {
     /// No authorizer was supplied.
     MissingAuthorizer,
@@ -1608,5 +1905,154 @@ mod tests {
             }
             GuardError::Operation(_) => panic!("operation must not run"),
         }
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn received_invalid_pop_deny_receipt_omits_pop() {
+        use super::super::evidence::{EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink};
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let other = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let authority = authority(vec![warrant], holder);
+        let client = guard_for(&issuer);
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        client.check(&authority, &call).expect("holder allow");
+        let junk = other.sign_raw(b"not-the-pop");
+        let received = ReceivedAuthorization::new(authority.chain(), &junk, &[]).unwrap();
+        let projection = VerifiedProjection::identical(HashMap::new());
+        let inbound = Call::from_transport("read", &projection);
+        let sink = Arc::new(MemoryReceiptSink::new());
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let server = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_signer(Arc::new(LocalReceiptSigner::for_development()))
+            .receipt_sink(sink.clone())
+            .build()
+            .unwrap();
+        assert!(server.check_received(&received, &inbound).is_err());
+        let stored = sink.stored();
+        assert_eq!(stored.len(), 1);
+        let payload = stored[0].verify_signature().unwrap();
+        assert!(payload.pop_signature.is_none());
+        assert!(payload.request_hash.is_none());
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn received_untrusted_root_deny_receipt_omits_pop() {
+        use super::super::evidence::{EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink};
+
+        let issuer = SigningKey::generate();
+        let other_root = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let presented = authority(vec![warrant], holder.clone());
+        let client = guard_for(&issuer);
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        client.check(&presented, &call).expect("holder allow");
+        let junk = holder.sign_raw(b"unverified-wire-pop");
+        let received = ReceivedAuthorization::new(presented.chain(), &junk, &[]).unwrap();
+        let projection = VerifiedProjection::identical(HashMap::new());
+        let inbound = Call::from_transport("read", &projection);
+        let sink = Arc::new(MemoryReceiptSink::new());
+        let mut stranger = Authorizer::new();
+        stranger.add_trusted_root(other_root.public_key());
+        let server = Guard::builder()
+            .authorizer(stranger)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_signer(Arc::new(LocalReceiptSigner::for_development()))
+            .receipt_sink(sink.clone())
+            .build()
+            .unwrap();
+        let denial = server.check_received(&received, &inbound).err().unwrap();
+        assert!(matches!(
+            denial.protocol_code(),
+            Some(ErrorCode::UntrustedRoot | ErrorCode::SignatureInvalid)
+        ));
+        let stored = sink.stored();
+        assert_eq!(stored.len(), 1);
+        let payload = stored[0].verify_signature().unwrap();
+        assert!(payload.pop_signature.is_none());
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn signer_without_sink_advances_receipt_chain() {
+        use super::super::evidence::{EvidencePolicy, LocalReceiptSigner};
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let presented = authority(vec![warrant], holder);
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_signer(Arc::new(LocalReceiptSigner::for_development()))
+            .build()
+            .unwrap();
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        let first = guard.check(&presented, &call).unwrap();
+        let a = first.receipt.expect("first receipt");
+        let second = guard.check(&presented, &call).unwrap();
+        let b = second.receipt.expect("second receipt");
+        assert_eq!(
+            b.verify_signature().unwrap().prev_receipt_hash,
+            Some(a.digest().unwrap())
+        );
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn poisoned_receipt_link_recovers_under_best_effort() {
+        use super::super::evidence::{EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink};
+        use std::sync::Mutex;
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let presented = authority(vec![warrant], holder);
+        let link = Arc::new(Mutex::new(None));
+        let poison = link.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poison.lock().unwrap();
+            panic!("poison receipt link");
+        })
+        .join();
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_signer(Arc::new(LocalReceiptSigner::for_development()))
+            .receipt_sink(Arc::new(MemoryReceiptSink::new()))
+            .receipt_link(link)
+            .build()
+            .unwrap();
+        let args = HashMap::new();
+        assert!(guard
+            .check(&presented, &Call::borrowed("read", &args))
+            .is_ok());
     }
 }

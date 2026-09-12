@@ -14,8 +14,9 @@
     "noEmit": true,
     "types": ["node"],
     "paths": {
-      "@tenuo/core": ["../core/src/index.ts"]
+      "@tenuo/core": ["../core/src/index.ts"],
+      "@tenuo/mcp": ["./src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "examples/**/*.ts"]
 }

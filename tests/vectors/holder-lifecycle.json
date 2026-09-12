@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "contract": "holder-lifecycle",
+  "notes": [
+    "ConnectToken parse is strict: missing v, v=0, and future versions are errors.",
+    "drain_receipts is a non-consuming snapshot; only acknowledge_receipts removes.",
+    "A full receipt buffer must not deny an authorized call; overflow is counted.",
+    "Public key is derived from the secret; secret never appears in Debug/repr/str."
+  ],
+  "connect_tokens": [
+    {
+      "name": "good_v1",
+      "raw": "tenuo_ct_eyJ2IjoxLCJlIjoiaHR0cHM6Ly9jb250cm9sLmV4YW1wbGUuY29tL3YxLyIsImsiOiJ0Y19hYmMiLCJhIjoiYWciLCJ0IjoidG9rIn0",
+      "expect": "ok",
+      "version": 1,
+      "endpoint": "https://control.example.com",
+      "api_key": "tc_abc",
+      "agent_id": "ag",
+      "registration_token": "tok",
+      "needs_endpoint_base": false
+    },
+    {
+      "name": "missing_v",
+      "raw": "tenuo_ct_eyJlIjoiaHR0cHM6Ly9jb250cm9sLmV4YW1wbGUuY29tIiwiayI6InRjX2FiYyJ9",
+      "expect": "error",
+      "error_contains": "version"
+    },
+    {
+      "name": "v0",
+      "raw": "tenuo_ct_eyJ2IjowLCJlIjoiaHR0cHM6Ly9jb250cm9sLmV4YW1wbGUuY29tIiwiayI6InRjX2FiYyJ9",
+      "expect": "error",
+      "error_contains": "version 0"
+    },
+    {
+      "name": "v2",
+      "raw": "tenuo_ct_eyJ2IjoyLCJlIjoiaHR0cHM6Ly9jb250cm9sLmV4YW1wbGUuY29tIiwiayI6InRjX2FiYyJ9",
+      "expect": "error",
+      "error_contains": "version 2"
+    },
+    {
+      "name": "empty_endpoint",
+      "raw": "tenuo_ct_eyJ2IjoxLCJlIjoiIiwiayI6InRjX2FiYyJ9",
+      "expect": "error",
+      "error_contains": "endpoint"
+    },
+    {
+      "name": "empty_api_key",
+      "raw": "tenuo_ct_eyJ2IjoxLCJlIjoiaHR0cHM6Ly9jb250cm9sLmV4YW1wbGUuY29tIiwiayI6IiJ9",
+      "expect": "error",
+      "error_contains": "api_key"
+    },
+    {
+      "name": "relative_v1",
+      "raw": "tenuo_ct_eyJ2IjoxLCJlIjoiL3YxIiwiayI6InRjX2FiYyJ9",
+      "expect": "ok",
+      "version": 1,
+      "endpoint": "",
+      "api_key": "tc_abc",
+      "agent_id": null,
+      "registration_token": null,
+      "needs_endpoint_base": true,
+      "resolve_base": "https://control.example.com/v1",
+      "resolved_endpoint": "https://control.example.com"
+    },
+    {
+      "name": "padded_b64_and_r_alias",
+      "raw": "tenuo_ct_eyJ2IjoxLCJlIjoiaHR0cHM6Ly9jb250cm9sLmV4YW1wbGUuY29tL3YxIiwiayI6InRjX2FiYyIsInIiOiJ0b2stYWxpYXMifQ==",
+      "expect": "ok",
+      "version": 1,
+      "endpoint": "https://control.example.com",
+      "api_key": "tc_abc",
+      "agent_id": null,
+      "registration_token": "tok-alias",
+      "needs_endpoint_base": false
+    }
+  ],
+  "identity": {
+    "secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+    "python_repr": "HolderIdentity(public_key=d04ab232…)"
+  },
+  "receipts": {
+    "drain_is_snapshot": true,
+    "remove_only_on_acknowledge": true,
+    "overflow_does_not_deny_authorized_call": true,
+    "overflow_is_observable": true
+  }
+}

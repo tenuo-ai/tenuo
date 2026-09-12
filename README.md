@@ -200,6 +200,21 @@ Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_deleg
 
 ---
 
+## Try It: The AI Agent Delegation Security Lab
+
+A travel assistant made of six AI agents is booking a spring-break trip. One of them has been told to do something it shouldn't. Secure the system so the trip still happens and the rogue agent gets nowhere.
+
+```bash
+git clone https://github.com/tenuo-ai/tenuo
+cd tenuo/labs/agent-delegation
+npm install
+npm run lab
+```
+
+Five main levels plus two optional bosses, no agent-framework experience needed. Book the trip, stop the rogue agent, and learn why each handoff should carry only the authority its task needs. Runs offline with free retries and no API key. The guide is at [tenuo.ai/lab](https://tenuo.ai/lab/); the code is in [`labs/agent-delegation`](./labs/agent-delegation/README.md).
+
+---
+
 ## How It Works
 
 Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. The verifier uses the trusted issuer key and locally available revocation state.
@@ -275,6 +290,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 
 | Resource | Description |
 |----------|-------------|
+| **[AI Agent Delegation Security Lab](./labs/agent-delegation/README.md)** | A hands-on lab: six agents, one rogue, five core levels plus two optional bosses |
 | **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
 | **[Concepts](https://tenuo.ai/concepts)** | How warrants and attenuation work |
 | **[Constraints](https://tenuo.ai/constraints)** | All 11 constraint types explained |
@@ -334,8 +350,8 @@ This runs the [orchestrator -> worker -> authorizer](https://tenuo.ai/demo.html)
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.2.4  # Sidecar for warrant verification
-docker pull tenuo/control:0.2.4     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.3.0  # Sidecar for warrant verification
+docker pull tenuo/control:0.3.0     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -372,7 +388,7 @@ The core crate is the protocol. The `sdk` feature is the enforcement surface: a 
 
 ```toml
 [dependencies]
-tenuo = { version = "0.2.4", features = ["sdk"] }
+tenuo = { version = "0.3.0", features = ["sdk"] }
 ```
 
 ```rust
@@ -389,19 +405,19 @@ let warrant = Warrant::builder()
     .ttl(Duration::from_secs(300))
     .build(&root)?;
 
-let (guard, authority) = Tenuo::local()
+let runtime = Runtime::builder()
+    .holder(holder)
     .trusted_root(root.public_key())
-    .chain(vec![warrant])
-    .signer(holder)
     .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(600) })
     .build()?;
+let session = runtime.session_from_warrant(warrant)?;
 
 let allowed = Call::owned("read_file", args! { "path" => "/data/report.csv" })?;
-let out = guard.guard(&authority, &allowed, |_| Ok::<_, std::io::Error>("read"))?;
+let out = session.guard(&allowed, |_| Ok::<_, std::io::Error>("read"))?;
 assert_eq!(out.into_inner(), "read");
 
 let refused = Call::owned("read_file", args! { "path" => "/etc/shadow" })?;
-assert!(guard.check(&authority, &refused).is_err());
+assert!(session.check(&refused).is_err());
 ```
 
 The closure runs only after an allow. A call outside the constraint is denied before it runs, same as Python `@guard`. A guard with no trust root or no revocation policy does not compile.

@@ -16,6 +16,15 @@ env:
   CARGO_INCREMENTAL: 0  # Faster CI builds (no incremental overhead)
 
 jobs:
+  version-check:
+    name: Version check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check crate and package versions
+        run: make version-check
+
   # ============================================================================
   # RUST CORE
   # ============================================================================
@@ -189,15 +198,31 @@ jobs:
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
           uv pip install --system types-PyYAML types-requests
+          # OpenAI + Agents SDK (Python 3.10+). Installed before crewai so the
+          # matrix exercises openai>=2; crewai may pin openai<3 afterwards.
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
+            && uv pip install --system openai openai-agents \
+            || echo "Skipping openai / openai-agents (requires Python 3.10+)"
+          # AutoGen AgentChat (Python 3.10+)
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
+            && uv pip install --system "autogen-agentchat>=0.7.0" "autogen-ext[openai]>=0.7.0" \
+            || echo "Skipping autogen (requires Python 3.10+)"
+          # Google ADK
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
+            && uv pip install --system google-adk \
+            || echo "Skipping google-adk (requires Python 3.10+)"
           # Install crewai for integration tests (Python 3.10+).
           # Skip on Python 3.14 (all OS/arch): CrewAI/Chroma pydantic.v1 models raise
           # ConfigError at import/collection time until upstream supports 3.14.
+          # Note: crewai currently requires openai<3 and mcp~=1.x — keep this
+          # install after openai so adapter tests still collect; mcp-smoke covers
+          # FastMCP 4 / mcp 2 separately.
           if [ "${{ matrix.python-version }}" = "3.14" ]; then
             echo "Skipping crewai install on Python 3.14 (upstream collect failure)"
           else
             python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system crewai || echo "Skipping crewai (requires Python 3.10+)"
           fi
-          # MCP SDK requires Python 3.10+
+          # MCP SDK requires Python 3.10+ (crewai-compatible 1.x when crewai is present)
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
           # Temporal SDK for live integration tests (Python 3.12+ to match dedicated job).
           # protobuf>=6.0 prevents a conflict with grpcio's bundled protobuf on Python 3.12+
@@ -234,12 +259,30 @@ jobs:
           fi
 
   # ============================================================================
-  # MCP END-TO-END SMOKE
+  # MCP / FastMCP dual-line smoke (regression guard)
+  # FastMCP 3 pairs with MCP SDK 1.x; FastMCP 4 requires MCP SDK 2.x.
+  # Keep these jobs separate from the main matrix (CrewAI pins mcp~=1.x).
   # ============================================================================
   mcp-smoke:
-    name: MCP Smoke (FastMCP + SecureMCPClient)
+    name: MCP Smoke (FastMCP ${{ matrix.fastmcp-line }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Latest 3.x (>=3.4 already has ToolResult.is_error); the weekly
+          # compatibility matrix covers the 3.2.1 floor.
+          - fastmcp-line: "3"
+            mcp_spec: "mcp>=1.9.4,<2"
+            fastmcp_spec: "fastmcp>=3,<4"
+            expect_fastmcp_major: "3"
+            expect_mcp_major: "1"
+          - fastmcp-line: "4"
+            mcp_spec: "mcp>=2"
+            fastmcp_spec: "fastmcp>=4"
+            expect_fastmcp_major: "4"
+            expect_mcp_major: "2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -260,19 +303,29 @@ jobs:
           cache: pip
           cache-dependency-path: tenuo-python/pyproject.toml
 
-      - name: Install Tenuo + MCP smoke dependencies
+      - name: Install Tenuo + FastMCP ${{ matrix.fastmcp-line }} line
         working-directory: tenuo-python
         run: |
           pip install uv
           uv pip install --system maturin
           maturin build --release
           uv pip install --system target/wheels/*.whl
-          uv pip install --system pytest pytest-asyncio mcp fastmcp
+          uv pip install --system pytest pytest-asyncio \
+            "${{ matrix.mcp_spec }}" \
+            "${{ matrix.fastmcp_spec }}"
+          python ../scripts/check_installed_majors.py \
+            "mcp=${{ matrix.expect_mcp_major }}" \
+            "fastmcp=${{ matrix.expect_fastmcp_major }}"
 
-      - name: Run MCP smoke test
+      - name: Run MCP smoke + FastMCP middleware/e2e
         working-directory: tenuo-python
         run: |
-          pytest -v tests/adapters/test_mcp_ci_smoke.py
+          pytest -v \
+            tests/adapters/test_mcp_ci_smoke.py \
+            tests/adapters/test_mcp_fastmcp_middleware.py \
+            tests/adapters/test_mcp_fastmcp_e2e.py \
+            tests/e2e/test_smoke.py::test_mcp_import \
+            tests/e2e/test_smoke.py::test_fastmcp_import
 
   # ============================================================================
   # TEMPORAL INTEGRATION (live Temporal server)
@@ -609,14 +662,43 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
+          components: clippy
 
       - name: Cache Rust
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
-          workspaces: tenuo-wasm
+          workspaces: |
+            tenuo-wasm
+            tenuo-python
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Check locked WASM adapter and lint
+        working-directory: tenuo-wasm
+        run: |
+          cargo check --locked --target wasm32-unknown-unknown
+          # These three large authorization entry points predate the TypeScript
+          # SDK. Keep the narrow waiver explicit while denying every other lint.
+          cargo clippy --locked --target wasm32-unknown-unknown -- \
+            -D warnings \
+            -A clippy::too_many_arguments
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tenuo-python/pyproject.toml
+
+      - name: Build and install the Python binding
+        working-directory: tenuo-python
+        run: |
+          pip install uv
+          uv pip install --system maturin
+          maturin build --release
+          uv pip install --system target/wheels/*.whl "mcp>=1.9.4"
+          python -c "import tenuo; from tenuo.mcp.server import MCPVerifier; print(f'tenuo {tenuo.__version__}')"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -640,11 +722,167 @@ jobs:
 
       - name: Test
         working-directory: tenuo-ts
+        env:
+          TENUO_REQUIRE_INTEROP: "1"
         run: pnpm test
+
+      # Optimized .wasm bytes and private export ordering vary across Rust and
+      # wasm-pack patch releases. The public adapters are the deterministic
+      # generated contract; the rebuilt binary is exercised by the tests above.
+      - name: Verify public WASM bindings are current
+        run: |
+          git diff --exit-code -- \
+            tenuo-wasm/Cargo.lock \
+            tenuo-ts/packages/core/src/generated/tenuo_wasm.js \
+            tenuo-ts/packages/core/src/generated/tenuo_wasm.d.ts
 
       - name: Pack smoke (Node 20)
         working-directory: tenuo-ts
         run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
+
+      - name: Next.js Node runtime example
+        working-directory: tenuo-ts
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: node examples/nextjs-node/scripts/verify-packed.mjs
+
+  # Test the committed WASM package on every supported active Node line without
+  # rebuilding it. Node 20 above remains the reproducible Rust/WASM build lane.
+  tenuo-ts-node-compat:
+    name: TypeScript SDK (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22", "24"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck and test committed WASM package
+        working-directory: tenuo-ts
+        run: |
+          pnpm typecheck
+          pnpm --filter @tenuo/core test
+          pnpm --filter @tenuo/mcp test
+
+      - name: Build and pack smoke
+        working-directory: tenuo-ts
+        run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
+
+  # Committed WASM only — no wasm-pack. Catches Node path / createRequire /
+  # npm.cmd issues that Linux jobs will not see.
+  tenuo-ts-windows:
+    name: TypeScript SDK (Windows pack smoke)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: tenuo-ts
+        run: pnpm typecheck
+
+      - name: Build and pack smoke
+        working-directory: tenuo-ts
+        run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
+
+  agent-delegation-lab:
+    name: Agent Delegation Lab
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: tenuo-wasm
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+
+      # Participants install the pinned public @tenuo/core package and never
+      # need Rust. CI rebuilds the SDK from this checkout so every stage also
+      # runs against the implementation in this commit.
+      - name: Build @tenuo/core from this checkout
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile && pnpm build:wasm && pnpm --filter @tenuo/core build
+
+      - name: Pack current @tenuo/core for the lab
+        working-directory: tenuo-ts/packages/core
+        env:
+          TENUO_LAB_PACKAGE: ${{ runner.temp }}/tenuo-lab-package
+        run: |
+          mkdir -p "$TENUO_LAB_PACKAGE"
+          npm pack --pack-destination "$TENUO_LAB_PACKAGE"
+
+      - name: Install and test the lab
+        working-directory: labs/agent-delegation
+        env:
+          TENUO_LAB_PACKAGE: ${{ runner.temp }}/tenuo-lab-package
+        run: |
+          # Install the lab reproducibly, then replace the participant-facing
+          # published SDK with the package built from this exact checkout.
+          npm ci --no-audit --no-fund
+          npm install --no-save --package-lock=false "$TENUO_LAB_PACKAGE"/*.tgz
+          npm run typecheck
+          npm test
+          # The hosted lab pages are generated from this code and real runs.
+          npm run site -- --check
 
   # ============================================================================
   # DOC CODE BLOCKS

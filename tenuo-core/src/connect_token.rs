@@ -1,9 +1,8 @@
 //! Connect token support for streamlined onboarding.
 //!
-//! A connect token (`tenuo_ct_<base64url-json>`) bundles all credentials needed
-//! to register an authorizer with the Tenuo Cloud control plane into a single
-//! copy-pasteable string. The token is created via the dashboard's Quick Connect
-//! dialog and can be shared across multiple authorizer instances.
+//! A connect token (`tenuo_ct_<base64url-json>`) bundles the credentials
+//! needed to register an authorizer with a control plane into a single
+//! string. It can be shared across multiple authorizer instances.
 //!
 //! # Token format (v1)
 //!
@@ -23,11 +22,23 @@ use serde::{Deserialize, Serialize};
 
 const TOKEN_PREFIX: &str = "tenuo_ct_";
 
+/// Strip trailing slashes and a trailing `/v1` so callers append `/v1/…` once.
+pub fn normalize_control_plane_url(url: &str) -> String {
+    let mut endpoint = url.trim().trim_end_matches('/').to_string();
+    if endpoint.ends_with("/v1") {
+        endpoint.truncate(endpoint.len() - 3);
+        endpoint = endpoint.trim_end_matches('/').to_string();
+    }
+    endpoint
+}
+
 /// Parsed connect token payload.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// `Debug` and `Serialize` redact `api_key` and `registration_token`.
+#[derive(Clone, Deserialize)]
 pub struct ConnectToken {
-    /// Token format version (currently 1).
-    #[serde(rename = "v", default = "default_version")]
+    /// Token format version. [`ConnectToken::parse`] accepts only version 1.
+    #[serde(rename = "v")]
     pub version: u8,
     /// Control plane API base endpoint.
     ///
@@ -43,16 +54,47 @@ pub struct ConnectToken {
     #[serde(rename = "a", default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     /// One-time registration token for claiming the agent.
-    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "t",
+        alias = "r",
+        alias = "registration_token",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub registration_token: Option<String>,
 }
 
-fn default_version() -> u8 {
-    1
+impl std::fmt::Debug for ConnectToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectToken")
+            .field("version", &self.version)
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &"[REDACTED]")
+            .field("agent_id", &self.agent_id)
+            .field(
+                "registration_token",
+                &self.registration_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
+}
+
+impl Serialize for ConnectToken {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("ConnectToken", 5)?;
+        state.serialize_field("v", &self.version)?;
+        state.serialize_field("e", &self.endpoint)?;
+        state.serialize_field("k", "[REDACTED]")?;
+        state.serialize_field("a", &self.agent_id)?;
+        state.serialize_field("t", &self.registration_token.as_ref().map(|_| "[REDACTED]"))?;
+        state.end()
+    }
 }
 
 /// Errors specific to connect token operations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConnectTokenError {
     /// Token string does not start with the expected prefix.
     MissingPrefix,
@@ -64,8 +106,8 @@ pub enum ConnectTokenError {
     MissingField(&'static str),
     /// Agent claim HTTP request failed.
     ClaimFailed(String),
-    /// Token version is newer than this SDK supports.
-    UnsupportedVersion(u8),
+    /// Token version is not supported by this SDK.
+    UnsupportedVersion(u64),
 }
 
 impl std::fmt::Display for ConnectTokenError {
@@ -92,20 +134,43 @@ impl ConnectToken {
     /// Parse a raw `tenuo_ct_…` string into a [`ConnectToken`].
     pub fn parse(raw: &str) -> Result<Self, ConnectTokenError> {
         let encoded = raw
+            .trim()
             .strip_prefix(TOKEN_PREFIX)
             .ok_or(ConnectTokenError::MissingPrefix)?;
 
         let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(encoded)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(encoded))
+            .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(encoded))
+            .or_else(|_| base64::engine::general_purpose::STANDARD.decode(encoded))
             .map_err(|e| ConnectTokenError::Base64(e.to_string()))?;
 
-        let token: ConnectToken = serde_json::from_slice(&json_bytes)
+        let value: serde_json::Value = serde_json::from_slice(&json_bytes)
             .map_err(|e| ConnectTokenError::Json(e.to_string()))?;
-
-        const MAX_SUPPORTED_VERSION: u8 = 1;
-        if token.version > MAX_SUPPORTED_VERSION {
-            return Err(ConnectTokenError::UnsupportedVersion(token.version));
+        if !value.is_object() {
+            return Err(ConnectTokenError::Json(
+                "connect token payload must be a JSON object".into(),
+            ));
         }
+        match value.get("v") {
+            None | Some(serde_json::Value::Null) => {
+                return Err(ConnectTokenError::MissingField("version"));
+            }
+            Some(v) => {
+                let parsed = v.as_u64().ok_or_else(|| {
+                    ConnectTokenError::Json(
+                        "version must be a non-negative integer. This SDK supports version 1."
+                            .into(),
+                    )
+                })?;
+                if parsed != 1 {
+                    return Err(ConnectTokenError::UnsupportedVersion(parsed));
+                }
+            }
+        }
+
+        let token: ConnectToken =
+            serde_json::from_value(value).map_err(|e| ConnectTokenError::Json(e.to_string()))?;
 
         if token.endpoint.is_empty() {
             return Err(ConnectTokenError::MissingField("endpoint"));
@@ -114,18 +179,38 @@ impl ConnectToken {
             return Err(ConnectTokenError::MissingField("api_key"));
         }
 
-        // Normalize: strip trailing `/v1` (and trailing slashes) so all
-        // callers can uniformly prepend `/v1/…` paths without doubling.
-        let mut ep = token.endpoint;
-        ep = ep.trim_end_matches('/').to_string();
-        if ep.ends_with("/v1") {
-            ep.truncate(ep.len() - 3);
-        }
-
         Ok(ConnectToken {
-            endpoint: ep,
+            endpoint: normalize_control_plane_url(&token.endpoint),
             ..token
         })
+    }
+
+    /// True when `e` was a relative path such as `/v1` and parse stripped it
+    /// to an empty or path-only origin. The caller must supply a base URL.
+    pub fn needs_endpoint_base(&self) -> bool {
+        self.endpoint.is_empty() || self.endpoint.starts_with('/')
+    }
+
+    /// Resolve a relative connect-token endpoint against a caller-provided base.
+    ///
+    /// `base` is an origin such as `https://control.example.com` or the same
+    /// origin with a `/v1` suffix. This method never invents an origin.
+    /// Absolute endpoints are left unchanged.
+    pub fn resolve_endpoint(&mut self, base: &str) -> Result<(), ConnectTokenError> {
+        if !self.needs_endpoint_base() {
+            return Ok(());
+        }
+        let origin = normalize_control_plane_url(base);
+        if origin.is_empty() || origin.starts_with('/') {
+            return Err(ConnectTokenError::MissingField("endpoint"));
+        }
+        let remainder = self.endpoint.clone();
+        self.endpoint = if remainder.is_empty() || remainder == "/" {
+            origin
+        } else {
+            format!("{}{}", origin.trim_end_matches('/'), remainder)
+        };
+        Ok(())
     }
 
     /// Claim the pre-created agent using the embedded registration token.
@@ -133,6 +218,7 @@ impl ConnectToken {
     /// This is a no-op when `agent_id` or `registration_token` is absent.
     /// HTTP 409 (already claimed) is treated as success so the same token can
     /// be safely reused by multiple authorizer instances.
+    #[cfg(feature = "server")]
     pub async fn claim_agent(
         &self,
         signing_key: &crate::crypto::SigningKey,
@@ -238,12 +324,34 @@ mod tests {
     }
 
     #[test]
+    fn parse_padded_base64url_and_registration_alias() {
+        let payload =
+            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","r":"tok-alias"}"#;
+        let padded = base64::engine::general_purpose::URL_SAFE.encode(payload);
+        let raw = format!("{TOKEN_PREFIX}{padded}");
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.registration_token.as_deref(), Some("tok-alias"));
+    }
+
+    #[test]
+    fn parse_trims_whitespace_and_accepts_standard_base64() {
+        let payload = br#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc"}"#;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(payload);
+        let raw = format!("  {TOKEN_PREFIX}{encoded}\n");
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.api_key, "tc_abc");
+        assert_eq!(ct.endpoint, "https://control.example.com");
+    }
+
+    #[test]
     fn parse_v0_token_without_version() {
         let raw = make_token_str(
             r#"{"e":"https://control.example.com/v1","k":"tc_old","a":"ag","t":"rt"}"#,
         );
-        let ct = ConnectToken::parse(&raw).unwrap();
-        assert_eq!(ct.version, 1); // default
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::MissingField("version"))
+        ));
     }
 
     #[test]
@@ -276,5 +384,76 @@ mod tests {
             ConnectToken::parse(&raw),
             Err(ConnectTokenError::UnsupportedVersion(2))
         ));
+    }
+
+    #[test]
+    fn relative_v1_endpoint_needs_caller_base() {
+        let raw = make_token_str(r#"{"v":1,"e":"/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        assert!(ct.needs_endpoint_base());
+        ct.resolve_endpoint("https://control.example.com/v1")
+            .unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com");
+        assert!(!ct.needs_endpoint_base());
+    }
+
+    #[test]
+    fn resolve_endpoint_does_not_replace_absolute_origin() {
+        let raw = make_token_str(r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        ct.resolve_endpoint("https://other.example").unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com");
+    }
+
+    #[test]
+    fn resolve_endpoint_joins_remaining_relative_path() {
+        let raw = make_token_str(r#"{"v":1,"e":"/api/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.endpoint, "/api");
+        ct.resolve_endpoint("https://control.example.com").unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com/api");
+    }
+
+    #[test]
+    fn reject_version_out_of_u8_range() {
+        let raw = make_token_str(r#"{"v":257,"e":"https://control.example.com","k":"tc_abc"}"#);
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::UnsupportedVersion(257))
+        ));
+        assert!(ConnectToken::parse(&raw)
+            .unwrap_err()
+            .to_string()
+            .contains("257"));
+    }
+
+    #[test]
+    fn resolve_endpoint_rejects_empty_or_relative_base() {
+        let raw = make_token_str(r#"{"v":1,"e":"/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        assert!(matches!(
+            ct.resolve_endpoint("/v1"),
+            Err(ConnectTokenError::MissingField("endpoint"))
+        ));
+        assert!(matches!(
+            ct.resolve_endpoint(""),
+            Err(ConnectTokenError::MissingField("endpoint"))
+        ));
+    }
+
+    #[test]
+    fn debug_and_serialize_redact_secrets() {
+        let raw = make_token_str(
+            r#"{"v":1,"e":"https://control.example.com","k":"tc_secret","t":"reg_secret"}"#,
+        );
+        let ct = ConnectToken::parse(&raw).unwrap();
+        let debug = format!("{ct:?}");
+        assert!(!debug.contains("tc_secret"), "{debug}");
+        assert!(!debug.contains("reg_secret"), "{debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
+        let json = serde_json::to_string(&ct).unwrap();
+        assert!(!json.contains("tc_secret"), "{json}");
+        assert!(!json.contains("reg_secret"), "{json}");
+        assert!(json.contains("[REDACTED]"), "{json}");
     }
 }

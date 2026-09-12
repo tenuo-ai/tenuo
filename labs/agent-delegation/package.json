@@ -1,0 +1,34 @@
+{
+  "name": "agent-delegation-lab",
+  "version": "0.2.0",
+  "private": true,
+  "description": "AI Agent Delegation Security Challenge: book the trip, stop the rogue agent, and learn least-privilege handoffs.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lab": "tsx src/cli/index.ts lab",
+    "trace": "tsx src/cli/index.ts trace",
+    "attack": "tsx src/cli/index.ts attack",
+    "score": "tsx src/cli/index.ts score",
+    "audit": "tsx src/cli/index.ts audit",
+    "next": "tsx src/cli/index.ts next",
+    "share": "tsx src/cli/index.ts share",
+    "star": "tsx src/cli/index.ts star",
+    "reset": "tsx src/cli/index.ts reset",
+    "ambassador": "tsx src/cli/index.ts ambassador",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "site": "tsx site/build.ts"
+  },
+  "dependencies": {
+    "@tenuo/core": "0.2.5-beta.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

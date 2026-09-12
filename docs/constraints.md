@@ -885,9 +885,10 @@ AnyOf([
 ```
 
 > [!NOTE]
-> **`Any` vs `AnyOf`**: These are different!
+> **`AnyValue` vs `AnyOf`**: These are different!
 > - `AnyOf([...])` - OR composite: at least one constraint must match
-> - `Any()` - Alias for `Wildcard()`: allows any value for a specific field in zero-trust mode
+> - `AnyValue()` - Alias for `Wildcard()`: allows any value for a specific field in zero-trust mode
+>   (`Any` is a deprecated alias and emits `DeprecationWarning`)
 
 > [!NOTE]
 > **Attenuation rule: every child branch must be covered by a parent branch.** `AnyOf -> AnyOf` attenuation is valid when the child's set of alternatives is a subset of the parent's: each child branch must be a valid attenuation of at least one parent branch. For example, `AnyOf([Subpath("/var"), Subpath("/srv")]) -> AnyOf([Subpath("/var/log")])` is valid; adding a new branch not in the parent is rejected.

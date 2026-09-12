@@ -11,14 +11,15 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
         
         // baseURL includes /explorer in CI
         await page.goto('/');
-        // Wait for WASM to load
-        await expect(page.getByText('Decode Warrant')).toBeEnabled({ timeout: 30000 });
+        // The label changes from "Loading WASM..." once initialization completes.
+        // It remains disabled until a warrant is loaded, which is the correct UI state.
+        await expect(page.getByText('Decode Warrant')).toBeVisible({ timeout: 30000 });
     });
 
     test('can decode sample warrant', async ({ page }) => {
         // Load sample
         await page.click('button:has-text("Samples")');
-        await page.click('text=File Read Access');
+        await page.getByText('Valid Read').click();
 
         // Verify warrant is loaded
         const textarea = page.locator('textarea').first();
@@ -28,46 +29,41 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
         await page.click('button:has-text("Decode Warrant")');
 
         // Verify decoded output appears
-        await expect(page.getByText('Warrant Type')).toBeVisible();
-        await expect(page.getByText('execution')).toBeVisible();
-        await expect(page.getByText('read_file')).toBeVisible();
+        await expect(page.getByText('Authorized Tools')).toBeVisible();
+        await expect(page.getByText('read_file').first()).toBeVisible();
     });
 
     test('authorization flow works with dry run', async ({ page }) => {
         // Load sample
         await page.click('button:has-text("Samples")');
-        await page.click('text=File Read Access');
+        await page.getByText('Valid Read').click();
         await page.click('button:has-text("Decode Warrant")');
 
-        // Enable dry run
-        const dryRunCheckbox = page.locator('input[type="checkbox"]').filter({ hasText: /dry run/i });
-        await dryRunCheckbox.check();
-
-        // Authorize
+        // The explorer intentionally performs policy-only checks in dry-run mode.
         await page.click('button:has-text("Check Authorization")');
 
         // Verify result appears
         await expect(page.locator('text=/Authorized|Denied/').first()).toBeVisible();
     });
 
-    test('keyboard shortcuts work', async ({ page }) => {
+    test('decode shortcut and clear action work', async ({ page }) => {
         // Load sample
         await page.click('button:has-text("Samples")');
-        await page.click('text=File Read Access');
+        await page.getByText('Valid Read').click();
 
         // Cmd+Enter to decode
         await page.keyboard.press('Meta+Enter');
-        await expect(page.getByText('Warrant Type')).toBeVisible();
+        await expect(page.getByText('Authorized Tools')).toBeVisible();
 
-        // Cmd+K to clear
-        await page.keyboard.press('Meta+K');
+        // Dispatch the app shortcut directly; browser chrome reserves Cmd/Ctrl+K.
+        await page.locator('body').dispatchEvent('keydown', { key: 'k', metaKey: true });
         const textarea = page.locator('textarea').first();
         await expect(textarea).toHaveValue('');
     });
 
     test('mode switching works', async ({ page }) => {
         // Switch to diff mode
-        await page.keyboard.press('Meta+4');
+        await page.keyboard.press('Meta+3');
         await expect(page.getByText('Warrant Diff Viewer')).toBeVisible();
 
         // Switch to builder mode
@@ -81,7 +77,7 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
 
     test('diff viewer compares warrants', async ({ page }) => {
         // Switch to diff mode
-        await page.keyboard.press('Meta+4');
+        await page.keyboard.press('Meta+3');
 
         // Load sample in both
         await page.click('button:has-text("Same Warrant")');
@@ -96,11 +92,11 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
     test('validation warnings appear for issues', async ({ page }) => {
         // Load sample and decode
         await page.click('button:has-text("Samples")');
-        await page.click('text=File Read Access');
+        await page.getByText('Valid Read').click();
         await page.click('button:has-text("Decode Warrant")');
 
         // Change tool to something not in warrant
-        await page.fill('input[placeholder*="Tool name"]', 'write_file');
+        await page.fill('input[placeholder="e.g., read_file"]', 'write_file');
 
         // Should show warning
         await expect(page.getByText(/not in warrant/)).toBeVisible();
@@ -108,14 +104,40 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
 });
 
 test.describe('Regression Tests', () => {
+    test('uses the public website theme and background treatment', async ({ page }) => {
+        await page.goto('/');
+        const theme = await page.evaluate(() => {
+            const root = getComputedStyle(document.documentElement);
+            return {
+                background: getComputedStyle(document.body).backgroundColor,
+                accent: root.getPropertyValue('--accent').trim(),
+                gridSize: getComputedStyle(document.querySelector('.site-grid-bg')!).backgroundSize,
+                hasGlow: getComputedStyle(document.querySelector('.site-glow')!).backgroundImage.includes('radial-gradient'),
+            };
+        });
+
+        expect(theme).toEqual({
+            background: 'rgb(4, 10, 15)',
+            accent: '#38bdf8',
+            gridSize: '48px 48px, 48px 48px',
+            hasGlow: true,
+        });
+
+        const footer = page.locator('footer');
+        await expect(footer).toContainText('© 2026 Tenuo · Docs · GitHub · Early Access');
+        await expect(footer.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', 'https://tenuo.ai/quickstart');
+        await expect(footer.getByRole('link', { name: 'GitHub' })).toHaveAttribute('href', 'https://github.com/tenuo-ai/tenuo');
+        await expect(footer.getByRole('link', { name: 'Early Access' })).toHaveAttribute('href', 'https://tenuo.ai/early-access.html');
+    });
+
     test('code generator shows correct Python API', async ({ page }) => {
         // baseURL includes /explorer in CI
         await page.goto('/');
-        await expect(page.getByText('Decode Warrant')).toBeEnabled({ timeout: 30000 });
+        await expect(page.getByText('Decode Warrant')).toBeVisible({ timeout: 30000 });
 
         // Load and decode sample
         await page.click('button:has-text("Samples")');
-        await page.click('text=File Read Access');
+        await page.getByText('Valid Read').click();
         await page.click('button:has-text("Decode Warrant")');
 
         // Switch to Code tab
@@ -135,11 +157,11 @@ test.describe('Regression Tests', () => {
     test('code generator shows correct Rust API', async ({ page }) => {
         // baseURL includes /explorer in CI
         await page.goto('/');
-        await expect(page.getByText('Decode Warrant')).toBeEnabled({ timeout: 30000 });
+        await expect(page.getByText('Decode Warrant')).toBeVisible({ timeout: 30000 });
 
         // Load and decode sample
         await page.click('button:has-text("Samples")');
-        await page.click('text=File Read Access');
+        await page.getByText('Valid Read').click();
         await page.click('button:has-text("Decode Warrant")');
 
         // Switch to Code tab

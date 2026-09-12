@@ -1,0 +1,92 @@
+"""Load the shared holder-lifecycle vectors used by sibling SDKs."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from tenuo_core import Pattern, SigningKey, Warrant
+
+from tenuo import ConnectToken, HolderIdentity, Runtime
+from tenuo._enforcement import enforce_tool_call
+from tenuo.exceptions import ConfigurationError
+
+
+def _vectors_path() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "tests" / "vectors" / "holder-lifecycle.json"
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("tests/vectors/holder-lifecycle.json")
+
+
+def _vectors() -> dict:
+    return json.loads(_vectors_path().read_text(encoding="utf-8"))
+
+
+def test_connect_token_vectors():
+    for case in _vectors()["connect_tokens"]:
+        if case["expect"] == "error":
+            with pytest.raises(ConfigurationError, match=case["error_contains"]):
+                ConnectToken.parse(case["raw"])
+            continue
+        token = ConnectToken.parse(case["raw"])
+        assert token.version == case["version"]
+        assert token.endpoint == case["endpoint"]
+        assert token.api_key == case["api_key"]
+        assert token.agent_id == case["agent_id"]
+        assert token.registration_token == case["registration_token"]
+        assert token.needs_endpoint_base is case["needs_endpoint_base"]
+        if case.get("resolve_base"):
+            token.resolve_endpoint(case["resolve_base"])
+            assert token.endpoint == case["resolved_endpoint"]
+            assert not token.needs_endpoint_base
+
+
+def test_identity_vector_derives_and_redacts():
+    case = _vectors()["identity"]
+    secret = bytes.fromhex(case["secret_hex"])
+    identity = HolderIdentity.from_bytes(secret)
+    assert bytes(identity.public_key.to_bytes()).hex() == case["public_key_hex"]
+    rendered = repr(identity)
+    assert rendered == case["python_repr"]
+    assert case["secret_hex"] not in rendered
+    assert case["secret_hex"] not in str(identity)
+
+
+def test_receipt_contract():
+    receipts = _vectors()["receipts"]
+    assert receipts["drain_is_snapshot"] is True
+    assert receipts["remove_only_on_acknowledge"] is True
+    assert receipts["overflow_does_not_deny_authorized_call"] is True
+    assert receipts["overflow_is_observable"] is True
+
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    warrant = (
+        Warrant.mint_builder()
+        .capability("read_file", path=Pattern("/data/*"))
+        .holder(holder.public_key)
+        .ttl(3600)
+        .mint(root)
+    )
+    runtime = Runtime(
+        identity=holder,
+        trusted_roots=[root.public_key],
+        receipts="collect",
+        receipt_maxsize=1,
+    )
+    session = runtime.session_from_wire(warrant)
+    with runtime.session_scope(session):
+        first = enforce_tool_call("read_file", {"path": "/data/a.pdf"}, session.bound)
+        second = enforce_tool_call("read_file", {"path": "/data/b.pdf"}, session.bound)
+    assert first.allowed
+    assert second.allowed
+    drained = runtime.drain_receipts()
+    assert len(drained) == 1
+    assert runtime.drain_receipts() == drained
+    assert runtime.receipt_overflows == 1
+    assert runtime.acknowledge_receipts(1) == 1
+    assert runtime.drain_receipts() == []

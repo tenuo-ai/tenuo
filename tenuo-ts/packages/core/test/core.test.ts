@@ -1,18 +1,40 @@
 import { createHash } from "node:crypto";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  all,
+  anyOf,
   ApprovalRequiredError,
   AuthorizationDeniedError,
+  approvalRequirement,
+  cel,
+  cidr,
+  contains,
   createTenuo,
   email,
+  evaluateApprovalGates,
+  exact,
+  inspectApprovalGate,
   max,
+  min,
+  notOneOf,
   oneOf,
   pattern,
+  range,
+  regex,
+  shlex,
+  subset,
   TenuoConfigurationError,
   TenuoError,
   under,
+  urlPattern,
 } from "../src/index.ts";
-import type { ExecuteOptions, ProtectedTool, ToolLike } from "../src/index.ts";
+import type {
+  AllowPolicy,
+  ExecuteOptions,
+  ProtectedTool,
+  ToolLike,
+  ToolPolicy,
+} from "../src/index.ts";
 import {
   devContext,
   exportSession,
@@ -37,6 +59,157 @@ describe("ProtectedTool types", () => {
     expectTypeOf<Ctx>().toHaveProperty("session");
     expectTypeOf<Ctx>().toHaveProperty("abortSignal");
     expectTypeOf<ReturnType<Wrapped["execute"]>>().toEqualTypeOf<Promise<string>>();
+  });
+});
+
+describe("ToolPolicy types", () => {
+  it("binds allow fields to tool argument keys", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const wrapped = tenuo.tool(
+      {
+        execute: async (
+          { path }: { path: string; encoding?: string },
+          _options?: { abortSignal?: AbortSignal },
+        ) => path,
+      },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+
+    tenuo.tool(
+      { execute: async ({ encoding }: { path: string; encoding?: string }) => encoding },
+      { capability: "read_optional", allow: { encoding: exact("utf8") } },
+    );
+    tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_unrestricted", allow: {} },
+    );
+
+    type Ctx = NonNullable<Parameters<typeof wrapped.execute>[1]>;
+    expectTypeOf<Ctx>().toMatchTypeOf<ExecuteOptions & { abortSignal?: AbortSignal }>();
+    expectTypeOf<ReturnType<typeof wrapped.execute>>().toEqualTypeOf<Promise<string>>();
+  });
+
+  it("rejects unknown literal policy fields", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      {
+        capability: "read_file",
+        allow: {
+          // @ts-expect-error -- tool policies reject unknown literal fields
+          paht: under("/data"),
+        },
+      },
+    );
+  });
+
+  it("keeps bare and no-argument policies open without admitting undefined", () => {
+    const policy: ToolPolicy = { allow: { path: under("/data") } };
+    expectTypeOf(policy.allow).toEqualTypeOf<AllowPolicy>();
+
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async () => "ok" },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+
+    const invalid: ToolPolicy = {
+      allow: {
+        // @ts-expect-error -- bare policies reject undefined constraints
+        path: undefined,
+      },
+    };
+    expectTypeOf(invalid).toEqualTypeOf<ToolPolicy>();
+  });
+
+  it("rejects unknown fields when the whole argument is optional", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async (args?: { path: string }) => args?.path },
+      {
+        capability: "read_file",
+        allow: {
+          // @ts-expect-error -- optional tool arguments still restrict policy fields
+          paht: under("/data"),
+        },
+      },
+    );
+  });
+
+  it("keeps broad argument policies constraint-typed", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async (args: unknown) => args },
+      {
+        capability: "unknown_args",
+        allow: {
+          // @ts-expect-error -- broad arguments still require constraint expressions
+          bad: 1,
+        },
+      },
+    );
+    tenuo.tool(
+      { execute: async (args: {}) => args },
+      {
+        capability: "empty_args",
+        allow: {
+          // @ts-expect-error -- empty-key arguments fall back to AllowPolicy
+          bad: 1,
+        },
+      },
+    );
+    tenuo.tool(
+      { execute: async (args: Record<string, never>) => args },
+      {
+        capability: "indexed_args",
+        allow: {
+          // @ts-expect-error -- indexed arguments reject undefined constraints
+          bad: undefined,
+        },
+      },
+    );
+    tenuo.tool(
+      { execute: async (args: Record<number, never>) => args },
+      {
+        capability: "numeric_args",
+        allow: {
+          // @ts-expect-error -- numeric index arguments reject undefined constraints
+          0: undefined,
+        },
+      },
+    );
+  });
+
+  it("uses all keys from union argument types", () => {
+    type ReadArgs =
+      | { kind: "file"; path: string }
+      | { kind: "url"; url: string };
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async (args: ReadArgs) => args.kind },
+      {
+        capability: "read",
+        allow: { path: under("/data"), url: exact("https://example.com") },
+      },
+    );
+    tenuo.tool(
+      { execute: async (args: ReadArgs) => args.kind },
+      {
+        capability: "read",
+        allow: {
+          // @ts-expect-error -- union policies reject fields absent from every member
+          paht: under("/data"),
+        },
+      },
+    );
+  });
+
+  it("does not infer constraint compatibility from field value types", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    tenuo.tool(
+      { execute: async ({ count }: { count: number }) => count },
+      { capability: "count", allow: { count: under("/data") } },
+    );
   });
 });
 
@@ -138,6 +311,65 @@ describe("createTenuo", () => {
       tenuo.tool(readFile, { capability: "read_file", allow: { path: under("/data") } }),
     ).toThrow(/already wrapped/);
   });
+
+  it("derives capability names from tool name or id when policy.capability is absent or empty", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const named = tenuo.tool(
+      { name: "read_file", execute: async () => "named" },
+      { capability: "", allow: {} },
+    );
+    const identified = tenuo.tool(
+      { name: "", id: "search", execute: async () => "identified" },
+      { allow: {} },
+    );
+
+    expect(tenuo.session({ tools: [named, identified] }).inspect().tools).toEqual([
+      "read_file",
+      "search",
+    ]);
+    expect(() => tenuo.tool({ execute: async () => "unnamed" }, { allow: {} })).toThrow(
+      /needs a capability name/,
+    );
+    expect(() => tenuo.tool({ id: "", execute: async () => "empty-id" }, { allow: {} })).toThrow(
+      /needs a capability name/,
+    );
+  });
+});
+
+describe("actionable delegation diagnostics", () => {
+  it("tells the caller how to fix a policy field omitted from allow", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const send = tenuo.tool(
+      { execute: (args: { to: string; body: string }) => args },
+      { capability: "send", allow: {} },
+    );
+    const session = tenuo.session({ allow: { send: { to: exact("ops@example.com") } } });
+
+    await expect(
+      tenuo.withSession(session, () => send.execute({ to: "ops@example.com", body: "hello" })),
+    ).rejects.toThrow(/name 'body' in allow.*constrained policies reject omitted fields/);
+  });
+
+  it("explains that a child constraint cannot widen its parent", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const parent = tenuo.session({ allow: { charge: { amount: max(100) } } });
+
+    expect(() => tenuo.narrow(parent, { charge: { amount: max(200) } })).toThrow(
+      /narrow\(\) only accepts a child policy that is equal to or stricter than its parent/,
+    );
+  });
+
+  it("points an omitted narrow().holder at the receiver key", () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const parent = issuer.session({ allow: { ping: {} } });
+    const child = issuer.narrow(parent, { ping: {} });
+    const receiver = createTenuo({ trustedRoots: [issuer.issuerPublicKey()] });
+
+    expect(() => receiver.sessionFromWire({
+      warrant: child.toWire(),
+      holderKey: createTenuo.generateHolderKey(),
+    })).toThrow(/use it\. If this followed narrow\(\), set \{ holder: receiverPublicKey \}.*imports the child/);
+  });
 });
 
 describe("constraints", () => {
@@ -149,8 +381,31 @@ describe("constraints", () => {
     expect(pattern("*@acme.com")).toEqual({ kind: "pattern", pattern: "*@acme.com" });
   });
 
-  it("rejects relative under() roots", () => {
-    expect(() => under("data")).toThrow(/absolute path/);
+  it.each<[string, () => unknown, RegExp]>([
+    ["under() with a relative root", () => under("data"), /absolute path/],
+    ["max() with a non-finite value", () => max(Number.POSITIVE_INFINITY), /finite number/],
+    ["min() with NaN", () => min(Number.NaN), /finite number/],
+    ["range() with no bounds", () => range({}), /min, max, or both/],
+    ["range() with a non-finite bound", () => range({ min: Number.NEGATIVE_INFINITY }), /finite numbers/],
+    ["range() with min above max", () => range({ min: 5, max: 1 }), /min must not exceed max/],
+    ["oneOf() with no values", () => oneOf([]), /at least one value/],
+    ["notOneOf() with no values", () => notOneOf([]), /at least one value/],
+    ["pattern() with an empty pattern", () => pattern(""), /non-empty pattern/],
+    ["regex() with an empty expression", () => regex(""), /non-empty expression/],
+    ["cidr() without a prefix length", () => cidr("10.0.0.0"), /CIDR notation/],
+    ["urlPattern() with an empty pattern", () => urlPattern(""), /non-empty pattern/],
+    ["shlex() with no allowed commands", () => shlex([]), /at least one allowed command/],
+    ["contains() with no values", () => contains([]), /at least one value/],
+    ["subset() with no values", () => subset([]), /at least one value/],
+    ["anyOf() with no constraints", () => anyOf([]), /at least one constraint/],
+    ["all() with no constraints", () => all([]), /at least one constraint/],
+    ["cel() with a blank expression", () => cel("   "), /non-empty expression/],
+  ])("%s throws TenuoConfigurationError", (_label, build, message) => {
+    expect(build).toThrow(TenuoConfigurationError);
+    expect(build).toThrow(message);
+    expect(build).toThrow(
+      expect.objectContaining({ code: "TENUO_CONFIGURATION", name: "TenuoConfigurationError" }),
+    );
   });
 });
 
@@ -945,5 +1200,41 @@ describe("root-anchored receipt verification", () => {
     const result = verifyReceiptChain(wire, [rootHex]);
     expect(result.signer_key).toHaveLength(64);
     expect(result.signer_key).toBe(verifyReceipt(wire) && result.signer_key);
+  });
+});
+
+describe("approvalRequirement", () => {
+  it("exempts 456.50 and gates 650 for a 0..500 Exempt range", async () => {
+    const { createRequire } = await import("node:module");
+    const require = createRequire(import.meta.url);
+    const wasm = require("../src/generated/tenuo_wasm.js") as {
+      create_warrant_from_config: (config: unknown) => { warrant_b64?: string; error?: string };
+    };
+    const minted = wasm.create_warrant_from_config({
+      tools: { write_approval: { amount: { range: "0-1000" } } },
+      ttl: 3600,
+      approval_gates: {
+        write_approval: { args: { amount: { exempt: { min: 0, max: 500 } } } },
+      },
+    });
+    if (minted.error || !minted.warrant_b64) {
+      throw new Error(minted.error ?? "missing warrant");
+    }
+    const warrant = minted.warrant_b64;
+    expect(inspectApprovalGate(warrant, "write_approval").kind).toBe("conditional");
+    const exempt = approvalRequirement(warrant, "write_approval", { amount: 456.5 });
+    expect(exempt.status).toBe("exempt");
+    expect(evaluateApprovalGates(warrant, "write_approval", { amount: 456.5 })).toBe(false);
+    const gated = approvalRequirement(warrant, "write_approval", { amount: 650 });
+    expect(gated.status).toBe("required");
+    expect(gated.kind).toBe("argument");
+    expect(evaluateApprovalGates(warrant, "write_approval", { amount: 650 })).toBe(true);
+    const denied = approvalRequirement(warrant, "write_approval", { amount: 1200 });
+    expect(denied.status).toBe("denied");
+    expect(denied.code).toBe("constraint-violation");
+    expect(evaluateApprovalGates(warrant, "write_approval", { amount: 1200 })).toBe(true);
+    const missing = approvalRequirement(warrant, "read_file", { path: "/x" });
+    expect(missing.status).toBe("denied");
+    expect(missing.code).toBe("tool-not-authorized");
   });
 });

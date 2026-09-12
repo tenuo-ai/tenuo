@@ -30,6 +30,7 @@
 //!   `distinct_keys` (every link signed by a different keypair, which is what
 //!   real delegation chains look like). Cite `distinct_keys` as the realistic
 //!   number.
+#![allow(deprecated)]
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use std::collections::HashMap;

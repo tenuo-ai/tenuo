@@ -38,25 +38,29 @@ impl Tenuo {
     ///     .ttl(Duration::from_secs(300))
     ///     .build(&root)?;
     ///
-    /// let (guard, authority) = Tenuo::local()
+    /// let runtime = Runtime::builder()
+    ///     .holder(holder)
     ///     .trusted_root(root.public_key())
-    ///     .chain(vec![warrant])
-    ///     .signer(holder)
     ///     .revocation(RevocationMode::TtlOnly {
     ///         max_lifetime: Duration::from_secs(600),
     ///     })
     ///     .build()?;
+    /// let session = runtime.session_from_warrant(warrant)?;
     ///
     /// // Inside the constraint: the operation runs.
     /// let allowed = Call::owned("read_file", args! { "path" => "/data/report.csv" })?;
-    /// let out = guard.guard(&authority, &allowed, |_| Ok::<_, std::io::Error>("read"))?;
+    /// let out = session.guard(&allowed, |_| Ok::<_, std::io::Error>("read"))?;
     /// assert_eq!(out.into_inner(), "read");
     ///
     /// // Outside it: denied, and the closure never runs.
     /// let refused = Call::owned("read_file", args! { "path" => "/etc/shadow" })?;
-    /// assert!(guard.check(&authority, &refused).is_err());
+    /// assert!(session.check(&refused).is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[deprecated(
+        since = "0.3.0",
+        note = "use `Runtime::builder()` for a long-lived holder process"
+    )]
     pub fn local() -> LocalBuilder<NeedRoot> {
         LocalBuilder {
             roots: Vec::new(),
@@ -255,6 +259,7 @@ impl EnforcementBuilder<Ready> {
 
 /// Failure constructing a quickstart `Guard` / `PresentedAuthority`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum TenuoBuildError {
     /// The guard could not be built.
     Guard(GuardBuildError),
@@ -283,7 +288,14 @@ impl std::fmt::Display for TenuoBuildError {
     }
 }
 
-impl std::error::Error for TenuoBuildError {}
+impl std::error::Error for TenuoBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Guard(err) => Some(err),
+            Self::Authority(err) => Some(err),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -294,6 +306,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    #[allow(deprecated)]
     fn local_quickstart_allows_and_names_constraint_field() {
         let issuer = SigningKey::generate();
         let holder = SigningKey::generate();

@@ -62,7 +62,9 @@ def mcp_tool_to_langchain(
 
     # Convert MCP JSON Schema to Pydantic model
     # MCP uses JSONSchema, LangChain uses Pydantic
-    input_schema = getattr(mcp_tool, "inputSchema", None) or {}
+    from ._compat import tool_input_schema  # SDK 1.x ``inputSchema`` / 2.x ``input_schema``
+
+    input_schema = tool_input_schema(mcp_tool)
     properties = input_schema.get("properties", {})
     required = input_schema.get("required", [])
 

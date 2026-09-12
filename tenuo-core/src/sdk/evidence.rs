@@ -4,10 +4,14 @@ use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::receipt::{Receipt, RECEIPT_VERSION};
 use crate::SIGNATURE_CONTEXT;
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+
+const DEFAULT_RECEIPT_CAPACITY: usize = 10_000;
 
 /// How receipt persistence interacts with the authorization outcome.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EvidencePolicy {
     #[default]
     /// Produce no receipts.
@@ -92,9 +96,28 @@ impl ReceiptSigner for LocalReceiptSigner {
 }
 
 /// In-memory sink for tests and local RequiredBeforeExecution.
-#[derive(Default)]
 pub struct MemoryReceiptSink {
-    stored: Mutex<Vec<Receipt>>,
+    stored: Mutex<SinkBuf>,
+    max: usize,
+    deny_max: usize,
+    overflowed: AtomicUsize,
+}
+
+struct SinkBuf {
+    items: Vec<StoredReceipt>,
+    allows: usize,
+    denies: usize,
+}
+
+struct StoredReceipt {
+    receipt: Receipt,
+    deny: bool,
+}
+
+impl Default for MemoryReceiptSink {
+    fn default() -> Self {
+        Self::with_capacity(DEFAULT_RECEIPT_CAPACITY)
+    }
 }
 
 impl MemoryReceiptSink {
@@ -103,21 +126,103 @@ impl MemoryReceiptSink {
         Self::default()
     }
 
+    /// Bound outbox. `max` is the cap for allow receipts and, separately,
+    /// for deny receipts, so the buffer can hold up to `2 * max` items.
+    /// A full side drops the new receipt, counts it, and returns
+    /// [`ReceiptSinkError::Unavailable`]. Best-effort evidence swallows
+    /// that error; RequiredBeforeExecution denies. A payload whose outcome
+    /// cannot be read is rejected without consuming either budget.
+    pub fn with_capacity(max: usize) -> Self {
+        Self {
+            stored: Mutex::new(SinkBuf {
+                items: Vec::new(),
+                allows: 0,
+                denies: 0,
+            }),
+            max: max.max(1),
+            deny_max: max.max(1),
+            overflowed: AtomicUsize::new(0),
+        }
+    }
+
+    /// Receipts dropped because the outbox was full.
+    pub fn overflowed(&self) -> usize {
+        self.overflowed.load(Ordering::Relaxed)
+    }
+
     /// Everything stored so far.
     pub fn stored(&self) -> Vec<Receipt> {
-        self.stored.lock().map(|g| g.clone()).unwrap_or_default()
+        self.stored
+            .lock()
+            .map(|g| g.items.iter().map(|item| item.receipt.clone()).collect())
+            .unwrap_or_default()
     }
+
+    /// Unacknowledged receipts. Same as [`Self::stored`] after prefix drops.
+    pub fn pending(&self) -> Vec<Receipt> {
+        self.stored()
+    }
+
+    /// Receipts at and after `cursor` without removing them.
+    pub fn peek_from(&self, cursor: usize) -> Vec<Receipt> {
+        let stored = self.stored();
+        if cursor >= stored.len() {
+            return Vec::new();
+        }
+        stored[cursor..].to_vec()
+    }
+
+    /// Remove the first `count` stored receipts.
+    pub fn drop_prefix(&self, count: usize) -> usize {
+        let Ok(mut stored) = self.stored.lock() else {
+            return 0;
+        };
+        let n = count.min(stored.items.len());
+        let removed: Vec<bool> = stored.items.drain(..n).map(|item| item.deny).collect();
+        for deny in removed {
+            if deny {
+                stored.denies = stored.denies.saturating_sub(1);
+            } else {
+                stored.allows = stored.allows.saturating_sub(1);
+            }
+        }
+        n
+    }
+}
+
+fn receipt_is_deny(receipt: &Receipt) -> Option<bool> {
+    ciborium::from_reader::<crate::receipt::ReceiptPayload, _>(receipt.payload.as_slice())
+        .ok()
+        .map(|payload| payload.outcome == crate::receipt::Outcome::Deny)
 }
 
 impl ReceiptSink for MemoryReceiptSink {
     fn persist(&self, receipt: &Receipt) -> Result<ReceiptRef, ReceiptSinkError> {
+        let deny = receipt_is_deny(receipt).ok_or(ReceiptSinkError::Unavailable)?;
         let mut stored = self
             .stored
             .lock()
             .map_err(|_| ReceiptSinkError::Unavailable)?;
-        stored.push(receipt.clone());
+        let (used, cap) = if deny {
+            (stored.denies, self.deny_max)
+        } else {
+            (stored.allows, self.max)
+        };
+        if used >= cap {
+            self.overflowed.fetch_add(1, Ordering::Relaxed);
+            return Err(ReceiptSinkError::Unavailable);
+        }
+        stored.items.push(StoredReceipt {
+            receipt: receipt.clone(),
+            deny,
+        });
+        if deny {
+            stored.denies += 1;
+        } else {
+            stored.allows += 1;
+        }
         Ok(ReceiptRef {
-            id: format!("mem:{}", stored.len()),
+            id: format!("mem:{}", stored.items.len()),
         })
     }
 }
@@ -131,6 +236,7 @@ pub struct ReceiptRef {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Why a receipt could not be signed.
+#[non_exhaustive]
 pub enum ReceiptSignerError {
     /// The receipt signer could not be reached.
     Unavailable,
@@ -148,6 +254,7 @@ impl std::error::Error for ReceiptSignerError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Why a receipt could not be stored.
+#[non_exhaustive]
 pub enum ReceiptSinkError {
     /// The sink could not be reached.
     Unavailable,
@@ -209,6 +316,71 @@ mod tests {
         let receipt = sign_payload(&payload.to_cbor().unwrap(), &signer).unwrap();
         let reference = sink.persist(&receipt).unwrap();
         assert!(reference.id.starts_with("mem:"));
+        assert_eq!(sink.stored().len(), 1);
+        assert_eq!(sink.peek_from(0).len(), 1);
+        assert_eq!(sink.peek_from(0).len(), 1);
+        assert_eq!(sink.drop_prefix(1), 1);
+        assert!(sink.pending().is_empty());
+    }
+
+    #[test]
+    fn memory_sink_overflow_is_counted_and_unavailable() {
+        let sink = MemoryReceiptSink::with_capacity(1);
+        let signer = LocalReceiptSigner::for_development();
+        let payload = ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64]);
+        let receipt = sign_payload(&payload.to_cbor().unwrap(), &signer).unwrap();
+        assert!(sink.persist(&receipt).is_ok());
+        assert_eq!(sink.persist(&receipt), Err(ReceiptSinkError::Unavailable));
+        assert_eq!(sink.stored().len(), 1);
+        assert_eq!(sink.overflowed(), 1);
+    }
+
+    #[test]
+    fn deny_receipts_do_not_consume_allow_budget() {
+        let sink = MemoryReceiptSink::with_capacity(1);
+        let signer = LocalReceiptSigner::for_development();
+        let deny = sign_payload(
+            &ReceiptPayload::deny_before_pop(vec![0xA0], "tool:read", 1, "deny-1", "denied")
+                .to_cbor()
+                .unwrap(),
+            &signer,
+        )
+        .unwrap();
+        let allow = sign_payload(
+            &ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64])
+                .to_cbor()
+                .unwrap(),
+            &signer,
+        )
+        .unwrap();
+        assert!(sink.persist(&deny).is_ok());
+        assert_eq!(sink.persist(&deny), Err(ReceiptSinkError::Unavailable));
+        assert!(sink.persist(&allow).is_ok());
+        assert_eq!(sink.stored().len(), 2);
+        assert_eq!(sink.overflowed(), 1);
+    }
+
+    #[test]
+    fn undecodable_payload_does_not_consume_allow_budget() {
+        let sink = MemoryReceiptSink::with_capacity(1);
+        let signer = LocalReceiptSigner::for_development();
+        let mut garbage = sign_payload(
+            &ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64])
+                .to_cbor()
+                .unwrap(),
+            &signer,
+        )
+        .unwrap();
+        garbage.payload = vec![0xff, 0x00];
+        assert_eq!(sink.persist(&garbage), Err(ReceiptSinkError::Unavailable));
+        let allow = sign_payload(
+            &ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64])
+                .to_cbor()
+                .unwrap(),
+            &signer,
+        )
+        .unwrap();
+        assert!(sink.persist(&allow).is_ok());
         assert_eq!(sink.stored().len(), 1);
     }
 

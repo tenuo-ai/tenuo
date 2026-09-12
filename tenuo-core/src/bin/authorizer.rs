@@ -57,6 +57,7 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tenuo::{
     approval::SignedApproval,
     constraints::ConstraintValue,
@@ -96,10 +97,14 @@ struct Cli {
     #[arg(long, env = "TENUO_REVOCATION_LIST")]
     revocation_list: Option<PathBuf>,
 
+    /// Persistent SRL floor file. Heartbeat fetches go through RevocationTracker.
+    #[arg(long, env = "TENUO_REVOCATION_FLOOR")]
+    revocation_floor: Option<PathBuf>,
+
     // === Control Plane Configuration ===
-    /// One-token onboarding for Tenuo Cloud.
-    /// Base64url-encoded JSON blob generated from the Tenuo Cloud dashboard.
-    /// Encodes the control plane endpoint, API key, and optional agent binding.
+    /// One-token onboarding for a control plane.
+    /// Base64url-encoded JSON blob that encodes the control plane endpoint,
+    /// API key, and optional agent binding.
     /// Explicit TENUO_CONTROL_PLANE_URL / TENUO_API_KEY take precedence when set.
     #[arg(long, env = "TENUO_CONNECT_TOKEN")]
     connect_token: Option<String>,
@@ -121,7 +126,12 @@ struct Cli {
     authorizer_type: String,
 
     /// Heartbeat interval in seconds
-    #[arg(long, env = "TENUO_HEARTBEAT_INTERVAL", default_value = "30")]
+    #[arg(
+        long,
+        env = "TENUO_HEARTBEAT_INTERVAL",
+        default_value = "30",
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
     heartbeat_interval: u64,
 
     /// Audit event batch size (flush when buffer reaches this size)
@@ -377,47 +387,33 @@ fn build_authorizer(
     trusted_keys: &Option<String>,
     revocation_path: &Option<PathBuf>,
 ) -> Result<(Authorizer, Option<u64>), Box<dyn std::error::Error>> {
-    // Start with a dummy authorizer if no keys provided
-    // This still validates signatures, just doesn't check the issuer
-    let first_key = if let Some(keys) = trusted_keys {
-        let first = keys.split(',').next().unwrap_or("");
-        if first.is_empty() {
-            return Err("TENUO_TRUSTED_KEYS is empty".into());
-        }
-        let bytes = hex::decode(first)?;
-        let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
-        PublicKey::from_bytes(&arr)?
-    } else {
-        // For development: create a dummy key
-        // In production, TENUO_TRUSTED_KEYS should always be set
-        eprintln!("WARNING: No trusted keys configured. Set TENUO_TRUSTED_KEYS for production.");
-        let dummy = [0u8; 32];
-        PublicKey::from_bytes(&dummy).unwrap_or_else(|_| {
-            // Generate a valid but useless key
-            tenuo::SigningKey::generate().public_key()
-        })
-    };
+    let mut authorizer = Authorizer::new();
 
-    let mut authorizer = Authorizer::new().with_trusted_root(first_key.clone());
-
-    // Add remaining keys
     if let Some(keys) = trusted_keys {
-        for key_hex in keys.split(',').skip(1) {
-            if !key_hex.is_empty() {
-                let bytes = hex::decode(key_hex)?;
-                let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
-                authorizer.add_trusted_root(PublicKey::from_bytes(&arr)?);
+        let mut any = false;
+        for key_hex in keys.split(',') {
+            let key_hex = key_hex.trim();
+            if key_hex.is_empty() {
+                continue;
             }
+            let bytes = hex::decode(key_hex)?;
+            let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
+            authorizer.add_trusted_root(PublicKey::from_bytes(&arr)?);
+            any = true;
+        }
+        if !any {
+            return Err("TENUO_TRUSTED_KEYS is empty".into());
         }
     }
 
-    // Load signed revocation list if provided
-    let initial_srl_version = if let Some(path) = revocation_path {
+    // Serve loads the SRL after YAML roots when CLI keys are absent.
+    let initial_srl_version = if let (Some(path), Some(first)) = (
+        revocation_path,
+        authorizer.trusted_root_keys().first().cloned(),
+    ) {
         let srl = load_signed_revocation_list(path)?;
         let version = srl.version();
-
-        // Verify against first trusted key (Control Plane key)
-        authorizer.set_revocation_list(srl, &first_key)?;
+        authorizer.set_revocation_list(srl, &first)?;
         eprintln!("Loaded signed revocation list from: {}", path.display());
         Some(version)
     } else {
@@ -425,6 +421,47 @@ fn build_authorizer(
     };
 
     Ok((authorizer, initial_srl_version))
+}
+
+fn parse_root_hex(hex_key: &str) -> Option<tenuo::crypto::PublicKey> {
+    let bytes = hex::decode(hex_key.trim()).ok()?;
+    let arr: [u8; 32] = bytes.try_into().ok()?;
+    tenuo::crypto::PublicKey::from_bytes(&arr).ok()
+}
+
+fn parse_first_root(keys: &str) -> Option<tenuo::crypto::PublicKey> {
+    keys.split(',').find_map(parse_root_hex)
+}
+
+fn apply_settings_trusted_roots(
+    authorizer: &mut Authorizer,
+    roots: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for hex_key in roots {
+        let Some(key) = parse_root_hex(hex_key) else {
+            return Err(format!("invalid trusted root hex: {hex_key}").into());
+        };
+        authorizer.add_trusted_root(key);
+    }
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+    }
+    info!("shutdown signal received");
 }
 
 fn load_signed_revocation_list(
@@ -467,6 +504,11 @@ use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tracing::{debug, error, info, warn};
 
+/// Fixed warm-up: allow only when the tracker has never accepted a list.
+const SRL_WARMUP: Duration = Duration::from_secs(60);
+const DEFAULT_SRL_MAX_AGE_SECS: u64 = 300;
+const SRL_FRESHNESS_SLACK_SECS: u64 = 60;
+
 /// Shared state for the HTTP server
 struct AppState {
     authorizer: Arc<tokio::sync::RwLock<Authorizer>>,
@@ -480,6 +522,15 @@ struct AppState {
     metrics: Option<MetricsCollector>,
     /// Process start time for uptime reporting in /status
     started_at: std::time::Instant,
+    /// Decision-time SRL freshness. `None` when no tracker was requested.
+    revocation_tracker: Option<Arc<tenuo::revocation_tracker::RevocationTracker>>,
+    /// Allow requests only while no list has ever been accepted, up to this bound.
+    srl_warmup: Duration,
+}
+
+struct HeartbeatShutdown {
+    handle: tokio::task::JoinHandle<()>,
+    stop: tokio::sync::oneshot::Sender<()>,
 }
 
 /// Structured denial reason for logging
@@ -553,6 +604,8 @@ struct ServeReady {
     state: Arc<AppState>,
     debug_mode: bool,
     control_plane_enabled: bool,
+    heartbeat: Option<HeartbeatShutdown>,
+    srl_version: Option<u64>,
 }
 
 /// Load gateway config, resolve control-plane credentials, build [`AppState`], and
@@ -563,17 +616,37 @@ async fn prepare_serve(
     config_path: &PathBuf,
     cli: &Cli,
 ) -> Result<ServeReady, Box<dyn std::error::Error>> {
-    // Load and compile gateway configuration
-    let mut config = GatewayConfig::from_file(config_path)?;
+    // Load and compile gateway configuration. CLI/env keys are already on
+    // `authorizer`; do not merge them into YAML or they are applied twice.
+    let config = GatewayConfig::from_file(config_path)?;
 
-    // Merge trusted keys from env/cli
-    if let Some(keys) = &cli.trusted_keys {
-        for key in keys.split(',') {
-            if !key.trim().is_empty() {
-                config.settings.trusted_roots.push(key.trim().to_string());
-            }
-        }
+    let mut authorizer = authorizer;
+    apply_settings_trusted_roots(&mut authorizer, &config.settings.trusted_roots)?;
+    authorizer.set_clock_tolerance(chrono::Duration::seconds(
+        config.settings.clock_tolerance_secs as i64,
+    ));
+    if authorizer.trusted_root_keys().is_empty() {
+        eprintln!(
+            "WARNING: No trusted keys configured. Set TENUO_TRUSTED_KEYS or settings.trusted_roots."
+        );
     }
+    let settings_first_root = authorizer.trusted_root_keys().first().cloned();
+
+    let loaded_srl = if let Some(path) = &cli.revocation_list {
+        let srl = load_signed_revocation_list(path)?;
+        let Some(first) = authorizer.trusted_root_keys().first().cloned() else {
+            return Err("a trusted root is required to verify the revocation list".into());
+        };
+        authorizer.set_revocation_list(srl.clone(), &first)?;
+        eprintln!("Loaded signed revocation list from: {}", path.display());
+        Some(srl)
+    } else {
+        None
+    };
+    let loaded_srl_version = loaded_srl
+        .as_ref()
+        .map(|srl| srl.version())
+        .or(initial_srl_version);
 
     let debug_mode = config.settings.debug_mode;
     let compiled = CompiledGatewayConfig::compile(config)?;
@@ -636,15 +709,14 @@ async fn prepare_serve(
         Arc::new(tokio::sync::RwLock::new(None));
 
     // Parse trusted root key for SRL verification (first key is control plane key)
-    let trusted_root = cli.trusted_keys.as_ref().and_then(|keys| {
-        let first = keys.split(',').next()?;
-        let bytes = hex::decode(first.trim()).ok()?;
-        let arr: [u8; 32] = bytes.try_into().ok()?;
-        PublicKey::from_bytes(&arr).ok()
-    });
+    let trusted_root = cli
+        .trusted_keys
+        .as_ref()
+        .and_then(|keys| parse_first_root(keys))
+        .or(settings_first_root);
 
     // Create audit channel, metrics collector, and spawn heartbeat task if control plane is configured
-    let (audit_tx, metrics) =
+    let (audit_tx, metrics, heartbeat, revocation_tracker) =
         if let (Some(url), Some(key), Some(name)) = (resolved_url, resolved_key, resolved_name) {
             // Create audit event channel (buffer 1000 events)
             let (tx, rx) = create_audit_channel(1000);
@@ -653,7 +725,7 @@ async fn prepare_serve(
             let metrics = MetricsCollector::new();
 
             // If SRL was loaded from file at startup, record its version in metrics
-            if let Some(version) = initial_srl_version {
+            if let Some(version) = loaded_srl_version {
                 metrics.record_srl_fetch(true, Some(version)).await;
             }
 
@@ -703,8 +775,49 @@ async fn prepare_serve(
                 }
             };
 
+            let revocation_tracker = if let Some(root) = trusted_root.as_ref() {
+                let floor = cli
+                    .revocation_floor
+                    .clone()
+                    .unwrap_or_else(|| std::env::temp_dir().join("tenuo-srl-floors"));
+                let store =
+                    tenuo::revocation_tracker::FileFloorStore::open(&floor).map_err(|e| {
+                        format!(
+                            "revocation floor unavailable at {}: {e}. \
+                     Mount a writable path and set TENUO_REVOCATION_FLOOR",
+                            floor.display()
+                        )
+                    })?;
+                let tracker = tenuo::revocation_tracker::RevocationTracker::new(
+                    vec![root.clone()],
+                    srl_max_age(cli.heartbeat_interval),
+                    Duration::from_secs(30),
+                    Arc::new(store),
+                )
+                .map_err(|e| format!("revocation tracker unavailable: {e}"))?;
+                Some(Arc::new(tracker))
+            } else {
+                None
+            };
+
+            if let (Some(tracker), Some(srl)) = (&revocation_tracker, &loaded_srl) {
+                let fetched_at = chrono::Utc::now();
+                if let Err(e) = tracker.accept(
+                    tenuo::revocation_tracker::RevocationUpdate {
+                        srl: srl.clone(),
+                        fetched_at,
+                    },
+                    fetched_at,
+                ) {
+                    warn!(
+                        error = %e,
+                        "file revocation list was not accepted into the tracker"
+                    );
+                }
+            }
+
             let heartbeat_config = HeartbeatConfig {
-                control_plane_url: url.clone(),
+                control_plane_url: tenuo::connect_token::normalize_control_plane_url(&url),
                 api_key: key.clone(),
                 authorizer_name: name.clone(),
                 authorizer_type: cli.authorizer_type.clone(),
@@ -720,23 +833,33 @@ async fn prepare_serve(
                 id_notify: None,
                 agent_id: resolved_agent_id,
                 connect_token: resolved_connect_token,
+                revocation_tracker: revocation_tracker.clone(),
             };
 
-            // Clone shared_authorizer_id for the heartbeat task to update
+            let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
             let authorizer_id_writer = shared_authorizer_id.clone();
-            tokio::spawn(async move {
-                heartbeat::start_heartbeat_loop_with_audit_and_id(
+            let handle = tokio::spawn(async move {
+                heartbeat::start_heartbeat_loop_until(
                     heartbeat_config,
                     Some(rx),
                     authorizer_id_writer,
+                    Some(stop_rx),
                 )
                 .await;
             });
             info!("Heartbeat, metrics, and audit streaming enabled for control plane");
 
-            (Some(tx), Some(metrics))
+            (
+                Some(tx),
+                Some(metrics),
+                Some(HeartbeatShutdown {
+                    handle,
+                    stop: stop_tx,
+                }),
+                revocation_tracker,
+            )
         } else {
-            (None, None)
+            (None, None, None, None)
         };
 
     let state = Arc::new(AppState {
@@ -747,12 +870,16 @@ async fn prepare_serve(
         authorizer_id: shared_authorizer_id,
         metrics,
         started_at: std::time::Instant::now(),
+        revocation_tracker,
+        srl_warmup: SRL_WARMUP,
     });
 
     Ok(ServeReady {
         state,
         debug_mode,
         control_plane_enabled,
+        heartbeat,
+        srl_version: loaded_srl_version,
     })
 }
 
@@ -765,6 +892,30 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/status", axum::routing::get(status_handler))
         .fallback(handle_request)
         .with_state(state)
+}
+
+/// Tracker freshness must outlast one heartbeat plus slack so a long
+/// interval cannot flap the per-request gate.
+fn srl_max_age(heartbeat_interval_secs: u64) -> Duration {
+    Duration::from_secs(
+        DEFAULT_SRL_MAX_AGE_SECS
+            .max(heartbeat_interval_secs.saturating_add(SRL_FRESHNESS_SLACK_SECS)),
+    )
+}
+
+/// Fail closed unless a fresh list is present. Warm-up covers only
+/// "never fetched yet" — a stale or failed tracker still denies.
+fn srl_freshness_allows(
+    tracker: &tenuo::revocation_tracker::RevocationTracker,
+    warmup_active: bool,
+) -> Result<(), tenuo::revocation_tracker::RevocationError> {
+    if tracker.has_accepted() {
+        tracker.latest(chrono::Utc::now()).map(|_| ())
+    } else if warmup_active {
+        Ok(())
+    } else {
+        Err(tenuo::revocation_tracker::RevocationError::Unavailable)
+    }
 }
 
 /// Print the shared portion of the startup banner.
@@ -812,16 +963,19 @@ async fn serve_http(
         &format!("transport=tcp  listen={}:{}", bind, port),
         config_path,
         ready.debug_mode,
-        initial_srl_version,
+        ready.srl_version,
         ready.control_plane_enabled,
         cli.heartbeat_interval,
     );
 
-    let app = build_router(ready.state);
+    let app = build_router(ready.state.clone());
     let addr: SocketAddr = format!("{}:{}", bind, port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
+    finish_heartbeat(ready.state, ready.heartbeat).await;
     Ok(())
 }
 
@@ -951,7 +1105,7 @@ async fn serve_unix(
         &format!("transport=unix socket={}", socket_path.display()),
         config_path,
         ready.debug_mode,
-        initial_srl_version,
+        ready.srl_version,
         ready.control_plane_enabled,
         cli.heartbeat_interval,
     );
@@ -992,10 +1146,26 @@ async fn serve_unix(
         "Unix socket ready"
     );
 
-    let app = build_router(ready.state);
-    axum::serve(listener, app).await?;
+    let app = build_router(ready.state.clone());
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
+    finish_heartbeat(ready.state, ready.heartbeat).await;
     Ok(())
+}
+
+async fn finish_heartbeat(state: Arc<AppState>, heartbeat: Option<HeartbeatShutdown>) {
+    let Some(heartbeat) = heartbeat else {
+        return;
+    };
+    drop(state);
+    let _ = heartbeat.stop.send(());
+    match tokio::time::timeout(Duration::from_secs(10), heartbeat.handle).await {
+        Ok(Ok(())) => info!("control-plane flush finished"),
+        Ok(Err(e)) => warn!(error = %e, "control-plane task failed during shutdown"),
+        Err(_) => warn!("control-plane flush timed out after 10s"),
+    }
 }
 
 /// Parse an octal socket-mode string (e.g. "0660", "660", "0o600") into bits.
@@ -1436,6 +1606,28 @@ async fn handle_request(
 
     // 8. Authorize with detailed timing instrumentation
     let total_start = std::time::Instant::now();
+
+    if let Some(tracker) = &state.revocation_tracker {
+        if let Err(e) = srl_freshness_allows(tracker, state.started_at.elapsed() < state.srl_warmup)
+        {
+            warn!(
+                request_id = %request_id,
+                event = "authorization_denied",
+                reason = "revocation_stale",
+                error = %e,
+                "Signed revocation list is missing or stale"
+            );
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "revocation_unavailable",
+                    "message": "signed revocation list is missing or stale",
+                    "request_id": request_id
+                })),
+            )
+                .into_response();
+        }
+    }
 
     // Phase 1: Lock acquisition
     let lock_start = std::time::Instant::now();
@@ -1946,6 +2138,8 @@ routes:
             authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
             metrics: None,
             started_at: std::time::Instant::now(),
+            revocation_tracker: None,
+            srl_warmup: Duration::from_secs(60),
         });
         Router::new()
             .route("/health", axum::routing::get(health_check))
@@ -2418,6 +2612,138 @@ routes:
         let body = parse_body(resp).await;
         assert_eq!(body["authorized"], true);
     }
+
+    fn empty_tracker(
+        root: &tenuo::crypto::PublicKey,
+    ) -> Arc<tenuo::revocation_tracker::RevocationTracker> {
+        Arc::new(
+            tenuo::revocation_tracker::RevocationTracker::with_in_memory_floors(
+                vec![root.clone()],
+                Duration::from_secs(60),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn build_test_app_tracked(
+        authorizer: Authorizer,
+        tracker: Arc<tenuo::revocation_tracker::RevocationTracker>,
+        started_at: std::time::Instant,
+        warmup: Duration,
+    ) -> Router {
+        let config = GatewayConfig::from_yaml(GATEWAY_YAML).unwrap();
+        let compiled = CompiledGatewayConfig::compile(config).unwrap();
+        let state = Arc::new(AppState {
+            authorizer: Arc::new(tokio::sync::RwLock::new(authorizer)),
+            config: compiled,
+            debug_mode: true,
+            audit_tx: None,
+            authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
+            metrics: None,
+            started_at,
+            revocation_tracker: Some(tracker),
+            srl_warmup: warmup,
+        });
+        Router::new()
+            .route("/health", axum::routing::get(health_check))
+            .fallback(handle_request)
+            .with_state(state)
+    }
+
+    async fn deploy_request(root_key: &SigningKey, app: Router) -> (StatusCode, Value) {
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .build(root_key)
+            .unwrap();
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(root_key, "deploy", &args).unwrap();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let status = resp.status();
+        (status, parse_body(resp).await)
+    }
+
+    #[test]
+    fn srl_max_age_outlasts_long_heartbeat() {
+        assert_eq!(srl_max_age(30), Duration::from_secs(300));
+        assert_eq!(srl_max_age(300), Duration::from_secs(360));
+        assert_eq!(srl_max_age(310), Duration::from_secs(370));
+    }
+
+    #[test]
+    fn warmup_allows_only_when_never_fetched() {
+        let issuer = SigningKey::generate();
+        let tracker = tenuo::revocation_tracker::RevocationTracker::with_in_memory_floors(
+            vec![issuer.public_key()],
+            Duration::from_secs(1),
+            Duration::from_secs(0),
+        )
+        .unwrap();
+        assert!(srl_freshness_allows(&tracker, true).is_ok());
+        assert!(srl_freshness_allows(&tracker, false).is_err());
+
+        let now = chrono::Utc::now();
+        tracker
+            .accept(
+                tenuo::revocation_tracker::RevocationUpdate {
+                    srl: tenuo::revocation::SignedRevocationList::builder()
+                        .version(1)
+                        .build(&issuer)
+                        .unwrap(),
+                    fetched_at: now - chrono::Duration::seconds(5),
+                },
+                now - chrono::Duration::seconds(5),
+            )
+            .unwrap();
+        assert!(tracker.has_accepted());
+        assert!(
+            srl_freshness_allows(&tracker, true).is_err(),
+            "stale list must deny even during warm-up"
+        );
+    }
+
+    #[tokio::test]
+    async fn warmup_never_fetched_allows_request() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let tracker = empty_tracker(&root_key.public_key());
+        let app = build_test_app_tracked(
+            authorizer,
+            tracker,
+            std::time::Instant::now(),
+            Duration::from_secs(60),
+        );
+        let (status, body) = deploy_request(&root_key, app).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["error"], "revocation_unavailable");
+    }
+
+    #[tokio::test]
+    async fn warmup_expired_without_list_denies() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let tracker = empty_tracker(&root_key.public_key());
+        let started = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(120))
+            .unwrap();
+        let app = build_test_app_tracked(authorizer, tracker, started, Duration::from_secs(60));
+        let (status, body) = deploy_request(&root_key, app).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "revocation_unavailable");
+    }
 }
 
 // ============================================================================
@@ -2661,6 +2987,8 @@ routes:
             authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
             metrics: None,
             started_at: std::time::Instant::now(),
+            revocation_tracker: None,
+            srl_warmup: Duration::from_secs(60),
         });
         let app = build_router(state);
 

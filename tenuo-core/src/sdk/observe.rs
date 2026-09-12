@@ -167,6 +167,7 @@ impl ObservingGuardBuilder {
 }
 
 /// What the caller actually presented — including nothing at all.
+#[non_exhaustive]
 pub enum PresentedRequest<'a> {
     /// A holder-side authority.
     Holder(&'a PresentedAuthority),
@@ -189,6 +190,7 @@ pub struct Observed<T> {
 }
 
 /// What enforcement would have decided. Never an allow token.
+#[non_exhaustive]
 pub enum ObservedOutcome {
     /// The call would have been allowed.
     WouldAllow,
@@ -203,6 +205,7 @@ pub enum ObservedOutcome {
 /// Persistable would-outcome. The full [`ObservedOutcome`] stays on [`Observed`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ObservationVerdict {
     /// The call would have been allowed.
     WouldAllow,
@@ -227,6 +230,7 @@ impl From<&ObservedOutcome> for ObservationVerdict {
 
 /// How much argument information an observation record may carry.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ArgumentShapePolicy {
     /// Key names only.
     KeysOnly,
@@ -266,6 +270,7 @@ impl ArgumentShape {
 /// Coarse class of a constraint value. Not the value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ValueClass {
     /// A string value.
     String,
@@ -411,6 +416,7 @@ fn hash_into(hasher: &mut Sha256, value: &ConstraintValue) {
 
 /// Failure while observing an already-built [`ObservingGuard`].
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ObserveError<E> {
     /// The assessment window has closed. The operation did not run.
     Expired,
@@ -431,6 +437,7 @@ impl<E: fmt::Debug + fmt::Display> std::error::Error for ObserveError<E> {}
 
 /// Failure constructing an [`ObservingGuard`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ObserveBuildError {
     /// No guard was supplied.
     MissingGuard,

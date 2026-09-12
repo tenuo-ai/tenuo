@@ -6,7 +6,7 @@
 
 use base64::Engine;
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
@@ -19,7 +19,7 @@ use tenuo::{
     encode_approval_gate_map, wire, ApprovalGateMap, Authorizer, Constraint, ConstraintSet,
     ConstraintValue, Error, Exact, OneOf, Pattern, PublicKey, Range, Signature,
     SignedRevocationList, SigningKey, ToolApprovalGate, Warrant, APPROVAL_GATE_EXTENSION_KEY,
-    MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE,
+    MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS,
 };
 use wasm_bindgen::prelude::*;
 
@@ -39,7 +39,7 @@ const MAX_ENCODED_WARRANT_CHARS: usize = MAX_WARRANT_SIZE * 2;
 const MAX_ENCODED_CHAIN_CHARS: usize = wire::MAX_STACK_SIZE * 2;
 
 #[derive(Default)]
-struct InputBudget {
+pub(crate) struct InputBudget {
     nodes: usize,
     key_bytes: usize,
     value_bytes: usize,
@@ -78,7 +78,7 @@ impl InputBudget {
 }
 
 #[derive(Serialize)]
-struct DecisionDto {
+pub(crate) struct DecisionDto {
     outcome: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
@@ -144,35 +144,118 @@ struct ExportDto {
     root_hex: String,
 }
 
+/// What `Session.inspect()` reports. Public keys and ids only — never the
+/// holder secret.
+#[derive(Serialize)]
+struct SessionInfoDto {
+    /// `"execution"` or `"issuer"`.
+    kind: String,
+    holder_public_key: String,
+    root_public_key: String,
+    depth: u32,
+    max_depth: u32,
+    terminal: bool,
+    expires_at: i64,
+    tools: Vec<String>,
+    warrant_ids: Vec<String>,
+    /// True when this process holds the leaf's holder secret and can sign
+    /// proof-of-possession. False for a session issued or delegated to
+    /// another holder: `toWire()` works, `authorize` does not.
+    can_authorize: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clearance: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_id: Option<String>,
+    /// Issuer warrants only: tools this holder may issue execution sessions for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    issuable_tools: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_issue_depth: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required_approvers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_approvals: Option<u32>,
+    /// Tools with an approval gate on the leaf.
+    approval_gated_tools: Vec<String>,
+}
+
+/// Security-relevant limits owned by tenuo-core. Language SDKs consume these
+/// instead of duplicating values that could drift from core enforcement.
+#[derive(Serialize)]
+struct ProtocolLimitsDto {
+    max_delegation_depth: u32,
+    max_warrant_ttl_seconds: u64,
+}
+
+/// `narrow(session, allow, options)` options. Unknown keys are rejected so a
+/// typo like `holderKey` cannot silently keep the parent's holder.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct NarrowOptions {
+    /// Hex public key of the next holder. Omit to keep the current holder.
+    holder: Option<String>,
+    /// Child lifetime. Clamped by core to the parent's remaining lifetime.
+    ttl_seconds: Option<u32>,
+    /// Make the child terminal: its holder cannot delegate further.
+    terminal: Option<bool>,
+    /// Lower the delegation ceiling. Cannot exceed the parent's.
+    max_depth: Option<u32>,
+    /// Lower the clearance level (name or 0-255). Cannot exceed the parent's.
+    clearance: Option<serde_json::Value>,
+    /// Set or change the agent id recorded on the child.
+    agent_id: Option<String>,
+    /// Hex public keys to add as required approvers. Approvers can only be added.
+    add_approvers: Option<Vec<String>>,
+    /// Raise the approval threshold. It can only go up.
+    min_approvals: Option<u32>,
+}
+
+/// Attenuation failures carry the code as a message prefix so TypeScript can
+/// map them without parsing prose.
+pub(crate) fn narrow_error(e: &Error) -> JsError {
+    let code = match e {
+        Error::DepthExceeded(_, _) => "TENUO_DEPTH_EXCEEDED",
+        _ => "TENUO_CHAIN_INVALID",
+    };
+    JsError::new(&format!("{code}: {e}"))
+}
+
 /// Issuer + authorizer for `createTenuo({ root: devRoot() })`.
 /// Verifier-only contexts have `issuer: None` and cannot mint.
 #[wasm_bindgen]
 pub struct SdkContext {
-    issuer: Option<SigningKey>,
-    authorizer: Authorizer,
-    trusted_roots: Vec<PublicKey>,
-    receipt_signer: SigningKey,
+    pub(crate) issuer: Option<SigningKey>,
+    pub(crate) authorizer: Authorizer,
+    pub(crate) trusted_roots: Vec<PublicKey>,
+    pub(crate) receipt_signer: SigningKey,
     /// `(version, sha256(wire bytes))` of the revocation list currently loaded.
     /// `None` until one is installed — receipts then omit keys 12 and 13, which
     /// is the honest claim that revocation was never consulted.
-    srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    pub(crate) srl_commitment: Option<(Option<u64>, [u8; 32])>,
     /// Commitment to the trusted root set (receipt key 15). Fixed at
     /// construction because the trust anchors do not change over a context's
     /// life.
-    trusted_roots_hash: [u8; 32],
+    pub(crate) trusted_roots_hash: [u8; 32],
     /// Digest of the last receipt this context emitted (receipt key 14).
     ///
     /// `Cell` because authorization takes `&self` and chaining is inherently
     /// stateful. Single-threaded by construction: wasm has no threads, and one
     /// context serves one enforcement point.
-    last_receipt_hash: std::cell::Cell<Option<[u8; 32]>>,
+    pub(crate) last_receipt_hash: std::cell::Cell<Option<[u8; 32]>>,
 }
 
 /// Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
+///
+/// `holder` is `None` when the leaf was issued or delegated to another agent's
+/// key. Such a session can be exported with `toWire()` and handed over, but it
+/// cannot sign proof-of-possession here; the holder imports it with
+/// `SdkSession.fromWire` and its own secret.
 #[wasm_bindgen]
 pub struct SdkSession {
-    chain: Vec<Warrant>,
-    holder: SigningKey,
+    pub(crate) chain: Vec<Warrant>,
+    pub(crate) holder: Option<SigningKey>,
 }
 
 impl Default for SdkContext {
@@ -220,7 +303,10 @@ impl SdkContext {
         Ok(SdkContext {
             srl_commitment: None,
             trusted_roots_hash: tenuo::trusted_roots_digest(
-                &trusted_roots.iter().map(|r| r.to_bytes()).collect::<Vec<_>>(),
+                &trusted_roots
+                    .iter()
+                    .map(|r| r.to_bytes())
+                    .collect::<Vec<_>>(),
             ),
             last_receipt_hash: std::cell::Cell::new(None),
             issuer: None,
@@ -228,6 +314,18 @@ impl SdkContext {
             trusted_roots,
             receipt_signer: SigningKey::generate(),
         })
+    }
+
+    /// Sign verifier receipts with this 32-byte holder secret instead of an
+    /// ephemeral key. Used by the TypeScript `Runtime`.
+    #[wasm_bindgen(js_name = withReceiptSigner)]
+    pub fn with_receipt_signer(mut self, secret: &[u8]) -> Result<SdkContext, JsError> {
+        init_panic_hook();
+        let arr: [u8; 32] = secret
+            .try_into()
+            .map_err(|_| JsError::new("receipt signer must be a 32-byte Ed25519 seed"))?;
+        self.receipt_signer = SigningKey::from_bytes(&arr);
+        Ok(self)
     }
 
     /// Load a published SignedRevocationList. The SRL must be signed by a trusted root.
@@ -259,7 +357,9 @@ impl SdkContext {
                 let version = published.version;
                 self.authorizer
                     .install_verified_revocation_ids(published.revoked_ids, version)
-                    .map_err(|e| JsError::new(&format!("failed to install revocation list: {e}")))?;
+                    .map_err(|e| {
+                        JsError::new(&format!("failed to install revocation list: {e}"))
+                    })?;
                 self.srl_commitment = Some((Some(version), digest));
                 Ok(())
             }
@@ -276,20 +376,49 @@ impl SdkContext {
         sign_srl_hex(ids, issuer)
     }
 
+    /// Public key of the local issuer, hex. Verifier-only contexts have none.
+    ///
+    /// This is what other processes put in `trustedRoots` to accept warrants
+    /// this context mints. It is a public key: sharing it grants nothing.
+    #[wasm_bindgen(js_name = issuerPublicKey)]
+    pub fn issuer_public_key(&self) -> Result<String, JsError> {
+        init_panic_hook();
+        let issuer = self.issuer.as_ref().ok_or_else(|| {
+            JsError::new("issuerPublicKey() needs a local issuer (devRoot context)")
+        })?;
+        Ok(hex::encode(issuer.public_key().to_bytes()))
+    }
+
     /// Mint a short-lived session from an allow map:
     /// `{ "read_file": { "path": { "kind": "under", "root": "/data" } } }`
     ///
     /// `require_approval` is optional:
     /// `{ "approvers": ["hex..."], "min": 2, "tools": ["transfer"] }`
+    ///
+    /// `holder_hex` binds the warrant to another agent's public key. The
+    /// returned session then has no holder secret: export it with `toWire()`
+    /// and let that agent import it. Omit it to mint a local session with a
+    /// fresh holder key.
+    ///
+    /// `max_depth` caps how many times the authority may be delegated below
+    /// the root (0 = terminal). Omit for the protocol maximum.
     #[wasm_bindgen]
     pub fn mint(
         &self,
         allow_json: JsValue,
         ttl_seconds: u32,
         require_approval: JsValue,
+        holder_hex: Option<String>,
+        max_depth: Option<u32>,
     ) -> Result<SdkSession, JsError> {
         init_panic_hook();
-        let holder = SigningKey::generate();
+        let (holder_public, holder_secret) = match holder_hex {
+            Some(hex) => (parse_public_key_hex(&hex)?, None),
+            None => {
+                let key = SigningKey::generate();
+                (key.public_key(), Some(key))
+            }
+        };
         let ttl = if ttl_seconds == 0 {
             DEFAULT_TTL_SECS
         } else {
@@ -309,7 +438,16 @@ impl SdkContext {
         let tool_names: Vec<String> = allow.keys().cloned().collect();
         let mut builder = Warrant::builder()
             .ttl(Duration::from_secs(ttl))
-            .holder(holder.public_key());
+            .holder(holder_public);
+
+        if let Some(depth) = max_depth {
+            if depth > MAX_DELEGATION_DEPTH {
+                return Err(JsError::new(&format!(
+                    "maxDepth {depth} exceeds the protocol maximum of {MAX_DELEGATION_DEPTH}"
+                )));
+            }
+            builder = builder.max_depth(depth);
+        }
 
         for (tool, fields) in allow {
             let mut set = ConstraintSet::new();
@@ -335,15 +473,42 @@ impl SdkContext {
 
         Ok(SdkSession {
             chain: vec![warrant],
-            holder,
+            holder: holder_secret,
         })
     }
 
-    /// Attenuate the leaf. The current holder signs; the same holder keeps the child.
+    /// Attenuate the leaf. The current holder signs.
+    ///
+    /// Without `options.holder` the same holder keeps the child. With it, the
+    /// child is bound to that public key: this is delegation to another agent,
+    /// and the returned session carries no holder secret (see `SdkSession`).
+    /// Core rejects any child that is not within its parent — tools,
+    /// constraints, lifetime, and depth — before a token exists.
     #[wasm_bindgen]
-    pub fn narrow(&self, session: &SdkSession, allow_json: JsValue) -> Result<SdkSession, JsError> {
+    pub fn narrow(
+        &self,
+        session: &SdkSession,
+        allow_json: JsValue,
+        options: JsValue,
+    ) -> Result<SdkSession, JsError> {
         init_panic_hook();
         let leaf = session.leaf()?;
+        let signer = session.holder.as_ref().ok_or_else(|| {
+            JsError::new(
+                "TENUO_CONFIGURATION: narrow() needs the session's holder key. This session was issued to another holder; that holder imports it with sessionFromWire() and narrows it there.",
+            )
+        })?;
+        let options: NarrowOptions = if options.is_undefined() || options.is_null() {
+            NarrowOptions::default()
+        } else {
+            serde_wasm_bindgen::from_value(options)
+                .map_err(|e| JsError::new(&format!("invalid narrow options: {e}")))?
+        };
+        if options.terminal == Some(true) && options.max_depth.is_some() {
+            return Err(JsError::new(
+                "narrow options: pass terminal or maxDepth, not both",
+            ));
+        }
         let tools = tools_for_narrow(leaf, &allow_json)?;
         if tools.is_empty() {
             return Err(JsError::new("narrow() requires at least one capability"));
@@ -353,16 +518,54 @@ impl SdkContext {
         for (tool, set) in tools {
             builder = builder.capability(tool, set);
         }
-        let child = builder
-            .build(&session.holder)
-            .map_err(|e| JsError::new(&format!("TENUO_CHAIN_INVALID: {e}")))?;
+        if let Some(ttl) = options.ttl_seconds {
+            if ttl == 0 {
+                return Err(JsError::new("narrow options: ttlSeconds must be positive"));
+            }
+            builder = builder.ttl(Duration::from_secs(u64::from(ttl)));
+        }
+        let next_holder = match &options.holder {
+            Some(hex) => Some(parse_public_key_hex(hex)?),
+            None => None,
+        };
+        if let Some(public_key) = &next_holder {
+            builder = builder.holder(public_key.clone());
+        }
+        if options.terminal == Some(true) {
+            builder = builder.max_depth(leaf.depth() + 1);
+        } else if let Some(depth) = options.max_depth {
+            builder = builder.max_depth(depth);
+        }
+        if let Some(level) = &options.clearance {
+            builder = builder.clearance(crate::sdk_ext::parse_clearance(level)?);
+        }
+        if let Some(agent_id) = &options.agent_id {
+            builder = builder.agent_id(agent_id.clone());
+        }
+        if let Some(approvers) = &options.add_approvers {
+            let mut keys = Vec::with_capacity(approvers.len());
+            for hex in approvers {
+                keys.push(parse_public_key_hex(hex)?);
+            }
+            builder = builder.add_approvers(keys);
+        }
+        if let Some(min) = options.min_approvals {
+            if min == 0 {
+                return Err(JsError::new(
+                    "narrow options: minApprovals must be at least 1",
+                ));
+            }
+            builder = builder.raise_min_approvals(min);
+        }
+        let child = builder.build(signer).map_err(|e| narrow_error(&e))?;
 
+        let holder = match next_holder {
+            Some(public_key) if public_key != signer.public_key() => None,
+            _ => Some(signer.clone()),
+        };
         let mut chain = session.chain.clone();
         chain.push(child);
-        Ok(SdkSession {
-            chain,
-            holder: session.holder.clone(),
-        })
+        Ok(SdkSession { chain, holder })
     }
 
     /// Sign PoP and authorize in one call. Never returns allow without a core allow.
@@ -380,13 +583,7 @@ impl SdkContext {
         request_id: Option<String>,
     ) -> JsValue {
         self.authorize_inner(
-            session,
-            tool,
-            args_json,
-            approvals,
-            tool_allow,
-            None,
-            request_id,
+            session, tool, args_json, approvals, tool_allow, None, request_id,
         )
     }
 
@@ -423,8 +620,12 @@ impl SdkContext {
         init_panic_hook();
         let args = js_to_args(&args_json).map_err(|e| JsError::new(&e))?;
         let leaf = session.leaf()?;
+        let holder = session
+            .holder
+            .as_ref()
+            .ok_or_else(|| JsError::new(NO_HOLDER_SECRET))?;
         let signature = leaf
-            .sign(&session.holder, tool, &args)
+            .sign(holder, tool, &args)
             .map_err(|e| JsError::new(&format!("failed to sign proof-of-possession: {e}")))?;
         Ok(base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()))
     }
@@ -445,14 +646,7 @@ impl SdkContext {
         request_id: Option<String>,
     ) -> JsValue {
         self.authorize_presented_inner(
-            warrants,
-            tool,
-            args_json,
-            pop,
-            approvals,
-            tool_allow,
-            None,
-            request_id,
+            warrants, tool, args_json, pop, approvals, tool_allow, None, request_id,
         )
     }
 }
@@ -543,20 +737,73 @@ impl SdkSession {
                     .map_err(|e| JsError::new(&format!("failed to encode warrant: {e}")))?,
             );
         }
+        let holder = self
+            .holder
+            .as_ref()
+            .ok_or_else(|| JsError::new("session has no holder secret to export"))?;
         Ok(to_js_value(&ExportDto {
             warrants,
-            holder_hex: hex::encode(self.holder.secret_key_bytes()),
+            holder_hex: hex::encode(holder.secret_key_bytes()),
             root_hex: hex::encode(root.issuer().to_bytes()),
+        }))
+    }
+
+    /// Public view of the leaf: holder public key, depth, ceiling, lifetime,
+    /// tools. Never the holder secret.
+    #[wasm_bindgen]
+    pub fn describe(&self) -> Result<JsValue, JsError> {
+        init_panic_hook();
+        let root = self
+            .chain
+            .first()
+            .ok_or_else(|| JsError::new("session chain is empty"))?;
+        let leaf = self.leaf()?;
+        Ok(to_js_value(&SessionInfoDto {
+            kind: match leaf.r#type() {
+                tenuo::WarrantType::Issuer => "issuer".into(),
+                tenuo::WarrantType::Execution => "execution".into(),
+            },
+            holder_public_key: hex::encode(leaf.authorized_holder().to_bytes()),
+            root_public_key: hex::encode(root.issuer().to_bytes()),
+            depth: leaf.depth(),
+            max_depth: leaf.effective_max_depth(),
+            terminal: leaf.is_terminal(),
+            expires_at: leaf.expires_at().timestamp(),
+            tools: leaf.tools(),
+            warrant_ids: self.chain.iter().map(|w| w.id().to_string()).collect(),
+            can_authorize: self.holder.is_some(),
+            clearance: leaf.clearance().map(|c| c.0),
+            session_id: leaf.session_id().map(str::to_string),
+            agent_id: leaf.agent_id().map(str::to_string),
+            issuable_tools: leaf.issuable_tools().map(|t| t.to_vec()),
+            max_issue_depth: leaf.max_issue_depth(),
+            required_approvers: leaf
+                .required_approvers()
+                .map(|keys| keys.iter().map(|k| hex::encode(k.to_bytes())).collect()),
+            min_approvals: leaf.min_approvals(),
+            approval_gated_tools: crate::sdk_ext::approval_gated_tools(leaf),
         }))
     }
 }
 
+/// Message for operations that need the leaf holder's secret on a session
+/// that was issued or delegated to someone else.
+const NO_HOLDER_SECRET: &str = "TENUO_CONFIGURATION: this session was issued to another holder and cannot sign proof-of-possession here. Send toWire() to that holder; it imports the warrant with sessionFromWire() and its own holder key.";
+
 impl SdkSession {
-    fn leaf(&self) -> Result<&Warrant, JsError> {
+    pub(crate) fn leaf(&self) -> Result<&Warrant, JsError> {
         self.chain
             .last()
             .ok_or_else(|| JsError::new("session chain is empty"))
     }
+}
+
+#[wasm_bindgen(js_name = sdkProtocolLimits)]
+pub fn sdk_protocol_limits() -> Result<JsValue, JsError> {
+    Ok(to_js_value(&ProtocolLimitsDto {
+        max_delegation_depth: MAX_DELEGATION_DEPTH,
+        max_warrant_ttl_seconds: MAX_WARRANT_TTL_SECS,
+    }))
 }
 
 #[wasm_bindgen(js_name = sdkInspectWarrant)]
@@ -571,6 +818,15 @@ pub fn sdk_inspect_parts(payload_hex: &str, signature_hex: &str) -> Result<JsVal
     init_panic_hook();
     let warrant = warrant_from_parts(payload_hex, signature_hex)?;
     Ok(inspect_js(&warrant))
+}
+
+/// Public key (hex) for a 32-byte Ed25519 holder secret. What an agent hands
+/// to whoever will issue or delegate a warrant to it.
+#[wasm_bindgen(js_name = sdkPublicKeyFromHolderKey)]
+pub fn sdk_public_key_from_holder_key(holder_secret: &[u8]) -> Result<String, JsError> {
+    init_panic_hook();
+    let holder = parse_holder_secret(holder_secret)?;
+    Ok(hex::encode(holder.public_key().to_bytes()))
 }
 
 /// Test / host seam. Signs an SRL with a provided issuer secret. Does not load it.
@@ -708,7 +964,9 @@ pub fn sdk_verify_receipt_chain(wire: &str, roots: JsValue) -> Result<JsValue, J
         chain_error,
         corroborates_denial,
         root_issuer: chain.first().map(|w| hex::encode(w.issuer().to_bytes())),
-        leaf_holder: chain.last().map(|w| hex::encode(w.authorized_holder().to_bytes())),
+        leaf_holder: chain
+            .last()
+            .map(|w| hex::encode(w.authorized_holder().to_bytes())),
     }))
 }
 
@@ -781,8 +1039,7 @@ impl SdkContext {
         // matched against its logs. The derived fallback is a correlation aid,
         // not an identity: repeats within a second collide, which is why
         // distinguishing them is the chain link's job.
-        let request_id =
-            request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
+        let request_id = request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
         let policy_hash = policy_digest(&tool_allow);
         // Filled once the leaf and arguments resolve. Stays None when the
         // arguments could not be canonicalized — a receipt must not claim to
@@ -798,7 +1055,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -826,7 +1083,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CONFIGURATION".into()),
@@ -852,9 +1109,37 @@ impl SdkContext {
             Some(leaf.authorized_holder()),
         ));
 
+        let holder = match session.holder.as_ref() {
+            Some(h) => h,
+            None => {
+                return self.finish_decision(
+                    &session.chain,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    request_hash,
+                    policy_hash,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_CONFIGURATION".into()),
+                        field: None,
+                        message: Some(NO_HOLDER_SECRET.into()),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    None,
+                    false,
+                    Some("configuration"),
+                )
+            }
+        };
+
         let signature = match as_of {
-            Some(t) => leaf.sign_with_timestamp(&session.holder, tool, &args, Some(t)),
-            None => leaf.sign(&session.holder, tool, &args),
+            Some(t) => leaf.sign_with_timestamp(holder, tool, &args, Some(t)),
+            None => leaf.sign(holder, tool, &args),
         };
         let signature = match signature {
             Ok(s) => s,
@@ -865,7 +1150,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     deny_from_error(&e),
                     None,
                     false,
@@ -883,7 +1168,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -931,7 +1216,7 @@ impl SdkContext {
                         timestamp,
                         &request_id,
                         request_hash,
-            policy_hash,
+                        policy_hash,
                         deny_from_error(&e),
                         Some(&signature),
                         true,
@@ -948,7 +1233,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "allow".into(),
                         code: None,
@@ -971,7 +1256,7 @@ impl SdkContext {
                 timestamp,
                 &request_id,
                 request_hash,
-            policy_hash,
+                policy_hash,
                 deny_from_error(&e),
                 Some(&signature),
                 pop_established_before_error(&e),
@@ -997,8 +1282,7 @@ impl SdkContext {
         // matched against its logs. The derived fallback is a correlation aid,
         // not an identity: repeats within a second collide, which is why
         // distinguishing them is the chain link's job.
-        let request_id =
-            request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
+        let request_id = request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
         let policy_hash = policy_digest(&tool_allow);
         // Filled once the leaf and arguments resolve. Stays None when the
         // arguments could not be canonicalized — a receipt must not claim to
@@ -1015,7 +1299,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CONFIGURATION".into()),
@@ -1039,7 +1323,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CHAIN_INVALID".into()),
@@ -1067,7 +1351,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -1106,7 +1390,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_INVALID_POP".into()),
@@ -1134,7 +1418,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -1182,7 +1466,7 @@ impl SdkContext {
                         timestamp,
                         &request_id,
                         request_hash,
-            policy_hash,
+                        policy_hash,
                         deny_from_error(&e),
                         Some(&signature),
                         true,
@@ -1199,7 +1483,7 @@ impl SdkContext {
                     timestamp,
                     &request_id,
                     request_hash,
-            policy_hash,
+                    policy_hash,
                     DecisionDto {
                         outcome: "allow".into(),
                         code: None,
@@ -1222,7 +1506,7 @@ impl SdkContext {
                 timestamp,
                 &request_id,
                 request_hash,
-            policy_hash,
+                policy_hash,
                 deny_from_error(&e),
                 Some(&signature),
                 pop_established_before_error(&e),
@@ -1316,7 +1600,7 @@ fn apply_require_approval(
     Ok(builder.extension(APPROVAL_GATE_EXTENSION_KEY, encoded))
 }
 
-fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, String> {
+pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, String> {
     if value.is_null() || value.is_undefined() {
         return Ok(Vec::new());
     }
@@ -1344,7 +1628,7 @@ fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
     Err("each approval must be hex, base64, or bytes".into())
 }
 
-fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
+pub(crate) fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
     let trimmed = text.trim();
     if let Ok(bytes) = parse_hex(trimmed) {
         if let Ok(approval) = signed_approval_from_bytes(&bytes) {
@@ -1362,17 +1646,20 @@ fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
     Err("approval is not valid hex or base64 SignedApproval CBOR".into())
 }
 
-fn signed_approval_from_bytes(bytes: &[u8]) -> Result<SignedApproval, String> {
+pub(crate) fn signed_approval_from_bytes(bytes: &[u8]) -> Result<SignedApproval, String> {
     ciborium::from_reader(bytes).map_err(|e| format!("invalid SignedApproval: {e}"))
 }
 
-fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> {
+pub(crate) fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> {
     let kind = expr
         .get("kind")
         .and_then(|v| v.as_str())
         .ok_or("constraint is missing kind")?;
     match kind {
         "under" => {
+            if expr.get("caseSensitive").is_some() || expr.get("allowEqual").is_some() {
+                return crate::sdk_ext::constraint_from_expr_ext("under", expr);
+            }
             let root = expr
                 .get("root")
                 .and_then(|v| v.as_str())
@@ -1427,11 +1714,11 @@ fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> 
             let cv = json_to_cv(value, 0, &mut InputBudget::default())?;
             Ok(Exact::new(cv).into())
         }
-        other => Err(format!("unknown constraint kind '{other}'")),
+        other => crate::sdk_ext::constraint_from_expr_ext(other, expr),
     }
 }
 
-fn json_to_cv(
+pub(crate) fn json_to_cv(
     value: &serde_json::Value,
     depth: u32,
     budget: &mut InputBudget,
@@ -1479,7 +1766,7 @@ fn json_to_cv(
     }
 }
 
-fn js_to_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, String> {
+pub(crate) fn js_to_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, String> {
     if value.is_null() || value.is_undefined() {
         return Ok(HashMap::new());
     }
@@ -1608,7 +1895,7 @@ fn reject_encoded_budget(input: &str, max: usize, what: &str) -> Result<(), JsEr
     Ok(())
 }
 
-fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
+pub(crate) fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
     match value {
         ConstraintValue::String(s) => json!(s),
         ConstraintValue::Integer(i) => json!(i),
@@ -1626,7 +1913,7 @@ fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
     }
 }
 
-fn deny_from_error(e: &Error) -> DecisionDto {
+pub(crate) fn deny_from_error(e: &Error) -> DecisionDto {
     if let Error::ApprovalRequired { tool, request } = e {
         return DecisionDto {
             outcome: "approval_required".into(),
@@ -1687,7 +1974,7 @@ fn pop_established_before_error(e: &Error) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_receipt(
+pub(crate) fn encode_receipt(
     signer: &SigningKey,
     chain: &[Warrant],
     tool: &str,
@@ -1767,7 +2054,7 @@ fn policy_digest(tool_allow: &JsValue) -> Option<[u8; 32]> {
     Some(tenuo::policy_commitment_digest(&bytes))
 }
 
-fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
+pub(crate) fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
     let revoked: Vec<String> = serde_wasm_bindgen::from_value(ids)
         .map_err(|e| JsError::new(&format!("revoked ids must be an array of strings: {e}")))?;
     if revoked.is_empty() {
@@ -1875,7 +2162,7 @@ fn verify_published_srl(
     Ok(published.payload)
 }
 
-fn parse_srl_bytes(input: &str) -> Result<Vec<u8>, JsError> {
+pub(crate) fn parse_srl_bytes(input: &str) -> Result<Vec<u8>, JsError> {
     let trimmed = input.trim();
     if let Ok(bytes) = parse_hex(trimmed) {
         if !bytes.is_empty() {
@@ -1892,7 +2179,7 @@ fn parse_srl_bytes(input: &str) -> Result<Vec<u8>, JsError> {
     Err(JsError::new("invalid revocation list or receipt encoding"))
 }
 
-fn map_code(e: &Error) -> &'static str {
+pub(crate) fn map_code(e: &Error) -> &'static str {
     match e {
         Error::WarrantExpired { .. } => "TENUO_WARRANT_EXPIRED",
         Error::WarrantRevoked(_) => "TENUO_REVOKED",
@@ -1900,10 +2187,10 @@ fn map_code(e: &Error) -> &'static str {
         Error::SignatureInvalid(msg) if msg.contains("Proof-of-Possession") => "TENUO_INVALID_POP",
         Error::MissingSignature(_) => "TENUO_INVALID_POP",
         Error::SignatureInvalid(_) => "TENUO_SIGNATURE_INVALID",
+        Error::DepthExceeded(_, _) => "TENUO_DEPTH_EXCEEDED",
         Error::ChainVerificationFailed(_)
         | Error::MonotonicityViolation(_)
         | Error::DelegationAuthorityError { .. }
-        | Error::DepthExceeded(_, _)
         | Error::ToolMismatch { .. }
         | Error::IncompatibleConstraintTypes { .. }
         | Error::WildcardExpansion { .. }
@@ -1925,13 +2212,13 @@ fn map_code(e: &Error) -> &'static str {
     }
 }
 
-fn parse_hex(input: &str) -> Result<Vec<u8>, JsError> {
+pub(crate) fn parse_hex(input: &str) -> Result<Vec<u8>, JsError> {
     reject_encoded_budget(input, MAX_ENCODED_CHAIN_CHARS, "hex")?;
     let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
     hex::decode(clean).map_err(|e| JsError::new(&format!("invalid hex: {e}")))
 }
 
-fn parse_public_key_hex(hex: &str) -> Result<PublicKey, JsError> {
+pub(crate) fn parse_public_key_hex(hex: &str) -> Result<PublicKey, JsError> {
     let bytes = parse_hex(hex)?;
     if bytes.len() != 32 {
         return Err(JsError::new(
@@ -1943,7 +2230,7 @@ fn parse_public_key_hex(hex: &str) -> Result<PublicKey, JsError> {
     PublicKey::from_bytes(&arr).map_err(|e| JsError::new(&format!("invalid public key: {e}")))
 }
 
-fn parse_holder_secret(bytes: &[u8]) -> Result<SigningKey, JsError> {
+pub(crate) fn parse_holder_secret(bytes: &[u8]) -> Result<SigningKey, JsError> {
     if bytes.len() != 32 {
         return Err(JsError::new("holder key must be 32 bytes"));
     }
@@ -1952,7 +2239,10 @@ fn parse_holder_secret(bytes: &[u8]) -> Result<SigningKey, JsError> {
     Ok(SigningKey::from_bytes(&arr))
 }
 
-fn session_from_chain(chain: Vec<Warrant>, holder_secret: &[u8]) -> Result<SdkSession, JsError> {
+pub(crate) fn session_from_chain(
+    chain: Vec<Warrant>,
+    holder_secret: &[u8],
+) -> Result<SdkSession, JsError> {
     if chain.is_empty() {
         return Err(JsError::new("chain must not be empty"));
     }
@@ -1960,13 +2250,16 @@ fn session_from_chain(chain: Vec<Warrant>, holder_secret: &[u8]) -> Result<SdkSe
     let leaf = chain.last().expect("non-empty chain");
     if holder.public_key() != *leaf.authorized_holder() {
         return Err(JsError::new(
-            "holder key does not match the warrant's authorized holder",
+            "TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.",
         ));
     }
-    Ok(SdkSession { chain, holder })
+    Ok(SdkSession {
+        chain,
+        holder: Some(holder),
+    })
 }
 
-fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
+pub(crate) fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
     reject_encoded_budget(input, MAX_ENCODED_CHAIN_CHARS, "encoded warrant chain")?;
     let trimmed = input.trim();
     if let Ok(stack) = wire::decode_pem_chain(trimmed) {
@@ -2072,7 +2365,7 @@ fn parse_chain_parts(parts: JsValue) -> Result<Vec<Warrant>, JsError> {
     Ok(out)
 }
 
-fn tools_for_narrow(
+pub(crate) fn tools_for_narrow(
     leaf: &Warrant,
     allow_json: &JsValue,
 ) -> Result<HashMap<String, ConstraintSet>, JsError> {
@@ -2142,7 +2435,7 @@ fn apply_tool_ceiling(
     set.matches(args)
 }
 
-fn constraint_set_from_fields(
+pub(crate) fn constraint_set_from_fields(
     fields: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ConstraintSet, JsError> {
     let mut set = ConstraintSet::new();
@@ -2199,7 +2492,7 @@ fn to_js_inspect(dto: &InspectDto) -> JsValue {
         .unwrap_or_else(|_| JsValue::from_str("internal serialize error"))
 }
 
-fn error_field(e: &Error) -> Option<&str> {
+pub(crate) fn error_field(e: &Error) -> Option<&str> {
     match e {
         Error::ConstraintNotSatisfied { field, .. } => Some(field.as_str()),
         Error::PathNotContained { .. } | Error::InvalidPath { .. } => Some("path"),
@@ -2211,7 +2504,7 @@ fn to_js(dto: &DecisionDto) -> JsValue {
     to_js_value(dto)
 }
 
-fn to_js_value<T: Serialize>(dto: &T) -> JsValue {
+pub(crate) fn to_js_value<T: Serialize>(dto: &T) -> JsValue {
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     dto.serialize(&serializer)
         .unwrap_or_else(|_| JsValue::from_str("internal serialize error"))

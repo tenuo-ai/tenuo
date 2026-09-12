@@ -1,6 +1,7 @@
 //! Tenuo CLI - Developer utilities for key management, warrant issuance, and verification.
 //!
 //! Implements the CLI specification v0.1.0
+#![allow(deprecated)]
 
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};

@@ -4,9 +4,12 @@ import time
 
 import pytest
 
-from tenuo import Authorizer, OneOf, Pattern, SigningKey, Warrant
-from tenuo.exceptions import ApprovalGateTriggered
-from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
+from tenuo import Authorizer, OneOf, Pattern, Range, SigningKey, Warrant
+from tenuo.exceptions import ApprovalGateTriggered, ConstraintViolation
+from tenuo_core import (
+    ApprovalRequirement,
+    evaluate_approval_gates as _evaluate_approval_gates,
+)
 
 
 @pytest.fixture
@@ -465,6 +468,103 @@ class TestEvaluateApprovalGatesBinding:
         )
         assert not _evaluate_approval_gates(w, "delete_file", {"path": "/tmp/safe"})
         assert _evaluate_approval_gates(w, "delete_file", {"path": "/etc/passwd"})
+
+
+# ============================================================================
+# Typed approval_requirement API
+# ============================================================================
+
+
+def _mint_write_approval(root, holder, approver):
+    return Warrant.issue(
+        keypair=root,
+        capabilities={"write_approval": {"amount": Range(0, 1000)}},
+        ttl_seconds=3600,
+        holder=holder.public_key,
+        required_approvers=[approver.public_key],
+        min_approvals=1,
+        approval_gates={"write_approval": {"amount": {"exempt": Range(0, 500)}}},
+    )
+
+
+class TestApprovalRequirementBinding:
+    def test_inspect_conditional_vs_whole_tool(self, keys):
+        root, holder, approver = keys
+        w = _mint_write_approval(root, holder, approver)
+        inspection = w.inspect_approval_gate("write_approval")
+        assert inspection.kind == "conditional"
+        assert inspection.arguments == ["amount"]
+        assert inspection.is_gated()
+
+        whole = _mint_gated(root, holder, approver, approval_gates={"delete_file": None})
+        assert whole.inspect_approval_gate("delete_file").kind == "whole_tool"
+        assert whole.inspect_approval_gate("read_file").kind == "none"
+
+    def test_exempt_range_float_456_50_not_gated(self, keys):
+        """0..500 exempts 456.50; SDKs must not treat the tool as unconditionally gated."""
+        root, holder, approver = keys
+        w = _mint_write_approval(root, holder, approver)
+
+        req = w.approval_requirement("write_approval", {"amount": 456.50})
+        assert isinstance(req, ApprovalRequirement)
+        assert req.status == "exempt"
+        assert req.is_exempt()
+        assert not req.requires_approval()
+        assert req.argument == "amount"
+        assert not _evaluate_approval_gates(w, "write_approval", {"amount": 456.50})
+
+        _authorize(
+            w, holder, "write_approval", {"amount": 456.50}, root.public_key
+        )
+
+    def test_exempt_range_650_requires_approval(self, keys):
+        root, holder, approver = keys
+        w = _mint_write_approval(root, holder, approver)
+
+        req = w.approval_requirement("write_approval", {"amount": 650})
+        assert req.status == "required"
+        assert req.requires_approval()
+        assert req.kind == "argument"
+        assert req.argument == "amount"
+        assert _evaluate_approval_gates(w, "write_approval", {"amount": 650})
+
+        with pytest.raises(ApprovalGateTriggered) as exc_info:
+            _authorize(w, holder, "write_approval", {"amount": 650}, root.public_key)
+        err = exc_info.value
+        assert err.tool == "write_approval"
+        assert isinstance(err.request_hash, str) and len(err.request_hash) == 64
+        assert all(c in "0123456789abcdef" for c in err.request_hash)
+        assert err.request_id
+
+    def test_capability_failure_is_denied_not_gated(self, keys):
+        root, holder, approver = keys
+        w = _mint_write_approval(root, holder, approver)
+
+        preflight = w.approval_requirement("write_approval", {"amount": 1200})
+        assert preflight.status == "denied"
+        assert preflight.is_denied()
+        assert not preflight.requires_approval()
+        assert preflight.code == "constraint-violation"
+        # Boolean helper is gate-map only (split-view safe); typed API is Denied.
+        assert _evaluate_approval_gates(w, "write_approval", {"amount": 1200})
+        with pytest.raises(ConstraintViolation):
+            _authorize(w, holder, "write_approval", {"amount": 1200}, root.public_key)
+
+        missing = w.approval_requirement("read_file", {"path": "/x"})
+        assert missing.status == "denied"
+        assert missing.code == "tool-not-authorized"
+        assert "Some(" not in repr(preflight)
+        assert "denied" in repr(preflight)
+        assert preflight == w.approval_requirement("write_approval", {"amount": 1200})
+
+    def test_module_level_matches_warrant_method(self, keys):
+        from tenuo import approval_requirement as module_requirement
+
+        root, holder, approver = keys
+        w = _mint_write_approval(root, holder, approver)
+        via_method = w.approval_requirement("write_approval", {"amount": 456.50})
+        via_module = module_requirement(w, "write_approval", {"amount": 456.50})
+        assert via_method.status == via_module.status == "exempt"
 
 
 # ============================================================================

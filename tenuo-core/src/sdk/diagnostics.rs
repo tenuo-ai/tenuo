@@ -53,9 +53,14 @@ impl<'a> Diagnostics<'a> {
 
     /// Explain why this call would be denied, without performing an authorization.
     pub fn why_denied(&self, call: &Call<'_>) -> Option<String> {
+        let attempt = super::guard::AuthorizationAttempt::new(call);
         let result = match self.subject {
-            Subject::Holder(authority) => self.guard.check(authority, call),
-            Subject::Received(received) => self.guard.check_received(received, call),
+            Subject::Holder(authority) => {
+                self.guard.authorize_holder(authority, &attempt).map(|_| ())
+            }
+            Subject::Received(received) => {
+                self.guard.authorize_received(received, call).map(|_| ())
+            }
         };
         match result {
             Ok(_) => None,

@@ -1037,6 +1037,10 @@ def guard(
                             "@guard(verify_mode='verify') requires either an explicit authorizer= "
                             "or trusted_roots configured via configure() at startup."
                         )
+            else:
+                _parents = chain_scope()
+                if _parents:
+                    _warrant_chain = list(_parents)
 
             result = enforce_tool_call(
                 tool_name=tool_name,

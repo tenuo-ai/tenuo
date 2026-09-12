@@ -69,7 +69,7 @@ impl FileFloorStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, RevocationError> {
         let path = path.into();
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|_| RevocationError::Unavailable)?;
+            fs::create_dir_all(parent).map_err(|_| RevocationError::unavailable_at(&path))?;
         }
         if !path.exists() {
             write_floors(&path, &HashMap::new())?;
@@ -124,9 +124,9 @@ fn apply_floor(
 }
 
 fn read_floors(path: &Path) -> Result<FloorMap, RevocationError> {
-    let raw = fs::read_to_string(path).map_err(|_| RevocationError::Unavailable)?;
+    let raw = fs::read_to_string(path).map_err(|_| RevocationError::unavailable_at(path))?;
     let encoded: HashMap<String, (u64, String)> =
-        serde_json::from_str(&raw).map_err(|_| RevocationError::Unavailable)?;
+        serde_json::from_str(&raw).map_err(|_| RevocationError::unavailable_at(path))?;
     let mut out = HashMap::new();
     for (issuer_hex, (version, hash_hex)) in encoded {
         let issuer = decode_hex32(&issuer_hex)?;
@@ -144,10 +144,23 @@ fn write_floors(
         .iter()
         .map(|(issuer, (version, hash))| (hex::encode(issuer), (*version, hex::encode(hash))))
         .collect();
-    let json = serde_json::to_string(&encoded).map_err(|_| RevocationError::Unavailable)?;
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, json).map_err(|_| RevocationError::Unavailable)?;
-    fs::rename(&tmp, path).map_err(|_| RevocationError::Unavailable)
+    let json =
+        serde_json::to_string(&encoded).map_err(|_| RevocationError::unavailable_at(path))?;
+    let tmp = unique_tmp(path);
+    fs::write(&tmp, &json).map_err(|_| RevocationError::unavailable_at(path))?;
+    fs::rename(&tmp, path).map_err(|_| RevocationError::unavailable_at(path))
+}
+
+fn unique_tmp(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "floors".to_string());
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    path.with_file_name(format!("{name}.tmp.{}-{stamp}", std::process::id()))
 }
 
 fn decode_hex32(value: &str) -> Result<[u8; 32], RevocationError> {
@@ -255,6 +268,13 @@ impl RevocationTracker {
         }
         Ok(snapshot.clone())
     }
+
+    /// Whether [`accept`](Self::accept) has ever installed a list.
+    ///
+    /// A poisoned lock is treated as already populated so callers fail closed.
+    pub fn has_accepted(&self) -> bool {
+        self.latest.lock().map(|g| g.is_some()).unwrap_or(true)
+    }
 }
 
 fn content_hash(srl: &SignedRevocationList) -> [u8; 32] {
@@ -270,6 +290,7 @@ fn content_hash(srl: &SignedRevocationList) -> [u8; 32] {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RevocationError {
     EmptyTrust,
     InvalidMaxAge,
@@ -280,6 +301,15 @@ pub enum RevocationError {
     Rollback { current: u64, attempted: u64 },
     Equivocation { version: u64 },
     Unavailable,
+    UnavailableAt { path: PathBuf },
+}
+
+impl RevocationError {
+    fn unavailable_at(path: impl AsRef<Path>) -> Self {
+        Self::UnavailableAt {
+            path: path.as_ref().to_path_buf(),
+        }
+    }
 }
 
 impl std::fmt::Display for RevocationError {
@@ -298,6 +328,9 @@ impl std::fmt::Display for RevocationError {
                 write!(f, "revocation version {version} changed content")
             }
             Self::Unavailable => write!(f, "revocation state is unavailable"),
+            Self::UnavailableAt { path } => {
+                write!(f, "revocation state is unavailable at {}", path.display())
+            }
         }
     }
 }
@@ -446,5 +479,28 @@ mod tests {
                 .unwrap(),
             RevocationError::FetchedInFuture
         );
+    }
+
+    #[test]
+    fn has_accepted_is_false_until_first_list() {
+        let issuer = SigningKey::generate();
+        let tracker = RevocationTracker::with_in_memory_floors(
+            vec![issuer.public_key()],
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(!tracker.has_accepted());
+        let now = Utc::now();
+        tracker
+            .accept(
+                RevocationUpdate {
+                    srl: srl(&issuer, 1, &[]),
+                    fetched_at: now,
+                },
+                now,
+            )
+            .unwrap();
+        assert!(tracker.has_accepted());
     }
 }

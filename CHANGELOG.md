@@ -7,6 +7,266 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TypeScript minimal `@tenuo/mcp` v2 example.**
+  `tenuo-ts/packages/mcp/examples/v2` runs an in-memory official v2 client
+  and server with one `guardTools()` tool, one `tenuo.mcp.attach()` call
+  that is allowed, and one swapped-argument call that is denied before the
+  handler runs. `pnpm example:mcp:v2` runs it. (#570)
+
+## [0.3.0] - 2026-09-11
+
+0.2.6 was prepared on `main` but never published. This release supersedes
+it and carries the same changes under a minor version bump, because the
+Rust API changes below are source-incompatible with 0.2.5.
+
+### Breaking
+
+- **Public enums are `#[non_exhaustive]`.** Thirty-seven public enums in
+  `tenuo` now carry the attribute, including `GuardError`,
+  `DelegationError`, `RevocationMode`, `DenialReporting`, `RevocationError`
+  (new `UnavailableAt` arm names the floor path), `TransportError`,
+  `RuntimeError`, `ApprovalRequirement`, and the SDK build-error enums.
+  Exhaustive `match` expressions in downstream crates need a wildcard arm.
+  Cargo treats `0.2.x` as one compatible line, so this ships as 0.3.0 rather
+  than 0.2.6.
+- **Connect token version is required.** `ConnectToken::parse` rejects a
+  missing `v`, `v=0`, and any version other than 1. Tokens issued without
+  `v` fail at parse after upgrade.
+- **Malformed `settings.trusted_roots` entries fail startup** instead of
+  being ignored. Existing gateway configs that contained invalid hex must be
+  corrected before upgrading the authorizer.
+- **`Tenuo::local` and `DataPlane` are deprecated.** `Runtime` is the
+  primary holder entry (`Runtime::builder()`), and `drain_receipts` /
+  `drainReceipts` are deprecated in favour of `peek_receipts` +
+  `acknowledge_receipts`. Crates that deny warnings need to migrate or
+  allow `deprecated`.
+
+### Added
+
+- **Typed approval-gate preflight.** `Warrant.approval_requirement(tool, args)`
+  returns `NotGated`, `Exempt`, `Required`, or `Denied` using the same
+  constraint matcher as the authorizer. Capability failures and ungranted
+  tools are `Denied` so an approval UI does not collect a signature the
+  authorizer will reject. `Warrant.inspect_approval_gate(tool)`
+  distinguishes no gate, an unconditional whole-tool gate, and a
+  per-argument conditional gate so SDKs do not parse raw
+  `tenuo.approval_gates` CBOR keys. Python: `approval_requirement` /
+  `inspect_approval_gate` (also on `Warrant`). TypeScript:
+  `approvalRequirement` / `inspectApprovalGate` / `evaluateApprovalGates`.
+  WASM: `approval_requirement` / `inspect_approval_gate`. Boolean
+  `evaluate_approval_gates` stays on the gate-map-only evaluator so
+  split-view callers (PoP args vs constraint args) still see a firing
+  gate. TypeScript also exports `evaluateApprovalGates`.
+- **Holder `Runtime` and `Session` (`sdk`).** Persist an Ed25519 identity,
+  configure trust / TTL fallback / receipt policy once, and bind each
+  warrant into a session. `peek_receipts` is the snapshot;
+  `acknowledge_receipts` removes items. `drain_receipts` is deprecated. Sessions created
+  before the first SRL keep the TTL fallback until a list is applied, then
+  enforce that list on the next check. `SignedRevocationList::{from_base64,
+  to_base64}` is the decode API. `ConnectToken::resolve_endpoint` accepts a
+  caller-provided base for relative `/v1` tokens.
+- **Python holder Runtime.** `HolderIdentity`, `ConnectToken.parse`, and
+  `Runtime` own identity, trusted roots, the current signed revocation list,
+  `session_from_wire` / `session_scope`, and an aggregate receipt outbox
+  (`peek_receipts` / `acknowledge_receipts`). `drain_receipts` is a
+  deprecated alias of `peek_receipts`. Receipts are removed only after
+  acknowledgement. `Runtime.install()` is the
+  process default when no session is in scope. MCP, FastAPI, A2A, and
+  Temporal accept `runtime=` and authorize inbound calls through
+  `verify_inbound_call`.
+- **`tenuo_core.ReceiptIssuer`.** Local receipt-v1 signing.
+  `ConnectToken` parse is strict version 1, redacts credentials in
+  `repr`/`str`/`Debug`, accepts padded Base64URL and `r` /
+  `registration_token` aliases, and exposes `needs_endpoint_base` /
+  `resolve_endpoint`.
+- **Shared holder-lifecycle vectors.** Rust, Python, and TypeScript load
+  `tests/vectors/holder-lifecycle.json` for connect-token parse, identity
+  derivation, and receipt outbox flags.
+- **TypeScript holder Runtime.** `createTenuo.runtime({ identity, trustedRoots,
+  revocationList?, receipts })` owns identity, roots, SRL refresh
+  (`applyRevocationList`), and `sessionFromWire`. `receipts: "collect"` retains
+  tool, `present()`, MCP attach, and verify/handler receipts until
+  `acknowledgeReceipts()`. `drainReceipts()` is a snapshot of the same buffer.
+  No network and no hosted defaults.
+- **TypeScript connect-token parse.** `createTenuo.parseConnectToken` accepts
+  a complete `tenuo_ct_…` token (padded or unpadded Base64URL, version 1).
+  Relative endpoints resolve only with `token.resolveEndpoint({ localBase })`.
+  Rust and WASM parsers now share prefix, padding, `/v1` strip, and the `r` /
+  `registration_token` aliases.
+- **TypeScript holder identity.** `createTenuo.generateIdentity()` and
+  `createTenuo.identity(holderKey)` redact the secret from JSON, inspect, and
+  `toString`. No filesystem API in core.
+- **`RuntimeBuilder::revocation_floor_path`.** Persist SRL floors at an
+  explicit path so a read-only or root-owned identity mount does not fail
+  `Runtime::build`. File-store errors name the floor path.
+- **`Authorizer::installed_revocation_list`.** Public so adapters can refuse
+  to roll a newer verifier list back to a stale Runtime SRL.
+- **Authorizer trust from gateway YAML and Helm env.** `settings.trusted_roots`
+  is applied to the live `Authorizer`. The chart sets `TENUO_TRUSTED_KEYS` from
+  `config.trustedRoots` and passes through `env`, including falsy values.
+- **Shared control-plane URL normalizer and status-aware retry.** Trailing
+  `/v1` is stripped once. Registration retries 429/5xx/network until shutdown
+  and honours `Retry-After`. Event batches that return 400 are dropped.
+- **`RuntimeBuilder::revocation` and Session delegation/diagnostics.**
+  `ttl_fallback` selects the public `RevocationMode::TtlUntilSrl`.
+  `Tenuo::local` and `DataPlane` are deprecated; `Runtime` is the primary
+  holder entry. `TtlOnly` runtimes reject `apply_signed_revocation_list`.
+- **Rust SDK receipt parity.** Deny receipts on check, guard, received, and
+  async paths. Previous-receipt hash, trusted-roots hash, and SRL commitment
+  come from the tracker when present. TypeScript `Runtime` signs verifier
+  receipts with the holder identity.
+- **`connect_token` is always compiled.** WASM uses the core parser. Rust
+  `Debug`/`Serialize` redact secrets.
+- **Sidecar SRL floor.** The chart mounts an `emptyDir` at
+  `/var/lib/tenuo/srl-floor` and sets `TENUO_REVOCATION_FLOOR`. Opening the
+  floor fails closed when a control plane and trusted root are configured.
+  A read-only root filesystem without that env var now exits at startup
+  instead of warning and running without a floor.
+
+### Fixed
+
+- **Sign-path `ApprovalRequired`.** `_enforce_tool_call` raises again when
+  `verify_mode == "sign"` and no handler is configured. Verify mode still
+  maps the gate to an `EnforcementResult`. Adapters that catch the
+  exception (`@guard`, LangChain, CrewAI, LangGraph, ADK) keep a request
+  hash instead of a false constraint explanation.
+- **`Authorizer.installed_revocation_list`.** Exported so
+  `apply_runtime_revocation` can refuse to roll a verifier holding v5
+  back to a Runtime list at v1.
+- **`DeferredEmitter` delivery contract.** A full queue no longer blocks
+  the request thread. The newest decision is shed and counted on
+  `shed_count`. Failed sink delivery is retried in place with backoff
+  (five attempts, interruptible by `close`) and then dropped and counted
+  on `retry_drops`. It is not re-queued and not retried in a tight loop.
+- **Python Runtime multi-hop sessions.** `session_scope` and `Session`
+  install the decoded parent chain on `chain_scope`, so a root →
+  intermediate → holder stack authorizes instead of failing as
+  `UntrustedRoot`.
+- **Receipt outbox overflow.** A full collector no longer turns an allow
+  into a denial. The new receipt is dropped, `receipt_overflows` counts
+  it, and the authorized call proceeds.
+- **`HolderIdentity.load_or_create` races.** The complete key is written
+  and fsynced to a unique `0600` temp file, then the destination is
+  claimed atomically. A concurrent loser loads the winner. Destination
+  is never visible half-written.
+- **Runtime `acknowledgeReceipts` follows emission order.** Session
+  receipts always land on the runtime outbox, including when the tool was
+  built on another `createTenuo` instance. Acking `n` removes the oldest
+  emitted wires by identity. `receiptMax` must be a positive integer.
+  `Session` now requires `peekReceipts` / `drainReceipts` /
+  `acknowledgeReceipts` (empty snapshots are fine for non-runtime
+  implementers).
+- **Receipt overflow under `RequiredBeforeExecution`.** A full memory sink
+  returns `Unavailable` so the guard denies. Best-effort still proceeds and
+  counts the overflow. The previous `Ok(overflow ref)` silently bypassed
+  the required-evidence check. `MemoryReceiptSink::with_capacity(n)` caps
+  allows and denies separately (up to `2 * n` stored). Classification
+  reads the payload once; counters update on push and drop.
+  `overflowed()` is the combined drop count. An undecodable payload is
+  rejected without consuming a budget. Required-evidence callers must
+  `acknowledge_receipts` or they are denied after the allow cap.
+- **Sidecar shutdown flush.** After HTTP drains, the audit sender is dropped
+  and the flush loop is joined so queued events are delivered. A 429
+  records a not-before time and skips flushes until then. The audit
+  buffer is capped on every enqueue, including during backoff. A failed
+  final drain logs the events actually dropped and does not say it will
+  retry.
+- **Receipt chain under concurrency.** Previous-hash and sign run under
+  the link lock; persist runs outside it. A sink panic does not poison
+  later checks. The lock recovers from poison. A signer without a sink
+  still advances the chain. Persist failure rolls the reserved link
+  back when this receipt is still the tip.
+- **Received-path deny receipts omit an unverified PoP.** The wire
+  signature is embedded only for denials that run after PoP verification
+  (constraint and approval). Chain, expiry, untrusted-root, and invalid
+  PoP denials use the before-PoP shape. Async holder denials carry the
+  PoP after it is signed. Preflight cancellation and deadline denials
+  emit a deny receipt.
+- **TypeScript `ToolPolicy.allow` is typed against the wrapped tool.**
+  Keys are bound to the tool's argument keys, so a policy naming an
+  argument the tool does not take is a compile-time error. Partial,
+  optional, empty, zero-argument, and broad-index policies still
+  type-check.
+- **TypeScript: published source maps are usable.** `@tenuo/core` and
+  `@tenuo/mcp` JavaScript maps embed the original TypeScript
+  (`sourcesContent`), so debuggers and `node --enable-source-maps` show SDK
+  source instead of pointing at `../src/*.ts` files that are not in the
+  package. Declaration maps are no longer published; editors fall back to the
+  `.d.ts` files.
+
+### Changed
+
+- **WASM `evaluate_approval_gates` fails closed** on an invalid warrant,
+  malformed gate map, or unparseable arguments (`approval_required: true`
+  plus `error`). Previously those cases returned `approval_required: false`.
+- **`drainReceipts()` is a snapshot.** It matches `peekReceipts()`. Only
+  `acknowledgeReceipts(n)` removes items. A second drain is not empty.
+- **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
+  (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
+  messages are unchanged. Code that catches `TenuoError` or switches on `code`
+  now sees builder mistakes too.
+- **`tenuo-wasm` 0.3.0.** `make version-check` runs in CI and covers Rust,
+  WASM, Python, TypeScript, and `@tenuo/mcp`. Compatibility matrix lists
+  those artifacts.
+- **Python `AnyValue`.** Importing `Any` emits `DeprecationWarning`. The OR
+  combinator is `AnyOf` (Rust type alias, Python, TypeScript `anyOf`).
+  `email`, `min`, `max`, and `Shlex` stay product features.
+- **Gateway `clock_tolerance_secs` is applied** to the live `Authorizer`.
+- **Sidecar graceful shutdown.** SIGTERM/ctrl-c drain the HTTP server, then
+  the audit flush. SRL fetch goes through `RevocationTracker` with a file
+  floor; a file-loaded list is accepted into the tracker. The sidecar
+  re-fetches on every heartbeat so an unchanged version does not go stale.
+  Request checks consult `latest()`. A fixed 60-second warm-up allows
+  only when the tracker has never accepted a list; a stale or failed
+  tracker still denies. Tracker max-age is `max(300s, heartbeat + 60s)`
+  so an interval at or above 300 seconds cannot flap the gate.
+
+## [0.2.5] - 2026-09-06
+
+Python `tenuo==0.2.5`, Rust `tenuo@0.2.5`, TypeScript `@tenuo/core@0.2.5-beta.0`
+(npm `beta`). Same protocol line; TypeScript stays on the beta dist-tag.
+
+### Added
+
+- **TypeScript: full constraint set**, matching Python: `range`, `min`,
+  `notOneOf`, `regex`, `wildcard`, `cidr`, `urlPattern`, `urlSafe`, `shlex`,
+  `contains`, `subset`, `anyOf`, `all`, `not`, `cel`, plus `under(root, {
+  caseSensitive, allowEqual })`.
+- **TypeScript: persistent issuer keys.** `createTenuo({ root:
+  createTenuo.issuerKeyFromEnv(...) })` (also `FromHex` / `FromBytes` /
+  `generateIssuerKey`) mints warrants from a Node control plane without
+  `NODE_ENV=development`.
+- **TypeScript: delegation to another agent.** `session({ holder, maxDepth })`
+  and `narrow(session, allow, { holder, terminal, maxDepth })` bind a child to
+  someone else's key. `session({ kind: "issuer", issuableTools, ... })` plus
+  `tenuo.issue()` mint execution warrants without the root key. Depth and
+  terminal violations raise `TENUO_DEPTH_EXCEEDED`.
+- **TypeScript: inspect, explain, present, verify.** `session.inspect()`,
+  `tenuo.explain()`, and `tenuo.present()` / `tenuo.verify()` for any
+  HTTP/RPC boundary (`mcp.attach` / `mcp.verify` use the same path).
+  Approvals, signed revocation lists, and `createTenuo.verifyReceipt()` /
+  `verifyReceiptChain()` are public.
+
+### Changed
+
+- **`tenuo[mcp]` / `tenuo[fastmcp]` require `mcp>=1.9.4`.** `tenuo[crewai]`
+  requires `crewai>=1.5`. Older extras installed versions that failed at
+  import or first use.
+- **TypeScript: `sessionFromWire()` with the wrong holder key** throws
+  `AuthorizationDeniedError` (`TENUO_INVALID_POP`). A copied warrant is not
+  authority. `@tenuo/mcp` requires `@tenuo/core@0.2.5-beta.0`.
+
+### Fixed
+
+- **FastMCP 4 denials** return a real error `ToolResult` and keep
+  `_meta.tenuo` on version-pinned 4.x calls.
+- **MCP SDK 2.x tool schemas.** `SecureMCPClient` and the LangChain bridge
+  read `Tool.input_schema` (was empty).
+- **TypeScript: `memoryNonceStore({ ttlSeconds })`** rejects non-positive or
+  non-finite TTLs at construction (default remains 180 seconds).
+
 ## [0.2.4] - 2026-09-01
 
 ### Breaking

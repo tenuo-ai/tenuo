@@ -22,6 +22,43 @@ class SdkContext {
         wasm.__wbg_sdkcontext_free(ptr, 0);
     }
     /**
+     * Signed statement from this session's holder that it is the one asking
+     * for `tool(args)`. Carried inside a control-plane approval request so
+     * the approver can tell a genuine request from a forged one.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {any} args_json
+     * @returns {any}
+     */
+    approvalContextAttestation(session, tool, args_json) {
+        _assertClass(session, SdkSession);
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_approvalContextAttestation(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Everything an approval service needs to present `tool(args)` to a
+     * human and mint a matching `SignedApproval`. Not a signed artifact.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {any} args_json
+     * @returns {any}
+     */
+    approvalRequest(session, tool, args_json) {
+        _assertClass(session, SdkSession);
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_approvalRequest(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Sign PoP and authorize in one call. Never returns allow without a core allow.
      *
      * `tool_allow` is the wrapper ceiling (`tenuo.tool(..., { allow })`). Null/undefined
@@ -85,6 +122,42 @@ class SdkContext {
         return ret;
     }
     /**
+     * Explain what the leaf would decide for `tool(args)`, field by field.
+     * No proof-of-possession is signed, so this works on any session,
+     * including one issued to another holder.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {any} args_json
+     * @returns {any}
+     */
+    explain(session, tool, args_json) {
+        _assertClass(session, SdkSession);
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_explain(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Issuer context from a stable 32-byte Ed25519 secret. Its own public
+     * key is trusted; `extra_roots` (hex) are trusted as well, so one
+     * process can verify chains from several control planes.
+     * @param {Uint8Array} secret
+     * @param {any} extra_roots
+     * @returns {SdkContext}
+     */
+    static fromIssuerSecret(secret, extra_roots) {
+        const ptr0 = passArray8ToWasm0(secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_fromIssuerSecret(ptr0, len0, extra_roots);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return SdkContext.__wrap(ret[0]);
+    }
+    /**
      * Authorizer-only context. `mint()` fails; import a session from the wire.
      * @param {any} roots
      * @returns {SdkContext}
@@ -95,6 +168,48 @@ class SdkContext {
             throw takeFromExternrefTable0(ret[1]);
         }
         return SdkContext.__wrap(ret[0]);
+    }
+    /**
+     * Issue an execution session from an issuer session. The issuer
+     * session's holder signs; core checks the tools against
+     * `issuableTools`, constraints against `constraintBounds`, clearance,
+     * and issue depth. No control-plane key is involved.
+     * @param {SdkSession} issuer
+     * @param {any} options
+     * @returns {SdkSession}
+     */
+    issue(issuer, options) {
+        _assertClass(issuer, SdkSession);
+        const ret = wasm.sdkcontext_issue(this.__wbg_ptr, issuer.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return SdkSession.__wrap(ret[0]);
+    }
+    /**
+     * Public key of the local issuer, hex. Verifier-only contexts have none.
+     *
+     * This is what other processes put in `trustedRoots` to accept warrants
+     * this context mints. It is a public key: sharing it grants nothing.
+     * @returns {string}
+     */
+    issuerPublicKey() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.sdkcontext_issuerPublicKey(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
     }
     /**
      * Load a published SignedRevocationList. The SRL must be signed by a trusted root.
@@ -114,27 +229,61 @@ class SdkContext {
      *
      * `require_approval` is optional:
      * `{ "approvers": ["hex..."], "min": 2, "tools": ["transfer"] }`
+     *
+     * `holder_hex` binds the warrant to another agent's public key. The
+     * returned session then has no holder secret: export it with `toWire()`
+     * and let that agent import it. Omit it to mint a local session with a
+     * fresh holder key.
+     *
+     * `max_depth` caps how many times the authority may be delegated below
+     * the root (0 = terminal). Omit for the protocol maximum.
      * @param {any} allow_json
      * @param {number} ttl_seconds
      * @param {any} require_approval
+     * @param {string | null} [holder_hex]
+     * @param {number | null} [max_depth]
      * @returns {SdkSession}
      */
-    mint(allow_json, ttl_seconds, require_approval) {
-        const ret = wasm.sdkcontext_mint(this.__wbg_ptr, allow_json, ttl_seconds, require_approval);
+    mint(allow_json, ttl_seconds, require_approval, holder_hex, max_depth) {
+        var ptr0 = isLikeNone(holder_hex) ? 0 : passStringToWasm0(holder_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_mint(this.__wbg_ptr, allow_json, ttl_seconds, require_approval, ptr0, len0, isLikeNone(max_depth) ? Number.MAX_SAFE_INTEGER : (max_depth) >>> 0);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
         return SdkSession.__wrap(ret[0]);
     }
     /**
-     * Attenuate the leaf. The current holder signs; the same holder keeps the child.
-     * @param {SdkSession} session
-     * @param {any} allow_json
+     * `mint()` with every option the protocol offers: kind, clearance,
+     * session and agent ids, approval gates with messages and per-argument
+     * triggers, and issuer-warrant fields. Keys are camelCase; unknown keys
+     * are rejected.
+     * @param {any} options
      * @returns {SdkSession}
      */
-    narrow(session, allow_json) {
+    mintExtended(options) {
+        const ret = wasm.sdkcontext_mintExtended(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return SdkSession.__wrap(ret[0]);
+    }
+    /**
+     * Attenuate the leaf. The current holder signs.
+     *
+     * Without `options.holder` the same holder keeps the child. With it, the
+     * child is bound to that public key: this is delegation to another agent,
+     * and the returned session carries no holder secret (see `SdkSession`).
+     * Core rejects any child that is not within its parent — tools,
+     * constraints, lifetime, and depth — before a token exists.
+     * @param {SdkSession} session
+     * @param {any} allow_json
+     * @param {any} options
+     * @returns {SdkSession}
+     */
+    narrow(session, allow_json, options) {
         _assertClass(session, SdkSession);
-        const ret = wasm.sdkcontext_narrow(this.__wbg_ptr, session.__wbg_ptr, allow_json);
+        const ret = wasm.sdkcontext_narrow(this.__wbg_ptr, session.__wbg_ptr, allow_json, options);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -197,12 +346,58 @@ class SdkContext {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
         }
     }
+    /**
+     * Sign a revocation list with this context's issuer key. Load it with
+     * `loadRevocationList` anywhere this issuer is a trusted root.
+     * @param {any} ids
+     * @param {number | null} [version]
+     * @returns {string}
+     */
+    signRevocationListVersioned(ids, version) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.sdkcontext_signRevocationListVersioned(this.__wbg_ptr, ids, isLikeNone(version) ? Number.MAX_SAFE_INTEGER : (version) >>> 0);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Sign verifier receipts with this 32-byte holder secret instead of an
+     * ephemeral key. Used by the TypeScript `Runtime`.
+     * @param {Uint8Array} secret
+     * @returns {SdkContext}
+     */
+    withReceiptSigner(secret) {
+        const ptr = this.__destroy_into_raw();
+        const ptr0 = passArray8ToWasm0(secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_withReceiptSigner(ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return SdkContext.__wrap(ret[0]);
+    }
 }
 if (Symbol.dispose) SdkContext.prototype[Symbol.dispose] = SdkContext.prototype.free;
 exports.SdkContext = SdkContext;
 
 /**
  * Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
+ *
+ * `holder` is `None` when the leaf was issued or delegated to another agent's
+ * key. Such a session can be exported with `toWire()` and handed over, but it
+ * cannot sign proof-of-possession here; the holder imports it with
+ * `SdkSession.fromWire` and its own secret.
  */
 class SdkSession {
     static __wrap(ptr) {
@@ -247,6 +442,18 @@ class SdkSession {
         } finally {
             wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
         }
+    }
+    /**
+     * Public view of the leaf: holder public key, depth, ceiling, lifetime,
+     * tools. Never the holder secret.
+     * @returns {any}
+     */
+    describe() {
+        const ret = wasm.sdksession_describe(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * Test / interop seam. Not on the public TypeScript Session type.
@@ -358,6 +565,28 @@ class SdkSession {
 }
 if (Symbol.dispose) SdkSession.prototype[Symbol.dispose] = SdkSession.prototype.free;
 exports.SdkSession = SdkSession;
+
+/**
+ * Typed preflight of a warrant's approval gates for `(tool, args)`.
+ *
+ * Returns `{ status: "not_gated"|"exempt"|"required"|"denied", tool, kind?,
+ * argument?, arguments, message?, code?, reason?, error? }`. Parse errors
+ * fail closed with `status: "required"` and `error` set (no fabricated
+ * `kind`). `denied` means the warrant's constraints refuse the call.
+ * @param {string} warrant_b64
+ * @param {string} tool
+ * @param {any} args_json
+ * @returns {any}
+ */
+function approval_requirement(warrant_b64, tool, args_json) {
+    const ptr0 = passStringToWasm0(warrant_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.approval_requirement(ptr0, len0, ptr1, len1, args_json);
+    return ret;
+}
+exports.approval_requirement = approval_requirement;
 
 /**
  * @param {string} warrant_b64
@@ -576,6 +805,9 @@ exports.decode_warrant = decode_warrant;
  * Returns `{ approval_required: true/false, tool, error }`.
  * This reads `extensions["tenuo.approval_gates"]` from the warrant, parses it,
  * and runs the gate evaluation logic from tenuo-core.
+ *
+ * Malformed warrants, gate maps, or arguments fail closed (`approval_required: true`).
+ * Prefer `approval_requirement` when the caller must distinguish exemptions.
  * @param {string} warrant_b64
  * @param {string} tool
  * @param {any} args_json
@@ -607,11 +839,31 @@ function init_panic_hook() {
 exports.init_panic_hook = init_panic_hook;
 
 /**
- * Parse a `TENUO_CONNECT_TOKEN` string into its component fields.
+ * Inspect how a warrant gates `tool`, without evaluating arguments.
  *
- * The token is a base64url-encoded JSON blob: `{ v, e, k, a?, t? }`.
- * This WASM binding keeps the parsing canonical so TypeScript doesn't need
- * to duplicate the decode logic.
+ * Returns `{ kind: "none"|"whole_tool"|"conditional", tool, arguments, message?, error? }`.
+ * Parse errors fail closed with `kind: "unknown"` and `error` set so callers
+ * cannot treat a malformed map as ungated.
+ * @param {string} warrant_b64
+ * @param {string} tool
+ * @returns {any}
+ */
+function inspect_approval_gate(warrant_b64, tool) {
+    const ptr0 = passStringToWasm0(warrant_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.inspect_approval_gate(ptr0, len0, ptr1, len1);
+    return ret;
+}
+exports.inspect_approval_gate = inspect_approval_gate;
+
+/**
+ * Parse a complete `tenuo_ct_…` token into its component fields.
+ *
+ * Accepts padded and unpadded Base64URL. Version must be 1; omitted `v`
+ * is an error. Trailing `/v1` is stripped from `e`.
+ * Registration-token aliases: `t`, `r`, `registration_token`.
  *
  * Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
  * @param {string} token
@@ -624,6 +876,22 @@ function parse_connect_token(token) {
     return ret;
 }
 exports.parse_connect_token = parse_connect_token;
+
+/**
+ * Decode and check an approval envelope. Not authorization.
+ * @param {string} envelope
+ * @returns {any}
+ */
+function sdkInspectApproval(envelope) {
+    const ptr0 = passStringToWasm0(envelope, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sdkInspectApproval(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkInspectApproval = sdkInspectApproval;
 
 /**
  * @param {string} payload_hex
@@ -644,6 +912,22 @@ function sdkInspectParts(payload_hex, signature_hex) {
 exports.sdkInspectParts = sdkInspectParts;
 
 /**
+ * Decode a signed revocation list without loading it.
+ * @param {string} wire
+ * @returns {any}
+ */
+function sdkInspectRevocationList(wire) {
+    const ptr0 = passStringToWasm0(wire, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sdkInspectRevocationList(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkInspectRevocationList = sdkInspectRevocationList;
+
+/**
  * @param {string} wire
  * @returns {any}
  */
@@ -657,6 +941,46 @@ function sdkInspectWarrant(wire) {
     return takeFromExternrefTable0(ret[0]);
 }
 exports.sdkInspectWarrant = sdkInspectWarrant;
+
+/**
+ * @returns {any}
+ */
+function sdkProtocolLimits() {
+    const ret = wasm.sdkProtocolLimits();
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkProtocolLimits = sdkProtocolLimits;
+
+/**
+ * Public key (hex) for a 32-byte Ed25519 holder secret. What an agent hands
+ * to whoever will issue or delegate a warrant to it.
+ * @param {Uint8Array} holder_secret
+ * @returns {string}
+ */
+function sdkPublicKeyFromHolderKey(holder_secret) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(holder_secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkPublicKeyFromHolderKey(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+exports.sdkPublicKeyFromHolderKey = sdkPublicKeyFromHolderKey;
 
 /**
  * Test / host seam. Signs a SignedApproval envelope; does not authorize.
@@ -694,6 +1018,42 @@ function sdkSignApproval(session, tool, args_json, approver_secret, external_id,
     }
 }
 exports.sdkSignApproval = sdkSignApproval;
+
+/**
+ * Sign an approval for a request hash. The approver never needs the
+ * warrant or the holder key; the hash already commits to both.
+ * @param {string} request_hash_hex
+ * @param {Uint8Array} approver_secret
+ * @param {string} external_id
+ * @param {number | null} [ttl_seconds]
+ * @param {number | null} [warrant_expires_at]
+ * @returns {string}
+ */
+function sdkSignApprovalForRequest(request_hash_hex, approver_secret, external_id, ttl_seconds, warrant_expires_at) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(request_hash_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(approver_secret, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(external_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkSignApprovalForRequest(ptr0, len0, ptr1, len1, ptr2, len2, isLikeNone(ttl_seconds) ? Number.MAX_SAFE_INTEGER : (ttl_seconds) >>> 0, !isLikeNone(warrant_expires_at), isLikeNone(warrant_expires_at) ? 0 : warrant_expires_at);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+exports.sdkSignApprovalForRequest = sdkSignApprovalForRequest;
 
 /**
  * Test seam. Signs the published generator envelope (not the in-memory SRL codec).
@@ -751,6 +1111,35 @@ function sdkSignRevocationList(ids, issuer_secret) {
     }
 }
 exports.sdkSignRevocationList = sdkSignRevocationList;
+
+/**
+ * Sign a revocation list with an explicit issuer secret (control-plane path).
+ * @param {any} ids
+ * @param {number | null | undefined} version
+ * @param {Uint8Array} issuer_secret
+ * @returns {string}
+ */
+function sdkSignRevocationListVersioned(ids, version, issuer_secret) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(issuer_secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkSignRevocationListVersioned(ids, isLikeNone(version) ? Number.MAX_SAFE_INTEGER : (version) >>> 0, ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+exports.sdkSignRevocationListVersioned = sdkSignRevocationListVersioned;
 
 /**
  * Signature authenticity only. Not authorization.

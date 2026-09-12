@@ -77,9 +77,169 @@ export type WasmReceiptChain = {
 
 export type WasmSession = object;
 
+/** Mirrors `SessionInfoDto` in tenuo-wasm. Snake case is the WASM boundary. */
+export type WasmSessionInfo = {
+  kind: "execution" | "issuer";
+  holder_public_key: string;
+  root_public_key: string;
+  depth: number;
+  max_depth: number;
+  terminal: boolean;
+  expires_at: number;
+  tools: string[];
+  warrant_ids: string[];
+  can_authorize: boolean;
+  clearance?: number;
+  session_id?: string;
+  agent_id?: string;
+  issuable_tools?: string[];
+  max_issue_depth?: number;
+  required_approvers?: string[];
+  min_approvals?: number;
+  approval_gated_tools: string[];
+};
+
+/** Security limits exported by tenuo-core; TypeScript must not redefine them. */
+export type WasmProtocolLimits = {
+  max_delegation_depth: number;
+  max_warrant_ttl_seconds: number;
+};
+
+/** Mirrors `NarrowOptions` in tenuo-wasm. Unknown keys are rejected there. */
+export type WasmNarrowOptions = {
+  holder?: string;
+  ttlSeconds?: number;
+  terminal?: boolean;
+  maxDepth?: number;
+  clearance?: number | string;
+  agentId?: string;
+  addApprovers?: string[];
+  minApprovals?: number;
+};
+
+export type WasmRequireApproval = {
+  approvers: string[];
+  min: number;
+  tools?: string[];
+  gates?: Record<string, { message?: string; args?: Record<string, unknown> }>;
+};
+
+/** Mirrors `MintOptions` in tenuo-wasm. */
+export type WasmMintOptions = {
+  kind?: "execution" | "issuer";
+  allow?: unknown;
+  ttlSeconds?: number;
+  holder?: string;
+  maxDepth?: number;
+  clearance?: number | string;
+  sessionId?: string;
+  agentId?: string;
+  requireApproval?: WasmRequireApproval;
+  issuableTools?: string[];
+  constraintBounds?: unknown;
+  maxIssueDepth?: number;
+};
+
+/** Mirrors `IssueOptions` in tenuo-wasm. */
+export type WasmIssueOptions = {
+  allow: unknown;
+  holder: string;
+  ttlSeconds?: number;
+  maxDepth?: number;
+  clearance?: number | string;
+  sessionId?: string;
+  agentId?: string;
+  requireApproval?: { approvers: string[]; min: number };
+};
+
+export type WasmExplainField = {
+  field: string;
+  kind: string;
+  constraint: unknown;
+  value?: unknown;
+  satisfied: boolean;
+  reason?: string;
+};
+
+export type WasmExplain = {
+  tool: string;
+  kind: "execution" | "issuer";
+  outcome: "allow" | "deny";
+  code?: TenuoErrorCode;
+  field?: string;
+  message?: string;
+  tool_granted: boolean;
+  fields: WasmExplainField[];
+  unknown_fields: string[];
+  missing_fields: string[];
+  expired: boolean;
+  expires_at: number;
+  chain_valid: boolean;
+  chain_error?: TenuoErrorCode;
+};
+
+export type WasmApprovalRequest = {
+  request_id: string;
+  warrant_id: string;
+  tool: string;
+  args: Record<string, unknown>;
+  request_hash: string;
+  holder_public_key: string;
+  required_approvers: string[];
+  min_approvals: number;
+  warrant_expires_at: number;
+  created_at: number;
+  message: string;
+};
+
+export type WasmAttestation = {
+  version: number;
+  canonicalization: string;
+  warrant_id: string;
+  tool: string;
+  request_hash: string;
+  holder_key_hex: string;
+  args_canonical_cbor_b64: string;
+  signer_key_hex: string;
+  signature_b64: string;
+};
+
+export type WasmApprovalInfo = {
+  approver_public_key: string;
+  request_hash: string;
+  external_id: string;
+  approved_at: number;
+  expires_at: number;
+  expired: boolean;
+  signature_valid: boolean;
+  error?: string;
+};
+
+export type WasmSrlInfo = {
+  version: number;
+  issued_at: number;
+  issuer_public_key: string;
+  revoked_ids: string[];
+  signature_valid: boolean;
+};
+
 export type WasmContext = {
-  mint(allow: unknown, ttlSeconds: number, requireApproval?: unknown): WasmSession;
-  narrow(session: WasmSession, allow: unknown): WasmSession;
+  withReceiptSigner(secret: Uint8Array): WasmContext;
+  mint(
+    allow: unknown,
+    ttlSeconds: number,
+    requireApproval?: unknown,
+    holderHex?: string,
+    maxDepth?: number,
+  ): WasmSession;
+  mintExtended(options: WasmMintOptions): WasmSession;
+  narrow(session: WasmSession, allow: unknown, options?: WasmNarrowOptions): WasmSession;
+  issue(issuer: WasmSession, options: WasmIssueOptions): WasmSession;
+  issuerPublicKey(): string;
+  explain(session: WasmSession, tool: string, args: unknown): WasmExplain;
+  approvalRequest(session: WasmSession, tool: string, args: unknown): WasmApprovalRequest;
+  approvalContextAttestation(session: WasmSession, tool: string, args: unknown): WasmAttestation;
+  signRevocationListVersioned(ids: string[], version?: number): string;
   authorize(
     session: WasmSession,
     tool: string,
@@ -114,6 +274,7 @@ type Generated = {
   SdkContext: {
     new (): WasmContext;
     fromTrustedRoots(roots: string[]): WasmContext;
+    fromIssuerSecret(secret: Uint8Array, extraRoots?: string[]): WasmContext;
   };
   SdkSession: {
     fromWire(warrant: string, holder: Uint8Array): WasmSession;
@@ -122,6 +283,8 @@ type Generated = {
   };
   sdkInspectWarrant(wire: string): WasmInspect;
   sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
+  sdkProtocolLimits(): WasmProtocolLimits;
+  sdkPublicKeyFromHolderKey(holderSecret: Uint8Array): string;
   sdkSignApproval(
     session: WasmSession,
     tool: string,
@@ -130,10 +293,34 @@ type Generated = {
     externalId: string,
     asOf?: number,
   ): string;
+  sdkSignApprovalForRequest(
+    requestHashHex: string,
+    approverSecret: Uint8Array,
+    externalId: string,
+    ttlSeconds?: number,
+    warrantExpiresAt?: number,
+  ): string;
+  sdkInspectApproval(envelope: string): WasmApprovalInfo;
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
+  sdkSignRevocationListVersioned(ids: string[], version: number | undefined, issuerSecret: Uint8Array): string;
   sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;
+  sdkInspectRevocationList(wire: string): WasmSrlInfo;
   sdkVerifyReceipt(wire: string): WasmReceipt;
   sdkVerifyReceiptChain(wire: string, roots: string[]): WasmReceiptChain;
+  approval_requirement(
+    warrantB64: string,
+    tool: string,
+    args: unknown,
+  ): ApprovalRequirement & { error?: string };
+  inspect_approval_gate(
+    warrantB64: string,
+    tool: string,
+  ): ApprovalGateInspection & { error?: string };
+  evaluate_approval_gates(
+    warrantB64: string,
+    tool: string,
+    args: unknown,
+  ): { approval_required: boolean; tool: string; error?: string };
 };
 
 let loaded: Generated | undefined;
@@ -169,19 +356,44 @@ export function loadWasm(): Generated {
   }
 }
 
-export function createDevContext(): WasmContext {
+export function createDevContext(receiptSigner?: Uint8Array): WasmContext {
   const { SdkContext } = loadWasm();
-  return new SdkContext();
+  let context: WasmContext = new SdkContext();
+  if (receiptSigner !== undefined) {
+    context = context.withReceiptSigner(receiptSigner);
+  }
+  return context;
+}
+
+export function protocolLimits(): WasmProtocolLimits {
+  return loadWasm().sdkProtocolLimits();
 }
 
 export function createVerifierContext(
   rootHexes: readonly string[],
   revocationList?: string,
+  receiptSigner?: Uint8Array,
 ): WasmContext {
   const { SdkContext } = loadWasm();
-  const context = SdkContext.fromTrustedRoots([...rootHexes]);
+  let context = SdkContext.fromTrustedRoots([...rootHexes]);
+  if (receiptSigner !== undefined) {
+    context = context.withReceiptSigner(receiptSigner);
+  }
   if (revocationList !== undefined && revocationList.length > 0) {
     context.loadRevocationList(revocationList);
+  }
+  return context;
+}
+
+export function createIssuerContext(
+  secret: Uint8Array,
+  extraRootHexes: readonly string[],
+  receiptSigner?: Uint8Array,
+): WasmContext {
+  const { SdkContext } = loadWasm();
+  let context = SdkContext.fromIssuerSecret(secret, [...extraRootHexes]);
+  if (receiptSigner !== undefined) {
+    context = context.withReceiptSigner(receiptSigner);
   }
   return context;
 }
@@ -211,4 +423,78 @@ export function inspectWarrant(wire: string): WasmInspect {
 
 export function inspectParts(payloadHex: string, signatureHex: string): WasmInspect {
   return loadWasm().sdkInspectParts(payloadHex, signatureHex);
+}
+
+/** Hex public key for a 32-byte holder secret. Ed25519, derived in Rust. */
+export function publicKeyHexFromHolderKey(holderSecret: Uint8Array): string {
+  return loadWasm().sdkPublicKeyFromHolderKey(holderSecret);
+}
+
+export type ApprovalRequirementStatus = "not_gated" | "exempt" | "required" | "denied";
+
+export type ApprovalRequirement = {
+  status: ApprovalRequirementStatus;
+  tool: string;
+  kind?: "whole_tool" | "argument";
+  argument?: string;
+  arguments: string[];
+  message?: string;
+  code?: string;
+  reason?: string;
+};
+
+export type ApprovalGateInspection = {
+  kind: "none" | "whole_tool" | "conditional" | "unknown";
+  tool: string;
+  arguments: string[];
+  message?: string;
+};
+
+function loadApprovalWasm() {
+  return loadWasm();
+}
+
+function throwIfGateError(error: string | undefined): void {
+  if (error) {
+    throw new TenuoConfigurationError(error);
+  }
+}
+
+/**
+ * Typed preflight of a warrant's approval gates for `(tool, args)`.
+ *
+ * Capability constraints are checked first. `denied` means the authorizer
+ * will refuse the call — do not collect approval. Malformed encodings throw
+ * (fail-closed).
+ */
+export function approvalRequirement(
+  warrantB64: string,
+  tool: string,
+  args: Record<string, unknown>,
+): ApprovalRequirement {
+  const result = loadApprovalWasm().approval_requirement(warrantB64, tool, args);
+  throwIfGateError(result.error);
+  return result;
+}
+
+/** Inspect how a warrant gates `tool`, without evaluating arguments. */
+export function inspectApprovalGate(warrantB64: string, tool: string): ApprovalGateInspection {
+  const result = loadApprovalWasm().inspect_approval_gate(warrantB64, tool);
+  throwIfGateError(result.error);
+  return result;
+}
+
+/**
+ * Gate-map-only boolean. Does not run capability checks, so split-view
+ * callers (PoP args vs constraint args) still see a firing gate. Prefer
+ * {@link approvalRequirement} when the caller must distinguish `denied`.
+ */
+export function evaluateApprovalGates(
+  warrantB64: string,
+  tool: string,
+  args: Record<string, unknown>,
+): boolean {
+  const result = loadApprovalWasm().evaluate_approval_gates(warrantB64, tool, args);
+  throwIfGateError(result.error);
+  return result.approval_required;
 }

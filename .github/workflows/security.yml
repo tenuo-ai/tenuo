@@ -20,18 +20,20 @@ jobs:
     name: Python Red Team Tests
     
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
       
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           workspaces: tenuo-python
       
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
       
@@ -65,13 +67,15 @@ jobs:
     name: Rust Red Team Tests
     
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
       
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           workspaces: tenuo-core
       
@@ -80,16 +84,135 @@ jobs:
         run: |
           cargo test --test red_team -- --nocapture
 
+  typescript-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: TypeScript Red Team Tests
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck and run security-sensitive suites
+        working-directory: tenuo-ts
+        run: |
+          pnpm typecheck
+          pnpm --filter @tenuo/core test
+          pnpm --filter @tenuo/mcp test
+
+      - name: Audit production dependencies
+        working-directory: tenuo-ts
+        run: pnpm audit --prod --audit-level high
+
+  typescript-differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: TypeScript Differential Security
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: tenuo-python
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Build and install the Python binding
+        working-directory: tenuo-python
+        run: |
+          pip install uv
+          uv pip install --system maturin
+          maturin build --release
+          uv pip install --system target/wheels/*.whl
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile
+
+      - name: Compare randomized delegation decisions across runtimes
+        working-directory: tenuo-ts
+        env:
+          FC_RUNS: "60"
+          FC_SEED: "20260906"
+        run: pnpm --filter @tenuo/core exec vitest run test/differential.property.test.ts
+
+  typescript-mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: TypeScript Mutation Security
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile
+
+      - name: Prove authorization and handler guards kill mutations
+        working-directory: tenuo-ts
+        run: pnpm test:mutation
+
   security-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     name: Dependency Audit
     
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
       
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -103,4 +226,8 @@ jobs:
 
       - name: Audit tenuo-python
         working-directory: tenuo-python
+        run: cargo audit
+
+      - name: Audit tenuo-wasm
+        working-directory: tenuo-wasm
         run: cargo audit

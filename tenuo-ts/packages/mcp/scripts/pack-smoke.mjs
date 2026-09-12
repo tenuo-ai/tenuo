@@ -1,7 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const mcpDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,20 +23,21 @@ const installDir = mkdtempSync(join(tmpdir(), "tenuo-mcp-smoke-"));
 try {
   const coreTarball = packPackage(coreDir, packDir);
   const mcpTarball = packPackage(mcpDir, packDir);
-  assertPacked(mcpTarball, [
-    "package/dist/index.js",
-    "package/dist/index.d.ts",
-    "package/dist/index.d.ts.map",
-    "package/LICENSE",
-    "package/README.md",
-  ]);
-
   writeFileSync(join(installDir, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  execFileSync("npm", ["install", "--omit=dev", coreTarball, mcpTarball], {
+  run("npm", ["install", "--omit=dev", coreTarball, mcpTarball], {
     cwd: installDir,
     stdio: "inherit",
   });
-  execFileSync("npm", ["install", "--save-dev", "typescript@~5.8.2", "@types/node@^20.0.0"], {
+  assertInstalled(installDir, "@tenuo/mcp", ["dist/index.js", "LICENSE", "README.md"]);
+  assertPackageContents(installDir, "@tenuo/mcp", [
+    /^package\.json$/,
+    /^LICENSE$/,
+    /^README\.md$/,
+    /^dist\/[^/]+\.js$/,
+    /^dist\/[^/]+\.js\.map$/,
+    /^dist\/[^/]+\.d\.ts$/,
+  ]);
+  run("npm", ["install", "--save-dev", "typescript@~5.8.2", "@types/node@^20.0.0"], {
     cwd: installDir,
     stdio: "inherit",
   });
@@ -95,6 +104,74 @@ try {
   rmSync(installDir, { recursive: true, force: true });
 }
 
+function run(command, args, options) {
+  return execFileSync(command, args, {
+    ...options,
+    shell: process.platform === "win32",
+  });
+}
+
+function packPackage(cwd, destination) {
+  const packed = run("pnpm", ["pack", "--pack-destination", destination], {
+    cwd,
+    encoding: "utf8",
+  })
+    .trim()
+    .split(/\r?\n/)
+    .at(-1);
+  if (packed === undefined || packed.length === 0) {
+    throw new Error("pnpm pack did not print a tarball path");
+  }
+  return isAbsolute(packed) ? packed : join(destination, packed);
+}
+
+function assertInstalled(root, packageName, required) {
+  const packageDir = join(root, "node_modules", ...packageName.split("/"));
+  for (const path of required) {
+    if (!existsSync(join(packageDir, path))) {
+      throw new Error(`installed ${packageName} is missing ${path}`);
+    }
+  }
+}
+
+function listFiles(dir) {
+  const files = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listFiles(path));
+    } else {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+// The tarball ships dist only, so a map's ../src/*.ts path never resolves for
+// consumers; JavaScript maps must carry sourcesContent instead. Only top-level
+// dist/*.js is checked: dist/generated is wasm-bindgen output with no maps.
+function assertPackageContents(root, packageName, allowed) {
+  const packageDir = join(root, "node_modules", ...packageName.split("/"));
+  const files = listFiles(packageDir).map((file) => relative(packageDir, file).split(sep).join("/"));
+  const unexpected = files.filter((file) => !allowed.some((pattern) => pattern.test(file)));
+  if (unexpected.length > 0) {
+    throw new Error(`installed ${packageName} contains unexpected files: ${unexpected.join(", ")}`);
+  }
+  for (const emitted of files.filter((file) => /^dist\/[^/]+\.js$/.test(file))) {
+    const map = `${emitted}.map`;
+    if (!files.includes(map)) {
+      throw new Error(`installed ${packageName} is missing ${map}`);
+    }
+    const { sources, sourcesContent } = JSON.parse(readFileSync(join(packageDir, map), "utf8"));
+    if (!Array.isArray(sourcesContent) || sourcesContent.length !== sources.length) {
+      throw new Error(`${map} must embed sourcesContent for every source`);
+    }
+    if (sourcesContent.some((content) => typeof content !== "string" || content.length === 0)) {
+      throw new Error(`${map} has an empty sourcesContent entry`);
+    }
+  }
+}
+
 function typecheckConsumer(cwd) {
   writeFileSync(
     join(cwd, "tsconfig.json"),
@@ -110,31 +187,9 @@ function typecheckConsumer(cwd) {
       files: ["consumer.ts"],
     }),
   );
-  execFileSync(join(cwd, "node_modules", ".bin", "tsc"), ["--noEmit"], {
+  run(process.execPath, [join(cwd, "node_modules", "typescript", "bin", "tsc"), "--noEmit"], {
     cwd,
     stdio: "inherit",
   });
 }
 
-function packPackage(cwd, destination) {
-  const packed = execFileSync("pnpm", ["pack", "--pack-destination", destination], {
-    cwd,
-    encoding: "utf8",
-  })
-    .trim()
-    .split("\n")
-    .at(-1);
-  if (packed === undefined || packed.length === 0) {
-    throw new Error("pnpm pack did not print a tarball path");
-  }
-  return packed.startsWith("/") ? packed : join(destination, packed);
-}
-
-function assertPacked(tarball, required) {
-  const listing = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" });
-  for (const path of required) {
-    if (!listing.split("\n").includes(path)) {
-      throw new Error(`packed tarball is missing ${path}`);
-    }
-  }
-}
