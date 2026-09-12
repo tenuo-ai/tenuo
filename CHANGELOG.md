@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TypeScript minimal `@tenuo/mcp` v2 example.**
+  `tenuo-ts/packages/mcp/examples/v2` runs an in-memory official v2 client
+  and server with one `guardTools()` tool, one `tenuo.mcp.attach()` call
+  that is allowed, and one swapped-argument call that is denied before the
+  handler runs. `pnpm example:mcp:v2` runs it. (#570)
+
 ## [0.3.0] - 2026-09-11
 
 0.2.6 was prepared on `main` but never published. This release supersedes
