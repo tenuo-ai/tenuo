@@ -79,6 +79,10 @@ export async function runMinimalExample(log: (line: string) => void = console.lo
     // 2. Denied. Same envelope, but the arguments are swapped after attach.
     //    The proof-of-possession no longer matches, so the guard rejects the
     //    call before the handler runs.
+    //    Note the session ceiling above: `attach()` would have refused
+    //    `/data/hr/payroll.csv` outright, since it is outside
+    //    `/data/reports`. This call is the in-flight swap, which only the
+    //    server can catch.
     const denied = summarize(
       await client.callTool({
         name: call.name,
