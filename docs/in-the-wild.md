@@ -138,6 +138,14 @@ description: External writing, talks, and coverage about Tenuo
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--mention">Mention</span>
+    <div class="wild-title"><a href="https://www.agentpatternscatalog.org/patterns/attenuating-delegation-chain/">Attenuating Delegation Chain</a></div>
+    <div class="wild-attribution">Agent Patterns Catalog</div>
+    <p class="wild-description">Independent pattern write-up of signed, append-only delegation chains that a verifier can reject for widening without calling the issuer. The AAT Internet-Draft is listed as a known use.</p>
+    <a class="wild-link" href="https://www.agentpatternscatalog.org/patterns/attenuating-delegation-chain/">Read the pattern →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--mention">Mention</span>
     <div class="wild-title"><a href="https://www.windley.com/archives/2026/06/internet_identity_workshop_xlii_report.shtml">Internet Identity Workshop XLII Report</a></div>
     <div class="wild-attribution">Phil Windley · IIW Organizer</div>
     <p class="wild-description">Report from IIW 42 at the Computer History Museum. Covers the Demo Hour where Niki Niyikiza showed Tenuo's attenuating authorization tokens that cryptographically narrow an agent's capabilities at each delegation hop.</p>
