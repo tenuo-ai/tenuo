@@ -43,7 +43,8 @@ security model.
 
 ### Prerequisites
 
-- Node.js 20 or newer
+- Node.js 24 (the active LTS) for local development. Node.js 20 is the minimum
+  supported version, and CI runs the SDK checks on both.
 - pnpm 9.15.9, as pinned by `tenuo-ts/package.json`
 
 Rust and `wasm-pack` are not required for ordinary TypeScript-only changes. The
