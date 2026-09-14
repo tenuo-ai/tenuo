@@ -78,7 +78,7 @@ The warrant is the authority, not the LLM's judgment. Even if the model is trick
 
 ## Quick Start
 
-The recommended approach uses `TenuoToolNode` as a drop-in replacement for LangGraph's `ToolNode`:
+For a LangGraph `StateGraph`, use `TenuoToolNode` as a drop-in replacement for `ToolNode`. For LangChain 1.x `create_agent()`, use `TenuoMiddleware` below.
 
 ```python
 from langgraph.graph import StateGraph, MessagesState
@@ -128,24 +128,21 @@ result = graph.invoke({
 
 | Feature | TenuoToolNode | TenuoMiddleware |
 |---------|---------------|-----------------|
-| **Status** | **Stable, recommended** | Experimental |
+| **Use when** | Existing `StateGraph` / `ToolNode` | LangChain 1.x `create_agent()` |
+| **Status** | Stable | Stable |
 | **Integration** | Drop-in replacement for `ToolNode` | Native LangChain middleware API |
 | **Tool filtering** | No | Auto-hides unauthorized tools from LLM |
-| **New graphs** | Recommended | Experimental |
-| **Existing graphs** | Drop-in | Requires migration to `create_agent()` |
+| **Requires** | langgraph | `langchain>=1.0` |
 
-**TenuoToolNode benefits:**
-- **Stable API**: Production-ready, well-tested
-- **Drop-in replacement**: Swap `ToolNode` for `TenuoToolNode` with no other changes
-- **Works with any graph**: No dependency on `create_agent()`
+Both use the same `enforce_tool_call` path.
 
 ---
 
-## Alternative: TenuoMiddleware (Experimental)
+## TenuoMiddleware (LangChain 1.x `create_agent()`)
 
-> **Note**: `TenuoMiddleware` is experimental and requires `langchain>=1.0`. For production use, prefer `TenuoToolNode`.
+> Recommended for `create_agent()`. Requires `langchain>=1.0`. For a custom `StateGraph`, use `TenuoToolNode`.
 
-For projects using LangChain's `create_agent()`, you can use `TenuoMiddleware` for automatic tool filtering:
+A runnable example is [`create_agent_middleware.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/langchain/create_agent_middleware.py).
 
 ```python
 from langchain.agents import create_agent
@@ -269,7 +266,7 @@ graph.add_node("tools", tool_node)
 
 ### `TenuoMiddleware`
 
-> **Experimental** — Middleware for securing LangGraph agents. Requires `langchain>=1.0`.
+Recommended for LangChain 1.x `create_agent()`. Requires `langchain>=1.0`.
 
 ```python
 from tenuo.langgraph import TenuoMiddleware
@@ -717,13 +714,13 @@ from tenuo import cli_prompt
 #   .approval_gates({"delete_database": None})
 #   .required_approvers([approver_key.public_key])
 
-# TenuoToolNode pattern (recommended)
+# TenuoToolNode (StateGraph)
 tool_node = TenuoToolNode(
     tools,
     approval_handler=cli_prompt(approver_key=approver_key),
 )
 
-# Or TenuoMiddleware pattern (experimental)
+# TenuoMiddleware (create_agent)
 middleware = TenuoMiddleware(
     approval_handler=cli_prompt(approver_key=approver_key),
 )
