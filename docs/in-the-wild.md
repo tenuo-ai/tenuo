@@ -146,6 +146,14 @@ description: External writing, talks, and coverage about Tenuo
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--mention">Mention</span>
+    <div class="wild-title"><a href="https://1password.github.io/agent-identity-specs/draft-1password-agent-identity-local-delegated.html#section-12-2.3.1">Local Delegated Agent Identity Architecture</a></div>
+    <div class="wild-attribution">Malnick, Meller, Menke · 1Password</div>
+    <p class="wild-description">1Password reference architecture for local delegated agents. The AAT Internet-Draft is cited as prior art for attenuating tokens in sub-agent flows.</p>
+    <a class="wild-link" href="https://1password.github.io/agent-identity-specs/draft-1password-agent-identity-local-delegated.html#section-12-2.3.1">Read the draft →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--mention">Mention</span>
     <div class="wild-title"><a href="https://www.windley.com/archives/2026/06/internet_identity_workshop_xlii_report.shtml">Internet Identity Workshop XLII Report</a></div>
     <div class="wild-attribution">Phil Windley · IIW Organizer</div>
     <p class="wild-description">Report from IIW 42 at the Computer History Museum. Covers the Demo Hour where Niki Niyikiza showed Tenuo's attenuating authorization tokens that cryptographically narrow an agent's capabilities at each delegation hop.</p>
