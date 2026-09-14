@@ -1050,6 +1050,30 @@ impl DataPlane {
             return Err(Error::UntrustedRoot);
         }
 
+        // Root shape (multi-warrant chains only): the first element of a
+        // presented chain must be a true root, at depth 0 with no parent
+        // linkage, or the chain is malformed.
+        //
+        // A single warrant presented alone is deliberately exempt. Tenuo's
+        // wire format allows an intermediate to be presented by itself
+        // (wire-format-v1 §12, "Single Warrant (Leaf Format)"), trusted on the
+        // anchor's direct signature.
+        if chain.len() > 1 {
+            if root.depth() != 0 {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "first warrant in chain '{}' has depth {}, expected a depth-0 root",
+                    root.id(),
+                    root.depth()
+                )));
+            }
+            if root.parent_hash().is_some() {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "first warrant in chain '{}' carries a parent_hash",
+                    root.id()
+                )));
+            }
+        }
+
         // Batch verify all signatures in the chain. Each warrant's fully
         // domain-separated signed bytes are built in a single allocation
         // (vs. the previous two-step signature_preimage + prefix_message).
@@ -1215,6 +1239,16 @@ impl DataPlane {
                 "I2 violated: child depth {} exceeds its own max_depth {}",
                 child.depth(),
                 child_max
+            )));
+        }
+
+        // I3: a child cannot claim to have been issued before its parent
+        // existed.
+        if child.issued_at() < parent.issued_at() {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I3 violated: child issued at {} before parent {}",
+                child.issued_at(),
+                parent.issued_at()
             )));
         }
 
@@ -1729,6 +1763,7 @@ impl AuthorizerBuilder {
             clock_tolerance: self.clock_tolerance,
             revocation_list,
             pop_window_secs: self.pop_window_secs,
+            max_token_lifetime: None,
             pop_max_windows: self.pop_max_windows,
             tool_clearance_requirements: self.tool_clearance_requirements,
         })
@@ -1765,6 +1800,9 @@ pub struct Authorizer {
     revocation_list: Option<SignedRevocationList>,
     pop_window_secs: i64,
     pop_max_windows: u32,
+    /// Upper bound on any warrant's `expires_at - issued_at`. `None` means
+    /// no ceiling beyond what the chain's own TTL monotonicity provides.
+    max_token_lifetime: Option<std::time::Duration>,
     /// Tool trust requirements: minimum trust level required per tool.
     tool_clearance_requirements: HashMap<String, Clearance>,
 }
@@ -1794,6 +1832,7 @@ impl Authorizer {
             revocation_list: None,
             pop_window_secs: DEFAULT_POP_WINDOW_SECS,
             pop_max_windows: DEFAULT_POP_MAX_WINDOWS,
+            max_token_lifetime: None,
             tool_clearance_requirements: HashMap::new(),
         }
     }
@@ -1828,6 +1867,15 @@ impl Authorizer {
     pub fn with_pop_window(mut self, window_secs: i64, max_windows: u32) -> Self {
         self.pop_window_secs = window_secs;
         self.pop_max_windows = max_windows;
+        self
+    }
+
+    /// Set a ceiling on warrant lifetime (`expires_at - issued_at`) for every
+    /// warrant in a verified chain (chainable).
+    ///
+    /// Default: no ceiling.
+    pub fn with_max_token_lifetime(mut self, max_lifetime: std::time::Duration) -> Self {
+        self.max_token_lifetime = Some(max_lifetime);
         self
     }
 
@@ -2362,6 +2410,30 @@ impl Authorizer {
             return Err(Error::UntrustedRoot);
         }
 
+        // Root shape (multi-warrant chains only): the first element of a
+        // presented chain must be a true root, at depth 0 with no parent
+        // linkage, or the chain is malformed.
+        //
+        // A single warrant presented alone is deliberately exempt. Tenuo's
+        // wire format allows an intermediate to be presented by itself
+        // (wire-format-v1 §12, "Single Warrant (Leaf Format)"), trusted on the
+        // anchor's direct signature.
+        if chain.len() > 1 {
+            if root.depth() != 0 {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "first warrant in chain '{}' has depth {}, expected a depth-0 root",
+                    root.id(),
+                    root.depth()
+                )));
+            }
+            if root.parent_hash().is_some() {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "first warrant in chain '{}' carries a parent_hash",
+                    root.id()
+                )));
+            }
+        }
+
         // Batch verify all signatures in the chain. Each warrant's fully
         // domain-separated signed bytes are built in a single allocation
         // (vs. the previous two-step signature_preimage + prefix_message).
@@ -2378,6 +2450,16 @@ impl Authorizer {
         // every warrant, including a singleton root — they used to run only
         // while walking child links. `as_of` is the TypeScript/vector replay clock.
         for warrant in chain {
+            if let Some(max) = self.max_token_lifetime {
+                if warrant.lifetime_secs() > max.as_secs() {
+                    return Err(Error::InvalidTtl(format!(
+                        "warrant '{}' lifetime {}s exceeds max_token_lifetime {}s",
+                        warrant.id(),
+                        warrant.lifetime_secs(),
+                        max.as_secs()
+                    )));
+                }
+            }
             if warrant.is_expired_with_tolerance_as_of(self.clock_tolerance, as_of) {
                 return Err(Error::WarrantExpired {
                     warrant_id: warrant.id().to_string(),
@@ -2510,6 +2592,16 @@ impl Authorizer {
                 "child depth {} exceeds its own max_depth {}",
                 child.depth(),
                 child_max
+            )));
+        }
+
+        // I3: a child cannot claim to have been issued before its parent
+        // existed.
+        if child.issued_at() < parent.issued_at() {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I3 violated: child issued at {} before parent {}",
+                child.issued_at(),
+                parent.issued_at()
             )));
         }
 

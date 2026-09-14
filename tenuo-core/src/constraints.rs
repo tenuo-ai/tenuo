@@ -3404,7 +3404,15 @@ impl All {
     }
 
     /// Check if all constraints match.
+    ///
+    /// An empty conjunction is invalid rather than vacuously true: it would
+    /// accept every value while appearing to constrain the argument.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        if self.constraints.is_empty() {
+            return Err(Error::Validation(
+                "All constraint with an empty constraints array is invalid".to_string(),
+            ));
+        }
         for c in &self.constraints {
             if !c.matches(value)? {
                 return Ok(false);
@@ -3413,8 +3421,16 @@ impl All {
         Ok(true)
     }
 
-    /// Validate attenuation: child must have all parent constraints plus optionally more.
+    /// Validate attenuation: every parent clause must be subsumed by at least
+    /// one child clause. A single child clause may cover several parent clauses;
+    /// extra child clauses only narrow further. An empty `constraints` array is
+    /// invalid in either position because an empty `All` is not a constraint.
     pub fn validate_attenuation(&self, child: &All) -> Result<()> {
+        if self.constraints.is_empty() || child.constraints.is_empty() {
+            return Err(Error::MonotonicityViolation(
+                "All constraint with an empty constraints array is invalid".to_string(),
+            ));
+        }
         // Every parent constraint must appear in child
         for parent_c in &self.constraints {
             let found = child

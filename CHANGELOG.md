@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Core chain verification hardening.** Multi-warrant chains must begin with
+  a depth-0 warrant without a parent hash, and a child may not claim an
+  issuance time before its parent. `Authorizer::with_max_token_lifetime()` can
+  enforce a deployment-specific warrant lifetime ceiling. Empty `All([])`
+  constraints now fail closed instead of matching every value; empty `Any([])`
+  keeps its existing deny-all behavior.
+
 ### Fixed
 
 - **MCP client denial messages read once.** `SecureMCPClient` built its typed
