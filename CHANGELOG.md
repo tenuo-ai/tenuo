@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rustls` 0.23.45** in `tenuo-core/Cargo.lock` and `tenuo-python/Cargo.lock`
+  (RUSTSEC-2026-0285).
+
 ### Added
 
 - **TypeScript minimal `@tenuo/mcp` v2 example.**
