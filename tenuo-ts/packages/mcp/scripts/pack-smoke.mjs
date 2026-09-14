@@ -37,7 +37,8 @@ try {
     /^dist\/[^/]+\.js\.map$/,
     /^dist\/[^/]+\.d\.ts$/,
   ]);
-  run("npm", ["install", "--save-dev", "typescript@~5.8.2", "@types/node@^20.0.0"], {
+  // The major selector is equivalent to ^20.0.0 without cmd.exe's caret escape.
+  run("npm", ["install", "--save-dev", "typescript@~5.8.2", "@types/node@20"], {
     cwd: installDir,
     stdio: "inherit",
   });
@@ -192,4 +193,3 @@ function typecheckConsumer(cwd) {
     stdio: "inherit",
   });
 }
-

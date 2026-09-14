@@ -171,6 +171,13 @@ pnpm --filter @tenuo/mcp pack:smoke
 The smoke scripts create temporary projects and install packed tarballs. They
 catch problems that workspace imports can hide.
 
+Keep npm version selectors in these cross-platform scripts free of shell
+metacharacters. Use `@types/node@20` for the Node 20 type range: Windows
+[`cmd.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd)
+consumes an unquoted caret in `@types/node@^20.0.0`, accidentally
+installing the incompatible initial `20.0.0` release. Consumer typechecks must
+retain `skipLibCheck: false` so dependency declaration errors remain visible.
+
 Published source maps follow one policy in both packages, and the smoke
 scripts fail when it drifts. JavaScript maps embed the original TypeScript
 (`inlineSources`), because the tarball ships `dist` only and the `../src/*.ts`
