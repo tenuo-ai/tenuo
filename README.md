@@ -197,6 +197,7 @@ except MonotonicityError:
 Adding tools or widening constraints fails the same way. A child TTL longer than the parent has left is clamped to the parent's expiry. The same chain works over MCP, A2A, HTTP, or a workflow engine. The last hop verifies it.
 
 Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_delegation_demo.py).
+Rust + Rig + GitHub MCP: [examples/rig-mcp-delegation](./examples/rig-mcp-delegation).
 
 ---
 
