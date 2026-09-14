@@ -435,6 +435,11 @@ jobs:
         working-directory: tenuo-python
         run: pytest tests/adapters/test_langchain_integration.py tests/adapters/test_langgraph.py -v
 
+      - name: Test create_agent middleware example
+        if: matrix.langchain-version == 'latest'
+        working-directory: tenuo-python
+        run: pytest tests/examples/test_langchain_create_agent_middleware.py -v
+
   # ============================================================================
   # SECURITY AUDIT
   # ============================================================================

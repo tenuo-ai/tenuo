@@ -18,6 +18,7 @@ uv pip install "tenuo[langgraph,mcp]"
 export OPENAI_API_KEY="sk-..."
 
 # Run examples
+python create_agent_middleware.py # LangChain 1.x create_agent + TenuoMiddleware (no API key)
 python simple.py              # Basic LangChain protection
 python integration.py         # Advanced callback patterns
 python protect_tools.py       # Securing third-party tools
@@ -27,6 +28,16 @@ python langgraph_protected.py # State-aware agents
 
 ## Examples
 
+### [create_agent_middleware.py](create_agent_middleware.py) - LangChain 1.x Quickstart
+
+The shortest current-generation agent: `create_agent()` with `TenuoMiddleware`. Requires `langchain>=1.0`; uses a scripted fake model, so no API key or network is needed. Shows:
+- **The `warrant` state field**: the agent's `state_schema` adds `warrant`, and each `agent.invoke({...})` passes the warrant alongside `messages`. The middleware reads it on every model and tool call.
+- **Key registration**: the holder key is registered with `KeyRegistry.get_instance().register("support-agent", key)` and selected with `TenuoMiddleware(key_id="support-agent")`, so no environment variables are required.
+- **`trusted_roots`**: `TenuoMiddleware(trusted_roots=[issuer_key.public_key])` only accepts warrants issued by that key. Always set it in production.
+- An authorized `search` call running, and `delete_record` (not in the warrant) denied without its body executing.
+
+**Start here** for LangChain 1.x agents; the examples below use the older callback and `AgentExecutor`-era APIs.
+
 ### [simple.py](simple.py) - Basic Protection
 
 Minimal example of protecting LangChain tools. Shows:
@@ -35,7 +46,7 @@ Minimal example of protecting LangChain tools. Shows:
 - Running agents with authorization
 - Basic error handling
 
-**Start here** for LangChain integration.
+**Use when**: you are on the older `@guard` / callback-based APIs.
 
 ### [integration.py](integration.py) - Advanced Callbacks
 
