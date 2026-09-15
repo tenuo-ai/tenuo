@@ -25,6 +25,7 @@ aborts generation.
 """
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 import json
@@ -38,6 +39,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from cryptography.exceptions import InvalidSignature
 
 OUT = Path(__file__).parent
+# Machine-readable suite lives with the other cross-language vectors
+# (tests/vectors/, consumed by the Rust, Python and TypeScript test suites);
+# the readable Markdown stays next to the draft. Both are overridable so the
+# validation script can regenerate into a temporary directory.
+_ap = argparse.ArgumentParser(description="Generate AAT JWS test vectors")
+_ap.add_argument("--json-out", type=Path, default=OUT.parent.parent / "tests" / "vectors" / "aat-jws-vectors.json")
+_ap.add_argument("--md-out", type=Path, default=OUT / "aat-jws-vectors.md")
+ARGS = _ap.parse_args()
 
 # ---------------------------------------------------------------------------
 # Fixed parameters
@@ -1130,7 +1139,7 @@ for v in VECTORS:
     md.append(tok_md("PoP JWT", v["pop"]))
     md.append("---\n")
 
-(OUT / "aat-jws-vectors.md").write_text("\n".join(md))
+ARGS.md_out.write_text("\n".join(md))
 
 
 def tok_json(t: dict) -> dict:
@@ -1159,5 +1168,5 @@ json_out = {
         "pop": tok_json(v["pop"]), "expected": v["expected"],
     } for v in VECTORS],
 }
-(OUT / "aat-jws-vectors.json").write_text(json.dumps(json_out, indent=2) + "\n")
-print(f"\nwrote {len(VECTORS)} vectors to {OUT}")
+ARGS.json_out.write_text(json.dumps(json_out, indent=2) + "\n")
+print(f"\nwrote {len(VECTORS)} vectors: {ARGS.json_out} and {ARGS.md_out}")

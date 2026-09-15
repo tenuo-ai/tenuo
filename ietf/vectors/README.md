@@ -8,8 +8,8 @@ same key seeds, same timestamps, matching scenario ids.
 | File | Purpose |
 |---|---|
 | `gen_vectors.py` | Generator. Builds every vector and re-verifies it with an independent §7 implementation before writing. |
-| `aat-jws-vectors.json` | Machine-readable suite: 67 vectors with expected verdict and cited §7 step. |
-| `aat-jws-vectors.md` | Human-readable rendering of the same suite. |
+| `aat-jws-vectors.md` | Human-readable rendering of the suite, kept next to the draft. |
+| [`../../tests/vectors/aat-jws-vectors.json`](../../tests/vectors/aat-jws-vectors.json) | Machine-readable suite: 67 vectors with expected verdict and cited §7 step. Lives with the other cross-language vectors; `tenuo-core/tests/aat_conformance.rs` compiles it in with `include_str!`. |
 
 Both output files are generated. Do not edit them by hand; change the generator
 and regenerate.

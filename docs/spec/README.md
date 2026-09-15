@@ -9,7 +9,7 @@ This directory contains the normative technical specifications for the Tenuo pro
 | [protocol-spec-v1.md](protocol-spec-v1.md) | Protocol Specification - concepts, invariants, verification algorithms |
 | [wire-format-v1.md](wire-format-v1.md) | Wire Format Specification - CBOR encoding, field IDs, serialization |
 | [test-vectors.md](test-vectors.md) | Byte-exact test vectors for cross-implementation validation, including [A.30 authorization receipts](test-vectors.md#a30-authorization-receipts) and [A.31 receipt derivations](test-vectors.md#a31-receipt-derivations) |
-| [../../ietf/vectors/](../../ietf/vectors/README.md) | AAT JWS test vectors for `draft-niyikiza-oauth-attenuating-agent-tokens`, the JWS twins of the CBOR vectors above (generated; validated by `scripts/validate_aat_vectors.sh`) |
+| [../../tests/vectors/aat-jws-vectors.json](../../tests/vectors/aat-jws-vectors.json) | AAT JWS test vectors for `draft-niyikiza-oauth-attenuating-agent-tokens`, the JWS twins of the CBOR vectors above. Generator and readable rendering in [ietf/vectors/](../../ietf/vectors/README.md); validated by `scripts/validate_aat_vectors.sh` |
 
 ## For Implementers
 

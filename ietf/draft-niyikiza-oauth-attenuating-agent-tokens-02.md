@@ -2746,8 +2746,10 @@ document.
 
 # Test Vectors (Non-Normative)
 Byte-exact JWS test vectors for the Section 7 algorithm are published
-at <https://github.com/tenuo-ai/tenuo/tree/main/ietf/vectors> as a
-machine-readable JSON file with a readable companion. Every expected
+in the reference implementation's repository: the machine-readable suite
+at <https://github.com/tenuo-ai/tenuo/blob/main/tests/vectors/aat-jws-vectors.json>
+and a readable companion with its generator at
+<https://github.com/tenuo-ai/tenuo/tree/main/ietf/vectors>. Every expected
 verdict in that suite is reproduced by an independent implementation
 of Section 7 before the suite is written. The suite covers the
 happy-path chains, each attenuation invariant (I1 through I6),

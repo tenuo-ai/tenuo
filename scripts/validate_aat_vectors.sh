@@ -1,8 +1,8 @@
 #!/bin/bash
-# Validate that ietf/vectors/aat-jws-vectors.{json,md} match the generator output.
+# Validate that tests/vectors/aat-jws-vectors.json and ietf/vectors/aat-jws-vectors.md
+# match the generator output.
 #
-# Regenerates into a temporary directory (the generator writes next to itself)
-# and diffs against the committed files. Same contract as validate_test_vectors.sh.
+# Regenerates into a temporary directory and diffs against the committed files. Same contract as validate_test_vectors.sh.
 
 set -euo pipefail
 
@@ -14,23 +14,24 @@ PY="${PYTHON:-python3}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-cp "$VEC_DIR/gen_vectors.py" "$TMP/gen_vectors.py"
 echo "Generating AAT JWS vectors..."
-"$PY" "$TMP/gen_vectors.py" > "$TMP/gen.log" 2>&1 || {
+"$PY" "$VEC_DIR/gen_vectors.py" --json-out "$TMP/aat-jws-vectors.json" --md-out "$TMP/aat-jws-vectors.md" > "$TMP/gen.log" 2>&1 || {
     echo "Generator failed:"
     cat "$TMP/gen.log"
     exit 1
 }
 
 status=0
-for f in aat-jws-vectors.json aat-jws-vectors.md; do
-    if diff -q "$TMP/$f" "$VEC_DIR/$f" > /dev/null; then
-        echo "OK: $f is up to date"
+check() {  # check <generated> <committed>
+    if diff -q "$1" "$2" > /dev/null; then
+        echo "OK: ${2#"$ROOT_DIR"/} is up to date"
     else
-        echo "MISMATCH: $f needs regeneration"
+        echo "MISMATCH: ${2#"$ROOT_DIR"/} needs regeneration"
         status=1
     fi
-done
+}
+check "$TMP/aat-jws-vectors.json" "$ROOT_DIR/tests/vectors/aat-jws-vectors.json"
+check "$TMP/aat-jws-vectors.md" "$VEC_DIR/aat-jws-vectors.md"
 
 if [ $status -ne 0 ]; then
     echo ""
