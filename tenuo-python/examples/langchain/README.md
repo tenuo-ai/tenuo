@@ -24,6 +24,7 @@ python integration.py         # Advanced callback patterns
 python protect_tools.py       # Securing third-party tools
 python mcp_integration.py     # LangChain + MCP + Tenuo
 python langgraph_protected.py # State-aware agents
+python langgraph_tenuo_node.py # Explicit warrant delegation in a graph node
 ```
 
 ## Examples
@@ -88,6 +89,14 @@ Advanced LangGraph integration with checkpointing. Shows:
 - Memory persistence with `MemorySaver`
 
 **Use when**: Building stateful agents with LangGraph.
+
+### [langgraph_tenuo_node.py](langgraph_tenuo_node.py) - Explicit Delegation
+
+A fully local `StateGraph` example for the `@tenuo_node` decorator. The planner
+receives a bound warrant, checks whether research is allowed, and grants a
+short-lived child warrant to a worker. The worker runs the allowed research
+action and proves that a `publish` action outside the child scope never runs.
+No model provider, API key, or network access is required.
 
 ### [langgraph_mcp_integration.py](langgraph_mcp_integration.py) - LangGraph + MCP
 
