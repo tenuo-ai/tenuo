@@ -306,14 +306,12 @@ fn transcode_token(
     Ok(w)
 }
 
+/// The suite is compiled in, like the other cross-language vectors in
+/// tests/vectors/, so a moved or missing file fails the build, not the run.
+const SUITE: &str = include_str!("../../tests/vectors/aat-jws-vectors.json");
+
 fn load_suite() -> serde_json::Value {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../ietf/vectors/aat-jws-vectors.json"
-    );
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("AAT vector suite missing at {path}: {e}"));
-    serde_json::from_str(&raw).expect("vector JSON")
+    serde_json::from_str(SUITE).expect("vector JSON")
 }
 
 #[test]
