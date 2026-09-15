@@ -129,6 +129,7 @@ This demo shows Tenuo's key capabilities:
   - **[protect_tools.py](langchain/protect_tools.py)**: Securing third-party tools from `langchain_community`
   - **[mcp_integration.py](langchain/mcp_integration.py)**: LangChain + MCP + Tenuo complete integration
   - **[langgraph_protected.py](langchain/langgraph_protected.py)**: State-aware agents with checkpointing (serialization, key binding, TenuoToolNode)
+  - **[langgraph_tenuo_node.py](langchain/langgraph_tenuo_node.py)**: Local planner-to-worker warrant delegation with `@tenuo_node`; includes an allowed research action and a denied publish action.
   - **[langgraph_mcp_integration.py](langchain/langgraph_mcp_integration.py)**: LangGraph + MCP multi-agent graph with context-based authorization
 
 ### OpenAI Integration
@@ -244,6 +245,7 @@ python langchain/mcp_integration.py
 
 # LangGraph examples (requires: uv pip install langgraph)
 python langchain/langgraph_protected.py
+python langchain/langgraph_tenuo_node.py
 python langchain/langgraph_mcp_integration.py
 
 # OpenAI examples (requires: uv pip install openai)
