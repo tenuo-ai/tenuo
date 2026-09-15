@@ -34,6 +34,7 @@ normative:
   RFC8126:   # Guidelines for Writing an IANA Considerations Section
 
 informative:
+  RFC2693:   # SPKI Certificate Theory
   RFC8792:   # Handling Long Lines in Content of Internet-Drafts and RFCs
   RFC7942:   # Improving Awareness of Running Code: The Implementation Status Section
   RFC8949:   # Concise Binary Object Representation (CBOR)
@@ -350,12 +351,27 @@ deterministic attenuation checks, and offline chain verification.
 Macaroons {{MACAROONS}} introduced the concept of attenuating tokens
 with contextual caveats. Macaroons use HMAC chaining, which provides
 attenuation but not proof of possession, and express caveats as
-free-form predicates evaluated at the target service at runtime. This
-specification adds asymmetric proof of possession, structured
+free-form predicates evaluated at the target service at runtime.
+HMAC chaining also requires the verifier to hold, or to reach a
+service that holds, the root secret. AATs target enforcement points
+that are not the root issuer and that may sit in another trust
+domain, so verification must succeed against the root issuer's
+public key alone, with no shared secret and no call back to the
+issuer. This specification therefore uses asymmetric signatures
+throughout, adds asymmetric proof of possession, structured
 tool-level capability claims, and a typed constraint vocabulary.
 It defines a normative subsumption relation, enabling any party
 holding the chain to verify monotonicity structurally, without
-predicate evaluation at a central service.
+predicate evaluation at a central service. The trade-off relative to
+HMAC chaining is discussed in Section 8.4.
+
+SPKI/SDSI {{RFC2693}} defines public keys as principals, delegation
+certificates whose effective authority is the intersection of the
+authority along the chain, and attenuation by reduction of a tag.
+AAT's `cnf.jwk` holder binding, chain verification against a root
+key, and the subsumption relation in Section 4.5 correspond to those
+three mechanisms, expressed over JWT claims and a typed constraint
+vocabulary rather than S-expression tags.
 
 Biscuit {{BISCUIT}} extends the Macaroons model with public-key
 signatures and offline attenuation. Biscuit expresses authorization
@@ -1877,6 +1893,20 @@ cannot use the compromised agent to escalate to broader authority,
 invoke tools outside the token's scope, or derive tokens with wider
 permissions than the compromised token encodes.
 
+**Replay of a parent or intermediate token.** Derivation is additive:
+a parent token remains valid after a child is derived from it, and an
+orchestrator commonly derives several narrower tokens while retaining
+its own. Every AAT in a chain, not only the leaf, carries a `cnf.jwk`
+holder key, and an invocation is authorized only when the presenter
+proves possession of the leaf token's key (I6, Section 5). A
+sub-agent that obtains the bytes of its parent's token, or of the
+root token, therefore cannot invoke with that token's authority and
+cannot present it as the leaf of a chain: doing either requires the
+parent holder's private key, which the protocol assumes is never
+shared across a delegation boundary (Section 8.4). Possession of a
+token without the corresponding holder key is not sufficient for
+authorization.
+
 **Grant-context substitution.** The `par_hash` claim (I5) binds each
 derived token to the specific bytes of its parent token. Suppose a
 delegator key holds two parent tokens, `A` and `B`, issued for different
@@ -1989,6 +2019,27 @@ issued to that holder. The attacker cannot derive tokens with broader
 scope than the compromised token grants. Mitigation is revocation of
 tokens bound to the compromised key, or expiry-based recovery for
 short-lived tokens.
+
+AATs do not provide the re-keying property of HMAC-chained designs
+such as Macaroons {{MACAROONS}}, where adding a caveat replaces the
+signing key so that the less-attenuated token can no longer be
+produced from the more-attenuated one. In an AAT chain the parent
+token continues to exist and remains valid until it expires or is
+revoked, and its use is controlled by the parent holder's key rather
+than by replacement of the signing key. Compromise of a holder key
+therefore exposes every token bound to that key, at that token's full
+scope, for the remainder of its lifetime. The design bounds this
+exposure with holder binding on every chain position, attenuation at
+every hop, and short lifetimes (Appendix B.7), rather than by making
+parent tokens unrecoverable. Deployments that require a holder to be
+unable to exercise a parent's authority after delegating SHOULD derive
+across a fresh holder key (Section 8.12) and let the parent token
+expire.
+
+The protocol assumes that holder private keys are not shared across
+delegation boundaries. Key generation, storage, rotation, and recovery
+are deployment concerns and are outside the semantics of chain
+verification.
 
 ## Replay Attacks
 
@@ -2949,6 +3000,12 @@ relative to the Section 7 algorithm in -01:
 - An `all` constraint with an empty `constraints` array is now
   explicitly invalid (Section 4.5), mirroring the existing rule for
   `any`.
+- Section 1.3 states why HMAC chaining is unsuitable for the target
+  verifier model and relates AAT to SPKI/SDSI {{RFC2693}}. Section
+  8.1.1 adds parent- and intermediate-token replay to the mitigated
+  threats. Section 8.4 records that AATs lack Macaroons' re-keying on
+  attenuation and what bounds that exposure instead. These respond to
+  list review of -01.
 - Byte-exact JWS test vectors are published as described in
   Appendix E. They encode the three normative changes above; a -01
   implementation will disagree on `typ`, required `aat_aud`, and the
