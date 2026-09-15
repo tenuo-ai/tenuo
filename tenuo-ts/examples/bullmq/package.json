@@ -1,0 +1,25 @@
+{
+  "name": "@tenuo/example-bullmq",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify:packed": "node scripts/verify-packed.mjs"
+  },
+  "dependencies": {
+    "@tenuo/core": "0.3.0-beta.0",
+    "bullmq": "6.3.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "tsx": "4.23.13",
+    "typescript": "5.8.3",
+    "vitest": "3.2.7"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
