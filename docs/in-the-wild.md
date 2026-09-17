@@ -138,6 +138,14 @@ description: External writing, talks, and coverage about Tenuo
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--mention">Mention</span>
+    <div class="wild-title"><a href="https://www.agenticfabriq.com/blog/agent-to-agent-authorization">Agent-to-Agent Authorization: What Breaks When Delegation Chains Get Long</a></div>
+    <div class="wild-attribution">Paulina Xu · Agentic Fabriq</div>
+    <p class="wild-description">A2A standardizes how agents talk, not what authority travels with the request. Tenuo's AAT Internet-Draft is treated as the proposal that takes monotonic narrowing furthest: per-argument constraints, offline child minting, and verification from the root issuer key alone.</p>
+    <a class="wild-link" href="https://www.agenticfabriq.com/blog/agent-to-agent-authorization">Read the post →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--mention">Mention</span>
     <div class="wild-title"><a href="https://www.windley.com/archives/2026/06/internet_identity_workshop_xlii_report.shtml">Internet Identity Workshop XLII Report</a></div>
     <div class="wild-attribution">Phil Windley · IIW Organizer</div>
     <p class="wild-description">Report from IIW 42 at the Computer History Museum. Covers the Demo Hour where Niki Niyikiza showed Tenuo's attenuating authorization tokens that cryptographically narrow an agent's capabilities at each delegation hop.</p>
