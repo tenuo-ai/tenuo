@@ -4,9 +4,9 @@ Tenuo LangGraph Integration
 This module provides middleware for securing LangGraph agents with Tenuo.
 It solves the key management problem by keeping private keys out of graph state.
 
-Production Pattern (TenuoToolNode):
+LangGraph Pattern (TenuoToolNode):
     Use TenuoToolNode as a drop-in replacement for LangGraph's ToolNode.
-    This is the stable, recommended path for production graphs — including
+    This is the recommended path for existing StateGraph graphs — including
     multi-agent supervisor patterns.
 
     from tenuo.langgraph import TenuoToolNode, guard_node, load_tenuo_keys
@@ -41,12 +41,10 @@ Multi-Agent Delegation Pattern:
     # Researcher's TenuoToolNode can only call search/read — not write
     researcher_tools = TenuoToolNode([search_tool, read_tool, write_tool])
 
-Experimental Pattern (TenuoMiddleware):
-    TenuoMiddleware integrates with the LangChain 1.0+ agent middleware API
-    (langchain>=1.2).  It intercepts both model calls (tool filtering) and
-    tool calls (authorization).  The middleware API is stable in langchain 1.x
-    but is newer than TenuoToolNode — prefer TenuoToolNode if you need maximum
-    compatibility across LangChain versions.
+LangChain 1.x Pattern (TenuoMiddleware):
+    Recommended for create_agent(). Same enforcement path as TenuoToolNode:
+    intercepts model calls (tool filtering) and tool calls (authorization).
+    Requires langchain>=1.0. Use TenuoToolNode for StateGraph + ToolNode graphs.
 
     from langchain.agents import create_agent
     from tenuo.langgraph import TenuoMiddleware, load_tenuo_keys
@@ -401,9 +399,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
     """
     Middleware for securing LangGraph agents with Tenuo authorization.
 
-    This is the recommended way to integrate Tenuo with LangGraph. The middleware
-    intercepts all tool calls and model requests, enforcing authorization based
-    on the warrant in state.
+    Recommended for LangChain 1.x ``create_agent()``. The middleware intercepts
+    tool calls and model requests and enforces authorization from the warrant
+    in state. For a custom StateGraph, use ``TenuoToolNode``.
 
     Features:
         - Automatic tool call authorization with PoP signing

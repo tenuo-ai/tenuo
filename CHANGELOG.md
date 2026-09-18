@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **LangChain / LangGraph guidance.** `TenuoMiddleware` is the recommended
+  path for LangChain 1.x `create_agent()`. `TenuoToolNode` remains the
+  path for existing LangGraph `StateGraph` graphs. The experimental label
+  is dropped.
+
 ### Fixed
 
 - **`rustls` 0.23.45** in `tenuo-core/Cargo.lock` and `tenuo-python/Cargo.lock`

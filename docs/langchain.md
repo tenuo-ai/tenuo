@@ -70,9 +70,61 @@ Even if an LLM is prompt-injected to call `search("hack commands")`, **the const
 
 ---
 
+## LangChain 1.x `create_agent()`
+
+If you are on LangChain 1.x, put `TenuoMiddleware` on `create_agent()`. The warrant lives in agent state; the holder key is looked up by id. Requires `langchain>=1.0`.
+
+```python
+# mdpytest:skip
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentState
+from langchain_core.tools import tool
+from tenuo import Pattern, SigningKey, Warrant
+from tenuo.keys import KeyRegistry
+from tenuo.langgraph import TenuoMiddleware
+
+@tool
+def search(query: str) -> str:
+    """Search customer records."""
+    return f"matches for {query}"
+
+class TenuoAgentState(AgentState):
+    warrant: object
+
+issuer_key = SigningKey.generate()
+holder_key = SigningKey.generate()
+KeyRegistry.get_instance().register("support-agent", holder_key)
+
+warrant = (
+    Warrant.mint_builder()
+    .holder(holder_key.public_key)
+    .capability("search", query=Pattern("customers:*"))
+    .ttl(3600)
+    .mint(issuer_key)
+)
+
+agent = create_agent(
+    model="openai:gpt-4.1",
+    tools=[search],
+    state_schema=TenuoAgentState,
+    middleware=[
+        TenuoMiddleware(
+            key_id="support-agent",
+            trusted_roots=[issuer_key.public_key],
+        )
+    ],
+)
+
+agent.invoke({"messages": [("human", "Look up Acme")], "warrant": warrant})
+```
+
+A runnable version with a scripted model (no API key) is [`create_agent_middleware.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/langchain/create_agent_middleware.py). For wrapping individual tools or older `AgentExecutor` agents, use `@guard` below.
+
+---
+
 ## Quick Start
 
-### Using `guard()` (Recommended)
+### Using `guard()` (tools and older agents)
 
 The unified `guard()` function wraps any LangChain tools:
 
