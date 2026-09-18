@@ -27,6 +27,16 @@ uv pip install "tenuo[temporal]"      # + Temporal Python SDK (workflow + activi
 uv pip install "tenuo[cloud]"         # optional: proprietary Tenuo Cloud client (see below)
 ```
 
+To have a supported coding agent inspect the installed SDK and implement a
+tested effect boundary for this project:
+
+```bash
+npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
+```
+
+The skill labels official adapters, verified recipes, generic integrations,
+and unsupported framework paths separately.
+
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
 [![Explorer](https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a)](https://tenuo.ai/explorer/)
 

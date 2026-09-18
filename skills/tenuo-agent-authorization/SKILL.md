@@ -36,8 +36,11 @@ For this repository's current SDKs:
 
 - Read [TypeScript integration](references/typescript.md) for `@tenuo/core` or `@tenuo/mcp`.
 - Read [Python integration](references/python.md) for `tenuo` and its framework adapters.
+- Read [Framework-neutral integration](references/framework-integration.md) when the project uses a framework without an official Tenuo adapter or verified recipe.
 
 If the installed version differs from these references, adapt to its shipped API and state that the reference was not copied verbatim.
+
+API examples belong in the SDK's normal example directories, where CI compiles or exercises them. Do not add copied Python or TypeScript API snippets to this skill. Use the canonical examples linked from the language references, then inspect the installed version before adapting them.
 
 ## Implement a vertical slice
 

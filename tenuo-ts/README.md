@@ -42,6 +42,16 @@ peer dependency:
 npm install @tenuo/mcp@beta @modelcontextprotocol/server
 ```
 
+To have a supported coding agent inspect the installed SDK and implement a
+tested effect boundary for this project:
+
+```bash
+npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
+```
+
+The skill labels official adapters, verified recipes, generic integrations,
+and unsupported framework paths separately.
+
 ## Protect your first tool
 
 This example creates a development issuer, protects a file-reading function,
