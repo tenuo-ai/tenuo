@@ -3,6 +3,8 @@ Secure MCP Client with Tenuo Authorization.
 
 Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
+from ..optional_deps import missing_optional_dependency
+
 
 import asyncio
 import base64
@@ -184,7 +186,7 @@ class SecureMCPClient:
                 (``warrant_context=True``).
         """
         if not MCP_AVAILABLE:
-            raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
+            raise ImportError(missing_optional_dependency("MCP", "mcp"))
 
         from tenuo._extension import require_extension
         require_extension("SecureMCPClient")

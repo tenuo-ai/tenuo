@@ -45,6 +45,8 @@ DX Helpers:
         explain_denial,       # Rich denial explanations
         visualize_warrant,    # Display warrant capabilities
     )
+
+Install with: pip install "tenuo[google_adk]".
 """
 
 from .decorators import (

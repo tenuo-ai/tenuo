@@ -72,6 +72,8 @@ Security Model (Local vs Remote PEP):
 
 See docs: https://tenuo.ai/langgraph
 """
+from .optional_deps import missing_optional_dependency
+
 
 import logging
 import os
@@ -462,7 +464,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         if not MIDDLEWARE_AVAILABLE:
             raise ImportError(
                 "LangChain middleware requires langchain>=1.0. "
-                "Install with: uv pip install 'langchain>=1.0'"
+                + missing_optional_dependency("LangGraph", "langgraph")
             )
         super().__init__()
         self._key_id = key_id
@@ -914,10 +916,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         **kwargs: Any,
     ):
         if not LANGGRAPH_AVAILABLE:
-            raise ImportError(
-                "LangGraph is required for TenuoToolNode. "
-                "Install with: uv pip install langgraph"
-            )
+            raise ImportError(missing_optional_dependency("LangGraph", "langgraph"))
 
         _require_constraints = require_constraints
         _trusted_roots = trusted_roots
