@@ -2,7 +2,7 @@
 
 Use this reference only for projects using the current `@tenuo/core` or `@tenuo/mcp` APIs. Confirm the resolved version and its shipped README before editing code. The TypeScript API may be on a beta release line.
 
-Do not treat this reference as an API specification. Inspect the resolved package's README, `package.json`, exports, and declaration files in `dist` first. The npm package does not ship the repository examples. For `@tenuo/core` version `0.3.0-beta.0`, use these immutable release sources only when the installed artifacts are insufficient:
+Do not treat this reference as an API specification. Inspect the resolved package's README, `package.json`, exports, and declaration files in `dist` first. The npm package does not ship the repository examples. If installed artifacts are insufficient, compare the resolved package with the TypeScript entry in the [release contract](../release.json). Use these immutable sources only when the versions match:
 
 - [Framework-neutral MCP host boundary](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-ts/packages/core/examples/mcp/host.ts), exercised by [the MCP host smoke test](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-ts/packages/core/test/mcp-host.smoke.test.ts)
 - [Package API and production configuration](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-ts/packages/core/README.md)

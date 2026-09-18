@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
@@ -17,10 +18,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 INTEGRATION_SKILL = SKILLS / "tenuo-agent-authorization"
 RELEASE_CONTRACT = INTEGRATION_SKILL / "release.json"
+BEHAVIORAL_EVAL = (
+    ROOT
+    / "tests/agent-skills/tenuo-agent-authorization/payment-boundary-result.json"
+)
 REPOSITORY_BLOB_PREFIX = "/tenuo-ai/tenuo/blob/"
 
 LINK_RE = re.compile(r"\[[^\]]+\]\((?P<target>[^)]+)\)")
 TAG_RE = re.compile(r"^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+VERSION_LITERAL_RE = re.compile(r"(?<![0-9A-Za-z])\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
 API_FENCE_RE = re.compile(
     r"^```(?:py|python|js|javascript|ts|typescript|rs|rust)(?:\s|$)",
     re.IGNORECASE | re.MULTILINE,
@@ -177,9 +183,14 @@ def validate_release_contract(contract: Dict[str, Any], errors: list[str]) -> bo
             errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: invalid package entry")
             continue
         path_value = package.get("manifest")
+        reference_value = package.get("reference")
         expected = package.get("version")
         name = package.get("name", path_value)
-        if not isinstance(path_value, str) or not isinstance(expected, str):
+        if (
+            not isinstance(path_value, str)
+            or not isinstance(reference_value, str)
+            or not isinstance(expected, str)
+        ):
             errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: invalid package contract {name!r}")
             continue
         relative = Path(path_value)
@@ -193,7 +204,62 @@ def validate_release_contract(contract: Dict[str, Any], errors: list[str]) -> bo
                 f"{RELEASE_CONTRACT.relative_to(ROOT)}: {name} expects {expected!r} "
                 f"but {relative} at {tag} declares {actual!r}"
             )
+        reference = INTEGRATION_SKILL / reference_value
+        try:
+            reference_text = reference.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: cannot read {reference}: {exc}")
+            continue
+        prose_without_links = LINK_RE.sub("", reference_text)
+        duplicate = VERSION_LITERAL_RE.search(prose_without_links)
+        if duplicate:
+            errors.append(
+                f"{reference.relative_to(ROOT)}: package version {duplicate.group(0)!r} is "
+                "duplicated in prose; refer to release.json instead"
+            )
     return True
+
+
+def behavioral_eval_fingerprint() -> str:
+    """Fingerprint every instruction or release input shipped with the skill."""
+    digest = hashlib.sha256()
+    files = sorted(
+        path
+        for path in INTEGRATION_SKILL.rglob("*")
+        if path.is_file() and path.suffix in {".md", ".json"}
+    )
+    for path in files:
+        relative = path.relative_to(INTEGRATION_SKILL).as_posix().encode("utf-8")
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def validate_behavioral_eval_result(result: Dict[str, Any], errors: list[str]) -> None:
+    current = behavioral_eval_fingerprint()
+    recorded = result.get("skill_fingerprint")
+    if result.get("result") != "pass":
+        errors.append(f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: latest behavioral eval did not pass")
+    if recorded != current:
+        errors.append(
+            f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: behavioral eval evidence is stale; "
+            "rerun payment-boundary-eval.md and record the current skill fingerprint "
+            f"{current}"
+        )
+
+
+def load_behavioral_eval_result(errors: list[str]) -> None:
+    try:
+        result = json.loads(BEHAVIORAL_EVAL.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: invalid eval result: {exc}")
+        return
+    if not isinstance(result, dict):
+        errors.append(f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: eval result must be an object")
+        return
+    validate_behavioral_eval_result(result, errors)
 
 
 def validate_skill(skill_dir: Path, documents: Dict[Path, str], errors: list[str]) -> None:
@@ -286,6 +352,7 @@ def main() -> int:
     contract = load_release_contract(errors)
     required_tag = contract.get("repository_tag") if contract else None
     tag_available = validate_release_contract(contract, errors) if contract else False
+    load_behavioral_eval_result(errors)
 
     skill_dirs = sorted(path for path in SKILLS.iterdir() if path.is_dir())
     if not skill_dirs:

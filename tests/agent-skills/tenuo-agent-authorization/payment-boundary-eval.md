@@ -45,3 +45,9 @@ When `tenuo-warrant` is selected first, it may design and generate the issuance 
 On 2026-09-17, the initial lower-cost-model run passed its generated tests but left the exported raw `PaymentClient.transfer` bypass. After the skill entrypoint was shortened and the completion gate required key separation plus an attempted direct-route test, the replay removed the raw exports, added a bypass-absence test, and passed nine SDK-backed tests and type-checking. A stronger-model comparison was already sound with and without the skill, at 21 and 20 passing tests respectively.
 
 Record future results in the pull request that changes the skill. A regression in any critical item blocks review even if link validation and generated tests pass.
+
+## CI freshness gate
+
+CI does not invoke a hosted model. Instead, `scripts/validate_agent_skills.py` fingerprints every Markdown and JSON input shipped with the skill and compares it with `payment-boundary-result.json`. Any instruction, reference, or release-contract edit makes the Agent skills job fail until the replay is run and a passing result records the new fingerprint.
+
+Do not update the fingerprint merely to make CI green. A result may be carried forward without another model run only for a demonstrably non-behavioral change, and the result must record that review and its rationale. The pull request should state whether it ran the model or carried evidence forward.

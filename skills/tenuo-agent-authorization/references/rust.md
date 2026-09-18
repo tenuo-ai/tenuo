@@ -2,7 +2,7 @@
 
 Use this reference for projects using the `tenuo` crate directly, embedding verification in a Rust service, or building a Rust enforcement component. Confirm the resolved crate version, enabled features, and docs.rs API before editing code.
 
-Do not treat this reference as an API specification. Use `cargo metadata` to locate the resolved crate source. Registry and vendored crate sources include the crate README and declared examples; inspect those exact-version files first. For crate version `0.3.0`, these immutable release sources provide the corresponding tests and fallback documentation:
+Do not treat this reference as an API specification. Use `cargo metadata` to locate the resolved crate source. Registry and vendored crate sources include the crate README and declared examples; inspect those exact-version files first. If local source is insufficient, compare the resolved crate with the Rust entry in the [release contract](../release.json). Use these immutable sources only when the versions match:
 
 - [MCP transport and received-authorization boundary](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/examples/sdk_mcp_demo.rs)
 - [Long-lived runtime, trusted roots, revocation, sessions, and receipts](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/examples/sdk_runtime.rs)

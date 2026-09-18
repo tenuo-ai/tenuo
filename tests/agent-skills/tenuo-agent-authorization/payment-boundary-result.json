@@ -1,0 +1,14 @@
+{
+  "scenario": "payment-boundary-eval.md",
+  "evaluated_at": "2026-09-17",
+  "model_class": "lower-cost coding model",
+  "result": "pass",
+  "skill_fingerprint": "dd0c23161a14d926c2b2ac386231ce0c526a2c67e08185edadcacf0df484954e",
+  "evidence": {
+    "sdk": "@tenuo/core 0.3.0-beta.0",
+    "tests": "9 passed",
+    "typecheck": "passed",
+    "critical_items": "passed"
+  },
+  "carried_forward_review": "The subsequent edit replaced duplicated prose versions with a pointer to the machine-checked release contract; it did not change boundary, key-separation, verification, bypass, or claim instructions."
+}

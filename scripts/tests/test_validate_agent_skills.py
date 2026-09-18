@@ -4,7 +4,9 @@ from tempfile import TemporaryDirectory
 
 from scripts.validate_agent_skills import (
     INTEGRATION_SKILL,
+    LINK_RE,
     ROOT,
+    behavioral_eval_fingerprint,
     markdown_link_destination,
     parse_frontmatter,
     repository_file_exists,
@@ -12,6 +14,8 @@ from scripts.validate_agent_skills import (
     validate_release_contract,
     validate_links,
     validate_no_api_fences,
+    validate_behavioral_eval_result,
+    VERSION_LITERAL_RE,
 )
 
 
@@ -146,6 +150,33 @@ class ApiFenceTests(unittest.TestCase):
             INTEGRATION_SKILL / "SKILL.md", "```text\nexample\n```\n", errors
         )
         self.assertEqual(errors, [])
+
+
+class BehavioralEvalTests(unittest.TestCase):
+    def test_fingerprint_is_stable_sha256_shape(self) -> None:
+        fingerprint = behavioral_eval_fingerprint()
+        self.assertEqual(len(fingerprint), 64)
+        int(fingerprint, 16)
+
+    def test_stale_result_fails_with_rerun_guidance(self) -> None:
+        errors = []
+        validate_behavioral_eval_result(
+            {"result": "pass", "skill_fingerprint": "0" * 64}, errors
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("behavioral eval evidence is stale", errors[0])
+
+
+class ReleaseProseTests(unittest.TestCase):
+    def test_detects_semver_in_prose_after_links_are_removed(self) -> None:
+        text = (
+            "For version 0.3.0-beta.0 use "
+            "[the guide](https://example.test/blob/v0.3.0/README.md)."
+        )
+        prose_without_links = LINK_RE.sub("", text)
+        match = VERSION_LITERAL_RE.search(prose_without_links)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(0), "0.3.0-beta.0")
 
 
 if __name__ == "__main__":
