@@ -19,10 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 INTEGRATION_SKILL = SKILLS / "tenuo-agent-authorization"
 RELEASE_CONTRACT = INTEGRATION_SKILL / "release.json"
-BEHAVIORAL_EVAL = (
-    ROOT
-    / "tests/agent-skills/tenuo-agent-authorization/payment-boundary-result.json"
-)
+BEHAVIORAL_EVAL_DIR = ROOT / "tests/agent-skills/tenuo-agent-authorization"
+BEHAVIORAL_EVAL_GLOB = "payment-boundary-result.*.json"
+LANGUAGE_REFERENCES = {
+    "python": "references/python.md",
+    "typescript": "references/typescript.md",
+    "rust": "references/rust.md",
+}
 REPOSITORY_BLOB_PREFIX = "/tenuo-ai/tenuo/blob/"
 
 LINK_RE = re.compile(r"\[[^\]]+\]\((?P<target>[^)]+)\)")
@@ -281,9 +284,12 @@ def skill_instruction_files() -> List[str]:
 
 
 def validate_behavioral_eval_result(
-    result: Dict[str, Any], errors: list[str], notices: Optional[list[str]] = None
-) -> None:
-    location = BEHAVIORAL_EVAL.relative_to(ROOT)
+    result: Dict[str, Any],
+    errors: list[str],
+    location: str = "payment-boundary-result.json",
+    language: Optional[str] = None,
+) -> List[str]:
+    """Validate one language's result file and return the inputs it covers."""
     inputs = result.get("inputs")
     if (
         not isinstance(inputs, list)
@@ -294,13 +300,21 @@ def validate_behavioral_eval_result(
             f"{location}: inputs must list the skill files the scenario reads, "
             "relative to the skill directory"
         )
-        return
+        return []
     if "SKILL.md" not in inputs:
         errors.append(f"{location}: inputs must include SKILL.md")
+    if language is not None:
+        if result.get("language") != language:
+            errors.append(f"{location}: language must be {language!r} to match the file name")
+        reference = LANGUAGE_REFERENCES.get(language)
+        if reference is None:
+            errors.append(f"{location}: unknown language {language!r}")
+        elif reference not in inputs:
+            errors.append(f"{location}: inputs must include {reference}")
     missing = [item for item in inputs if not (INTEGRATION_SKILL / item).is_file()]
     if missing:
         errors.append(f"{location}: inputs name missing skill files: {missing}")
-        return
+        return []
 
     kind = result.get("evidence_kind")
     if kind not in EVIDENCE_KINDS:
@@ -320,25 +334,37 @@ def validate_behavioral_eval_result(
             "rerun payment-boundary-eval.md (or record a carried_forward review for a "
             f"non-behavioral change) with skill fingerprint {current}"
         )
-
-    if notices is not None:
-        uncovered = [item for item in skill_instruction_files() if item not in inputs]
-        if uncovered:
-            notices.append(
-                f"{location}: no committed behavioral evidence covers {uncovered}"
-            )
+    return list(inputs)
 
 
-def load_behavioral_eval_result(errors: list[str], notices: list[str]) -> None:
-    try:
-        result = json.loads(BEHAVIORAL_EVAL.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        errors.append(f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: invalid eval result: {exc}")
+def load_behavioral_eval_results(errors: list[str], notices: list[str]) -> None:
+    """Validate every per-language result and report skill files none of them cover."""
+    covered: set[str] = set()
+    result_files = sorted(BEHAVIORAL_EVAL_DIR.glob(BEHAVIORAL_EVAL_GLOB))
+    if not result_files:
+        errors.append(
+            f"{BEHAVIORAL_EVAL_DIR.relative_to(ROOT)}: no {BEHAVIORAL_EVAL_GLOB} evidence found"
+        )
         return
-    if not isinstance(result, dict):
-        errors.append(f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: eval result must be an object")
-        return
-    validate_behavioral_eval_result(result, errors, notices)
+    for path in result_files:
+        location = str(path.relative_to(ROOT))
+        language = path.name[len("payment-boundary-result.") : -len(".json")]
+        try:
+            result = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"{location}: invalid eval result: {exc}")
+            continue
+        if not isinstance(result, dict):
+            errors.append(f"{location}: eval result must be an object")
+            continue
+        covered.update(validate_behavioral_eval_result(result, errors, location, language))
+
+    uncovered = [item for item in skill_instruction_files() if item not in covered]
+    if uncovered:
+        notices.append(
+            f"{BEHAVIORAL_EVAL_DIR.relative_to(ROOT)}: no committed behavioral evidence "
+            f"covers {uncovered}"
+        )
 
 
 def validate_skill(skill_dir: Path, documents: Dict[Path, str], errors: list[str]) -> None:
@@ -492,7 +518,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     tag_available = validate_release_contract(contract, errors) if contract else False
     if contract:
         check_release_drift(contract, errors, warnings, args.require_current_release)
-    load_behavioral_eval_result(errors, notices)
+    load_behavioral_eval_results(errors, notices)
 
     skill_dirs = sorted(path for path in SKILLS.iterdir() if path.is_dir())
     if not skill_dirs:

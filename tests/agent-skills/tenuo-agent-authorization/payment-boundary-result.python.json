@@ -1,0 +1,23 @@
+{
+  "scenario": "payment-boundary-eval.md",
+  "language": "python",
+  "evaluated_at": "2026-09-17",
+  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md",
+    "references/python.md",
+    "references/common-footguns.md",
+    "references/security-model.md",
+    "release.json"
+  ],
+  "skill_fingerprint": "3c1926cb67c00765c52492eee44873af81432a71c34a47fd61a2956ad7884f72",
+  "evidence": {
+    "sdk": "tenuo 0.3.0 from PyPI in a project .venv",
+    "tests": "16 passed (.venv/bin/pytest -q, rerun by the grader)",
+    "typecheck": "mypy --ignore-missing-imports payment_service: no issues (run by the grader)",
+    "critical_items": "passed",
+    "notes": "Verifier takes a base64 warrant chain and a PoP signature only; trusted roots come from PAYMENT_TRUSTED_ISSUERS or constructor injection. PaymentClient.transfer now requires a VerifiedTransfer matching the requested recipient/amount, and tests attempt both original bypass shapes (direct client call, old two-argument execute_transfer). Wider child delegation is proven at grant time via the SDK's MonotonicityError rather than by presenting a forged wider chain to the verifier. Report separates the in-process guardrail from a service boundary and disclaims replay, revocation, exactly-once, and intent."
+  }
+}

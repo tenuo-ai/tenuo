@@ -1,5 +1,6 @@
 {
   "scenario": "payment-boundary-eval.md",
+  "language": "typescript",
   "evaluated_at": "2026-09-17",
   "model_class": "lower-cost coding model",
   "result": "pass",

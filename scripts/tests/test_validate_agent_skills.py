@@ -242,21 +242,58 @@ class BehavioralEvalTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("carried_forward_review", errors[0])
 
-    def test_uncovered_skill_files_are_reported_as_notices(self) -> None:
-        errors, notices = [], []
+    def test_language_result_must_cover_its_reference(self) -> None:
+        errors = []
         validate_behavioral_eval_result(
             {
                 "result": "pass",
+                "language": "rust",
                 "evidence_kind": "fresh",
                 "inputs": ["SKILL.md"],
                 "skill_fingerprint": behavioral_eval_fingerprint(["SKILL.md"]),
             },
             errors,
-            notices,
+            "payment-boundary-result.rust.json",
+            "rust",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("references/rust.md", errors[0])
+
+    def test_language_must_match_file_name(self) -> None:
+        errors = []
+        inputs = ["SKILL.md", "references/rust.md"]
+        validate_behavioral_eval_result(
+            {
+                "result": "pass",
+                "language": "python",
+                "evidence_kind": "fresh",
+                "inputs": inputs,
+                "skill_fingerprint": behavioral_eval_fingerprint(inputs),
+            },
+            errors,
+            "payment-boundary-result.rust.json",
+            "rust",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("language must be 'rust'", errors[0])
+
+    def test_valid_result_returns_covered_inputs(self) -> None:
+        errors = []
+        inputs = ["SKILL.md", "references/rust.md"]
+        covered = validate_behavioral_eval_result(
+            {
+                "result": "pass",
+                "language": "rust",
+                "evidence_kind": "fresh",
+                "inputs": inputs,
+                "skill_fingerprint": behavioral_eval_fingerprint(inputs),
+            },
+            errors,
+            "payment-boundary-result.rust.json",
+            "rust",
         )
         self.assertEqual(errors, [])
-        self.assertEqual(len(notices), 1)
-        self.assertIn("references/rust.md", notices[0])
+        self.assertEqual(covered, inputs)
 
 
 class ReleaseDriftTests(unittest.TestCase):
