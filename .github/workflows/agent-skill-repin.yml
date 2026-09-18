@@ -1,0 +1,88 @@
+name: Agent skill re-pin
+
+# When a release is published, re-pin the tenuo-agent-authorization skill to
+# the new tag and open that change for review, so the skill cannot silently
+# keep pointing at the previous release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to pin (for example v0.4.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  repin:
+    name: Re-pin skill to release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Re-pin release contract, links, and evidence
+        id: repin
+        run: |
+          git fetch --tags --force
+          if python3 scripts/repin_agent_skill.py --tag "$TAG" --check; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 scripts/repin_agent_skill.py --tag "$TAG"
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+          python3 scripts/validate_agent_skills.py --require-current-release
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push branch and open the change for review
+        if: steps.repin.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="chore/repin-agent-skill-$TAG"
+          title="chore(skills): re-pin tenuo-agent-authorization to $TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -A
+          git commit -m "$title"
+          git push --force origin "$branch"
+
+          body=$(cat <<EOF
+          Automated by the Agent skill re-pin workflow for release \`$TAG\`.
+
+          - \`skills/tenuo-agent-authorization/release.json\` now pins \`$TAG\` with versions read from the manifests at that tag.
+          - Pinned repository links in the skill references point at \`$TAG\`.
+          - Behavioral results whose inputs changed are marked \`carried_forward\` with a review naming this re-pin.
+
+          Before merging:
+          - [ ] Confirm the linked examples at \`$TAG\` still match the reference prose.
+          - [ ] Rerun \`tests/agent-skills/tenuo-agent-authorization/payment-boundary-eval.md\` if any behavioral input changed.
+          - [ ] If CI did not run on this pull request (it was opened by a workflow token), close and reopen it to trigger checks.
+          EOF
+          )
+
+          if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" != "0" ]; then
+            echo "Pull request for $branch already open."
+            exit 0
+          fi
+          if gh pr create --base main --head "$branch" --title "$title" --body "$body"; then
+            exit 0
+          fi
+          echo "Could not open a pull request (Actions may not be allowed to create them); opening an issue instead."
+          if [ "$(gh issue list --search "\"$title\" in:title" --state open --json number --jq length)" != "0" ]; then
+            echo "Issue for $TAG already open."
+            exit 0
+          fi
+          gh issue create --title "$title" --body "$(printf '%s\n\nThe change is pushed to branch `%s`. Open it with:\n\n```bash\ngh pr create --base main --head %s --title "%s"\n```\n' "$body" "$branch" "$branch" "$title")"

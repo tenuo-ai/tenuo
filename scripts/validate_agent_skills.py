@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
 
@@ -235,15 +235,16 @@ def check_release_drift(
     errors: list[str],
     warnings: list[str],
     require_current: bool,
+    tag_exists: Callable[[str], bool] = repository_tag_exists,
 ) -> None:
     """Compare the pinned contract with the manifests at HEAD.
 
     The contract must name a tag that already exists, so a version-bump pull
-    request cannot update it before the release is tagged. Drift is therefore a
-    warning by default and an error only when ``--require-current-release`` is
-    passed (for the follow-up pull request that re-pins the skill).
+    request cannot update it before the release is tagged. Drift is a warning
+    while the release is still pending. Once a tag matching a HEAD manifest
+    version exists, the release happened and the skill was not re-pinned, which
+    is an error. ``--require-current-release`` makes any drift an error.
     """
-    sink = errors if require_current else warnings
     for package in contract_packages(contract, []):
         name = package.get("name", package["manifest"])
         manifest = ROOT / package["manifest"]
@@ -251,12 +252,25 @@ def check_release_drift(
             head_version = manifest_version(manifest.read_text(encoding="utf-8"), package)
         except OSError:
             head_version = None
-        if head_version != package["version"]:
-            sink.append(
-                f"{RELEASE_CONTRACT.relative_to(ROOT)}: {name} pins {package['version']!r} but "
-                f"{package['manifest']} at HEAD declares {head_version!r}; after tagging the "
-                "release, update release.json, the pinned reference links, and the behavioral "
-                "evidence"
+        if head_version == package["version"]:
+            continue
+        message = (
+            f"{RELEASE_CONTRACT.relative_to(ROOT)}: {name} pins {package['version']!r} but "
+            f"{package['manifest']} at HEAD declares {head_version!r}"
+        )
+        release_tag = f"v{head_version}" if head_version else None
+        if release_tag and tag_exists(release_tag):
+            errors.append(
+                f"{message}; release {release_tag} exists, so re-pin the skill with "
+                f"`python3 scripts/repin_agent_skill.py --tag {release_tag}` (the "
+                "agent-skill-repin workflow opens this change automatically on release)"
+            )
+        elif require_current:
+            errors.append(f"{message}; the release is not tagged yet")
+        else:
+            warnings.append(
+                f"{message}; after tagging the release, the agent-skill-repin workflow "
+                "re-pins release.json, the reference links, and the behavioral evidence"
             )
 
 

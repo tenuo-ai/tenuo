@@ -311,16 +311,37 @@ class ReleaseDriftTests(unittest.TestCase):
         ],
     }
 
-    def test_head_drift_warns_by_default(self) -> None:
+    def test_head_drift_warns_while_release_is_untagged(self) -> None:
         errors, warnings = [], []
-        check_release_drift(self.CONTRACT, errors, warnings, require_current=False)
+        check_release_drift(
+            self.CONTRACT, errors, warnings, require_current=False, tag_exists=lambda tag: False
+        )
         self.assertEqual(errors, [])
         self.assertEqual(len(warnings), 1)
         self.assertIn("at HEAD declares", warnings[0])
 
+    def test_head_drift_fails_once_release_tag_exists(self) -> None:
+        errors, warnings = [], []
+        check_release_drift(
+            self.CONTRACT, errors, warnings, require_current=False, tag_exists=lambda tag: True
+        )
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("repin_agent_skill.py --tag v", errors[0])
+
+    def test_forgotten_repin_is_detected_against_real_tags(self) -> None:
+        # HEAD declares 0.3.0 and v0.3.0 exists, so pinning anything else is the
+        # forgotten-re-pin state this check exists to catch.
+        errors, warnings = [], []
+        check_release_drift(self.CONTRACT, errors, warnings, require_current=False)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("--tag v0.3.0", errors[0])
+
     def test_head_drift_fails_when_current_release_required(self) -> None:
         errors, warnings = [], []
-        check_release_drift(self.CONTRACT, errors, warnings, require_current=True)
+        check_release_drift(
+            self.CONTRACT, errors, warnings, require_current=True, tag_exists=lambda tag: False
+        )
         self.assertEqual(warnings, [])
         self.assertEqual(len(errors), 1)
 

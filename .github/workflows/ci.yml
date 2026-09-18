@@ -25,7 +25,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Test skill validator
-        run: python3 -m unittest discover -s scripts/tests -p 'test_validate_agent_skills.py'
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Validate skill metadata and portable references
         run: python3 scripts/validate_agent_skills.py
 

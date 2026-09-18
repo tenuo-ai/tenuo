@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent skill re-pin automation.** Publishing a release runs the Agent skill
+  re-pin workflow, which re-pins `tenuo-agent-authorization` to the new tag and
+  opens the change for review. The skill validator now fails, on every branch,
+  when a release tag exists that the skill does not pin.
 - **Installable agent-authorization skill.** Coding agents can install
   `tenuo-agent-authorization` with `npx skills add tenuo-ai/tenuo --skill
   tenuo-agent-authorization` for Python, TypeScript, and Rust effect-boundary
