@@ -3,14 +3,15 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import os
 import re
-import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
 
@@ -25,6 +26,11 @@ BEHAVIORAL_EVAL = (
 REPOSITORY_BLOB_PREFIX = "/tenuo-ai/tenuo/blob/"
 
 LINK_RE = re.compile(r"\[[^\]]+\]\((?P<target>[^)]+)\)")
+# CommonMark inline-link target: a <...> destination or a run of non-space
+# characters, followed by an optional "…", '…', or (…) title.
+LINK_DESTINATION_RE = re.compile(
+    r"""^(?:<(?P<angle>[^<>]*)>|(?P<plain>[^\s<>]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^()]*\)))?$"""
+)
 TAG_RE = re.compile(r"^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 VERSION_LITERAL_RE = re.compile(r"(?<![0-9A-Za-z])\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
 API_FENCE_RE = re.compile(
@@ -32,6 +38,7 @@ API_FENCE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 BLOCK_SCALAR_MARKERS = {"|", "|-", "|+", ">", ">-", ">+"}
+EVIDENCE_KINDS = {"fresh", "carried_forward"}
 
 
 def _plain_scalar(value: str) -> Optional[str]:
@@ -69,19 +76,11 @@ def parse_frontmatter(text: str) -> Tuple[Optional[Dict[str, str]], Optional[str
 
 def markdown_link_destination(raw_target: str) -> Optional[str]:
     """Return a Markdown inline-link destination without its optional title."""
-    raw_target = raw_target.strip()
-    if not raw_target:
+    match = LINK_DESTINATION_RE.fullmatch(raw_target.strip())
+    if match is None:
         return None
-    if raw_target.startswith("<"):
-        closing = raw_target.find(">")
-        if closing == -1:
-            return None
-        return raw_target[1:closing]
-    try:
-        parts = shlex.split(raw_target)
-    except ValueError:
-        return None
-    return parts[0] if parts else None
+    angle = match.group("angle")
+    return angle if angle is not None else match.group("plain")
 
 
 def repository_ref_and_path_for_url(target: str) -> Optional[Tuple[str, Path]]:
@@ -164,6 +163,27 @@ def load_release_contract(errors: list[str]) -> Optional[Dict[str, Any]]:
     return contract
 
 
+def contract_packages(contract: Dict[str, Any], errors: list[str]) -> List[Dict[str, Any]]:
+    """Return the well-formed package entries, reporting malformed ones once."""
+    packages = contract.get("packages")
+    if not isinstance(packages, list) or not packages:
+        errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: packages must be a non-empty list")
+        return []
+    valid: List[Dict[str, Any]] = []
+    for package in packages:
+        if not isinstance(package, dict):
+            errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: invalid package entry")
+            continue
+        name = package.get("name", package.get("manifest"))
+        if not all(
+            isinstance(package.get(key), str) for key in ("manifest", "reference", "version")
+        ):
+            errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: invalid package contract {name!r}")
+            continue
+        valid.append(package)
+    return valid
+
+
 def validate_release_contract(contract: Dict[str, Any], errors: list[str]) -> bool:
     tag = contract["repository_tag"]
     if not repository_tag_exists(tag):
@@ -173,27 +193,11 @@ def validate_release_contract(contract: Dict[str, Any], errors: list[str]) -> bo
         )
         return False
 
-    packages = contract.get("packages")
-    if not isinstance(packages, list) or not packages:
-        errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: packages must be a non-empty list")
-        return True
-
-    for package in packages:
-        if not isinstance(package, dict):
-            errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: invalid package entry")
-            continue
-        path_value = package.get("manifest")
-        reference_value = package.get("reference")
-        expected = package.get("version")
-        name = package.get("name", path_value)
-        if (
-            not isinstance(path_value, str)
-            or not isinstance(reference_value, str)
-            or not isinstance(expected, str)
-        ):
-            errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: invalid package contract {name!r}")
-            continue
-        relative = Path(path_value)
+    checked_references: set[Path] = set()
+    for package in contract_packages(contract, errors):
+        name = package.get("name", package["manifest"])
+        relative = Path(package["manifest"])
+        expected = package["version"]
         text = repository_file_text(tag, relative)
         if text is None:
             errors.append(f"{RELEASE_CONTRACT.relative_to(ROOT)}: {relative} is missing at {tag}")
@@ -204,7 +208,10 @@ def validate_release_contract(contract: Dict[str, Any], errors: list[str]) -> bo
                 f"{RELEASE_CONTRACT.relative_to(ROOT)}: {name} expects {expected!r} "
                 f"but {relative} at {tag} declares {actual!r}"
             )
-        reference = INTEGRATION_SKILL / reference_value
+        reference = INTEGRATION_SKILL / package["reference"]
+        if reference in checked_references:
+            continue
+        checked_references.add(reference)
         try:
             reference_text = reference.read_text(encoding="utf-8")
         except OSError as exc:
@@ -220,37 +227,109 @@ def validate_release_contract(contract: Dict[str, Any], errors: list[str]) -> bo
     return True
 
 
-def behavioral_eval_fingerprint() -> str:
-    """Fingerprint every instruction or release input shipped with the skill."""
+def check_release_drift(
+    contract: Dict[str, Any],
+    errors: list[str],
+    warnings: list[str],
+    require_current: bool,
+) -> None:
+    """Compare the pinned contract with the manifests at HEAD.
+
+    The contract must name a tag that already exists, so a version-bump pull
+    request cannot update it before the release is tagged. Drift is therefore a
+    warning by default and an error only when ``--require-current-release`` is
+    passed (for the follow-up pull request that re-pins the skill).
+    """
+    sink = errors if require_current else warnings
+    for package in contract_packages(contract, []):
+        name = package.get("name", package["manifest"])
+        manifest = ROOT / package["manifest"]
+        try:
+            head_version = manifest_version(manifest.read_text(encoding="utf-8"), package)
+        except OSError:
+            head_version = None
+        if head_version != package["version"]:
+            sink.append(
+                f"{RELEASE_CONTRACT.relative_to(ROOT)}: {name} pins {package['version']!r} but "
+                f"{package['manifest']} at HEAD declares {head_version!r}; after tagging the "
+                "release, update release.json, the pinned reference links, and the behavioral "
+                "evidence"
+            )
+
+
+def behavioral_eval_fingerprint(inputs: Iterable[str]) -> str:
+    """Fingerprint the skill files a behavioral scenario actually reads.
+
+    Line endings are normalized so a checkout with ``core.autocrlf`` produces the
+    same fingerprint as CI.
+    """
     digest = hashlib.sha256()
-    files = sorted(
-        path
-        for path in INTEGRATION_SKILL.rglob("*")
-        if path.is_file() and path.suffix in {".md", ".json"}
-    )
-    for path in files:
-        relative = path.relative_to(INTEGRATION_SKILL).as_posix().encode("utf-8")
-        digest.update(relative)
+    for relative in sorted(set(inputs)):
+        digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        digest.update((INTEGRATION_SKILL / relative).read_bytes().replace(b"\r\n", b"\n"))
         digest.update(b"\0")
     return digest.hexdigest()
 
 
-def validate_behavioral_eval_result(result: Dict[str, Any], errors: list[str]) -> None:
-    current = behavioral_eval_fingerprint()
-    recorded = result.get("skill_fingerprint")
-    if result.get("result") != "pass":
-        errors.append(f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: latest behavioral eval did not pass")
-    if recorded != current:
+def skill_instruction_files() -> List[str]:
+    return sorted(
+        path.relative_to(INTEGRATION_SKILL).as_posix()
+        for path in INTEGRATION_SKILL.rglob("*.md")
+        if path.is_file()
+    )
+
+
+def validate_behavioral_eval_result(
+    result: Dict[str, Any], errors: list[str], notices: Optional[list[str]] = None
+) -> None:
+    location = BEHAVIORAL_EVAL.relative_to(ROOT)
+    inputs = result.get("inputs")
+    if (
+        not isinstance(inputs, list)
+        or not inputs
+        or not all(isinstance(item, str) for item in inputs)
+    ):
         errors.append(
-            f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: behavioral eval evidence is stale; "
-            "rerun payment-boundary-eval.md and record the current skill fingerprint "
-            f"{current}"
+            f"{location}: inputs must list the skill files the scenario reads, "
+            "relative to the skill directory"
+        )
+        return
+    if "SKILL.md" not in inputs:
+        errors.append(f"{location}: inputs must include SKILL.md")
+    missing = [item for item in inputs if not (INTEGRATION_SKILL / item).is_file()]
+    if missing:
+        errors.append(f"{location}: inputs name missing skill files: {missing}")
+        return
+
+    kind = result.get("evidence_kind")
+    if kind not in EVIDENCE_KINDS:
+        errors.append(f"{location}: evidence_kind must be one of {sorted(EVIDENCE_KINDS)}")
+    elif kind == "carried_forward" and not str(result.get("carried_forward_review", "")).strip():
+        errors.append(
+            f"{location}: carried_forward evidence requires a carried_forward_review rationale"
         )
 
+    if result.get("result") != "pass":
+        errors.append(f"{location}: latest behavioral eval did not pass")
 
-def load_behavioral_eval_result(errors: list[str]) -> None:
+    current = behavioral_eval_fingerprint(inputs)
+    if result.get("skill_fingerprint") != current:
+        errors.append(
+            f"{location}: behavioral eval evidence is stale for {sorted(set(inputs))}; "
+            "rerun payment-boundary-eval.md (or record a carried_forward review for a "
+            f"non-behavioral change) with skill fingerprint {current}"
+        )
+
+    if notices is not None:
+        uncovered = [item for item in skill_instruction_files() if item not in inputs]
+        if uncovered:
+            notices.append(
+                f"{location}: no committed behavioral evidence covers {uncovered}"
+            )
+
+
+def load_behavioral_eval_result(errors: list[str], notices: list[str]) -> None:
     try:
         result = json.loads(BEHAVIORAL_EVAL.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -259,7 +338,7 @@ def load_behavioral_eval_result(errors: list[str]) -> None:
     if not isinstance(result, dict):
         errors.append(f"{BEHAVIORAL_EVAL.relative_to(ROOT)}: eval result must be an object")
         return
-    validate_behavioral_eval_result(result, errors)
+    validate_behavioral_eval_result(result, errors, notices)
 
 
 def validate_skill(skill_dir: Path, documents: Dict[Path, str], errors: list[str]) -> None:
@@ -280,6 +359,48 @@ def validate_skill(skill_dir: Path, documents: Dict[Path, str], errors: list[str
         )
     if not metadata.get("description"):
         errors.append(f"{entrypoint.relative_to(ROOT)}: missing description")
+
+
+def validate_repository_link(
+    markdown: Path,
+    target: str,
+    ref: str,
+    relative: Path,
+    errors: list[str],
+    required_repository_tag: Optional[str],
+    repository_tag_available: bool,
+) -> None:
+    location = markdown.relative_to(ROOT)
+    if required_repository_tag is not None:
+        if ref != required_repository_tag:
+            errors.append(
+                f"{location}: repository link must be pinned to release tag "
+                f"{required_repository_tag!r}, not {ref!r}: {target!r}"
+            )
+        elif repository_tag_available and not repository_file_exists(ref, relative):
+            errors.append(
+                f"{location}: canonical repository link does not name a file at tag {ref}: "
+                f"{target!r}"
+            )
+        return
+
+    if TAG_RE.fullmatch(ref):
+        if not repository_tag_exists(ref):
+            errors.append(
+                f"{location}: tag {ref!r} is unavailable; fetch tags (git fetch --tags --force) "
+                f"before validating: {target!r}"
+            )
+        elif not repository_file_exists(ref, relative):
+            errors.append(
+                f"{location}: repository link does not name a file at tag {ref}: {target!r}"
+            )
+        return
+
+    if not (ROOT / relative).exists():
+        errors.append(
+            f"{location}: repository link to {ref!r} does not name a file in this checkout: "
+            f"{target!r}"
+        )
 
 
 def validate_links(
@@ -305,18 +426,15 @@ def validate_links(
         if repository_target is not None:
             checked += 1
             ref, relative = repository_target
-            expected = required_repository_tag
-            if TAG_RE.fullmatch(ref) is None or (expected is not None and ref != expected):
-                suffix = f" {expected!r}" if expected is not None else " an immutable semver tag"
-                errors.append(
-                    f"{markdown.relative_to(ROOT)}: repository link must use pinned tag{suffix}, "
-                    f"not {ref!r}: {target!r}"
-                )
-            elif repository_tag_available and not repository_file_exists(ref, relative):
-                errors.append(
-                    f"{markdown.relative_to(ROOT)}: canonical repository link does not name a file "
-                    f"at tag {ref}: {target!r}"
-                )
+            validate_repository_link(
+                markdown,
+                target,
+                ref,
+                relative,
+                errors,
+                required_repository_tag,
+                repository_tag_available,
+            )
             continue
 
         if target.startswith(("http://", "https://", "mailto:", "#", "/", "//")):
@@ -347,12 +465,34 @@ def validate_no_api_fences(markdown: Path, text: str, errors: list[str]) -> None
         )
 
 
-def main() -> int:
+def _emit(level: str, message: str) -> None:
+    """Print a diagnostic, as a workflow annotation when running in GitHub Actions."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::{level}::{message}")
+    else:
+        print(f"{level.upper()}: {message}", file=sys.stderr)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--require-current-release",
+        action="store_true",
+        help="fail when release.json does not match the SDK manifests at HEAD "
+        "(use in the pull request that re-pins the skill after a release)",
+    )
+    args = parser.parse_args(argv)
+
     errors: list[str] = []
+    warnings: list[str] = []
+    notices: list[str] = []
+
     contract = load_release_contract(errors)
     required_tag = contract.get("repository_tag") if contract else None
     tag_available = validate_release_contract(contract, errors) if contract else False
-    load_behavioral_eval_result(errors)
+    if contract:
+        check_release_drift(contract, errors, warnings, args.require_current_release)
+    load_behavioral_eval_result(errors, notices)
 
     skill_dirs = sorted(path for path in SKILLS.iterdir() if path.is_dir())
     if not skill_dirs:
@@ -377,9 +517,13 @@ def main() -> int:
             if skill_dir == INTEGRATION_SKILL:
                 validate_no_api_fences(markdown, text, errors)
 
+    for notice in notices:
+        _emit("notice", notice)
+    for warning in warnings:
+        _emit("warning", warning)
     if errors:
         for error in errors:
-            print(f"ERROR: {error}", file=sys.stderr)
+            _emit("error", error)
         return 1
 
     print(

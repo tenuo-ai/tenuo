@@ -17,6 +17,13 @@
       "version": "0.3.0-beta.0"
     },
     {
+      "name": "TypeScript MCP",
+      "reference": "references/typescript.md",
+      "manifest": "tenuo-ts/packages/mcp/package.json",
+      "format": "json",
+      "version": "0.3.0-beta.0"
+    },
+    {
       "name": "Rust",
       "reference": "references/rust.md",
       "manifest": "tenuo-core/Cargo.toml",

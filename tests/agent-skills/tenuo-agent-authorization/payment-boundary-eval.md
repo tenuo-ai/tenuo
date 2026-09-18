@@ -48,6 +48,10 @@ Record future results in the pull request that changes the skill. A regression i
 
 ## CI freshness gate
 
-CI does not invoke a hosted model. Instead, `scripts/validate_agent_skills.py` fingerprints every Markdown and JSON input shipped with the skill and compares it with `payment-boundary-result.json`. Any instruction, reference, or release-contract edit makes the Agent skills job fail until the replay is run and a passing result records the new fingerprint.
+CI does not invoke a hosted model. Instead, `scripts/validate_agent_skills.py` fingerprints the skill files listed under `inputs` in `payment-boundary-result.json` and compares the digest with `skill_fingerprint`. The list names exactly the files this TypeScript scenario reads: `SKILL.md`, `references/typescript.md`, `references/common-footguns.md`, and `references/security-model.md`. Editing any of them makes the Agent skills job fail until the replay is run and a passing result records the new fingerprint. Files outside the list, such as `references/python.md` and `references/rust.md`, are reported as uncovered in the job log; they are not gated because no committed scenario exercises them. Add a scenario and result file per language before relying on those references.
 
-Do not update the fingerprint merely to make CI green. A result may be carried forward without another model run only for a demonstrably non-behavioral change, and the result must record that review and its rationale. The pull request should state whether it ran the model or carried evidence forward.
+Each result records `evidence_kind`: `fresh` for a model run against the recorded fingerprint, or `carried_forward` for a non-behavioral change reviewed without a model run. A carried-forward result must keep a `carried_forward_review` rationale, and the pull request should state which kind it ships. Do not update the fingerprint merely to make CI green.
+
+## Release re-pinning
+
+`release.json` must name a tag that already exists, so a version-bump pull request cannot update it before the release is tagged. The validator warns whenever the pinned versions differ from the manifests at HEAD; after tagging, open a follow-up that updates `release.json`, the pinned reference links, and this evidence, and run `python3 scripts/validate_agent_skills.py --require-current-release` to turn that warning into a failure.

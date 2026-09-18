@@ -6,7 +6,9 @@ from scripts.validate_agent_skills import (
     INTEGRATION_SKILL,
     LINK_RE,
     ROOT,
+    SKILLS,
     behavioral_eval_fingerprint,
+    check_release_drift,
     markdown_link_destination,
     parse_frontmatter,
     repository_file_exists,
@@ -50,6 +52,19 @@ class LinkTests(unittest.TestCase):
             "references/a file.md",
         )
 
+    def test_keeps_apostrophes_and_backslashes_in_destination(self) -> None:
+        self.assertEqual(
+            markdown_link_destination("references/don't-do-this.md"),
+            "references/don't-do-this.md",
+        )
+        self.assertEqual(
+            markdown_link_destination("references\\windows.md"),
+            "references\\windows.md",
+        )
+
+    def test_rejects_destination_with_unterminated_title(self) -> None:
+        self.assertIsNone(markdown_link_destination('references/a.md "open title'))
+
     def test_maps_tagged_repository_url_to_checkout(self) -> None:
         self.assertEqual(
             repository_path_for_url(
@@ -72,6 +87,27 @@ class LinkTests(unittest.TestCase):
         )
         self.assertEqual(len(errors), 1)
         self.assertIn("not 'main'", errors[0])
+
+    def test_other_skill_may_link_to_main_when_file_exists(self) -> None:
+        errors = []
+        validate_links(
+            SKILLS / "tenuo-warrant" / "SKILL.md",
+            "[Example](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/README.md)",
+            SKILLS / "tenuo-warrant",
+            errors,
+        )
+        self.assertEqual(errors, [])
+
+    def test_other_skill_main_link_must_name_checkout_file(self) -> None:
+        errors = []
+        validate_links(
+            SKILLS / "tenuo-warrant" / "SKILL.md",
+            "[Example](https://github.com/tenuo-ai/tenuo/blob/main/does/not/exist.md)",
+            SKILLS / "tenuo-warrant",
+            errors,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("does not name a file in this checkout", errors[0])
 
     def test_missing_tag_explains_how_to_fetch_tags(self) -> None:
         errors = []
@@ -154,17 +190,102 @@ class ApiFenceTests(unittest.TestCase):
 
 class BehavioralEvalTests(unittest.TestCase):
     def test_fingerprint_is_stable_sha256_shape(self) -> None:
-        fingerprint = behavioral_eval_fingerprint()
+        fingerprint = behavioral_eval_fingerprint(["SKILL.md"])
         self.assertEqual(len(fingerprint), 64)
         int(fingerprint, 16)
+
+    def test_fingerprint_only_covers_listed_inputs(self) -> None:
+        self.assertNotEqual(
+            behavioral_eval_fingerprint(["SKILL.md"]),
+            behavioral_eval_fingerprint(["SKILL.md", "references/rust.md"]),
+        )
 
     def test_stale_result_fails_with_rerun_guidance(self) -> None:
         errors = []
         validate_behavioral_eval_result(
-            {"result": "pass", "skill_fingerprint": "0" * 64}, errors
+            {
+                "result": "pass",
+                "evidence_kind": "fresh",
+                "inputs": ["SKILL.md"],
+                "skill_fingerprint": "0" * 64,
+            },
+            errors,
         )
         self.assertEqual(len(errors), 1)
         self.assertIn("behavioral eval evidence is stale", errors[0])
+
+    def test_inputs_must_include_entrypoint(self) -> None:
+        errors = []
+        validate_behavioral_eval_result(
+            {
+                "result": "pass",
+                "evidence_kind": "fresh",
+                "inputs": ["references/typescript.md"],
+                "skill_fingerprint": behavioral_eval_fingerprint(["references/typescript.md"]),
+            },
+            errors,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("must include SKILL.md", errors[0])
+
+    def test_carried_forward_requires_review_rationale(self) -> None:
+        errors = []
+        validate_behavioral_eval_result(
+            {
+                "result": "pass",
+                "evidence_kind": "carried_forward",
+                "inputs": ["SKILL.md"],
+                "skill_fingerprint": behavioral_eval_fingerprint(["SKILL.md"]),
+            },
+            errors,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("carried_forward_review", errors[0])
+
+    def test_uncovered_skill_files_are_reported_as_notices(self) -> None:
+        errors, notices = [], []
+        validate_behavioral_eval_result(
+            {
+                "result": "pass",
+                "evidence_kind": "fresh",
+                "inputs": ["SKILL.md"],
+                "skill_fingerprint": behavioral_eval_fingerprint(["SKILL.md"]),
+            },
+            errors,
+            notices,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(notices), 1)
+        self.assertIn("references/rust.md", notices[0])
+
+
+class ReleaseDriftTests(unittest.TestCase):
+    CONTRACT = {
+        "repository_tag": "v0.3.0",
+        "packages": [
+            {
+                "name": "Rust",
+                "reference": "references/rust.md",
+                "manifest": "tenuo-core/Cargo.toml",
+                "format": "toml",
+                "section": "package",
+                "version": "0.0.0-never",
+            }
+        ],
+    }
+
+    def test_head_drift_warns_by_default(self) -> None:
+        errors, warnings = [], []
+        check_release_drift(self.CONTRACT, errors, warnings, require_current=False)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("at HEAD declares", warnings[0])
+
+    def test_head_drift_fails_when_current_release_required(self) -> None:
+        errors, warnings = [], []
+        check_release_drift(self.CONTRACT, errors, warnings, require_current=True)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(errors), 1)
 
 
 class ReleaseProseTests(unittest.TestCase):
