@@ -1,6 +1,6 @@
 ---
 name: tenuo-warrant
-description: Create tenuo warrants (capability tokens) for AI agents from natural language descriptions. Use this skill when someone wants to create, mint, design, or delegate a warrant; authorize an agent; set up agent permissions; or add tenuo to a project. Do NOT trigger for auditing, reviewing, or explaining existing warrants (use tenuo-audit instead).
+description: Create or delegate Tenuo warrants from natural-language authority requirements. Use when designing capabilities and constraints, minting a warrant, or narrowing authority for a child agent. Do not use for integrating enforcement into an application or tool boundary (use tenuo-agent-authorization), or for a review-only audit (use tenuo-audit).
 ---
 
 # Tenuo Warrant Creator
