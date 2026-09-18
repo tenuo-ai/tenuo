@@ -751,6 +751,11 @@ jobs:
           NEXT_TELEMETRY_DISABLED: "1"
         run: node examples/nextjs-node/scripts/verify-packed.mjs
 
+      # Drives the worker's processor with a job double, so this needs no Redis.
+      - name: BullMQ job authorization example
+        working-directory: tenuo-ts
+        run: node examples/bullmq/scripts/verify-packed.mjs
+
   # Test the committed WASM package on every supported active Node line without
   # rebuilding it. Node 20 above remains the reproducible Rust/WASM build lane.
   tenuo-ts-node-compat:
