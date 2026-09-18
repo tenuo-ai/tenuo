@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -14,7 +15,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 INTEGRATION_SKILL = SKILLS / "tenuo-agent-authorization"
-REPOSITORY_BLOB_PREFIX = "/tenuo-ai/tenuo/blob/main/"
+REPOSITORY_BLOB_PREFIX = "/tenuo-ai/tenuo/blob/"
 
 LINK_RE = re.compile(r"\[[^\]]+\]\((?P<target>[^)]+)\)")
 API_FENCE_RE = re.compile(
@@ -75,15 +76,38 @@ def markdown_link_destination(raw_target: str) -> Optional[str]:
     return parts[0] if parts else None
 
 
-def repository_path_for_url(target: str) -> Optional[Path]:
-    """Map this repository's canonical main-branch URLs to the checkout."""
+def repository_ref_and_path_for_url(target: str) -> Optional[Tuple[str, Path]]:
+    """Map this repository's canonical branch or tag URLs to a ref and path."""
     parsed = urlsplit(target)
     if parsed.scheme != "https" or parsed.netloc != "github.com":
         return None
     if not parsed.path.startswith(REPOSITORY_BLOB_PREFIX):
         return None
-    relative = unquote(parsed.path[len(REPOSITORY_BLOB_PREFIX) :])
-    return ROOT / relative
+    ref_and_path = parsed.path[len(REPOSITORY_BLOB_PREFIX) :]
+    if "/" not in ref_and_path:
+        return None
+    ref, relative = ref_and_path.split("/", 1)
+    relative = unquote(relative)
+    return ref, Path(relative)
+
+
+def repository_path_for_url(target: str) -> Optional[Path]:
+    """Map this repository's canonical URL to the equivalent checkout path."""
+    parsed = repository_ref_and_path_for_url(target)
+    return ROOT / parsed[1] if parsed is not None else None
+
+
+def repository_file_exists(ref: str, relative: Path) -> bool:
+    if ref == "main":
+        return (ROOT / relative).is_file()
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{ref}:{relative.as_posix()}"],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def validate_skill(skill_dir: Path, documents: Dict[Path, str], errors: list[str]) -> None:
@@ -123,12 +147,13 @@ def validate_links(
             )
             continue
 
-        repository_path = repository_path_for_url(target)
-        if repository_path is not None:
+        repository_target = repository_ref_and_path_for_url(target)
+        if repository_target is not None:
             checked += 1
-            if not repository_path.is_file():
+            ref, relative = repository_target
+            if not repository_file_exists(ref, relative):
                 errors.append(
-                    f"{markdown.relative_to(ROOT)}: canonical repository link does not name a file: {target!r}"
+                    f"{markdown.relative_to(ROOT)}: canonical repository link does not name a file at {ref}: {target!r}"
                 )
             continue
 

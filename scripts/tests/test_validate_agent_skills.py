@@ -6,6 +6,7 @@ from scripts.validate_agent_skills import (
     ROOT,
     markdown_link_destination,
     parse_frontmatter,
+    repository_file_exists,
     repository_path_for_url,
     validate_links,
 )
@@ -42,13 +43,16 @@ class LinkTests(unittest.TestCase):
             "references/a file.md",
         )
 
-    def test_maps_canonical_repository_url_to_checkout(self) -> None:
+    def test_maps_tagged_repository_url_to_checkout(self) -> None:
         self.assertEqual(
             repository_path_for_url(
-                "https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/README.md#usage"
+                "https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/README.md#usage"
             ),
             ROOT / "tenuo-core/README.md",
         )
+
+    def test_pinned_repository_file_exists_at_tag(self) -> None:
+        self.assertTrue(repository_file_exists("v0.3.0", Path("tenuo-core/README.md")))
 
     def test_root_absolute_link_is_not_a_repository_file(self) -> None:
         self.assertIsNone(repository_path_for_url("/docs/authorization"))
