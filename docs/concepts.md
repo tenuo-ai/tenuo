@@ -45,7 +45,7 @@ Each task gets exactly the authority it needs, for a short time window.
 
 ### Warrants, Not Credentials
 
-A warrant is a cryptographically signed capability token with:
+A warrant is a signed, task-scoped grant with:
 
 - Explicit tool permissions
 - Argument constraints
@@ -136,7 +136,7 @@ The in-process model is sufficient for trusted single-process deployments. For s
 
 ### Warrants
 
-A warrant is a self-contained capability token specifying tools, argument constraints, holder, expiration, and signatures.
+A warrant is a self-contained, task-scoped grant specifying tools, argument constraints, holder, expiration, and signatures.
 
 ```
 WARRANT

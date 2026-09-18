@@ -114,7 +114,7 @@ bad_warrant = (planner_warrant.grant_builder()
 
 ## Security Principles
 
-Tenuo implements a capability-based security model built on three pillars. For full details on each, see [Concepts](./concepts#core-invariants).
+Tenuo implements task-scoped authorization built on three pillars. For full details on each, see [Concepts](./concepts#core-invariants).
 
 1. **Principle of Least Authority (POLA)** - Agents receive only the minimum capabilities needed for their specific task. No ambient authority.
 2. **Monotonic Attenuation** - Authority can only decrease through delegation, never increase. If an agent has read access to `/data/*`, it cannot issue a warrant for `/etc/*`.

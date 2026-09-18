@@ -90,7 +90,7 @@ A complete defense may use both:
 | Aspect | Tenuo | FIDES |
 |--------|-------|-------|
 | **Focus** | Authorization (who can do what) | Information flow (where data goes) |
-| **Model** | Capability tokens (warrants) | Taint labels (confidentiality/integrity) |
+| **Model** | Task-scoped warrants | Taint labels (confidentiality/integrity) |
 | **Enforcement** | Tool invocation time | Data propagation time |
 | **Scope** | Per-task authority | Per-data-item provenance |
 | **Overhead** | Local, offline verification (see [benchmarks](./api-reference#performance-benchmarks)) | Depends on taint propagation |
@@ -182,7 +182,7 @@ The approaches are complementary: model-level defenses reduce the likelihood of 
 | Input filtering | Detect/block malicious prompts | Evasion attacks |
 | Output filtering | Detect/block harmful outputs | Post-hoc, reactive |
 | Instruction hierarchy | System vs user prompt priority | Model-dependent |
-| **Capability-based** | Limit what actions are possible | Tenuo's approach |
+| **Task-scoped authorization** | Limit what this task may execute | Tenuo's approach |
 
 ---
 

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Task-scoped framing.** Public README, SDK, site, spec, and skill
+  openers lead with task-scoped authorization. A warrant is the signed
+  grant for one unit of work. Capability-security research stays as
+  lineage, not the product name.
 - **Agent skill boundaries.** `tenuo-warrant` now stops at warrant issuance
   and delegation, `tenuo-audit` routes application enforcement work to the
   authorization skill, and release-tagged SDK references are validated against
