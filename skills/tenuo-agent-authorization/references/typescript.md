@@ -4,9 +4,9 @@ Use this reference only for projects using the current `@tenuo/core` or `@tenuo/
 
 Do not treat this reference as an API specification. Use the repository's executable examples and the installed package types:
 
-- [Concurrent protected tools and deny-before-effect evidence](../../../tenuo-ts/packages/core/examples/concurrent-sessions.ts), exercised by [its example test](../../../tenuo-ts/packages/core/test/example-sessions.test.ts)
-- [Framework-neutral MCP host boundary](../../../tenuo-ts/packages/core/examples/mcp/host.ts), exercised by [the MCP host smoke test](../../../tenuo-ts/packages/core/test/mcp-host.smoke.test.ts)
-- [Current package API and production configuration](../../../tenuo-ts/packages/core/README.md)
+- [Concurrent protected tools and deny-before-effect evidence](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-ts/packages/core/examples/concurrent-sessions.ts), exercised by [its example test](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-ts/packages/core/test/example-sessions.test.ts)
+- [Framework-neutral MCP host boundary](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-ts/packages/core/examples/mcp/host.ts), exercised by [the MCP host smoke test](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-ts/packages/core/test/mcp-host.smoke.test.ts)
+- [Current package API and production configuration](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-ts/packages/core/README.md)
 
 ## Choose the boundary
 

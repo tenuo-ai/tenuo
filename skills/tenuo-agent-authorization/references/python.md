@@ -4,13 +4,13 @@ Use this reference only for projects using the current `tenuo` Python package. C
 
 Do not treat this reference as an API specification. Use the repository's checked examples and the installed package:
 
-- [MCP server effect-boundary patterns](../../../tenuo-python/examples/mcp_server.py), covered by the repository-wide [example API checks](../../../tenuo-python/tests/examples/test_examples.py) and [MCP integration tests](../../../tenuo-python/tests/adapters/test_mcp_integration.py)
-- [Issuer, holder, delegation, PoP, and trusted-root verification](../../../tenuo-python/examples/mcp/mcp_delegation_demo.py), covered by the example API checks and [MCP delegation tests](../../../tenuo-python/tests/adapters/test_mcp_delegation.py)
-- [Current Python SDK guide](../../../tenuo-python/README.md)
+- [MCP server effect-boundary patterns](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp_server.py), covered by the repository-wide [example API checks](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tests/examples/test_examples.py) and [MCP integration tests](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tests/adapters/test_mcp_integration.py)
+- [Issuer, holder, delegation, PoP, and trusted-root verification](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp/mcp_delegation_demo.py), covered by the example API checks and [MCP delegation tests](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tests/adapters/test_mcp_delegation.py)
+- [Current Python SDK guide](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/README.md)
 
 ## Choose the boundary
 
-- Use a `GuardBuilder` or `@guard` wrapper for an in-process guardrail when that matches the threat model.
+- Use the top-level `@guard` wrapper for a generic in-process guardrail when that matches the threat model. `GuardBuilder` is not a top-level `tenuo` export; use it only from a supported adapter module, such as `tenuo.openai`, `tenuo.crewai`, `tenuo.autogen`, or `tenuo.google_adk`, after checking the installed adapter API.
 - Use `Authorizer` at a server or worker boundary for independent warrant, trust-chain, PoP, capability, and constraint verification.
 - For MCP, prefer `MCPVerifier` with the integration's middleware so verification occurs before the tool handler.
 

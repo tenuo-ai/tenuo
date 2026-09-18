@@ -22,7 +22,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Validate skill metadata, references, and canonical examples
+      - name: Test skill validator
+        run: python3 -m unittest discover -s scripts/tests -p 'test_validate_agent_skills.py'
+      - name: Validate skill metadata and portable references
         run: python3 scripts/validate_agent_skills.py
 
   version-check:

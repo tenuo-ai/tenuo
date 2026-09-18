@@ -43,7 +43,7 @@ For this repository's current SDKs:
 
 If the installed version differs from these references, adapt to its shipped API and state that the reference was not copied verbatim.
 
-API examples belong in the SDK's normal example directories, where CI compiles or exercises them. Do not add copied Python or TypeScript API snippets to this skill. Use the canonical examples linked from the language references, then inspect the installed version before adapting them.
+API examples belong in the SDK's normal example directories, where CI compiles or exercises them. Do not add copied Python, TypeScript, or Rust API snippets to this skill. Use the canonical examples linked from the language references, then inspect the installed version before adapting them.
 
 ## Implement a vertical slice
 
