@@ -16,7 +16,7 @@ INTEGRATION_SKILL = SKILLS / "tenuo-agent-authorization"
 FRONTMATTER_RE = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.DOTALL)
 LINK_RE = re.compile(r"\[[^\]]+\]\((?P<target>[^)]+)\)")
 API_FENCE_RE = re.compile(
-    r"^```(?:py|python|js|javascript|ts|typescript)(?:\s|$)",
+    r"^```(?:py|python|js|javascript|ts|typescript|rs|rust)(?:\s|$)",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -30,6 +30,11 @@ CANONICAL_EXAMPLES = (
     ROOT / "tenuo-python/tests/examples/test_examples.py",
     ROOT / "tenuo-python/tests/adapters/test_mcp_integration.py",
     ROOT / "tenuo-python/tests/adapters/test_mcp_delegation.py",
+    ROOT / "tenuo-core/examples/sdk_mcp_demo.rs",
+    ROOT / "tenuo-core/examples/sdk_runtime.rs",
+    ROOT / "tenuo-core/tests/integration.rs",
+    ROOT / "tenuo-core/tests/security.rs",
+    ROOT / "tenuo-core/tests/red_team.rs",
 )
 
 REQUIRED_SOURCE_TEXT = {
@@ -56,7 +61,27 @@ REQUIRED_SOURCE_TEXT = {
         "os.walk(EXAMPLES_DIR)",
         "test_tenuo_imports_resolve",
     ),
+    ROOT / "tenuo-core/src/planes.rs": (
+        "pub fn authorize_one(",
+        "pub fn authorize_one_with_pop_args(",
+    ),
+    ROOT / "tenuo-core/src/sdk/guard.rs": (
+        "pub struct Guard",
+        "guard_received",
+    ),
+    ROOT / "tenuo-core/src/sdk/observe.rs": (
+        "pub struct ObservingGuard",
+    ),
+    ROOT / "tenuo-core/src/sdk/runtime.rs": (
+        "pub struct Runtime",
+        "session_from_warrant",
+    ),
+    ROOT / "tenuo-core/Cargo.toml": (
+        'name = "sdk_mcp_demo"',
+        'name = "sdk_runtime"',
+    ),
     ROOT / ".github/workflows/ci.yml": (
+        "cargo test --all-features",
         "pytest tests/examples/test_examples.py -v",
         "pnpm --filter @tenuo/core test",
     ),

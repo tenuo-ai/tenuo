@@ -1,6 +1,6 @@
 ---
 name: tenuo-agent-authorization
-description: Add or retrofit Tenuo authorization for AI-agent tools and effects. Use when implementing Tenuo, protecting an MCP or framework tool, placing warrant verification at an effect boundary, or testing that an agent cannot exceed delegated authority. Do not use for a review-only audit of an existing warrant.
+description: Add or retrofit Tenuo authorization for AI-agent tools and effects. Use when implementing Tenuo, protecting an MCP or framework tool, choosing a gateway, sidecar, or embedded enforcement boundary, or testing that an agent cannot exceed delegated authority. Do not use for a review-only audit of an existing warrant.
 ---
 
 # Tenuo Agent Authorization
@@ -23,6 +23,8 @@ Distinguish these deployment modes in the final explanation:
 
 If the agent still has an unguarded route to the effect, say so and either close that route within scope or describe the residual risk. Do not imply that installing an SDK alone creates containment.
 
+Read [Architectural patterns](references/architectural-patterns.md) when choosing or changing the enforcement topology. Select based on the actual trust boundary and bypass paths, not deployment fashion.
+
 ## Ground the implementation
 
 Inspect the project before choosing an API:
@@ -36,6 +38,7 @@ For this repository's current SDKs:
 
 - Read [TypeScript integration](references/typescript.md) for `@tenuo/core` or `@tenuo/mcp`.
 - Read [Python integration](references/python.md) for `tenuo` and its framework adapters.
+- Read [Rust integration](references/rust.md) for the `tenuo` crate, embedded verification, or Rust enforcement services.
 - Read [Framework-neutral integration](references/framework-integration.md) when the project uses a framework without an official Tenuo adapter or verified recipe.
 
 If the installed version differs from these references, adapt to its shipped API and state that the reference was not copied verbatim.
@@ -58,7 +61,7 @@ Delegate only when the architecture requires it. Bind the child to the recipient
 
 ## Apply security checks
 
-Use [Security model and limits](references/security-model.md) while designing the integration. In particular:
+Use [Security model and limits](references/security-model.md) while designing the integration and [Common footguns](references/common-footguns.md) before considering it complete. In particular:
 
 - **Path effects:** canonicalize or resolve the actual target at the trusted boundary and authorize the same target used for I/O. A lexical prefix check is not a complete filesystem sandbox.
 - **Network effects:** constrain scheme, host, port, method, and relevant path where the API exposes them. Treat URL validation as one control; also account for redirects, DNS resolution changes, proxies, and network egress policy.
