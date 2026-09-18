@@ -25,7 +25,7 @@
 
 ## Abstract
 
-Tenuo is a capability-based authorization protocol for AI agent systems. It enables secure delegation of authority through cryptographically signed tokens called *warrants*, ensuring that compromised or misbehaving agents cannot exceed their granted permissions. Warrants support *attenuation* (authority can only shrink, never expand) and *proof-of-possession* (stolen tokens are useless without the holder's private key).
+Tenuo is a task-scoped authorization protocol for AI agent systems. It binds authority to a unit of work and carries that authority as cryptographically signed tokens called *warrants*, ensuring that compromised or misbehaving agents cannot exceed their granted permissions. Warrants support *attenuation* (authority can only shrink, never expand) and *proof-of-possession* (stolen tokens are useless without the holder's private key).
 
 > **Normative Precedence:** In case of conflict between this document and [wire-format-v1.md](wire-format-v1.md), the wire format specification is authoritative for encoding details.
 
@@ -856,7 +856,7 @@ Each test vector includes:
 | **Biscuit** | Similar datalog-based approach; Tenuo is simpler, focused on AI agents |
 | **UCAN** | JWT-based; Tenuo uses CBOR for compactness |
 | **CaMeL** | Academic inspiration; Tenuo is production-focused implementation |
-| **OAuth 2.0** | Identity-based; Tenuo is capability-based |
+| **OAuth 2.0** | Identity-based; Tenuo is task-scoped |
 
 ---
 

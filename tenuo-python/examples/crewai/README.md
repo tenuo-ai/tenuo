@@ -1,6 +1,6 @@
 # Tenuo CrewAI Examples
 
-**These demos show where prompt-based guardrails fail and capability-based authorization holds.**
+**These demos show where prompt-based guardrails fail and task-scoped authorization holds.**
 
 This directory contains integration examples and security demos for Tenuo's CrewAI integration using the native hooks API (the adapter's v2 hooks-based design, not the tenuo package version).
 
