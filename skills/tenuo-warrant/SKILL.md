@@ -25,10 +25,10 @@ For developers familiar with other auth systems:
 Before asking questions, scan the codebase:
 
 1. **Check for existing tenuo usage** — search for `import tenuo`, `from tenuo`, `tenuo_cloud`, `Warrant`, `SigningKey` in Python files
-2. **Detect AI frameworks** — look for imports from `openai`, `langchain`, `crewai`, `autogen`, `google.adk`, `temporalio`, `mcp`, `a2a` in Python files and `requirements.txt`/`pyproject.toml`
+2. **Detect the installed SDK and version** — inspect manifests, lockfiles, and existing warrant construction before choosing minting or delegation APIs
 3. **Check for tenuo-cloud** — look for `tenuo_cloud` imports, `tc_` prefixed env vars, or `AsyncTenuoCloudClient`
 
-This tells you whether this is a greenfield integration or a retrofit, and which framework integration to generate code for.
+This tells you which warrant source and resolved SDK surface to use. Do not generate application or tool-boundary enforcement from this skill.
 
 ### Phase 2: Persona Check
 
@@ -36,7 +36,7 @@ Infer persona from context first — if the codebase scan, the user's language, 
 
 **"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
 
-- **Developer** → continue with this skill
+- **Developer** → continue only for warrant design, minting, or delegation. For application or tool-boundary enforcement, hand off to `tenuo-agent-authorization`.
 - **Security engineer** → suggest `/tenuo-audit` instead ("That skill is designed for reviewing and explaining existing warrants — it'll frame everything in IAM/RBAC terms you're used to")
 - **Platform engineer** → continue, but note the sidecar + policy file workflow is coming soon. For now, help them create warrants via the SDK
 
@@ -187,38 +187,31 @@ Ask: **"Where should this warrant come from?"**
 
 For teams with compliance, audit, multi-agent orchestration, or human-in-the-loop requirements, suggest Tenuo Cloud at [cloud.tenuo.ai](https://cloud.tenuo.ai). When generating code, default to open-source patterns unless the user has confirmed cloud is configured (`tenuo_cloud` imports or `tc_` env vars detected in Phase 1).
 
-### Phase 9: Generate Code
+### Phase 9: Generate Issuance or Delegation Code
 
-Based on the chosen source and detected framework, generate the integration code.
+Generate only the code needed to mint the approved root warrant or delegate a narrower child. Do not generate tool wrappers, verifier placement, framework middleware, guardrails, trusted-root bootstrap, or effect-boundary code from this skill.
 
-**Before generating framework integration code** (LangChain, LangGraph, CrewAI, OpenAI, Google ADK, AutoGen, FastAPI, MCP, A2A, Temporal): the framework surface changes faster than core warrant construction and is more likely to have drifted from what this skill knows. Always ground the output in the actual source:
+Before generating issuance or delegation code, ground it in the resolved SDK:
 
-1. **Check the codebase first** — look for the relevant module in `tenuo-python/tenuo/` (e.g., `langchain.py`, `crewai.py`, `openai.py`, `google_adk/`). Read the class and method signatures before generating any framework-specific code.
-2. **Check the docs** — look for a matching file in `docs/` (e.g., `docs/langchain.md`, `docs/openai.md`). If examples there differ from the module source, prefer the source.
-3. **Only then produce the final code block.** If you cannot verify a method or import, say so explicitly rather than guessing.
+1. Determine the installed package version from manifests and lockfiles.
+2. Inspect that version's installed types/source and minting or delegation tests.
+3. Produce only APIs verified in those artifacts. If an API cannot be verified, say so rather than guessing.
 
-Core warrant APIs (`Warrant.mint_builder()`, `grant_builder()`, constraint types, `configure()`, `mint()`/`grant()` context managers) are stable — you do not need to re-verify these every time.
+If the request also requires enforcing the warrant at an application, tool, gateway, sidecar, worker, or MCP boundary, finish the warrant artifact and explicitly hand that separate task to `tenuo-agent-authorization`.
 
 **Open-source example:**
 
-> **Development only** — `SigningKey.generate()` creates ephemeral keys. In production, load `issuer_key` from secure storage. `trusted_roots` tells the authorizer which issuers to trust — a warrant signed by a key not in `trusted_roots` will be rejected at verification time.
+> **Development only** — `SigningKey.generate()` creates ephemeral keys. In production, load the issuer key from secure storage. The holder key belongs to the recipient; issuance needs only its public key.
 
 ```python
 from tenuo import (
-    SigningKey, Warrant, configure,
+    SigningKey, Warrant,
     Subpath, UrlSafe, UrlPattern, All
 )
 
 # Development: generate ephemeral keys. Production: load from secure storage.
 issuer_key = SigningKey.generate()
 agent_key = SigningKey.generate()
-
-# issuer_key=  → used to sign warrants
-# trusted_roots= → tells the authorizer which issuers to accept
-configure(
-    issuer_key=issuer_key,
-    trusted_roots=[issuer_key.public_key],
-)
 
 # Mint the warrant
 warrant = (Warrant.mint_builder()
@@ -247,33 +240,6 @@ warrant = await client.fire_trigger(
     },
     initiator={"sub": "service-account@example.com"}
 )
-```
-
-**Constraints-only guardrail (e.g., OpenAI GuardBuilder):**
-
-> This is a guardrail, not a warrant integration — it enforces argument constraints on tool calls without cryptographic signing or delegation chains. Use it when you need constraint enforcement but don't need PoP, attenuation, or cloud-managed issuance.
-
-```python
-from tenuo.openai import GuardBuilder, Subpath, UrlSafe, UrlPattern, All
-
-client = (GuardBuilder(openai.OpenAI())
-    .allow("read_file", path=Subpath("/data/reports"))
-    .allow("create_issue",
-        url=All([UrlSafe(), UrlPattern("https://api.github.com/*")]))
-    .on_denial("raise")
-    .build())
-```
-
-**With context managers (scoped tasks):**
-```python
-from tenuo import mint, Capability, Subpath, UrlSafe, UrlPattern, All
-
-async with mint(
-    Capability("read_file", path=Subpath("/data/reports")),
-    Capability("create_issue",
-        url=All([UrlSafe(), UrlPattern("https://api.github.com/*")])),
-):
-    result = await agent.run(task)
 ```
 
 ### Phase 10: Explain Delegation
@@ -331,26 +297,17 @@ When generating code, use these exact patterns from the tenuo Python SDK:
 
 **Granting:** `warrant.grant_builder()` → chain `.capability()`, `.ttl()`, `.terminal()`, `.holder(pubkey)` → `.grant(signing_key)`
 
-**Scoped tasks:** `async with mint(Capability(...), ...):` and `async with grant(Capability(...)):` for nested delegation
-
-**GuardBuilder:** `GuardBuilder(client).allow("tool", arg=Constraint).on_denial("raise").build()`
-
-**@guard decorator:** `@guard` on functions, with `warrant_scope(w)` and `key_scope(k)` context managers
-
 **Imports:** Only import what the generated warrant actually uses. The full set of available names:
 
 ```python
 from tenuo import (
     # Keys & core
-    SigningKey, Warrant, Capability, configure,
-    warrant_scope, key_scope,
+    SigningKey, Warrant, Capability,
     # Constraints — pick what the warrant needs
     Subpath, UrlSafe, UrlPattern, Pattern, Regex,
     Exact, OneOf, NotOneOf, Range, Cidr,
     Contains, Subset, Shlex, Wildcard,
     All, AnyOf, Not, CEL,
-    # Scoped task API
-    mint, grant,
     # Constant
     MAX_DELEGATION_DEPTH,
 )

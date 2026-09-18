@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent skill boundaries.** `tenuo-warrant` now stops at warrant issuance
+  and delegation, `tenuo-audit` routes application enforcement work to the
+  authorization skill, and release-tagged SDK references are validated against
+  one version contract.
 - **LangChain / LangGraph guidance.** `TenuoMiddleware` is the recommended
   path for LangChain 1.x `create_agent()`. `TenuoToolNode` remains the
   path for existing LangGraph `StateGraph` graphs. The experimental label
@@ -21,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Installable agent-authorization skill.** Coding agents can install
+  `tenuo-agent-authorization` with `npx skills add tenuo-ai/tenuo --skill
+  tenuo-agent-authorization` for Python, TypeScript, and Rust effect-boundary
+  integrations, deny-before-effect tests, architecture patterns, and common
+  security footguns.
 - **TypeScript minimal `@tenuo/mcp` v2 example.**
   `tenuo-ts/packages/mcp/examples/v2` runs an in-memory official v2 client
   and server with one `guardTools()` tool, one `tenuo.mcp.attach()` call

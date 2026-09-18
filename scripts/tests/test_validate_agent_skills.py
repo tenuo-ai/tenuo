@@ -3,12 +3,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from scripts.validate_agent_skills import (
+    INTEGRATION_SKILL,
     ROOT,
     markdown_link_destination,
     parse_frontmatter,
     repository_file_exists,
     repository_path_for_url,
+    validate_release_contract,
     validate_links,
+    validate_no_api_fences,
 )
 
 
@@ -53,6 +56,27 @@ class LinkTests(unittest.TestCase):
 
     def test_pinned_repository_file_exists_at_tag(self) -> None:
         self.assertTrue(repository_file_exists("v0.3.0", Path("tenuo-core/README.md")))
+
+    def test_main_repository_link_is_rejected(self) -> None:
+        errors = []
+        validate_links(
+            INTEGRATION_SKILL / "SKILL.md",
+            "[Example](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/README.md)",
+            INTEGRATION_SKILL,
+            errors,
+            required_repository_tag="v0.3.0",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not 'main'", errors[0])
+
+    def test_missing_tag_explains_how_to_fetch_tags(self) -> None:
+        errors = []
+        available = validate_release_contract(
+            {"repository_tag": "v9.9.9", "packages": []}, errors
+        )
+        self.assertFalse(available)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("git fetch --tags --force", errors[0])
 
     def test_root_absolute_link_is_not_a_repository_file(self) -> None:
         self.assertIsNone(repository_path_for_url("/docs/authorization"))
@@ -102,6 +126,26 @@ class LinkTests(unittest.TestCase):
         self.assertEqual(checked, 0)
         self.assertEqual(len(errors), 1)
         self.assertIn("relative link escapes the installed skill", errors[0])
+
+
+class ApiFenceTests(unittest.TestCase):
+    def test_rejects_python_typescript_javascript_and_rust_fences(self) -> None:
+        for language in ("python", "py", "typescript", "ts", "javascript", "js", "rust", "rs"):
+            with self.subTest(language=language):
+                errors = []
+                validate_no_api_fences(
+                    INTEGRATION_SKILL / "SKILL.md",
+                    f"```{language}\nexample\n```\n",
+                    errors,
+                )
+                self.assertEqual(len(errors), 1)
+
+    def test_allows_non_api_fences(self) -> None:
+        errors = []
+        validate_no_api_fences(
+            INTEGRATION_SKILL / "SKILL.md", "```text\nexample\n```\n", errors
+        )
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":
