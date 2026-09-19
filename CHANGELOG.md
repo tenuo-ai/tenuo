@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux wheels install on glibc 2.28 and newer.** Release wheels were built
+  natively on `ubuntu-latest` and tagged `manylinux_2_38`, so `pip install
+  tenuo` refused the wheel on Ubuntu 20.04/22.04, Debian 11/12, RHEL 8/9,
+  and the default `python:3.x` Docker images, falling back to a source build
+  that needs a Rust toolchain. The Linux wheel is now built in the
+  `manylinux_2_28` container; CI installs it on `python:3.12-slim-bookworm`
+  (glibc 2.36) to prove it.
+
 ### Security
 
 - **Core chain verification hardening.** Multi-warrant chains must begin with
