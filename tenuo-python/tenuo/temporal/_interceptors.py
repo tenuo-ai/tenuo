@@ -852,8 +852,7 @@ class TenuoActivityInboundInterceptor:
                     "Authorizer rebuild failed during trusted root refresh: %s", e
                 )
                 return
-            with self._config._provider_state_lock:
-                self._config._last_good_trusted_roots = list(roots)
+            self._config._record_provider_snapshot(trusted_roots=roots)
             self._last_trusted_roots_refresh = _time.monotonic()
 
     def _maybe_refresh_revocation_list(self) -> None:
@@ -890,8 +889,7 @@ class TenuoActivityInboundInterceptor:
                 ]
                 for auth in authorizers:
                     auth.set_revocation_list(srl)
-                with self._config._provider_state_lock:
-                    self._config._last_good_revocation_list = srl
+                self._config._record_provider_snapshot(revocation_list=srl)
             except Exception as e:
                 logger.warning("SRL refresh failed: %s", e)
             finally:
