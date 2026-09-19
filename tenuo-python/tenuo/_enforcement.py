@@ -896,12 +896,11 @@ def _enforce_tool_call_impl(
         trusted_roots: Explicit list of trusted issuer public keys (tenuo_core.PublicKey).
             When provided, enforce_tool_call builds an Authorizer(trusted_roots=...)
             and verifies the warrant issuer against those roots via
-            Authorizer.authorize_one() after signing PoP locally.  This closes the
-            self-signed trust gap in the default verify_mode="sign" path where
-            BoundWarrant.validate() would accept any warrant whose issuer matches
-            its own signature key.
-            When NOT provided a SecurityWarning is emitted — callers should always
-            supply trusted_roots in production deployments.
+            Authorizer.authorize_one() after signing PoP locally.
+            When NOT provided, roots are resolved from the BoundWarrant's bind-time
+            roots, then tenuo.configure(), then the active Runtime; exhausting all
+            of those raises ConfigurationError rather than accepting a self-signed
+            warrant.
         approval_handler: When a warrant **approval gate** fires, invoked to obtain
             ``SignedApproval`` objects (e.g. ``cli_prompt``, ``auto_approve``), unless
             ``approvals`` are provided.

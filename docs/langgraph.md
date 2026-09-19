@@ -257,9 +257,12 @@ graph.add_node("tools", tool_node)
 |-----------|------|---------|-------------|
 | `tools` | `List[BaseTool]` | required | Tools to make available |
 | `require_constraints` | `bool` | `False` | Require constraints for sensitive tools |
+| `trusted_roots` | `List[PublicKey]` | `None` | Trusted issuer keys to anchor verification on |
+| `warrant_chain` | `List[Warrant]` | `None` | Default parents for graphs without a `warrant_chain` state field |
+| `key_id` | `str` | `None` | Signing key to use, overriding the config value |
 
 **How it works:**
-1. Extracts warrant from state
+1. Extracts warrant from state, plus any parents in `warrant_chain`
 2. Gets key from registry (via `key_id` in config or "default")
 3. Authorizes each tool call via shared enforcement logic
 4. Returns error ToolMessage if authorization fails
@@ -515,7 +518,65 @@ graph.add_node("router", guard_node(smart_router, inject_warrant=True))
 
 ### Pattern 4: Delegation
 
-Attenuate warrants for sub-agents using the scope-based delegation API:
+A delegated warrant is signed by the agent that delegated it, not by a trusted
+root. Presented on its own it is denied with **`Root warrant issuer is not
+trusted`**, because the only warrant the verifier sees was issued by a key it
+has no reason to trust. The sub-agent must also present the path back to a
+trusted root.
+
+Carry that path in a `warrant_chain` state field, root-first and **excluding**
+the leaf in `warrant`:
+
+```python
+from typing import Annotated, Any, TypedDict
+from langgraph.graph.message import add_messages
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    warrant: Any        # the agent's own (possibly delegated) warrant
+    warrant_chain: list # its parents, root-first, excluding `warrant`
+```
+
+Each delegating node appends its own warrant to the chain it received:
+
+```python
+from tenuo import Pattern
+from tenuo.langgraph import tenuo_node
+
+@tenuo_node
+def orchestrator(state, bound_warrant):
+    worker_warrant = bound_warrant.grant(
+        to=worker_pubkey,
+        allow=["search"],
+        ttl=60,
+        query=Pattern("safe*"),
+    )
+    return {
+        "messages": [...],
+        "warrant": worker_warrant,
+        "warrant_chain": [*state.get("warrant_chain", []), bound_warrant.warrant],
+    }
+```
+
+`TenuoToolNode` and `TenuoMiddleware` read the field automatically and verify
+the full chain. Entries may be `Warrant` objects or base64 tokens. A chain that
+does not hash-link to the leaf, or that does not root in one of
+`trusted_roots`, is denied — supplying a chain cannot widen authority, only
+prove it.
+
+You only get away without a chain when the delegating agent is itself a trusted
+root, which stops being true as soon as a third level appears.
+
+#### Supplying the chain outside state
+
+When a graph cannot thread the field through state, set a default once at
+construction:
+
+```python
+researcher_tools = TenuoToolNode([search_tool], warrant_chain=[root_warrant])
+```
+
+Or wrap the invocation in a chain scope:
 
 ```python
 from tenuo import SigningKey, Warrant, chain_scope, warrant_scope, key_scope
@@ -532,7 +593,6 @@ child = (root.grant_builder()
     .capability("search")
     .holder(worker.public_key).ttl(1800).grant(orchestrator))
 
-# In a LangGraph node, set up delegation context:
 with chain_scope([root]):
     with warrant_scope(child):
         with key_scope(worker):
@@ -540,27 +600,8 @@ with chain_scope([root]):
             pass
 ```
 
-Within a `@tenuo_node`, you can also use `bound_warrant.grant()` for inline delegation:
-
-```python
-from tenuo.langgraph import tenuo_node
-from tenuo import Pattern
-
-@tenuo_node
-def orchestrator(state, bound_warrant):
-    worker_warrant = bound_warrant.grant(
-        to=worker_pubkey,
-        allow=["search"],
-        ttl=60,
-        query=Pattern("safe*")
-    )
-
-    # Pass delegated warrant in state (the warrant IS the object)
-    return {
-        "messages": [...],
-        "warrant": str(worker_warrant),
-    }
-```
+The state field takes precedence over the constructor default, which takes
+precedence over `chain_scope()`.
 
 ### Pattern 5: Multi-Tenant Key Isolation
 
@@ -620,7 +661,10 @@ except ConstraintViolation as e:
 |-------|-----------|-------|-----|
 | `ConfigurationError` | 1201 | Missing 'warrant' field in state | Add warrant to state: `{"warrant": str(warrant), ...}` |
 | `ConfigurationError` | 1201 | Key not registered | Register key or use `load_tenuo_keys()` |
+| `ConfigurationError` | 1201 | No trusted roots configured | Pass `trusted_roots=[...]` or call `tenuo.configure(trusted_roots=[...])` |
 | `ToolNotAuthorized` | 1500 | Tool not in warrant | Check warrant constraints with `why_denied()` |
+| Denied: `Root warrant issuer is not trusted` | 1400 | Delegated warrant presented without its parents | Add `warrant_chain` to state — see [Pattern 4](#pattern-4-delegation) |
+| Denied: `chain broken: child parent_hash mismatch` | 1405 | `warrant_chain` does not hash-link to the leaf | Present the real parents, root-first, excluding the leaf |
 | `ConstraintViolation` | 1501 | Argument violates constraint | Request within bounds |
 | `ExpiredError` | 1300 | TTL exceeded | Request fresh warrant |
 

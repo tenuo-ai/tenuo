@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enforce a deployment-specific warrant lifetime ceiling. Empty `All([])`
   constraints now fail closed instead of matching every value; empty `Any([])`
   keeps its existing deny-all behavior.
+- **`BoundWarrant.validate()` no longer accepts self-signed authority.**
+  It built its `Authorizer` from the warrant's own issuer, so every warrant
+  was trusted by construction and any `trusted_roots` passed at bind time were
+  silently ignored — a warrant `enforce_tool_call` denied could still validate.
+  It now resolves roots exactly as enforcement does (call argument, bind-time
+  roots, `tenuo.configure()`, `Runtime`) and raises `ConfigurationError` when
+  none are available. **Breaking:** `validate()` and `headers()` now require a
+  trust anchor. New `trusted_roots=` and `warrant_chain=` parameters let
+  callers supply one and present a delegated warrant's parents.
 
 ### Fixed
 
@@ -33,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python SRL builder chaining.** `SrlBuilder.revoke()`, `revoke_all()`,
   `version()`, and `from_existing()` now return the builder as documented, and
   the publicly exported `SrlBuilder` can be constructed directly.
+- **LangGraph delegated warrants can present their chain.** A warrant issued
+  by a supervisor is not signed by a trusted root, so a sub-agent holding one
+  was denied with `Root warrant issuer is not trusted` and the only documented
+  workaround was an undocumented `chain_scope()` around the invocation.
+  `TenuoToolNode` and `TenuoMiddleware` now read a `warrant_chain` state field
+  (parents root-first, excluding the leaf, as `Warrant` objects or base64
+  tokens) and accept a `warrant_chain=` constructor default. A chain that
+  cannot be read, does not hash-link to the leaf, or does not root in
+  `trusted_roots` denies the call.
 - **MCP client denial messages read once.** `SecureMCPClient` built its typed
   exceptions by feeding the already-formatted `denial_reason` back into
   constructors that format their own sentence, producing messages such as
