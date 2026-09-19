@@ -7,16 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Linux wheels install on glibc 2.28 and newer.** Release wheels were built
-  natively on `ubuntu-latest` and tagged `manylinux_2_38`, so `pip install
-  tenuo` refused the wheel on Ubuntu 20.04/22.04, Debian 11/12, RHEL 8/9,
-  and the default `python:3.x` Docker images, falling back to a source build
-  that needs a Rust toolchain. The Linux wheel is now built in the
-  `manylinux_2_28` container; CI installs it on `python:3.12-slim-bookworm`
-  (glibc 2.36) to prove it.
-
 ### Security
 
 - **Core chain verification hardening.** Multi-warrant chains must begin with
@@ -28,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linux wheels install on glibc 2.28 and newer.** Release wheels were built
+  natively on `ubuntu-latest` and tagged `manylinux_2_38`, so `pip install
+  tenuo` refused the wheel on Ubuntu 20.04/22.04, Debian 11/12, RHEL 8/9,
+  and the default `python:3.x` Docker images, falling back to a source build
+  that needs a Rust toolchain. The Linux wheel is now built in the
+  `manylinux_2_28` container; CI installs it on `python:3.12-slim-bookworm`
+  (glibc 2.36) to prove it.
 - **Python SRL builder chaining.** `SrlBuilder.revoke()`, `revoke_all()`,
   `version()`, and `from_existing()` now return the builder as documented, and
   the publicly exported `SrlBuilder` can be constructed directly.
@@ -56,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refresh failed and built its `Authorizer` with no revocation list. Both
   halves now travel as one immutable record, and readiness is derived from it
   rather than tracked separately.
+- **`rustls` 0.23.45** in `tenuo-core/Cargo.lock` and `tenuo-python/Cargo.lock`
+  (RUSTSEC-2026-0285).
 
 ### Added
 
@@ -75,11 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path for LangChain 1.x `create_agent()`. `TenuoToolNode` remains the
   path for existing LangGraph `StateGraph` graphs. The experimental label
   is dropped.
-
-### Fixed
-
-- **`rustls` 0.23.45** in `tenuo-core/Cargo.lock` and `tenuo-python/Cargo.lock`
-  (RUSTSEC-2026-0285).
 
 ### Added
 

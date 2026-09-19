@@ -290,7 +290,8 @@ jobs:
         with:
           working-directory: tenuo-python
           command: build
-          args: --release
+          args: --release --locked --compatibility pypi
+          maturin-version: v1.15.0
           manylinux: 2_28
 
       - name: Check the platform tag
