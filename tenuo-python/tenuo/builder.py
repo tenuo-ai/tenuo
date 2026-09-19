@@ -556,10 +556,11 @@ class GrantBuilder:
         return self
 
     def tool(self, name: str) -> "GrantBuilder":
-        """Narrow to a single tool (for execution warrants).
+        """Add one tool, inheriting its parent constraints.
 
         The specified tool must be in the parent warrant's tools.
-        This enables "always shrinking authority" for non-terminal warrants.
+        Previously selected capabilities are preserved. Use ``capability()``
+        when you need to narrow the inherited constraints.
 
         For ISSUER warrants (narrowing issuable_tools), this also works.
 
@@ -572,7 +573,7 @@ class GrantBuilder:
         Example:
             # Parent has ["read_file", "send_email", "query_db"]
             child = (parent.attenuate()
-                .tool("read_file")  # Narrow to just read_file
+                .tool("read_file")  # Select read_file with parent constraints
                 .holder(worker_key)
                 .grant(kp))
         """
@@ -580,10 +581,10 @@ class GrantBuilder:
         return self
 
     def tools(self, names: List[str]) -> "GrantBuilder":
-        """Narrow to a subset of tools (for execution warrants).
+        """Add tools, inheriting each tool's parent constraints.
 
         The specified tools must all be in the parent warrant's tools.
-        This enables "always shrinking authority" for non-terminal warrants.
+        Previously selected capabilities are preserved.
 
         For ISSUER warrants (narrowing issuable_tools), this also works.
 
@@ -594,6 +595,24 @@ class GrantBuilder:
             Self for method chaining
         """
         self._rust_builder.with_tools(names)
+        return self
+
+    def retain_tool(self, name: str) -> "GrantBuilder":
+        """Keep only one capability from the current builder selection.
+
+        This is useful after ``inherit_all()``. Unlike ``tool()``, it does not
+        add a capability that has not already been selected.
+        """
+        self._rust_builder.retain_tool(name)
+        return self
+
+    def retain_tools(self, names: List[str]) -> "GrantBuilder":
+        """Keep only the named capabilities from the current selection.
+
+        This is useful after ``inherit_all()``. Unlike ``tools()``, it does not
+        add capabilities that have not already been selected.
+        """
+        self._rust_builder.retain_tools(names)
         return self
 
     def issuable_tool(self, name: str) -> "GrantBuilder":

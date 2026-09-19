@@ -312,10 +312,10 @@ class TestMonotonicity:
 
         warrant = Warrant.issue(keypair=keypair, capabilities={"search": {}, "read": {}, "write": {}}, ttl_seconds=3600)
 
-        # Attenuation should narrow tools (POLA: inherit_all first, then narrow)
+        # Attenuation should narrow tools (POLA: inherit_all first, then retain)
         builder = warrant.grant_builder()
         builder.inherit_all()
-        builder.tools(["search"])
+        builder.retain_tools(["search"])
         child = builder.grant(keypair)
 
         assert child.tools == ["search"]

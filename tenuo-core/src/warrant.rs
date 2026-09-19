@@ -2675,6 +2675,54 @@ impl OwnedAttenuationBuilder {
         self.retain_tools(tools)
     }
 
+    /// Add a capability by inheriting its constraints from the parent warrant.
+    ///
+    /// This is the constraint-free selection path used by language bindings:
+    /// naming a tool grants exactly the authority the parent has for that tool,
+    /// while callers can use `set_capability` to provide narrower constraints.
+    pub fn inherit_capability(&mut self, tool: &str) -> Result<()> {
+        let constraints = self
+            .parent
+            .payload
+            .tools
+            .get(tool)
+            .or_else(|| self.parent.payload.tools.get("*"))
+            .cloned()
+            .ok_or_else(|| {
+                Error::MonotonicityViolation(format!("tool '{}' not in parent's tools", tool))
+            })?;
+        self.tools.insert(tool.to_string(), constraints);
+        Ok(())
+    }
+
+    /// Add capabilities by inheriting each tool's constraints from the parent.
+    ///
+    /// Validation is atomic: if any requested tool is absent from the parent,
+    /// no capabilities are added to the builder.
+    pub fn inherit_capabilities(&mut self, tools: &[String]) -> Result<()> {
+        let inherited = tools
+            .iter()
+            .map(|tool| {
+                self.parent
+                    .payload
+                    .tools
+                    .get(tool)
+                    .or_else(|| self.parent.payload.tools.get("*"))
+                    .cloned()
+                    .map(|constraints| (tool.clone(), constraints))
+                    .ok_or_else(|| {
+                        Error::MonotonicityViolation(format!(
+                            "tool '{}' not in parent's tools",
+                            tool
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.tools.extend(inherited);
+        Ok(())
+    }
+
     /// Get the configured TTL (if any).
     pub fn ttl_seconds(&self) -> Option<u64> {
         self.ttl.map(|d| d.as_secs())

@@ -654,7 +654,8 @@ class RangeExpanded(MonotonicityError):
 
     def __init__(self, bound: str, parent_value: float, child_value: float, hint: Optional[str] = None):
         super().__init__(
-            f"Child {bound} ({child_value}, hint=hint) exceeds parent {bound} ({parent_value}, hint=hint)", hint=hint
+            f"range expanded: child {bound} ({child_value}) exceeds parent {bound} ({parent_value})",
+            hint=hint,
         )
         self.details = {"bound": bound, "parent_value": parent_value, "child_value": child_value}
 

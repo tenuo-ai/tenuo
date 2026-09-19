@@ -50,6 +50,11 @@ class TestErrorMapping:
 
         # Details might vary slightly depending on float representation
         assert excinfo.value.details["bound"] == "min"
+        assert "hint=hint" not in str(excinfo.value)
+        assert (
+            "range expanded: child min (-10) exceeds parent min (0)"
+            in str(excinfo.value)
+        )
 
     def test_delegation_authority_error(self, keypair):
         """Verify DelegationAuthorityError mapping.
