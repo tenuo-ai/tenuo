@@ -539,7 +539,7 @@ class TenuoPluginConfig:
             if snapshots.ready:
                 # A copy of an already-primed config: reuse the roots the
                 # provider handed us rather than calling it again.
-                roots = list(self.trusted_roots or snapshots.trusted_roots)
+                roots = list(snapshots.trusted_roots)
             else:
                 roots = list(self.trusted_roots_provider())
         elif self.trusted_roots:
@@ -586,8 +586,10 @@ class TenuoPluginConfig:
                     "revocation_refresh_secs requires revocation_list_provider."
                 )
 
-        if not snapshots.ready:
-            if self.revocation_list_provider is not None:
+        if self.revocation_list_provider is not None:
+            if snapshots.ready:
+                initial_srl = snapshots.revocation_list
+            else:
                 try:
                     initial_srl = self.revocation_list_provider()
                 except Exception as exc:
@@ -601,14 +603,19 @@ class TenuoPluginConfig:
                         "SRL endpoint availability, credentials, and timeout settings, "
                         "or pass a static revocation_list for bootstrap."
                     ) from exc
-            else:
-                initial_srl = self.revocation_list
-            # Publish both halves at once: readiness is derived from the roots
-            # in this record, so it can never outlive the SRL snapshot.
-            self._provider_snapshots = _ProviderSnapshots(
-                trusted_roots=tuple(roots),
-                revocation_list=initial_srl,
-            )
+        else:
+            # Static values may have been explicitly overridden through
+            # dataclasses.replace(), so they take precedence over a carried
+            # snapshot when no provider owns this half of the state.
+            initial_srl = self.revocation_list
+
+        # Publish both halves at once: provider-backed values come from the
+        # carried last-known-good snapshot, while static values are rebuilt
+        # from the public fields so explicit replace() overrides take effect.
+        self._provider_snapshots = _ProviderSnapshots(
+            trusted_roots=tuple(roots),
+            revocation_list=initial_srl,
+        )
 
         if self.signing_key is not None and self.key_resolver is None:
 

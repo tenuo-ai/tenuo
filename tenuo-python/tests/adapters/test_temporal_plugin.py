@@ -589,6 +589,47 @@ def test_config_replace_preserves_provider_snapshots() -> None:
     assert calls == {"roots": 1, "srl": 1}
 
 
+def test_config_replace_after_root_refresh_uses_latest_snapshot() -> None:
+    """A copied provider config must not reactivate its startup trust roots."""
+    startup = SigningKey.generate().public_key
+    rotated = SigningKey.generate().public_key
+
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots_provider=lambda: [startup],
+    )
+    config._record_provider_snapshot(trusted_roots=[rotated])
+
+    copy = dataclasses.replace(config)
+
+    assert copy.trusted_roots == [rotated]
+    assert copy._last_good_trusted_roots == [rotated]
+
+
+def test_config_replace_honors_static_trust_overrides() -> None:
+    """Explicit static roots and SRL overrides must rebuild the snapshot."""
+    original = SigningKey.generate()
+    replacement = SigningKey.generate().public_key
+    original_srl = object()
+    replacement_srl = object()
+
+    config = TenuoPluginConfig(
+        signing_key=original,
+        trusted_roots=[original.public_key],
+        revocation_list=original_srl,
+    )
+
+    copy = dataclasses.replace(
+        config,
+        trusted_roots=[replacement],
+        revocation_list=replacement_srl,
+    )
+
+    assert copy.trusted_roots == [replacement]
+    assert copy._last_good_trusted_roots == [replacement]
+    assert copy._last_good_revocation_list is replacement_srl
+
+
 def test_config_snapshot_readiness_is_not_settable() -> None:
     """Readiness is derived from the snapshot, never asserted by a caller."""
     sk = SigningKey.generate()
