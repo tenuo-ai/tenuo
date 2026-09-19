@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Python SRL builder chaining.** `SrlBuilder.revoke()`, `revoke_all()`,
+  `version()`, and `from_existing()` now return the builder as documented, and
+  the publicly exported `SrlBuilder` can be constructed directly.
 - **MCP client denial messages read once.** `SecureMCPClient` built its typed
   exceptions by feeding the already-formatted `denial_reason` back into
   constructors that format their own sentence, producing messages such as
