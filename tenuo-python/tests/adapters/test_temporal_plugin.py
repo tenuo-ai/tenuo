@@ -1,5 +1,6 @@
 """Unit tests for ``TenuoTemporalPlugin`` (temporalio SimplePlugin integration)."""
 
+import dataclasses
 import inspect
 from unittest.mock import MagicMock
 
@@ -551,6 +552,180 @@ def test_plugin_copy_does_not_refetch_trusted_roots_provider() -> None:
     assert calls == 1
     TenuoTemporalPlugin(config)
     assert calls == 1
+
+
+def test_config_replace_preserves_provider_snapshots() -> None:
+    """``dataclasses.replace`` must carry last-known-good provider state.
+
+    Regression: readiness used to be an ``init=True`` flag while the snapshots
+    themselves were ``init=False``, so any ``replace()`` produced a config that
+    claimed to be primed while carrying no roots and no SRL to fall back on.
+    """
+    sk = SigningKey.generate()
+    srl = object()
+    calls = {"roots": 0, "srl": 0}
+
+    def roots_provider():
+        calls["roots"] += 1
+        return [sk.public_key]
+
+    def srl_provider():
+        calls["srl"] += 1
+        return srl
+
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots_provider=roots_provider,
+        revocation_list_provider=srl_provider,
+    )
+    assert calls == {"roots": 1, "srl": 1}
+
+    copy = dataclasses.replace(config, dry_run=False)
+
+    assert copy._provider_snapshots_ready
+    assert copy._last_good_trusted_roots == [sk.public_key]
+    assert copy._last_good_revocation_list is srl
+    assert copy.trusted_roots == [sk.public_key]
+    assert calls == {"roots": 1, "srl": 1}
+
+
+def test_config_replace_after_root_refresh_uses_latest_snapshot() -> None:
+    """A copied provider config must not reactivate its startup trust roots."""
+    startup = SigningKey.generate().public_key
+    rotated = SigningKey.generate().public_key
+
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots_provider=lambda: [startup],
+    )
+    config._record_provider_snapshot(trusted_roots=[rotated])
+
+    copy = dataclasses.replace(config)
+
+    assert copy.trusted_roots == [rotated]
+    assert copy._last_good_trusted_roots == [rotated]
+
+
+def test_config_replace_honors_static_trust_overrides() -> None:
+    """Explicit static roots and SRL overrides must rebuild the snapshot."""
+    original = SigningKey.generate()
+    replacement = SigningKey.generate().public_key
+    original_srl = object()
+    replacement_srl = object()
+
+    config = TenuoPluginConfig(
+        signing_key=original,
+        trusted_roots=[original.public_key],
+        revocation_list=original_srl,
+    )
+
+    copy = dataclasses.replace(
+        config,
+        trusted_roots=[replacement],
+        revocation_list=replacement_srl,
+    )
+
+    assert copy.trusted_roots == [replacement]
+    assert copy._last_good_trusted_roots == [replacement]
+    assert copy._last_good_revocation_list is replacement_srl
+
+
+def test_config_snapshot_readiness_is_not_settable() -> None:
+    """Readiness is derived from the snapshot, never asserted by a caller."""
+    sk = SigningKey.generate()
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[sk.public_key],
+    )
+
+    with pytest.raises(TypeError):
+        dataclasses.replace(config, _provider_snapshots_ready=True)  # type: ignore[call-arg]
+
+
+def test_config_snapshot_updates_do_not_leak_between_copies() -> None:
+    """A refresh recorded on a worker's copy must not touch the user's config."""
+    sk = SigningKey.generate()
+    rotated = SigningKey.generate().public_key
+    original_srl = object()
+    refreshed_srl = object()
+
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots_provider=lambda: [sk.public_key],
+        revocation_list_provider=lambda: original_srl,
+    )
+    copy = dataclasses.replace(config)
+
+    copy._record_provider_snapshot(
+        trusted_roots=[rotated], revocation_list=refreshed_srl
+    )
+
+    assert copy._last_good_trusted_roots == [rotated]
+    assert copy._last_good_revocation_list is refreshed_srl
+    assert config._last_good_trusted_roots == [sk.public_key]
+    assert config._last_good_revocation_list is original_srl
+
+
+def test_record_provider_snapshot_keeps_untouched_half() -> None:
+    """Refreshing one provider must not clear the other's last-known-good value."""
+    sk = SigningKey.generate()
+    srl = object()
+
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[sk.public_key],
+        revocation_list=srl,
+    )
+
+    config._record_provider_snapshot(trusted_roots=[SigningKey.generate().public_key])
+    assert config._last_good_revocation_list is srl
+
+    config._record_provider_snapshot(revocation_list=object())
+    assert len(config._last_good_trusted_roots) == 1
+
+
+def test_plugin_copy_keeps_enforcing_provider_backed_revocation(monkeypatch) -> None:
+    """The worker built from the plugin's copy must still install the SRL.
+
+    Provider-backed SRLs never land in ``config.revocation_list``, so a copy
+    that dropped its snapshot would build an Authorizer with no revocation list
+    and accept revoked warrants until the first scheduled refresh.
+    """
+    import tenuo_core  # type: ignore[import-not-found]
+
+    class _FakeAuthorizer:
+        instances: list = []
+
+        def __init__(self, *, trusted_roots, **kwargs):
+            self.trusted_roots = list(trusted_roots)
+            self.srl = None
+            type(self).instances.append(self)
+
+        def require_clearance(self, tool, clearance):  # pragma: no cover
+            pass
+
+        def set_revocation_list(self, srl):
+            self.srl = srl
+
+    _FakeAuthorizer.instances.clear()
+    monkeypatch.setattr(tenuo_core, "Authorizer", _FakeAuthorizer)
+
+    sk = SigningKey.generate()
+    srl = object()
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[sk.public_key],
+        revocation_list_provider=lambda: srl,
+        revocation_refresh_secs=300,
+    )
+
+    plugin = TenuoTemporalPlugin(config)
+    interceptor = TenuoWorkerInterceptor(plugin._tenuo_config)
+    activity_interceptor = interceptor.intercept_activity(MagicMock())
+
+    assert activity_interceptor._config._last_good_revocation_list is srl
+    assert _FakeAuthorizer.instances
+    assert all(auth.srl is srl for auth in _FakeAuthorizer.instances)
 
 
 def test_revocation_list_provider_startup_failure_is_configuration_error() -> None:

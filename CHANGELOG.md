@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Python SRL builder chaining.** `SrlBuilder.revoke()`, `revoke_all()`,
+  `version()`, and `from_existing()` now return the builder as documented, and
+  the publicly exported `SrlBuilder` can be constructed directly.
 - **MCP client denial messages read once.** `SecureMCPClient` built its typed
   exceptions by feeding the already-formatted `denial_reason` back into
   constructors that format their own sentence, producing messages such as
@@ -46,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ExceptionGroup`) from the streamable-HTTP transport's own background tasks
   are logged at debug level and dropped; anything else still propagates.
   Session state is cleared either way.
+- **Temporal provider snapshots survive config copies.** Copying a
+  `TenuoPluginConfig` with `dataclasses.replace()` used to keep the
+  "providers already primed" flag while dropping the last-known-good trusted
+  roots and revocation list, so the copy had nothing to fall back on when a
+  refresh failed and built its `Authorizer` with no revocation list. Both
+  halves now travel as one immutable record, and readiness is derived from it
+  rather than tracked separately.
 
 ### Added
 
