@@ -8,6 +8,7 @@ import asyncio
 import base64
 import logging
 import random
+import re
 import sys
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -19,6 +20,7 @@ from ..approval import ApprovalHandler
 from ..config import is_configured
 from ..decorators import key_scope, warrant_scope
 from ..exceptions import (
+    RevokedError,
     AuthorizationDenied,
     ConfigurationError,
     ConstraintViolation,
@@ -58,17 +60,41 @@ if sys.version_info < (3, 10) and MCP_AVAILABLE:
     MCP_AVAILABLE = False
 
 
+_CONSTRAINT_PREFIX = re.compile(r"^Constraint '(?P<field>[^']+)' not satisfied:\s*")
+_WARRANT_ID_IN_REASON = re.compile(r"Warrant '(?P<id>[^']+)' has (?:expired|been revoked)")
+
+
+def _warrant_id_for(result: "EnforcementResult", reason: str) -> str:
+    """Best-effort warrant id for an exception: the result's field, else parsed from the reason."""
+    warrant_id = getattr(result, "warrant_id", None)
+    if isinstance(warrant_id, str) and warrant_id:
+        return warrant_id
+    match = _WARRANT_ID_IN_REASON.search(reason)
+    return match.group("id") if match else "unknown"
+
+
 def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
-    """Raise the appropriate exception for a denied EnforcementResult."""
+    """Raise the typed exception for a denied EnforcementResult.
+
+    ``denial_reason`` is already a complete sentence, so each exception is built
+    from its structured parts rather than re-wrapping the sentence: the message
+    reads once, and ``details`` carries the tool, field, or warrant id.
+    """
     reason = result.denial_reason or "Authorization denied"
     etype = result.error_type or ""
     if etype == "constraint_violation":
-        field = result.constraint_violated or tool_name
-        raise ConstraintViolation(field, reason)
+        field = result.constraint_violated or ""
+        match = _CONSTRAINT_PREFIX.match(reason)
+        if match:
+            field = field or match.group("field")
+            reason = reason[match.end() :] or "value does not match constraint"
+        raise ConstraintViolation(field or tool_name, reason)
     if etype in {"tool_not_allowed", "tool_not_authorized"}:
-        raise ToolNotAuthorized(reason)
+        raise ToolNotAuthorized(tool=tool_name)
     if etype == "expired":
-        raise ExpiredError(reason)
+        raise ExpiredError(_warrant_id_for(result, reason))
+    if etype == "revoked":
+        raise RevokedError(_warrant_id_for(result, reason), reason=reason)
     if etype == "insufficient_approvals":
         meta = result.approval_metadata or {}
         raise InsufficientApprovals(
@@ -76,7 +102,7 @@ def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
             received=meta.get("got", 0),
             detail=reason,
         )
-    raise AuthorizationDenied(reason)
+    raise AuthorizationDenied(tool=tool_name, reason=reason)
 
 
 def _extract_tenuo_error_code(structured: Any) -> Optional[int]:
@@ -359,12 +385,35 @@ class SecureMCPClient:
             self._wrapped_tools[tool.name] = self.create_protected_tool(tool)
 
     async def close(self):
-        """Close the MCP connection and clear all session state."""
+        """Close the MCP connection and clear all session state.
+
+        Transport teardown can race with the SDK's own background tasks (a
+        post-writer sending on a memory stream that was just closed). Those
+        surface as anyio ``ClosedResourceError`` / ``BrokenResourceError``,
+        sometimes wrapped in an ``ExceptionGroup``. They carry no information
+        once the connection is going away, so they are logged and dropped;
+        anything else propagates. State is cleared either way.
+        """
         async with self._connect_lock:
-            await self.exit_stack.aclose()
-            self.session = None
-            self._tools = None
-            self._wrapped_tools = {}
+            try:
+                await self.exit_stack.aclose()
+            except Exception as exc:
+                if not self._is_teardown_noise(exc):
+                    raise
+                logger.debug("Ignored transport teardown error on close: %r", exc)
+            finally:
+                self.exit_stack = AsyncExitStack()
+                self.session = None
+                self._tools = None
+                self._wrapped_tools = {}
+
+    @classmethod
+    def _is_teardown_noise(cls, exc: BaseException) -> bool:
+        """True when ``exc`` is only connection-teardown errors (possibly grouped)."""
+        nested = getattr(exc, "exceptions", None)
+        if isinstance(nested, (list, tuple)):
+            return len(nested) > 0 and all(cls._is_teardown_noise(sub) for sub in nested)
+        return cls._is_connection_error(exc)
 
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:

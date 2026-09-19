@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP client denial messages read once.** `SecureMCPClient` built its typed
+  exceptions by feeding the already-formatted `denial_reason` back into
+  constructors that format their own sentence, producing messages such as
+  `Tool 'Tool 'write_file' is not authorized' is not authorized` and
+  `Constraint 'path' not satisfied: Constraint 'path' not satisfied: ...`.
+  Denials now map to `ConstraintViolation`, `ToolNotAuthorized`,
+  `ExpiredError`, `RevokedError` (new for `error_type="revoked"`), and
+  `AuthorizationDenied` from their structured parts, so each message reads
+  once and `details` carries the tool, field, or warrant id.
+- **`ExpiredError` carried the reason where the warrant id belongs.**
+  `EnforcementResult.raise_if_denied()` and the AutoGen adapter passed
+  `denial_reason` as the warrant id, yielding
+  `Warrant 'Warrant has expired' has expired`. They now pass `warrant_id`.
+- **`SecureMCPClient.close()` no longer raises on transport teardown races.**
+  anyio `ClosedResourceError` / `BrokenResourceError` (bare or in an
+  `ExceptionGroup`) from the streamable-HTTP transport's own background tasks
+  are logged at debug level and dropped; anything else still propagates.
+  Session state is cleared either way.
+
+### Added
+
+- **`tenuo.enforce_tool_call`, `tenuo.enforce_tool_call_async`, and
+  `tenuo.EnforcementResult`** are exported from the package. They are what
+  every adapter calls under the hood, and are the right entry point for tests
+  and custom integrations that need a single authorization decision without
+  a framework.
+
 ### Changed
 
 - **Agent skill boundaries.** `tenuo-warrant` now stops at warrant issuance

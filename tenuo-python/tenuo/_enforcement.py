@@ -186,7 +186,7 @@ class EnforcementResult:
             )
 
         if error_type == "expired":
-            raise ExpiredError(self.denial_reason or "Warrant expired")
+            raise ExpiredError(self.warrant_id or "unknown")
 
         if error_type == "tool_not_allowed":
             raise ToolNotAuthorized(tool=self.tool)

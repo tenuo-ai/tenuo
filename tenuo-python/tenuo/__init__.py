@@ -174,6 +174,9 @@ import tenuo.warrant_ext  # noqa: F401
 # BoundWarrant (common result of warrant.bind())
 from .bound_warrant import BoundWarrant
 
+# Framework-agnostic enforcement (what every adapter calls under the hood)
+from ._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async
+
 # Holder runtime (identity, connect token, session lifecycle)
 from .connect import ConnectToken
 from .identity import HolderIdentity
@@ -271,6 +274,10 @@ __all__ = [
     "get_runtime",
     "bind_runtime",
     "Authorizer",
+    # Enforcement (framework-agnostic; adapters call these)
+    "enforce_tool_call",
+    "enforce_tool_call_async",
+    "EnforcementResult",
     # Chain verification (returned by Authorizer.authorize_one / check_chain)
     "ChainVerificationResult",
     "ChainStep",
