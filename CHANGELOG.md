@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trust anchor. New `trusted_roots=` and `warrant_chain=` parameters let
   callers supply one and present a delegated warrant's parents.
 
+### Added
+
+- **`noArgs()` tool ceiling for zero-argument tools (TypeScript).**
+  `tenuo.tool(raw, { allow: noArgs() })` denies any call that supplies an
+  argument before the tool body runs, closing argument smuggling into tools
+  that take none. It is a ceiling on the wrapped tool only: the session
+  warrant still records the capability as `{}`, and `session({ allow })` and
+  `narrow()` reject it so the limit is never mistaken for delegated
+  authority. Closing the empty policy inside the warrant is a wire-format
+  change and is deferred.
+
 ### Fixed
 
 - **MCP warrants can cross `_meta`-stripping gateways.**

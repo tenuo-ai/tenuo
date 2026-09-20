@@ -9,6 +9,7 @@ import type {
   ExactConstraint,
   MaxConstraint,
   MinConstraint,
+  NoArgsPolicy,
   NotConstraint,
   NotOneOfConstraint,
   OneOfConstraint,
@@ -176,6 +177,16 @@ export function exact(value: string | number | boolean): ExactConstraint {
 /** Any value at all. Name it in a zero-trust policy to allow an argument without constraining it. */
 export function wildcard(): WildcardConstraint {
   return { kind: "wildcard" };
+}
+
+/**
+ * Tool ceiling for a capability that accepts exactly zero arguments: any
+ * supplied key is denied before the tool body runs. Host ceiling only, for
+ * `tenuo.tool()`; the warrant still records `{}`, and `session({ allow })`
+ * and `narrow()` reject it.
+ */
+export function noArgs(): NoArgsPolicy {
+  return { $tenuoNoArgs: true };
 }
 
 /** IP address inside a network, e.g. `cidr("10.0.0.0/8")`. */

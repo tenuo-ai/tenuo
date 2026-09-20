@@ -9,6 +9,7 @@ export { approvalRequirement, evaluateApprovalGates, inspectApprovalGate } from 
 export type {
   AllConstraint,
   AllowPolicy,
+  CapabilityPolicy,
   AnyOfConstraint,
   ApprovalContextAttestation,
   ApprovalInfo,
@@ -41,6 +42,7 @@ export type {
   MinConstraint,
   NarrowInput,
   NarrowOptions,
+  NoArgsPolicy,
   NonceStore,
   NotConstraint,
   NotOneOfConstraint,
@@ -97,6 +99,7 @@ export {
   exact,
   max,
   min,
+  noArgs,
   not,
   notOneOf,
   oneOf,

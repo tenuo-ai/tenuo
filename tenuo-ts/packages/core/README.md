@@ -37,6 +37,8 @@ every call argument must be named in the policy. `allow: {}` adds no extra
 ceiling. `devRoot()` requires `NODE_ENV=development` or `test`,
 `devRoot({ allowInProduction: true })`, or `TENUO_ALLOW_DEV=1`. Unset
 `NODE_ENV` is not treated as development.
+`noArgs()` closes the ceiling for a tool that takes no arguments; it stays on
+the wrapped tool and is not carried by the warrant.
 
 Production loads an issued warrant and a trusted root. Prefer `Runtime` when
 the same holder identity, roots, revocation list, and receipt buffer should

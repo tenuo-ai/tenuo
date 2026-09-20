@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import type {
   AllowPolicy,
+  CapabilityPolicy,
   ApprovalContextAttestation,
   ApprovalInfo,
   ApprovalRequest,
@@ -17,6 +18,7 @@ import type {
   McpVerifyOptions,
   NarrowInput,
   NarrowOptions,
+  NoArgsPolicy,
   PresentedCall,
   ProtectedTool,
   PublicKeyHandle,
@@ -60,7 +62,21 @@ import {
 } from "./wasm.ts";
 
 const currentSession = new AsyncLocalStorage<Session>();
-const toolPolicies = new WeakMap<object, { capability: string; allow: AllowPolicy }>();
+const toolPolicies = new WeakMap<object, { capability: string; allow: CapabilityPolicy }>();
+
+/** Reserved key `noArgs()` emits. Mirrors `NO_ARGS_KEY` in the WASM core. */
+const NO_ARGS_KEY = "$tenuoNoArgs";
+
+function isNoArgs(value: unknown): value is NoArgsPolicy {
+  return typeof value === "object" && value !== null && NO_ARGS_KEY in value;
+}
+
+/** `noArgs()` is a ceiling on the wrapped tool; warrants never carry it. */
+function noArgsNotAllowed(where: string): TenuoConfigurationError {
+  return new TenuoConfigurationError(
+    `${where}: noArgs() is a host ceiling for tenuo.tool() and is not carried by the warrant. Use {} here and pass noArgs() to tenuo.tool().`,
+  );
+}
 const wrappedInners = new WeakSet<object>();
 
 const CLEARANCE_NAMES = new Set(["untrusted", "external", "partner", "internal", "privileged", "system"]);
@@ -412,7 +428,7 @@ class TenuoClient implements Tenuo {
       execute,
     }) as ProtectedTool<T>;
     wrappedInners.add(inner);
-    toolPolicies.set(wrapped, { capability, allow: { ...policy.allow } as AllowPolicy });
+    toolPolicies.set(wrapped, { capability, allow: { ...policy.allow } as CapabilityPolicy });
     return wrapped;
   }
 
@@ -545,6 +561,14 @@ class TenuoClient implements Tenuo {
   narrow(session: Session, allow: NarrowInput, options?: NarrowOptions): Session {
     if (Object.keys(allow).length === 0) {
       throw new TenuoConfigurationError("tenuo.narrow() requires a non-empty allow policy");
+    }
+    if (isNoArgs(allow)) {
+      throw noArgsNotAllowed("narrow()");
+    }
+    for (const [capability, value] of Object.entries(allow)) {
+      if (isNoArgs(value)) {
+        throw noArgsNotAllowed(`narrow() allow.${capability}`);
+      }
     }
     if (!isSession(session)) {
       throw new TenuoConfigurationError("narrow() requires a Tenuo Session, not a plain object");
@@ -984,6 +1008,11 @@ function resolveSession(callOptions: unknown): Session {
 
 function collectSessionAllow(input: SessionInput): { [capability: string]: AllowPolicy } {
   const allow: { [capability: string]: AllowPolicy } = { ...(input.allow ?? {}) };
+  for (const [capability, value] of Object.entries(allow)) {
+    if (isNoArgs(value)) {
+      throw noArgsNotAllowed(`session() allow.${capability}`);
+    }
+  }
   for (const tool of input.tools ?? []) {
     if (tool === null || typeof tool !== "object") {
       throw new TenuoConfigurationError("session({ tools }) requires tools from tenuo.tool()");
@@ -992,13 +1021,16 @@ function collectSessionAllow(input: SessionInput): { [capability: string]: Allow
     if (policy === undefined) {
       throw new TenuoConfigurationError("session({ tools }) requires tools from tenuo.tool()");
     }
+    // noArgs() stays on the wrapped tool; the warrant records the capability
+    // as {} exactly as it does for a tool with no ceiling.
+    const warrantAllow: AllowPolicy = isNoArgs(policy.allow) ? {} : policy.allow;
     const existing = allow[policy.capability];
-    if (existing !== undefined && !sameAllow(existing, policy.allow)) {
+    if (existing !== undefined && !sameAllow(existing, warrantAllow)) {
       throw new TenuoConfigurationError(
         `session() allow and tools disagree on ${policy.capability}`,
       );
     }
-    allow[policy.capability] = policy.allow;
+    allow[policy.capability] = warrantAllow;
   }
   return allow;
 }

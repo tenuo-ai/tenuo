@@ -11,12 +11,12 @@
     "references/common-footguns.md",
     "references/security-model.md"
   ],
-  "skill_fingerprint": "abab77da5ae3392d56a309a957330f55d0c49e6f847cf98db0c29ccb6c6d679a",
+  "skill_fingerprint": "e47c892f7f37436a0297ba8d8741e4e62a5e66c6f4d0d4f57f7a087c4ee8d8a4",
   "evidence": {
     "sdk": "@tenuo/core 0.3.0-beta.0",
     "tests": "9 passed",
     "typecheck": "passed",
     "critical_items": "passed"
   },
-  "carried_forward_review": "No fresh model run since the 2026-09-17 replay. Later edits replaced duplicated prose versions with a pointer to the machine-checked release contract and narrowed this fingerprint to the files the TypeScript scenario reads; they did not change boundary, key-separation, verification, bypass, or claim instructions. Python and Rust references have no committed behavioral evidence."
+  "carried_forward_review": "No fresh model run since the 2026-09-17 replay. Later edits replaced duplicated prose versions with a pointer to the machine-checked release contract and narrowed this fingerprint to the files the TypeScript scenario reads; they did not change boundary, key-separation, verification, bypass, or claim instructions. Python and Rust references have no committed behavioral evidence. 2026-09-20: references/typescript.md gained one sentence describing the noArgs() tool ceiling (host-side only, warrant unchanged); it adds no boundary, key-separation, verification, bypass, or claim instruction, so the evidence is carried forward."
 }
