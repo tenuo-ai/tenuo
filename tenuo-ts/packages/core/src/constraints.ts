@@ -154,11 +154,27 @@ export function notOneOf(values: readonly string[]): NotOneOfConstraint {
   return { kind: "notOneOf", values };
 }
 
+/**
+ * Generic string glob. `*` matches `/`; this is not path containment.
+ * For filesystem arguments, use `pathGlob(root, glob)`.
+ */
 export function pattern(pattern: string): PatternConstraint {
   if (pattern.length === 0) {
     throw new TenuoConfigurationError("tenuo.pattern() requires a non-empty pattern");
   }
   return { kind: "pattern", pattern };
+}
+
+/**
+ * A traversal-safe filesystem glob: the value must stay under `root` and
+ * match `glob`. The glob applies to the full path and may match at any depth.
+ */
+export function pathGlob(
+  root: string,
+  glob: string,
+  options?: { readonly caseSensitive?: boolean; readonly allowEqual?: boolean },
+): AllConstraint {
+  return all([under(root, options), pattern(glob)]);
 }
 
 /** Regular expression, compiled and evaluated in core. */

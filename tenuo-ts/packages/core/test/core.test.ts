@@ -18,6 +18,7 @@ import {
   min,
   notOneOf,
   oneOf,
+  pathGlob,
   pattern,
   range,
   regex,
@@ -380,6 +381,28 @@ describe("constraints", () => {
     expect(max(500)).toEqual({ kind: "max", value: 500 });
     expect(oneOf(["a", "b"])).toEqual({ kind: "oneOf", values: ["a", "b"] });
     expect(pattern("*@acme.com")).toEqual({ kind: "pattern", pattern: "*@acme.com" });
+    expect(pathGlob("/workspace", "*.json")).toEqual({
+      kind: "all",
+      constraints: [
+        { kind: "under", root: "/workspace" },
+        { kind: "pattern", pattern: "*.json" },
+      ],
+    });
+  });
+
+  it("keeps path globs inside their traversal-safe root", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const readJson = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_json", allow: { path: pathGlob("/workspace", "*.json") } },
+    );
+    const session = tenuo.session({ tools: [readJson] });
+    await expect(readJson.execute({ path: "/workspace/reports/q3.json" }, { session })).resolves.toBe(
+      "/workspace/reports/q3.json",
+    );
+    await expect(
+      readJson.execute({ path: "../../etc/passwd.json" }, { session }),
+    ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION", field: "path" });
   });
 
   it.each<[string, () => unknown, RegExp]>([
