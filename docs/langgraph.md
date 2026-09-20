@@ -362,9 +362,11 @@ graph.add_node("my_node", guard_node(my_node))
 # Explicit key_id
 graph.add_node("worker", guard_node(worker_node, key_id="worker-1"))
 
-# Inject BoundWarrant for advanced use
+# Inject BoundWarrant for advanced use. The injected warrant carries the roots
+# from tenuo.configure(trusted_roots=[...]); validate() fails closed without one.
 def node_with_warrant(state, bound_warrant):
-    if bound_warrant.validate("search", {"query": "test"}):
+    if bound_warrant.validate("search", {"query": "test"},
+                              warrant_chain=state.get("warrant_chain")):
         return {"authorized": True}
     return {"authorized": False}
 
@@ -708,10 +710,11 @@ state["warrant"] = bound_warrant.warrant  # Just the warrant (serializable)
  
  # WRONG: Not a security check!
  if bound_warrant.allows("delete"):
-     delete_database()  # No PoP verification happened!
+     delete_database()  # No PoP verification, no issuer check!
  
- # Correct: Use validate()
- if bound_warrant.validate("delete", args):
+ # Correct: validate() checks issuer trust, PoP, and constraints
+ if bound_warrant.validate("delete", args,
+                           warrant_chain=state.get("warrant_chain")):
      delete_database()
  ```
 ### Lazy Key Binding
@@ -719,6 +722,8 @@ state["warrant"] = bound_warrant.warrant  # Just the warrant (serializable)
 `BoundWarrant.bind(key)` performs **lazy validation**. It does not verify that the key matches the warrant's `holder` at binding time.
 
 Instead, validation happens at **usage time** (inside `validate()`). The `validate()` method generates a Proof-of-Possession signature using the bound key. If the key is incorrect, the core Rust logic will reject the signature, and `validate()` will return a failed `ValidationResult`. This ensures security without requiring stateful validation during graph transitions.
+
+`validate()` also checks that the warrant's issuer chains back to a trusted root, so it needs an anchor: the `trusted_roots` argument, the roots given at bind time, `tenuo.configure(trusted_roots=[...])`, or the active `Runtime`. With none of those it raises `ConfigurationError` rather than trusting the warrant's own issuer. Warrants injected by `guard_node` and `@tenuo_node` inherit the configured roots.
 
 ---
 

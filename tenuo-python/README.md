@@ -145,8 +145,9 @@ warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(key))
 
-# Bind key for repeated use
-bound = warrant.bind(key)
+# Bind key for repeated use. trusted_roots is the anchor the warrant's issuer
+# must chain back to; this warrant is self-minted, so that anchor is `key`.
+bound = warrant.bind(key, trusted_roots=[key.public_key])
 
 items = ["item1", "item2", "item3"]
 for item in items:

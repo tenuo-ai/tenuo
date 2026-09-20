@@ -622,10 +622,18 @@ bound = warrant.bind(keypair)
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `validate(tool, args)` | `ValidationResult` | Full security check (PoP + constraints) |
+| `validate(tool, args, *, trusted_roots=None, warrant_chain=None)` | `ValidationResult` | Full security check (issuer trust + PoP + constraints) |
 | `allows(tool, args=None)` | `bool` | Logic check (no PoP) |
 | `grant(allow, to=None, ttl=None, **constraints)` | `BoundWarrant` | Delegate (uses bound key) |
-| `headers(tool, args)` | `dict` | HTTP headers (uses bound key) |
+| `headers(tool, args, *, trusted_roots=None, warrant_chain=None)` | `dict` | HTTP headers (uses bound key) |
+
+`validate()` and `headers()` need a trust anchor. They resolve one from the
+`trusted_roots` argument, then the roots given at bind time, then
+`tenuo.configure(trusted_roots=[...])`, then the active `Runtime`, and raise
+`ConfigurationError` when none of those supply one — a warrant is never trusted
+just because it signed itself. A delegated warrant is issued by the agent that
+delegated it rather than by a root, so pass its parents via `warrant_chain`
+(root-first, excluding the warrant itself).
 | `unbind()` | `tuple[Warrant, SigningKey]` | Extract warrant and key |
 | `why_denied(tool, **args)` | `WhyDenied` | Get denial reason |
 
@@ -1754,8 +1762,9 @@ from tenuo import Warrant
 # Returns (warrant, signing_key)
 warrant, key = Warrant.quick_mint(["read_file", "search"], ttl=300)
 
-# Use the warrant
-bound = warrant.bind(key)
+# Use the warrant. trusted_roots anchors the issuer check; this warrant is
+# self-minted, so the anchor is `key` itself.
+bound = warrant.bind(key, trusted_roots=[key.public_key])
 headers = bound.headers("search", {"query": "test"})
 ```
 

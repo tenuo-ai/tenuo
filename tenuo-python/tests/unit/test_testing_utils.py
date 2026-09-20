@@ -86,3 +86,53 @@ class TestDXTooling(unittest.TestCase):
         # Case: Authorization fails (should pass assertion)
         mock_warrant.authorize.return_value = False
         assert_denied(mock_warrant, mock_key, "tool")
+
+
+class TestWarrantAssertionTrustAnchor(unittest.TestCase):
+    """The warrant-and-key mode of the assertion helpers (issue #675).
+
+    ``validate()`` now requires a trust anchor. These helpers assert what a
+    warrant permits, so they resolve one rather than propagating the error —
+    and a missing anchor must never read as a denial.
+    """
+
+    def setUp(self):
+        from tenuo import SigningKey, Warrant
+
+        self.warrant, self.key = Warrant.quick_mint(["search"], ttl=3600)
+        self.other_key = SigningKey.generate()
+
+    def test_assert_authorized_accepts_a_permitted_tool(self):
+        with assert_authorized(self.warrant, self.key, "search", {"query": "x"}):
+            pass
+
+    def test_assert_authorized_rejects_a_tool_outside_the_warrant(self):
+        with self.assertRaises(AuthorizationAssertionError):
+            with assert_authorized(self.warrant, self.key, "delete_everything", {}):
+                pass
+
+    def test_assert_denied_accepts_a_tool_outside_the_warrant(self):
+        with assert_denied(self.warrant, self.key, "delete_everything", {}):
+            pass
+
+    def test_assert_denied_rejects_a_permitted_tool(self):
+        """The regression: a resolution failure must not read as a denial."""
+        with self.assertRaises(AuthorizationAssertionError):
+            with assert_denied(self.warrant, self.key, "search", {"query": "x"}):
+                pass
+
+    def test_explicit_roots_are_honoured(self):
+        """Passing roots asserts issuer trust on top of policy."""
+        untrusted = [self.other_key.public_key]
+        with assert_denied(
+            self.warrant, self.key, "search", {"query": "x"}, trusted_roots=untrusted
+        ):
+            pass
+        with assert_authorized(
+            self.warrant,
+            self.key,
+            "search",
+            {"query": "x"},
+            trusted_roots=[self.warrant.issuer],
+        ):
+            pass
