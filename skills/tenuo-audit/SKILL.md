@@ -31,7 +31,7 @@ The key difference: warrants carry **semantic constraints** on arguments (e.g., 
 ### Phase 1: Context Discovery
 
 Scan the codebase for tenuo usage:
-1. Search for `import tenuo`, `from tenuo`, `Warrant`, `mint_builder`, `grant_builder`, `@guard`
+1. Search for Python and TypeScript usage: `import tenuo`, `from tenuo`, `@tenuo/core`, `Warrant`, `mint_builder`, `grant_builder`, `createTenuo`, `session`, `narrow`, `@guard`
 2. Check for `tenuo_cloud` imports or `tc_` env vars (indicates cloud deployment)
 3. Look for warrant serialization patterns (base64 strings, `warrant.serialize()`, `Warrant(...)` deserialization)
 
@@ -68,6 +68,15 @@ For each warrant found, extract and present:
 - List of capabilities (tools/actions granted)
 - Constraints on each capability's arguments
 - Closed-world status (are unconstrained arguments rejected?)
+
+Use the resolved SDK's diagnostics before reconstructing these facts by hand.
+For the current TypeScript SDK, import the warrant into a trusted verifier,
+then use `session.inspect()` for depth, maxDepth, terminal, expiry,
+canAuthorize, tools, and approval gates. Use `tenuo.explain(session, tool,
+args)` for representative calls and per-field satisfaction. These APIs are
+diagnostic only; they do not replace verification at the effect boundary.
+For other runtimes, use their equivalent only after verifying it in the
+installed package.
 
 ### Phase 5: Plain-Language Explanation
 
@@ -174,10 +183,9 @@ Assess each warrant against this risk framework:
 
 | Finding | Severity | What it means |
 |---|---|---|
-| `_allow_unknown=True` | **HIGH** | Closed-world disabled. Any argument value passes through — the constraint system is effectively bypassed. Like an IAM policy with `"Resource": "*"`. |
+| `_allow_unknown=True` (Python only) | **HIGH** | Closed-world disabled. Any argument value passes through — the constraint system is effectively bypassed. The current TypeScript SDK has no such escape hatch; do not report this finding there. |
 | PoP not enforced | **HIGH** | Warrant is a bearer token. If stolen, attacker can use it without the holder's private key. Like an API key vs. mTLS. |
 | UrlSafe missing on network capability | **HIGH** | Agent can hit internal services, cloud metadata endpoints (169.254.169.254). SSRF risk. |
-| No TTL or TTL > 1 hour | **MEDIUM** | Long-lived credential. Increases the blast radius time window. Like a non-expiring session token. |
 | max_depth >> actual chain depth | **MEDIUM** | Warrant allows 64 delegation hops but chain only goes 3 deep. Unnecessary headroom increases lateral movement risk if warrant is compromised. |
 | CEL constraint without review | **MEDIUM** | Custom evaluation logic. Could contain subtle bugs or overly permissive expressions. Needs human verification — like a custom OPA policy. |
 | Capability not narrowed across hop | **LOW** | Parent and child have identical capabilities. Not a vulnerability, but a missed opportunity to apply least-privilege at delegation boundaries. |

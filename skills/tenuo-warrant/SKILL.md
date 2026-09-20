@@ -24,11 +24,16 @@ For developers familiar with other auth systems:
 
 Before asking questions, scan the codebase:
 
-1. **Check for existing tenuo usage** — search for `import tenuo`, `from tenuo`, `tenuo_cloud`, `Warrant`, `SigningKey` in Python files
+1. **Check for existing tenuo usage** — search Python and TypeScript manifests and sources for `import tenuo`, `from tenuo`, `@tenuo/core`, `tenuo_cloud`, `Warrant`, `SigningKey`, `createTenuo`, `session`, and `narrow`
 2. **Detect the installed SDK and version** — inspect manifests, lockfiles, and existing warrant construction before choosing minting or delegation APIs
 3. **Check for tenuo-cloud** — look for `tenuo_cloud` imports, `tc_` prefixed env vars, or `AsyncTenuoCloudClient`
 
 This tells you which warrant source and resolved SDK surface to use. Do not generate application or tool-boundary enforcement from this skill.
+
+Route by the detected runtime. For TypeScript, read
+`references/typescript.md` and use TypeScript names throughout; never make the
+developer translate Python builders or vocabulary. For Python, verify the
+installed Python API before using the examples below.
 
 ### Phase 2: Persona Check
 
@@ -157,7 +162,7 @@ If any constraints were added, explain the trust cliff:
 
 If there are arguments you want to leave unconstrained, I'll add `Wildcard()` for those explicitly.
 
-⚠️ **`_allow_unknown=True` disables closed-world mode entirely** — any argument value passes through unchecked, which voids the main constraint safety property. This is a security override, not a convenience flag. Treat any request to use it like a request to disable input validation globally: require an explicit justification and document it in a code comment."
+⚠️ **Python only:** `_allow_unknown=True` disables closed-world mode entirely — any argument value passes through unchecked, which voids the main constraint safety property. This escape hatch does not exist in the current TypeScript SDK. Do not warn TypeScript users about an option they cannot set."
 
 ### Phase 8: Choose Minting Source
 
@@ -199,7 +204,7 @@ Before generating issuance or delegation code, ground it in the resolved SDK:
 
 If the request also requires enforcing the warrant at an application, tool, gateway, sidecar, worker, or MCP boundary, finish the warrant artifact and explicitly hand that separate task to `tenuo-agent-authorization`.
 
-**Open-source example:**
+**Open-source Python example:**
 
 > **Development only** — `SigningKey.generate()` creates ephemeral keys. In production, load the issuer key from secure storage. The holder key belongs to the recipient; issuance needs only its public key.
 
@@ -291,7 +296,7 @@ When a developer picks `Regex`, warn them about the delegation limitation and su
 
 ## Key API Reference
 
-When generating code, use these exact patterns from the tenuo Python SDK:
+For Python, use these patterns only after verifying them in the installed SDK. For TypeScript, use `references/typescript.md` and the installed declarations instead of translating this section literally.
 
 **Minting:** `Warrant.mint_builder()` → chain `.capability()`, `.ttl()`, `.max_depth()`, `.holder(pubkey)` → `.mint(signing_key)`
 

@@ -46,7 +46,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json && node scripts/copy-build-assets.mjs",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-build-assets.mjs && node scripts/write-build-info.mjs",
     "pack:smoke": "node scripts/pack-smoke.mjs",
     "publish:npm": "npm publish --access public --provenance --tag beta",
     "build:wasm": "pnpm --dir ../.. build:wasm"

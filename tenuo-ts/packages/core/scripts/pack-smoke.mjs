@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
@@ -9,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const coreDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,6 +24,7 @@ try {
   run("npm", ["install", "--omit=dev", tarball], { cwd: installDir, stdio: "inherit" });
   assertInstalled(installDir, "@tenuo/core", [
     "dist/index.js",
+    "dist/build-info.json",
     "dist/generated/tenuo_wasm_bg.wasm",
     "dist/generated/tenuo_wasm.js",
     "LICENSE",
@@ -32,12 +34,14 @@ try {
     /^package\.json$/,
     /^LICENSE$/,
     /^README\.md$/,
+    /^dist\/build-info\.json$/,
     /^dist\/[^/]+\.js$/,
     /^dist\/[^/]+\.js\.map$/,
     /^dist\/[^/]+\.d\.ts$/,
     /^dist\/generated\/(package\.json|tenuo_wasm\.js|tenuo_wasm\.d\.ts)$/,
     /^dist\/generated\/(tenuo_wasm_bg\.wasm|tenuo_wasm_bg\.wasm\.d\.ts)$/,
   ]);
+  assertBuildInfo(installDir, "@tenuo/core");
   // The major selector is equivalent to ^20.0.0 without cmd.exe's caret escape.
   run("npm", ["install", "--save-dev", "typescript@~5.8.2", "@types/node@20"], {
     cwd: installDir,
@@ -134,6 +138,30 @@ function assertPackageContents(root, packageName, allowed) {
     if (sourcesContent.some((content) => typeof content !== "string" || content.length === 0)) {
       throw new Error(`${map} has an empty sourcesContent entry`);
     }
+    for (const [index, source] of sources.entries()) {
+      const sourcePath = resolve(coreDir, dirname(map), source);
+      if (!existsSync(sourcePath)) {
+        throw new Error(`${map} references missing repository source ${source}`);
+      }
+      if (readFileSync(sourcePath, "utf8") !== sourcesContent[index]) {
+        throw new Error(`${map} embeds stale source for ${source}`);
+      }
+    }
+  }
+}
+
+function assertBuildInfo(root, packageName) {
+  const packageDir = join(root, "node_modules", ...packageName.split("/"));
+  const info = JSON.parse(readFileSync(join(packageDir, "dist", "build-info.json"), "utf8"));
+  const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: coreDir, encoding: "utf8" }).trim();
+  const wasm = readFileSync(join(packageDir, "dist", "generated", "tenuo_wasm_bg.wasm"));
+  if (info.package !== packageName || info.version !== manifest.version || info.sourceCommit !== commit) {
+    throw new Error("build-info.json does not identify this package version and source commit");
+  }
+  const digest = createHash("sha256").update(wasm).digest("hex");
+  if (info.wasmSha256 !== digest) {
+    throw new Error("build-info.json does not identify the packed WASM artifact");
   }
 }
 
