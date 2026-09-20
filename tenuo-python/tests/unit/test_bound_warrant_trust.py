@@ -8,7 +8,17 @@ bind time were silently ignored. It now resolves roots the same way
 
 import pytest
 
-from tenuo import ConfigurationError, Exact, Pattern, SigningKey, Warrant
+from tenuo import (
+    ConfigurationError,
+    Exact,
+    HolderIdentity,
+    Pattern,
+    Runtime,
+    SigningKey,
+    Warrant,
+    decode_warrant_stack_base64,
+)
+from tenuo_core import SignedRevocationList
 from tenuo._enforcement import enforce_tool_call
 
 
@@ -158,7 +168,7 @@ def test_validate_agrees_with_enforce_tool_call(delegation, with_chain):
 
 
 def test_headers_forwards_the_chain(delegation):
-    """headers() pre-flights through validate(), so it needs the same inputs."""
+    """headers() pre-flights and transports the same complete chain."""
     bound = delegation["child"].bind(
         delegation["worker_key"], trusted_roots=[delegation["root_key"].public_key]
     )
@@ -170,6 +180,43 @@ def test_headers_forwards_the_chain(delegation):
         "lookup_order", delegation["args"], warrant_chain=[delegation["task"]]
     )
     assert set(headers) == {"X-Tenuo-Warrant", "X-Tenuo-PoP"}
+    stack = decode_warrant_stack_base64(headers["X-Tenuo-Warrant"])
+    assert [w.id for w in stack] == [delegation["task"].id, delegation["child"].id]
+
+
+def test_validate_applies_active_runtime_revocation(delegation):
+    """validate() and enforcement must agree when Runtime revokes the leaf."""
+    builder = SignedRevocationList.builder()
+    builder.revoke(delegation["child"].id)
+    builder.version(1)
+    srl = builder.build(delegation["root_key"])
+    runtime = Runtime(
+        identity=HolderIdentity.from_signing_key(delegation["worker_key"]),
+        trusted_roots=[delegation["root_key"].public_key],
+        revocation_list=srl,
+    )
+    bound = delegation["child"].bind(
+        delegation["worker_key"],
+        trusted_roots=[delegation["root_key"].public_key],
+    )
+
+    with runtime.bind():
+        validated = bound.validate(
+            "lookup_order",
+            delegation["args"],
+            warrant_chain=[delegation["task"]],
+        )
+        enforced = enforce_tool_call(
+            "lookup_order",
+            delegation["args"],
+            bound,
+            warrant_chain=[delegation["task"]],
+        )
+
+    assert not validated
+    assert not enforced.allowed
+    assert "revoked" in validated.reason.lower()
+    assert enforced.error_type == "revoked"
 
 
 def test_root_warrant_still_validates_against_its_issuer(delegation):

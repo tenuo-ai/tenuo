@@ -254,8 +254,8 @@ class BoundWarrant:
             trusted_roots: Trusted issuer public keys for the pre-flight check.
                 Forwarded to :meth:`validate`.
             warrant_chain: Parent warrants in root-first order, excluding this
-                warrant. Required for delegated warrants; forwarded to
-                :meth:`validate`.
+                warrant. Required for delegated warrants; validated locally
+                and encoded with this warrant as a WarrantStack for transport.
 
         Returns:
             Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
@@ -278,8 +278,19 @@ class BoundWarrant:
         pop_sig = self._warrant.sign(self._key, tool, args, int(time.time()))
         # sign returns bytes, encode to base64
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
+
+        # The pre-flight above verified the complete delegation path, so send
+        # that same path to the remote PEP. A plain leaf is not independently
+        # trusted when it was issued by an intermediate holder.
+        warrant_token = self._warrant.to_base64()
+        if warrant_chain:
+            from tenuo_core import encode_warrant_stack
+
+            warrant_token = encode_warrant_stack(
+                list(warrant_chain) + [self._warrant]
+            )
         return {
-            _WARRANT_HEADER: self._warrant.to_base64(),
+            _WARRANT_HEADER: warrant_token,
             "X-Tenuo-PoP": pop_b64,
         }
 
@@ -389,6 +400,9 @@ class BoundWarrant:
         # 2. Verify via the Authorizer — full check: issuer trust, expiry,
         #    revocation, clearance, PoP, constraints, guard satisfaction.
         auth = Authorizer(trusted_roots=roots)
+        from .runtime import apply_runtime_revocation
+
+        apply_runtime_revocation(auth)
         try:
             if warrant_chain:
                 auth.check_chain(

@@ -1901,6 +1901,20 @@ class TestWarrantChainStateField:
         resolved = _get_warrant_chain({"warrant_chain": [parent.to_base64()]})
         assert [w.id for w in resolved] == [parent.id]
 
+    def test_base64_fallback_entries_are_inflated(self, parent):
+        """Serialized constructor defaults use the same normalization path."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        resolved = _get_warrant_chain({}, [parent.to_base64()])
+        assert [w.id for w in resolved] == [parent.id]
+
+    def test_malformed_fallback_raises(self):
+        """Constructor defaults fail as configuration errors, like state."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        with pytest.raises(ConfigurationError, match=r"warrant_chain\[0\]"):
+            _get_warrant_chain({}, ["not-base64!!"])
+
     def test_order_is_preserved(self):
         """Chains are root-first; reordering them would break linkage."""
         from tenuo.langgraph import _get_warrant_chain

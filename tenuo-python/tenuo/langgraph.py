@@ -692,15 +692,15 @@ def _get_warrant_chain(
     silently degrading to a leaf-only check.
     """
     chain = state.get("warrant_chain")
-    if chain is None:
-        return fallback
+    if chain is None or (isinstance(chain, (list, tuple)) and not chain):
+        chain = fallback
+    if chain is None or (isinstance(chain, (list, tuple)) and not chain):
+        return None
     if isinstance(chain, (str, bytes)) or not isinstance(chain, (list, tuple)):
         raise ConfigurationError(
             "State field 'warrant_chain' must be a list of parent warrants "
             f"(root-first, excluding the leaf), got {type(chain).__name__}."
         )
-    if not chain:
-        return fallback
 
     parents: List[Any] = []
     for index, parent in enumerate(chain):
