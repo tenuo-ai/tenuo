@@ -1655,6 +1655,39 @@ pub(crate) fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constrain
         .get("kind")
         .and_then(|v| v.as_str())
         .ok_or("constraint is missing kind")?;
+    let allowed_keys: &[&str] = match kind {
+        "under" => &["kind", "root", "caseSensitive", "allowEqual"],
+        "email" => &["kind", "domain"],
+        "max" | "min" => &["kind", "value"],
+        "range" => &["kind", "min", "max", "minExclusive", "maxExclusive"],
+        "oneOf" | "notOneOf" | "contains" | "subset" => &["kind", "values"],
+        "pattern" | "urlPattern" => &["kind", "pattern"],
+        "regex" => &["kind", "source"],
+        "exact" => &["kind", "value"],
+        "wildcard" => &["kind"],
+        "cidr" => &["kind", "network"],
+        "urlSafe" => &["kind", "schemes", "allowDomains", "denyDomains"],
+        "shlex" => &["kind", "allow"],
+        "anyOf" | "all" => &["kind", "constraints"],
+        "not" => &["kind", "constraint"],
+        "cel" => &["kind", "expression"],
+        other => return Err(format!("unknown constraint kind '{other}'")),
+    };
+    let object = expr.as_object().ok_or("constraint must be an object")?;
+    if let Some(unknown) = object
+        .keys()
+        .find(|key| !allowed_keys.contains(&key.as_str()))
+    {
+        return Err(format!(
+            "{kind} has unknown option '{unknown}'; allowed options: {}",
+            allowed_keys
+                .iter()
+                .copied()
+                .filter(|key| *key != "kind")
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     match kind {
         "under" => {
             if expr.get("caseSensitive").is_some() || expr.get("allowEqual").is_some() {

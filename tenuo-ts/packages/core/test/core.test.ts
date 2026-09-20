@@ -27,6 +27,7 @@ import {
   TenuoError,
   under,
   urlPattern,
+  urlSafe,
 } from "../src/index.ts";
 import type {
   AllowPolicy,
@@ -400,12 +401,28 @@ describe("constraints", () => {
     ["anyOf() with no constraints", () => anyOf([]), /at least one constraint/],
     ["all() with no constraints", () => all([]), /at least one constraint/],
     ["cel() with a blank expression", () => cel("   "), /non-empty expression/],
+    [
+      "urlSafe() with a misspelled option",
+      () => urlSafe({ domains: ["example.com"] } as never),
+      /unknown option "domains".*allowDomains/,
+    ],
   ])("%s throws TenuoConfigurationError", (_label, build, message) => {
     expect(build).toThrow(TenuoConfigurationError);
     expect(build).toThrow(message);
     expect(build).toThrow(
       expect.objectContaining({ code: "TENUO_CONFIGURATION", name: "TenuoConfigurationError" }),
     );
+  });
+
+  it("rejects unknown options in raw constraint objects instead of widening authority", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    expect(() => tenuo.session({
+      allow: {
+        fetch: {
+          url: { kind: "urlSafe", domains: ["example.com"] } as never,
+        },
+      },
+    })).toThrow(/urlSafe has unknown option 'domains'.*allowDomains/);
   });
 });
 

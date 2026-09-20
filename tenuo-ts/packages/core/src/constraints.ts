@@ -24,6 +24,22 @@ import type {
 } from "./api.ts";
 import { TenuoConfigurationError } from "./errors.ts";
 
+function rejectUnknownOptions(
+  builder: string,
+  options: object | undefined,
+  allowed: readonly string[],
+): void {
+  if (options === undefined) {
+    return;
+  }
+  const unknown = Object.keys(options).find((key) => !allowed.includes(key));
+  if (unknown !== undefined) {
+    throw new TenuoConfigurationError(
+      `tenuo.${builder}() received unknown option "${unknown}"; allowed options: ${allowed.join(", ")}`,
+    );
+  }
+}
+
 /**
  * Constraint builders. These produce plain marker objects; every one is
  * evaluated by the Rust core, never in TypeScript. The set matches the
@@ -38,6 +54,7 @@ export function under(
   root: string,
   options?: { readonly caseSensitive?: boolean; readonly allowEqual?: boolean },
 ): UnderConstraint {
+  rejectUnknownOptions("under", options, ["caseSensitive", "allowEqual"]);
   if (!root.startsWith("/")) {
     throw new TenuoConfigurationError("tenuo.under() expects an absolute path (start with /)");
   }
@@ -55,6 +72,7 @@ export function under(
 }
 
 export function email(options: { domain: string }): EmailConstraint {
+  rejectUnknownOptions("email", options, ["domain"]);
   return { kind: "email", domain: options.domain };
 }
 
@@ -79,6 +97,7 @@ export function range(options: {
   readonly minExclusive?: boolean;
   readonly maxExclusive?: boolean;
 }): RangeConstraint {
+  rejectUnknownOptions("range", options, ["min", "max", "minExclusive", "maxExclusive"]);
   if (options.min === undefined && options.max === undefined) {
     throw new TenuoConfigurationError("tenuo.range() requires min, max, or both");
   }
@@ -176,6 +195,7 @@ export function urlSafe(options?: {
   readonly allowDomains?: readonly string[];
   readonly denyDomains?: readonly string[];
 }): UrlSafeConstraint {
+  rejectUnknownOptions("urlSafe", options, ["schemes", "allowDomains", "denyDomains"]);
   const out: {
     kind: "urlSafe";
     schemes?: readonly string[];
