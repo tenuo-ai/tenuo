@@ -187,6 +187,19 @@ export type AllowPolicy = {
 };
 
 /**
+ * Closed tool ceiling produced by `noArgs()`: the wrapped tool accepts no
+ * arguments at all. It applies to `tenuo.tool()` only. The session warrant
+ * still records the capability as `{}`; `session({ allow })` and `narrow()`
+ * reject it so the ceiling is never mistaken for delegated authority.
+ */
+export type NoArgsPolicy = {
+  readonly $tenuoNoArgs: true;
+};
+
+/** What `tenuo.tool()` accepts as `allow`: a field policy or `noArgs()`. */
+export type CapabilityPolicy = AllowPolicy | NoArgsPolicy;
+
+/**
  * Framework tool shape we wrap. No dependency on `ai` / Mastra.
  * `parameters` is host-schema (usually Zod) and is never treated as authority.
  */
@@ -205,9 +218,10 @@ export type ToolPolicy<TArgs = undefined> = {
   /**
    * Host ceiling. AND'd with the session in Rust.
    * Non-empty maps are zero-trust: every call argument must be named here.
-   * `{}` means no extra ceiling (session/warrant only).
+   * `{}` means no extra ceiling (session/warrant only). `noArgs()` closes
+   * the ceiling: the call must carry no arguments.
    */
-  readonly allow: [NonNullable<TArgs>] extends [object]
+  readonly allow: NoArgsPolicy | ([NonNullable<TArgs>] extends [object]
     ? [KeysOfUnion<NonNullable<TArgs>>] extends [never]
       ? AllowPolicy
       : string extends KeysOfUnion<NonNullable<TArgs>>
@@ -217,7 +231,7 @@ export type ToolPolicy<TArgs = undefined> = {
           : symbol extends KeysOfUnion<NonNullable<TArgs>>
             ? AllowPolicy
             : { readonly [Field in KeysOfUnion<NonNullable<TArgs>>]?: ConstraintExpr }
-    : AllowPolicy;
+    : AllowPolicy);
   readonly capability?: string;
 };
 

@@ -151,6 +151,22 @@ covered, for example with `pattern("*")`, or removed from the call.
 An empty tool policy, `allow: {}`, adds no host ceiling. The session warrant
 still applies; it does not mean “allow everything.”
 
+For a tool that accepts exactly zero arguments, close the ceiling with
+`noArgs()`:
+
+```ts
+const status = tenuo.tool(rawStatus, {
+  capability: "read_git_status",
+  allow: noArgs(),
+});
+```
+
+The empty call `{}` passes; any supplied key is denied before the tool body
+runs. `noArgs()` is a host ceiling on the wrapped tool, like the rest of
+`allow`. The session warrant still records the capability as `{}`, so another
+enforcement point verifying the same warrant does not inherit it, and
+`session({ allow })` and `narrow()` reject `noArgs()` for that reason.
+
 ### Sessions carry delegated authority
 
 `session({ tools })` builds the session policy from protected tools, so the

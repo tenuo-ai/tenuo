@@ -2521,12 +2521,13 @@ pub(crate) fn tools_for_narrow(
         return Err(JsError::new("narrow() requires a non-empty allow policy"));
     }
 
-    let field_level = obj
-        .values()
-        .all(|v| v.get("kind").and_then(|k| k.as_str()).is_some());
+    let field_level = obj.get("$tenuoNoArgs").is_some()
+        || obj
+            .values()
+            .all(|v| v.get("kind").and_then(|k| k.as_str()).is_some());
 
     if field_level {
-        let set = constraint_set_from_fields(obj)?;
+        let set = constraint_set_from_fields(obj).map_err(|e| JsError::new(&e))?;
         let tools = leaf
             .capabilities()
             .ok_or_else(|| JsError::new("leaf has no capabilities to narrow"))?;
@@ -2545,12 +2546,21 @@ pub(crate) fn tools_for_narrow(
         let fields = fields
             .as_object()
             .ok_or_else(|| JsError::new(&format!("allow.{tool} must be an object")))?;
-        out.insert(tool.clone(), constraint_set_from_fields(fields)?);
+        out.insert(
+            tool.clone(),
+            constraint_set_from_fields(fields).map_err(|e| JsError::new(&e))?,
+        );
     }
     Ok(out)
 }
 
+/// Reserved key the TypeScript `noArgs()` builder emits. It is a host
+/// ceiling on the wrapped tool only: warrants never carry it, so every
+/// path that mints or narrows a warrant rejects it.
+pub(crate) const NO_ARGS_KEY: &str = "$tenuoNoArgs";
+
 /// Wrapper `allow` ceiling. Null/undefined: no extra gate. Empty object: open.
+/// `noArgs()`: closed, the call must carry no arguments at all.
 fn apply_tool_ceiling(
     tool_allow: &JsValue,
     args: &HashMap<String, ConstraintValue>,
@@ -2569,22 +2579,36 @@ fn apply_tool_ceiling(
     if obj.is_empty() {
         return Ok(());
     }
-    let mut set = ConstraintSet::new();
-    for (field, expr) in obj {
-        let constraint = constraint_from_expr(expr)
-            .map_err(|e| Error::ConfigurationError(format!("tool allow.{field}: {e}")))?;
-        set.insert(field.clone(), constraint);
+    if let Some(marker) = obj.get(NO_ARGS_KEY) {
+        if obj.len() != 1 || marker.as_bool() != Some(true) {
+            return Err(Error::ConfigurationError(
+                "$tenuoNoArgs is reserved; use tenuo.noArgs() as the complete tool policy".into(),
+            ));
+        }
+        // BTreeMap order would be nicer, but args is a HashMap: pick the
+        // smallest key so the reported field is deterministic.
+        if let Some(field) = args.keys().min() {
+            return Err(Error::ConstraintNotSatisfied {
+                field: field.clone(),
+                reason: "unknown field not allowed (tool ceiling is noArgs(): no arguments accepted)"
+                    .to_string(),
+            });
+        }
+        return Ok(());
     }
+    let set = constraint_set_from_fields(obj).map_err(Error::ConfigurationError)?;
     set.matches(args)
 }
 
 pub(crate) fn constraint_set_from_fields(
     fields: &serde_json::Map<String, serde_json::Value>,
-) -> Result<ConstraintSet, JsError> {
+) -> Result<ConstraintSet, String> {
+    if fields.contains_key(NO_ARGS_KEY) {
+        return Err("noArgs() is a host ceiling for tenuo.tool() and is not carried by the warrant; use {} here and pass noArgs() to tenuo.tool()".into());
+    }
     let mut set = ConstraintSet::new();
     for (field, expr) in fields {
-        let constraint =
-            constraint_from_expr(expr).map_err(|e| JsError::new(&format!("allow.{field}: {e}")))?;
+        let constraint = constraint_from_expr(expr).map_err(|e| format!("allow.{field}: {e}"))?;
         set.insert(field.clone(), constraint);
     }
     Ok(set)

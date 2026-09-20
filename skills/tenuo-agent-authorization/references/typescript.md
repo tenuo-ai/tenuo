@@ -21,7 +21,7 @@ For production verification, configure a holder identity and explicit trusted ro
 
 Use the installed package types to verify the exact ownership and signatures of tool protection, runtime, session, presentation, verification, and MCP methods. The release-tagged MCP example above is compiled and tested with that SDK; adapt its boundary placement rather than copying remembered syntax. Newer examples on `main` may use unreleased APIs and are not evidence for the installed version.
 
-`allow` is a host-side ceiling intersected with the session's authority. Name every call argument whose value matters to the effect. On the current core API, `allow: {}` adds no additional host ceiling; do not describe it as deny-all.
+`allow` is a host-side ceiling intersected with the session's authority. Name every call argument whose value matters to the effect. On the current core API, `allow: {}` adds no additional host ceiling; do not describe it as deny-all. For a tool that takes no arguments, pass `allow: noArgs()` when the installed package exports it: any supplied argument is denied before the tool body runs. It is a ceiling on the wrapped tool only. The warrant still records `{}`, `session({ allow })` and `narrow()` reject it, and another enforcement point verifying the same warrant does not inherit it; do not describe it as delegated authority.
 
 ## MCP placement
 

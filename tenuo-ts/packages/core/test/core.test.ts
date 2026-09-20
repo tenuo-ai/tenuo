@@ -16,6 +16,7 @@ import {
   inspectApprovalGate,
   max,
   min,
+  noArgs,
   notOneOf,
   oneOf,
   pattern,
@@ -31,6 +32,7 @@ import {
 } from "../src/index.ts";
 import type {
   AllowPolicy,
+  CapabilityPolicy,
   ExecuteOptions,
   ProtectedTool,
   ToolLike,
@@ -106,7 +108,7 @@ describe("ToolPolicy types", () => {
 
   it("keeps bare and no-argument policies open without admitting undefined", () => {
     const policy: ToolPolicy = { allow: { path: under("/data") } };
-    expectTypeOf(policy.allow).toEqualTypeOf<AllowPolicy>();
+    expectTypeOf(policy.allow).toEqualTypeOf<CapabilityPolicy>();
 
     const tenuo = createTenuo({ root: createTenuo.devRoot() });
     tenuo.tool(
@@ -749,6 +751,51 @@ describe("tool allow and session({ tools })", () => {
     await expect(tenuo.withSession(session, () => ping.execute({} as Record<string, never>))).resolves.toBe(
       "pong",
     );
+  });
+
+  it("noArgs() rejects smuggled arguments before the tool body", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    let calls = 0;
+    const ping = tenuo.tool(
+      {
+        execute: async (_args: Record<string, never>) => {
+          calls += 1;
+          return "pong";
+        },
+      },
+      { capability: "ping", allow: noArgs() },
+    );
+    const session = tenuo.session({ tools: [ping] });
+    await expect(tenuo.withSession(session, () => ping.execute({}))).resolves.toBe("pong");
+    await expect(
+      tenuo.withSession(session, () => ping.execute({ pathspec: "../../etc/passwd" } as never)),
+    ).rejects.toMatchObject({
+      code: "TENUO_CONSTRAINT_VIOLATION",
+      field: "pathspec",
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("noArgs() is a ceiling on the wrapped tool, not authority in the warrant", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const ping = tenuo.tool(
+      { execute: async (_args: Record<string, never>) => "pong" },
+      { capability: "ping", allow: noArgs() },
+    );
+    // Same capability, no ceiling: the warrant session({ tools }) minted is {}.
+    const open = tenuo.tool(
+      { execute: async (args: Record<string, unknown>) => args },
+      { capability: "ping", allow: {} },
+    );
+    const session = tenuo.session({ tools: [ping] });
+    await expect(
+      tenuo.withSession(session, () => open.execute({ pathspec: "x" })),
+    ).resolves.toEqual({ pathspec: "x" });
+
+    const message = /noArgs\(\) is a host ceiling/;
+    expect(() => tenuo.session({ allow: { ping: noArgs() as never } })).toThrow(message);
+    expect(() => tenuo.narrow(session, noArgs() as never)).toThrow(message);
+    expect(() => tenuo.narrow(session, { ping: noArgs() } as never)).toThrow(message);
   });
 });
 
