@@ -2531,6 +2531,63 @@ pub struct UrlSafe {
     pub block_internal_tlds: bool,
 }
 
+/// Why [`UrlSafe`] rejected a URL. Codes are stable for diagnostics and logs;
+/// messages are intended for local operator-facing explanations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UrlSafeRejection {
+    NullByte,
+    Malformed,
+    Scheme,
+    MissingHost,
+    Port,
+    Loopback,
+    InternalHostname,
+    Metadata,
+    AmbiguousIp,
+    DomainAllowList,
+    DomainDenyList,
+    PrivateNetwork,
+    ReservedAddress,
+}
+
+impl UrlSafeRejection {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NullByte => "url_null_byte",
+            Self::Malformed => "url_malformed",
+            Self::Scheme => "url_scheme_not_allowed",
+            Self::MissingHost => "url_missing_host",
+            Self::Port => "url_port_not_allowed",
+            Self::Loopback => "url_loopback_blocked",
+            Self::InternalHostname => "url_internal_hostname_blocked",
+            Self::Metadata => "url_metadata_blocked",
+            Self::AmbiguousIp => "url_ambiguous_ip_blocked",
+            Self::DomainAllowList => "url_domain_not_allowed",
+            Self::DomainDenyList => "url_domain_denied",
+            Self::PrivateNetwork => "url_private_network_blocked",
+            Self::ReservedAddress => "url_reserved_address_blocked",
+        }
+    }
+
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::NullByte => "URL contains a null byte",
+            Self::Malformed => "URL is malformed",
+            Self::Scheme => "URL scheme is not allowed",
+            Self::MissingHost => "URL has no host",
+            Self::Port => "URL port is not allowed",
+            Self::Loopback => "loopback hosts and addresses are blocked",
+            Self::InternalHostname => "internal hostnames are blocked",
+            Self::Metadata => "cloud metadata hosts and addresses are blocked",
+            Self::AmbiguousIp => "ambiguous IP address notation is blocked",
+            Self::DomainAllowList => "host is not in the domain allow list",
+            Self::DomainDenyList => "host is in the domain deny list",
+            Self::PrivateNetwork => "private network addresses are blocked",
+            Self::ReservedAddress => "reserved addresses are blocked",
+        }
+    }
+}
+
 fn default_schemes() -> Vec<String> {
     vec!["http".to_string(), "https".to_string()]
 }
@@ -2591,34 +2648,35 @@ impl UrlSafe {
         }
     }
 
-    /// Check if a URL is safe to fetch.
+    /// Return a stable, operator-facing reason when a URL is rejected.
     ///
-    /// Returns `Ok(true)` if the URL passes all SSRF checks.
-    /// Returns `Ok(false)` for any security violation or malformed URL.
-    pub fn is_safe(&self, url: &str) -> Result<bool> {
+    /// This is intentionally separate from the public authorization error:
+    /// callers can use it in local diagnostics without turning remote denials
+    /// into a policy oracle.
+    pub fn rejection_reason(&self, url: &str) -> Result<Option<UrlSafeRejection>> {
         use url::Url;
 
         // Reject null bytes
         if url.contains('\0') {
-            return Ok(false);
+            return Ok(Some(UrlSafeRejection::NullByte));
         }
 
         // Parse URL
         let parsed = match Url::parse(url) {
             Ok(u) => u,
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(Some(UrlSafeRejection::Malformed)),
         };
 
         // Check scheme
         let scheme = parsed.scheme().to_lowercase();
         if !self.schemes.iter().any(|s| s.to_lowercase() == scheme) {
-            return Ok(false);
+            return Ok(Some(UrlSafeRejection::Scheme));
         }
 
         // Extract host
         let host = match parsed.host_str() {
             Some(h) if !h.is_empty() => h,
-            _ => return Ok(false), // No host or empty host
+            _ => return Ok(Some(UrlSafeRejection::MissingHost)),
         };
 
         // Decode percent-encoded hostname (SSRF bypass prevention)
@@ -2630,34 +2688,34 @@ impl UrlSafe {
         if let Some(ref allowed_ports) = self.allow_ports {
             if let Some(port) = parsed.port_or_known_default() {
                 if !allowed_ports.contains(&port) {
-                    return Ok(false);
+                    return Ok(Some(UrlSafeRejection::Port));
                 }
             }
         }
 
         // Check for localhost names
         if self.block_loopback && (host == "localhost" || host == "localhost.localdomain") {
-            return Ok(false);
+            return Ok(Some(UrlSafeRejection::Loopback));
         }
 
         // Check internal TLDs
         if self.block_internal_tlds {
             for tld in INTERNAL_TLDS {
                 if host.ends_with(tld) || host == tld[1..] {
-                    return Ok(false);
+                    return Ok(Some(UrlSafeRejection::InternalHostname));
                 }
             }
         }
 
         // Check metadata hosts
         if self.block_metadata && METADATA_HOSTS.contains(&host.as_str()) {
-            return Ok(false);
+            return Ok(Some(UrlSafeRejection::Metadata));
         }
 
         // Try to parse as IP address
         if let Some(ip) = self.parse_ip(&host) {
-            if !self.check_ip_safe(&ip) {
-                return Ok(false);
+            if let Some(reason) = self.ip_rejection_reason(&ip) {
+                return Ok(Some(reason));
             }
         } else {
             // It's a hostname - additional security checks
@@ -2670,13 +2728,13 @@ impl UrlSafe {
             //
             // This inconsistency creates SSRF bypass risk. Fail closed.
             if self.looks_like_ambiguous_ip(&host) {
-                return Ok(false);
+                return Ok(Some(UrlSafeRejection::AmbiguousIp));
             }
 
             // Check domain allowlist (hostnames only — IPs use block_* flags)
             if let Some(ref domains) = self.allow_domains {
                 if !self.check_domain_allowed(&host, domains) {
-                    return Ok(false);
+                    return Ok(Some(UrlSafeRejection::DomainAllowList));
                 }
             }
         }
@@ -2686,11 +2744,19 @@ impl UrlSafe {
         // deny_domains: ["169.254.169.254"] works as expected.
         if let Some(ref denied) = self.deny_domains {
             if self.check_domain_allowed(&host, denied) {
-                return Ok(false);
+                return Ok(Some(UrlSafeRejection::DomainDenyList));
             }
         }
 
-        Ok(true)
+        Ok(None)
+    }
+
+    /// Check if a URL is safe to fetch.
+    ///
+    /// Returns `Ok(true)` if the URL passes all SSRF checks.
+    /// Returns `Ok(false)` for any security violation or malformed URL.
+    pub fn is_safe(&self, url: &str) -> Result<bool> {
+        Ok(self.rejection_reason(url)?.is_none())
     }
 
     /// Parse host as IP address, handling various representations.
@@ -2799,7 +2865,7 @@ impl UrlSafe {
     }
 
     /// Check if IP address is safe to connect to.
-    fn check_ip_safe(&self, ip: &IpAddr) -> bool {
+    fn ip_rejection_reason(&self, ip: &IpAddr) -> Option<UrlSafeRejection> {
         // Handle IPv6 addresses that embed IPv4
         let ip = match ip {
             IpAddr::V6(v6) => {
@@ -2835,7 +2901,7 @@ impl UrlSafe {
 
         // Check loopback
         if self.block_loopback && ip.is_loopback() {
-            return false;
+            return Some(UrlSafeRejection::Loopback);
         }
 
         // Check private ranges (requires manual check for IPv4)
@@ -2844,15 +2910,15 @@ impl UrlSafe {
                 let octets = v4.octets();
                 // 10.0.0.0/8
                 if octets[0] == 10 {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
                 // 172.16.0.0/12
                 if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
                 // 192.168.0.0/16
                 if octets[0] == 192 && octets[1] == 168 {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
             }
             // IPv6 private ranges
@@ -2860,11 +2926,11 @@ impl UrlSafe {
                 let segments = v6.segments();
                 // fc00::/7 (unique local)
                 if (segments[0] & 0xfe00) == 0xfc00 {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
                 // fe80::/10 (link-local)
                 if (segments[0] & 0xffc0) == 0xfe80 {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
             }
         }
@@ -2875,15 +2941,15 @@ impl UrlSafe {
                 let octets = v4.octets();
                 // 0.0.0.0/8 ("This" network)
                 if octets[0] == 0 {
-                    return false;
+                    return Some(UrlSafeRejection::ReservedAddress);
                 }
                 // 224.0.0.0/4 (Multicast)
                 if (224..=239).contains(&octets[0]) {
-                    return false;
+                    return Some(UrlSafeRejection::ReservedAddress);
                 }
                 // 255.255.255.255 (Broadcast)
                 if octets == [255, 255, 255, 255] {
-                    return false;
+                    return Some(UrlSafeRejection::ReservedAddress);
                 }
             }
         }
@@ -2893,12 +2959,12 @@ impl UrlSafe {
             if let IpAddr::V4(v4) = ip {
                 let octets = v4.octets();
                 if octets[0] == 169 && octets[1] == 254 {
-                    return false;
+                    return Some(UrlSafeRejection::Metadata);
                 }
             }
         }
 
-        true
+        None
     }
 
     /// Check if hostname matches domain allowlist.
@@ -5610,6 +5676,10 @@ mod tests {
         assert!(!us.is_safe("http://127.0.0.1/").unwrap());
         assert!(!us.is_safe("http://localhost/").unwrap());
         assert!(!us.is_safe("http://[::1]/").unwrap());
+        assert_eq!(
+            us.rejection_reason("http://127.0.0.1/").unwrap(),
+            Some(UrlSafeRejection::Loopback)
+        );
     }
 
     #[test]

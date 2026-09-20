@@ -501,6 +501,8 @@ export type ExplainedField = {
   /** Absent when the argument was not supplied. */
   readonly value?: unknown;
   readonly satisfied: boolean;
+  /** Stable machine-readable diagnostic, when the core can identify one. */
+  readonly reasonCode?: string;
   readonly reason?: string;
 };
 

@@ -14,7 +14,8 @@ use tenuo::approval::{
 };
 use tenuo::{
     encode_approval_gate_map, parse_approval_gate_map, ApprovalGateMap, ApprovalRequest,
-    ArgApprovalGate, Authorizer, Clearance, ConstraintSet, Error, PublicKey, SignedRevocationList,
+    ArgApprovalGate, Authorizer, Clearance, Constraint, ConstraintSet, Error, PublicKey,
+    SignedRevocationList,
     SigningKey, ToolApprovalGate, Warrant, WarrantType, APPROVAL_GATE_EXTENSION_KEY,
     MAX_DELEGATION_DEPTH,
 };
@@ -514,21 +515,41 @@ impl SdkContext {
                             constraint: expr,
                             value: None,
                             satisfied: false,
+                            reason_code: Some("argument_missing".into()),
                             reason: Some("argument not supplied".into()),
                         });
                     }
                     Some(value) => {
-                        let (satisfied, reason) = match constraint.matches(value) {
-                            Ok(true) => (true, None),
-                            Ok(false) => (
-                                false,
-                                Some(format!(
-                                    "{} does not satisfy {}",
-                                    value,
-                                    constraint.type_name()
-                                )),
-                            ),
-                            Err(e) => (false, Some(e.to_string())),
+                        let (satisfied, reason_code, reason) = match constraint {
+                            Constraint::UrlSafe(safe) => match value.as_str() {
+                                Some(url) => match safe.rejection_reason(url) {
+                                    Ok(None) => (true, None, None),
+                                    Ok(Some(rejection)) => (
+                                        false,
+                                        Some(rejection.code().to_string()),
+                                        Some(rejection.message().to_string()),
+                                    ),
+                                    Err(e) => (false, None, Some(e.to_string())),
+                                },
+                                None => (
+                                    false,
+                                    Some("url_value_not_string".to_string()),
+                                    Some("URL value must be a string".to_string()),
+                                ),
+                            },
+                            _ => match constraint.matches(value) {
+                                Ok(true) => (true, None, None),
+                                Ok(false) => (
+                                    false,
+                                    None,
+                                    Some(format!(
+                                        "{} does not satisfy {}",
+                                        value,
+                                        constraint.type_name()
+                                    )),
+                                ),
+                                Err(e) => (false, None, Some(e.to_string())),
+                            },
                         };
                         fields.push(ExplainFieldDto {
                             field: field.clone(),
@@ -536,6 +557,7 @@ impl SdkContext {
                             constraint: expr,
                             value: Some(cv_to_json(value)),
                             satisfied,
+                            reason_code,
                             reason,
                         });
                     }
@@ -846,6 +868,8 @@ struct ExplainFieldDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<serde_json::Value>,
     satisfied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
 }
