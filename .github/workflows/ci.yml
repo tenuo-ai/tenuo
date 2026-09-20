@@ -714,10 +714,55 @@ jobs:
     name: TypeScript SDK
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Two independent questions, because the answers differ for most pull
+      # requests: does this lane need to run at all, and does it need to
+      # recompile the WASM? When no Rust changed, the committed binary is
+      # already the one that ships and the other lanes test, so rebuilding it
+      # only re-runs wasm-opt. Gated as steps rather than a job `if:` so the
+      # required check still reports.
+      - name: Select lane
+        id: lane
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "Not a pull request: running the full lane."
+            exit 0
+          fi
+          # Falling back to the full lane keeps a transient API failure from
+          # quietly skipping checks, and from blocking the pull request.
+          if ! files="$(gh api --paginate \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename')"; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "Could not list changed files: running the full lane."
+            exit 0
+          fi
+          needed=false
+          rust=false
+          if grep -Eq '^(tenuo-core/|tenuo-wasm/|tenuo-ts/|tenuo-python/|\.github/workflows/ci\.yml$)' <<<"$files"; then
+            needed=true
+          fi
+          if grep -Eq '^(tenuo-core/|tenuo-wasm/|\.github/workflows/ci\.yml$)' <<<"$files"; then
+            rust=true
+          fi
+          echo "needed=$needed" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "needed=$needed rust=$rust"
+
+      # maturin needs the toolchain even when nothing WASM is rebuilt.
       - name: Install Rust
+        if: steps.lane.outputs.needed == 'true'
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
@@ -725,6 +770,7 @@ jobs:
           components: clippy
 
       - name: Cache Rust
+        if: steps.lane.outputs.needed == 'true'
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           workspaces: |
@@ -732,9 +778,11 @@ jobs:
             tenuo-python
 
       - name: Install wasm-pack
+        if: steps.lane.outputs.rust == 'true'
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Check locked WASM adapter and lint
+        if: steps.lane.outputs.rust == 'true'
         working-directory: tenuo-wasm
         run: |
           cargo check --locked --target wasm32-unknown-unknown
@@ -745,6 +793,7 @@ jobs:
             -A clippy::too_many_arguments
 
       - name: Setup Python
+        if: steps.lane.outputs.needed == 'true'
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
@@ -752,6 +801,7 @@ jobs:
           cache-dependency-path: tenuo-python/pyproject.toml
 
       - name: Build and install the Python binding
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-python
         run: |
           pip install uv
@@ -761,11 +811,13 @@ jobs:
           python -c "import tenuo; from tenuo.mcp.server import MCPVerifier; print(f'tenuo {tenuo.__version__}')"
 
       - name: Setup pnpm
+        if: steps.lane.outputs.needed == 'true'
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
           version: 9.15.9
 
       - name: Setup Node.js
+        if: steps.lane.outputs.needed == 'true'
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "20"
@@ -773,23 +825,39 @@ jobs:
           cache-dependency-path: tenuo-ts/pnpm-lock.yaml
 
       - name: Install
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: pnpm typecheck
 
-      - name: Test
+      - name: Test (rebuilt WASM)
+        if: steps.lane.outputs.rust == 'true'
         working-directory: tenuo-ts
         env:
           TENUO_REQUIRE_INTEROP: "1"
         run: pnpm test
 
+      # No Rust changed, so `pnpm build:wasm` would recompile the committed
+      # binary into a differently optimized copy of itself. Test the committed
+      # one instead: it is what ships, and interop still runs against Python.
+      - name: Test (committed WASM)
+        if: steps.lane.outputs.needed == 'true' && steps.lane.outputs.rust != 'true'
+        working-directory: tenuo-ts
+        env:
+          TENUO_REQUIRE_INTEROP: "1"
+        run: |
+          pnpm --filter @tenuo/core test
+          pnpm --filter @tenuo/mcp test
+
       # Optimized .wasm bytes and private export ordering vary across Rust and
       # wasm-pack patch releases. The public adapters are the deterministic
       # generated contract; the rebuilt binary is exercised by the tests above.
       - name: Verify public WASM bindings are current
+        if: steps.lane.outputs.rust == 'true'
         run: |
           git diff --exit-code -- \
             tenuo-wasm/Cargo.lock \
@@ -797,10 +865,12 @@ jobs:
             tenuo-ts/packages/core/src/generated/tenuo_wasm.d.ts
 
       - name: Pack smoke (Node 20)
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
 
       - name: Next.js Node runtime example
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         env:
           NEXT_TELEMETRY_DISABLED: "1"
