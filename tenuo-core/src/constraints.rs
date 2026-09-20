@@ -719,8 +719,20 @@ impl Constraint {
                 parent.validate_attenuation(child)
             }
 
-            // All can add more constraints
+            // All can add more constraints, or collapse to a single Exact value
+            // that every conjunct already admits.
             (Constraint::All(parent), Constraint::All(child)) => parent.validate_attenuation(child),
+            (Constraint::All(parent), Constraint::Exact(child_exact)) => {
+                for conjunct in &parent.constraints {
+                    if !conjunct.matches(&child_exact.value)? {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "exact value is rejected by the parent's {} constraint",
+                            conjunct.type_name()
+                        )));
+                    }
+                }
+                Ok(())
+            }
 
             // Any: every child branch must be covered by some parent branch
             (Constraint::Any(parent), Constraint::Any(child)) => parent.validate_attenuation(child),
@@ -4292,6 +4304,37 @@ mod tests {
         assert!(all.matches(&50i64.into()).unwrap());
         assert!(!all.matches(&(-10i64).into()).unwrap());
         assert!(!all.matches(&150i64.into()).unwrap());
+    }
+
+    #[test]
+    fn test_all_attenuates_to_exact() {
+        // A path glob: contained under a root *and* matching a filename shape.
+        let parent: Constraint = All::new([
+            Subpath::new("/workspace").unwrap().into(),
+            Pattern::new("*.json").unwrap().into(),
+        ])
+        .into();
+
+        // A delegatee may pin the argument to one concrete value that every
+        // conjunct already admits.
+        parent
+            .validate_attenuation(&Exact::new("/workspace/reports/q3.json").into())
+            .unwrap();
+
+        // Escaping the root is still refused, even though the glob matches.
+        assert!(parent
+            .validate_attenuation(&Exact::new("/etc/passwd.json").into())
+            .is_err());
+
+        // Staying under the root is not enough if the glob rejects the value.
+        assert!(parent
+            .validate_attenuation(&Exact::new("/workspace/secrets.env").into())
+            .is_err());
+
+        // Traversal out of the root is refused after normalization.
+        assert!(parent
+            .validate_attenuation(&Exact::new("/workspace/../etc/passwd.json").into())
+            .is_err());
     }
 
     #[test]

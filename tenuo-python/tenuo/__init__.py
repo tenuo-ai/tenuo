@@ -147,7 +147,7 @@ from .nonce import (
 )
 
 # Constraints
-from .constraints import Capability, Shlex, Subpath, UrlSafe
+from .constraints import Capability, Shlex, Subpath, UrlSafe, path_glob
 
 # Authority context managers
 from .scoped import (
@@ -359,6 +359,7 @@ __all__ = [
     "Subpath",  # Secure path containment (path traversal protection)
     "UrlSafe",  # SSRF protection (IP/domain blocking)
     "Shlex",  # Shell injection protection (command validation)
+    "path_glob",  # Subpath + Pattern: traversal-safe filesystem glob
     # Constraint aliases (shorter names)
     "Path",  # Alias for Subpath
     "Url",  # Alias for UrlSafe

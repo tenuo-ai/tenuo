@@ -222,7 +222,8 @@ Tenuo provides semantic constraints that block specific attack vectors:
 | Type | Example | Protects Against |
 |------|---------|------------------|
 | `Subpath(root)` | `Subpath("/data")` | Path traversal (`../etc/passwd`) |
-| `Pattern(glob)` | `Pattern("*.pdf")` | Arbitrary file access |
+| `path_glob(root, glob)` | `path_glob("/data", "*.pdf")` | Arbitrary file access |
+| `Pattern(glob)` | `Pattern("*.pdf")` | Unexpected value shapes — **not** file access: `*` crosses `/`, so this alone admits `/etc/passwd.pdf` |
 | `OneOf([values])` | `OneOf(["dev", "prod"])` | Injection attacks |
 | `Range(min, max)` | `Range(0, 100)` | Parameter tampering |
 | `UrlSafe()` | `UrlSafe()` | SSRF attacks |

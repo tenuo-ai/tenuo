@@ -76,7 +76,7 @@ For each capability and constraint, explain what you chose and why using this ma
 | "only in production" or "staging only" | `OneOf(["prod"])` | Enum constraint. Like environment-scoped IAM roles. |
 | "IP range 10.0.0.0/8" | `Cidr("10.0.0.0/8")` | Network range constraint. Like a security group or firewall rule. |
 | "custom rule: if X then Y" | `CEL("expression")` | Arbitrary evaluation logic. Like an OPA/Rego policy. Needs human review. |
-| "files matching *.json" | First establish an allowed root, then use `All([Subpath("/allowed/root"), Pattern("*.json")])` | `Pattern` is a generic string glob: `*` crosses `/` and does not prevent traversal. Never use it alone as a filesystem boundary. |
+| "files matching *.json" | `path_glob("/allowed/root", "*.json")` (or `All([Subpath("/allowed/root"), Pattern("*.json")])`) | `Pattern` is a generic string glob: `*` crosses `/`, so `Pattern("*.json")` alone admits `/etc/passwd.json`. Never use it alone as a filesystem boundary. The glob is tested against the whole path, so it matches at any depth under the root. Supports delegation narrowing: a child may narrow to a tighter root or to an `Exact` path the parent already admits. |
 | "exactly this value" | `Exact("value")` | Literal match only. Like an enum with one option. |
 | "match pattern [regex]" | `Regex("pattern")` | Regex match. **Cannot be narrowed during delegation** — prefer `Pattern` if the warrant will be delegated further. |
 | "anything except X" | `Not(Exact("X"))` or `Not(OneOf([...]))` | Negation — rejects values matching the inner constraint. Attenuation direction reverses: child's inner must be *wider* than parent's inner. |

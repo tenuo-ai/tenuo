@@ -400,9 +400,47 @@ describe("constraints", () => {
     await expect(readJson.execute({ path: "/workspace/reports/q3.json" }, { session })).resolves.toBe(
       "/workspace/reports/q3.json",
     );
+
+    // Containment is decided after normalization, not by a textual prefix:
+    // each of these matches the `*.json` glob and must still be refused.
+    for (const path of [
+      "../../etc/passwd.json",
+      "/workspace/../etc/passwd.json",
+      "/workspace/a/../../etc/passwd.json",
+      "/workspace-evil/x.json",
+      "/etc/passwd.json",
+    ]) {
+      await expect(readJson.execute({ path }, { session })).rejects.toMatchObject({
+        code: "TENUO_CONSTRAINT_VIOLATION",
+        field: "path",
+      });
+    }
+
+    // The root alone is not a licence to read anything under it.
     await expect(
-      readJson.execute({ path: "../../etc/passwd.json" }, { session }),
+      readJson.execute({ path: "/workspace/secrets.env" }, { session }),
     ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION", field: "path" });
+  });
+
+  it("applies the path glob to the whole path, not relative to the root", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const read = (glob: string) =>
+      tenuo.tool(
+        { execute: async ({ path }: { path: string }) => path },
+        { capability: "read_json", allow: { path: pathGlob("/workspace", glob) } },
+      );
+
+    // A root-relative looking glob does not match: the value it is tested
+    // against is the full path, so it needs to admit the root too.
+    const relative = read("reports/*.json");
+    await expect(
+      relative.execute({ path: "/workspace/reports/q3.json" }, { session: tenuo.session({ tools: [relative] }) }),
+    ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION", field: "path" });
+
+    const absolute = read("/workspace/reports/*.json");
+    await expect(
+      absolute.execute({ path: "/workspace/reports/q3.json" }, { session: tenuo.session({ tools: [absolute] }) }),
+    ).resolves.toBe("/workspace/reports/q3.json");
   });
 
   it.each<[string, () => unknown, RegExp]>([
@@ -804,6 +842,27 @@ describe("narrow", () => {
       allow: { read_file: { path: under("/data/reports") } },
     });
     expect(() => tenuo.narrow(session, { path: under("/data") })).toThrow(
+      expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
+    );
+  });
+
+  it("narrows a path glob to one file, or to a tighter root", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { read_file: { path: pathGlob("/data", "*.json") } },
+    });
+
+    expect(() => tenuo.narrow(session, { path: exact("/data/reports/q3.json") })).not.toThrow();
+    expect(() => tenuo.narrow(session, { path: pathGlob("/data/reports", "*.json") })).not.toThrow();
+
+    // Values the parent never admitted stay refused.
+    expect(() => tenuo.narrow(session, { path: exact("/etc/passwd.json") })).toThrow(
+      expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
+    );
+    expect(() => tenuo.narrow(session, { path: exact("/data/secrets.env") })).toThrow(
+      expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
+    );
+    expect(() => tenuo.narrow(session, { path: pathGlob("/", "*.json") })).toThrow(
       expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
     );
   });

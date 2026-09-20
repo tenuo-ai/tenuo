@@ -167,7 +167,20 @@ export function pattern(pattern: string): PatternConstraint {
 
 /**
  * A traversal-safe filesystem glob: the value must stay under `root` and
- * match `glob`. The glob applies to the full path and may match at any depth.
+ * match `glob`.
+ *
+ * The glob is tested against the whole path, not against the part below
+ * `root`, so it matches at any depth:
+ *
+ * ```ts
+ * pathGlob("/workspace", "*.json");
+ * // /workspace/reports/q3.json  allowed
+ * // /workspace/secrets.env      denied (glob)
+ * // /etc/passwd.json            denied (root)
+ * ```
+ *
+ * A delegatee can narrow this to a tighter `pathGlob`, or to an `exact()`
+ * path the parent already admits.
  */
 export function pathGlob(
   root: string,

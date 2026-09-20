@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`Pattern` is documented as a string glob, not a path boundary, and
+  `pathGlob()`/`path_glob()` provide the safe composition.** `Pattern`'s `*`
+  crosses `/`, so `Pattern("*.json")` admits `/etc/passwd.json`; guidance that
+  presented it as protection against arbitrary file access was wrong. The new
+  helper pairs `Subpath` with `Pattern` so the value must stay under a root and
+  match the glob, which is decided after path normalization and so is not
+  defeated by `..` or a shared textual prefix like `/workspace-evil`. An `All`
+  constraint can now be narrowed to an `Exact` value that every conjunct
+  already admits, so a delegatee can still pin a path glob to one file.
 - **TypeScript/WASM constraint expressions fail closed on unknown options.**
   A raw constraint object (JSON/YAML policy, `narrow()`, approval-gate
   `when`/`exempt`, `constraintBounds`) with a key its kind does not accept,
