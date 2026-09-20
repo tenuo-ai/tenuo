@@ -24,13 +24,21 @@ import type {
 } from "./api.ts";
 import { TenuoConfigurationError } from "./errors.ts";
 
+/**
+ * Builders throw on a misspelled option instead of dropping it: an option
+ * that vanishes silently (`urlSafe({ domains })`) widens authority. The core
+ * applies the same rule to raw constraint objects when the policy compiles.
+ */
 function rejectUnknownOptions(
   builder: string,
-  options: object | undefined,
+  options: unknown,
   allowed: readonly string[],
 ): void {
-  if (options === undefined) {
+  if (options === undefined || options === null) {
     return;
+  }
+  if (typeof options !== "object" || Array.isArray(options)) {
+    throw new TenuoConfigurationError(`tenuo.${builder}() expects an options object`);
   }
   const unknown = Object.keys(options).find((key) => !allowed.includes(key));
   if (unknown !== undefined) {

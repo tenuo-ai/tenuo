@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **TypeScript/WASM constraint expressions fail closed on unknown options.**
+  A raw constraint object (JSON/YAML policy, `narrow()`, approval-gate
+  `when`/`exempt`, `constraintBounds`) with a key its kind does not accept,
+  or a value of the wrong type, is now rejected when the policy compiles
+  instead of being silently ignored; `{ kind: "urlSafe", domains: [...] }`
+  previously compiled to an unrestricted `urlSafe`. The `@tenuo/core`
+  builders reject misspelled options at the call site with
+  `TenuoConfigurationError`.
 - **Core chain verification hardening.** Multi-warrant chains must begin with
   a depth-0 warrant without a parent hash, and a child may not claim an
   issuance time before its parent. `Authorizer::with_max_token_lifetime()` can

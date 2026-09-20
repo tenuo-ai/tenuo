@@ -406,6 +406,22 @@ describe("constraints", () => {
       () => urlSafe({ domains: ["example.com"] } as never),
       /unknown option "domains".*allowDomains/,
     ],
+    [
+      "under() with a misspelled option",
+      () => under("/data", { allowEquals: true } as never),
+      /unknown option "allowEquals".*allowEqual/,
+    ],
+    [
+      "range() with a misspelled option",
+      () => range({ min: 1, maximum: 2 } as never),
+      /unknown option "maximum".*max/,
+    ],
+    [
+      "email() with a misspelled option",
+      () => email({ domain: "example.com", domains: [] } as never),
+      /unknown option "domains".*domain/,
+    ],
+    ["urlSafe() with a non-object", () => urlSafe("https" as never), /expects an options object/],
   ])("%s throws TenuoConfigurationError", (_label, build, message) => {
     expect(build).toThrow(TenuoConfigurationError);
     expect(build).toThrow(message);
@@ -414,15 +430,52 @@ describe("constraints", () => {
     );
   });
 
+  it("treats null options like omitted options", () => {
+    expect(under("/data", null as never)).toEqual({ kind: "under", root: "/data" });
+    expect(urlSafe(null as never)).toEqual({ kind: "urlSafe" });
+  });
+
+  const mint = (url: unknown) => () =>
+    createTenuo({ root: createTenuo.devRoot() }).session({
+      allow: { fetch: { url: url as never } },
+    });
+
   it("rejects unknown options in raw constraint objects instead of widening authority", () => {
-    const tenuo = createTenuo({ root: createTenuo.devRoot() });
-    expect(() => tenuo.session({
-      allow: {
-        fetch: {
-          url: { kind: "urlSafe", domains: ["example.com"] } as never,
+    expect(mint({ kind: "urlSafe", domains: ["example.com"] })).toThrow(
+      /urlSafe: unknown field `domains`.*allowDomains/,
+    );
+  });
+
+  it("rejects unknown options nested inside not / anyOf / all", () => {
+    const inner = { kind: "under", root: "/data", allowEquals: true };
+    expect(mint({ kind: "not", constraint: inner })).toThrow(/unknown field `allowEquals`/);
+    expect(mint({ kind: "anyOf", constraints: [inner] })).toThrow(/unknown field `allowEquals`/);
+    expect(mint({ kind: "all", constraints: [{ kind: "wildcard" }, inner] })).toThrow(
+      /unknown field `allowEquals`/,
+    );
+  });
+
+  it("rejects wrong-typed option values instead of dropping them", () => {
+    expect(mint({ kind: "range", min: "10", max: 100 })).toThrow(/range: invalid type: string "10"/);
+    expect(mint({ kind: "under", root: "/data", allowEqual: "false" })).toThrow(
+      /under: invalid type: string "false"/,
+    );
+    expect(mint({ kind: "urlSafe", allowDomains: "example.com" })).toThrow(/urlSafe: invalid type/);
+  });
+
+  it("applies the same rule to approval-gate when / exempt constraints", () => {
+    const gate = (arg: unknown) => () =>
+      createTenuo({ root: createTenuo.devRoot() }).session({
+        allow: { fetch: { url: urlSafe() } },
+        requireApproval: {
+          approvers: [createTenuo.publicKeyFromHex(APPROVER1_PUB)],
+          min: 1,
+          gates: { fetch: { args: { url: arg as never } } },
         },
-      },
-    })).toThrow(/urlSafe has unknown option 'domains'.*allowDomains/);
+      });
+    const typo = { kind: "urlSafe", domains: ["example.com"] };
+    expect(gate({ when: typo })).toThrow(/gates\.fetch\.args\.url\.when: urlSafe: unknown field `domains`/);
+    expect(gate({ exempt: typo })).toThrow(/gates\.fetch\.args\.url\.exempt: urlSafe: unknown field `domains`/);
   });
 });
 

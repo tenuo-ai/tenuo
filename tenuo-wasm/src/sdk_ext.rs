@@ -12,191 +12,23 @@ use std::time::Duration;
 use tenuo::approval::{
     build_approval_context_attestation, compute_request_hash, ApprovalPayload, SignedApproval,
 };
-use tenuo::constraints::{Shlex, Subpath, UrlSafe};
 use tenuo::{
-    encode_approval_gate_map, parse_approval_gate_map, All, Any, ApprovalGateMap, ApprovalRequest,
-    ArgApprovalGate, Authorizer, CelConstraint, Cidr, Clearance, Constraint, ConstraintSet,
-    ConstraintValue, Contains, Error, Not, NotOneOf, PublicKey, Range, RegexConstraint,
-    SignedRevocationList, SigningKey, Subset, ToolApprovalGate, UrlPattern, Warrant, WarrantType,
-    Wildcard, APPROVAL_GATE_EXTENSION_KEY, MAX_DELEGATION_DEPTH,
+    encode_approval_gate_map, parse_approval_gate_map, ApprovalGateMap, ApprovalRequest,
+    ArgApprovalGate, Authorizer, Clearance, ConstraintSet, Error, PublicKey, SignedRevocationList,
+    SigningKey, ToolApprovalGate, Warrant, WarrantType, APPROVAL_GATE_EXTENSION_KEY,
+    MAX_DELEGATION_DEPTH,
 };
 use wasm_bindgen::prelude::*;
 
 use crate::init_panic_hook;
 use crate::sdk::{
-    constraint_from_expr, cv_to_json, error_field, js_to_args, json_to_cv, map_code,
-    parse_holder_secret, parse_public_key_hex, parse_srl_bytes, signed_approval_from_text,
-    to_js_value, InputBudget, SdkContext, SdkSession,
+    constraint_from_expr, cv_to_json, error_field, js_to_args, map_code, parse_holder_secret,
+    parse_public_key_hex, parse_srl_bytes, signed_approval_from_text, to_js_value, SdkContext,
+    SdkSession,
 };
 
 const DEFAULT_TTL_SECS: u64 = 300;
 const DEFAULT_APPROVAL_TTL_SECS: u64 = 3600;
-
-// ---------------------------------------------------------------------------
-// Constraints beyond the six in sdk.rs
-// ---------------------------------------------------------------------------
-
-fn str_list(expr: &serde_json::Value, key: &str, what: &str) -> Result<Vec<String>, String> {
-    let values = expr
-        .get(key)
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| format!("{what} requires {key}"))?;
-    values
-        .iter()
-        .map(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| format!("{what} {key} must be strings"))
-        })
-        .collect()
-}
-
-fn value_list(
-    expr: &serde_json::Value,
-    key: &str,
-    what: &str,
-) -> Result<Vec<ConstraintValue>, String> {
-    let values = expr
-        .get(key)
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| format!("{what} requires {key}"))?;
-    let mut budget = InputBudget::default();
-    values
-        .iter()
-        .map(|v| json_to_cv(v, 0, &mut budget))
-        .collect()
-}
-
-fn inner_list(expr: &serde_json::Value, what: &str) -> Result<Vec<Constraint>, String> {
-    let items = expr
-        .get("constraints")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| format!("{what} requires constraints"))?;
-    if items.is_empty() {
-        return Err(format!("{what} requires at least one constraint"));
-    }
-    items.iter().map(constraint_from_expr).collect()
-}
-
-/// Kinds `sdk.rs` does not know. Called from `constraint_from_expr`'s
-/// fallthrough so the wire vocabulary stays in one place.
-pub(crate) fn constraint_from_expr_ext(
-    kind: &str,
-    expr: &serde_json::Value,
-) -> Result<Constraint, String> {
-    match kind {
-        "min" => {
-            let value = expr
-                .get("value")
-                .and_then(|v| v.as_f64())
-                .ok_or("min requires a numeric value")?;
-            Ok(Range::new(Some(value), None)
-                .map_err(|e| e.to_string())?
-                .into())
-        }
-        "range" => {
-            let min = expr.get("min").and_then(|v| v.as_f64());
-            let max = expr.get("max").and_then(|v| v.as_f64());
-            if min.is_none() && max.is_none() {
-                return Err("range requires min, max, or both".into());
-            }
-            let mut range = Range::new(min, max).map_err(|e| e.to_string())?;
-            if expr.get("minExclusive").and_then(|v| v.as_bool()) == Some(true) {
-                range = range.min_exclusive();
-            }
-            if expr.get("maxExclusive").and_then(|v| v.as_bool()) == Some(true) {
-                range = range.max_exclusive();
-            }
-            Ok(range.into())
-        }
-        "notOneOf" => Ok(NotOneOf::new(str_list(expr, "values", "notOneOf")?).into()),
-        "regex" => {
-            let source = expr
-                .get("source")
-                .and_then(|v| v.as_str())
-                .ok_or("regex requires source")?;
-            Ok(RegexConstraint::new(source)
-                .map_err(|e| e.to_string())?
-                .into())
-        }
-        "wildcard" => Ok(Wildcard::new().into()),
-        "cidr" => {
-            let network = expr
-                .get("network")
-                .and_then(|v| v.as_str())
-                .ok_or("cidr requires network")?;
-            Ok(Cidr::new(network).map_err(|e| e.to_string())?.into())
-        }
-        "urlPattern" => {
-            let pattern = expr
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .ok_or("urlPattern requires pattern")?;
-            Ok(UrlPattern::new(pattern).map_err(|e| e.to_string())?.into())
-        }
-        "urlSafe" => {
-            let mut safe = UrlSafe::new();
-            if expr.get("schemes").is_some() {
-                let schemes = str_list(expr, "schemes", "urlSafe")?;
-                if schemes.is_empty() {
-                    return Err("urlSafe schemes must not be empty".into());
-                }
-                safe.schemes = schemes;
-            }
-            if expr.get("allowDomains").is_some() {
-                safe.allow_domains = Some(str_list(expr, "allowDomains", "urlSafe")?);
-            }
-            if expr.get("denyDomains").is_some() {
-                safe.deny_domains = Some(str_list(expr, "denyDomains", "urlSafe")?);
-            }
-            Ok(safe.into())
-        }
-        "shlex" => {
-            let allow = str_list(expr, "allow", "shlex")?;
-            if allow.is_empty() {
-                return Err("shlex requires at least one allowed command".into());
-            }
-            Ok(Shlex::new(allow).into())
-        }
-        "contains" => Ok(Contains::new(value_list(expr, "values", "contains")?).into()),
-        "subset" => Ok(Subset::new(value_list(expr, "values", "subset")?).into()),
-        "anyOf" => Ok(Any::new(inner_list(expr, "anyOf")?).into()),
-        "all" => Ok(All::new(inner_list(expr, "all")?).into()),
-        "not" => {
-            let inner = expr.get("constraint").ok_or("not requires constraint")?;
-            Ok(Not::new(constraint_from_expr(inner)?).into())
-        }
-        "cel" => {
-            let expression = expr
-                .get("expression")
-                .and_then(|v| v.as_str())
-                .ok_or("cel requires expression")?;
-            if expression.trim().is_empty() {
-                return Err("cel expression must not be empty".into());
-            }
-            Ok(CelConstraint::new(expression).into())
-        }
-        "under" => {
-            // Only reached with options; the plain form is handled in sdk.rs.
-            let root = expr
-                .get("root")
-                .and_then(|v| v.as_str())
-                .ok_or("under requires root")?;
-            let case_sensitive = expr
-                .get("caseSensitive")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            let allow_equal = expr
-                .get("allowEqual")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            Ok(Subpath::with_options(root, case_sensitive, allow_equal)
-                .map_err(|e| e.to_string())?
-                .into())
-        }
-        other => Err(format!("unknown constraint kind '{other}'")),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Small shared helpers
