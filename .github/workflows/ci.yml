@@ -276,6 +276,48 @@ jobs:
   # FastMCP 3 pairs with MCP SDK 1.x; FastMCP 4 requires MCP SDK 2.x.
   # Keep these jobs separate from the main matrix (CrewAI pins mcp~=1.x).
   # ============================================================================
+  linux-wheel-portability:
+    name: Linux wheel portability (manylinux_2_28)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same build the release workflow ships. The wheel must carry the
+      # manylinux_2_28 tag and import on a glibc 2.36 image (python:3.12-slim,
+      # Debian bookworm), which a native ubuntu-latest build (glibc 2.38) fails.
+      - name: Build wheel in the manylinux_2_28 container
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: tenuo-python
+          command: build
+          args: --release --locked --compatibility pypi
+          maturin-version: v1.15.0
+          manylinux: 2_28
+
+      - name: Check the platform tag
+        run: |
+          ls -la tenuo-python/target/wheels/
+          wheel=$(ls tenuo-python/target/wheels/*.whl)
+          case "$wheel" in
+            *manylinux_2_28_x86_64.whl) echo "tag ok: $wheel" ;;
+            *) echo "unexpected wheel tag: $wheel"; exit 1 ;;
+          esac
+
+      - name: Install and import on Debian bookworm (glibc 2.36)
+        run: |
+          docker run --rm -v "$PWD/tenuo-python/target/wheels:/wheels:ro" python:3.12-slim-bookworm bash -ec '
+            ldd --version | head -1
+            pip install --quiet /wheels/*.whl
+            python -c "import tenuo, tenuo_core; from tenuo import SigningKey, Warrant; k = SigningKey.generate(); w = Warrant.mint_builder().tool(\"ping\").holder(k.public_key).ttl(60).mint(k); print(\"tenuo\", tenuo.__version__, \"ok\", w.id[:12])"
+          '
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: wheel-manylinux_2_28
+          path: tenuo-python/target/wheels/*.whl
+          if-no-files-found: error
+
   mcp-smoke:
     name: MCP Smoke (FastMCP ${{ matrix.fastmcp-line }})
     runs-on: ubuntu-latest
