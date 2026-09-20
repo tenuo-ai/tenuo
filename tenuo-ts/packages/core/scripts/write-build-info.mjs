@@ -1,25 +1,35 @@
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  committedWasmSha256,
+  resolveSourceCommit,
+  sha256,
+  sourceIsClean,
+} from "./build-provenance.mjs";
 
 const coreDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(readFileSync(join(coreDir, "package.json"), "utf8"));
-const sourceCommit = process.env.TENUO_SOURCE_COMMIT
-  ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: coreDir, encoding: "utf8" }).trim();
-
-if (!/^[0-9a-f]{40}$/.test(sourceCommit)) {
-  throw new Error("TENUO_SOURCE_COMMIT must be a full 40-character Git commit");
-}
+const sourceCommit = resolveSourceCommit(coreDir);
 
 const wasm = readFileSync(join(coreDir, "dist", "generated", "tenuo_wasm_bg.wasm"));
+const wasmSha256 = sha256(wasm);
+
 writeFileSync(
   join(coreDir, "dist", "build-info.json"),
-  `${JSON.stringify({
-    package: packageJson.name,
-    version: packageJson.version,
-    sourceCommit,
-    wasmSha256: createHash("sha256").update(wasm).digest("hex"),
-  }, null, 2)}\n`,
+  `${JSON.stringify(
+    {
+      package: packageJson.name,
+      version: packageJson.version,
+      sourceCommit,
+      // Qualifies sourceCommit. A build from a dirty tree still names a
+      // commit, and without these two flags it would name it as if the
+      // artifact came from it.
+      sourceClean: sourceIsClean(coreDir),
+      wasmSha256,
+      wasmMatchesCommit: wasmSha256 === committedWasmSha256(coreDir, sourceCommit),
+    },
+    null,
+    2,
+  )}\n`,
 );

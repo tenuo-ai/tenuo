@@ -183,9 +183,10 @@ Assess each warrant against this risk framework:
 
 | Finding | Severity | What it means |
 |---|---|---|
-| `_allow_unknown=True` (Python only) | **HIGH** | Closed-world disabled. Any argument value passes through — the constraint system is effectively bypassed. The current TypeScript SDK has no such escape hatch; do not report this finding there. |
+| `_allow_unknown=True` | **HIGH** | Closed-world disabled. Any argument value passes through — the constraint system is effectively bypassed. Like an IAM policy with `"Resource": "*"`. Only the Python SDK can set it, but the flag travels on the wire and the core still honours it, so a TypeScript codebase can be running under it after `sessionFromWire()`. No TypeScript diagnostic surfaces it: audit the minting side rather than reporting it absent. |
 | PoP not enforced | **HIGH** | Warrant is a bearer token. If stolen, attacker can use it without the holder's private key. Like an API key vs. mTLS. |
 | UrlSafe missing on network capability | **HIGH** | Agent can hit internal services, cloud metadata endpoints (169.254.169.254). SSRF risk. |
+| No TTL or TTL > 1 hour | **MEDIUM** | Long-lived credential. Increases the blast radius time window. Like a non-expiring session token. |
 | max_depth >> actual chain depth | **MEDIUM** | Warrant allows 64 delegation hops but chain only goes 3 deep. Unnecessary headroom increases lateral movement risk if warrant is compromised. |
 | CEL constraint without review | **MEDIUM** | Custom evaluation logic. Could contain subtle bugs or overly permissive expressions. Needs human verification — like a custom OPA policy. |
 | Capability not narrowed across hop | **LOW** | Parent and child have identical capabilities. Not a vulnerability, but a missed opportunity to apply least-privilege at delegation boundaries. |

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
@@ -12,6 +11,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  committedWasmSha256,
+  resolveSourceCommit,
+  sha256,
+  sourceIsClean,
+  WASM_SOURCE_PATH,
+} from "./build-provenance.mjs";
 
 const coreDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 copyFileSync(join(coreDir, "..", "..", "..", "LICENSE"), join(coreDir, "LICENSE"));
@@ -144,7 +150,9 @@ function assertPackageContents(root, packageName, allowed) {
         throw new Error(`${map} references missing repository source ${source}`);
       }
       if (readFileSync(sourcePath, "utf8") !== sourcesContent[index]) {
-        throw new Error(`${map} embeds stale source for ${source}`);
+        throw new Error(
+          `${map} embeds source for ${source} that differs from the working tree; rebuild, or commit/stash local edits`,
+        );
       }
     }
   }
@@ -154,14 +162,27 @@ function assertBuildInfo(root, packageName) {
   const packageDir = join(root, "node_modules", ...packageName.split("/"));
   const info = JSON.parse(readFileSync(join(packageDir, "dist", "build-info.json"), "utf8"));
   const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
-  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: coreDir, encoding: "utf8" }).trim();
+  const commit = resolveSourceCommit(coreDir);
   const wasm = readFileSync(join(packageDir, "dist", "generated", "tenuo_wasm_bg.wasm"));
   if (info.package !== packageName || info.version !== manifest.version || info.sourceCommit !== commit) {
     throw new Error("build-info.json does not identify this package version and source commit");
   }
-  const digest = createHash("sha256").update(wasm).digest("hex");
+  const digest = sha256(wasm);
   if (info.wasmSha256 !== digest) {
     throw new Error("build-info.json does not identify the packed WASM artifact");
+  }
+  // The two qualifiers are recomputed rather than read back, so a stale or
+  // hand-edited build-info.json cannot overstate provenance. They are not
+  // required to be true: `pnpm test` recompiles the WASM, and wasm-pack is not
+  // byte-reproducible, so a legitimate CI build packs a binary that differs
+  // from the committed one and says so.
+  if (info.wasmMatchesCommit !== (digest === committedWasmSha256(coreDir, commit))) {
+    throw new Error(
+      `build-info.json misreports whether the packed WASM is ${WASM_SOURCE_PATH} as committed at ${commit}`,
+    );
+  }
+  if (info.sourceClean !== sourceIsClean(coreDir)) {
+    throw new Error("build-info.json misreports whether the source tree was clean");
   }
 }
 

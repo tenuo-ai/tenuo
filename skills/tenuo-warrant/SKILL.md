@@ -162,7 +162,7 @@ If any constraints were added, explain the trust cliff:
 
 If there are arguments you want to leave unconstrained, I'll add `Wildcard()` for those explicitly.
 
-⚠️ **Python only:** `_allow_unknown=True` disables closed-world mode entirely — any argument value passes through unchecked, which voids the main constraint safety property. This escape hatch does not exist in the current TypeScript SDK. Do not warn TypeScript users about an option they cannot set."
+⚠️ **`_allow_unknown=True` disables closed-world mode entirely** — any argument value passes through unchecked, which voids the main constraint safety property. This is a security override, not a convenience flag. Treat any request to use it like a request to disable input validation globally: require an explicit justification and document it in a code comment. Only the Python SDK can set it, so do not offer it to TypeScript users as an option — but it rides on the wire, so a warrant minted with it keeps the flag wherever it is imported."
 
 ### Phase 8: Choose Minting Source
 
