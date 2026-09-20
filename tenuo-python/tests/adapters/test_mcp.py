@@ -350,6 +350,75 @@ class TestCallToolApprovalsInjection:
 
 
 # ---------------------------------------------------------------------------
+# Argument-carried warrant injection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestCallToolArgumentInjection:
+    @pytest.mark.asyncio
+    async def test_argument_transport_injects_reserved_argument(self):
+        client = _make_client()
+        mock_warrant, mock_keypair = _mock_warrant_context()
+        original = {"path": "/data/file.txt", "encoding": None}
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+        ):
+            await client.call_tool(
+                "read_file",
+                original,
+                warrant_context=False,
+                inject_warrant="argument",
+            )
+
+        forwarded = client.session.call_tool.call_args.args[1]
+        envelope = forwarded["_tenuo"]
+        assert envelope["warrant"] == "warrant_b64"
+        assert envelope["signature"] == base64.b64encode(b"pop_bytes").decode()
+        assert client.session.call_tool.call_args.kwargs["meta"] is None
+        assert mock_warrant.sign.call_args.args[2] == {"path": "/data/file.txt"}
+        assert original == {"path": "/data/file.txt", "encoding": None}
+
+    @pytest.mark.asyncio
+    async def test_argument_transport_carries_approvals(self):
+        client = _make_client()
+        mock_warrant, mock_keypair = _mock_warrant_context()
+        approval = MagicMock()
+        approval.to_bytes.return_value = b"approval_cbor"
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+        ):
+            await client.call_tool(
+                "read_file",
+                {"path": "/data/file.txt"},
+                warrant_context=False,
+                inject_warrant="argument",
+                approvals=[approval],
+            )
+
+        forwarded = client.session.call_tool.call_args.args[1]
+        assert forwarded["_tenuo"]["approvals"] == [
+            base64.b64encode(b"approval_cbor").decode()
+        ]
+
+    @pytest.mark.asyncio
+    async def test_argument_transport_rejects_reserved_argument_collision(self):
+        client = _make_client()
+
+        with pytest.raises(ValueError, match="'_tenuo' is reserved"):
+            await client.call_tool(
+                "read_file",
+                {"path": "/data/file.txt", "_tenuo": {"user": "value"}},
+                warrant_context=False,
+                inject_warrant="argument",
+            )
+
+
+# ---------------------------------------------------------------------------
 # PoP signing over extracted constraints (C1 fix verification)
 # ---------------------------------------------------------------------------
 
@@ -545,6 +614,14 @@ class TestSchemaStrippingEmptyProperties:
 
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 class TestTransportValidation:
+    def test_invalid_warrant_injection_mode_rejected(self):
+        with pytest.raises(
+            ValueError, match="inject_warrant must be False, True, or 'argument'"
+        ):
+            SecureMCPClient(
+                command="python", inject_warrant="invalid"  # type: ignore[arg-type]
+            )
+
     def test_stdio_requires_command(self):
         with pytest.raises(ValueError, match="transport='stdio' requires 'command'"):
             SecureMCPClient(transport="stdio")

@@ -96,6 +96,19 @@ def _make_arguments(
     return dict(tool_args), {"tenuo": tenuo}
 
 
+def _make_argument_carrier(
+    warrant: Warrant,
+    key: SigningKey,
+    tool: str,
+    tool_args: Dict[str, Any],
+    approvals: list | None = None,
+) -> Dict[str, Any]:
+    """Return tool arguments with the Tenuo envelope in reserved ``_tenuo``."""
+    arguments, meta = _make_arguments(warrant, key, tool, tool_args, approvals)
+    arguments["_tenuo"] = meta["tenuo"]
+    return arguments
+
+
 def test_access_denial_reason_signature_invalid_mentions_raw_args():
     from tenuo.exceptions import SignatureInvalid
     from tenuo.mcp.server import _access_denial_reason
@@ -322,6 +335,96 @@ class TestRequireWarrant:
 
 
 class TestSuccessfulVerification:
+    def test_valid_argument_carrier_and_pop(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ):
+        tool_args = {"path": "/data/log.txt"}
+        arguments = _make_argument_carrier(
+            simple_warrant, agent_key, "read_file", tool_args
+        )
+        original = dict(arguments)
+
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+
+        assert result.allowed, result.denial_reason
+        assert result.clean_arguments == tool_args
+        assert "_tenuo" not in result.constraints
+        assert arguments == original
+
+    def test_matching_meta_and_argument_carriers_are_accepted(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ):
+        tool_args = {"path": "/data/log.txt"}
+        arguments, meta = _make_arguments(
+            simple_warrant, agent_key, "read_file", tool_args
+        )
+        arguments["_tenuo"] = dict(meta["tenuo"])
+
+        result = MCPVerifier(authorizer=authorizer).verify(
+            "read_file", arguments, meta=meta
+        )
+
+        assert result.allowed, result.denial_reason
+        assert result.clean_arguments == tool_args
+
+    def test_none_argument_carrier_default_is_treated_as_absent(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ):
+        tool_args = {"path": "/data/log.txt"}
+        arguments, meta = _make_arguments(
+            simple_warrant, agent_key, "read_file", tool_args
+        )
+        arguments["_tenuo"] = None
+
+        result = MCPVerifier(authorizer=authorizer).verify(
+            "read_file", arguments, meta=meta
+        )
+
+        assert result.allowed, result.denial_reason
+        assert result.clean_arguments == tool_args
+
+    def test_conflicting_meta_and_argument_carriers_are_denied(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ):
+        tool_args = {"path": "/data/log.txt"}
+        arguments, meta = _make_arguments(
+            simple_warrant, agent_key, "read_file", tool_args
+        )
+        arguments["_tenuo"] = {**meta["tenuo"], "signature": "different"}
+
+        result = MCPVerifier(authorizer=authorizer).verify(
+            "read_file", arguments, meta=meta
+        )
+
+        assert not result.allowed
+        assert result.jsonrpc_error_code == -32602
+        assert "Conflicting Tenuo envelopes" in (result.denial_reason or "")
+        assert result.clean_arguments == tool_args
+
+    def test_malformed_argument_carrier_is_denied_even_when_optional(
+        self,
+        authorizer: Authorizer,
+    ):
+        result = MCPVerifier(
+            authorizer=authorizer, require_warrant=False
+        ).verify("read_file", {"path": "/data/log.txt", "_tenuo": "invalid"})
+
+        assert not result.allowed
+        assert result.jsonrpc_error_code == -32602
+        assert result.clean_arguments == {"path": "/data/log.txt"}
+
     def test_valid_warrant_and_pop(
         self,
         authorizer: Authorizer,
@@ -657,6 +760,38 @@ tools:
         # constraints should use the mapped name ("max_size" not "maxSize")
         assert "max_size" in result.constraints
         assert "path" in result.constraints
+
+    def test_argument_carrier_is_removed_before_extraction(
+        self,
+        authorizer: Authorizer,
+        issuer_key: SigningKey,
+        agent_key: SigningKey,
+        mcp_config,
+    ):
+        from tenuo import Pattern, Range
+
+        warrant = Warrant.issue(
+            issuer_key,
+            capabilities={
+                "read_file": {
+                    "path": Pattern("/data/*"),
+                    "max_size": Range(max=10 * 1024 * 1024),
+                }
+            },
+            holder=agent_key.public_key,
+        )
+        tool_args = {"path": "/data/log.txt", "maxSize": 2048}
+        arguments = _make_argument_carrier(
+            warrant, agent_key, "read_file", tool_args
+        )
+
+        result = MCPVerifier(authorizer=authorizer, config=mcp_config).verify(
+            "read_file", arguments
+        )
+
+        assert result.allowed, result.denial_reason
+        assert result.clean_arguments == tool_args
+        assert "_tenuo" not in result.constraints
 
     def test_extraction_error_returns_minus_32602(
         self,

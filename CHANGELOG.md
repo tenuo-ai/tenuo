@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP warrants can cross `_meta`-stripping gateways.**
+  `SecureMCPClient(inject_warrant="argument")` carries the warrant, PoP, and
+  approvals in reserved `arguments._tenuo`; `MCPVerifier` removes it before
+  verification and tool dispatch, and rejects conflicting `_meta` and argument
+  envelopes.
 - **Python SRL builder chaining.** `SrlBuilder.revoke()`, `revoke_all()`,
   `version()`, and `from_existing()` now return the builder as documented, and
   the publicly exported `SrlBuilder` can be constructed directly.

@@ -204,9 +204,9 @@ async def read_file(path: str, maxSize: int = 4096) -> str:
 ```
 
 The middleware:
-- Extracts warrant + PoP from `params._meta.tenuo`
+- Extracts warrant + PoP from `params._meta.tenuo` or the reserved `arguments._tenuo`
 - Verifies the warrant chain, signature, constraints, and PoP
-- Strips `tenuo` from `_meta` before forwarding to the handler
+- Strips the authorization envelope before forwarding to the handler
 - Returns `-32001` (denied) or `-32002` (approval required) on failure
 
 Install the `tenuo[fastmcp]` extra, which pins FastMCP ≥3.2.1 (includes [hardened client parsing](https://github.com/PrefectHQ/fastmcp/pull/3778) of tool error results).
@@ -243,7 +243,23 @@ async with SecureMCPClient(
     inject_warrant=True,
 ) as client:
     ...
+
+# Gateway that drops params._meta (proxy/aggregator compatibility)
+async with SecureMCPClient(
+    url="https://gateway.example.com/mcp",
+    transport="http",
+    inject_warrant="argument",
+) as client:
+    ...
 ```
+
+`inject_warrant="argument"` places the same envelope in the reserved `_tenuo`
+tool argument. The PoP covers only the real tool arguments, excluding `_tenuo`.
+`MCPVerifier` strips the carrier before constraint extraction or tool dispatch
+and denies the request if `_meta.tenuo` and `_tenuo` are both present but differ.
+When using `TenuoMiddleware`, no tool signature change is needed. If a decorated
+tool calls `MCPVerifier` directly, declare `_tenuo: dict | None = None` and pass
+it into the arguments dict supplied to `verify()`.
 
 ### Pattern 3: MCPVerifier (Framework-Agnostic Server)
 
@@ -464,6 +480,11 @@ Tenuo sends warrant metadata via `params._meta.tenuo`:
 ```
 
 The `warrant` field accepts either a single base64-encoded warrant (for root warrants issued directly by a trusted root) or a **WarrantStack** — the full delegation chain encoded as a CBOR array. See [Multi-Agent Delegation](#advanced-multi-agent-delegation) below.
+
+For gateways that strip `_meta`, set `inject_warrant="argument"`. This sends
+the envelope as the reserved `arguments._tenuo` field instead. The server
+removes `_tenuo` before verification and dispatch, and the PoP covers the tool
+arguments without that field.
 
 ---
 

@@ -1287,7 +1287,8 @@ async with SecureMCPClient(
 Parameters:
 - `command`, `args`, `env` - Stdio transport (local subprocess)
 - `url`, `transport`, `headers`, `timeout` - HTTP transports (remote server)
-- `inject_warrant` - Send warrant via `params._meta.tenuo` for server-side verification
+- `inject_warrant` - `True` sends the warrant via `params._meta.tenuo`;
+  `"argument"` uses reserved `arguments._tenuo` for gateways that strip `_meta`
 - `config_path`, `register_config` - Load MCP config for constraint extraction
 
 ### MCPVerifier

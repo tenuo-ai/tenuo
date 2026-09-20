@@ -12,7 +12,7 @@ import re
 import sys
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Callable, Dict, List, Literal, Optional, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Union, cast
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
@@ -62,6 +62,19 @@ if sys.version_info < (3, 10) and MCP_AVAILABLE:
 
 _CONSTRAINT_PREFIX = re.compile(r"^Constraint '(?P<field>[^']+)' not satisfied:\s*")
 _WARRANT_ID_IN_REASON = re.compile(r"Warrant '(?P<id>[^']+)' has (?:expired|been revoked)")
+
+WarrantInjection = Union[bool, Literal["argument"]]
+
+
+def _warrant_injection_mode(value: WarrantInjection) -> Literal["none", "meta", "argument"]:
+    """Normalize the backwards-compatible public injection setting."""
+    if value is False:
+        return "none"
+    if value is True:
+        return "meta"
+    if value == "argument":
+        return "argument"
+    raise ValueError("inject_warrant must be False, True, or 'argument'")
 
 
 def _warrant_id_for(result: "EnforcementResult", reason: str) -> str:
@@ -170,7 +183,7 @@ class SecureMCPClient:
         env: Optional[Dict[str, str]] = None,
         config_path: Optional[str] = None,
         register_config: Optional[bool] = None,
-        inject_warrant: bool = False,
+        inject_warrant: WarrantInjection = False,
         url: Optional[str] = None,
         transport: Literal["stdio", "sse", "http"] = "stdio",
         headers: Optional[Dict[str, str]] = None,
@@ -202,8 +215,9 @@ class SecureMCPClient:
                 ``False`` — call ``configure(mcp_config=...)`` explicitly if you
                 need global registration.
             inject_warrant: Inject warrants into tool calls for server-side
-                verification (default: False). Set True when the server runs
-                Tenuo verification.
+                verification (default: False). Set ``True`` to use
+                ``params._meta.tenuo`` or ``"argument"`` to use the reserved
+                ``arguments._tenuo`` carrier for gateways that strip ``_meta``.
             approval_handler: Optional callable for warrant approval gates.
                 Receives an ``ApprovalRequest`` and returns ``SignedApproval``
                 (or raises ``ApprovalDenied``). Used during local enforcement
@@ -225,6 +239,8 @@ class SecureMCPClient:
                 f"transport='{transport}' requires 'url'. "
                 "Provide the MCP server endpoint URL."
             )
+
+        _warrant_injection_mode(inject_warrant)
 
         self.command = command
         self.args = args or []
@@ -621,7 +637,7 @@ class SecureMCPClient:
         tool_name: str,
         arguments: Dict[str, Any],
         warrant_context: bool = True,
-        inject_warrant: Optional[bool] = None,
+        inject_warrant: Optional[WarrantInjection] = None,
         approvals: Optional[List] = None,
         timeout: float = 30.0,
         raise_on_tool_error: bool = True,
@@ -630,19 +646,23 @@ class SecureMCPClient:
         Call an MCP tool with Tenuo authorization.
 
         MCP Warrant Transport:
-            When injection is enabled, the current warrant and PoP signature are
-            sent via ``params._meta.tenuo`` (the MCP spec extension point).
+            With ``inject_warrant=True``, the current warrant and PoP signature
+            are sent via ``params._meta.tenuo`` (the MCP spec extension point).
+            With ``inject_warrant="argument"``, they are sent via the reserved
+            ``arguments._tenuo`` key for gateways that strip ``_meta``.
             If ``approvals`` are provided, they are serialized into
-            ``_meta.tenuo.approvals`` so the server can satisfy any approval gate on the tool.
+            the selected envelope so the server can satisfy any approval gate.
 
         Args:
             tool_name: Name of the MCP tool to call
             arguments: Tool arguments
             warrant_context: If True, authorize locally before sending
-            inject_warrant: Override client's inject_warrant setting (default: None)
+            inject_warrant: Override the client's injection setting. Use
+                ``True`` for ``_meta``, ``"argument"`` for ``_tenuo``, or
+                ``False`` to disable injection (default: None, inherit client).
             approvals: Pre-obtained SignedApproval objects to forward to the server
-                via ``_meta.tenuo.approvals``. Required when the tool is approval-gate-protected
-                and the server performs Tenuo verification (``inject_warrant=True``).
+                through the selected warrant carrier. Required when the tool is
+                approval-gate-protected and the server performs Tenuo verification.
             timeout: Maximum seconds to wait for the server response (default: 30).
                 Raises ``asyncio.TimeoutError`` if exceeded.
             raise_on_tool_error: If True (default), a server response with
@@ -669,6 +689,12 @@ class SecureMCPClient:
             )
 
         should_inject = self.inject_warrant if inject_warrant is None else inject_warrant
+        injection_mode = _warrant_injection_mode(should_inject)
+        if injection_mode == "argument" and "_tenuo" in arguments:
+            raise ValueError(
+                "'_tenuo' is reserved for Tenuo warrant transport; "
+                "remove it from tool arguments"
+            )
 
         # Pre-flight expiry check — fail fast before touching the network
         _active_warrant = warrant_scope()
@@ -684,7 +710,7 @@ class SecureMCPClient:
             call_args = args.copy()
             meta_payload: Optional[Dict[str, Any]] = None
 
-            if should_inject:
+            if injection_mode != "none":
                 warrant = warrant_scope()
                 keypair = key_scope()
 
@@ -721,7 +747,10 @@ class SecureMCPClient:
                             base64.b64encode(a.to_bytes()).decode("utf-8")
                             for a in approvals
                         ]
-                    meta_payload = {"tenuo": tenuo_meta}
+                    if injection_mode == "argument":
+                        call_args["_tenuo"] = tenuo_meta
+                    else:
+                        meta_payload = {"tenuo": tenuo_meta}
 
             if self.session is None:
                 raise RuntimeError("Not connected to MCP server. Call connect() first.")
@@ -955,7 +984,7 @@ async def discover_and_protect(
     timeout: float = 30.0,
     sse_read_timeout: float = 300.0,
     auth: Optional[Any] = None,
-    inject_warrant: bool = False,
+    inject_warrant: WarrantInjection = False,
 ):  # type: ignore[misc]
     """
     Discover MCP tools and return protected wrappers.
@@ -976,6 +1005,9 @@ async def discover_and_protect(
         ) as tools:
             async with mint(Capability("search")):
                 result = await tools["search"](query="tenuo")
+
+    Gateways that discard MCP ``_meta`` can use
+    ``inject_warrant="argument"`` instead.
     """
     async with SecureMCPClient(
         command=command,

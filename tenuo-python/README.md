@@ -660,7 +660,7 @@ async with SecureMCPClient("python", ["server.py"]) as client:
 async with SecureMCPClient(
     url="https://mcp.example.com/mcp",
     transport="http",          # or "sse"
-    inject_warrant=True,       # send warrant via params._meta.tenuo
+    inject_warrant=True,       # params._meta.tenuo; use "argument" for _tenuo
 ) as client:
     ...
 ```
