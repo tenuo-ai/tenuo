@@ -6716,33 +6716,48 @@ pub struct PySrlBuilder {
 
 #[pymethods]
 impl PySrlBuilder {
+    /// Create an empty SRL builder.
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: crate::revocation::SrlBuilder::new(),
+        }
+    }
+
     /// Add a warrant ID to revoke.
     ///
     /// Returns self for chaining.
-    fn revoke(&mut self, warrant_id: &str) {
-        self.inner = std::mem::take(&mut self.inner).revoke(warrant_id);
+    fn revoke<'py>(mut slf: PyRefMut<'py, Self>, warrant_id: &str) -> PyRefMut<'py, Self> {
+        slf.inner = std::mem::take(&mut slf.inner).revoke(warrant_id);
+        slf
     }
 
     /// Add multiple warrant IDs to revoke.
     ///
     /// Returns self for chaining.
-    fn revoke_all(&mut self, ids: Vec<String>) {
-        self.inner = std::mem::take(&mut self.inner).revoke_all(ids);
+    fn revoke_all<'py>(mut slf: PyRefMut<'py, Self>, ids: Vec<String>) -> PyRefMut<'py, Self> {
+        slf.inner = std::mem::take(&mut slf.inner).revoke_all(ids);
+        slf
     }
 
     /// Set the version number (must be monotonically increasing).
     ///
     /// Returns self for chaining.
-    fn version(&mut self, version: u64) {
-        self.inner = std::mem::take(&mut self.inner).version(version);
+    fn version<'py>(mut slf: PyRefMut<'py, Self>, version: u64) -> PyRefMut<'py, Self> {
+        slf.inner = std::mem::take(&mut slf.inner).version(version);
+        slf
     }
 
     /// Import entries from an existing SRL.
     ///
     /// Returns self for chaining.
     #[allow(clippy::wrong_self_convention)]
-    fn from_existing(&mut self, existing: &PySignedRevocationList) {
-        self.inner = std::mem::take(&mut self.inner).from_existing(&existing.inner);
+    fn from_existing<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        existing: &PySignedRevocationList,
+    ) -> PyRefMut<'py, Self> {
+        slf.inner = std::mem::take(&mut slf.inner).from_existing(&existing.inner);
+        slf
     }
 
     /// Build and sign the revocation list.

@@ -1,0 +1,22 @@
+{
+  "scenario": "payment-boundary-eval.md",
+  "language": "rust",
+  "evaluated_at": "2026-09-17",
+  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md",
+    "references/rust.md",
+    "references/common-footguns.md",
+    "references/security-model.md"
+  ],
+  "skill_fingerprint": "f32d6f3d683b5f43591e20457da37ffb5a86ac53841f6a57f64db2a05818dca8",
+  "evidence": {
+    "sdk": "tenuo 0.3.0 from crates.io with the sdk feature",
+    "tests": "9 integration tests + 1 compile_fail doctest passed (cargo test, rerun by the grader); 5 grader-added forged-presentation tests passed",
+    "typecheck": "cargo build --all-targets and cargo clippy --all-targets clean per the agent; cargo test emitted no warnings on rerun",
+    "critical_items": "passed",
+    "notes": "PaymentClient became crate-private and execute_transfer was removed; a compile_fail doctest attempts the original bypass surface. The boundary uses Tenuo::enforcement() with one trusted root and guard_received over a ReceivedAuthorization built from the chain, PoP signature, and approvals; the effect runs with execution_args(). Weakness: wrong-holder, wrong-capability, recipient, amount, and wider-delegation denials are proven at the caller's own guard or delegate_to, not at the boundary, because the presentation type has no public constructor. The grader added in-crate tests that forge presentations (attacker-signed proof, wrong capability, amount 600, recipient outside pattern) and submit them directly; all four are denied with zero effects and a valid raw presentation runs once. Report disclaims replay, revocation freshness, process isolation, and intent."
+  }
+}

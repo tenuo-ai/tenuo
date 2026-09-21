@@ -587,6 +587,9 @@ class TenuoClient implements Tenuo {
         if (f.reason !== undefined) {
           field.reason = f.reason;
         }
+        if (f.reason_code !== undefined) {
+          field.reasonCode = f.reason_code;
+        }
         return field;
       }),
       unknownFields: [...raw.unknown_fields],
@@ -867,11 +870,14 @@ function approvalRequestFromWasm(raw: WasmApprovalRequest): ApprovalRequest {
 }
 
 function explainDeny(message: string, field?: string): string {
-  if (!message.includes("unknown field not allowed")) {
-    return message;
+  if (message.includes("unknown field not allowed")) {
+    const named = field !== undefined && field.length > 0 ? `'${field}'` : "this argument";
+    return `${message}. Zero-trust: name ${named} in allow (for example ${named}: pattern("*")), or remove it from the call; constrained policies reject omitted fields.`;
   }
-  const named = field !== undefined && field.length > 0 ? `'${field}'` : "this argument";
-  return `${message}. Zero-trust: name ${named} in allow (for example ${named}: pattern("*")), or remove it from the call; constrained policies reject omitted fields.`;
+  if (message.includes("value does not match constraint")) {
+    return `${message}. Use tenuo.explain(session, tool, args) locally for field-level diagnostics.`;
+  }
+  return message;
 }
 
 function forwardExecuteOptions(callOptions: unknown): unknown {

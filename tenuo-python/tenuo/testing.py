@@ -23,7 +23,7 @@ try:
 except ImportError:
     _WARRANT_HEADER = "X-Tenuo-Warrant"
 
-from .exceptions import AuthorizationDenied
+from .exceptions import AuthorizationDenied, ConfigurationError
 
 
 def _is_test_environment() -> bool:
@@ -240,6 +240,21 @@ class AuthorizationAssertionError(AssertionError):
     pass
 
 
+def _assertion_trusted_roots(warrant: Warrant, explicit: Optional[List] = None) -> List:
+    """Resolve the trust anchor for the warrant-and-key assertion helpers.
+
+    These helpers answer "what does this warrant permit", not "who issued it",
+    and they refuse to run outside a test environment, so they default to the
+    warrant's own issuer. Deliberately not `tenuo.configure()`: reading global
+    state here would make an assertion about one warrant depend on unrelated
+    configuration, and on test ordering. Pass ``trusted_roots`` to assert
+    issuer trust as well.
+    """
+    if explicit is not None:
+        return list(explicit)
+    return [warrant.issuer]
+
+
 @contextmanager
 def assert_authorized(
     warrant: Optional[Warrant] = None,
@@ -248,6 +263,7 @@ def assert_authorized(
     args: Optional[dict] = None,
     *,
     message: Optional[str] = None,
+    trusted_roots: Optional[List] = None,
 ):
     """
     Assert that code is authorized or that a warrant matches.
@@ -260,6 +276,10 @@ def assert_authorized(
 
     Function Usage:
         assert_authorized(warrant, key, "tool", args)
+
+    Pass ``trusted_roots`` to assert issuer trust too; the default anchors on
+    the configured roots, then the warrant's own issuer, so a self-minted test
+    warrant is checked for what it permits.
     """
     # Legacy Function Mode
     if warrant is not None:
@@ -270,8 +290,9 @@ def assert_authorized(
             raise ValueError("If warrant is provided, key and tool are required.")
 
         args = args or {}
+        roots = _assertion_trusted_roots(warrant, trusted_roots)
         try:
-            bound = warrant.bind(key)
+            bound = warrant.bind(key, trusted_roots=roots)
             result = bound.validate(tool, args)
             if not result:
                 raise AuthorizationAssertionError(
@@ -306,6 +327,7 @@ def assert_denied(
     expected_reason: Optional[str] = None,
     code: Optional[str] = None,
     message: Optional[str] = None,
+    trusted_roots: Optional[List] = None,
 ):
     """
     Assert that code raises AuthorizationDenied or a warrant denies access.
@@ -316,6 +338,10 @@ def assert_denied(
 
     Function Usage:
         assert_denied(warrant, key, "tool", expected_reason="...")
+
+    Pass ``trusted_roots`` to assert issuer trust too; the default anchors on
+    the configured roots, then the warrant's own issuer, so a self-minted test
+    warrant is checked for what it permits.
     """
     # Legacy Function Mode
     if warrant is not None:
@@ -326,14 +352,19 @@ def assert_denied(
             raise ValueError("If warrant is provided, key and tool are required.")
 
         args = args or {}
+        roots = _assertion_trusted_roots(warrant, trusted_roots)
         try:
-            bound = warrant.bind(key)
+            bound = warrant.bind(key, trusted_roots=roots)
             result = bound.validate(tool, args)
             if result:
                 raise AuthorizationAssertionError(
                     message or f"Expected authorization to FAIL for tool '{tool}', but it was ALLOWED."
                 )
         except AuthorizationAssertionError:
+            raise
+        except ConfigurationError:
+            # A misconfigured harness is not a denial. Swallowing it here would
+            # make this assertion pass for any warrant at all.
             raise
         except Exception as e:
             # Grant failed as expected, check reason

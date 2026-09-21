@@ -396,8 +396,10 @@ if warrant.allows("read_file", args={"path": "/data/file.txt"}):
 if warrant.allows("delete"):
     delete_database()  # No PoP verification!
 
-# CORRECT
-if bound.validate("delete", {"id": "123"}):
+# CORRECT — validate() checks issuer trust, PoP, and constraints.
+# It needs a trust anchor: pass trusted_roots here, set it at bind time, or
+# call tenuo.configure(trusted_roots=[...]) at startup.
+if bound.validate("delete", {"id": "123"}, trusted_roots=[root_key.public_key]):
     delete_database()
 ```
 

@@ -64,7 +64,22 @@ jobs:
           pip install uv
           uv pip install --system maturin
 
+      # Linux: build inside the manylinux_2_28 container so the wheel runs on
+      # any glibc >= 2.28 (Ubuntu 20.04+, Debian 11+, RHEL 8+, and the default
+      # python:3.x Docker images). A native build on ubuntu-latest links glibc
+      # 2.38 symbols and pip refuses the wheel on every older distro.
+      - name: Build wheel (manylinux_2_28)
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: tenuo-python
+          command: build
+          args: --release --locked --compatibility pypi
+          maturin-version: v1.15.0
+          manylinux: 2_28
+
       - name: Build wheel
+        if: runner.os != 'Linux'
         working-directory: tenuo-python
         run: maturin build --release
 

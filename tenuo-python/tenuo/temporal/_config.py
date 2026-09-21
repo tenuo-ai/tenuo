@@ -6,7 +6,7 @@ import logging
 import threading
 import warnings
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 
 from tenuo.temporal._observability import TemporalAuditEvent, TenuoMetrics
 from tenuo.temporal._resolvers import KeyResolver
@@ -34,6 +34,28 @@ def _build_activity_registry(
         else:
             registry[getattr(fn, "__name__", str(fn))] = fn
     return registry
+
+
+@dataclass(frozen=True)
+class _ProviderSnapshots:
+    """Last-known-good provider state, carried as one immutable unit.
+
+    Readiness is derived from ``trusted_roots`` instead of being tracked as a
+    separate flag, and both halves live in a single field so a copy either
+    inherits the whole snapshot or none of it. A config can therefore never
+    claim its providers are primed while carrying no last-known-good state to
+    fall back on when a refresh fails.
+    """
+
+    trusted_roots: Tuple[Any, ...] = ()
+    revocation_list: Optional[Any] = None
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.trusted_roots)
+
+
+_EMPTY_PROVIDER_SNAPSHOTS = _ProviderSnapshots()
 
 
 @dataclass
@@ -431,18 +453,53 @@ class TenuoPluginConfig:
     Requires ``revocation_list_provider`` to be set.
     """
 
-    _last_good_trusted_roots: List[Any] = field(
-        default_factory=list, init=False, repr=False, compare=False
-    )
-    _last_good_revocation_list: Optional[Any] = field(
-        default=None, init=False, repr=False, compare=False
+    _provider_snapshots: _ProviderSnapshots = field(
+        default=_EMPTY_PROVIDER_SNAPSHOTS, init=True, repr=False, compare=False
     )
     _provider_state_lock: Any = field(
         default_factory=threading.RLock, init=False, repr=False, compare=False
     )
-    _provider_snapshots_ready: bool = field(
-        default=False, init=True, repr=False, compare=False
-    )
+
+    @property
+    def _provider_snapshots_ready(self) -> bool:
+        """Whether provider snapshots have been primed from the providers."""
+        return self._provider_snapshots.ready
+
+    @property
+    def _last_good_trusted_roots(self) -> List[Any]:
+        """Last-known-good trusted roots. Update via ``_record_provider_snapshot``."""
+        return list(self._provider_snapshots.trusted_roots)
+
+    @property
+    def _last_good_revocation_list(self) -> Optional[Any]:
+        """Last-known-good SRL. Update via ``_record_provider_snapshot``."""
+        return self._provider_snapshots.revocation_list
+
+    def _record_provider_snapshot(
+        self,
+        *,
+        trusted_roots: Optional[Sequence[Any]] = None,
+        revocation_list: Optional[Any] = None,
+    ) -> None:
+        """Fold a successful provider refresh into the snapshot, atomically.
+
+        ``None`` (or empty roots) leaves that half of the snapshot untouched,
+        so a refresh can only ever move last-known-good state forward. Callers
+        must already have rejected empty root lists and ``None`` SRLs as
+        refresh failures before reaching here.
+        """
+        with self._provider_state_lock:
+            current = self._provider_snapshots
+            self._provider_snapshots = _ProviderSnapshots(
+                trusted_roots=(
+                    tuple(trusted_roots) if trusted_roots else current.trusted_roots
+                ),
+                revocation_list=(
+                    current.revocation_list
+                    if revocation_list is None
+                    else revocation_list
+                ),
+            )
 
     def __post_init__(self) -> None:
         if self.dry_run:
@@ -469,16 +526,20 @@ class TenuoPluginConfig:
                 stacklevel=2,
             )
 
+        snapshots = self._provider_snapshots
+
         # Trusted roots are mandatory: explicit list, provider, or global configure().
         if self.trusted_roots_provider is not None:
-            if self.trusted_roots and not self._provider_snapshots_ready:
+            if self.trusted_roots and not snapshots.ready:
                 from tenuo.exceptions import ConfigurationError
                 raise ConfigurationError(
                     "TenuoPluginConfig: pass either trusted_roots= or "
                     "trusted_roots_provider=, not both."
                 )
-            if self._provider_snapshots_ready:
-                roots = list(self.trusted_roots or [])
+            if snapshots.ready:
+                # A copy of an already-primed config: reuse the roots the
+                # provider handed us rather than calling it again.
+                roots = list(snapshots.trusted_roots)
             else:
                 roots = list(self.trusted_roots_provider())
         elif self.trusted_roots:
@@ -497,9 +558,7 @@ class TenuoPluginConfig:
                 "runtime=Runtime(...), or call tenuo.configure(trusted_roots=[...]) "
                 "at application startup."
             )
-        if not self._provider_snapshots_ready:
-            self.trusted_roots = roots  # type: ignore[assignment]
-            self._last_good_trusted_roots = list(roots)
+        self.trusted_roots = roots  # type: ignore[assignment]
 
         if (
             self.runtime is not None
@@ -527,8 +586,10 @@ class TenuoPluginConfig:
                     "revocation_refresh_secs requires revocation_list_provider."
                 )
 
-        if not self._provider_snapshots_ready:
-            if self.revocation_list_provider is not None:
+        if self.revocation_list_provider is not None:
+            if snapshots.ready:
+                initial_srl = snapshots.revocation_list
+            else:
                 try:
                     initial_srl = self.revocation_list_provider()
                 except Exception as exc:
@@ -542,11 +603,19 @@ class TenuoPluginConfig:
                         "SRL endpoint availability, credentials, and timeout settings, "
                         "or pass a static revocation_list for bootstrap."
                     ) from exc
-                if initial_srl is not None:
-                    self._last_good_revocation_list = initial_srl
-            else:
-                self._last_good_revocation_list = self.revocation_list
-            self._provider_snapshots_ready = True
+        else:
+            # Static values may have been explicitly overridden through
+            # dataclasses.replace(), so they take precedence over a carried
+            # snapshot when no provider owns this half of the state.
+            initial_srl = self.revocation_list
+
+        # Publish both halves at once: provider-backed values come from the
+        # carried last-known-good snapshot, while static values are rebuilt
+        # from the public fields so explicit replace() overrides take effect.
+        self._provider_snapshots = _ProviderSnapshots(
+            trusted_roots=tuple(roots),
+            revocation_list=initial_srl,
+        )
 
         if self.signing_key is not None and self.key_resolver is None:
 

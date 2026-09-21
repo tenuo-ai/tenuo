@@ -271,6 +271,40 @@ async def test_middleware_accepts_and_strips_tenuo(
 
 
 @pytest.mark.asyncio
+async def test_middleware_accepts_and_strips_argument_carrier(
+    authorizer: Authorizer,
+    simple_warrant: Warrant,
+    agent_key: SigningKey,
+) -> None:
+    verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
+    mw = TenuoMiddleware(verifier)
+    tool_args = {"path": "/data/x.txt"}
+    envelope = request_params_meta_as_dict(
+        _make_meta(simple_warrant, agent_key, "read_file", tool_args)
+    )["tenuo"]
+    params = CallToolRequestParams(
+        name="read_file", arguments={**tool_args, "_tenuo": envelope}
+    )
+    ctx = MiddlewareContext(
+        message=params,
+        source="client",
+        type="request",
+        method="tools/call",
+        fastmcp_context=None,
+    )
+    seen: dict[str, Any] = {}
+
+    async def call_next(c: MiddlewareContext) -> ToolResult:
+        seen["args"] = dict(c.message.arguments or {})
+        return ToolResult(content=[TextContent(type="text", text="ok")])
+
+    out = await mw.on_call_tool(ctx, call_next)
+
+    assert seen["args"] == tool_args
+    assert isinstance(out, ToolResult)
+
+
+@pytest.mark.asyncio
 async def test_middleware_denies_tampered_pop(
     authorizer: Authorizer,
     simple_warrant: Warrant,

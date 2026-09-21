@@ -10,6 +10,7 @@
     "example:mcp:host": "pnpm --filter @tenuo/core exec vitest run test/mcp-host.smoke.test.ts",
     "example:mcp:adapter": "pnpm --filter @tenuo/mcp test",
     "example:mcp:v2": "pnpm --filter @tenuo/mcp exec vitest run test/example-v2.test.ts",
+    "example:sessions": "pnpm --filter @tenuo/core exec vitest run test/example-sessions.test.ts",
     "test:mutation": "stryker run stryker.core.config.mjs && stryker run stryker.mcp.config.mjs"
   },
   "engines": {

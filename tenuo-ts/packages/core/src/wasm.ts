@@ -158,6 +158,7 @@ export type WasmExplainField = {
   constraint: unknown;
   value?: unknown;
   satisfied: boolean;
+  reason_code?: string;
   reason?: string;
 };
 

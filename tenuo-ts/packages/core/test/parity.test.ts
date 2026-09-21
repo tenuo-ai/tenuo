@@ -605,6 +605,25 @@ describe("explain()", () => {
     expect(tenuo.explain(issued, "read_file", { path: "/x" }).outcome).toBe("deny");
   });
 
+  it("gives stable, specific UrlSafe diagnostics without exposing them in authorization errors", async () => {
+    const tenuo = dev();
+    const session = tenuo.session({
+      allow: { fetch: { url: urlSafe({ allowDomains: ["api.example.com"] }) } },
+    });
+    const explanation = tenuo.explain(session, "fetch", { url: "https://evil.example/x" });
+    expect(explanation.fields[0]).toMatchObject({
+      satisfied: false,
+      reasonCode: "url_domain_not_allowed",
+      reason: "host is not in the domain allow list",
+    });
+
+    const fetch = probe(tenuo, "fetch", { url: urlSafe({ allowDomains: ["api.example.com"] }) });
+    await expect(fetch.ok({ url: "https://evil.example/x" })).rejects.toMatchObject({
+      code: "TENUO_CONSTRAINT_VIOLATION",
+      message: expect.stringMatching(/Use tenuo\.explain\(session, tool, args\) locally/),
+    });
+  });
+
   it("flags a chain the verifier does not trust", () => {
     const tenuo = dev();
     const holderKey = createTenuo.generateHolderKey();

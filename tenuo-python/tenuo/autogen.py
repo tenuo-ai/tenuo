@@ -426,7 +426,7 @@ class _Guard:
 
                 # Handle specific error types
                 if result.error_type == "expired":
-                    raise ExpiredError(result.denial_reason or "Warrant has expired")
+                    raise ExpiredError(result.warrant_id or "unknown")
                 elif result.error_type == "tool_not_allowed":
                     raise ToolNotAuthorized(tool=tool_name)
                 elif result.error_type == "clearance_insufficient":
@@ -489,7 +489,7 @@ class _Guard:
                 from .exceptions import ConstraintResult, ExpiredError
 
                 if result.error_type == "expired":
-                    raise ExpiredError(result.denial_reason or "Warrant has expired")
+                    raise ExpiredError(result.warrant_id or "unknown")
                 elif result.error_type == "tool_not_allowed":
                     raise ToolNotAuthorized(tool=tool_name)
                 elif result.error_type == "clearance_insufficient":

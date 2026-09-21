@@ -100,6 +100,7 @@ export {
   not,
   notOneOf,
   oneOf,
+  pathGlob,
   pattern,
   range,
   regex,

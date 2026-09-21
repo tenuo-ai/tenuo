@@ -7,13 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`Pattern` is documented as a string glob, not a path boundary, and
+  `pathGlob()`/`path_glob()` provide the safe composition.** `Pattern`'s `*`
+  crosses `/`, so `Pattern("*.json")` admits `/etc/passwd.json`; guidance that
+  presented it as protection against arbitrary file access was wrong. The new
+  helper pairs `Subpath` with `Pattern` so the value must stay under a root and
+  match the glob, which is decided after path normalization and so is not
+  defeated by `..` or a shared textual prefix like `/workspace-evil`. An `All`
+  constraint can now be narrowed to an `Exact` value that every conjunct
+  already admits, so a delegatee can still pin a path glob to one file.
+- **TypeScript/WASM constraint expressions fail closed on unknown options.**
+  A raw constraint object (JSON/YAML policy, `narrow()`, approval-gate
+  `when`/`exempt`, `constraintBounds`) with a key its kind does not accept,
+  or a value of the wrong type, is now rejected when the policy compiles
+  instead of being silently ignored; `{ kind: "urlSafe", domains: [...] }`
+  previously compiled to an unrestricted `urlSafe`. The `@tenuo/core`
+  builders reject misspelled options at the call site with
+  `TenuoConfigurationError`.
+- **Core chain verification hardening.** Multi-warrant chains must begin with
+  a depth-0 warrant without a parent hash, and a child may not claim an
+  issuance time before its parent. `Authorizer::with_max_token_lifetime()` can
+  enforce a deployment-specific warrant lifetime ceiling. Empty `All([])`
+  constraints now fail closed instead of matching every value; empty `Any([])`
+  keeps its existing deny-all behavior.
+- **`BoundWarrant.validate()` no longer accepts self-signed authority.**
+  It built its `Authorizer` from the warrant's own issuer, so every warrant
+  was trusted by construction and any `trusted_roots` passed at bind time were
+  silently ignored — a warrant `enforce_tool_call` denied could still validate.
+  It now resolves roots exactly as enforcement does (call argument, bind-time
+  roots, `tenuo.configure()`, `Runtime`) and raises `ConfigurationError` when
+  none are available. **Breaking:** `validate()` and `headers()` now require a
+  trust anchor. New `trusted_roots=` and `warrant_chain=` parameters let
+  callers supply one and present a delegated warrant's parents.
+
 ### Fixed
 
+- **MCP warrants can cross `_meta`-stripping gateways.**
+  `SecureMCPClient(inject_warrant="argument")` carries the warrant, PoP, and
+  approvals in reserved `arguments._tenuo`; `MCPVerifier` removes it before
+  verification and tool dispatch, and rejects conflicting `_meta` and argument
+  envelopes.
+- **Linux wheels install on glibc 2.28 and newer.** Release wheels were built
+  natively on `ubuntu-latest` and tagged `manylinux_2_38`, so `pip install
+  tenuo` refused the wheel on Ubuntu 20.04/22.04, Debian 11/12, RHEL 8/9,
+  and the default `python:3.x` Docker images, falling back to a source build
+  that needs a Rust toolchain. The Linux wheel is now built in the
+  `manylinux_2_28` container; CI installs it on `python:3.12-slim-bookworm`
+  (glibc 2.36) to prove it.
+- **Python SRL builder chaining.** `SrlBuilder.revoke()`, `revoke_all()`,
+  `version()`, and `from_existing()` now return the builder as documented, and
+  the publicly exported `SrlBuilder` can be constructed directly.
+- **LangGraph delegated warrants can present their chain.** A warrant issued
+  by a supervisor is not signed by a trusted root, so a sub-agent holding one
+  was denied with `Root warrant issuer is not trusted` and the only documented
+  workaround was an undocumented `chain_scope()` around the invocation.
+  `TenuoToolNode` and `TenuoMiddleware` now read a `warrant_chain` state field
+  (parents root-first, excluding the leaf, as `Warrant` objects or base64
+  tokens) and accept a `warrant_chain=` constructor default. A chain that
+  cannot be read, does not hash-link to the leaf, or does not root in
+  `trusted_roots` denies the call.
+- **MCP client denial messages read once.** `SecureMCPClient` built its typed
+  exceptions by feeding the already-formatted `denial_reason` back into
+  constructors that format their own sentence, producing messages such as
+  `Tool 'Tool 'write_file' is not authorized' is not authorized` and
+  `Constraint 'path' not satisfied: Constraint 'path' not satisfied: ...`.
+  Denials now map to `ConstraintViolation`, `ToolNotAuthorized`,
+  `ExpiredError`, `RevokedError` (new for `error_type="revoked"`), and
+  `AuthorizationDenied` from their structured parts, so each message reads
+  once and `details` carries the tool, field, or warrant id.
+- **`ExpiredError` carried the reason where the warrant id belongs.**
+  `EnforcementResult.raise_if_denied()` and the AutoGen adapter passed
+  `denial_reason` as the warrant id, yielding
+  `Warrant 'Warrant has expired' has expired`. They now pass `warrant_id`.
+- **`SecureMCPClient.close()` no longer raises on transport teardown races.**
+  anyio `ClosedResourceError` / `BrokenResourceError` (bare or in an
+  `ExceptionGroup`) from the streamable-HTTP transport's own background tasks
+  are logged at debug level and dropped; anything else still propagates.
+  Session state is cleared either way.
+- **Temporal provider snapshots survive config copies.** Copying a
+  `TenuoPluginConfig` with `dataclasses.replace()` used to keep the
+  "providers already primed" flag while dropping the last-known-good trusted
+  roots and revocation list, so the copy had nothing to fall back on when a
+  refresh failed and built its `Authorizer` with no revocation list. Both
+  halves now travel as one immutable record, and readiness is derived from it
+  rather than tracked separately.
 - **`rustls` 0.23.45** in `tenuo-core/Cargo.lock` and `tenuo-python/Cargo.lock`
   (RUSTSEC-2026-0285).
 
 ### Added
 
+- **`tenuo.enforce_tool_call`, `tenuo.enforce_tool_call_async`, and
+  `tenuo.EnforcementResult`** are exported from the package. They are what
+  every adapter calls under the hood, and are the right entry point for tests
+  and custom integrations that need a single authorization decision without
+  a framework.
+
+### Changed
+
+- **Agent skill boundaries.** `tenuo-warrant` now stops at warrant issuance
+  and delegation, `tenuo-audit` routes application enforcement work to the
+  authorization skill, and release-tagged SDK references are validated against
+  one version contract.
+- **LangChain / LangGraph guidance.** `TenuoMiddleware` is the recommended
+  path for LangChain 1.x `create_agent()`. `TenuoToolNode` remains the
+  path for existing LangGraph `StateGraph` graphs. The experimental label
+  is dropped.
+
+### Added
+
+- **Agent skill re-pin automation.** Publishing a release runs the Agent skill
+  re-pin workflow, which re-pins `tenuo-agent-authorization` to the new tag and
+  opens the change for review. The skill validator now fails, on every branch,
+  when a release tag exists that the skill does not pin.
+- **Installable agent-authorization skill.** Coding agents can install
+  `tenuo-agent-authorization` with `npx skills add tenuo-ai/tenuo --skill
+  tenuo-agent-authorization` for Python, TypeScript, and Rust effect-boundary
+  integrations, deny-before-effect tests, architecture patterns, and common
+  security footguns.
 - **TypeScript minimal `@tenuo/mcp` v2 example.**
   `tenuo-ts/packages/mcp/examples/v2` runs an in-memory official v2 client
   and server with one `guardTools()` tool, one `tenuo.mcp.attach()` call

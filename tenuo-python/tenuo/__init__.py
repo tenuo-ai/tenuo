@@ -147,7 +147,7 @@ from .nonce import (
 )
 
 # Constraints
-from .constraints import Capability, Shlex, Subpath, UrlSafe
+from .constraints import Capability, Shlex, Subpath, UrlSafe, path_glob
 
 # Authority context managers
 from .scoped import (
@@ -173,6 +173,9 @@ import tenuo.warrant_ext  # noqa: F401
 
 # BoundWarrant (common result of warrant.bind())
 from .bound_warrant import BoundWarrant
+
+# Framework-agnostic enforcement (what every adapter calls under the hood)
+from ._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async
 
 # Holder runtime (identity, connect token, session lifecycle)
 from .connect import ConnectToken
@@ -271,6 +274,10 @@ __all__ = [
     "get_runtime",
     "bind_runtime",
     "Authorizer",
+    # Enforcement (framework-agnostic; adapters call these)
+    "enforce_tool_call",
+    "enforce_tool_call_async",
+    "EnforcementResult",
     # Chain verification (returned by Authorizer.authorize_one / check_chain)
     "ChainVerificationResult",
     "ChainStep",
@@ -352,6 +359,7 @@ __all__ = [
     "Subpath",  # Secure path containment (path traversal protection)
     "UrlSafe",  # SSRF protection (IP/domain blocking)
     "Shlex",  # Shell injection protection (command validation)
+    "path_glob",  # Subpath + Pattern: traversal-safe filesystem glob
     # Constraint aliases (shorter names)
     "Path",  # Alias for Subpath
     "Url",  # Alias for UrlSafe

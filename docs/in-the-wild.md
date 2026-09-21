@@ -138,18 +138,18 @@ description: External writing, talks, and coverage about Tenuo
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--mention">Mention</span>
-    <div class="wild-title"><a href="https://www.agentpatternscatalog.org/patterns/attenuating-delegation-chain/">Attenuating Delegation Chain</a></div>
-    <div class="wild-attribution">Agent Patterns Catalog</div>
-    <p class="wild-description">Independent pattern write-up of signed, append-only delegation chains that a verifier can reject for widening without calling the issuer. The AAT Internet-Draft is listed as a known use.</p>
-    <a class="wild-link" href="https://www.agentpatternscatalog.org/patterns/attenuating-delegation-chain/">Read the pattern →</a>
+    <div class="wild-title"><a href="https://www.agenticfabriq.com/blog/agent-to-agent-authorization">Agent-to-Agent Authorization: What Breaks When Delegation Chains Get Long</a></div>
+    <div class="wild-attribution">Paulina Xu · Agentic Fabriq</div>
+    <p class="wild-description">A2A standardizes how agents talk, not what authority travels with the request. Tenuo's AAT Internet-Draft is treated as the proposal that takes monotonic narrowing furthest: per-argument constraints, offline child minting, and verification from the root issuer key alone.</p>
+    <a class="wild-link" href="https://www.agenticfabriq.com/blog/agent-to-agent-authorization">Read the post →</a>
   </div>
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--mention">Mention</span>
-    <div class="wild-title"><a href="https://1password.github.io/agent-identity-specs/draft-1password-agent-identity-local-delegated.html#section-12-2.3.1">Local Delegated Agent Identity Architecture</a></div>
-    <div class="wild-attribution">Malnick, Meller, Menke · 1Password</div>
-    <p class="wild-description">1Password reference architecture for local delegated agents. The AAT Internet-Draft is cited as prior art for attenuating tokens in sub-agent flows.</p>
-    <a class="wild-link" href="https://1password.github.io/agent-identity-specs/draft-1password-agent-identity-local-delegated.html#section-12-2.3.1">Read the draft →</a>
+    <div class="wild-title"><a href="https://www.agentpatternscatalog.org/patterns/attenuating-delegation-chain/">Attenuating Delegation Chain</a></div>
+    <div class="wild-attribution">Agent Patterns Catalog</div>
+    <p class="wild-description">Independent pattern write-up of signed, append-only delegation chains that a verifier can reject for widening without calling the issuer. The AAT Internet-Draft is listed among the references.</p>
+    <a class="wild-link" href="https://www.agentpatternscatalog.org/patterns/attenuating-delegation-chain/">Read the pattern →</a>
   </div>
 
   <div class="wild-card">
@@ -166,22 +166,6 @@ description: External writing, talks, and coverage about Tenuo
     <div class="wild-attribution">K. Sweeney · IETF WIMSE</div>
     <p class="wild-description">WIMSE individual draft for an online Delegation Server. AAT is cited as the offline, holder-attenuable counterpart with the same goal and a different trust model.</p>
     <a class="wild-link" href="https://datatracker.ietf.org/doc/draft-sweeney-wimse-credential-delegation/">Read the draft →</a>
-  </div>
-
-  <div class="wild-card">
-    <span class="wild-badge wild-badge--mention">Mention</span>
-    <div class="wild-title"><a href="https://datatracker.ietf.org/doc/draft-mcguinness-oauth-mission/">Mission-Bound Authorization for OAuth 2.0</a></div>
-    <div class="wild-attribution">Karl McGuinness</div>
-    <p class="wild-description">OAuth profile for mission-bound grants. The AAT Internet-Draft is cited as the nearby work that carries offline capability attenuation and typed per-argument constraints.</p>
-    <a class="wild-link" href="https://datatracker.ietf.org/doc/draft-mcguinness-oauth-mission/">Read the draft →</a>
-  </div>
-
-  <div class="wild-card">
-    <span class="wild-badge wild-badge--mention">Mention</span>
-    <div class="wild-title"><a href="https://datatracker.ietf.org/doc/draft-sharif-attp/">ATTP: Agent Trust Transport Protocol</a></div>
-    <div class="wild-attribution">R. Sharif · CyberSecAI</div>
-    <p class="wild-description">Trust-decision protocol for agent actions. It treats AAT chains as a capability-attenuation input and says it does not define a competing delegation format.</p>
-    <a class="wild-link" href="https://datatracker.ietf.org/doc/draft-sharif-attp/">Read the draft →</a>
   </div>
 
   <div class="wild-card">

@@ -4,7 +4,9 @@ FastMCP middleware that delegates every ``tools/call`` authorization decision to
 
 Verification semantics (warrant decoding, PoP, constraints, approvals) are
 unchanged — this module only wires FastMCP's middleware hook to
-:meth:`MCPVerifier.verify` and normalizes request metadata.
+:meth:`MCPVerifier.verify` and normalizes request metadata. The verifier also
+accepts the gateway-compatible ``arguments._tenuo`` carrier; successful
+verification removes it before FastMCP validates and invokes the tool.
 
 ``CallToolRequestParams.meta`` (JSON ``_meta``) is read first. On the wire
 path FastMCP synthesizes the middleware's ``CallToolRequestParams`` without
@@ -183,8 +185,9 @@ class TenuoMiddleware(Middleware):
     """Run :class:`MCPVerifier` on every ``tools/call`` before the tool runs.
 
     On success, forwards a copy of the request with
-    :attr:`~MCPVerificationResult.clean_arguments` and ``tenuo`` removed from
-    ``meta`` so handlers do not see warrant material. On failure, returns a
+    :attr:`~MCPVerificationResult.clean_arguments`, ``tenuo`` removed from
+    ``meta``, and ``_tenuo`` removed from arguments so handlers do not see
+    warrant material. On failure, returns a
     tool result with ``isError=True`` (and structured ``tenuo`` diagnostics)
     without invoking the tool.
 

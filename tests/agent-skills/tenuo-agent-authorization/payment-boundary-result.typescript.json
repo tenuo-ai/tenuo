@@ -1,0 +1,22 @@
+{
+  "scenario": "payment-boundary-eval.md",
+  "language": "typescript",
+  "evaluated_at": "2026-09-17",
+  "model_class": "lower-cost coding model",
+  "result": "pass",
+  "evidence_kind": "carried_forward",
+  "inputs": [
+    "SKILL.md",
+    "references/typescript.md",
+    "references/common-footguns.md",
+    "references/security-model.md"
+  ],
+  "skill_fingerprint": "abab77da5ae3392d56a309a957330f55d0c49e6f847cf98db0c29ccb6c6d679a",
+  "evidence": {
+    "sdk": "@tenuo/core 0.3.0-beta.0",
+    "tests": "9 passed",
+    "typecheck": "passed",
+    "critical_items": "passed"
+  },
+  "carried_forward_review": "No fresh model run since the 2026-09-17 replay. Later edits replaced duplicated prose versions with a pointer to the machine-checked release contract and narrowed this fingerprint to the files the TypeScript scenario reads; they did not change boundary, key-separation, verification, bypass, or claim instructions. Python and Rust references have no committed behavioral evidence."
+}

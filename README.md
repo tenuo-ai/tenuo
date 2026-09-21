@@ -41,7 +41,21 @@ cargo add tenuo --features sdk
 
 See [`tenuo-ts/README.md`](tenuo-ts/README.md) for TypeScript. Rust is [below](#rust).
 
-Or try it without installing:
+### AI coding agents
+
+Install Tenuo's implementation skill so a supported coding agent can place
+authorization at the effect boundary, use the SDK version in your project, and
+generate both allow and deny-before-effect tests:
+
+```bash
+npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
+```
+
+The skill distinguishes an in-process guardrail from an independently enforced
+boundary and reports the guarantee and remaining bypasses explicitly. It does
+not ask the agent to reimplement Tenuo's cryptography or protocol.
+
+To try Tenuo without installing an SDK:
 
 <a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
 <a href="https://tenuo.ai/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a" alt="Explorer"></a>

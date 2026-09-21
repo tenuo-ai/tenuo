@@ -77,12 +77,30 @@ extension point::
       }
     }
 
-Tool arguments are never polluted with authorization metadata.
+Some MCP gateways discard ``params._meta``. For those paths,
+``SecureMCPClient(inject_warrant="argument")`` sends the same envelope in the
+reserved ``arguments._tenuo`` key. ``MCPVerifier`` removes that key before PoP
+verification, constraint extraction, and returning ``clean_arguments``. If
+both carriers are present, they must be identical or verification fails.
 
-On the server, ``MCPVerifier.verify()`` reads that block via its ``meta``
-parameter.  Pass ``req.params.meta`` from a raw handler that receives the full
+With :class:`TenuoMiddleware`, ``_tenuo`` is removed before FastMCP dispatches
+to the tool, so tool signatures do not need to declare it. A high-level tool
+that invokes ``MCPVerifier`` itself must accept and forward the optional field::
+
+    @mcp.tool()
+    async def read_file(
+        path: str, _tenuo: dict | None = None
+    ) -> str:
+        clean = verifier.verify_or_raise(
+            "read_file", {"path": path, "_tenuo": _tenuo}
+        )
+        return open(clean["path"]).read()
+
+On the server, ``MCPVerifier.verify()`` reads ``_meta`` via its ``meta``
+parameter and automatically falls back to ``arguments._tenuo``. Pass
+``req.params.meta`` from a raw handler that receives the full
 ``CallToolRequest``: ``_meta`` is the wire name, and the parsed attribute is
-``meta`` on both SDK lines.  It arrives as a model on 1.x and a dict on 2.x, and
+``meta`` on both SDK lines. It arrives as a model on 1.x and a dict on 2.x, and
 ``verify()`` accepts either.
 
 Approval gate flow
@@ -179,7 +197,10 @@ def _access_denial_reason(exc: BaseException) -> str:
             "canonicalization (both apply tenuo._pop_canonicalize.strip_none_values)."
         )
     if isinstance(exc, MissingSignature):
-        return f"{base} Ensure the client sends a PoP signature in _meta.tenuo.signature."
+        return (
+            f"{base} Ensure the client sends a PoP signature in "
+            "_meta.tenuo.signature or arguments._tenuo.signature."
+        )
     return base
 
 
@@ -451,7 +472,7 @@ class MCPVerifier:
 
         result = verifier.verify("transfer", arguments)
         if result.is_approval_required:
-            # Client must obtain approvals and re-submit with _meta.tenuo.approvals
+            # Client re-submits approvals through the selected warrant carrier.
             return jsonrpc_error(-32002, result.denial_reason)
     """
 
@@ -481,7 +502,8 @@ class MCPVerifier:
                 constraints — the field name must then match the warrant
                 constraint name exactly.
             require_warrant: If ``True`` (default), calls without a warrant
-                in ``_meta.tenuo`` are denied with ``-32001``.  Set ``False``
+                in ``_meta.tenuo`` or ``arguments._tenuo`` are denied with
+                ``-32001``.  Set ``False``
                 only in mixed deployments where some tool calls legitimately
                 arrive without a Tenuo warrant (e.g., during gradual rollout).
             nonce_store: Optional ``tenuo.nonce.NonceStore`` for PoP replay
@@ -522,25 +544,31 @@ class MCPVerifier:
         approval gates, and checks all constraints.
 
         Authorization metadata is read from the ``tenuo`` key of the request
-        ``_meta``.  Pass ``params.meta`` when your server framework exposes the
-        full ``CallToolRequest`` (e.g. raw low-level handlers).
+        ``_meta`` or, as a gateway-compatible fallback, the reserved
+        ``arguments._tenuo`` key. Pass ``params.meta`` when your server
+        framework exposes the full ``CallToolRequest`` (e.g. raw low-level
+        handlers). If both carriers are present, they must be identical.
 
         This method never raises — all failures are returned as a denial result.
 
         Args:
             tool_name: The MCP tool name being called.
             arguments: Tool arguments dict.  ``None`` is treated as an empty
-                dict.
+                dict. The reserved ``_tenuo`` carrier is removed before PoP
+                verification, constraint extraction, and ``clean_arguments``.
             meta: The request's ``_meta``, as either a dict or the SDK's parsed
-                model — 1.x supplies a model and 2.x a dict.  Must carry a
-                ``tenuo`` key with the warrant and PoP signature.
+                model — 1.x supplies a model and 2.x a dict. It may carry a
+                ``tenuo`` key with the warrant and PoP signature; when absent,
+                the verifier checks ``arguments._tenuo``.
 
         Returns:
             :class:`MCPVerificationResult` with ``allowed=True`` on success,
             or ``allowed=False`` with ``denial_reason`` and
             ``jsonrpc_error_code`` on failure.
         """
-        args: Dict[str, Any] = arguments or {}
+        args: Dict[str, Any] = dict(arguments or {})
+        missing_argument_envelope = object()
+        argument_envelope: Any = args.pop("_tenuo", missing_argument_envelope)
         # PoP bytes cover the wire-args view. Both client and server apply
         # strip_none_values to that view so optional arguments with None
         # defaults don't crash the Rust canonicalizer and don't silently
@@ -578,12 +606,75 @@ class MCPVerifier:
             return result
 
         # ------------------------------------------------------------------
-        # Step 1: extract Tenuo envelope from params._meta
+        # Step 1: resolve the Tenuo envelope from _meta or arguments._tenuo.
         # ------------------------------------------------------------------
-        tenuo_envelope: Dict[str, Any] = {}
         resolved_meta = _coerce_meta(meta)
-        if resolved_meta is not None and isinstance(resolved_meta.get("tenuo"), dict):
-            tenuo_envelope = resolved_meta["tenuo"]
+        meta_present = resolved_meta is not None and "tenuo" in resolved_meta
+        meta_envelope: Any = (
+            resolved_meta["tenuo"]
+            if resolved_meta is not None and "tenuo" in resolved_meta
+            else None
+        )
+        # High-level tool signatures commonly declare
+        # ``_tenuo: dict | None = None``. Treat that default as no argument
+        # carrier while still removing the reserved key from tool arguments.
+        argument_present = (
+            argument_envelope is not missing_argument_envelope
+            and argument_envelope is not None
+        )
+
+        if meta_present and not isinstance(meta_envelope, Mapping):
+            # Preserve the historical meta-only behavior (malformed metadata
+            # is treated as absent), but fail closed if a second carrier is
+            # also present and therefore cannot agree with it.
+            if argument_present:
+                return _emit_and_return(MCPVerificationResult(
+                    allowed=False,
+                    tool=tool_name,
+                    clean_arguments=dict(args),
+                    constraints={},
+                    denial_reason=(
+                        "Conflicting Tenuo envelopes in params._meta.tenuo and "
+                        "arguments._tenuo"
+                    ),
+                    jsonrpc_error_code=-32602,
+                ))
+            meta_present = False
+            meta_envelope = None
+        if argument_present and not isinstance(argument_envelope, Mapping):
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments=dict(args),
+                constraints={},
+                denial_reason="Invalid Tenuo envelope in arguments._tenuo",
+                jsonrpc_error_code=-32602,
+            ))
+
+        meta_envelope_dict = dict(meta_envelope) if meta_present else None
+        argument_envelope_dict = (
+            dict(argument_envelope) if argument_present else None
+        )
+        if (
+            meta_envelope_dict is not None
+            and argument_envelope_dict is not None
+            and meta_envelope_dict != argument_envelope_dict
+        ):
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments=dict(args),
+                constraints={},
+                denial_reason=(
+                    "Conflicting Tenuo envelopes in params._meta.tenuo and "
+                    "arguments._tenuo"
+                ),
+                jsonrpc_error_code=-32602,
+            ))
+
+        tenuo_envelope: Dict[str, Any] = (
+            meta_envelope_dict or argument_envelope_dict or {}
+        )
 
         clean_arguments: Dict[str, Any]
         constraints: Dict[str, Any]
@@ -635,7 +726,8 @@ class MCPVerifier:
                     clean_arguments=clean_arguments,
                     constraints=constraints,
                     denial_reason=(
-                        "No warrant provided. Use SecureMCPClient(inject_warrant=True), "
+                        "No warrant provided. Use SecureMCPClient(inject_warrant=True) "
+                        "for _meta or inject_warrant='argument' for arguments._tenuo, "
                         "or pass params.meta with tenuo metadata into MCPVerifier.verify. "
                         "On FastMCP, register TenuoMiddleware(verifier) so _meta from the "
                         "wire request reaches the verifier (tool handlers alone do not "

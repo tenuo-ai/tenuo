@@ -1,6 +1,6 @@
 ---
 name: tenuo-audit
-description: Audit, explain, and review tenuo warrants for security engineers and CISOs. Use this skill when someone wants to understand what a warrant authorizes, assess blast radius, review delegation chains, check for security risks, or audit agent permissions. Also trigger when a security engineer asks about agent authorization, access control review, permission auditing, or wants warrants explained in IAM/RBAC/OAuth terms.
+description: Audit, explain, or compare existing Tenuo warrants and delegation chains. Use for review-only requests about effective authority, blast radius, chain validity, or authorization risk. Do not use to implement enforcement in an application or tool boundary (use tenuo-agent-authorization).
 ---
 
 # Tenuo Warrant Auditor
@@ -31,7 +31,7 @@ The key difference: warrants carry **semantic constraints** on arguments (e.g., 
 ### Phase 1: Context Discovery
 
 Scan the codebase for tenuo usage:
-1. Search for `import tenuo`, `from tenuo`, `Warrant`, `mint_builder`, `grant_builder`, `@guard`
+1. Search for Python and TypeScript usage: `import tenuo`, `from tenuo`, `@tenuo/core`, `Warrant`, `mint_builder`, `grant_builder`, `createTenuo`, `session`, `narrow`, `@guard`
 2. Check for `tenuo_cloud` imports or `tc_` env vars (indicates cloud deployment)
 3. Look for warrant serialization patterns (base64 strings, `warrant.serialize()`, `Warrant(...)` deserialization)
 
@@ -40,7 +40,8 @@ Scan the codebase for tenuo usage:
 Ask: **"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
 
 - **Security engineer / CISO** → continue with this skill
-- **Developer** → suggest `/tenuo-warrant` instead ("That skill helps you create warrants from scratch — it'll walk you through what your agent needs")
+- **Developer creating or delegating authority** → suggest `tenuo-warrant`.
+- **Developer integrating enforcement into an application or tool boundary** → suggest `tenuo-agent-authorization`.
 - **Platform engineer** → continue, adjusting framing for infrastructure review
 
 ### Phase 3: Source Selection
@@ -67,6 +68,15 @@ For each warrant found, extract and present:
 - List of capabilities (tools/actions granted)
 - Constraints on each capability's arguments
 - Closed-world status (are unconstrained arguments rejected?)
+
+Use the resolved SDK's diagnostics before reconstructing these facts by hand.
+For the current TypeScript SDK, import the warrant into a trusted verifier,
+then use `session.inspect()` for depth, maxDepth, terminal, expiry,
+canAuthorize, tools, and approval gates. Use `tenuo.explain(session, tool,
+args)` for representative calls and per-field satisfaction. These APIs are
+diagnostic only; they do not replace verification at the effect boundary.
+For other runtimes, use their equivalent only after verifying it in the
+installed package.
 
 ### Phase 5: Plain-Language Explanation
 
@@ -173,7 +183,7 @@ Assess each warrant against this risk framework:
 
 | Finding | Severity | What it means |
 |---|---|---|
-| `_allow_unknown=True` | **HIGH** | Closed-world disabled. Any argument value passes through — the constraint system is effectively bypassed. Like an IAM policy with `"Resource": "*"`. |
+| `_allow_unknown=True` | **HIGH** | Closed-world disabled. Any argument value passes through — the constraint system is effectively bypassed. Like an IAM policy with `"Resource": "*"`. Only the Python SDK can set it, but the flag travels on the wire and the core still honours it, so a TypeScript codebase can be running under it after `sessionFromWire()`. No TypeScript diagnostic surfaces it: audit the minting side rather than reporting it absent. |
 | PoP not enforced | **HIGH** | Warrant is a bearer token. If stolen, attacker can use it without the holder's private key. Like an API key vs. mTLS. |
 | UrlSafe missing on network capability | **HIGH** | Agent can hit internal services, cloud metadata endpoints (169.254.169.254). SSRF risk. |
 | No TTL or TTL > 1 hour | **MEDIUM** | Long-lived credential. Increases the blast radius time window. Like a non-expiring session token. |

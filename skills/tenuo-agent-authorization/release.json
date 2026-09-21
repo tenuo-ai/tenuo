@@ -1,0 +1,35 @@
+{
+  "repository_tag": "v0.3.0",
+  "packages": [
+    {
+      "name": "Python",
+      "reference": "references/python.md",
+      "manifest": "tenuo-python/pyproject.toml",
+      "format": "toml",
+      "section": "project",
+      "version": "0.3.0"
+    },
+    {
+      "name": "TypeScript core",
+      "reference": "references/typescript.md",
+      "manifest": "tenuo-ts/packages/core/package.json",
+      "format": "json",
+      "version": "0.3.0-beta.0"
+    },
+    {
+      "name": "TypeScript MCP",
+      "reference": "references/typescript.md",
+      "manifest": "tenuo-ts/packages/mcp/package.json",
+      "format": "json",
+      "version": "0.3.0-beta.0"
+    },
+    {
+      "name": "Rust",
+      "reference": "references/rust.md",
+      "manifest": "tenuo-core/Cargo.toml",
+      "format": "toml",
+      "section": "package",
+      "version": "0.3.0"
+    }
+  ]
+}

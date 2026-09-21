@@ -173,7 +173,8 @@ class TestBoundWarrant:
     def test_headers(self):
         """Test headers generation."""
         warrant, key = Warrant.quick_mint(["search"], ttl=3600)
-        bound = warrant.bind(key)
+        # headers() pre-flights through validate(), which needs a trust anchor.
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         headers = bound.headers("search", {"query": "test"})
 

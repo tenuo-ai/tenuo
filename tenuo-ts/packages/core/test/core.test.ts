@@ -18,6 +18,7 @@ import {
   min,
   notOneOf,
   oneOf,
+  pathGlob,
   pattern,
   range,
   regex,
@@ -27,6 +28,7 @@ import {
   TenuoError,
   under,
   urlPattern,
+  urlSafe,
 } from "../src/index.ts";
 import type {
   AllowPolicy,
@@ -379,6 +381,66 @@ describe("constraints", () => {
     expect(max(500)).toEqual({ kind: "max", value: 500 });
     expect(oneOf(["a", "b"])).toEqual({ kind: "oneOf", values: ["a", "b"] });
     expect(pattern("*@acme.com")).toEqual({ kind: "pattern", pattern: "*@acme.com" });
+    expect(pathGlob("/workspace", "*.json")).toEqual({
+      kind: "all",
+      constraints: [
+        { kind: "under", root: "/workspace" },
+        { kind: "pattern", pattern: "*.json" },
+      ],
+    });
+  });
+
+  it("keeps path globs inside their traversal-safe root", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const readJson = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_json", allow: { path: pathGlob("/workspace", "*.json") } },
+    );
+    const session = tenuo.session({ tools: [readJson] });
+    await expect(readJson.execute({ path: "/workspace/reports/q3.json" }, { session })).resolves.toBe(
+      "/workspace/reports/q3.json",
+    );
+
+    // Containment is decided after normalization, not by a textual prefix:
+    // each of these matches the `*.json` glob and must still be refused.
+    for (const path of [
+      "../../etc/passwd.json",
+      "/workspace/../etc/passwd.json",
+      "/workspace/a/../../etc/passwd.json",
+      "/workspace-evil/x.json",
+      "/etc/passwd.json",
+    ]) {
+      await expect(readJson.execute({ path }, { session })).rejects.toMatchObject({
+        code: "TENUO_CONSTRAINT_VIOLATION",
+        field: "path",
+      });
+    }
+
+    // The root alone is not a licence to read anything under it.
+    await expect(
+      readJson.execute({ path: "/workspace/secrets.env" }, { session }),
+    ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION", field: "path" });
+  });
+
+  it("applies the path glob to the whole path, not relative to the root", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const read = (glob: string) =>
+      tenuo.tool(
+        { execute: async ({ path }: { path: string }) => path },
+        { capability: "read_json", allow: { path: pathGlob("/workspace", glob) } },
+      );
+
+    // A root-relative looking glob does not match: the value it is tested
+    // against is the full path, so it needs to admit the root too.
+    const relative = read("reports/*.json");
+    await expect(
+      relative.execute({ path: "/workspace/reports/q3.json" }, { session: tenuo.session({ tools: [relative] }) }),
+    ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION", field: "path" });
+
+    const absolute = read("/workspace/reports/*.json");
+    await expect(
+      absolute.execute({ path: "/workspace/reports/q3.json" }, { session: tenuo.session({ tools: [absolute] }) }),
+    ).resolves.toBe("/workspace/reports/q3.json");
   });
 
   it.each<[string, () => unknown, RegExp]>([
@@ -400,12 +462,81 @@ describe("constraints", () => {
     ["anyOf() with no constraints", () => anyOf([]), /at least one constraint/],
     ["all() with no constraints", () => all([]), /at least one constraint/],
     ["cel() with a blank expression", () => cel("   "), /non-empty expression/],
+    [
+      "urlSafe() with a misspelled option",
+      () => urlSafe({ domains: ["example.com"] } as never),
+      /unknown option "domains".*allowDomains/,
+    ],
+    [
+      "under() with a misspelled option",
+      () => under("/data", { allowEquals: true } as never),
+      /unknown option "allowEquals".*allowEqual/,
+    ],
+    [
+      "range() with a misspelled option",
+      () => range({ min: 1, maximum: 2 } as never),
+      /unknown option "maximum".*max/,
+    ],
+    [
+      "email() with a misspelled option",
+      () => email({ domain: "example.com", domains: [] } as never),
+      /unknown option "domains".*domain/,
+    ],
+    ["urlSafe() with a non-object", () => urlSafe("https" as never), /expects an options object/],
   ])("%s throws TenuoConfigurationError", (_label, build, message) => {
     expect(build).toThrow(TenuoConfigurationError);
     expect(build).toThrow(message);
     expect(build).toThrow(
       expect.objectContaining({ code: "TENUO_CONFIGURATION", name: "TenuoConfigurationError" }),
     );
+  });
+
+  it("treats null options like omitted options", () => {
+    expect(under("/data", null as never)).toEqual({ kind: "under", root: "/data" });
+    expect(urlSafe(null as never)).toEqual({ kind: "urlSafe" });
+  });
+
+  const mint = (url: unknown) => () =>
+    createTenuo({ root: createTenuo.devRoot() }).session({
+      allow: { fetch: { url: url as never } },
+    });
+
+  it("rejects unknown options in raw constraint objects instead of widening authority", () => {
+    expect(mint({ kind: "urlSafe", domains: ["example.com"] })).toThrow(
+      /urlSafe: unknown field `domains`.*allowDomains/,
+    );
+  });
+
+  it("rejects unknown options nested inside not / anyOf / all", () => {
+    const inner = { kind: "under", root: "/data", allowEquals: true };
+    expect(mint({ kind: "not", constraint: inner })).toThrow(/unknown field `allowEquals`/);
+    expect(mint({ kind: "anyOf", constraints: [inner] })).toThrow(/unknown field `allowEquals`/);
+    expect(mint({ kind: "all", constraints: [{ kind: "wildcard" }, inner] })).toThrow(
+      /unknown field `allowEquals`/,
+    );
+  });
+
+  it("rejects wrong-typed option values instead of dropping them", () => {
+    expect(mint({ kind: "range", min: "10", max: 100 })).toThrow(/range: invalid type: string "10"/);
+    expect(mint({ kind: "under", root: "/data", allowEqual: "false" })).toThrow(
+      /under: invalid type: string "false"/,
+    );
+    expect(mint({ kind: "urlSafe", allowDomains: "example.com" })).toThrow(/urlSafe: invalid type/);
+  });
+
+  it("applies the same rule to approval-gate when / exempt constraints", () => {
+    const gate = (arg: unknown) => () =>
+      createTenuo({ root: createTenuo.devRoot() }).session({
+        allow: { fetch: { url: urlSafe() } },
+        requireApproval: {
+          approvers: [createTenuo.publicKeyFromHex(APPROVER1_PUB)],
+          min: 1,
+          gates: { fetch: { args: { url: arg as never } } },
+        },
+      });
+    const typo = { kind: "urlSafe", domains: ["example.com"] };
+    expect(gate({ when: typo })).toThrow(/gates\.fetch\.args\.url\.when: urlSafe: unknown field `domains`/);
+    expect(gate({ exempt: typo })).toThrow(/gates\.fetch\.args\.url\.exempt: urlSafe: unknown field `domains`/);
   });
 });
 
@@ -711,6 +842,27 @@ describe("narrow", () => {
       allow: { read_file: { path: under("/data/reports") } },
     });
     expect(() => tenuo.narrow(session, { path: under("/data") })).toThrow(
+      expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
+    );
+  });
+
+  it("narrows a path glob to one file, or to a tighter root", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { read_file: { path: pathGlob("/data", "*.json") } },
+    });
+
+    expect(() => tenuo.narrow(session, { path: exact("/data/reports/q3.json") })).not.toThrow();
+    expect(() => tenuo.narrow(session, { path: pathGlob("/data/reports", "*.json") })).not.toThrow();
+
+    // Values the parent never admitted stay refused.
+    expect(() => tenuo.narrow(session, { path: exact("/etc/passwd.json") })).toThrow(
+      expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
+    );
+    expect(() => tenuo.narrow(session, { path: exact("/data/secrets.env") })).toThrow(
+      expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
+    );
+    expect(() => tenuo.narrow(session, { path: pathGlob("/", "*.json") })).toThrow(
       expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
     );
   });

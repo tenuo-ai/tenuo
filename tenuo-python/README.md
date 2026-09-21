@@ -27,6 +27,16 @@ uv pip install "tenuo[temporal]"      # + Temporal Python SDK (workflow + activi
 uv pip install "tenuo[cloud]"         # optional: proprietary Tenuo Cloud client (see below)
 ```
 
+To have a supported coding agent inspect the installed SDK and implement a
+tested effect boundary for this project:
+
+```bash
+npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
+```
+
+The skill labels official adapters, verified recipes, generic integrations,
+and unsupported framework paths separately.
+
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
 [![Explorer](https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a)](https://tenuo.ai/explorer/)
 
@@ -135,8 +145,9 @@ warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(key))
 
-# Bind key for repeated use
-bound = warrant.bind(key)
+# Bind key for repeated use. trusted_roots is the anchor the warrant's issuer
+# must chain back to; this warrant is self-minted, so that anchor is `key`.
+bound = warrant.bind(key, trusted_roots=[key.public_key])
 
 items = ["item1", "item2", "item3"]
 for item in items:
@@ -650,7 +661,7 @@ async with SecureMCPClient("python", ["server.py"]) as client:
 async with SecureMCPClient(
     url="https://mcp.example.com/mcp",
     transport="http",          # or "sse"
-    inject_warrant=True,       # send warrant via params._meta.tenuo
+    inject_warrant=True,       # params._meta.tenuo; use "argument" for _tenuo
 ) as client:
     ...
 ```
