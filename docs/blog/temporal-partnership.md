@@ -5,7 +5,7 @@ layout: default
 permalink: /blog/temporal-partnership.html
 canonical_url: https://tenuo.ai/blog/temporal-partnership.html
 og_image: /images/og-temporal-partnership.png
-author: "Niki Aimable Niyikiza"
+author: "Tenuo Engineering"
 date: 2026-05-27
 tags: ["Temporal", "AI agents", "authorization", "security"]
 ---
