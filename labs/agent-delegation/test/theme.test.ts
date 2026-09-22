@@ -87,8 +87,8 @@ describe("public-site theme", () => {
 
     expect(mainNav).toBeDefined();
     expect(docsNav).toBeDefined();
-    expect(docsNav?.match(/<a /g)).toHaveLength(5); // brand plus the four main-site links
-    for (const label of ["Docs", "Explorer", "GitHub", "Tenuo Cloud"]) {
+    expect(docsNav?.match(/<a /g)).toHaveLength(6); // brand plus the five main-site links
+    for (const label of ["Docs", "Explorer", "Blog", "GitHub", "Tenuo Cloud"]) {
       expect(mainNav).toContain(`>${label}<`);
       expect(docsNav).toContain(`>${label}<`);
     }
