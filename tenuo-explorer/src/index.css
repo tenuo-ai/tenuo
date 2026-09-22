@@ -11,18 +11,20 @@
 :root {
   color-scheme: dark;
   --bg: #040a0f;
-  --surface: #09111a;
-  --surface-2: #0d1722;
+  --surface: #0a1018;
+  --surface-2: #0e1620;
   --surface-3: #111e2a;
   --border: rgba(56, 189, 248, 0.11);
   --border-strong: rgba(56, 189, 248, 0.24);
   --text: #c8d8e4;
-  --text-bright: #f1f7fb;
+  --text-bright: #e8e8e8;
   --muted: #7892a3;
   --muted-dim: #506b7b;
   --accent: #38bdf8;
-  --green: #00e987;
-  --red: #ff5573;
+  --accent2: #a855f7;
+  --green: #00ff88;
+  --red: #ff4466;
+  --gold: #c8a96e;
   --yellow: #e7b95c;
   --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
 }
@@ -1007,8 +1009,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   padding: 48px 24px;
   color: var(--muted);
   text-align: center;
-  font: 400 12px/1.6 'JetBrains Mono', monospace;
-  letter-spacing: .04em;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
 }
 .site-footer a { color: var(--muted); text-decoration: none; }
 .site-footer a:hover { color: var(--text); }
