@@ -73,6 +73,10 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
         // Switch back to decoder
         await page.keyboard.press('Meta+1');
         await expect(page.getByText('Paste Warrant')).toBeVisible();
+
+        // Receipt verification is also keyboard-accessible
+        await page.keyboard.press('Meta+5');
+        await expect(page.getByText('Paste Receipt(s)', { exact: true })).toBeVisible();
     });
 
     test('diff viewer compares warrants', async ({ page }) => {
@@ -111,8 +115,8 @@ test.describe('Regression Tests', () => {
             return {
                 background: getComputedStyle(document.body).backgroundColor,
                 accent: root.getPropertyValue('--accent').trim(),
-                gridSize: getComputedStyle(document.querySelector('.site-grid-bg')!).backgroundSize,
-                hasGlow: getComputedStyle(document.querySelector('.site-glow')!).backgroundImage.includes('radial-gradient'),
+                gridSize: getComputedStyle(document.querySelector('.app-shell')!).backgroundSize,
+                hasGlow: document.querySelector('.site-glow') !== null,
             };
         });
 
@@ -120,10 +124,12 @@ test.describe('Regression Tests', () => {
             background: 'rgb(4, 10, 15)',
             accent: '#38bdf8',
             gridSize: '48px 48px, 48px 48px',
-            hasGlow: true,
+            hasGlow: false,
         });
 
+        await expect(page.getByText(/WASM engine ready|Starting local engine/)).toHaveCount(0);
         const footer = page.locator('footer');
+        await expect(footer).toContainText('Runs locally in your browser. No uploads or account required.');
         await expect(footer).toContainText('© 2026 Tenuo · Docs · GitHub · Early Access');
         await expect(footer.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', 'https://tenuo.ai/quickstart');
         await expect(footer.getByRole('link', { name: 'GitHub' })).toHaveAttribute('href', 'https://github.com/tenuo-ai/tenuo');
@@ -141,7 +147,7 @@ test.describe('Regression Tests', () => {
         await page.click('button:has-text("Decode Warrant")');
 
         // Switch to Code tab
-        await page.click('button:has-text("💻 Code")');
+        await page.click('button:has-text("Code")');
 
         // Verify Python code uses correct API
         const codeBlock = page.locator('pre').first();
@@ -165,10 +171,10 @@ test.describe('Regression Tests', () => {
         await page.click('button:has-text("Decode Warrant")');
 
         // Switch to Code tab
-        await page.click('button:has-text("💻 Code")');
+        await page.click('button:has-text("Code")');
 
         // Switch to Rust
-        await page.click('button:has-text("🦀 rust")');
+        await page.click('button:has-text("rust")');
 
         // Verify Rust code uses correct API
         const codeBlock = page.locator('pre').first();
