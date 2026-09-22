@@ -6,7 +6,7 @@ canonical_url: https://tenuo.ai/eu-act
 og_type: article
 og_image: /images/og-eu-ai-act.png
 og_image_alt: "Tenuo and the EU AI Act for high-risk AI systems"
-author: "Tenuo Team"
+author: "Tenuo Engineering"
 date: 2026-05-06
 tags: ["EU AI Act", "compliance", "AI governance", "agentic systems"]
 ---

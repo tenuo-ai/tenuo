@@ -6,7 +6,7 @@ canonical_url: https://tenuo.ai/owasp
 og_type: article
 og_image: /images/og-owasp-agentic.png
 og_image_alt: "Tenuo against the OWASP Top 10 for Agentic Applications"
-author: "Tenuo Team"
+author: "Tenuo Engineering"
 date: 2026-05-06
 tags: ["OWASP", "AI security", "agentic systems", "authorization"]
 ---
