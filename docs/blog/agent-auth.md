@@ -2,6 +2,10 @@
 title: "Your AI agent is authorized to do everything wrong"
 description: "Why identity-based authorization fails when agents act autonomously, and what warrant-based authorization looks like."
 layout: default
+permalink: /blog/agent-auth.html
+author: "Niki Aimable Niyikiza"
+date: 2026-03-31
+tags: ["authorization", "AI agents", "prompt injection"]
 ---
 
 # Your AI agent is authorized to do everything wrong
