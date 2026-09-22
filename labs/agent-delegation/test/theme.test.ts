@@ -49,12 +49,12 @@ describe("public-site theme", () => {
       expect(token(explorer, name), `explorer --${name}`).toBe(token(main, name));
     }
 
-    for (const surface of [lab, explorer]) {
-      expect(surface).toContain("background-size: 48px 48px");
-      expect(surface).toContain("radial-gradient(ellipse, rgba(56, 189, 248, 0.07)");
-    }
-    expect(explorer).toContain(".site-grid-bg");
-    expect(explorer).toContain(".site-glow");
+    expect(lab).toContain("background-size: 48px 48px");
+    expect(lab).toContain("radial-gradient(ellipse, rgba(56, 189, 248, 0.07)");
+    expect(explorer).toContain("background-size: 48px 48px");
+    expect(explorer).toContain(".app-shell");
+    expect(explorer).not.toContain("radial-gradient(");
+    expect(explorer).not.toContain(".site-glow");
     expect(explorer).not.toContain(".orb-1");
   });
 
