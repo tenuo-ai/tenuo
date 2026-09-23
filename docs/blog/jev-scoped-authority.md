@@ -1,7 +1,8 @@
 ---
 title: "Jev in practice: typed decisions, scoped authority"
 description: "How Jev's typed probabilistic decisions, LangGraph workflows, and Tenuo task-scoped warrants combine in a dependency upgrade agent."
-layout: default
+layout: blog-post
+blog_post: true
 permalink: /blog/jev-scoped-authority.html
 canonical_url: https://tenuo.ai/blog/jev-scoped-authority
 og_image: /images/og-safe-agent-delegation-jev-langgraph-tenuo.png

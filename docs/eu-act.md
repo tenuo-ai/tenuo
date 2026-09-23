@@ -9,6 +9,8 @@ og_image_alt: "Tenuo and the EU AI Act for high-risk AI systems"
 author: "Tenuo Engineering"
 date: 2026-05-06
 tags: ["EU AI Act", "compliance", "AI governance", "agentic systems"]
+blog_resource: true
+resource_order: 2
 ---
 
 # Tenuo and the EU AI Act

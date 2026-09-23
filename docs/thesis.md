@@ -2,6 +2,8 @@
 title: "Authorization for Agentic Systems"
 description: "Task-scoped authority for AI agents"
 layout: default
+blog_resource: true
+resource_order: 1
 ---
 
 # Authorization for Agentic Systems

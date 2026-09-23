@@ -9,6 +9,9 @@ og_image_alt: "Tenuo against the OWASP Top 10 for Agentic Applications"
 author: "Tenuo Engineering"
 date: 2026-05-06
 tags: ["OWASP", "AI security", "agentic systems", "authorization"]
+blog_resource: true
+featured_resource: true
+resource_order: 3
 ---
 
 # Tenuo against the OWASP Top 10 for Agentic Applications
