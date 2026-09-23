@@ -43,6 +43,17 @@ informative:
   RFC9052:   # CBOR Object Signing and Encryption (COSE)
   RFC9334:   # Remote ATtestation procedureS (RATS) Architecture
   RFC9449:   # DPoP
+  RFC8707:   # Resource Indicators for OAuth 2.0
+  OIDC.Core:
+    title: "OpenID Connect Core 1.0 incorporating errata set 2"
+    author:
+      - name: Nat Sakimura
+      - name: John Bradley
+      - name: Michael B. Jones
+      - name: Breno de Medeiros
+      - name: Chuck Mortimore
+    date: 2023
+    target: https://openid.net/specs/openid-connect-core-1_0.html
   OAUTH-TXN-TOKENS:
     title: "Transaction Tokens"
     target: https://datatracker.ietf.org/doc/draft-ietf-oauth-transaction-tokens/
@@ -510,6 +521,7 @@ their absence carries the semantics described in the table.
 | `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a derived token's `iat` MUST NOT be earlier than its parent's `iat`. |
 | `exp` | NumericDate | REQUIRED | Time at which the token expires. MUST be greater than `iat`. MUST NOT exceed `iat` plus MAX_TOKEN_LIFETIME (see Section 4.4). |
 | `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}}. MUST contain `jwk` with the holder's public key. The `jwk` value MUST be a public key; private key material MUST NOT appear in this field. |
+| `aud` | string or array of strings | OPTIONAL | Audience, with the semantics of {{RFC7519}} Section 4.1.3: the enforcement points or resource contexts at which this token, and every token derived from it, may be presented. A holder that knows where a token will be presented SHOULD set `aud` when deriving it, in the manner of a contextual caveat {{MACAROONS}} or a resource indicator {{RFC8707}}; a holder that does not know MUST NOT guess. Every token in a chain that carries `aud` is checked against the enforcement point (Section 7, step 6c), so a derived token can add or narrow an audience restriction but cannot remove one. |
 | `del_depth` | integer | REQUIRED | Delegation depth. 0 for root tokens. Incremented by exactly 1 at each derivation step (see Section 4.3). |
 | `del_max_depth` | integer | REQUIRED | Maximum delegation depth permitted in this chain. MUST be a non-negative integer not exceeding the implementation's MAX_DELEGATION_DEPTH (Section 4.3). |
 | `par_hash` | string | MUST (derived) / MUST NOT (root) | Base64url-encoded SHA-256 digest of the parent token signing input, using base64url encoding without padding as defined in {{RFC7515}} Appendix C. For JWT/JWS AATs, the parent token signing input is the JWS Signing Input. MUST be absent in root tokens. MUST be present in all derived tokens. |
@@ -1419,7 +1431,8 @@ holder's private key. It MUST contain the required claims listed below.
 | `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3). |
 | `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
 | `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
-| `aat_aud` | string | REQUIRED | Audience identifier for the enforcement point or resource accepting the PoP JWT. MUST identify that enforcement point or resource. An enforcement point MUST reject a PoP JWT that omits `aat_aud` or whose `aat_aud` does not match a configured audience for this invocation. |
+| `aat_aud` | string | OPTIONAL | Presentation audience: identifies the party to which the holder presents this PoP JWT, with the semantics of the JWT `aud` claim ({{RFC7519}} Section 4.1.3) and the target binding of DPoP `htu` ({{RFC9449}}). It names the next hop, never a resource behind it that the holder cannot see (Section 8.5). When present, an enforcement point MUST reject a PoP JWT whose `aat_aud` does not identify itself. An enforcement point MAY require the claim. |
+| `nonce` | string | OPTIONAL | A value previously supplied by this enforcement point, following the server-provided nonce pattern of DPoP ({{RFC9449}} Section 8). An enforcement point that requires a nonce MUST reject a PoP JWT that omits it or carries a value the enforcement point did not issue or no longer accepts. How the nonce reaches the holder is transport-specific and out of scope. The claim name is the registered `nonce` claim {{OIDC.Core}}. |
 | `hta` | object | REQUIRED | The tool arguments for this invocation. Keys are argument names; values are argument values. |
 
 The PoP JWT payload MUST be serialized as JCS-canonical JSON
@@ -1470,9 +1483,10 @@ The enforcement point MUST reject a PoP JWT that:
    `cnf.jwk`.
 3. References an `aat_id` that does not match the `jti` of the
    presented leaf token.
-4. Omits `aat_aud` or contains an `aat_aud` claim that does not
-   identify the enforcement point or resource accepting the
-   invocation.
+4. Contains an `aat_aud` claim that does not identify the
+   enforcement point receiving the presentation, or omits
+   `aat_aud` when this enforcement point requires it (Section
+   8.5).
 5. Names a tool in `aat_tool` that does not exactly match the
    tool being invoked.
 6. Presents arguments in `hta` whose JCS-canonical form differs
@@ -1480,6 +1494,9 @@ The enforcement point MUST reject a PoP JWT that:
    (Section 7, step 7f).
 7. Has `iat` that is outside the enforcement point's accepted
    clock tolerance window (RECOMMENDED: ±30 seconds).
+8. Omits `nonce` when this enforcement point requires one, or
+   carries a `nonce` value this enforcement point did not issue
+   or no longer accepts.
 
 The PoP JWT `iat` timestamp and clock tolerance window bound the replay
 surface to a short interval. Implementations that wish to avoid shared
@@ -1776,6 +1793,12 @@ Algorithm:
       each argument name present in both the constraint map
       and args, verify the argument value satisfies the
       constraint. If any constraint check fails, DENY.
+   c. For each token in chain that carries an `aud` claim, verify
+      that at least one of its values identifies this enforcement
+      point (RFC 7519 Section 4.1.3). If any such token does not,
+      DENY. If this enforcement point requires chain audience
+      restriction (Sec 8.5) and no token in chain carries `aud`,
+      DENY.
 
 7. Verify PoP JWT:
    a. Verify the PoP JWT's JWS alg header is on the
@@ -1788,8 +1811,10 @@ Algorithm:
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
       signature verification succeeds, parse the PoP JWT claims. (I6)
    c. Verify pop_jwt.aat_id == leaf.jti.
-   d. Verify pop_jwt.aat_aud identifies this enforcement point
-      or resource context. If absent or mismatched, DENY.
+   d. If pop_jwt.aat_aud is present, verify it identifies this
+      enforcement point. If it does not, DENY. If it is absent
+      and this enforcement point requires PoP audience binding
+      (Sec 8.5), DENY.
    e. Verify pop_jwt.aat_tool equals tool using the exact-string
       matching rules in Section 3.3.1.
    f. Verify pop_jwt.hta, when JCS-canonicalized, equals the
@@ -1797,6 +1822,10 @@ Algorithm:
       canonical byte sequences differ, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
       window. If outside the window, DENY.
+   h. If this enforcement point requires a nonce (Sec 8.5),
+      verify pop_jwt.nonce is present and is a value this
+      enforcement point issued and still accepts. If absent,
+      unknown, or expired, DENY.
 
 8. PERMIT.
 ~~~
@@ -2044,8 +2073,8 @@ verification.
 ## Replay Attacks
 
 The PoP JWT binds a specific invocation to a fresh PoP `jti`, a
-timestamp, the target tool, the presented arguments, and the
-enforcement point or resource audience. The
+timestamp, the target tool, the presented arguments, and, when
+present, the presentation audience and enforcement-point nonce. The
 timestamp window limits the interval during which a captured PoP JWT
 remains usable to approximately twice the clock tolerance (RECOMMENDED:
 ±30 seconds, giving a window of roughly 60 seconds). This provides
@@ -2058,15 +2087,49 @@ external systems, and any operation that cannot be undone: enforcement
 points MUST implement stateful `jti` tracking for PoP JWTs and MUST NOT
 rely solely on the timestamp window for replay protection.
 
-PoP JWTs are scoped to the invocation data they contain. Deployments with
-multiple enforcement points, resource servers, tenants, or resource
-contexts that could accept the same AAT chain SHOULD require the
-`aat_aud` claim and reject PoP JWTs whose audience does not identify the
-accepting enforcement point or resource. Without audience binding, a PoP
-JWT captured at one enforcement point may be replayable at another
-enforcement point that accepts the same chain, tool name, and argument
-map within the timestamp window, unless stateful `jti` tracking is shared
-across those contexts.
+PoP JWTs are scoped to the invocation data they contain. Without
+further binding, a PoP JWT captured at one enforcement point may be
+replayable at another enforcement point that accepts the same chain,
+tool name, and argument map within the timestamp window. This
+specification provides three bindings against that replay, each
+borrowed from an existing mechanism, and requires deployments to use
+at least one where the exposure exists:
+
+- **Chain audience.** A holder that knows where a token will be
+  presented sets `aud` when deriving it (Section 3.2). This is the
+  contextual-caveat pattern of Macaroons {{MACAROONS}} and the
+  resource-indicator pattern of {{RFC8707}}: the restriction is added
+  by the party that knows the target, and every enforcement point
+  checks every `aud` in the chain against itself (Section 7, step
+  6c). A holder further down the chain need not know the target.
+- **Presentation audience.** `aat_aud` names the party the holder
+  hands the PoP JWT to, with the semantics of the JWT `aud` claim
+  {{RFC7519}} and the target binding of DPoP `htu` {{RFC9449}}. It
+  is the next hop, never a resource behind it. A holder always knows
+  the next hop, so the claim is always settable. It is OPTIONAL
+  because a transparent intermediary between the holder and the
+  enforcement point would otherwise force the enforcement point to
+  accept an audience value it does not own.
+- **Enforcement-point nonce.** The enforcement point supplies a
+  nonce and requires the PoP JWT to carry it, following the DPoP
+  server-provided nonce pattern ({{RFC9449}} Section 8). A proof
+  bound to one enforcement point's nonce cannot be replayed at
+  another, and the holder never needs to name or know the
+  enforcement point.
+
+An intermediary that forwards a presentation MUST either derive its
+own token and present its own PoP JWT to the next hop, as in token
+exchange {{RFC8693}}, or forward the presentation unchanged only to an
+enforcement point that does not require `aat_aud`. Requiring
+`aat_aud` while accepting transparent intermediaries is not a
+coherent policy.
+
+An enforcement point that accepts a chain which other enforcement
+points, resource servers, tenants, or resource contexts also accept
+MUST do at least one of the following: require chain audience,
+require `aat_aud`, require a nonce, or share `jti` tracking state
+with those contexts. Which one is a deployment choice; this
+specification does not prefer among them.
 
 This specification requires stateful `jti` tracking for irreversible
 operations but does not define the storage backend, consistency model,
@@ -2277,8 +2340,12 @@ Registry.
 |---|---|---|---|
 | `aat_id` | AAT `jti` being presented | IETF | This document |
 | `aat_tool` | Tool identifier for PoP binding | IETF | This document |
-| `aat_aud` | Enforcement point or resource audience for PoP binding | IETF | This document |
+| `aat_aud` | Presentation audience for PoP binding | IETF | This document |
 | `hta` | Tool arguments for PoP binding | IETF | This document |
+
+The `aud` claim on AATs (Section 3.2) and the `nonce` claim on PoP JWTs
+(Section 5.2) are existing registered claims, from {{RFC7519}} and
+{{OIDC.Core}} respectively, and are not re-registered.
 
 ## OAuth Authorization Details Types Registry
 
@@ -2594,6 +2661,12 @@ differ structurally from `htm` and `htu`: (1) `hta` carries the full
 argument map required for constraint evaluation at the enforcement
 point; (2) `aat_id` binds the proof to a specific leaf token `jti` and
 chain position, which DPoP does not define.
+
+Two proof-level mechanisms are borrowed from DPoP directly. `aat_aud`
+follows the `htu` model of naming the target the proof is presented
+to, and the OPTIONAL `nonce` claim follows the DPoP server-provided
+nonce ({{RFC9449}} Section 8), so an enforcement point can bind proofs
+to itself without the holder knowing its identity (Section 8.5).
 
 The cryptographic mechanism is the same: an asymmetric key in `cnf.jwk`,
 compact JWT serialization, verified against the leaf token's bound key.
@@ -2971,10 +3044,18 @@ implementations that followed the -01 text.
   `typ` at the header step (Section 7, steps 3a, 4a, and 7a). This
   follows {{RFC8725}} Section 3.11 and matches the pattern used by DPoP
   {{RFC9449}} (`dpop+jwt`). The -01 text defined no `typ` value.
-- **Required PoP audience.** `aat_aud` is REQUIRED on every PoP JWT and
-  MUST identify the enforcement point or resource accepting the
-  invocation (Section 5.2, Section 7 step 7d). The -01 text left
-  audience binding to deployment policy.
+- **Audience defined as a presentation target; chain audience and
+  nonce added.** `aat_aud` is OPTIONAL and, when present, MUST identify
+  the party the PoP JWT is presented to, never a resource behind it
+  (Section 5.2, Section 7 step 7d). AATs MAY carry the standard `aud`
+  claim, checked for every token in the chain (Section 3.2, step 6c),
+  and PoP JWTs MAY carry an enforcement-point `nonce` (step 7h).
+  Deployments in which several enforcement points accept one chain
+  MUST use at least one of these or share `jti` state (Section 8.5).
+  Each mechanism follows an existing one: JWT `aud` {{RFC7519}},
+  Macaroon caveats and resource indicators {{RFC8707}}, and the DPoP
+  `htu` and server nonce {{RFC9449}}. The -01 text left audience to
+  deployment policy without defining what the value meant.
 - **`all` subsumption without one-to-one assignment.** A derived `all`
   is valid if every parent clause is subsumed by at least one derived
   clause. A single derived clause MAY satisfy several parent clauses.
@@ -3008,5 +3089,5 @@ relative to the Section 7 algorithm in -01:
   list review of -01.
 - Byte-exact JWS test vectors are published as described in
   Appendix E. They encode the three normative changes above; a -01
-  implementation will disagree on `typ`, required `aat_aud`, and the
+  implementation will disagree on `typ`, audience mismatch handling, and the
   `all` clause-reuse cases.

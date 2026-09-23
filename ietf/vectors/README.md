@@ -31,7 +31,7 @@ diffs against the committed files, the same contract as
 
 Happy-path chains (single token, three levels, prefix presentation), each
 attenuation invariant I1 through I6, closed-world leaf checks, explicit JWT
-typing, required PoP audience, composite `all`/`any` subsumption including
+typing, optional PoP audience with mandatory mismatch rejection, chain audience, enforcement-point nonce, composite `all`/`any` subsumption including
 clause reuse, the remaining core constraint types, and the structural root
 checks of §7 steps 3c, 3d, 3f, 3h, 3l.
 
@@ -42,5 +42,5 @@ checks of §7 steps 3c, 3d, 3f, 3h, 3l.
 - No floats and no non-ASCII strings appear anywhere. Numeric canonicalization
   and Unicode tool-name matching need their own vector sets once the -02 text
   on those points is final.
-- Draft-01 implementations will disagree on `typ`, required `aat_aud`, and the
+- Draft-01 implementations will disagree on `typ`, audience mismatch handling, and the
   two `all` clause-reuse cases (`J.15.3`, `J.15.4`). Those encode -02 changes.

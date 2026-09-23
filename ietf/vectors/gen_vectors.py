@@ -12,12 +12,16 @@ Design choices (recorded in the emitted document):
     they must not re-canonicalize an AAT before verifying its signature.
   * Headers carry explicit typing: {"alg":"EdDSA","typ":"aat+jwt"} for
     AATs and {"alg":"EdDSA","typ":"aat-pop+jwt"} for PoP JWTs (RFC 8725 §3.11).
-  * aat_aud is REQUIRED on the PoP and MUST match the configured audience.
+  * aat_aud is OPTIONAL on the PoP; when present it MUST identify this
+    enforcement point (7d). Every chain token that carries `aud` must name
+    this enforcement point (6c). A PoP `nonce` is checked when the vector's
+    policy says the enforcement point requires one (7h).
   * `all` subsumption: every parent clause is subsumed by at least one derived
     clause; a derived clause MAY cover several parent clauses.
   * Verification clock: now = 1704067500 (2024-01-01T00:05:00Z).
     MAX_IAT_SKEW = 30, MAX_TOKEN_LIFETIME = 90 days, MAX_DELEGATION_DEPTH = 8,
-    PoP window = ±30 s, audience "https://tools.example.com" required.
+    PoP window = ±30 s, this enforcement point is "https://tools.example.com";
+    audience and nonce are required only where a vector's policy says so.
 
 Every vector is checked by the independent §7 verifier in this file before it
 is written. A vector whose actual verdict differs from its expected verdict
@@ -343,7 +347,9 @@ def subsumes(child: dict, parent: dict) -> bool:
 
 
 def verify_chain(chain: list[str], trust_anchors: list[Ed25519PublicKey], tool: str, args: dict,
-                 pop_jwt: str, now: int = NOW, audience: str | None = AUDIENCE) -> str:
+                 pop_jwt: str, now: int = NOW, audience: str = AUDIENCE,
+                 require_pop_aud: bool = False, require_chain_aud: bool = False,
+                 nonce: str | None = None) -> str:
     """Returns 'PERMIT' or raises Deny(step)."""
     if not chain:
         raise Deny("1", "empty chain")
@@ -465,18 +471,33 @@ def verify_chain(chain: list[str], trust_anchors: list[Ed25519PublicKey], tool: 
         for a, c in cmap.items():
             if not check(c, args[a]):
                 raise Deny("6b", f"argument {a!r} violates constraint")
+    # 6c: chain audience. Every token that carries aud must name this
+    # enforcement point (RFC 7519 §4.1.3 applied per token); a derived token
+    # can add or narrow the restriction but never remove one.
+    for i, c in enumerate(claims):
+        if "aud" in c:
+            vals = c["aud"] if isinstance(c["aud"], list) else [c["aud"]]
+            if audience not in vals:
+                raise Deny("6c", f"token {i} aud does not identify this enforcement point")
+    if require_chain_aud and not any("aud" in c for c in claims):
+        raise Deny("6c", "chain audience required by policy but no token carries aud")
 
     pop = _verify_jws(pop_jwt, _jwk_pub(leaf["cnf"]["jwk"], "7b"), "7a", "7b", expected_typ="aat-pop+jwt")
     if pop.get("aat_id") != leaf["jti"]:
         raise Deny("7c", "aat_id != leaf.jti")
-    if audience is not None and pop.get("aat_aud") != audience:
-        raise Deny("7d", "aat_aud mismatch")
+    pop_aud = pop.get("aat_aud")
+    if pop_aud is not None and pop_aud != audience:
+        raise Deny("7d", "aat_aud does not identify this enforcement point")
+    if pop_aud is None and require_pop_aud:
+        raise Deny("7d", "aat_aud required by policy but absent")
     if pop.get("aat_tool") != tool:
         raise Deny("7e", "aat_tool != tool")
     if jcs(pop.get("hta")) != jcs(args):
         raise Deny("7f", "hta != args (JCS)")
     if abs(pop["iat"] - now) > POP_WINDOW:
         raise Deny("7g", "PoP iat outside window")
+    if nonce is not None and pop.get("nonce") != nonce:
+        raise Deny("7h", "nonce required by policy but absent or not issued by this enforcement point")
     return "PERMIT"
 
 
@@ -519,10 +540,13 @@ def pop_sign(payload: dict, signer: Key, header: dict = POP_HEADER) -> dict:
     return jws_sign(payload, signer, header)
 
 
-def pop_claims(jti: str, leaf_tok: dict, tool: str, hta: dict, iat=NOW, aud=AUDIENCE) -> dict:
+def pop_claims(jti: str, leaf_tok: dict, tool: str, hta: dict, iat=NOW, aud=AUDIENCE,
+               nonce: str | None = None) -> dict:
     c = {"jti": jti, "iat": iat, "aat_id": leaf_tok["payload"]["jti"], "aat_tool": tool, "hta": hta}
     if aud is not None:
         c["aat_aud"] = aud
+    if nonce is not None:
+        c["nonce"] = nonce
     return c
 
 
@@ -530,10 +554,13 @@ VECTORS: list[dict] = []
 
 
 def add(vid: str, title: str, twin: str | None, desc: str, chain: list[dict], pop: dict, tool: str,
-        args: dict, expect: str, expect_step: str | None = None, now: int = NOW, notes: list[str] | None = None):
+        args: dict, expect: str, expect_step: str | None = None, now: int = NOW, notes: list[str] | None = None,
+        policy: dict | None = None):
+    """`policy` is what this enforcement point requires beyond the base algorithm:
+    require_pop_aud, require_chain_aud, nonce (the value it issued)."""
     compact = [t["compact"] for t in chain]
     try:
-        verdict, step = verify_chain(compact, TRUST, tool, args, pop["compact"], now=now), None
+        verdict, step = verify_chain(compact, TRUST, tool, args, pop["compact"], now=now, **(policy or {})), None
     except Deny as e:
         verdict, step = "DENY", e.step
     ok = verdict == expect and (expect == "PERMIT" or step == expect_step)
@@ -542,7 +569,7 @@ def add(vid: str, title: str, twin: str | None, desc: str, chain: list[dict], po
         sys.exit(1)
     VECTORS.append({
         "id": vid, "title": title, "cbor_twin": twin, "description": desc, "notes": notes or [],
-        "verification_time": now, "tool": tool, "args": args,
+        "verification_time": now, "tool": tool, "args": args, "policy": policy or {},
         "chain": chain, "pop": pop,
         "expected": {"verdict": expect, "step": expect_step},
     })
@@ -581,17 +608,67 @@ add("J.3", "Valid 3-level chain", "A.3",
     [L0, L1, L2], POP3, "read_file", {"path": Q3}, "PERMIT")
 
 # --- J.6 PoP variants on the valid chain -------------------------------------
-add("J.6.1", "PoP without aat_aud, verifier requires audience", "A.6",
-    "Same chain as J.3; the PoP omits aat_aud. The vector's deployment policy requires audience binding.",
+add("J.6.1", "PoP without aat_aud, enforcement point requires audience", "A.6",
+    "Same chain as J.3; the PoP omits aat_aud and this enforcement point's policy requires it (step 7d, "
+    "second sentence).",
     [L0, L1, L2], pop_sign(pop_claims(uuid7ish(0xA04), L2, "read_file", {"path": Q3}, aud=None), WK2),
-    "read_file", {"path": Q3}, "DENY", "7d",
-    notes=["-02: aat_aud is REQUIRED. Under draft-01 text a verifier with no audience policy would PERMIT "
-           "(Warden NOTES entry 8)."])
+    "read_file", {"path": Q3}, "DENY", "7d", policy={"require_pop_aud": True},
+    notes=["aat_aud is OPTIONAL in -02; this vector's policy requires it. Compare J.6.3, the same PoP under "
+           "a policy that does not (Warden NOTES entry 8)."])
 add("J.6.2", "PoP aat_aud does not identify this enforcement point", "A.6",
-    "Same chain as J.3; aat_aud is present but names https://evil.example.com.",
+    "Same chain as J.3; aat_aud is present but names https://evil.example.com. A present aat_aud MUST identify "
+    "the receiving enforcement point regardless of policy (step 7d, first sentence).",
     [L0, L1, L2], pop_sign(pop_claims(uuid7ish(0xA05), L2, "read_file", {"path": Q3},
                                      aud="https://evil.example.com"), WK2),
+    "read_file", {"path": Q3}, "DENY", "7d", policy={"require_pop_aud": True})
+add("J.6.3", "PoP without aat_aud, enforcement point does not require audience", None,
+    "Same chain as J.3; the PoP omits aat_aud and this enforcement point has no audience policy. "
+    "aat_aud is OPTIONAL (§5.2).",
+    [L0, L1, L2], pop_sign(pop_claims(uuid7ish(0xA06), L2, "read_file", {"path": Q3}, aud=None), WK2),
+    "read_file", {"path": Q3}, "PERMIT")
+add("J.6.4", "PoP aat_aud mismatch is fatal even without an audience policy", None,
+    "Same chain as J.3; aat_aud names https://evil.example.com and this enforcement point has no audience "
+    "policy. Presence is optional; a present value MUST identify the receiver (step 7d).",
+    [L0, L1, L2], pop_sign(pop_claims(uuid7ish(0xA07), L2, "read_file", {"path": Q3},
+                                     aud="https://evil.example.com"), WK2),
     "read_file", {"path": Q3}, "DENY", "7d")
+
+# --- J.6.5-7 enforcement-point nonce (§5.2 nonce, step 7h; DPoP RFC 9449 §8 pattern) -----
+NONCE = "e1c8a7f4-3b2d-4c5e-9f6a-7b8c9d0e1f2a"
+STALE_NONCE = "0f0e0d0c-0b0a-4908-8706-050403020100"
+add("J.6.5", "Nonce required, PoP omits nonce", None,
+    "Same chain as J.3; this enforcement point issued nonce " + NONCE + " and requires it. The PoP carries none.",
+    [L0, L1, L2], pop_sign(pop_claims(uuid7ish(0xA08), L2, "read_file", {"path": Q3}), WK2),
+    "read_file", {"path": Q3}, "DENY", "7h", policy={"nonce": NONCE})
+add("J.6.6", "Nonce required, PoP carries the issued nonce", None,
+    "Same chain as J.3; the PoP carries the nonce this enforcement point issued. The holder never names "
+    "the enforcement point; the nonce binds the proof to it.",
+    [L0, L1, L2], pop_sign(pop_claims(uuid7ish(0xA09), L2, "read_file", {"path": Q3}, nonce=NONCE), WK2),
+    "read_file", {"path": Q3}, "PERMIT", policy={"nonce": NONCE})
+add("J.6.7", "Nonce required, PoP carries a nonce this enforcement point did not issue", None,
+    "Same chain as J.3; the PoP carries a nonce from another enforcement point or an expired one.",
+    [L0, L1, L2], pop_sign(pop_claims(uuid7ish(0xA0A), L2, "read_file", {"path": Q3}, nonce=STALE_NONCE), WK2),
+    "read_file", {"path": Q3}, "DENY", "7h", policy={"nonce": NONCE})
+
+# --- J.6.8-10 chain audience (§3.2 aud, step 6c; Macaroon caveat / RFC 8707 pattern) ------
+AUD_ROOT = jws_sign(root_claims(uuid7ish(0x20), ROOT_TOOLS, ORCH, aud=AUDIENCE), CP)
+AUD_L1 = jws_sign(derived_claims(uuid7ish(0x21), AUD_ROOT, ORCH, WK, L1_TOOLS, IAT_ROOT + 60, 1704069000, 2), ORCH)
+add("J.6.8", "Root aud names this enforcement point", None,
+    "J.3 root and L1 with aud on the root set to this enforcement point by the issuer. L1 carries no aud; "
+    "the root's restriction still applies to every token below it (step 6c).",
+    [AUD_ROOT, AUD_L1], pop_sign(pop_claims(uuid7ish(0xA0B), AUD_L1, "read_file", {"path": Q3}), WK),
+    "read_file", {"path": Q3}, "PERMIT")
+OTHER_ROOT = jws_sign(root_claims(uuid7ish(0x22), ROOT_TOOLS, ORCH, aud="https://other.example.com"), CP)
+OTHER_L1 = jws_sign(derived_claims(uuid7ish(0x23), OTHER_ROOT, ORCH, WK, L1_TOOLS, IAT_ROOT + 60, 1704069000, 2), ORCH)
+add("J.6.9", "Root aud names another enforcement point", None,
+    "Same as J.6.8 with the root's aud set to https://other.example.com. The chain is valid but was not "
+    "issued for this enforcement point; the presentation audience on the PoP does not override the chain (step 6c).",
+    [OTHER_ROOT, OTHER_L1], pop_sign(pop_claims(uuid7ish(0xA0C), OTHER_L1, "read_file", {"path": Q3}), WK),
+    "read_file", {"path": Q3}, "DENY", "6c")
+add("J.6.10", "Chain audience required, no token carries aud", None,
+    "Same chain as J.3, which carries no aud anywhere; this enforcement point's policy requires chain audience "
+    "restriction (step 6c, last sentence).",
+    [L0, L1, L2], POP3, "read_file", {"path": Q3}, "DENY", "6c", policy={"require_chain_aud": True})
 
 # --- J.7 explicit typing (-02 proposal, RFC 8725 §3.11) ----------------------
 add("J.7.1", "PoP JWT missing typ", None,
@@ -1072,14 +1149,17 @@ md.append("# AAT JWS Test Vectors (draft-niyikiza-oauth-attenuating-agent-tokens
 md.append("**Status:** generated by `gen_vectors.py`, do not edit by hand; "
           "every expected verdict below was reproduced by the independent §7 verifier in that file. "
           "These vectors are for the -02 text. A draft-01 implementation will disagree on `typ`, "
-          "required `aat_aud`, and `all` clause-reuse (`J.15.3`, `J.15.4`).\n")
+          "audience mismatch handling (`J.6.2`, `J.6.4`), and `all` clause-reuse (`J.15.3`, `J.15.4`).\n")
 md.append("## Conventions\n")
 md.append("- Signature algorithm: Ed25519, JWS `alg` = `EdDSA`.")
 md.append("- **Explicit typing.** AAT header carries `typ` = `aat+jwt` and PoP header carries `typ` = `aat-pop+jwt` "
           "(RFC 8725 §3.11, cf. DPoP `dpop+jwt`). Verifiers reject a missing or mismatched `typ` at the header step "
           "(3a, 4a, 7a). Draft-01 defines no `typ`.")
-md.append("- **Audience.** `aat_aud` is REQUIRED in the PoP and MUST match a configured audience. "
-          "Draft-01 leaves this to deployment policy.")
+md.append("- **Audience and nonce.** `aat_aud` is OPTIONAL in the PoP; when present it MUST identify the receiving "
+          "enforcement point (step 7d). AATs MAY carry `aud`, checked for every token in the chain (step 6c). "
+          "PoP JWTs MAY carry an enforcement-point `nonce` (step 7h). Each vector states which of these its "
+          "enforcement point requires under **Policy**. Draft-01 leaves audience to deployment policy without "
+          "defining the value.")
 md.append("- **`all` subsumption.** Every parent clause must be subsumed by at least one derived clause; "
           "a derived clause MAY cover several parent clauses; extra derived clauses are permitted. Draft-01's one-to-one "
           "assignment is dropped (it adds backtracking without adding soundness).")
@@ -1130,6 +1210,8 @@ for v in VECTORS:
     if v["cbor_twin"]:
         md.append(f"CBOR twin: {v['cbor_twin']}.  ")
     md.append(v["description"] + "\n")
+    if v["policy"]:
+        md.append("**Policy:** " + ", ".join(f"`{k}`=`{val}`" for k, val in v["policy"].items()) + "\n")
     for n in v["notes"]:
         md.append(f"> {n}\n")
     md.append(f"**Invocation:** tool `{v['tool']}`, args `{jcs(v['args']).decode()}`, now = `{v['verification_time']}`  ")
@@ -1152,7 +1234,9 @@ json_out = {
     "conventions": {
         "header": HEADER, "pop_header": POP_HEADER,
         "aat_payload_jcs": True, "pop_payload_jcs": True,
-        "aat_aud_required": True,
+        "aat_aud": "optional; when present it must identify the enforcement point (7d)",
+        "chain_aud": "every chain token that carries aud must identify the enforcement point (6c)",
+        "pop_nonce": "checked when the vector policy names the nonce the enforcement point issued (7h)",
         "all_subsumption": "every parent clause subsumed by at least one derived clause; reuse permitted",
         "par_hash": "base64url-nopad(SHA-256(parent JWS Signing Input))",
     },
@@ -1164,6 +1248,7 @@ json_out = {
     "vectors": [{
         "id": v["id"], "title": v["title"], "cbor_twin": v["cbor_twin"], "description": v["description"],
         "notes": v["notes"], "now": v["verification_time"], "tool": v["tool"], "args": v["args"],
+        "policy": v["policy"],
         "chain": [tok_json(t) for t in v["chain"]], "chain_compact": [t["compact"] for t in v["chain"]],
         "pop": tok_json(v["pop"]), "expected": v["expected"],
     } for v in VECTORS],
