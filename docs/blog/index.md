@@ -30,17 +30,17 @@ blog_index: true
   .newsletter-signup {
     display: grid;
     grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
-    gap: 32px;
+    gap: 24px;
     align-items: center;
-    margin: 0 0 48px;
-    padding: 28px;
+    margin: 0 0 40px;
+    padding: 20px 24px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 10px;
   }
 
   .newsletter-label {
-    margin: 0 0 8px;
+    margin: 0 0 6px;
     color: var(--accent);
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.68rem;
@@ -49,7 +49,7 @@ blog_index: true
   }
 
   .newsletter-copy h2 {
-    margin: 0 0 8px;
+    margin: 0 0 4px;
     color: var(--text-bright);
     font-size: 1.2rem;
     line-height: 1.35;
@@ -362,9 +362,9 @@ blog_index: true
 
     .newsletter-signup {
       grid-template-columns: 1fr;
-      gap: 20px;
+      gap: 16px;
       margin-bottom: 34px;
-      padding: 22px;
+      padding: 20px;
     }
 
     .engineering-posts {

@@ -153,6 +153,37 @@ layout: blog-index
     border-radius: 10px;
   }
 
+  .post-content .partner-lockup {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 8px 0 20px;
+    opacity: 0.9;
+  }
+
+  .post-content .partner-lockup img {
+    width: auto;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .post-content .partner-lockup .partner-logo-temporal {
+    height: 30px;
+    max-width: 210px;
+  }
+
+  .post-content .partner-lockup .partner-logo-tenuo {
+    height: 18px;
+    max-width: 118px;
+  }
+
+  .post-content .partner-lockup .partner-separator {
+    color: var(--muted);
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+
   .post-content table {
     display: block;
     width: 100%;
@@ -322,6 +353,21 @@ layout: blog-index
 
     .post-newsletter .newsletter-form button {
       width: 100%;
+    }
+
+    .post-content .partner-lockup {
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .post-content .partner-lockup .partner-logo-temporal {
+      height: 26px;
+      max-width: 180px;
+    }
+
+    .post-content .partner-lockup .partner-logo-tenuo {
+      height: 16px;
+      max-width: 104px;
     }
   }
 </style>
