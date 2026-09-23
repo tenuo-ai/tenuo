@@ -116,7 +116,7 @@ Tier 1 provides this: fast, in-process constraint checking without cryptographic
 
 **Why Tier 2 exists:**
 
-When authorization crosses process boundaries (Agent A calls Agent B over HTTP), you need proof. Agent B can't trust that the request "really came from Agent A with these permissions" without cryptographic verification. Tier 2 adds warrants (signed capability tokens) and Proof-of-Possession (proving the caller holds the private key).
+When authorization crosses process boundaries (Agent A calls Agent B over HTTP), you need proof. Agent B can't trust that the request "really came from Agent A with these permissions" without cryptographic verification. Tier 2 adds warrants (signed, task-scoped grants) and Proof-of-Possession (proving the caller holds the private key).
 
 ```
 Which tier should I use?

@@ -17,7 +17,7 @@ npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
 
 ## Overview
 
-Tenuo implements **capability tokens** (Warrants) for AI agent authorization:
+Tenuo implements **task-scoped authorization** with signed warrants:
 
 - **Offline verification** in under 50 μs - no network calls
 - **Monotonic attenuation** - delegated tokens can only shrink in scope

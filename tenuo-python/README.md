@@ -1,13 +1,13 @@
 # Tenuo Python SDK
 
-**Capability tokens for AI agents**
+**Task-scoped authorization for AI agents**
 
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
 > **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](../CHANGELOG.md).
 
-Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing cryptographically-enforced capability attenuation for AI agent workflows.
+Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing task-scoped authorization with cryptographic attenuation for AI agent workflows.
 
 ## Installation
 
@@ -422,7 +422,7 @@ For Tier 2 (warrant + PoP) and multi-agent scenarios, see [Google ADK Integratio
 
 ## CrewAI Integration
 
-Capability-based authorization for CrewAI multi-agent crews:
+Task-scoped authorization for CrewAI multi-agent crews:
 
 ```python
 from crewai import Agent, Task, Crew

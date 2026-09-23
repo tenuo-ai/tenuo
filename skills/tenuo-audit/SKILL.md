@@ -11,7 +11,7 @@ Help security engineers and CISOs understand what tenuo warrants authorize, asse
 
 ## How Warrants Map to Familiar Concepts
 
-Warrants are tenuo's authorization primitive — capability tokens with cryptographic delegation chains. If you're coming from traditional access control, here's the translation:
+Warrants are tenuo's authorization primitive — task-scoped grants with cryptographic delegation chains. If you're coming from traditional access control, here's the translation:
 
 | Tenuo | IAM | RBAC | OAuth |
 |---|---|---|---|

@@ -169,12 +169,12 @@ lab acknowledges this. When it happens, what does your auth stack allow it to do
 What if the authorization wasn't "you have the finance role" but "you can pay
 vendor V-4521 to account `7291034851`, for the next 10 minutes"?
 
-This is capability-based security applied to agent delegation. Instead of
-authorizing identities, you issue a **warrant**: a signed token that carries the
-allowed tools, argument constraints, and a TTL for this specific task. The concept
-comes from capability security research (think Dennis & Van Horn, 1966), but
-warrants add something those systems didn't need: a delegation chain where every
-hop can only narrow authority, never expand it.
+This is task-scoped authorization. Instead of authorizing identities, you issue
+a **warrant**: a signed grant that carries the allowed tools, argument
+constraints, and a TTL for this specific task. The mechanism comes from
+capability security research (think Dennis & Van Horn, 1966), but warrants add
+something those systems didn't need: a delegation chain where every hop can
+only narrow authority, never expand it.
 
 When the orchestrator plans the task, it reads the known-good account from the
 vendor ERP database and mints a warrant explicitly for the execution sub-agent

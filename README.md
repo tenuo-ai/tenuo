@@ -231,7 +231,7 @@ Five main levels plus two optional bosses, no agent-framework experience needed.
 
 ## How It Works
 
-Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. The verifier uses the trusted issuer key and locally available revocation state.
+Tenuo is task-scoped authorization. A warrant is the signed grant for one unit of work: which tools an agent may call, which argument values it may pass, which key may use it, and when it expires. The warrant travels with the request. The verifier uses the trusted issuer key and locally available revocation state.
 
 **Holder-bound.** Every warrant names a public key. Every call carries a signature from that key over the warrant, the tool, the exact arguments, and a short time window. A copied warrant is useless without the key.
 

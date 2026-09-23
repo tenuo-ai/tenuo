@@ -5,13 +5,13 @@ description: Create or delegate Tenuo warrants from natural-language authority r
 
 # Tenuo Warrant Creator
 
-Help developers create tenuo warrants by translating natural language intent into capability tokens with the right constraints. Warrants are a new authorization primitive — most developers haven't seen them before — so this skill bridges the gap between "I want my agent to do X" and the actual warrant code.
+Help developers create tenuo warrants by translating natural language intent into task-scoped grants with the right constraints. Warrants are a new authorization primitive — most developers haven't seen them before — so this skill bridges the gap between "I want my agent to do X" and the actual warrant code.
 
 **Announce at start:** "I'm using the tenuo-warrant skill to help you create a warrant for your agent."
 
 ## The Core Idea
 
-A warrant is like an API key that can only get weaker. Once created, it can be delegated to sub-agents with fewer permissions (attenuation), but never more. Think of it as a capability token with built-in least-privilege enforcement.
+A warrant is like an API key that can only get weaker. Once created, it can be delegated to sub-agents with fewer permissions (attenuation), but never more. Think of it as a task-scoped grant with built-in least-privilege enforcement.
 
 For developers familiar with other auth systems:
 - **OAuth**: Warrants are like scopes, but scopes are static strings — warrants carry semantic constraints (e.g., "files under /data" not just "files:read")

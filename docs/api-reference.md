@@ -286,7 +286,7 @@ from tenuo import Signature
 
 ### Warrant
 
-Capability token with constraints and cryptographic provenance.
+Signed, task-scoped grant with constraints and cryptographic provenance.
 
 ```python
 from tenuo import Warrant

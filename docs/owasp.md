@@ -24,7 +24,7 @@ This page maps each listed risk to **Tenuo's mechanisms**, notes where complemen
 
 ## Scope and mechanism
 
-Before a tool runs, Tenuo checks a cryptographically signed **warrant**: a task-scoped capability token that names allowed tools, **argument constraints**, and **TTL**. The authorization decision is **offline-verifiable** against configured trust anchors; typical verification is tens of microseconds per check. Each allow, deny, or human approval yields a **signed receipt**, so audit evidence is produced by enforcement rather than by a separate logging pipeline.
+Before a tool runs, Tenuo checks a cryptographically signed **warrant**: a task-scoped grant that names allowed tools, **argument constraints**, and **TTL**. The authorization decision is **offline-verifiable** against configured trust anchors; typical verification is tens of microseconds per check. Each allow, deny, or human approval yields a **signed receipt**, so audit evidence is produced by enforcement rather than by a separate logging pipeline.
 
 Most concrete harm from OWASP-style failures appears as **tool calls**. Tenuo constrains *what* executes, not *why* the model proposed it—so prompt injection, poisoned memory, supply-chain influence, and misaligned planning all encounter the same boundary. The sections below highlight which part of the mechanism matters most per risk (constraints, delegation chain, receipts).
 
@@ -347,7 +347,7 @@ Spoofed or forged agent-to-agent messages misdirect clusters. A malicious or com
 
 ### How Tenuo helps
 
-Warrants are cryptographically signed capability tokens bound to a holder key. Inter-agent delegation requires the receiving agent to present a warrant derived from its sender's, signed by keys the receiver is configured to trust. Chain verification is offline and cryptographic, so:
+Warrants are cryptographically signed, task-scoped grants bound to a holder key. Inter-agent delegation requires the receiving agent to present a warrant derived from its sender's, signed by keys the receiver is configured to trust. Chain verification is offline and cryptographic, so:
 
 - A spoofed agent cannot present a warrant it does not hold (signature check fails).
 - A compromised agent cannot derive a warrant that exceeds what it received (monotonicity fails at signing time).
