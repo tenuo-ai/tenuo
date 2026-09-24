@@ -61,6 +61,21 @@ python guarded_crew.py
 - Audit logging for all authorization decisions
 - Fail-closed behavior with `on_denial("raise")`
 
+### guarded_crew_builder.py
+
+GuardedCrew builder quickstart example demonstrating role-based policies, argument constraints, strict mode, and offline execution without LLM keys (#656).
+
+```bash
+python guarded_crew_builder.py
+```
+
+**Demonstrates:**
+- Fluent `GuardedCrew` builder chaining (`.policy()`, `.constraints()`, `.strict()`)
+- Role-based policy mapping agent roles to authorized tools
+- Pattern-based argument constraints (`Pattern("topic:*")`)
+- Per-agent guard introspection via `crew.guards`
+- Offline deterministic execution without API keys
+
 ### guarded_flow.py
 
 Step-level protection for CrewAI Flows using `@guarded_step` decorator.

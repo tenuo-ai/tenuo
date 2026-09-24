@@ -2228,6 +2228,8 @@ class _GuardedCrewImpl:
     @property
     def guards(self) -> Dict[str, CrewAIGuard]:
         """Get per-agent guards for introspection."""
+        if not self._guards:
+            self._protect_agents()
         return self._guards
 
 
