@@ -1,0 +1,19 @@
+{
+  "scenario": "denial-triage-eval.md",
+  "language": "python",
+  "evaluated_at": "2026-09-24",
+  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md"
+  ],
+  "skill_fingerprint": "3fb3fa35978dfc82b6b41b399dd547b75c1ac944237f92122ddd17e5cccdc4d4",
+  "evidence": {
+    "sdk": "tenuo 0.3.0 from PyPI in the payment-boundary result project's .venv (12 tests)",
+    "tests": "17 passed (.venv/bin/python -m pytest -q, rerun by the grader): 12 prior, the reproduced denial, the legitimate acct-2/500/memo call allowed once, acct-123 still allowed, and acct-3 and 501 still denied",
+    "typecheck": "mypy --ignore-missing-imports payment_service: no issues (run by the grader)",
+    "critical_items": "passed",
+    "notes": "Used tenuo.explain() on the caught ConstraintViolation rather than reading source, and found both gaps in order: the closed-world rejection of `memo`, then the recipient constraint. Classified both as policy. Fix: recipient Exact('acct-123') -> OneOf(['acct-123','acct-2']); amount Range(0, 500) unchanged because the ceiling already covered the task; `memo` named with AnyValue() and added to execute_transfer as an optional argument included in the verified set only when a caller sends one. authz.py, trusted roots, PoP, closed-world mode, TTL, and depth unchanged; the effect still takes only recipient and amount. Report states the authority delta and residual risk. Weakness: as in the TypeScript run, `memo` was admitted with a wildcard (rank 4, justified as non-material) rather than removed from the presented call (rank 1) even though the effect never reads it. Follow-up for the skill: make rank 1 name that case explicitly."
+  }
+}

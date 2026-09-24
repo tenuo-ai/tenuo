@@ -38,6 +38,10 @@ The run fails if any critical item fails, even when its generated tests pass.
 - Does not claim replay prevention, revocation, exactly-once execution, or downstream completion.
 - States what the service can now do that it could not before.
 
+## Baseline
+
+On 2026-09-24, one Claude Sonnet 5 run per language with the skill, starting from the payment-boundary result projects with the released 0.3.0 SDKs, passed every critical item: TypeScript 14 tests, Python 17, Rust 12, each proving the legitimate acct-2/500/memo call reaches the effect once, every prior denial still yields zero effects, and a value one past the edge is still denied. All three used the SDK diagnostics named in the skill, located the denial in the closed-world unknown-field check, classified it as policy, left verifier trust, proof-of-possession, closed-world mode, TTL, and depth untouched, and reported an authority delta. Python widened the recipient set by exactly acct-2; the TypeScript and Rust projects set recipient and amount per warrant, so no widening was needed. Shared weakness: all three admitted `memo` with a wildcard (rank 4, justified as non-material) rather than removing it from the presentation (rank 1); only in Rust, where the effect now records the memo, must it reach the verifier. The next skill revision should say in rank 1 that an argument the effect never reads is removed from the presented call, and rerun this scenario.
+
 ## CI freshness gate
 
 `scripts/validate_agent_skills.py` reads every `denial-triage-result.<language>.json` in this directory, fingerprints the skill files each lists under `inputs`, and fails the Agent skills job when a listed file changes until the replay is rerun or a `carried_forward` review is recorded. Record future results in the pull request that changes the skill.

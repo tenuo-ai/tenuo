@@ -1,0 +1,19 @@
+{
+  "scenario": "denial-triage-eval.md",
+  "language": "rust",
+  "evaluated_at": "2026-09-24",
+  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md"
+  ],
+  "skill_fingerprint": "3fb3fa35978dfc82b6b41b399dd547b75c1ac944237f92122ddd17e5cccdc4d4",
+  "evidence": {
+    "sdk": "tenuo crate 0.3.0 from crates.io with the sdk feature, starting from the payment-boundary result project (10 tests)",
+    "tests": "12 passed (cargo test, rerun by the grader): 10 prior, the legitimate acct-2/500/memo call allowed once, and acct-2 at 500.01 still denied",
+    "typecheck": "cargo check: clean (run by the grader)",
+    "critical_items": "passed",
+    "notes": "Used Guard::diagnostics_received(...).why_denied() and located the denial in the leaf constraint set's closed-world check reached from Guard::guard_received; classified the cause as policy and confirmed the diagnosis by observing the predicted regressions before changing any constraint. In this project recipient and amount are issuance-time parameters (Exact and Range per warrant), so no widening of either was needed and none was made. Fix: threaded `memo` into the Call's argument map and named it with Wildcard in transfer_constraints(); the client now records memo alongside the transfer. Trusted root, clock tolerance, revocation mode, closed-world mode, TTL, and depth unchanged; residual risk of unbounded memo text stated. Weakness: same as the other languages, the run chose a wildcard (rank 4) over dropping the argument from the presentation (rank 1); here the wildcard is more defensible because the effect now records the memo, so it must reach the verifier."
+  }
+}

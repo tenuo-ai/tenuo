@@ -1,0 +1,19 @@
+{
+  "scenario": "denial-triage-eval.md",
+  "language": "typescript",
+  "evaluated_at": "2026-09-24",
+  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md"
+  ],
+  "skill_fingerprint": "3fb3fa35978dfc82b6b41b399dd547b75c1ac944237f92122ddd17e5cccdc4d4",
+  "evidence": {
+    "sdk": "@tenuo/core 0.3.0-beta.0 from npm, starting from the payment-boundary result project (12 tests)",
+    "tests": "14 passed (npx vitest run, rerun by the grader): 12 prior, the reproduced legitimate call, and a memo-attached call one past the maximum still denied",
+    "typecheck": "tsc --noEmit: clean (run by the grader)",
+    "critical_items": "passed",
+    "notes": "Triage note correctly identified the denied check as the closed-world unknown-field rejection of `memo`, located it in the core decision reached from the holder's present() before the gateway, and classified the cause as policy. In this project the recipient set and amount ceiling are issuance-time parameters and the existing fixture already admitted acct-2 within its maximum, so no recipient or amount widening was needed and none was made. Fix: named `memo` with wildcard() in the issued policy and threaded it through present() and verify(); the effect and ledger still take only recipient and amount, and the report states the residual risk of unconstrained memo text and that it never reaches the effect. Verifier trusted roots, PoP, closed-world mode, TTL, and depth unchanged. Weakness: the skill ranks removing an argument the effect does not need above a wildcard; the run went to the wildcard (rank 4) with a written justification instead of dropping memo from the presented call (rank 1). Follow-up for the skill: say explicitly that an argument the effect never reads should be removed from the presentation, and that wildcard is for arguments that must reach the effect."
+  }
+}
