@@ -47,15 +47,15 @@ An expected denial is finished when you say so. Do not turn it into a change.
 
 ## Rank the fixes and stop at the first that works
 
-1. **Fix the call.** Right tool name, right argument names and types, values normalized the way the verifier normalizes them, the proof signed by the leaf holder over the final arguments, a fresh warrant instead of a stale one. If the effect never reads an argument, remove it from the presented call; do not name it in the policy. A policy names the arguments the effect acts on, and a wildcard is only for an argument that must reach the effect and whose value does not change what the effect does. If you name one, the report must say why the argument has to reach the effect at all.
+1. **Fix the call.** Right tool name, right argument names and types, values normalized the way the verifier normalizes them, the proof signed by the leaf holder over the final arguments, a fresh warrant instead of a stale one. If the effect never reads an argument, remove it from the presented call; do not name it in the policy. A value is material when the effect stores, forwards, logs, or acts on it, even if it does not change which effect runs; a material value needs a bounded constraint, never a wildcard. Do not change the effect to consume a value in order to justify naming it.
 2. **Stay inside the envelope.** If the task is narrower than the warrant, narrow the child. If the issuer can mint authority that fits the task, request that warrant. Neither changes any policy.
-3. **Widen minimally, at the issuer, by naming exactly the new legitimate values.** Add the one recipient to the allowed set. Raise a maximum to the number the task needs. Name a newly required argument with the tightest constraint that admits the real values: an exact value, a small set, a bounded range, a path under a root, a URL limited to named domains. Keep the TTL and delegation depth as they were.
-4. **Last resort, with a written justification in the report:** an unconstrained wildcard on a named argument that does not materially change the effect.
+3. **Widen minimally, at the issuer, by naming exactly the new legitimate values.** Add the one recipient to the allowed set. Raise a maximum to the number the task needs. Name a newly required argument with the tightest constraint that admits the real values: an exact value, a small set, a bounded range, a path under a root, a URL limited to named domains. Free text the effect keeps gets a regular expression that bounds its length and character set, where the SDK offers one; if it offers none, the value cannot be admitted and must be dropped from the presentation. Keep the TTL and delegation depth as they were.
+4. **Last resort, with a written justification in the report:** an unconstrained wildcard on a named argument that the call must carry and the effect ignores. Never on a value the effect keeps.
 
 Never do these to clear a denial:
 
 - Opt out of closed-world mode (`_allow_unknown` or its equivalents) to admit an unknown field. Name the field or drop it.
-- Leave the capability open to any arguments, whether by a policy that names none or by the SDK's explicit any-arguments form, or put a wildcard or a match-everything pattern on an argument that changes what the effect does.
+- Leave the capability open to any arguments, whether by a policy that names none or by the SDK's explicit any-arguments form, or put a wildcard or a match-everything pattern on a material argument: one the effect stores, forwards, logs, or acts on.
 - Remove a constraint, or replace a path or URL constraint with a plain string glob.
 - Lengthen the TTL because a warrant expired. Re-issue instead.
 - Add the caller's own key, a test key, or any new root to the verifier's trusted roots.
