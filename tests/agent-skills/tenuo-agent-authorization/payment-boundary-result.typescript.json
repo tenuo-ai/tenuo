@@ -1,22 +1,26 @@
 {
   "scenario": "payment-boundary-eval.md",
   "language": "typescript",
-  "evaluated_at": "2026-09-17",
-  "model_class": "lower-cost coding model",
+  "evaluated_at": "2026-09-24",
+  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
   "result": "pass",
   "evidence_kind": "carried_forward",
   "inputs": [
     "SKILL.md",
     "references/typescript.md",
     "references/common-footguns.md",
-    "references/security-model.md"
+    "references/security-model.md",
+    "references/native-tools.md",
+    "references/trust-levels.md",
+    "scripts/inspect_native_tools.py"
   ],
-  "skill_fingerprint": "56c7b3c1a4ea597b7f63bc3ae2bf0b2d59b3142629470602d66cc7cc2a6eb627",
+  "skill_fingerprint": "7bf028ee9687ac98fca3b05edcbfb2edff7ad6f03968e2e62c419cf132a5e2be",
   "evidence": {
-    "sdk": "@tenuo/core 0.3.0-beta.0",
-    "tests": "9 passed",
-    "typecheck": "passed",
-    "critical_items": "passed"
+    "sdk": "@tenuo/core 0.3.0-beta.0 from npm (Node 23, vitest 3, tsc 5)",
+    "tests": "12 passed (npx vitest run, rerun by the grader)",
+    "typecheck": "tsc --noEmit: clean (run by the grader)",
+    "critical_items": "passed",
+    "notes": "PaymentClient became a private class field of a new PaymentGateway; the client singleton and executeTransfer exports are removed and a test asserts they no longer exist. The gateway is built from trustedRoots only, verifies via tenuo.verify() before the effect, and executes the verifier's returned recipient and amount. Issuer and holder keys live in separate TransferIssuer/TransferHolder modules; only the wire warrant and a PresentedCall cross to the gateway. Twelve SDK-backed tests assert an empty ledger for every denial, including wider child delegation via narrow() and execution-argument mismatch. The run followed the new native-tools routing: it ran scripts/inspect_native_tools.py and reported with the trust-levels labels (development loop, no in-process guardrail). Weakness: wrong-holder, wrong-capability, and constraint denials are refused by the holder's own present() before reaching the gateway; the untrusted-issuer and argument-mismatch cases are the boundary-side proofs. Replay, revocation, and exactly-once are explicitly disclaimed."
   },
-  "carried_forward_review": "Automated re-pin from v0.3.0 to v0.3.1 after the release was published. Only release.json and the pinned repository links changed; skill instructions did not. Before merging, confirm the linked examples at the new tag still match the reference prose, and rerun payment-boundary-eval.md if any behavioral input changed."
+  "carried_forward_review": "Fresh Claude Sonnet 5 run on 2026-09-24 against these instructions; after that run the v0.3.1 re-pin retargeted the pinned repository links in the language references and release.json. Link targets are not boundary, key-separation, verification, bypass, or claim instructions, so the fresh result is carried forward and re-fingerprinted for the re-pinned files."
 }

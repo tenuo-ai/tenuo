@@ -1,7 +1,7 @@
 {
   "scenario": "payment-boundary-eval.md",
   "language": "rust",
-  "evaluated_at": "2026-09-17",
+  "evaluated_at": "2026-09-24",
   "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
   "result": "pass",
   "evidence_kind": "carried_forward",
@@ -9,15 +9,18 @@
     "SKILL.md",
     "references/rust.md",
     "references/common-footguns.md",
-    "references/security-model.md"
+    "references/security-model.md",
+    "references/native-tools.md",
+    "references/trust-levels.md",
+    "scripts/inspect_native_tools.py"
   ],
-  "skill_fingerprint": "ec7734cc0ccdb2a652af8587f2ff571afae56789c438edd4b08e9802b55edb73",
+  "skill_fingerprint": "527bee38f4c285a6795726a3f1e45dff0e35f1cbb1febfc4045dbb9081c3e2ea",
   "evidence": {
-    "sdk": "tenuo 0.3.0 from crates.io with the sdk feature",
-    "tests": "9 integration tests + 1 compile_fail doctest passed (cargo test, rerun by the grader); 5 grader-added forged-presentation tests passed",
-    "typecheck": "cargo build --all-targets and cargo clippy --all-targets clean per the agent; cargo test emitted no warnings on rerun",
+    "sdk": "tenuo crate 0.3.0 from crates.io with the sdk feature (stable toolchain)",
+    "tests": "10 passed (cargo test, rerun by the grader)",
+    "typecheck": "cargo check: clean (run by the grader)",
     "critical_items": "passed",
-    "notes": "PaymentClient became crate-private and execute_transfer was removed; a compile_fail doctest attempts the original bypass surface. The boundary uses Tenuo::enforcement() with one trusted root and guard_received over a ReceivedAuthorization built from the chain, PoP signature, and approvals; the effect runs with execution_args(). Weakness: wrong-holder, wrong-capability, recipient, amount, and wider-delegation denials are proven at the caller's own guard or delegate_to, not at the boundary, because the presentation type has no public constructor. The grader added in-crate tests that forge presentations (attacker-signed proof, wrong capability, amount 600, recipient outside pattern) and submit them directly; all four are denied with zero effects and a valid raw presentation runs once. Report disclaims replay, revocation freshness, process isolation, and intent."
+    "notes": "PaymentClient::transfer became private and the old free execute_transfer was deleted; PaymentGateway owns the client and a Guard built from one trusted issuer PublicKey with zero clock tolerance. execute_transfer builds a ReceivedAuthorization from the presented chain and PoP signature only, calls Guard::guard_received on the same recipient/amount it then executes with, and maps denials to PaymentError. Unlike the 2026-09-17 baseline, every denial is proven at the boundary: forged wrong-holder proofs, untrusted issuers, expired and wrong-capability warrants, and constraint violations are submitted directly to the gateway and assert transfer_count() == 0; the wider child is rejected at attenuation and the unwidened parent still runs once. The run followed the new native-tools routing (ran scripts/inspect_native_tools.py). Weaknesses: bypass absence rests on the symbol being removed rather than an attempted call such as a compile_fail doctest, and the report omits the trust-levels label the skill now requires, though it names the missing external issuer and disclaims replay, receipts, and revocation distribution."
   },
-  "carried_forward_review": "Automated re-pin from v0.3.0 to v0.3.1 after the release was published. Only release.json and the pinned repository links changed; skill instructions did not. Before merging, confirm the linked examples at the new tag still match the reference prose, and rerun payment-boundary-eval.md if any behavioral input changed."
+  "carried_forward_review": "Fresh Claude Sonnet 5 run on 2026-09-24 against these instructions; after that run the v0.3.1 re-pin retargeted the pinned repository links in the language references and release.json. Link targets are not boundary, key-separation, verification, bypass, or claim instructions, so the fresh result is carried forward and re-fingerprinted for the re-pinned files."
 }

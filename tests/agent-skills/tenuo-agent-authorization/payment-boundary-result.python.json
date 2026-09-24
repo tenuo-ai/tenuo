@@ -1,7 +1,7 @@
 {
   "scenario": "payment-boundary-eval.md",
   "language": "python",
-  "evaluated_at": "2026-09-17",
+  "evaluated_at": "2026-09-24",
   "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
   "result": "pass",
   "evidence_kind": "carried_forward",
@@ -10,15 +10,18 @@
     "references/python.md",
     "references/common-footguns.md",
     "references/security-model.md",
+    "references/native-tools.md",
+    "references/trust-levels.md",
+    "scripts/inspect_native_tools.py",
     "release.json"
   ],
-  "skill_fingerprint": "cc57552d1bad4fde15e2946804b70d639833328f46e399f23f6a35a20dc65942",
+  "skill_fingerprint": "3831b5de542a81c2c20bb3465d7d8d6109f9c09d935389e49fd8c2b24a39cc7b",
   "evidence": {
-    "sdk": "tenuo 0.3.0 from PyPI in a project .venv",
-    "tests": "16 passed (.venv/bin/pytest -q, rerun by the grader)",
-    "typecheck": "mypy --ignore-missing-imports payment_service: no issues (run by the grader)",
+    "sdk": "tenuo 0.3.0 from PyPI in a project .venv (Python 3.13)",
+    "tests": "12 passed (.venv/bin/python -m pytest -q, rerun by the grader)",
+    "typecheck": "mypy --ignore-missing-imports payment_service: no issues in 4 files (run by the grader)",
     "critical_items": "passed",
-    "notes": "Verifier takes a base64 warrant chain and a PoP signature only; trusted roots come from PAYMENT_TRUSTED_ISSUERS or constructor injection. PaymentClient.transfer now requires a VerifiedTransfer matching the requested recipient/amount, and tests attempt both original bypass shapes (direct client call, old two-argument execute_transfer). Wider child delegation is proven at grant time via the SDK's MonotonicityError rather than by presenting a forged wider chain to the verifier. Report separates the in-process guardrail from a service boundary and disclaims replay, revocation, exactly-once, and intent."
+    "notes": "execute_transfer now requires a warrant token and a PoP signature and calls Authorizer.authorize() on the exact recipient/amount it then passes to the effect. The guarded PaymentClient lives only in a closure; the module-level client is gone and a test asserts neither `client` nor `_client` exists. Trusted issuers come from configure_trusted_issuers() or PAYMENT_TRUSTED_ISSUERS and accept PublicKey only; get_authorizer() raises when unconfigured instead of defaulting open. Twelve SDK-backed tests assert an empty effect log for every denial. Wider delegation is proven at grant time via RangeExpanded, as in the 2026-09-17 baseline. The run followed the new native-tools routing (ran scripts/inspect_native_tools.py, used the trust-levels labels). Reporting weakness: it labeled the result 'production boundary (for the enforcement architecture)' although the repository has no issuer and keys are generated in tests, which trust-levels.md reserves for evidence of an external issuer and managed keys; it did correctly report the in-process guardrail and the same-process introspection bypass, and disclaimed replay, revocation, receipts, and exactly-once. Follow-up for the skill: state in trust-levels.md that a missing item forces the lower label."
   },
-  "carried_forward_review": "Automated re-pin from v0.3.0 to v0.3.1 after the release was published. Only release.json and the pinned repository links changed; skill instructions did not. Before merging, confirm the linked examples at the new tag still match the reference prose, and rerun payment-boundary-eval.md if any behavioral input changed."
+  "carried_forward_review": "Fresh Claude Sonnet 5 run on 2026-09-24 against these instructions; after that run the v0.3.1 re-pin retargeted the pinned repository links in the language references and release.json. Link targets are not boundary, key-separation, verification, bypass, or claim instructions, so the fresh result is carried forward and re-fingerprinted for the re-pinned files."
 }
