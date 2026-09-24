@@ -70,9 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `trusted_roots` denies the call.
 - **Python grant tool selection and range errors.** `GrantBuilder.tool()` and
   `tools()` now add the named parent capabilities with their existing
-  constraints instead of retaining from an initially empty builder, and a
-  missing parent tool reports that specific error. `RangeExpanded` messages no
-  longer print the literal text `hint=hint`.
+  constraints instead of retaining from an initially empty builder, never
+  overwrite a narrower `capability()` already set for the same tool, and
+  report a missing parent tool, or an issuer parent, with a specific error.
+  After `inherit_all()` they raise instead of silently keeping every parent
+  tool; the narrowing idiom is `retain_tool()` / `retain_tools()`.
+  `RangeExpanded` messages no longer print the literal text `hint=hint`.
 - **MCP client denial messages read once.** `SecureMCPClient` built its typed
   exceptions by feeding the already-formatted `denial_reason` back into
   constructors that format their own sentence, producing messages such as

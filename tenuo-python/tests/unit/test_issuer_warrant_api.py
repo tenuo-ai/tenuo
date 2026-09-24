@@ -369,6 +369,59 @@ class TestGrantBuilderToolSelection:
 
         assert exec_warrant.tools == ["read_file"]
 
+    def test_grant_builder_tool_never_widens_an_explicit_capability(self):
+        """tool()/tools() after a narrower capability() for the same tool keep the narrowing."""
+        kp = SigningKey.generate()
+        parent = Warrant.mint(
+            keypair=kp,
+            capabilities=Constraints.for_tool("lookup_order", {"order_id": Pattern("A-*")}),
+            ttl_seconds=3600,
+        )
+        child = (
+            parent.grant_builder()
+            .capability("lookup_order", order_id=Exact("A-100"))
+            .tool("lookup_order")
+            .tools(["lookup_order"])
+            .grant(kp)
+        )
+        assert child.check_constraints("lookup_order", {"order_id": "A-100"}) is None
+        assert child.check_constraints("lookup_order", {"order_id": "A-200"}) is not None
+
+    def test_grant_builder_tools_after_inherit_all_fails_loudly(self):
+        """The old narrowing idiom inherit_all().tools([...]) raises instead of keeping everything."""
+        kp = SigningKey.generate()
+        parent = Warrant.mint(
+            keypair=kp,
+            capabilities={"read_file": {}, "write_file": {}, "delete_file": {}},
+            ttl_seconds=3600,
+        )
+        with pytest.raises(ValidationError, match="retain_tools"):
+            parent.grant_builder().inherit_all().tools(["read_file"])
+        with pytest.raises(ValidationError, match="retain_tools"):
+            parent.grant_builder().inherit_all().tool("read_file")
+
+        # retain_tools() is the narrowing verb; afterwards adds are unambiguous again.
+        child = (
+            parent.grant_builder()
+            .inherit_all()
+            .retain_tools(["read_file"])
+            .tool("write_file")
+            .grant(kp)
+        )
+        assert set(child.tools) == {"read_file", "write_file"}
+
+    def test_grant_builder_tool_on_issuer_parent_points_to_issuable_tool(self):
+        """tool() on an issuer warrant names the right method instead of a missing-tool error."""
+        kp = SigningKey.generate()
+        issuer = Warrant.issue_issuer(
+            issuable_tools=["read_file", "send_email"],
+            clearance=Clearance.INTERNAL,
+            keypair=kp,
+            ttl_seconds=3600,
+        )
+        with pytest.raises(ValidationError, match="issuable_tool"):
+            issuer.grant_builder().tool("read_file")
+
 
 class TestTerminalWarrants:
     """Test terminal warrant behavior."""

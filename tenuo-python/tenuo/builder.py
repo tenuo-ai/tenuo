@@ -559,13 +559,19 @@ class GrantBuilder:
         """Add one tool, inheriting its parent constraints.
 
         The specified tool must be in the parent warrant's tools.
-        Previously selected capabilities are preserved. Use ``capability()``
-        when you need to narrow the inherited constraints.
+        Previously selected capabilities are preserved, including a narrower
+        ``capability()`` for the same tool: ``tool()`` never widens a
+        selection. Use ``capability()`` when you need to narrow the inherited
+        constraints.
 
-        For ISSUER warrants (narrowing issuable_tools), this also works.
+        After ``inherit_all()`` every parent tool is already selected, so this
+        call raises ``ValidationError`` instead of silently keeping them all;
+        use ``retain_tool()`` / ``retain_tools()`` to narrow that selection.
+
+        Execution warrants only. For ISSUER warrants use ``issuable_tool()``.
 
         Args:
-            name: The tool name to keep
+            name: The tool name to add
 
         Returns:
             Self for method chaining
@@ -583,13 +589,15 @@ class GrantBuilder:
     def tools(self, names: List[str]) -> "GrantBuilder":
         """Add tools, inheriting each tool's parent constraints.
 
-        The specified tools must all be in the parent warrant's tools.
-        Previously selected capabilities are preserved.
+        The specified tools must all be in the parent warrant's tools; one
+        missing name adds nothing. Previously selected capabilities are
+        preserved and never widened. After ``inherit_all()`` this raises
+        ``ValidationError``; use ``retain_tools()`` to narrow that selection.
 
-        For ISSUER warrants (narrowing issuable_tools), this also works.
+        Execution warrants only. For ISSUER warrants use ``issuable_tools()``.
 
         Args:
-            names: List of tool names to keep
+            names: List of tool names to add
 
         Returns:
             Self for method chaining
