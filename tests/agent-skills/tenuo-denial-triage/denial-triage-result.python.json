@@ -8,12 +8,12 @@
   "inputs": [
     "SKILL.md"
   ],
-  "skill_fingerprint": "3fb3fa35978dfc82b6b41b399dd547b75c1ac944237f92122ddd17e5cccdc4d4",
+  "skill_fingerprint": "138cd93cea8d36b17f12e9cbff3de88a59f7462600845150ba903ce73287f27b",
   "evidence": {
     "sdk": "tenuo 0.3.0 from PyPI in the payment-boundary result project's .venv (12 tests)",
-    "tests": "17 passed (.venv/bin/python -m pytest -q, rerun by the grader): 12 prior, the reproduced denial, the legitimate acct-2/500/memo call allowed once, acct-123 still allowed, and acct-3 and 501 still denied",
+    "tests": "18 passed (.venv/bin/python -m pytest -q, rerun by the grader): 12 prior, the reproduced denial with its why_denied diagnosis, the legitimate acct-2/500/memo call allowed once, acct-123 still allowed, acct-3 denied, 501 denied, and a call omitting the now-named memo denied",
     "typecheck": "mypy --ignore-missing-imports payment_service: no issues (run by the grader)",
     "critical_items": "passed",
-    "notes": "Used tenuo.explain() on the caught ConstraintViolation rather than reading source, and found both gaps in order: the closed-world rejection of `memo`, then the recipient constraint. Classified both as policy. Fix: recipient Exact('acct-123') -> OneOf(['acct-123','acct-2']); amount Range(0, 500) unchanged because the ceiling already covered the task; `memo` named with AnyValue() and added to execute_transfer as an optional argument included in the verified set only when a caller sends one. authz.py, trusted roots, PoP, closed-world mode, TTL, and depth unchanged; the effect still takes only recipient and amount. Report states the authority delta and residual risk. Weakness: as in the TypeScript run, `memo` was admitted with a wildcard (rank 4, justified as non-material) rather than removed from the presented call (rank 1) even though the effect never reads it. Follow-up for the skill: make rank 1 name that case explicitly."
+    "notes": "Second run, against the revised skill (rank 1 says an unread argument is removed from the presentation and a wildcard is only for an argument that must reach the effect). Used warrant.why_denied() and found both gaps: the closed-world rejection of memo, then the recipient mismatch. Fix: recipient Exact('acct-123') -> OneOf(['acct-123','acct-2']); amount unchanged; memo named with Wildcard() and, this time, carried into the effect, which records it for reconciliation, with the report stating that as the reason the argument must reach the effect. authz.py, trusted roots, PoP, closed-world mode, TTL, and depth unchanged. Compared with the first run, the justification the revised rank 1 requires is now present; the run chose to make the effect consume the memo rather than drop it, which the prompt's 'callers attach a memo to every transfer' leaves open. The old-policy warrants are untouched and still deny, which the report notes."
   }
 }

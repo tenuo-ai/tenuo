@@ -8,12 +8,12 @@
   "inputs": [
     "SKILL.md"
   ],
-  "skill_fingerprint": "3fb3fa35978dfc82b6b41b399dd547b75c1ac944237f92122ddd17e5cccdc4d4",
+  "skill_fingerprint": "138cd93cea8d36b17f12e9cbff3de88a59f7462600845150ba903ce73287f27b",
   "evidence": {
     "sdk": "tenuo crate 0.3.0 from crates.io with the sdk feature, starting from the payment-boundary result project (10 tests)",
     "tests": "12 passed (cargo test, rerun by the grader): 10 prior, the legitimate acct-2/500/memo call allowed once, and acct-2 at 500.01 still denied",
     "typecheck": "cargo check: clean (run by the grader)",
     "critical_items": "passed",
-    "notes": "Used Guard::diagnostics_received(...).why_denied() and located the denial in the leaf constraint set's closed-world check reached from Guard::guard_received; classified the cause as policy and confirmed the diagnosis by observing the predicted regressions before changing any constraint. In this project recipient and amount are issuance-time parameters (Exact and Range per warrant), so no widening of either was needed and none was made. Fix: threaded `memo` into the Call's argument map and named it with Wildcard in transfer_constraints(); the client now records memo alongside the transfer. Trusted root, clock tolerance, revocation mode, closed-world mode, TTL, and depth unchanged; residual risk of unbounded memo text stated. Weakness: same as the other languages, the run chose a wildcard (rank 4) over dropping the argument from the presentation (rank 1); here the wildcard is more defensible because the effect now records the memo, so it must reach the verifier."
+    "notes": "Second run, against the revised skill. Reproduced the denial with a red test and read the denial code: signature-invalid, not a constraint violation. The gateway rebuilt the verified argument map from recipient and amount only, so a holder signing over memo failed proof-of-possession before constraints ran; the triage note cites the verification order in the crate source and classifies the cause as a caller/boundary bug. Fix: memo becomes a parameter of execute_transfer and enters the single args map used for both PoP and constraint checking, is recorded by the effect, and is named with Wildcard in transfer_constraints so closed-world admits it. Recipient and amount are per-warrant parameters via the existing helper; no widening. Trusted root, clock tolerance, revocation mode, closed-world mode, TTL, depth unchanged; residual risk of untrusted free text stated. Compared with the first run, the diagnosis is deeper (PoP mismatch rather than the constraint check) and the wildcard is justified by the effect recording the value."
   }
 }
