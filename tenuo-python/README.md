@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
-> **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](../CHANGELOG.md).
+> **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](https://github.com/tenuo-ai/tenuo/blob/main/CHANGELOG.md).
 
 Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing cryptographically-enforced capability attenuation for AI agent workflows.
 
@@ -685,7 +685,7 @@ async def read_file(path: str, **kwargs) -> str:
     return open(clean["path"]).read()
 ```
 
-MCP servers return JSON-RPC `-32002` when an approval gate fires or multi-sig threshold is not met; retry with `_meta.tenuo.approvals`. See [Human Approvals](../docs/approvals.md).
+MCP servers return JSON-RPC `-32002` when an approval gate fires or multi-sig threshold is not met; retry with `_meta.tenuo.approvals`. See [Human Approvals](https://tenuo.ai/approvals).
 
 ## Security Considerations
 
