@@ -1,0 +1,25 @@
+{
+  "repo_notes": [
+    {
+      "content": "Tenuo is task-scoped authorization for AI agents. A warrant is a signed grant of which tools an agent may call, with which argument constraints, for how long. Warrants are holder-bound (proof-of-possession), can only narrow when delegated (attenuation), are verified offline where the action executes, and produce signed allow/deny receipts. The Rust core lives in tenuo-core; tenuo-python (PyO3 bindings plus framework adapters) and tenuo-ts (TypeScript, beta) wrap it. docs/ is the Jekyll source for https://tenuo.ai and is the best source for user-facing behavior. Ignore benchmarks/, labs/, and docs/blog/ when describing the product."
+    }
+  ],
+  "pages": [
+    { "title": "Overview", "purpose": "What Tenuo is, the problem it solves for AI agents, and how the repository is organized (tenuo-core, tenuo-python, tenuo-ts, tenuo-wasm, docs)." },
+    { "title": "Core Concepts", "purpose": "Warrants, holders and proof-of-possession, attenuation on delegation, TTLs, offline verification, and receipts, based on docs/concepts.md and docs/enforcement.md." },
+    { "title": "Warrant Format and Protocol", "parent": "Core Concepts", "purpose": "Wire format, signing, verification, and the protocol specification in docs/spec and docs/protocol, mapped to tenuo-core/src/warrant.rs, wire.rs, crypto.rs, and verification.rs." },
+    { "title": "Constraints", "parent": "Core Concepts", "purpose": "Argument constraint types and their semantics (docs/constraints.md, tenuo-core/src/constraints.rs, cel.rs), including how constraints may only narrow on delegation." },
+    { "title": "Approvals", "parent": "Core Concepts", "purpose": "Signed human approvals for sensitive actions (docs/approvals.md, tenuo-core/src/approval.rs, approval_gate.rs)." },
+    { "title": "Receipts and Audit", "parent": "Core Concepts", "purpose": "Signed allow/deny receipts and audit trails (tenuo-core/src/receipt.rs, audit.rs, tenuo-python/tenuo/receipts.py)." },
+    { "title": "Revocation", "parent": "Core Concepts", "purpose": "How warrants are revoked and how revocation is tracked (tenuo-core/src/revocation*.rs)." },
+    { "title": "Rust Core", "purpose": "Architecture of tenuo-core: module map, the verification path, the gateway and MCP support, and the binaries in tenuo-core/src/bin." },
+    { "title": "Python SDK", "purpose": "Installing and using the tenuo package: builders, keys, guard and decorators, dry-run versus enforce, testing helpers, and the extras list (tenuo-python/tenuo, docs/quickstart.md, docs/api-reference.md)." },
+    { "title": "MCP Integration", "parent": "Python SDK", "purpose": "Protecting MCP servers and clients, including the FastMCP middleware (tenuo-python/tenuo/mcp, docs/mcp.md)." },
+    { "title": "Agent Framework Adapters", "parent": "Python SDK", "purpose": "Adapters for LangChain, LangGraph, CrewAI, AutoGen, OpenAI, Google ADK, A2A, and FastAPI, with one short section per adapter linking its docs page." },
+    { "title": "Temporal Integration", "parent": "Python SDK", "purpose": "Temporal workflows and Nexus cross-namespace authorization (tenuo-python/tenuo/temporal, docs/temporal*.md)." },
+    { "title": "TypeScript SDK", "purpose": "The beta TypeScript packages in tenuo-ts/packages, including @tenuo/core and @tenuo/mcp (a library for MCP server authors, not a runnable server)." },
+    { "title": "Deployment", "purpose": "Running Tenuo in production: in-process, sidecar, gateway, Docker authorizer, Kubernetes and Helm charts (docs/production-guide.md, docs/kubernetes.md, charts/)." },
+    { "title": "Security Model", "purpose": "Threat model, security properties, red team tests, fuzzing, and formal verification (docs/security.md, docs/formal_verification, SECURITY.md)." },
+    { "title": "Contributing and Testing", "purpose": "Building from source, running the Rust, Python, and TypeScript test suites, and the release process (CONTRIBUTING.md, Makefile, CI workflows)." }
+  ]
+}
