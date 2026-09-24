@@ -34,8 +34,13 @@ TEXT_SUFFIXES = {
     ".pyi",
     ".js",
     ".jsx",
+    ".mjs",
+    ".cjs",
     ".ts",
     ".tsx",
+    ".mts",
+    ".cts",
+    ".rs",
     ".json",
     ".toml",
     ".yaml",
@@ -46,7 +51,8 @@ PATTERNS = {
     "native_tool": re.compile(
         r"@(?:\w+\.)?(?:function_tool|tool)\b|\bFunctionTool\s*\(|"
         r"\bStructuredTool\.from_function\s*\(|\bToolNode\s*\(|"
-        r"\b(?:defineTool|createTool)\s*\("
+        r"\b(?:defineTool|createTool)\s*\(|\btool\s*\(\s*\{|\bDynamicStructuredTool\s*\(|"
+        r"\btenuo\.tool\s*\(|\bimpl\s+Tool\s+for\b|\brig::tool\b"
     ),
     "tool_registration": re.compile(
         r"\btools\s*=\s*\[|\.bind_tools\s*\(|\btools\s*:\s*\[|\btools\s*:\s*{"
@@ -54,7 +60,8 @@ PATTERNS = {
     "builtin_execution": re.compile(
         r"\b(?:ShellTool|LocalShellTool|ComputerTool|ApplyPatchTool|CodeInterpreterTool)\s*\(|"
         r"\bsubprocess\.(?:run|Popen|call)\s*\(|\bos\.system\s*\(|"
-        r"\bchild_process\.(?:exec|spawn)\s*\("
+        r"\bchild_process\.(?:exec|spawn)\s*\(|\b(?:execSync|spawnSync|execFile)\s*\(|"
+        r"\bstd::process\b|\bCommand::new\s*\("
     ),
     "handoff": re.compile(
         r"\.as_tool\s*\(|\bhandoff\s*\(|\bhandoffs\s*=|\bsubagents?\s*=|"
@@ -63,27 +70,49 @@ PATTERNS = {
     "interceptor": re.compile(
         r"\btool_input_guardrails\b|\bbefore_tool_call\b|\bpreToolUse\b|"
         r"\bTenuoToolNode\b|\bTenuoMiddleware\b|\bcreate_tier[12]_guardrail\b|"
-        r"\bguard_tools?\s*\(|\b_authorize\s*\("
+        r"\bguard_tools?\s*\(|\b_authorize\s*\(|"
+        r"\btenuo\.tool\s*\(|\bwithSession\s*\(|\bguardTools\s*\(|"
+        r"\bGuard::\w+\s*\(|\bTenuoGuard\b|\bbefore_tool\w*\b|\bpre_tool\w*\b"
     ),
+    # Python, TypeScript, and Rust spellings of the same roles.
     "issuer": re.compile(
         r"\bWarrant\.mint_builder\s*\(|\bmint_sync\s*\(|\bmint\s*\(|"
-        r"fire_trigger\s*\(|/triggers/[^\s]+/fire"
+        r"fire_trigger\s*\(|/triggers/[^\s]+/fire|"
+        r"\bcreateTenuo\s*\(|\.session\s*\(|\bdevRoot\s*\(|\bissuerKeyFrom\w*\s*\(|"
+        r"\bWarrant::builder\s*\(|\bWarrantBuilder\b|\bSigningKey::generate\s*\("
     ),
-    "holder": re.compile(r"\.holder\s*\(|\bkey_scope\s*\(|\bholder_key\b|\bagent_key\b"),
+    "holder": re.compile(
+        r"\.holder\s*\(|\bkey_scope\s*\(|\bholder_key\b|\bagent_key\b|"
+        r"\bholder\s*:|\bpublicKeyFromHex\s*\(|\bholderKey\b|\bLocalSigner\b|\bHolderKey\b"
+    ),
     "verifier": re.compile(
         r"\bAuthorizer\s*\(|\bMCPVerifier\s*\(|\bcheck_sync\s*\(|"
-        r"\bauthoriz(?:e|er)\.(?:check|verify)\s*\("
+        r"\bauthoriz(?:e|er)\.(?:check|verify)\s*\(|"
+        r"\btenuo\.verify\s*\(|\btenuo\.mcp\.verify\s*\(|\bcontext\.authorize\s*\(|"
+        r"\bAuthorizer::(?:new|builder)\s*\(|\bcheck_chain\w*\s*\(|\bverify_pop\w*\s*\("
     ),
-    "trusted_roots": re.compile(r"\btrusted_roots\s*=|TENUO_TRUSTED_ROOTS"),
+    "trusted_roots": re.compile(
+        r"\btrusted_roots\s*[=(]|TENUO_TRUSTED_ROOTS|\btrustedRoots\s*:|"
+        r"\bwith_trusted_roots\s*\(|\bTrustStore\b"
+    ),
     "effect": re.compile(
         r"\b(?:subprocess\.(?:run|Popen|call)|shutil\.rmtree|"
         r"os\.(?:remove|unlink|rename|replace)|"
         r"requests\.(?:post|put|patch|delete)|httpx\.(?:post|put|patch|delete)|"
         r"\w+\.(?:write|delete|remove|unlink|insert|update|commit|publish|send|deploy)\s*\(|"
-        r"(?:delete|remove|deploy|send|publish|create|update|write)_\w+\s*\()",
+        r"(?:delete|remove|deploy|send|publish|create|update|write)_\w+\s*\(|"
+        r"\bfs\.(?:writeFile|writeFileSync|rm|rmSync|unlink|rename)\w*\s*\(|"
+        r"\baxios\.(?:post|put|patch|delete)\s*\(|"
+        r"method\s*:\s*[\"'](?:POST|PUT|PATCH|DELETE)[\"']|"
+        r"\bstd::fs::(?:write|remove_\w+|rename)\s*\(|\bCommand::new\s*\(|"
+        r"\breqwest\b.*\.(?:post|put|patch|delete)\s*\()",
         re.IGNORECASE,
     ),
-    "test": re.compile(r"\bpytest\b|\bunittest\b|\bassert\b|\bMock\s*\("),
+    "test": re.compile(
+        r"\bpytest\b|\bunittest\b|\bassert\b|\bMock\s*\(|"
+        r"\bvitest\b|\bjest\b|\bdescribe\s*\(|\bexpect\s*\(|"
+        r"#\[(?:tokio::)?test\]|\bassert(?:_eq|_ne)?!\s*\("
+    ),
 }
 
 
@@ -114,7 +143,7 @@ def inspect(root: Path) -> list[Finding]:
         relative = str(path.relative_to(root))
         for number, line in enumerate(lines, start=1):
             stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
+            if not stripped or stripped.startswith(("#", "//", "/*", "*")):
                 continue
             for kind, pattern in PATTERNS.items():
                 if pattern.search(line):

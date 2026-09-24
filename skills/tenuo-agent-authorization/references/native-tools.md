@@ -14,10 +14,10 @@ A framework callback can be a useful interception point. It is an independent se
 
 ## Inventory the execution path
 
-Run the read-only helper:
+Run the read-only helper (the path is relative to this skill's directory; it scans Python, TypeScript, JavaScript, and Rust sources):
 
 ```bash
-python skills/tenuo-agent-authorization/scripts/inspect_native_tools.py --root .
+python scripts/inspect_native_tools.py --root <project>
 ```
 
 Confirm every finding in source. Map the actual path rather than relying on framework terminology:

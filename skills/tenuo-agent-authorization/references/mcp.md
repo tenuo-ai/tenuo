@@ -14,10 +14,10 @@ Prefer one secure vertical slice over broad, unverified edits.
 
 ## Inspect the repository
 
-Run the read-only inventory helper:
+Run the read-only inventory helper (the path is relative to this skill's directory; it scans Python, TypeScript, JavaScript, and Rust sources):
 
 ```bash
-python skills/tenuo-agent-authorization/scripts/inspect_mcp_project.py --root .
+python scripts/inspect_mcp_project.py --root <project>
 ```
 
 Confirm every finding in source. Locate:

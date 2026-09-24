@@ -34,8 +34,13 @@ TEXT_SUFFIXES = {
     ".pyi",
     ".js",
     ".jsx",
+    ".mjs",
+    ".cjs",
     ".ts",
     ".tsx",
+    ".mts",
+    ".cts",
+    ".rs",
     ".json",
     ".toml",
     ".yaml",
@@ -43,29 +48,61 @@ TEXT_SUFFIXES = {
 }
 
 PATTERNS = {
-    "mcp_server": re.compile(r"\bFastMCP\s*\(|\bServer\s*\(|@\w*\.tool\s*\("),
-    "mcp_client": re.compile(r"\bSecureMCPClient\b|\bClientSession\b|\.call_tool\s*\("),
+    "mcp_server": re.compile(
+        r"\bFastMCP\s*\(|\bServer\s*\(|@\w*\.tool\s*\(|"
+        r"\bMcpServer\s*\(|\.registerTool\s*\(|\bserver\.tool\s*\(|\bguardTools\s*\(|"
+        r"\brmcp::|#\[tool\b|\btenuo::mcp\b"
+    ),
+    "mcp_client": re.compile(
+        r"\bSecureMCPClient\b|\bClientSession\b|\.call_tool\s*\(|"
+        r"\.callTool\s*\(|\btenuo\.mcp\.attach\s*\(|\bMcpMeta\b"
+    ),
+    # Python, TypeScript, and Rust spellings of the same roles.
     "issuer": re.compile(
         r"\bWarrant\.mint_builder\s*\(|\bmint_sync\s*\(|\bmint\s*\(|"
-        r"fire_trigger\s*\(|/triggers/[^\s]+/fire"
+        r"fire_trigger\s*\(|/triggers/[^\s]+/fire|"
+        r"\bcreateTenuo\s*\(|\.session\s*\(|\bdevRoot\s*\(|\bissuerKeyFrom\w*\s*\(|"
+        r"\bWarrant::builder\s*\(|\bWarrantBuilder\b|\bSigningKey::generate\s*\("
     ),
-    "holder": re.compile(r"\.holder\s*\(|\bkey_scope\s*\(|\bholder_key\b|\bagent_key\b"),
+    "holder": re.compile(
+        r"\.holder\s*\(|\bkey_scope\s*\(|\bholder_key\b|\bagent_key\b|"
+        r"\bholder\s*:|\bpublicKeyFromHex\s*\(|\bholderKey\b|\bLocalSigner\b|\bHolderKey\b"
+    ),
     "propagation": re.compile(
         r"inject_warrant\s*=|_meta[\"']?\s*[:.]\s*[\"']?tenuo|"
-        r"[\"']_tenuo[\"']|\bchain_scope\s*\("
+        r"[\"']_tenuo[\"']|\bchain_scope\s*\(|"
+        r"\btenuo\.mcp\.attach\s*\(|\btenuo\.present\s*\(|\bmcp_meta\b|\bpresent\s*\("
     ),
-    "verifier": re.compile(r"\bMCPVerifier\s*\(|\bTenuoMiddleware\s*\("),
-    "trusted_roots": re.compile(r"\btrusted_roots\s*=|TENUO_TRUSTED_ROOTS"),
-    "fail_closed": re.compile(r"\brequire_warrant\s*=\s*True\b"),
+    "verifier": re.compile(
+        r"\bMCPVerifier\s*\(|\bTenuoMiddleware\s*\(|"
+        r"\btenuo\.mcp\.(?:verify|handler)\s*\(|\btenuo\.verify\s*\(|\bguardTools\s*\(|"
+        r"\bAuthorizer::(?:new|builder)\s*\(|\bGuard::\w+\s*\(|\bcheck_chain\w*\s*\("
+    ),
+    "trusted_roots": re.compile(
+        r"\btrusted_roots\s*[=(]|TENUO_TRUSTED_ROOTS|\btrustedRoots\s*:|"
+        r"\bwith_trusted_roots\s*\(|\bTrustStore\b"
+    ),
+    # Only the Python and TypeScript verifiers expose an optional-warrant
+    # switch; the Rust verifier always fails closed, so no Rust form exists.
+    "fail_closed": re.compile(r"\brequire_warrant\s*=\s*True\b|\brequireWarrant\s*:\s*true\b"),
     "effect": re.compile(
         r"\b(?:subprocess\.(?:run|Popen|call)|shutil\.rmtree|"
         r"os\.(?:remove|unlink|rename|replace)|"
         r"requests\.(?:post|put|patch|delete)|httpx\.(?:post|put|patch|delete)|"
         r"\w+\.(?:write|delete|remove|unlink|insert|update|commit|publish|send|deploy)\s*\(|"
-        r"(?:delete|remove|deploy|send|publish|create|update|write)_\w+\s*\()",
+        r"(?:delete|remove|deploy|send|publish|create|update|write)_\w+\s*\(|"
+        r"\bfs\.(?:writeFile|writeFileSync|rm|rmSync|unlink|rename)\w*\s*\(|"
+        r"\baxios\.(?:post|put|patch|delete)\s*\(|"
+        r"method\s*:\s*[\"'](?:POST|PUT|PATCH|DELETE)[\"']|"
+        r"\bstd::fs::(?:write|remove_\w+|rename)\s*\(|\bCommand::new\s*\(|"
+        r"\breqwest\b.*\.(?:post|put|patch|delete)\s*\()",
         re.IGNORECASE,
     ),
-    "test": re.compile(r"\bpytest\b|\bunittest\b|\bassert\b|\bMock\s*\("),
+    "test": re.compile(
+        r"\bpytest\b|\bunittest\b|\bassert\b|\bMock\s*\(|"
+        r"\bvitest\b|\bjest\b|\bdescribe\s*\(|\bexpect\s*\(|"
+        r"#\[(?:tokio::)?test\]|\bassert(?:_eq|_ne)?!\s*\("
+    ),
 }
 
 
@@ -96,7 +133,7 @@ def inspect(root: Path) -> list[Finding]:
         relative = str(path.relative_to(root))
         for number, line in enumerate(lines, start=1):
             stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
+            if not stripped or stripped.startswith(("#", "//", "/*", "*")):
                 continue
             for kind, pattern in PATTERNS.items():
                 if pattern.search(line):
