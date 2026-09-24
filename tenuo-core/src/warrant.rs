@@ -2547,6 +2547,11 @@ pub struct OwnedAttenuationBuilder {
     parent: Warrant,
     // Execution warrant fields
     tools: BTreeMap<String, ConstraintSet>,
+    /// Set by `inherit_all()` and cleared by `retain_*`. While set, the
+    /// additive `inherit_capability*` calls are refused: on a full selection
+    /// they cannot narrow anything, and callers written against the old
+    /// `with_tool` (which narrowed) would silently keep every parent tool.
+    inherited_all: bool,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
     max_issue_depth: Option<u32>,
@@ -2618,6 +2623,7 @@ impl OwnedAttenuationBuilder {
             parent,
 
             tools,
+            inherited_all: false,
             issuable_tools,
             max_issue_depth,
             constraint_bounds,
@@ -2638,6 +2644,7 @@ impl OwnedAttenuationBuilder {
         match self.parent.payload.warrant_type {
             WarrantType::Execution => {
                 self.tools = self.parent.payload.tools.clone();
+                self.inherited_all = true;
             }
             WarrantType::Issuer => {
                 self.issuable_tools = self.parent.payload.issuable_tools.clone();
@@ -2658,6 +2665,7 @@ impl OwnedAttenuationBuilder {
     /// Keep only the specified tool (remove others).
     pub fn retain_tool(&mut self, tool: &str) {
         self.tools.retain(|k, _| k == tool);
+        self.inherited_all = false;
     }
 
     /// Compat alias
@@ -2668,11 +2676,79 @@ impl OwnedAttenuationBuilder {
     /// Keep only the specified tools (remove others).
     pub fn retain_tools(&mut self, tools: &[String]) {
         self.tools.retain(|k, _| tools.contains(k));
+        self.inherited_all = false;
     }
 
     /// Compat alias
     pub fn retain_capabilities(&mut self, tools: &[String]) {
         self.retain_tools(tools)
+    }
+
+    /// Refuse the additive selection calls while `inherit_all()` is in effect.
+    fn guard_additive_selection(&self) -> Result<()> {
+        if self.inherited_all {
+            return Err(Error::Validation(
+                "tool()/tools() after inherit_all() would not narrow the selection: \
+                 every parent tool is already selected. Use retain_tools([...]) to keep \
+                 a subset, or drop inherit_all() and name the tools to add."
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The parent's constraint set for `tool`, honoring a parent `*` tool the
+    /// same way authorization and attenuation validation do.
+    fn parent_constraints_for(&self, tool: &str) -> Result<ConstraintSet> {
+        if self.parent.payload.warrant_type == WarrantType::Issuer {
+            return Err(Error::Validation(format!(
+                "tool '{}' cannot be selected on an issuer warrant: issuer warrants carry \
+                 issuable_tools, not tools. Use with_issuable_tool()/issuable_tool().",
+                tool
+            )));
+        }
+        self.parent
+            .payload
+            .tools
+            .get(tool)
+            .or_else(|| self.parent.payload.tools.get("*"))
+            .cloned()
+            .ok_or_else(|| {
+                Error::MonotonicityViolation(format!("tool '{}' not in parent's tools", tool))
+            })
+    }
+
+    /// Add a capability by inheriting its constraints from the parent warrant.
+    ///
+    /// This is the constraint-free selection path used by language bindings:
+    /// naming a tool grants exactly the authority the parent has for that tool.
+    /// A capability already selected, for example narrowed with
+    /// `set_capability`, is kept as is; this call never widens an existing
+    /// selection. After `inherit_all()` it is refused; use `retain_tools`.
+    pub fn inherit_capability(&mut self, tool: &str) -> Result<()> {
+        self.guard_additive_selection()?;
+        let constraints = self.parent_constraints_for(tool)?;
+        self.tools.entry(tool.to_string()).or_insert(constraints);
+        Ok(())
+    }
+
+    /// Add capabilities by inheriting each tool's constraints from the parent.
+    ///
+    /// Validation is atomic: if any requested tool is absent from the parent,
+    /// no capabilities are added. Already-selected capabilities are kept as is.
+    pub fn inherit_capabilities(&mut self, tools: &[String]) -> Result<()> {
+        self.guard_additive_selection()?;
+        let inherited = tools
+            .iter()
+            .map(|tool| {
+                self.parent_constraints_for(tool)
+                    .map(|constraints| (tool.clone(), constraints))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for (tool, constraints) in inherited {
+            self.tools.entry(tool).or_insert(constraints);
+        }
+        Ok(())
     }
 
     /// Get the configured TTL (if any).

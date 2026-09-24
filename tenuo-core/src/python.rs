@@ -3380,18 +3380,30 @@ impl PyAttenuationBuilder {
             .map_err(to_py_err)
     }
 
-    /// Narrow execution warrant tools to a single tool.
+    /// Add one execution capability, inheriting its parent constraints.
     ///
-    /// The tool must be in the parent warrant's tools.
+    /// The tool must be in the parent warrant's tools. Existing selected
+    /// capabilities are preserved.
     /// This is for EXECUTION warrants. For ISSUER warrants, use `with_issuable_tool()`.
-    fn with_tool(&mut self, tool: &str) {
+    fn with_tool(&mut self, tool: &str) -> PyResult<()> {
+        self.inner.inherit_capability(tool).map_err(to_py_err)
+    }
+
+    /// Add execution capabilities, inheriting their parent constraints.
+    ///
+    /// All tools must be in the parent warrant's tools. Existing selected
+    /// capabilities are preserved.
+    fn with_tools(&mut self, tools: Vec<String>) -> PyResult<()> {
+        self.inner.inherit_capabilities(&tools).map_err(to_py_err)
+    }
+
+    /// Keep only one capability from the builder's current selection.
+    fn retain_tool(&mut self, tool: &str) {
         self.inner.retain_capability(tool);
     }
 
-    /// Narrow execution warrant tools to a subset.
-    ///
-    /// All tools must be in the parent warrant's tools.
-    fn with_tools(&mut self, tools: Vec<String>) {
+    /// Keep only the named capabilities from the builder's current selection.
+    fn retain_tools(&mut self, tools: Vec<String>) {
         self.inner.retain_capabilities(&tools);
     }
 
