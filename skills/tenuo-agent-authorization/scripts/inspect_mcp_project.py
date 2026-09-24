@@ -82,9 +82,10 @@ PATTERNS = {
         r"\btrusted_roots\s*[=(]|TENUO_TRUSTED_ROOTS|\btrustedRoots\s*:|"
         r"\bwith_trusted_roots\s*\(|\bTrustStore\b"
     ),
-    # Only the Python and TypeScript verifiers expose an optional-warrant
-    # switch; the Rust verifier always fails closed, so no Rust form exists.
-    "fail_closed": re.compile(r"\brequire_warrant\s*=\s*True\b|\brequireWarrant\s*:\s*true\b"),
+    # Only the Python MCPVerifier exposes an optional-warrant switch
+    # (require_warrant). The TypeScript and Rust verifiers have no such
+    # option and fail closed unless a wrapper makes authorization optional.
+    "fail_closed": re.compile(r"\brequire_warrant\s*=\s*True\b"),
     "effect": re.compile(
         r"\b(?:subprocess\.(?:run|Popen|call)|shutil\.rmtree|"
         r"os\.(?:remove|unlink|rename|replace)|"
@@ -148,9 +149,17 @@ def summarize(findings: list[Finding], max_per_kind: int) -> dict[str, object]:
     for finding in findings:
         by_kind[finding.kind].append(finding)
 
-    required = ("issuer", "holder", "propagation", "verifier", "trusted_roots")
+    # The advertised path is issuer -> holder-bound warrant -> PoP-signed MCP
+    # call -> verifier -> effect, so an MCP endpoint and an effect are as
+    # required as the authority roles. A repository with none of them has
+    # nothing to protect yet and must not read as gap-free.
+    required = ("issuer", "holder", "propagation", "verifier", "trusted_roots", "effect")
     gaps = [kind for kind in required if not by_kind[kind]]
+    if not by_kind["mcp_server"] and not by_kind["mcp_client"]:
+        gaps.insert(0, "mcp_endpoint")
     warnings: list[str] = []
+    if not by_kind["test"]:
+        warnings.append("No test evidence was found; denial-before-effect tests are required.")
     if by_kind["verifier"] and not by_kind["issuer"]:
         warnings.append("Verifier evidence exists, but no warrant minting path was found.")
     if by_kind["issuer"] and by_kind["verifier"]:
@@ -160,8 +169,17 @@ def summarize(findings: list[Finding], max_per_kind: int) -> dict[str, object]:
             warnings.append(
                 "Issuance and verification appear in the same file; confirm the agent cannot control the issuer."
             )
-    if by_kind["verifier"] and not by_kind["fail_closed"]:
-        warnings.append("Verifier evidence exists, but require_warrant=True was not found.")
+    verifier_suffixes = {Path(item.path).suffix.lower() for item in by_kind["verifier"]}
+    if verifier_suffixes & {".py", ".pyi"} and not by_kind["fail_closed"]:
+        warnings.append(
+            "Python verifier evidence exists, but require_warrant=True was not found; "
+            "an MCPVerifier with require_warrant=False lets unauthenticated callers through."
+        )
+    if verifier_suffixes & {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".rs"}:
+        warnings.append(
+            "TypeScript and Rust verifiers have no optional-warrant switch; confirm manually that "
+            "no wrapper, observe-only mode, or fallback route makes authorization optional."
+        )
 
     return {
         "counts": {kind: len(items) for kind, items in by_kind.items()},
