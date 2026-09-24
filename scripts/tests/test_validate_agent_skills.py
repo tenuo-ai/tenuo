@@ -9,10 +9,12 @@ from scripts.validate_agent_skills import (
     SKILLS,
     behavioral_eval_fingerprint,
     check_release_drift,
+    manifest_version,
     markdown_link_destination,
     parse_frontmatter,
     repository_file_exists,
     repository_path_for_url,
+    repository_tag_exists,
     validate_release_contract,
     validate_links,
     validate_no_api_fences,
@@ -330,12 +332,29 @@ class ReleaseDriftTests(unittest.TestCase):
         self.assertIn("repin_agent_skill.py --tag v", errors[0])
 
     def test_forgotten_repin_is_detected_against_real_tags(self) -> None:
-        # HEAD declares 0.3.0 and v0.3.0 exists, so pinning anything else is the
-        # forgotten-re-pin state this check exists to catch.
+        # Integration check against the real manifest and the real tags. The
+        # contract pins a version HEAD never declares, so drift is certain;
+        # which side it lands on depends on whether HEAD's version is tagged.
+        # On a release-bump PR the tag does not exist yet and drift must be a
+        # warning; once the release is tagged and the skill was not re-pinned,
+        # it must be the error this check exists to catch.
+        package = self.CONTRACT["packages"][0]
+        head_version = manifest_version(
+            (ROOT / package["manifest"]).read_text(encoding="utf-8"), package
+        )
+        self.assertIsNotNone(head_version)
+        head_tag = f"v{head_version}"
+
         errors, warnings = [], []
         check_release_drift(self.CONTRACT, errors, warnings, require_current=False)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("--tag v0.3.0", errors[0])
+        if repository_tag_exists(head_tag):
+            self.assertEqual(warnings, [])
+            self.assertEqual(len(errors), 1)
+            self.assertIn(f"--tag {head_tag}", errors[0])
+        else:
+            self.assertEqual(errors, [])
+            self.assertEqual(len(warnings), 1)
+            self.assertIn(f"at HEAD declares {head_version!r}", warnings[0])
 
     def test_head_drift_fails_when_current_release_required(self) -> None:
         errors, warnings = [], []
