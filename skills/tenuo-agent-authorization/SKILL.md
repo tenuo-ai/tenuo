@@ -16,6 +16,8 @@ Identify the action-selecting process, the effecting component, every direct or 
 
 If an unguarded route remains, close it or report the residual risk. Read [Architectural patterns](references/architectural-patterns.md) only when the enforcement location is undecided or the task changes deployment topology.
 
+For an MCP integration, run `scripts/inspect_mcp_project.py --root .`, confirm its findings in source, then read [End-to-end MCP integration](references/mcp.md). Do not add a verifier in isolation: identify how legitimate callers receive holder-bound warrants and send proof with each protected call. If issuance is missing, observation and policy discovery may still be useful, but report that enforcement is incomplete.
+
 ## Resolve the actual API
 
 1. Read manifests and lockfiles to determine the resolved Tenuo version.
@@ -29,6 +31,8 @@ Read exactly the applicable language reference:
 - [Python integration](references/python.md) for `tenuo` and its framework adapters.
 - [TypeScript integration](references/typescript.md) for `@tenuo/core` or `@tenuo/mcp`.
 - [Rust integration](references/rust.md) for the `tenuo` crate or a Rust enforcement service.
+
+For MCP, also read [End-to-end MCP integration](references/mcp.md). It defines the issuer-to-effect completion gate and reporting levels shared across languages.
 
 Read [Framework-neutral integration](references/framework-integration.md) only when no official adapter or verified recipe covers the framework. The linked examples are pinned to the release represented by this skill; use another version's installed API or matching tag rather than adapting them by guesswork.
 
@@ -73,3 +77,5 @@ Prefer a bounded statement:
 > Calls reaching this effect boundary execute only after the configured Tenuo verifier accepts the warrant, holder proof, capability, and constrained arguments.
 
 Do not claim that Tenuo proves human intent, covers every application action, or proves that an authorized downstream effect completed.
+
+For MCP, classify the delivered result using the labels in [Integration trust levels](references/trust-levels.md): observation only, development loop, or production boundary. Report an in-process guardrail separately when it can be bypassed by the agent process.
