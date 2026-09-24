@@ -508,7 +508,8 @@ Tenuo follows **POLA**: when you attenuate a warrant, the child starts with **NO
 |--------|----------|
 | `capability(tool, {})` | Grant only that tool |
 | `inherit_all()` | Explicitly opt-in to inherit all parent capabilities |
-| `tools([...])` | After `inherit_all()`, narrow to subset |
+| `tool(name)` / `tools([...])` | Add tools with the parent's constraints for them |
+| `retain_tool(name)` / `retain_tools([...])` | After `inherit_all()`, keep only these |
 
 **Pattern 1: Grant specific capabilities (recommended)**
 
@@ -527,10 +528,13 @@ child = builder.grant(parent_key)
 # Start with all parent capabilities, then narrow
 builder = parent.grant_builder()
 builder.inherit_all()                    # Explicit opt-in
-builder.tools(["read_file"])             # Keep only this tool
+builder.retain_tools(["read_file"])      # Keep only this tool
 builder.holder(worker_key.public_key)
 child = builder.grant(parent_key)
 ```
+
+`tool()` and `tools()` add capabilities and never narrow, so calling them
+after `inherit_all()` raises `ValidationError`; use `retain_tools()` there.
 
 **Pattern 3: Via grant() convenience method**
 
@@ -712,8 +716,10 @@ All setter methods are **dual-purpose**: call with argument to set (returns self
 |--------|---------|-------------|
 | `inherit_all()` | `GrantBuilder` | **POLA opt-in**: Inherit all capabilities from parent |
 | `capability(tool, constraints)` | `GrantBuilder` | Grant specific capability with constraints |
-| `tool(name)` | `GrantBuilder` | After `inherit_all()`, narrow to single tool |
-| `tools(names)` | `GrantBuilder` | After `inherit_all()`, narrow to subset of tools |
+| `tool(name)` | `GrantBuilder` | Add a parent tool with its parent constraints; never widens an existing selection; raises after `inherit_all()` |
+| `tools(names)` | `GrantBuilder` | Add parent tools with their constraints; one missing name adds nothing |
+| `retain_tool(name)` | `GrantBuilder` | After `inherit_all()`, keep only this tool |
+| `retain_tools(names)` | `GrantBuilder` | After `inherit_all()`, keep only these tools |
 | `issuable_tool(name)` | `GrantBuilder` | Narrow issuable tools (issuer warrants) |
 | `issuable_tools(names)` | `GrantBuilder` | Narrow issuable tools (issuer warrants) |
 | `holder(pk)` / `holder()` | `GrantBuilder` / `PublicKey` | Set/get holder |
@@ -738,7 +744,7 @@ child = (parent.grant_builder()
 # Pattern 2: Inherit all, then narrow
 child = (parent.grant_builder()
     .inherit_all()                    # Explicit opt-in
-    .tools(["read_file"])             # Keep only this tool
+    .retain_tools(["read_file"])      # Keep only this tool
     .holder(worker_key.public_key)
     .grant(parent_key))
 

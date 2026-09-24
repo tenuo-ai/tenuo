@@ -2,8 +2,8 @@ apiVersion: v2
 name: tenuo-authorizer
 description: Tenuo authorization service for Kubernetes
 type: application
-version: 0.3.0
-appVersion: "0.3.0"
+version: 0.3.1
+appVersion: "0.3.1"
 keywords:
   - authorization
   - security
