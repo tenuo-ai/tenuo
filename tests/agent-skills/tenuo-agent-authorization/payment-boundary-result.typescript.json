@@ -11,12 +11,12 @@
     "references/common-footguns.md",
     "references/security-model.md"
   ],
-  "skill_fingerprint": "abab77da5ae3392d56a309a957330f55d0c49e6f847cf98db0c29ccb6c6d679a",
+  "skill_fingerprint": "56c7b3c1a4ea597b7f63bc3ae2bf0b2d59b3142629470602d66cc7cc2a6eb627",
   "evidence": {
     "sdk": "@tenuo/core 0.3.0-beta.0",
     "tests": "9 passed",
     "typecheck": "passed",
     "critical_items": "passed"
   },
-  "carried_forward_review": "No fresh model run since the 2026-09-17 replay. Later edits replaced duplicated prose versions with a pointer to the machine-checked release contract and narrowed this fingerprint to the files the TypeScript scenario reads; they did not change boundary, key-separation, verification, bypass, or claim instructions. Python and Rust references have no committed behavioral evidence."
+  "carried_forward_review": "Automated re-pin from v0.3.0 to v0.3.1 after the release was published. Only release.json and the pinned repository links changed; skill instructions did not. Before merging, confirm the linked examples at the new tag still match the reference prose, and rerun payment-boundary-eval.md if any behavioral input changed."
 }
