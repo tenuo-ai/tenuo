@@ -42,6 +42,7 @@ Ask: **"Before we start — are you a developer building agent integrations, a p
 - **Security engineer / CISO** → continue with this skill
 - **Developer creating or delegating authority** → suggest `tenuo-warrant`.
 - **Developer integrating enforcement into an application or tool boundary** → suggest `tenuo-agent-authorization`.
+- **Developer with a denied call to make work** → suggest `tenuo-denial-triage`.
 - **Platform engineer** → continue, adjusting framing for infrastructure review
 
 ### Phase 3: Source Selection

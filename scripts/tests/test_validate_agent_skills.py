@@ -216,6 +216,45 @@ class BehavioralEvalTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("behavioral eval evidence is stale", errors[0])
 
+    def test_other_skill_evidence_is_fingerprinted_against_its_own_directory(self) -> None:
+        with TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "tenuo-example"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: tenuo-example\ndescription: x\n---\n")
+            inputs = ["SKILL.md"]
+            result = {
+                "language": "python",
+                "inputs": inputs,
+                "evidence_kind": "fresh",
+                "result": "pass",
+                "skill_fingerprint": behavioral_eval_fingerprint(inputs, skill),
+            }
+            errors: list[str] = []
+            covered = validate_behavioral_eval_result(
+                result, errors, "x-result.python.json", "python",
+                skill_dir=skill, scenario="x-eval.md",
+            )
+        # No references/python.md in this skill, so the language reference is not required.
+        self.assertEqual(errors, [])
+        self.assertEqual(covered, ["SKILL.md"])
+
+    def test_other_skill_stale_evidence_names_its_scenario(self) -> None:
+        with TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "tenuo-example"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: tenuo-example\ndescription: x\n---\n")
+            result = {
+                "language": "python", "inputs": ["SKILL.md"], "evidence_kind": "fresh",
+                "result": "pass", "skill_fingerprint": "0" * 64,
+            }
+            errors: list[str] = []
+            validate_behavioral_eval_result(
+                result, errors, "x-result.python.json", "python",
+                skill_dir=skill, scenario="x-eval.md",
+            )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("rerun x-eval.md", errors[0])
+
     def test_inputs_must_include_entrypoint(self) -> None:
         errors = []
         validate_behavioral_eval_result(

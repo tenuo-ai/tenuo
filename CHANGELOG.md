@@ -131,6 +131,14 @@ updating; see the linked entries below for the full rationale.
 
 ### Added
 
+- **`tenuo-denial-triage` agent skill.** Diagnoses a denied call from the
+  SDK's own diagnostics and receipts, classifies the denied check, and ranks
+  fixes from "fix the call" to "widen minimally at the issuer", with an
+  explicit never-list (closed-world opt-out, wildcards on material
+  arguments, longer TTLs, new trusted roots, optional-warrant modes). Install
+  with `npx skills add tenuo-ai/tenuo --skill tenuo-denial-triage`. The skills
+  validator now gates any skill that carries evidence under
+  `tests/agent-skills/<skill>/`.
 - **`tenuo.enforce_tool_call`, `tenuo.enforce_tool_call_async`, and
   `tenuo.EnforcementResult`** are exported from the package. They are what
   every adapter calls under the hood, and are the right entry point for tests
