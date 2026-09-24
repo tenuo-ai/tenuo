@@ -114,6 +114,7 @@ class TenuoPlugin(BasePlugin):
         arg_map: Optional[Dict[str, Dict[str, str]]] = None,
         require_pop: bool = True,
         trusted_roots: Optional[List[Any]] = None,
+        name: str = "tenuo",
     ):
         """
         Initialize TenuoPlugin.
@@ -127,7 +128,13 @@ class TenuoPlugin(BasePlugin):
             require_pop: If True (default), requires signing_key for Tier 2 authorization
             trusted_roots: Trusted issuer public keys for cryptographic chain-of-trust
                            verification.  Required for Tier 2 in production.
+            name: Plugin name registered with the ADK ``PluginManager`` (must be
+                  unique among the Runner's plugins).
         """
+        if BasePlugin is object:
+            self.name = name
+        else:
+            super().__init__(name=name)
         self._guard = TenuoGuard(
             warrant=warrant,
             signing_key=signing_key,
@@ -139,10 +146,11 @@ class TenuoPlugin(BasePlugin):
         )
         self._warrant_key = warrant_key
 
-    def before_agent_callback(  # type: ignore[override]
+    async def before_agent_callback(  # type: ignore[override]
         self,
+        *,
         callback_context: "CallbackContext",
-        **kwargs: Any,  # Accept additional kwargs for API compatibility
+        **kwargs: Any,  # ADK also passes agent=; accept future kwargs
     ) -> Optional[Any]:
         """
         Validate warrant scope at turn boundary.
@@ -207,23 +215,30 @@ class TenuoPlugin(BasePlugin):
 
         return False
 
-    def before_tool_callback(  # type: ignore[override]
+    async def before_tool_callback(  # type: ignore[override]
         self,
+        *,
         tool: "BaseTool",
-        args: Dict[str, Any],
+        tool_args: Dict[str, Any],
         tool_context: "ToolContext",
-        **kwargs: Any,  # Accept additional kwargs for API compatibility
+        **kwargs: Any,  # Accept future ADK kwargs
     ) -> Optional[Dict[str, Any]]:
-        """Plugin hook - called for all tool invocations."""
-        return self._guard.before_tool(tool, args, tool_context)
+        """Plugin hook - called for all tool invocations.
 
-    def after_tool_callback(  # type: ignore[override]
+        ADK awaits plugin callbacks and passes arguments by keyword
+        (``tool``, ``tool_args``, ``tool_context``). Returning a dict skips the
+        tool and uses the dict as its result (the denial); ``None`` allows it.
+        """
+        return await self._guard.async_before_tool(tool, tool_args, tool_context)
+
+    async def after_tool_callback(  # type: ignore[override]
         self,
+        *,
         tool: "BaseTool",
-        args: Dict[str, Any],
+        tool_args: Dict[str, Any],
         tool_context: "ToolContext",
         result: Any,
-        **kwargs: Any,  # Accept additional kwargs for API compatibility
+        **kwargs: Any,  # Accept future ADK kwargs
     ) -> Optional[Any]:
         """Plugin hook - called after all tool invocations."""
-        return self._guard.after_tool(tool, args, tool_context, result)
+        return self._guard.after_tool(tool, tool_args, tool_context, result)
