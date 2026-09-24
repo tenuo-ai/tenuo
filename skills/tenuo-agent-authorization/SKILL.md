@@ -18,6 +18,8 @@ If an unguarded route remains, close it or report the residual risk. Read [Archi
 
 For an MCP integration, run `scripts/inspect_mcp_project.py --root .`, confirm its findings in source, then read [End-to-end MCP integration](references/mcp.md). Do not add a verifier in isolation: identify how legitimate callers receive holder-bound warrants and send proof with each protected call. If issuance is missing, observation and policy discovery may still be useful, but report that enforcement is incomplete.
 
+For native function, shell, computer-use, or framework tools, run `scripts/inspect_native_tools.py --root .`, confirm its findings in source, then read [Native agent tool integration](references/native-tools.md). Determine whether the framework hook actually runs for every selected tool type; when it does not, enforce in the handler or downstream service that owns the effect.
+
 ## Resolve the actual API
 
 1. Read manifests and lockfiles to determine the resolved Tenuo version.
@@ -33,6 +35,8 @@ Read exactly the applicable language reference:
 - [Rust integration](references/rust.md) for the `tenuo` crate or a Rust enforcement service.
 
 For MCP, also read [End-to-end MCP integration](references/mcp.md). It defines the issuer-to-effect completion gate and reporting levels shared across languages.
+
+For native tools, also read [Native agent tool integration](references/native-tools.md). It covers function-tool dispatch, built-in execution tools, handoffs, and framework hook bypasses.
 
 Read [Framework-neutral integration](references/framework-integration.md) only when no official adapter or verified recipe covers the framework. The linked examples are pinned to the release represented by this skill; use another version's installed API or matching tag rather than adapting them by guesswork.
 
@@ -78,4 +82,4 @@ Prefer a bounded statement:
 
 Do not claim that Tenuo proves human intent, covers every application action, or proves that an authorized downstream effect completed.
 
-For MCP, classify the delivered result using the labels in [Integration trust levels](references/trust-levels.md): observation only, development loop, or production boundary. Report an in-process guardrail separately when it can be bypassed by the agent process.
+For MCP and native agent tools, classify the delivered result using the labels in [Integration trust levels](references/trust-levels.md): observation only, development loop, or production boundary. Report an in-process guardrail separately when it can be bypassed by the agent process.
