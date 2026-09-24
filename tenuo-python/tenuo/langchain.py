@@ -28,8 +28,8 @@ Example:
 
 For multi-agent graphs with automatic delegation, see tenuo.langgraph.
 """
-
 from __future__ import annotations
+
 
 import asyncio
 import inspect
