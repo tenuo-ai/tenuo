@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.1] - 2026-09-23
 
+### Breaking
+
+Both changes are in the Python SDK. Code written against 0.3.0 may need
+updating; see the linked entries below for the full rationale.
+
+- **`BoundWarrant.validate()` and `headers()` now require a trust anchor.**
+  They previously trusted the warrant's own issuer, so every warrant validated
+  by construction. Supply roots with the new `trusted_roots=` parameter, at
+  bind time, through `tenuo.configure()`, or from a `Runtime`; a delegated
+  warrant presents its parents with `warrant_chain=`. Without any of these,
+  both raise `ConfigurationError`. See the Security entry below.
+- **`GrantBuilder.tool()` and `tools()` raise after `inherit_all()`.** They add
+  parent capabilities rather than narrowing, so calling them after
+  `inherit_all()` — which already selects every parent tool — now raises
+  `ValidationError` instead of silently keeping them all. The narrowing idiom
+  is `retain_tool()` / `retain_tools()`. See the Fixed entry below.
+
 ### Security
 
 - **`Pattern` is documented as a string glob, not a path boundary, and
@@ -119,20 +136,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every adapter calls under the hood, and are the right entry point for tests
   and custom integrations that need a single authorization decision without
   a framework.
-
-### Changed
-
-- **Agent skill boundaries.** `tenuo-warrant` now stops at warrant issuance
-  and delegation, `tenuo-audit` routes application enforcement work to the
-  authorization skill, and release-tagged SDK references are validated against
-  one version contract.
-- **LangChain / LangGraph guidance.** `TenuoMiddleware` is the recommended
-  path for LangChain 1.x `create_agent()`. `TenuoToolNode` remains the
-  path for existing LangGraph `StateGraph` graphs. The experimental label
-  is dropped.
-
-### Added
-
 - **Agent skill re-pin automation.** Publishing a release runs the Agent skill
   re-pin workflow, which re-pins `tenuo-agent-authorization` to the new tag and
   opens the change for review. The skill validator now fails, on every branch,
@@ -147,6 +150,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and server with one `guardTools()` tool, one `tenuo.mcp.attach()` call
   that is allowed, and one swapped-argument call that is denied before the
   handler runs. `pnpm example:mcp:v2` runs it. (#570)
+
+### Changed
+
+- **Agent skill boundaries.** `tenuo-warrant` now stops at warrant issuance
+  and delegation, `tenuo-audit` routes application enforcement work to the
+  authorization skill, and release-tagged SDK references are validated against
+  one version contract.
+- **LangChain / LangGraph guidance.** `TenuoMiddleware` is the recommended
+  path for LangChain 1.x `create_agent()`. `TenuoToolNode` remains the
+  path for existing LangGraph `StateGraph` graphs. The experimental label
+  is dropped.
 
 ## [0.3.0] - 2026-09-11
 
