@@ -8,12 +8,12 @@
   "inputs": [
     "SKILL.md"
   ],
-  "skill_fingerprint": "138cd93cea8d36b17f12e9cbff3de88a59f7462600845150ba903ce73287f27b",
+  "skill_fingerprint": "bc96b2df2a16a0c08e0d73baa9fb430f938807ee0e6c5b5968abed4a935e7eac",
   "evidence": {
     "sdk": "tenuo crate 0.3.0 from crates.io with the sdk feature, starting from the payment-boundary result project (10 tests)",
-    "tests": "12 passed (cargo test, rerun by the grader): 10 prior, the legitimate acct-2/500/memo call allowed once, and acct-2 at 500.01 still denied",
+    "tests": "12 passed (cargo test, rerun by the grader): 10 prior, the legitimate acct-2/500/memo call allowed once, and a 141-character memo denied",
     "typecheck": "cargo check: clean (run by the grader)",
     "critical_items": "passed",
-    "notes": "Second run, against the revised skill. Reproduced the denial with a red test and read the denial code: signature-invalid, not a constraint violation. The gateway rebuilt the verified argument map from recipient and amount only, so a holder signing over memo failed proof-of-possession before constraints ran; the triage note cites the verification order in the crate source and classifies the cause as a caller/boundary bug. Fix: memo becomes a parameter of execute_transfer and enters the single args map used for both PoP and constraint checking, is recorded by the effect, and is named with Wildcard in transfer_constraints so closed-world admits it. Recipient and amount are per-warrant parameters via the existing helper; no widening. Trusted root, clock tolerance, revocation mode, closed-world mode, TTL, depth unchanged; residual risk of untrusted free text stated. Compared with the first run, the diagnosis is deeper (PoP mismatch rather than the constraint check) and the wildcard is justified by the effect recording the value."
+    "notes": "Third run, against the materiality revision. Reproduced the denial with a red test and read the code: signature-invalid, because the gateway rebuilt the verified argument map without memo while the holder signed over it; the note also states that closed-world would have rejected memo next. Fix: memo enters the single args map used for both PoP and constraint checking, is stored by the effect, and is named in transfer_constraints with RegexConstraint('^[\\\\x20-\\\\x7E]{0,140}$'). Recipient and amount are per-warrant parameters; no widening. Trusted root, clock tolerance, revocation mode, closed-world mode, TTL, and depth unchanged; residual risk stated as bounded opaque text with a note that forwarding it downstream would need its own review. This is the bounded-constraint shape for a kept value; no wildcard."
   }
 }

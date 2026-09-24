@@ -8,12 +8,12 @@
   "inputs": [
     "SKILL.md"
   ],
-  "skill_fingerprint": "138cd93cea8d36b17f12e9cbff3de88a59f7462600845150ba903ce73287f27b",
+  "skill_fingerprint": "bc96b2df2a16a0c08e0d73baa9fb430f938807ee0e6c5b5968abed4a935e7eac",
   "evidence": {
     "sdk": "@tenuo/core 0.3.0-beta.0 from npm, starting from the payment-boundary result project (12 tests)",
-    "tests": "15 passed (npx vitest run, rerun by the grader): 12 prior scenarios, the legitimate acct-2/500/memo call allowed once, a memo-attached call above the ceiling denied, and a memo changed after presentation denied by proof-of-possession",
+    "tests": "14 passed (npx vitest run, rerun by the grader): 12 prior, the legitimate acct-2/500/memo call allowed once, and a memo one character past the 140-character bound denied",
     "typecheck": "tsc --noEmit: clean (run by the grader)",
     "critical_items": "passed",
-    "notes": "Second run, against the revised skill. Triage note identified the closed-world unknown-field rejection of memo at the holder's present() before the gateway, classified the cause as policy, and confirmed the root cause by observing the predicted failures before changing the policy. In this project recipient and amount are issuance-time parameters and the fixture already admitted acct-2 within its ceiling, so neither was widened. Fix: memo named with wildcard() in the issued policy and carried through present(), verify(), and the effect, which now records it on the ledger; the report explicitly ranks this as the last-resort rung, says why no finite set or range fits free text, and states that the argument must reach the effect. Verifier trusted roots, PoP, closed-world mode, TTL, and depth unchanged. Compared with the first run, the revised rank 1 produced the missing justification and made the effect consume the argument; the run chose recording over dropping, which the prompt leaves open. Its error text quoted the pre-#709 SDK hint recommending pattern('*'); the run did not follow that suggestion."
+    "notes": "Third run, against the materiality revision (a stored value is material; bounded constraint or drop, never a wildcard). Used tenuo.explain() and found recipient and amount already satisfied and only memo unsatisfied as an unknown field; classified the cause as policy. Fix: memo named with regex('^[A-Za-z0-9 .,()/:_-]{0,140}$') in the issued policy, carried through present() and verify(), and recorded on the ledger only when non-empty. Recipient and amount were already inside the fixture's envelope, so neither was widened. Verifier trusted roots, PoP, closed-world mode, TTL, and depth unchanged; residual risk stated as a bounded free-text note per transfer. Compared with the earlier rounds, the wildcard is gone and the constraint bounds both length and character set, which is the rubric's passing shape for a kept value."
   }
 }

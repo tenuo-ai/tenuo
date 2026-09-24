@@ -8,12 +8,12 @@
   "inputs": [
     "SKILL.md"
   ],
-  "skill_fingerprint": "138cd93cea8d36b17f12e9cbff3de88a59f7462600845150ba903ce73287f27b",
+  "skill_fingerprint": "bc96b2df2a16a0c08e0d73baa9fb430f938807ee0e6c5b5968abed4a935e7eac",
   "evidence": {
     "sdk": "tenuo 0.3.0 from PyPI in the payment-boundary result project's .venv (12 tests)",
-    "tests": "18 passed (.venv/bin/python -m pytest -q, rerun by the grader): 12 prior, the reproduced denial with its why_denied diagnosis, the legitimate acct-2/500/memo call allowed once, acct-123 still allowed, acct-3 denied, 501 denied, and a call omitting the now-named memo denied",
+    "tests": "14 passed (.venv/bin/python -m pytest -q, rerun by the grader): 12 prior, the legitimate acct-2/500/memo call allowed once, and acct-3 with a memo still denied",
     "typecheck": "mypy --ignore-missing-imports payment_service: no issues (run by the grader)",
     "critical_items": "passed",
-    "notes": "Second run, against the revised skill (rank 1 says an unread argument is removed from the presentation and a wildcard is only for an argument that must reach the effect). Used warrant.why_denied() and found both gaps: the closed-world rejection of memo, then the recipient mismatch. Fix: recipient Exact('acct-123') -> OneOf(['acct-123','acct-2']); amount unchanged; memo named with Wildcard() and, this time, carried into the effect, which records it for reconciliation, with the report stating that as the reason the argument must reach the effect. authz.py, trusted roots, PoP, closed-world mode, TTL, and depth unchanged. Compared with the first run, the justification the revised rank 1 requires is now present; the run chose to make the effect consume the memo rather than drop it, which the prompt's 'callers attach a memo to every transfer' leaves open. The old-policy warrants are untouched and still deny, which the report notes."
+    "notes": "Third run, against the materiality revision. Found the interface gap first (execute_transfer had no memo parameter), then the recipient constraint via ConstraintViolation and warrant.why_denied(); probed and rejected passing memo into the authorized args. Fix: recipient Exact('acct-123') -> OneOf(['acct-123','acct-2']); amount Range(0, 500) unchanged; memo accepted by execute_transfer but deliberately excluded from the presented, PoP-signed, and authorized arguments and from the policy because PaymentClient.transfer never stores, forwards, or acts on it, citing the skill's rank 1. The report states that persisting the memo later would make it material and require a bounded Regex before that change. authz.py, trusted roots, PoP scope, closed-world mode, TTL, and depth unchanged. This is the drop-it shape the rubric accepts; the TypeScript run took the bounded-constraint shape. Minor: an accepted-but-ignored parameter could mislead callers into thinking the memo is recorded, which the report discloses."
   }
 }
