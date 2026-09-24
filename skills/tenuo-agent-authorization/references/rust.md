@@ -4,11 +4,11 @@ Use this reference for projects using the `tenuo` crate directly, embedding veri
 
 Do not treat this reference as an API specification. Use `cargo metadata` to locate the resolved crate source. Registry and vendored crate sources include the crate README and declared examples; inspect those exact-version files first. If local source is insufficient, compare the resolved crate with the Rust entry in the [release contract](../release.json). Use these immutable sources only when the versions match:
 
-- [MCP transport and received-authorization boundary](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/examples/sdk_mcp_demo.rs)
-- [Long-lived runtime, trusted roots, revocation, sessions, and receipts](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/examples/sdk_runtime.rs)
-- [Core SDK guide and feature flags](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/README.md)
-- [End-to-end authorization behavior](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/tests/integration.rs) and [security cases](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/tests/security.rs)
-- [Adversarial trust, PoP, and argument-binding tests](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-core/tests/red_team.rs)
+- [MCP transport and received-authorization boundary](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-core/examples/sdk_mcp_demo.rs)
+- [Long-lived runtime, trusted roots, revocation, sessions, and receipts](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-core/examples/sdk_runtime.rs)
+- [Core SDK guide and feature flags](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-core/README.md)
+- [End-to-end authorization behavior](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-core/tests/integration.rs) and [security cases](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-core/tests/security.rs)
+- [Adversarial trust, PoP, and argument-binding tests](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-core/tests/red_team.rs)
 
 The Rust CI builds and tests the crate with all features, which compiles the declared examples. Adapt their architecture using the resolved crate's types rather than copying remembered syntax.
 

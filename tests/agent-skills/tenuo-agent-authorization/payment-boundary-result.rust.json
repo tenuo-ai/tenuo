@@ -4,19 +4,20 @@
   "evaluated_at": "2026-09-17",
   "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
   "result": "pass",
-  "evidence_kind": "fresh",
+  "evidence_kind": "carried_forward",
   "inputs": [
     "SKILL.md",
     "references/rust.md",
     "references/common-footguns.md",
     "references/security-model.md"
   ],
-  "skill_fingerprint": "f32d6f3d683b5f43591e20457da37ffb5a86ac53841f6a57f64db2a05818dca8",
+  "skill_fingerprint": "ec7734cc0ccdb2a652af8587f2ff571afae56789c438edd4b08e9802b55edb73",
   "evidence": {
     "sdk": "tenuo 0.3.0 from crates.io with the sdk feature",
     "tests": "9 integration tests + 1 compile_fail doctest passed (cargo test, rerun by the grader); 5 grader-added forged-presentation tests passed",
     "typecheck": "cargo build --all-targets and cargo clippy --all-targets clean per the agent; cargo test emitted no warnings on rerun",
     "critical_items": "passed",
     "notes": "PaymentClient became crate-private and execute_transfer was removed; a compile_fail doctest attempts the original bypass surface. The boundary uses Tenuo::enforcement() with one trusted root and guard_received over a ReceivedAuthorization built from the chain, PoP signature, and approvals; the effect runs with execution_args(). Weakness: wrong-holder, wrong-capability, recipient, amount, and wider-delegation denials are proven at the caller's own guard or delegate_to, not at the boundary, because the presentation type has no public constructor. The grader added in-crate tests that forge presentations (attacker-signed proof, wrong capability, amount 600, recipient outside pattern) and submit them directly; all four are denied with zero effects and a valid raw presentation runs once. Report disclaims replay, revocation freshness, process isolation, and intent."
-  }
+  },
+  "carried_forward_review": "Automated re-pin from v0.3.0 to v0.3.1 after the release was published. Only release.json and the pinned repository links changed; skill instructions did not. Before merging, confirm the linked examples at the new tag still match the reference prose, and rerun payment-boundary-eval.md if any behavioral input changed."
 }

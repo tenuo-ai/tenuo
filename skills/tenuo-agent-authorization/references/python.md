@@ -4,9 +4,9 @@ Use this reference only for projects using the current `tenuo` Python package. C
 
 Do not treat this reference as an API specification. First locate the importable `tenuo` package and its distribution metadata, then inspect the modules used by the project. Python wheels do not reliably include this repository's top-level examples. If local source is insufficient, compare the resolved package with the Python entry in the [release contract](../release.json). Use these immutable sources only when the versions match:
 
-- [MCP server effect-boundary patterns](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-python/examples/mcp_server.py), covered by the repository-wide [example API checks](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-python/tests/examples/test_examples.py) and [MCP integration tests](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-python/tests/adapters/test_mcp_integration.py)
-- [Issuer, holder, delegation, PoP, and trusted-root verification](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-python/examples/mcp/mcp_delegation_demo.py), covered by the example API checks and [MCP delegation tests](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-python/tests/adapters/test_mcp_delegation.py)
-- [Pinned Python SDK guide](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-python/README.md)
+- [MCP server effect-boundary patterns](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-python/examples/mcp_server.py), covered by the repository-wide [example API checks](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-python/tests/examples/test_examples.py) and [MCP integration tests](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-python/tests/adapters/test_mcp_integration.py)
+- [Issuer, holder, delegation, PoP, and trusted-root verification](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-python/examples/mcp/mcp_delegation_demo.py), covered by the example API checks and [MCP delegation tests](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-python/tests/adapters/test_mcp_delegation.py)
+- [Pinned Python SDK guide](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-python/README.md)
 
 For another version, verify that a `v<version>` tag exists and that `tenuo-python/pyproject.toml` at that tag declares the resolved version before using its examples. Pre-release and language-package versions do not always map mechanically to repository tags.
 
