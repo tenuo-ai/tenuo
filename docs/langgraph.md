@@ -5,6 +5,10 @@ description: Secure LangGraph workflows with Tenuo
 
 # Tenuo LangGraph Integration
 
+Tenuo stops LangChain agents from doing more than the task requires. A warrant defines which tools the agent may call, the allowed argument values (paths, URLs, shell commands, amounts), and when it expires. Tenuo checks every call before the tool runs and blocks anything outside the warrant, even when the model has been prompt-injected. Warrants are bound to the agent holding them, so a copied warrant can't be used, and authority can only shrink as it passes to sub-agents. Every allow and deny is recorded as a signed receipt.
+
+See [tenuo.ai](https://tenuo.ai) for the full docs, or the source on [GitHub](https://github.com/tenuo-ai/tenuo).
+
 ---
 
 ## Why Tenuo for LangGraph?
@@ -145,36 +149,65 @@ Both use the same `enforce_tool_call` path.
 A runnable example is [`create_agent_middleware.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/langchain/create_agent_middleware.py).
 
 ```python
+from typing import Any
+
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentState
 from langchain_core.messages import HumanMessage
-from tenuo import SigningKey, Warrant
-from tenuo.langgraph import TenuoMiddleware, load_tenuo_keys
+from langchain_core.tools import tool
+from tenuo import Pattern, SigningKey, Warrant
+from tenuo.keys import KeyRegistry
+from tenuo.langgraph import TenuoMiddleware
 
-load_tenuo_keys()
 
-issuer = SigningKey.generate()
-agent_key = SigningKey.generate()
+@tool
+def search(query: str) -> str:
+    """Search customer records."""
+    return f"3 records match {query!r}"
 
-# Create agent with middleware
+
+@tool
+def delete_record(record_id: str) -> str:
+    """Delete a customer record."""
+    return f"record {record_id} deleted"
+
+
+class TenuoAgentState(AgentState):
+    warrant: Any  # TenuoMiddleware reads the warrant from agent state
+
+
+issuer_key = SigningKey.generate()  # issues warrants
+holder_key = SigningKey.generate()  # the agent's key, used for proof of possession
+KeyRegistry.get_instance().register("support-agent", holder_key)
+
 agent = create_agent(
-    model="gpt-4.1",
-    tools=[search, read_file],
-    middleware=[TenuoMiddleware()],
+    model="openai:gpt-4.1",
+    tools=[search, delete_record],
+    state_schema=TenuoAgentState,
+    middleware=[
+        TenuoMiddleware(
+            key_id="support-agent",
+            trusted_roots=[issuer_key.public_key],  # only accept warrants from this issuer
+        )
+    ],
 )
 
-# Mint warrant and invoke
-warrant = (Warrant.mint_builder()
-    .capability("search")
-    .capability("read_file")
-    .holder(agent_key.public_key)
+# search is allowed only for customer queries; delete_record is not granted
+warrant = (
+    Warrant.mint_builder()
+    .holder(holder_key.public_key)
+    .capability("search", query=Pattern("customers:*"))
     .ttl(3600)
-    .mint(issuer))
+    .mint(issuer_key)
+)
 
 result = agent.invoke({
-    "messages": [HumanMessage("search for AI papers")],
-    "warrant": str(warrant),
+    "messages": [HumanMessage("Find the Acme account")],
+    "warrant": warrant,
 })
 ```
+
+Calls outside the warrant (an ungranted tool, or `search` with a query that does not match `customers:*`) come back to the model as an error `ToolMessage`, and the tool body never runs.
 
 ---
 
@@ -225,7 +258,7 @@ load_tenuo_keys()  # Registers all TENUO_KEY_* vars
 
 ### `TenuoToolNode`
 
-**Recommended** — Drop-in replacement for LangGraph's `ToolNode` with automatic authorization:
+**Recommended**: drop-in replacement for LangGraph's `ToolNode` with automatic authorization:
 
 ```python
 from tenuo.langgraph import TenuoToolNode
@@ -563,7 +596,7 @@ def orchestrator(state, bound_warrant):
 `TenuoToolNode` and `TenuoMiddleware` read the field automatically and verify
 the full chain. Entries may be `Warrant` objects or base64 tokens. A chain that
 does not hash-link to the leaf, or that does not root in one of
-`trusted_roots`, is denied — supplying a chain cannot widen authority, only
+`trusted_roots`, is denied: supplying a chain cannot widen authority, only
 prove it.
 
 You only get away without a chain when the delegating agent is itself a trusted
@@ -665,7 +698,7 @@ except ConstraintViolation as e:
 | `ConfigurationError` | 1201 | Key not registered | Register key or use `load_tenuo_keys()` |
 | `ConfigurationError` | 1201 | No trusted roots configured | Pass `trusted_roots=[...]` or call `tenuo.configure(trusted_roots=[...])` |
 | `ToolNotAuthorized` | 1500 | Tool not in warrant | Check warrant constraints with `why_denied()` |
-| Denied: `Root warrant issuer is not trusted` | 1400 | Delegated warrant presented without its parents | Add `warrant_chain` to state — see [Pattern 4](#pattern-4-delegation) |
+| Denied: `Root warrant issuer is not trusted` | 1400 | Delegated warrant presented without its parents | Add `warrant_chain` to state (see [Pattern 4](#pattern-4-delegation)) |
 | Denied: `chain broken: child parent_hash mismatch` | 1405 | `warrant_chain` does not hash-link to the leaf | Present the real parents, root-first, excluding the leaf |
 | `ConstraintViolation` | 1501 | Argument violates constraint | Request within bounds |
 | `ExpiredError` | 1300 | TTL exceeded | Request fresh warrant |
