@@ -872,7 +872,7 @@ function approvalRequestFromWasm(raw: WasmApprovalRequest): ApprovalRequest {
 function explainDeny(message: string, field?: string): string {
   if (message.includes("unknown field not allowed")) {
     const named = field !== undefined && field.length > 0 ? `'${field}'` : "this argument";
-    return `${message}. Zero-trust: name ${named} in allow (for example ${named}: pattern("*")), or remove it from the call; constrained policies reject omitted fields.`;
+    return `${message}. Zero-trust: name ${named} in allow with the tightest constraint that admits the real values (wildcard() only when the value does not change what the tool does), or remove ${named} from the call if the tool does not act on it; constrained policies reject omitted fields.`;
   }
   if (message.includes("value does not match constraint")) {
     return `${message}. Use tenuo.explain(session, tool, args) locally for field-level diagnostics.`;

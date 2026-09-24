@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **TypeScript unknown-field hint no longer suggests `pattern("*")`.** The
+  closed-world denial hint pointed at a match-everything string glob, which
+  is not a boundary and is the widening the guidance elsewhere warns against.
+  It now says to name the argument with the tightest constraint that admits
+  the real values, use `wildcard()` only when the value does not change what
+  the tool does, or remove the argument if the tool does not act on it.
 - **MCP warrants can cross `_meta`-stripping gateways.**
   `SecureMCPClient(inject_warrant="argument")` carries the warrant, PoP, and
   approvals in reserved `arguments._tenuo`; `MCPVerifier` removes it before
