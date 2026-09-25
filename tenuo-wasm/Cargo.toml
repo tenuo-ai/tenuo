@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "WASM bindings for Tenuo"
 license = "Apache-2.0"
+license-file = "../LICENSE"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
