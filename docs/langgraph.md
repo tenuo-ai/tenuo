@@ -5,7 +5,7 @@ description: Secure LangGraph workflows with Tenuo
 
 # Tenuo LangGraph Integration
 
-Tenuo stops LangChain agents from doing more than the task requires. A warrant defines which tools the agent may call, the allowed argument values (paths, URLs, shell commands, amounts), and when it expires. Tenuo checks every call before the tool runs and blocks anything outside the warrant, even when the model has been prompt-injected. Warrants are bound to the agent holding them, so a copied warrant can't be used, and authority can only shrink as it passes to sub-agents. Every allow and deny is recorded as a signed receipt.
+Tenuo stops LangChain agents from doing more than the task requires. A warrant defines which tools the agent may call, the allowed argument values (paths, URLs, shell commands, amounts), and when it expires. Tenuo checks every call before the tool runs and blocks anything outside the warrant, even when the model has been prompt-injected. Warrants are bound to the agent holding them, so a copied warrant can't be used, and authority can only shrink as it passes to sub-agents. With signed receipt collection enabled, each decision over a presented warrant produces verifiable evidence.
 
 See [tenuo.ai](https://tenuo.ai) for the full docs, or the source on [GitHub](https://github.com/tenuo-ai/tenuo).
 
@@ -155,14 +155,14 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentState
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
-from tenuo import Pattern, SigningKey, Warrant
+from tenuo import HolderIdentity, Pattern, Runtime, SigningKey, Warrant
 from tenuo.keys import KeyRegistry
 from tenuo.langgraph import TenuoMiddleware
 
 
 @tool
 def search(query: str) -> str:
-    """Search customer records."""
+    """Search customer records. Use the query format ``customers:<term>``."""
     return f"3 records match {query!r}"
 
 
@@ -177,8 +177,15 @@ class TenuoAgentState(AgentState):
 
 
 issuer_key = SigningKey.generate()  # issues warrants
-holder_key = SigningKey.generate()  # the agent's key, used for proof of possession
-KeyRegistry.get_instance().register("support-agent", holder_key)
+holder = HolderIdentity.generate()  # the agent's key, used for proof of possession
+KeyRegistry.get_instance().register("support-agent", holder.signing_key)
+
+# Collect signed receipts for authorization decisions made over the warrant.
+runtime = Runtime(
+    identity=holder,
+    trusted_roots=[issuer_key.public_key],
+    receipts="collect",
+)
 
 agent = create_agent(
     model="openai:gpt-4.1",
@@ -195,16 +202,19 @@ agent = create_agent(
 # search is allowed only for customer queries; delete_record is not granted
 warrant = (
     Warrant.mint_builder()
-    .holder(holder_key.public_key)
+    .holder(holder.public_key)
     .capability("search", query=Pattern("customers:*"))
     .ttl(3600)
     .mint(issuer_key)
 )
 
-result = agent.invoke({
-    "messages": [HumanMessage("Find the Acme account")],
-    "warrant": warrant,
-})
+with runtime.bind():
+    result = agent.invoke({
+        "messages": [HumanMessage("Search customer records for customers:acme")],
+        "warrant": warrant,
+    })
+
+signed_receipts = runtime.peek_receipts()
 ```
 
 Calls outside the warrant (an ungranted tool, or `search` with a query that does not match `customers:*`) come back to the model as an error `ToolMessage`, and the tool body never runs.

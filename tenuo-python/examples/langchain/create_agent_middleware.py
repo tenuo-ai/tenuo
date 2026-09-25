@@ -29,7 +29,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
-from tenuo import Pattern, SigningKey, Warrant
+from tenuo import HolderIdentity, Pattern, Runtime, SigningKey, Warrant
 from tenuo.keys import KeyRegistry
 from tenuo.langgraph import TenuoMiddleware
 
@@ -41,7 +41,7 @@ executed: List[str] = []
 
 @tool
 def search(query: str) -> str:
-    """Search customer records."""
+    """Search customer records. Use the query format ``customers:<term>``."""
     executed.append(f"search:{query}")
     return f"3 records match {query!r}"
 
@@ -82,22 +82,28 @@ def scripted_model(tool_name: str, args: Dict[str, Any]) -> ScriptedChatModel:
 
 
 def setup_keys_and_warrant() -> tuple:
-    """Create keys, register the holder key, and mint a search-only warrant."""
+    """Create keys, receipt collection, and a search-only warrant."""
     issuer_key = SigningKey.generate()  # The authority that issues warrants.
-    holder_key = SigningKey.generate()  # The agent's own key, used for proof of possession.
+    holder = HolderIdentity.generate()  # The agent's own key, used for proof of possession.
 
     # The middleware looks the holder key up by id; nothing is read from the environment.
-    KeyRegistry.get_instance().register(HOLDER_KEY_ID, holder_key)
+    KeyRegistry.get_instance().register(HOLDER_KEY_ID, holder.signing_key)
+
+    runtime = Runtime(
+        identity=holder,
+        trusted_roots=[issuer_key.public_key],
+        receipts="collect",
+    )
 
     # Allow `search` only for customer queries. `delete_record` is simply not granted.
     warrant = (
         Warrant.mint_builder()
-        .holder(holder_key.public_key)
+        .holder(holder.public_key)
         .capability("search", query=Pattern("customers:*"))
         .ttl(3600)
         .mint(issuer_key)
     )
-    return issuer_key, warrant
+    return issuer_key, warrant, runtime
 
 
 def build_agent(model: Any, issuer_key: SigningKey) -> Any:
@@ -116,10 +122,17 @@ def build_agent(model: Any, issuer_key: SigningKey) -> Any:
     )
 
 
-def run(tool_name: str, args: Dict[str, Any], issuer_key: SigningKey, warrant: Warrant) -> List[ToolMessage]:
+def run(
+    tool_name: str,
+    args: Dict[str, Any],
+    issuer_key: SigningKey,
+    warrant: Warrant,
+    runtime: Runtime,
+) -> List[ToolMessage]:
     """Invoke the agent with the warrant in state and return its tool messages."""
     agent = build_agent(scripted_model(tool_name, args), issuer_key)
-    result = agent.invoke({"messages": [HumanMessage("Handle the request.")], "warrant": warrant})
+    with runtime.bind():
+        result = agent.invoke({"messages": [HumanMessage("Handle the request.")], "warrant": warrant})
     return tool_messages(result["messages"])
 
 
@@ -128,17 +141,18 @@ def tool_messages(messages: Iterable[Any]) -> List[ToolMessage]:
 
 
 def main() -> None:
-    issuer_key, warrant = setup_keys_and_warrant()
+    issuer_key, warrant, runtime = setup_keys_and_warrant()
 
     print("1. Authorized: search customers")
-    for message in run("search", {"query": "customers:acme"}, issuer_key, warrant):
+    for message in run("search", {"query": "customers:acme"}, issuer_key, warrant, runtime):
         print(f"   {message.status}: {message.content}")
 
     print("2. Not in the warrant: delete_record")
-    for message in run("delete_record", {"record_id": "42"}, issuer_key, warrant):
+    for message in run("delete_record", {"record_id": "42"}, issuer_key, warrant, runtime):
         print(f"   {message.status}: {message.content}")
 
     print(f"Tool bodies that ran: {executed}")
+    print(f"Signed receipts collected: {len(runtime.peek_receipts())}")
 
 
 if __name__ == "__main__":
