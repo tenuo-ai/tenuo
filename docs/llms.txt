@@ -4,7 +4,7 @@
 
 Install:
 
-- Python: `uv pip install tenuo` or `pip install tenuo`. Framework extras: `tenuo[langchain]`, `tenuo[langgraph]`, `tenuo[crewai]`, `tenuo[autogen]`, `tenuo[openai]`, `tenuo[google-adk]`, `tenuo[a2a]`, `tenuo[mcp]`, `tenuo[fastmcp]`, `tenuo[fastapi]`, `tenuo[temporal]`.
+- Python: `uv pip install tenuo` or `pip install tenuo`. Framework extras: `tenuo[langchain]`, `tenuo[langgraph]`, `tenuo[crewai]`, `tenuo[autogen]`, `tenuo[openai]`, `tenuo[google_adk]`, `tenuo[a2a]`, `tenuo[mcp]`, `tenuo[fastmcp]`, `tenuo[fastapi]`, `tenuo[temporal]`.
 - TypeScript (beta, Node 20+): `npm i @tenuo/core@beta`; MCP: `npm i @tenuo/mcp@beta`.
 - Rust: `cargo add tenuo --features sdk`.
 - Coding agents: `npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization`.
@@ -14,7 +14,7 @@ Guidance for agents writing code with Tenuo:
 - Enforce at the effect boundary (where the tool actually runs), not only in the planner.
 - Use the SDK and framework adapters; do not reimplement warrant signing, attenuation, or verification.
 - Test both an allowed call and a denied call that is blocked before any side effect.
-- Roll out with dry-run mode first, then switch to enforce.
+- Roll out in audit mode first (`configure(mode="audit")`), then switch to enforce.
 
 ## Docs
 
@@ -45,7 +45,7 @@ Guidance for agents writing code with Tenuo:
 - [Temporal Nexus](https://tenuo.ai/temporal-nexus): Authorization across Temporal Nexus namespace boundaries
 - [Kubernetes](https://tenuo.ai/kubernetes): Deployment patterns for Kubernetes
 - [TypeScript SDK](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-ts/README.md): `@tenuo/core` and `@tenuo/mcp` (beta)
-- [Claude Code](https://github.com/tenuo-ai/claude-governance): Task-scoped governance for Claude Code via hooks and an MCP proxy
+- [Claude Code](https://github.com/tenuo-ai/tenuo-claude-code): Task-scoped governance for Claude Code via hooks and an MCP proxy
 
 ## Protocol and spec
 
