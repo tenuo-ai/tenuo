@@ -1,5 +1,6 @@
 """Tests for Google ADK integration."""
 
+import asyncio
 import io
 import json
 
@@ -539,7 +540,7 @@ class TestScopedWarrant:
 
         # Case 1: Matching agent accesses warrant
         ctx_researcher = MockCallbackContext("researcher", state.copy())
-        plugin.before_agent_callback(ctx_researcher)
+        asyncio.run(plugin.before_agent_callback(callback_context=ctx_researcher))
         assert "warrant" in ctx_researcher.state
 
     def test_scoped_warrant_invalid(self, warrant, keys):
@@ -555,8 +556,8 @@ class TestScopedWarrant:
 
         # Case 2: Different agent tries to access leaked warrant
         ctx_writer = MockCallbackContext("writer", state.copy())
-        plugin.before_agent_callback(ctx_writer)
-        assert "warrant" not in ctx_writer.state
+        asyncio.run(plugin.before_agent_callback(callback_context=ctx_writer))
+        assert ctx_writer.state.get("warrant") is None
 
 
 class TestPluginExpiryCleanup:
@@ -576,9 +577,9 @@ class TestPluginExpiryCleanup:
         state = {"warrant": mock_warrant}
         ctx = MockCallbackContext("agent", state)
 
-        plugin.before_agent_callback(ctx)
+        asyncio.run(plugin.before_agent_callback(callback_context=ctx))
 
-        assert "warrant" not in state
+        assert state.get("warrant") is None
 
 
 class TestFailClosedUnknownConstraint:

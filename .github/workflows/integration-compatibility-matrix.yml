@@ -197,6 +197,7 @@ jobs:
             google_adk)
               pytest tenuo-python/tests/adapters/test_google_adk.py \
                 tenuo-python/tests/adapters/test_google_adk_adversarial.py \
+                tenuo-python/tests/adapters/test_google_adk_runner.py \
                 -v --tb=short
               ;;
             mcp)
