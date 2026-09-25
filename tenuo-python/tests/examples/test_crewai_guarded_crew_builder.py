@@ -2,28 +2,23 @@
 Unit and integration tests for examples/crewai/guarded_crew_builder.py (#656).
 
 Verifies:
-1. Public GuardedCrew builder constructs properly configured agents, tasks, and guards.
-2. Authorized role tool calls succeed and execute tool bodies.
-3. Constraint violations are blocked before tool execution, ensuring tool bodies never run.
+1. Public GuardedCrew builder constructs properly configured agents, tasks, and process.
+2. Authorized role tool calls succeed and execute tool bodies via public kickoff().
+3. Constraint violations are blocked by the authorization hook; tool bodies never run.
 4. Cross-role unauthorized tool calls fail closed without executing tool bodies.
-5. Strict mode and unguarded call reporting behavior.
-6. The example main() runs cleanly end-to-end without requiring external LLM API keys.
+5. Closed-world semantics block unlisted arguments from executing tool bodies.
+6. Strict mode fails closed on kickoff when unguarded tool calls occur (UnguardedToolError).
+7. Per-agent guard introspection provides accurate policy evaluation via .allows().
+8. The example main() runs cleanly end-to-end without requiring external LLM API keys.
 """
 
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, Dict, Optional
 
 import pytest
-
-from tenuo.crewai import (
-    CrewAIGuard,
-    _guarded_zone,
-    get_unguarded_calls,
-)
+from tenuo.crewai import CrewAIGuard, UnguardedToolError
 
 pytest.importorskip("crewai", reason="GuardedCrew requires crewai")
 
@@ -44,39 +39,27 @@ def example():
     module.executed_tools.clear()
 
 
-def simulate_tool_call(
-    hook: Any,
-    tool: Any,
-    tool_args: Dict[str, Any],
-    agent: Any,
-) -> Optional[Any]:
-    """Simulate CrewAI before_tool_call hook interception.
-
-    In CrewAI, if the before_tool_call hook returns False, the runner blocks
-    and skips tool execution, preventing the tool body from running.
-    """
-    context = SimpleNamespace(
-        tool_name=tool.name,
-        tool_input=tool_args,
-        agent=agent,
-    )
-    hook_result = hook(context)
-    if hook_result is not False:
-        # Tool call is allowed (hook returned None or True)
-        return tool._run(**tool_args)
-    # Tool call was blocked by Tenuo hook
-    return None
-
-
 def test_crew_builder_instantiation(example):
-    """GuardedCrew builder initializes agents and per-agent guards correctly."""
+    """GuardedCrew builder initializes agents and tasks correctly."""
     crew, researcher, writer = example.build_guarded_crew()
 
     assert crew is not None
     assert researcher.role == "Researcher"
     assert writer.role == "Writer"
 
-    # Guards property provides per-agent CrewAIGuard introspection
+
+def test_authorized_tool_execution(example):
+    """Authorized tools with valid constraints execute successfully via kickoff()."""
+    crew, _, _ = example.build_guarded_crew()
+
+    result = crew.kickoff()
+    assert result is not None
+
+    # Both authorized tools should have executed their underlying bodies
+    assert ("search", {"query": "topic:model_safety"}) in example.executed_tools
+    assert ("write_report", {"topic": "topic:model_safety"}) in example.executed_tools
+
+    # Per-agent guards are accessible after kickoff for introspection
     guards = crew.guards
     assert "Researcher" in guards
     assert "Writer" in guards
@@ -84,91 +67,121 @@ def test_crew_builder_instantiation(example):
     assert isinstance(guards["Writer"], CrewAIGuard)
 
 
-def test_authorized_tool_execution(example):
-    """Authorized tools with valid constraints execute successfully."""
-    crew, researcher, writer = example.build_guarded_crew()
-    crew._protect_agents()
-    hook = crew._create_combined_hook()
-
-    search_tool = example.SearchTool()
-    report_tool = example.WriteReportTool()
-
-    # Researcher executes search within constraint "topic:*"
-    search_args = {"query": "topic:model_safety"}
-    res = simulate_tool_call(hook, search_tool, search_args, researcher)
-
-    assert res == "Research results for: topic:model_safety"
-    assert ("search", search_args) in example.executed_tools
-
-    # Writer executes write_report within constraint "topic:*"
-    report_args = {"topic": "topic:model_safety"}
-    res = simulate_tool_call(hook, report_tool, report_args, writer)
-
-    assert res == "Report published for: topic:model_safety"
-    assert ("write_report", report_args) in example.executed_tools
-
-
 def test_constraint_violation_denied_and_never_runs(example):
     """Arguments violating constraints are blocked and tool bodies never execute."""
-    crew, researcher, writer = example.build_guarded_crew()
-    crew._protect_agents()
-    hook = crew._create_combined_hook()
+    # Researcher requests an unapproved query that does not match Pattern("topic:*")
+    crew, _, _ = example.build_guarded_crew(
+        researcher_responses=[
+            'Thought: Search unapproved\nAction: search\nAction Input: {"query": "unapproved_query"}\n',
+            'Thought: Final response\nFinal Answer: Done without unapproved tools.',
+        ],
+        writer_responses=[
+            'Thought: Done\nFinal Answer: Task complete.',
+        ],
+    )
 
-    search_tool = example.SearchTool()
-    invalid_args = {"query": "unapproved_query"}  # does not match Pattern("topic:*")
+    crew.kickoff()
 
-    res = simulate_tool_call(hook, search_tool, invalid_args, researcher)
-
-    assert res is None
+    # The tool body must never have been called with the disallowed argument
+    assert ("search", {"query": "unapproved_query"}) not in example.executed_tools
     assert example.executed_tools == []
 
 
 def test_cross_role_tool_denied_and_never_runs(example):
     """Tools attempted by unauthorized agent roles are blocked without running."""
-    crew, researcher, writer = example.build_guarded_crew()
-    crew._protect_agents()
-    hook = crew._create_combined_hook()
+    # Researcher attempting to invoke Writer's tool (write_report)
+    crew, _, _ = example.build_guarded_crew(
+        researcher_responses=[
+            'Thought: Try writer tool\nAction: write_report\nAction Input: {"topic": "topic:model_safety"}\n',
+            'Thought: Conclude\nFinal Answer: Complete.',
+        ],
+        writer_responses=[
+            'Thought: Conclude\nFinal Answer: Complete.',
+        ],
+    )
 
-    report_tool = example.WriteReportTool()
-    search_tool = example.SearchTool()
+    crew.kickoff()
 
-    # Researcher trying to call Writer's tool
-    res1 = simulate_tool_call(hook, report_tool, {"topic": "topic:model_safety"}, researcher)
-    assert res1 is None
+    # Researcher cannot call write_report; tool body must never run
+    assert ("write_report", {"topic": "topic:model_safety"}) not in example.executed_tools
     assert example.executed_tools == []
 
-    # Writer trying to call Researcher's tool
-    res2 = simulate_tool_call(hook, search_tool, {"query": "topic:model_safety"}, writer)
-    assert res2 is None
+
+def test_cross_role_writer_denied_researcher_tool(example):
+    """Writer attempting to invoke Researcher's search tool is blocked without running."""
+    crew, _, _ = example.build_guarded_crew(
+        researcher_responses=[
+            'Thought: Conclude\nFinal Answer: Done.',
+        ],
+        writer_responses=[
+            'Thought: Try search\nAction: search\nAction Input: {"query": "topic:model_safety"}\n',
+            'Thought: Conclude\nFinal Answer: Complete.',
+        ],
+    )
+
+    crew.kickoff()
+
+    # Writer cannot call search; tool body must never run
+    assert ("search", {"query": "topic:model_safety"}) not in example.executed_tools
     assert example.executed_tools == []
 
 
 def test_closed_world_unlisted_argument_denied(example):
-    """Extra unlisted parameters trigger closed-world denial."""
-    crew, researcher, _ = example.build_guarded_crew()
-    crew._protect_agents()
-    hook = crew._create_combined_hook()
+    """Extra unlisted parameters trigger closed-world denial; tool body never runs."""
+    crew, _, _ = example.build_guarded_crew(
+        researcher_responses=[
+            'Thought: Injected args\nAction: search\nAction Input: {"query": "topic:model_safety", "extra_param": "injection"}\n',
+            'Thought: Conclude\nFinal Answer: Done.',
+        ],
+        writer_responses=[
+            'Thought: Conclude\nFinal Answer: Complete.',
+        ],
+    )
 
-    search_tool = example.SearchTool()
-    injected_args = {"query": "topic:model_safety", "extra_param": "injection"}
+    crew.kickoff()
 
-    res = simulate_tool_call(hook, search_tool, injected_args, researcher)
-
-    assert res is None
+    # Injected argument triggers UnlistedArgument denial; tool body never executes
     assert example.executed_tools == []
 
 
-def test_unguarded_tool_reporting(example):
-    """Unguarded tool calls report their invocation to Tenuo strict tracking."""
-    crew, researcher, _ = example.build_guarded_crew()
-    guard = crew.guards["Researcher"]
-    admin_tool = example.UnguardedAdminTool()
+def test_strict_mode_unguarded_tool_raises_on_kickoff(example):
+    """Strict mode detects unguarded calls and raises UnguardedToolError on kickoff."""
+    crew, _, _ = example.build_guarded_crew(
+        include_unguarded_tool=True,
+        researcher_responses=[
+            'Thought: Reset\nAction: admin_reset\nAction Input: {}\n',
+            'Thought: Done\nFinal Answer: Done.',
+        ],
+        writer_responses=[
+            'Thought: Done\nFinal Answer: Done.',
+        ],
+    )
 
-    with _guarded_zone(guard, strict=True):
-        assert get_unguarded_calls() == []
-        admin_tool._run(target="cluster_config")
-        assert ("admin_reset", {"target": "cluster_config"}) in example.executed_tools
-        assert "admin_reset" in get_unguarded_calls()
+    with pytest.raises(UnguardedToolError) as exc_info:
+        crew.kickoff()
+
+    assert "admin_reset" in str(exc_info.value)
+    assert "GuardedCrew.kickoff" in str(exc_info.value)
+
+
+def test_guard_allows_policy_evaluation(example):
+    """Guard allows() provides accurate boolean policy evaluation for CI checks."""
+    crew, _, _ = example.build_guarded_crew()
+    crew.kickoff()
+
+    res_guard = crew.guards["Researcher"]
+    writer_guard = crew.guards["Writer"]
+
+    # Allowed calls
+    assert res_guard.allows("search", {"query": "topic:ai_safety"}) is True
+    assert writer_guard.allows("write_report", {"topic": "topic:ai_safety"}) is True
+
+    # Constraint violations
+    assert res_guard.allows("search", {"query": "unapproved_query"}) is False
+
+    # Cross-role denials
+    assert res_guard.allows("write_report", {"topic": "topic:ai_safety"}) is False
+    assert writer_guard.allows("search", {"query": "topic:ai_safety"}) is False
 
 
 def test_main_runs_end_to_end(example, capsys):
@@ -177,9 +190,13 @@ def test_main_runs_end_to_end(example, capsys):
 
     captured = capsys.readouterr().out
     assert "=== Tenuo GuardedCrew Builder Quickstart ===" in captured
+    assert "Kickoff Result: Safety report published." in captured
+    assert "- [ALLOWED] search({'query': 'topic:model_safety'})" in captured
+    assert "- [ALLOWED] write_report({'topic': 'topic:model_safety'})" in captured
     assert "Researcher search('topic:ai_safety'): True" in captured
     assert "Writer write_report('topic:ai_safety'): True" in captured
     assert "Researcher search('unapproved_query'): False" in captured
     assert "Researcher write_report('topic:ai_safety'): False" in captured
     assert "Writer search('topic:ai_safety'): False" in captured
-    assert "GuardedCrew successfully configured with strict enforcement." in captured
+    assert "[FAIL-CLOSED] Caught UnguardedToolError as expected" in captured
+    assert "GuardedCrew successfully executed with strict enforcement." in captured

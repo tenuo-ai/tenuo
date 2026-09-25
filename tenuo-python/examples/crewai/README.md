@@ -63,18 +63,19 @@ python guarded_crew.py
 
 ### guarded_crew_builder.py
 
-GuardedCrew builder quickstart example demonstrating role-based policies, argument constraints, strict mode, and offline execution without LLM keys (#656).
+Official quickstart demonstrating the public `GuardedCrew()` fluent builder API for CrewAI (#656).
 
 ```bash
 python guarded_crew_builder.py
 ```
 
 **Demonstrates:**
-- Fluent `GuardedCrew` builder chaining (`.policy()`, `.constraints()`, `.strict()`)
-- Role-based policy mapping agent roles to authorized tools
-- Pattern-based argument constraints (`Pattern("topic:*")`)
-- Per-agent guard introspection via `crew.guards`
-- Offline deterministic execution without API keys
+- Fluent `GuardedCrew` builder chaining:
+  - `.policy({role: [tool_names]})` to map agent roles to authorized capabilities
+  - `.constraints({role: {tool: {arg: constraint}}})` for fine-grained argument control (e.g. `Pattern("topic:*")`)
+  - `.strict()` to ensure execution fails closed if any unguarded tool calls occur
+- Public `crew.kickoff()` execution through CrewAI's native `before_tool_call` hooks
+- Reproducible, offline testing using a deterministic LLM double (no provider keys or network required)
 
 ### guarded_flow.py
 
