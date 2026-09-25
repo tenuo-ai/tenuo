@@ -4,8 +4,8 @@ Use this reference only for projects using the current `@tenuo/core` or `@tenuo/
 
 Do not treat this reference as an API specification. Inspect the resolved package's README, `package.json`, exports, and declaration files in `dist` first. The npm package does not ship the repository examples. If installed artifacts are insufficient, compare the resolved package with the TypeScript entry in the [release contract](../release.json). Use these immutable sources only when the versions match:
 
-- [Framework-neutral MCP host boundary](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-ts/packages/core/examples/mcp/host.ts), exercised by [the MCP host smoke test](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-ts/packages/core/test/mcp-host.smoke.test.ts)
-- [Package API and production configuration](https://github.com/tenuo-ai/tenuo/blob/v0.3.0/tenuo-ts/packages/core/README.md)
+- [Framework-neutral MCP host boundary](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-ts/packages/core/examples/mcp/host.ts), exercised by [the MCP host smoke test](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-ts/packages/core/test/mcp-host.smoke.test.ts)
+- [Package API and production configuration](https://github.com/tenuo-ai/tenuo/blob/v0.3.1/tenuo-ts/packages/core/README.md)
 
 For another package version, do not assume that its prerelease suffix names a repository tag. Confirm a candidate tag by reading `tenuo-ts/packages/core/package.json` at that tag.
 

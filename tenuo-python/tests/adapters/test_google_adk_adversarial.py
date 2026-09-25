@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
@@ -274,11 +275,11 @@ class TestScoping:
         cb_context.session_state = {"my_warrant": scoped}
 
         # Run before_agent_callback
-        plugin.before_agent_callback(cb_context)
+        asyncio.run(plugin.before_agent_callback(callback_context=cb_context))
 
         # Result: warrant should be removed from session state
         # We check the dict we passed in
-        assert "my_warrant" not in cb_context.session_state
+        assert cb_context.session_state.get("my_warrant") is None
 
 
 class TestReplayAndBinding:

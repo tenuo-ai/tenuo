@@ -4,7 +4,7 @@
   "evaluated_at": "2026-09-17",
   "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
   "result": "pass",
-  "evidence_kind": "fresh",
+  "evidence_kind": "carried_forward",
   "inputs": [
     "SKILL.md",
     "references/python.md",
@@ -12,12 +12,13 @@
     "references/security-model.md",
     "release.json"
   ],
-  "skill_fingerprint": "3c1926cb67c00765c52492eee44873af81432a71c34a47fd61a2956ad7884f72",
+  "skill_fingerprint": "cc57552d1bad4fde15e2946804b70d639833328f46e399f23f6a35a20dc65942",
   "evidence": {
     "sdk": "tenuo 0.3.0 from PyPI in a project .venv",
     "tests": "16 passed (.venv/bin/pytest -q, rerun by the grader)",
     "typecheck": "mypy --ignore-missing-imports payment_service: no issues (run by the grader)",
     "critical_items": "passed",
     "notes": "Verifier takes a base64 warrant chain and a PoP signature only; trusted roots come from PAYMENT_TRUSTED_ISSUERS or constructor injection. PaymentClient.transfer now requires a VerifiedTransfer matching the requested recipient/amount, and tests attempt both original bypass shapes (direct client call, old two-argument execute_transfer). Wider child delegation is proven at grant time via the SDK's MonotonicityError rather than by presenting a forged wider chain to the verifier. Report separates the in-process guardrail from a service boundary and disclaims replay, revocation, exactly-once, and intent."
-  }
+  },
+  "carried_forward_review": "Automated re-pin from v0.3.0 to v0.3.1 after the release was published. Only release.json and the pinned repository links changed; skill instructions did not. Before merging, confirm the linked examples at the new tag still match the reference prose, and rerun payment-boundary-eval.md if any behavioral input changed."
 }
