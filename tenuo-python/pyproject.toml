@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
+requires = ["maturin>=1.9.3,<2.0"]
 build-backend = "maturin"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.3.1"
 description = "Capability tokens for AI agents - Python SDK"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [
     { name = "Tenuo Contributors" }
 ]
@@ -95,7 +96,7 @@ cloud = [
 # Development dependencies (includes features + tools)
 dev = [
     # Build tools
-    "maturin>=1.0",
+    "maturin>=1.9.3",
     # Testing
     "pytest>=7.0",
     "pytest-asyncio",
@@ -195,6 +196,5 @@ ignore = ["E501"]  # Line too long - handled by formatter
 ignore_missing_imports = true
 
 [[tool.maturin.sdist]]
-include = ["README.md", "LICENSE*", "examples/**/*", "tenuo/**/*.py"]
-
+include = ["README.md", "examples/**/*", "tenuo/**/*.py"]
 
