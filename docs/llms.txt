@@ -14,7 +14,7 @@ Guidance for agents writing code with Tenuo:
 - Enforce at the effect boundary (where the tool actually runs), not only in the planner.
 - Use the SDK and framework adapters; do not reimplement warrant signing, attenuation, or verification.
 - Test both an allowed call and a denied call that is blocked before any side effect.
-- Roll out in audit mode first (`configure(mode="audit")`), then switch to enforce.
+- Default to enforce mode. For a controlled audit rollout, configure trusted roots explicitly and follow the [production guide](https://tenuo.ai/production-guide). Audit mode logs violations but does not block unauthorized actions. Switching modes with `configure(...)` replaces the configuration, so supply the trusted roots and any other required settings again.
 
 ## Docs
 
