@@ -52,15 +52,15 @@ Usage (Global Hook - Recommended):
     guard.register()
 
 Usage (Crew-Scoped Hook):
-    from crewai import CrewBase
-    from crewai.hooks import before_tool_call_crew
+    from crewai.project import CrewBase
+    from crewai.hooks import before_tool_call
 
     @CrewBase
     class MyProjCrew:
         def __init__(self):
             self.guard = GuardBuilder().allow(...).build()
 
-        @before_tool_call_crew
+        @before_tool_call
         def authorize(self, context):
             return self.guard.authorize_hook(context)
 
@@ -729,7 +729,7 @@ class CrewAIGuard:
                 def __init__(self):
                     self.guard = GuardBuilder().allow(...).build()
 
-                @before_tool_call_crew
+                @before_tool_call
                 def authorize(self, context):
                     return self.guard.authorize_hook(context)
         """
@@ -791,7 +791,7 @@ class CrewAIGuard:
         Example:
             @CrewBase
             class MyProjCrew:
-                @before_tool_call_crew
+                @before_tool_call
                 def authorize(self, context):
                     return self.guard.authorize_hook(context)
         """

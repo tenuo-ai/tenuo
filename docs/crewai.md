@@ -77,11 +77,11 @@ agent = Agent(
 
 ### Crew-Scoped Hook
 
-For crew-scoped authorization (instead of global), use `as_hook()` with CrewAI's `@before_tool_call_crew` decorator:
+For crew-scoped authorization (instead of global), call `guard.authorize_hook(context)` from a method decorated with CrewAI's `@before_tool_call` on a `@CrewBase` class. CrewAI registers method hooks for that crew only:
 
 ```python
-from crewai import CrewBase
-from crewai.hooks import before_tool_call_crew
+from crewai.project import CrewBase
+from crewai.hooks import before_tool_call
 from tenuo import Pattern
 from tenuo.crewai import GuardBuilder, Subpath
 
@@ -94,7 +94,7 @@ class MyProjCrew:
             .on_denial("raise")
             .build())
 
-    @before_tool_call_crew
+    @before_tool_call
     def authorize(self, context):
         return self.guard.authorize_hook(context)
 ```
