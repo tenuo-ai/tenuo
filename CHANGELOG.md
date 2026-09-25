@@ -238,6 +238,32 @@ these before upgrading:
   are built for glibc 2.28 and imported on Debian bookworm before publishing,
   and the release checks each platform tag (#743).
 
+- **Native support for the Temporal Agent Harness.** Three opt-in
+  `TenuoPluginConfig` fields close the gaps found running the harness's
+  refund-agent example against Tenuo: `pop_exclude_args` drops named,
+  non-authority activity arguments (e.g. the harness's
+  `tool_ctx: AgentToolContext`) from PoP signing and verification, applied
+  symmetrically outbound and inbound and failing closed on any mismatch
+  between the two sides; `unwarranted_activities` exempts a framework's own
+  internal-plumbing activities (model calls, approval routing, sandbox
+  lifecycle) from warrant requirements under `require_warrant=True`, without
+  weakening verification for an activity that *does* present a warrant, and
+  is validated at construction time against MCP call-tool-v2-shaped names so
+  a careless pattern can never exempt a real tool-call effect;
+  `mcp_call_tool_activities` unwraps an MCP client's one-activity-per-server
+  `<server>-call-tool-v2` wrapper so a warrant authorizes the inner MCP tool
+  and its arguments, not the wrapper activity, failing closed on a malformed
+  wrapper and never treating its `meta` field as authority. `tenuo.temporal.
+  harness` ships the harness's own preset values (`HARNESS_INTERNAL_
+  ACTIVITIES`, `HARNESS_TOOL_CTX_EXCLUDE_ARGS`, `HARNESS_MCP_CALL_TOOL_
+  ACTIVITIES`), a `harness_plugin_config()` convenience that applies all
+  three, and `warrant_evaluator()`, an auto-mode evaluator that checks the
+  task warrant before any other approval logic runs. See
+  [`docs/temporal-harness.md`](docs/temporal-harness.md). The `tenuo[temporal-
+  harness]` extra installs `temporalio` and `temporal-agent-harness` together;
+  importing `tenuo.temporal.harness` itself never requires the harness
+  package.
+
 - **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
   `ServerMiddleware` for `MCPServer` / low-level `Server` that runs
   `MCPVerifier` on every `tools/call` before params validation, accepting the

@@ -108,6 +108,15 @@ with the same `MAJOR.MINOR.PATCH`.
 - **1.23.0**: Minimum for `TenuoTemporalPlugin` (`SimplePlugin`).
 - Replay safety and live Temporal jobs run in the weekly compatibility matrix.
 
+### Temporal Agent Harness (`tenuo.temporal.harness`)
+**Current Status**: Experimental — tracks the upstream package's own "Pre-Alpha" status
+
+**Version Notes**:
+- Minimum extra is `temporal-agent-harness>=0.4.0` (`tenuo[temporal-harness]`).
+- `temporal-agent-harness` itself states its APIs will change; this integration
+  is not held to the same stability bar as the entries above until upstream
+  reaches a stable release. See [`docs/temporal-harness.md`](temporal-harness.md).
+
 ### Hermes Agent
 **Current Status**: Supported
 
