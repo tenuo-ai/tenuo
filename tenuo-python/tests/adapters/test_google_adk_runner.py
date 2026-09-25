@@ -20,6 +20,7 @@ _PROBE = "import google.adk.runners, google.adk.plugins"
 _SCRIPT = textwrap.dedent(
     """
     import asyncio
+    from types import SimpleNamespace
     from typing import AsyncGenerator
 
     from google.adk.agents import Agent
@@ -29,7 +30,7 @@ _SCRIPT = textwrap.dedent(
 
     from tenuo import SigningKey, Warrant
     from tenuo.constraints import Subpath
-    from tenuo.google_adk import TenuoPlugin
+    from tenuo.google_adk import ScopedWarrant, TenuoPlugin
 
     ran = []
 
@@ -93,6 +94,37 @@ _SCRIPT = textwrap.dedent(
     for case in ("outside", "traversal", "ungranted"):
         assert results[case].get("error") == "authorization_denied", (case, results[case])
     assert ran == [("read_file", "/data/report.txt")], ran
+
+    # Exercise real CallbackContext.state, including persisted revocation.
+    # ADK State is not a dict and deliberately has no pop/delete operation.
+    dynamic_plugin = TenuoPlugin(signing_key=agent_key, trusted_roots=[issuer.public_key])
+    dynamic_runner = InMemoryRunner(agent=agent, app_name="files", plugins=[dynamic_plugin])
+
+    async def check_session_warrants():
+        # Copyable warrant doubles isolate cleanup from Rust object storage:
+        # InMemorySessionService deep-copies session state.
+        for invalid in (
+            ScopedWarrant(SimpleNamespace(is_expired=lambda: False), "another_agent"),
+            SimpleNamespace(is_expired=lambda: True),
+        ):
+            session = await dynamic_runner.session_service.create_session(
+                app_name="files", user_id="u", state={"__tenuo_warrant__": invalid})
+            responses = []
+            deltas = []
+            msg = types.Content(role="user", parts=[types.Part.from_text(text="allowed")])
+            async for event in dynamic_runner.run_async(user_id="u", session_id=session.id, new_message=msg):
+                deltas.append(event.actions.state_delta)
+                for part in (event.content.parts if event.content else []):
+                    if part.function_response:
+                        responses.append(part.function_response.response)
+            assert responses and all(r.get("error") == "authorization_denied" for r in responses), responses
+            assert any("__tenuo_warrant__" in d and d["__tenuo_warrant__"] is None for d in deltas), deltas
+            saved = await dynamic_runner.session_service.get_session(
+                app_name="files", user_id="u", session_id=session.id)
+            assert saved.state["__tenuo_warrant__"] is None, saved.state
+        assert ran == [("read_file", "/data/report.txt")], ran
+
+    asyncio.run(check_session_warrants())
     print("OK")
     """
 )

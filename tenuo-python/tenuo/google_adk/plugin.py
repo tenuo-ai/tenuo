@@ -184,16 +184,16 @@ class TenuoPlugin(BasePlugin):
                 logger.warning(
                     f"Removing warrant scoped for '{scoped_warrant.agent_name}' from agent '{callback_context.agent_name}'"
                 )
-                # Use pop() to avoid KeyError if already removed
-                state.pop(self._warrant_key, None)
+                # ADK State has no pop/delete API. Assignment also records the
+                # revocation in its delta so it survives the current callback.
+                state[self._warrant_key] = None
                 return None  # Will fail in before_tool with "no warrant"
 
         # Check expiry
         warrant = getattr(scoped_warrant, "warrant", scoped_warrant)
         is_expired = self._check_warrant_expiry(warrant)
         if is_expired:
-            # Use pop() to avoid KeyError if already removed
-            state.pop(self._warrant_key, None)
+            state[self._warrant_key] = None
 
         return None  # Continue with agent execution
 

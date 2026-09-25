@@ -98,6 +98,7 @@ from tenuo_core import (  # type: ignore
     UrlPattern,
     Warrant,
     Wildcard,
+    verify_receipt,
 )
 from tenuo_core import (
     py_build_approval_context_attestation as build_approval_context_attestation,
@@ -274,6 +275,7 @@ __all__ = [
     "get_runtime",
     "bind_runtime",
     "Authorizer",
+    "verify_receipt",
     # Enforcement (framework-agnostic; adapters call these)
     "enforce_tool_call",
     "enforce_tool_call_async",

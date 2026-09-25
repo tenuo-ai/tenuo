@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
+
 ### Fixed
 
 - **`TenuoPlugin` (Google ADK) now works under a real ADK `Runner`.** It did
@@ -20,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sets the plugin name. Code that called these callbacks directly must now
   `await` them and pass keywords. The existing tests mocked `google.adk`, so a
   new test drives the plugin through a real `InMemoryRunner`.
+  Expired and wrong-agent session warrants are cleared through ADK's tracked
+  state assignment API, preserving revocation without calling unsupported `pop`.
 
 ## [0.3.1] - 2026-09-23
 

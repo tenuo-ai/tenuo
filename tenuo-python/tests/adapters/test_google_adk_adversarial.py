@@ -279,7 +279,7 @@ class TestScoping:
 
         # Result: warrant should be removed from session state
         # We check the dict we passed in
-        assert "my_warrant" not in cb_context.session_state
+        assert cb_context.session_state.get("my_warrant") is None
 
 
 class TestReplayAndBinding:

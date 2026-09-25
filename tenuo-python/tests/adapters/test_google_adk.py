@@ -557,7 +557,7 @@ class TestScopedWarrant:
         # Case 2: Different agent tries to access leaked warrant
         ctx_writer = MockCallbackContext("writer", state.copy())
         asyncio.run(plugin.before_agent_callback(callback_context=ctx_writer))
-        assert "warrant" not in ctx_writer.state
+        assert ctx_writer.state.get("warrant") is None
 
 
 class TestPluginExpiryCleanup:
@@ -579,7 +579,7 @@ class TestPluginExpiryCleanup:
 
         asyncio.run(plugin.before_agent_callback(callback_context=ctx))
 
-        assert "warrant" not in state
+        assert state.get("warrant") is None
 
 
 class TestFailClosedUnknownConstraint:
