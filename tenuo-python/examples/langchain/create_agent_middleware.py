@@ -10,6 +10,7 @@ Demonstrates:
 3. Installing TenuoMiddleware with trusted_roots on create_agent().
 4. An authorized `search` call running, and `delete_record` (not in the warrant)
    being denied without its body executing.
+5. Verifying a signed receipt for each of those decisions.
 
 Requires LangChain >= 1.0 (for create_agent and agent middleware):
 
@@ -29,6 +30,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
+import tenuo_core
 from tenuo import HolderIdentity, Pattern, Runtime, SigningKey, Warrant
 from tenuo.keys import KeyRegistry
 from tenuo.langgraph import TenuoMiddleware
@@ -129,10 +131,16 @@ def run(
     warrant: Warrant,
     runtime: Runtime,
 ) -> List[ToolMessage]:
-    """Invoke the agent with the warrant in state and return its tool messages."""
+    """Invoke the agent with the warrant token in state and return its tool messages."""
     agent = build_agent(scripted_model(tool_name, args), issuer_key)
     with runtime.bind():
-        result = agent.invoke({"messages": [HumanMessage("Handle the request.")], "warrant": warrant})
+        result = agent.invoke(
+            {
+                "messages": [HumanMessage("Handle the request.")],
+                # Base64 token. A live Warrant object is not safe to checkpoint.
+                "warrant": str(warrant),
+            }
+        )
     return tool_messages(result["messages"])
 
 
@@ -152,7 +160,11 @@ def main() -> None:
         print(f"   {message.status}: {message.content}")
 
     print(f"Tool bodies that ran: {executed}")
-    print(f"Signed receipts collected: {len(runtime.peek_receipts())}")
+    receipts = runtime.peek_receipts()
+    print(f"Signed receipts collected: {len(receipts)}")
+    for wire in receipts:
+        payload = tenuo_core.verify_receipt(wire)
+        print(f"   {payload.outcome}: {payload.action}")
 
 
 if __name__ == "__main__":

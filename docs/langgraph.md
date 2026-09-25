@@ -211,13 +211,13 @@ warrant = (
 with runtime.bind():
     result = agent.invoke({
         "messages": [HumanMessage("Search customer records for customers:acme")],
-        "warrant": warrant,
+        "warrant": str(warrant),  # base64 token; safe to checkpoint
     })
 
 signed_receipts = runtime.peek_receipts()
 ```
 
-Calls outside the warrant (an ungranted tool, or `search` with a query that does not match `customers:*`) come back to the model as an error `ToolMessage`, and the tool body never runs.
+Calls outside the warrant (an ungranted tool, or `search` with a query that does not match `customers:*`) come back to the model as an error `ToolMessage`, and the tool body never runs. The linked example is the deterministic run: it allows `search("customers:acme")`, denies `delete_record`, and verifies the signed allow and deny receipts. This snippet calls a live model, which may choose a different tool call, so `signed_receipts` can be empty.
 
 ---
 
