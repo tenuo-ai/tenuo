@@ -10,8 +10,8 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-import tenuo_core
 
+from tenuo import verify_receipt
 from tenuo.keys import KeyRegistry
 
 pytest.importorskip("langchain.agents.middleware", reason="create_agent middleware requires langchain>=1.0")
@@ -38,7 +38,7 @@ def keys_and_warrant(example):
 def assert_signed_receipt(runtime, *, outcome: str, action: str) -> None:
     receipts = runtime.peek_receipts()
     assert len(receipts) == 1
-    payload = tenuo_core.verify_receipt(receipts[0])
+    payload = verify_receipt(receipts[0])
     assert payload.outcome == outcome
     assert payload.action == action
 

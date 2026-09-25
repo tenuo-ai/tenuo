@@ -30,8 +30,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
-import tenuo_core
-from tenuo import HolderIdentity, Pattern, Runtime, SigningKey, Warrant
+from tenuo import HolderIdentity, Pattern, Runtime, SigningKey, Warrant, verify_receipt
 from tenuo.keys import KeyRegistry
 from tenuo.langgraph import TenuoMiddleware
 
@@ -163,7 +162,7 @@ def main() -> None:
     receipts = runtime.peek_receipts()
     print(f"Signed receipts collected: {len(receipts)}")
     for wire in receipts:
-        payload = tenuo_core.verify_receipt(wire)
+        payload = verify_receipt(wire)
         print(f"   {payload.outcome}: {payload.action}")
 
 

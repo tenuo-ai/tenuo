@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
+
 ## [0.3.1] - 2026-09-23
 
 ### Breaking
