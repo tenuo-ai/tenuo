@@ -97,6 +97,7 @@ Thumbprint URIs used as derived-token `iss`:
 | J.20.4 | PoP iat outside the clock window | A.20 | DENY at step 7g |
 | J.20.5 | PoP hta does not match invocation args | A.20 | DENY at step 7f |
 | J.20.6 | PoP aat_tool does not match the invocation tool | A.20 | DENY at step 7e |
+| J.20.7 | PoP replayed on a sibling leaf with the same jti | — | DENY at step 7c |
 | J.9.1 | Closed-world: unconstrained extra argument | — | DENY at step 6b |
 | J.9.2 | Closed-world: constrained argument absent | — | DENY at step 6b |
 | J.9.3 | Tool dropped at L2 cannot be invoked | — | DENY at step 6b |
@@ -203,7 +204,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000001","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a01"}
+{"aat_aud":"https://tools.example.com","aat_hash":"c5dLB2dC4svl2kfnuLN307nhKkSnxROsSD7pF954omo","aat_id":"019471f8-0000-7000-8000-000000000001","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a01"}
 ```
 Pretty payload:
 ```json
@@ -211,6 +212,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a01",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000001",
+  "aat_hash": "c5dLB2dC4svl2kfnuLN307nhKkSnxROsSD7pF954omo",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -221,13 +223,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0` |
-| SHA-256(signing input), base64url | `Jx5hSrfns320Y19b3aQebWVrmuVfcBdFjB4iUKJOvfI` |
-| signature_b64 | `53KUJeP0FxoTOZhTpfG2IuIUeO-RxktIu2-MTvRf15tf-bN6M92QRW4rjCoZcbY1309WClkSryoasNW3FYDaDg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiYzVkTEIyZEM0c3ZsMmtmbnVMTjMwN25oS2tTbnhST3NTRDdwRjk1NG9tbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0` |
+| SHA-256(signing input), base64url | `XGM9QAGN5mxt16SjdXsfIPio8bZcd8tbFuscy_uSOIg` |
+| signature_b64 | `WpV5uIDDzs7jo_t8IsHAfPrUI6iM4ytaM8cYN4wPOLhM4v1Y2wrvife4f-VPbKCrXDDVNDNXCzKGn7U8LVavAA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0.53KUJeP0FxoTOZhTpfG2IuIUeO-RxktIu2-MTvRf15tf-bN6M92QRW4rjCoZcbY1309WClkSryoasNW3FYDaDg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiYzVkTEIyZEM0c3ZsMmtmbnVMTjMwN25oS2tTbnhST3NTRDdwRjk1NG9tbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0.WpV5uIDDzs7jo_t8IsHAfPrUI6iM4ytaM8cYN4wPOLhM4v1Y2wrvife4f-VPbKCrXDDVNDNXCzKGn7U8LVavAA
 ```
 
 ---
@@ -433,7 +435,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a03"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a03"}
 ```
 Pretty payload:
 ```json
@@ -441,6 +443,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a03",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -451,13 +454,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0` |
-| SHA-256(signing input), base64url | `t6i-c4-7_N1gfM_Ny8cDguk1cPMCwwQJVtpIdqvlBcU` |
-| signature_b64 | `gLRGKa0Bjsrm79O1FampxQTO2pcOX1qku5GPY7Oe9EIeKczzOBOo1uKZittE8joB6JrRlU8_GY639AbvZ2prCg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0` |
+| SHA-256(signing input), base64url | `uceSc5RU-ldamppR-mI9q791yukVXCVwEAoU3uToJu4` |
+| signature_b64 | `MLhTuijzM23ScPEWv80VfheOWPb3CMFkjss2OrkHMdNqvc3oxjYcoPAMFc6ahkndBgPAqAo99u3vbnLYeGaMBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0.gLRGKa0Bjsrm79O1FampxQTO2pcOX1qku5GPY7Oe9EIeKczzOBOo1uKZittE8joB6JrRlU8_GY639AbvZ2prCg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0.MLhTuijzM23ScPEWv80VfheOWPb3CMFkjss2OrkHMdNqvc3oxjYcoPAMFc6ahkndBgPAqAo99u3vbnLYeGaMBQ
 ```
 
 ---
@@ -667,7 +670,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a04"}
+{"aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a04"}
 ```
 Pretty payload:
 ```json
@@ -675,6 +678,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a04",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -684,13 +688,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfaWQiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTIiLCJhYXRfdG9vbCI6InJlYWRfZmlsZSIsImh0YSI6eyJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGEwNCJ9` |
-| SHA-256(signing input), base64url | `Abv2MxIKvncnGnhHDTkB44i-hSvUO_RbMyp5wx38M0A` |
-| signature_b64 | `EDfEpxisv8QUENR-CXs12cJ8To5wCF0OeWwO_U_9dBpC8wyZ8i7hdlH7iWZUWdkpkLt6B6gXRJYLjXXYA4qpDg` |
+| payload_b64 | `eyJhYXRfaGFzaCI6IkpjdTh3U0ZwVjBfb0pvTmN3dWdrSjVTNmQ0UnU1NGc5MEVFUUY2YjVybm8iLCJhYXRfaWQiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTIiLCJhYXRfdG9vbCI6InJlYWRfZmlsZSIsImh0YSI6eyJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGEwNCJ9` |
+| SHA-256(signing input), base64url | `TimNSA3Njygee2eELvwstpuHUesOPlie9fOhIn4_YCE` |
+| signature_b64 | `DOkfCeJxvXTeLgIHTASDfXpzyFJanKGXhupteOAROpMFAk6GGjK3iQGOYKCzqGcQcrwTynaToq7M86KzalayDw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfaWQiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTIiLCJhYXRfdG9vbCI6InJlYWRfZmlsZSIsImh0YSI6eyJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGEwNCJ9.EDfEpxisv8QUENR-CXs12cJ8To5wCF0OeWwO_U_9dBpC8wyZ8i7hdlH7iWZUWdkpkLt6B6gXRJYLjXXYA4qpDg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfaGFzaCI6IkpjdTh3U0ZwVjBfb0pvTmN3dWdrSjVTNmQ0UnU1NGc5MEVFUUY2YjVybm8iLCJhYXRfaWQiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTIiLCJhYXRfdG9vbCI6InJlYWRfZmlsZSIsImh0YSI6eyJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGEwNCJ9.DOkfCeJxvXTeLgIHTASDfXpzyFJanKGXhupteOAROpMFAk6GGjK3iQGOYKCzqGcQcrwTynaToq7M86KzalayDw
 ```
 
 ---
@@ -898,7 +902,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://evil.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a05"}
+{"aat_aud":"https://evil.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a05"}
 ```
 Pretty payload:
 ```json
@@ -906,6 +910,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a05",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -916,13 +921,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwiYWF0X2lkIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDEyIiwiYWF0X3Rvb2wiOiJyZWFkX2ZpbGUiLCJodGEiOnsicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhMDUifQ` |
-| SHA-256(signing input), base64url | `X53YPQA_csHcvKsubsaft03FIDY0dz-O_Nl2ubqBS70` |
-| signature_b64 | `KIkp8Vs_L87CxwiCrCt0B5cEOgAqdQAQGyu97WwXPmB0V_Tkyy48SMsrQDgXtPOhHggovfHrmr3w-q_6LKbKDw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwiYWF0X2hhc2giOiJKY3U4d1NGcFYwX29Kb05jd3Vna0o1UzZkNFJ1NTRnOTBFRVFGNmI1cm5vIiwiYWF0X2lkIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDEyIiwiYWF0X3Rvb2wiOiJyZWFkX2ZpbGUiLCJodGEiOnsicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhMDUifQ` |
+| SHA-256(signing input), base64url | `WezL0J3jAKXSkq-srpwlsarUXSiJd-Xci0pWIr23Ngk` |
+| signature_b64 | `lkwWsJU8kJCd_orV8SYXsrI3NDz87nkd8GpVMo2jn6xwxPC9jP_m8WDFWTzzSWjExJf2c9eYaY3qzpfq2zTVCA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwiYWF0X2lkIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDEyIiwiYWF0X3Rvb2wiOiJyZWFkX2ZpbGUiLCJodGEiOnsicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhMDUifQ.KIkp8Vs_L87CxwiCrCt0B5cEOgAqdQAQGyu97WwXPmB0V_Tkyy48SMsrQDgXtPOhHggovfHrmr3w-q_6LKbKDw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwiYWF0X2hhc2giOiJKY3U4d1NGcFYwX29Kb05jd3Vna0o1UzZkNFJ1NTRnOTBFRVFGNmI1cm5vIiwiYWF0X2lkIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDEyIiwiYWF0X3Rvb2wiOiJyZWFkX2ZpbGUiLCJodGEiOnsicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhMDUifQ.lkwWsJU8kJCd_orV8SYXsrI3NDz87nkd8GpVMo2jn6xwxPC9jP_m8WDFWTzzSWjExJf2c9eYaY3qzpfq2zTVCA
 ```
 
 ---
@@ -1127,7 +1132,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a06"}
+{"aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a06"}
 ```
 Pretty payload:
 ```json
@@ -1135,6 +1140,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a06",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -1144,13 +1150,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfaWQiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTIiLCJhYXRfdG9vbCI6InJlYWRfZmlsZSIsImh0YSI6eyJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGEwNiJ9` |
-| SHA-256(signing input), base64url | `OGxTeGvHCE6cguxmJR-9QZifwVq3KiNYYxK4N6ko6_k` |
-| signature_b64 | `9xbXb0RMpvMpm8c04PAyQjp9FG05Mhx9XU8nehUcuDsW5ma7OvVCAjhaA5W0-JTmH3a-BX2-IM_hIkxYxVISCw` |
+| payload_b64 | `eyJhYXRfaGFzaCI6IkpjdTh3U0ZwVjBfb0pvTmN3dWdrSjVTNmQ0UnU1NGc5MEVFUUY2YjVybm8iLCJhYXRfaWQiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTIiLCJhYXRfdG9vbCI6InJlYWRfZmlsZSIsImh0YSI6eyJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGEwNiJ9` |
+| SHA-256(signing input), base64url | `TbW_fMIXjuqd9BbAnRhYNoCugFNmFxg1IEDvYVzci0g` |
+| signature_b64 | `0GaRX-KALKXoi67RLTTi8s8LLes6i3dSazPU-aah38kLWInN2fPGI_aW09laXubO3VQ78pHJm3UBzeMhWsheAw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfaWQiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTIiLCJhYXRfdG9vbCI6InJlYWRfZmlsZSIsImh0YSI6eyJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGEwNiJ9.9xbXb0RMpvMpm8c04PAyQjp9FG05Mhx9XU8nehUcuDsW5ma7OvVCAjhaA5W0-JTmH3a-BX2-IM_hIkxYxVISCw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfaGFzaCI6IkpjdTh3U0ZwVjBfb0pvTmN3dWdrSjVTNmQ0UnU1NGc5MEVFUUY2YjVybm8iLCJhYXRfaWQiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTIiLCJhYXRfdG9vbCI6InJlYWRfZmlsZSIsImh0YSI6eyJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGEwNiJ9.0GaRX-KALKXoi67RLTTi8s8LLes6i3dSazPU-aah38kLWInN2fPGI_aW09laXubO3VQ78pHJm3UBzeMhWsheAw
 ```
 
 ---
@@ -1355,7 +1361,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://evil.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a07"}
+{"aat_aud":"https://evil.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a07"}
 ```
 Pretty payload:
 ```json
@@ -1363,6 +1369,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a07",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -1373,13 +1380,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwiYWF0X2lkIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDEyIiwiYWF0X3Rvb2wiOiJyZWFkX2ZpbGUiLCJodGEiOnsicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhMDcifQ` |
-| SHA-256(signing input), base64url | `595lD2nrTWU_hKu7UYgIq9tdSO_uaUVjIYrgAp6xTZI` |
-| signature_b64 | `WHzUB3XQDHtwVYAQQDmf3l3pM8GlWLaCaKrxr03Y355yCsbedw2xq6LHoea83s0I8A33jZyqUPQ0HrmJaZh5CQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwiYWF0X2hhc2giOiJKY3U4d1NGcFYwX29Kb05jd3Vna0o1UzZkNFJ1NTRnOTBFRVFGNmI1cm5vIiwiYWF0X2lkIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDEyIiwiYWF0X3Rvb2wiOiJyZWFkX2ZpbGUiLCJodGEiOnsicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhMDcifQ` |
+| SHA-256(signing input), base64url | `DJI94PI2lLNWbGkbhD6tk1ecJA4BOn8qzTiQqTJC7f0` |
+| signature_b64 | `zxU9BJnsh9od2fgpw6VofwNDEct4t45m441RN85rSnTPRIgMMSSmYUgeK-JF_4Y2aAjW3xYWoY53ETrfefOrDg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwiYWF0X2lkIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDEyIiwiYWF0X3Rvb2wiOiJyZWFkX2ZpbGUiLCJodGEiOnsicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhMDcifQ.WHzUB3XQDHtwVYAQQDmf3l3pM8GlWLaCaKrxr03Y355yCsbedw2xq6LHoea83s0I8A33jZyqUPQ0HrmJaZh5CQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwiYWF0X2hhc2giOiJKY3U4d1NGcFYwX29Kb05jd3Vna0o1UzZkNFJ1NTRnOTBFRVFGNmI1cm5vIiwiYWF0X2lkIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDEyIiwiYWF0X3Rvb2wiOiJyZWFkX2ZpbGUiLCJodGEiOnsicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhMDcifQ.zxU9BJnsh9od2fgpw6VofwNDEct4t45m441RN85rSnTPRIgMMSSmYUgeK-JF_4Y2aAjW3xYWoY53ETrfefOrDg
 ```
 
 ---
@@ -1586,7 +1593,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a08"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a08"}
 ```
 Pretty payload:
 ```json
@@ -1594,6 +1601,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a08",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -1604,13 +1612,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTA4In0` |
-| SHA-256(signing input), base64url | `W4evrFsln0AxqT1PYuY2qEltReoJSOPi-dCe6u-hdXs` |
-| signature_b64 | `civckr45i1IS4vGV451oSv7xEsQf5EC5CLM-P0_C2IqL0iMifQoRkYjrAFjiaiTGl0nnlMCIDCkymHetVsPxAg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTA4In0` |
+| SHA-256(signing input), base64url | `aEGXPJDuW0P1q50TPEG1lUEs7C_CXYmXDjuM6Rrh0aA` |
+| signature_b64 | `S5fZFgJmQTuZd73YkJSA-yhJfnPtAs6kgnJ9CV7_RiHWLwEgdP0_4CfzwfEmkRSXvw7sDJBAEVF7SEZSQuloDw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTA4In0.civckr45i1IS4vGV451oSv7xEsQf5EC5CLM-P0_C2IqL0iMifQoRkYjrAFjiaiTGl0nnlMCIDCkymHetVsPxAg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTA4In0.S5fZFgJmQTuZd73YkJSA-yhJfnPtAs6kgnJ9CV7_RiHWLwEgdP0_4CfzwfEmkRSXvw7sDJBAEVF7SEZSQuloDw
 ```
 
 ---
@@ -1817,7 +1825,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a09","nonce":"e1c8a7f4-3b2d-4c5e-9f6a-7b8c9d0e1f2a"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a09","nonce":"e1c8a7f4-3b2d-4c5e-9f6a-7b8c9d0e1f2a"}
 ```
 Pretty payload:
 ```json
@@ -1825,6 +1833,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a09",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -1836,13 +1845,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTA5Iiwibm9uY2UiOiJlMWM4YTdmNC0zYjJkLTRjNWUtOWY2YS03YjhjOWQwZTFmMmEifQ` |
-| SHA-256(signing input), base64url | `rp92VDPP8VrLlBnNgbp9rk86-s3XNJlVtZVQSceGLnc` |
-| signature_b64 | `hNfN4fE46tW_kz2h2gIkAUdeJdx41kXYy_XjaivqB8e-i5mO-xD9CKLEI3acxmm905sAZn7xqQGVHiSUOc9ABw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTA5Iiwibm9uY2UiOiJlMWM4YTdmNC0zYjJkLTRjNWUtOWY2YS03YjhjOWQwZTFmMmEifQ` |
+| SHA-256(signing input), base64url | `xyPW5rAy4HL9hUvl93lIzvvIe_aSxaPyh_WhvpuTwc8` |
+| signature_b64 | `Oqc78syczkoN8DdUUKO3QHuN4swQnUNo41bSq9vXLnDv_KgnTAVhCpNbxOEf6j7BnfjnQwxS9hi-dwV3Mt0-Cw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTA5Iiwibm9uY2UiOiJlMWM4YTdmNC0zYjJkLTRjNWUtOWY2YS03YjhjOWQwZTFmMmEifQ.hNfN4fE46tW_kz2h2gIkAUdeJdx41kXYy_XjaivqB8e-i5mO-xD9CKLEI3acxmm905sAZn7xqQGVHiSUOc9ABw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTA5Iiwibm9uY2UiOiJlMWM4YTdmNC0zYjJkLTRjNWUtOWY2YS03YjhjOWQwZTFmMmEifQ.Oqc78syczkoN8DdUUKO3QHuN4swQnUNo41bSq9vXLnDv_KgnTAVhCpNbxOEf6j7BnfjnQwxS9hi-dwV3Mt0-Cw
 ```
 
 ---
@@ -2049,7 +2058,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a0a","nonce":"0f0e0d0c-0b0a-4908-8706-050403020100"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a0a","nonce":"0f0e0d0c-0b0a-4908-8706-050403020100"}
 ```
 Pretty payload:
 ```json
@@ -2057,6 +2066,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a0a",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -2068,13 +2078,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBhIiwibm9uY2UiOiIwZjBlMGQwYy0wYjBhLTQ5MDgtODcwNi0wNTA0MDMwMjAxMDAifQ` |
-| SHA-256(signing input), base64url | `DGvE2oEjl5kN_O2bxLr4Ubm86ixxek4_9Bx9fRvOEfo` |
-| signature_b64 | `6GcTRCF578FGcT8-bmJuN_W4PMT2hleWa5AYIL1emepev9yOz7kXvikwf1xqF5sFGUThEvrMxY_VLJH4qr2wBg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBhIiwibm9uY2UiOiIwZjBlMGQwYy0wYjBhLTQ5MDgtODcwNi0wNTA0MDMwMjAxMDAifQ` |
+| SHA-256(signing input), base64url | `MKyGPnWR4DmP6JItIv0JjHh6Z3DUzCFQdYdO6TTlihc` |
+| signature_b64 | `CuVN8PmPSOIGTu6Ig0H_JJZRFcStHZ_07VezWZksPsjgGaCgHJoje1xPjiQjx6MXutgn81uKnUifJL8qZ7P1BQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBhIiwibm9uY2UiOiIwZjBlMGQwYy0wYjBhLTQ5MDgtODcwNi0wNTA0MDMwMjAxMDAifQ.6GcTRCF578FGcT8-bmJuN_W4PMT2hleWa5AYIL1emepev9yOz7kXvikwf1xqF5sFGUThEvrMxY_VLJH4qr2wBg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBhIiwibm9uY2UiOiIwZjBlMGQwYy0wYjBhLTQ5MDgtODcwNi0wNTA0MDMwMjAxMDAifQ.CuVN8PmPSOIGTu6Ig0H_JJZRFcStHZ_07VezWZksPsjgGaCgHJoje1xPjiQjx6MXutgn81uKnUifJL8qZ7P1BQ
 ```
 
 ---
@@ -2226,7 +2236,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000021","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a0b"}
+{"aat_aud":"https://tools.example.com","aat_hash":"bbkZohKE6SOBW_Cus_Ver57ptvqPrsBh4MlRNFkX924","aat_id":"019471f8-0000-7000-8000-000000000021","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a0b"}
 ```
 Pretty payload:
 ```json
@@ -2234,6 +2244,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a0b",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000021",
+  "aat_hash": "bbkZohKE6SOBW_Cus_Ver57ptvqPrsBh4MlRNFkX924",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -2244,13 +2255,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBiIn0` |
-| SHA-256(signing input), base64url | `dZfgvTCt3RgFX7oalM-JzE9-K7rzTmLNRgd2R2dIlN8` |
-| signature_b64 | `isKBc5WpgDMTfxGUGYSba2kjWAakNz18RCmhHy5FJGDub5GNx8EYrC8WDE3RBOA9grziZcepCDvN7rUklWgCDQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiYmJrWm9oS0U2U09CV19DdXNfVmVyNTdwdHZxUHJzQmg0TWxSTkZrWDkyNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBiIn0` |
+| SHA-256(signing input), base64url | `-AYOTG6-oaPrw8lEECISwtPxBBHvyiU_ObQdOMRUHWg` |
+| signature_b64 | `Jo_SwzpGP_DuG_a4Y0I8vhXyH1i8xj54lYkFOxX0s_rusflap3DRW58FQIlie1rffZHZmQJjb5-MWvNkAa85Ag` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBiIn0.isKBc5WpgDMTfxGUGYSba2kjWAakNz18RCmhHy5FJGDub5GNx8EYrC8WDE3RBOA9grziZcepCDvN7rUklWgCDQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiYmJrWm9oS0U2U09CV19DdXNfVmVyNTdwdHZxUHJzQmg0TWxSTkZrWDkyNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBiIn0.Jo_SwzpGP_DuG_a4Y0I8vhXyH1i8xj54lYkFOxX0s_rusflap3DRW58FQIlie1rffZHZmQJjb5-MWvNkAa85Ag
 ```
 
 ---
@@ -2402,7 +2413,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000023","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a0c"}
+{"aat_aud":"https://tools.example.com","aat_hash":"5yfI9qBBXu6jjvGKQml28UvFYGLWJEBWp-lQ9iaM38w","aat_id":"019471f8-0000-7000-8000-000000000023","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a0c"}
 ```
 Pretty payload:
 ```json
@@ -2410,6 +2421,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a0c",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000023",
+  "aat_hash": "5yfI9qBBXu6jjvGKQml28UvFYGLWJEBWp-lQ9iaM38w",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -2420,13 +2432,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBjIn0` |
-| SHA-256(signing input), base64url | `RoBpuiF1kO9N8OrjiSp-bPxpEj5ReNjbg3tTfDkWizU` |
-| signature_b64 | `rodySJGKp9RZnWCLXFfDbpE80Uk7Zwm2g75PiRavUumRbQNySkIHOK95yxOGJLY4W1WYszEMllF6IH4_3nsMDg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNXlmSTlxQkJYdTZqanZHS1FtbDI4VXZGWUdMV0pFQldwLWxROWlhTTM4dyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBjIn0` |
+| SHA-256(signing input), base64url | `DhcWWotvMmKXRXd-lj7lJZixn06wmGatLgt8JDJuH04` |
+| signature_b64 | `EmkkoOanasbK517LKpJrSfgPP_g5CVBTffdhAwGam5GnmKmPY6x17EYugpCmjd2dp6rnDEU4wBpq4JMHkzNcDw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBjIn0.rodySJGKp9RZnWCLXFfDbpE80Uk7Zwm2g75PiRavUumRbQNySkIHOK95yxOGJLY4W1WYszEMllF6IH4_3nsMDg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNXlmSTlxQkJYdTZqanZHS1FtbDI4VXZGWUdMV0pFQldwLWxROWlhTTM4dyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBjIn0.EmkkoOanasbK517LKpJrSfgPP_g5CVBTffdhAwGam5GnmKmPY6x17EYugpCmjd2dp6rnDEU4wBpq4JMHkzNcDw
 ```
 
 ---
@@ -2633,7 +2645,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a03"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a03"}
 ```
 Pretty payload:
 ```json
@@ -2641,6 +2653,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a03",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -2651,13 +2664,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0` |
-| SHA-256(signing input), base64url | `t6i-c4-7_N1gfM_Ny8cDguk1cPMCwwQJVtpIdqvlBcU` |
-| signature_b64 | `gLRGKa0Bjsrm79O1FampxQTO2pcOX1qku5GPY7Oe9EIeKczzOBOo1uKZittE8joB6JrRlU8_GY639AbvZ2prCg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0` |
+| SHA-256(signing input), base64url | `uceSc5RU-ldamppR-mI9q791yukVXCVwEAoU3uToJu4` |
+| signature_b64 | `MLhTuijzM23ScPEWv80VfheOWPb3CMFkjss2OrkHMdNqvc3oxjYcoPAMFc6ahkndBgPAqAo99u3vbnLYeGaMBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0.gLRGKa0Bjsrm79O1FampxQTO2pcOX1qku5GPY7Oe9EIeKczzOBOo1uKZittE8joB6JrRlU8_GY639AbvZ2prCg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0.MLhTuijzM23ScPEWv80VfheOWPb3CMFkjss2OrkHMdNqvc3oxjYcoPAMFc6ahkndBgPAqAo99u3vbnLYeGaMBQ
 ```
 
 ---
@@ -2862,7 +2875,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae1"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae1"}
 ```
 Pretty payload:
 ```json
@@ -2870,6 +2883,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ae1",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -2880,13 +2894,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSJ9` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUxIn0` |
-| SHA-256(signing input), base64url | `hwzjvkjGzSt0bCv7XcJ1GoQ9dB4gvuFLhxTGMBNxU9s` |
-| signature_b64 | `DVEm_02obMx1eknVnVSh8vsnLHidRfPLobIHKi_k3PySAJHiSOn_VB50zWgWk87PFKL8g9w6SP-LzOY4Vbr2Dw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUxIn0` |
+| SHA-256(signing input), base64url | `Jiz93vSrcJIKPSLMPb_f1M-s8chfrtDLpwau9ONaf_Q` |
+| signature_b64 | `iRRPwgDwqZarZ4Z2jpaq-F02JdC6vuoucx8jahJnAkegZmOaNclP3P5tO1RpoPtfxzjnzuHYFvOJdY7bHXztDA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSJ9.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUxIn0.DVEm_02obMx1eknVnVSh8vsnLHidRfPLobIHKi_k3PySAJHiSOn_VB50zWgWk87PFKL8g9w6SP-LzOY4Vbr2Dw
+eyJhbGciOiJFZERTQSJ9.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUxIn0.iRRPwgDwqZarZ4Z2jpaq-F02JdC6vuoucx8jahJnAkegZmOaNclP3P5tO1RpoPtfxzjnzuHYFvOJdY7bHXztDA
 ```
 
 ---
@@ -3091,7 +3105,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae2"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae2"}
 ```
 Pretty payload:
 ```json
@@ -3099,6 +3113,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ae2",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -3109,13 +3124,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUyIn0` |
-| SHA-256(signing input), base64url | `bSiuT8UCZSYK_JXi8ZAalJkeo0fHwyPKCQAiYzxkMR4` |
-| signature_b64 | `xOhSaU0FKHqt6ZfHUsjBO9rugfCbGxO47QWPHFo5tNtkiH7CVUjqrasZHre97WOmNFrYhWk4nlo9L7zrcWw7DA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUyIn0` |
+| SHA-256(signing input), base64url | `d2y1Zlnt-YqLiKQI5dM2sKl-_7TV_L5vBkFzHHXQ8NM` |
+| signature_b64 | `Ss2pewwo7pV9aSvQ89822UBLfuflh4R_TZ6pyhbhr-kYpTnvxI8TAD9oZ16zXjdARYEONw8Yx3rLFAQCSp5bDg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUyIn0.xOhSaU0FKHqt6ZfHUsjBO9rugfCbGxO47QWPHFo5tNtkiH7CVUjqrasZHre97WOmNFrYhWk4nlo9L7zrcWw7DA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUyIn0.Ss2pewwo7pV9aSvQ89822UBLfuflh4R_TZ6pyhbhr-kYpTnvxI8TAD9oZ16zXjdARYEONw8Yx3rLFAQCSp5bDg
 ```
 
 ---
@@ -3200,7 +3215,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-00000000007e","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae3"}
+{"aat_aud":"https://tools.example.com","aat_hash":"1QgsdJwNqAi9OCJCA3LSOHM0gPZ5Y1xMefzUD7Mz4j4","aat_id":"019471f8-0000-7000-8000-00000000007e","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae3"}
 ```
 Pretty payload:
 ```json
@@ -3208,6 +3223,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ae3",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-00000000007e",
+  "aat_hash": "1QgsdJwNqAi9OCJCA3LSOHM0gPZ5Y1xMefzUD7Mz4j4",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -3218,13 +3234,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3ZSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUzIn0` |
-| SHA-256(signing input), base64url | `bxRMcwMUO29vYEVZjboFGuIhrqikz4OOprTxg4O4HXc` |
-| signature_b64 | `GZpgOqdCezzuAokXynsf1bcyUXW36bZqIkKF8mKWqOxHdYqw8XfoLJNXpE79eeWbhG4l9B7RO81TODiiW2AlCA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMVFnc2RKd05xQWk5T0NKQ0EzTFNPSE0wZ1BaNVkxeE1lZnpVRDdNejRqNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3ZSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUzIn0` |
+| SHA-256(signing input), base64url | `coOV6n9d-ARE4SIXtaos8GwyWy08n0QeB2sebYqKkRg` |
+| signature_b64 | `RDodDkBy6UBn9ggSPd9I3qNZTb940vdNY4dhpJhfAboEKhO0yYE5I_cVvBHoPJaJb9z4aW-OMfhfEJUo1fDmBw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3ZSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUzIn0.GZpgOqdCezzuAokXynsf1bcyUXW36bZqIkKF8mKWqOxHdYqw8XfoLJNXpE79eeWbhG4l9B7RO81TODiiW2AlCA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMVFnc2RKd05xQWk5T0NKQ0EzTFNPSE0wZ1BaNVkxeE1lZnpVRDdNejRqNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3ZSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWUzIn0.RDodDkBy6UBn9ggSPd9I3qNZTb940vdNY4dhpJhfAboEKhO0yYE5I_cVvBHoPJaJb9z4aW-OMfhfEJUo1fDmBw
 ```
 
 ---
@@ -3309,7 +3325,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-00000000007f","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae4"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Azm8WzarNZ1Cpy_HrjQFJe9FyBMultGVc11HGrcakLM","aat_id":"019471f8-0000-7000-8000-00000000007f","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae4"}
 ```
 Pretty payload:
 ```json
@@ -3317,6 +3333,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ae4",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-00000000007f",
+  "aat_hash": "Azm8WzarNZ1Cpy_HrjQFJe9FyBMultGVc11HGrcakLM",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -3327,13 +3344,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3ZiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWU0In0` |
-| SHA-256(signing input), base64url | `VQ6_4QA7eL3zQp62TSwud57GjcDgJGHeNCC7IMNsmnM` |
-| signature_b64 | `-j_DnvzbRqMScdwn6xhUZq2QyaaoFtj25kYDKRklaQGB4d5Nvu3yqa_Kpzm8Iil6006UJEFKxtKPCyBBkWwKCA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiQXptOFd6YXJOWjFDcHlfSHJqUUZKZTlGeUJNdWx0R1ZjMTFIR3JjYWtMTSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3ZiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWU0In0` |
+| SHA-256(signing input), base64url | `1GPRDPGs7lGswjnYA8w2FpWx7gSOgpbc7M3thX_wL-0` |
+| signature_b64 | `HEttlykij_sGIR3OSCvUJqk1TFelc7XoOEI-OSY2U_5mgbJgDKNJmE8QgSfPyGaRGsF0aKRxTB_cdj-DeOkUBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3ZiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWU0In0.-j_DnvzbRqMScdwn6xhUZq2QyaaoFtj25kYDKRklaQGB4d5Nvu3yqa_Kpzm8Iil6006UJEFKxtKPCyBBkWwKCA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiQXptOFd6YXJOWjFDcHlfSHJqUUZKZTlGeUJNdWx0R1ZjMTFIR3JjYWtMTSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3ZiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWU0In0.HEttlykij_sGIR3OSCvUJqk1TFelc7XoOEI-OSY2U_5mgbJgDKNJmE8QgSfPyGaRGsF0aKRxTB_cdj-DeOkUBQ
 ```
 
 ---
@@ -3485,7 +3502,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000041","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a41"}
+{"aat_aud":"https://tools.example.com","aat_hash":"DvwJFG0jq2rXh4jYa6-yLoGQX7cKyMY8FNr7EvMAmAY","aat_id":"019471f8-0000-7000-8000-000000000041","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a41"}
 ```
 Pretty payload:
 ```json
@@ -3493,6 +3510,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a41",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000041",
+  "aat_hash": "DvwJFG0jq2rXh4jYa6-yLoGQX7cKyMY8FNr7EvMAmAY",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -3503,13 +3521,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQxIn0` |
-| SHA-256(signing input), base64url | `WiTIzmdk1wgWCfo4JICzSbEfhRHQxOKzZeT4Bokvk2I` |
-| signature_b64 | `lcxC_pWt_FqAk9kf2-1PYu2Gi9HSgKEeDXXm1lHZgl2YU4aKKSbug-_wXojRWqYFA_KMl8nDgWYNncjPsmlJDg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiRHZ3SkZHMGpxMnJYaDRqWWE2LXlMb0dRWDdjS3lNWThGTnI3RXZNQW1BWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQxIn0` |
+| SHA-256(signing input), base64url | `Oh2mTCzLPCVlts11T-OcKlP08P0ZCLnpPoYimr4e6dw` |
+| signature_b64 | `Am5bUUM5KcEYQtrTD1s_RRkaeoJvXlren8oU1-EhT6PEA5d7xsaGBiPD5MMTa7K811LuKVUDYnwCNWz6wZ_FDQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQxIn0.lcxC_pWt_FqAk9kf2-1PYu2Gi9HSgKEeDXXm1lHZgl2YU4aKKSbug-_wXojRWqYFA_KMl8nDgWYNncjPsmlJDg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiRHZ3SkZHMGpxMnJYaDRqWWE2LXlMb0dRWDdjS3lNWThGTnI3RXZNQW1BWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQxIn0.Am5bUUM5KcEYQtrTD1s_RRkaeoJvXlren8oU1-EhT6PEA5d7xsaGBiPD5MMTa7K811LuKVUDYnwCNWz6wZ_FDQ
 ```
 
 ---
@@ -3661,7 +3679,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000042","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a42"}
+{"aat_aud":"https://tools.example.com","aat_hash":"EQga3C6MvS8MKUpk1KvFT0siUpyrWPF5C_oqa02q37U","aat_id":"019471f8-0000-7000-8000-000000000042","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a42"}
 ```
 Pretty payload:
 ```json
@@ -3669,6 +3687,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a42",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000042",
+  "aat_hash": "EQga3C6MvS8MKUpk1KvFT0siUpyrWPF5C_oqa02q37U",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -3679,13 +3698,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQyIn0` |
-| SHA-256(signing input), base64url | `Hjb_pprRT0f-QbXq2HDLyxcvFmUazcD1hK6uP6SUiz4` |
-| signature_b64 | `-G6Svu1TgxbdXAJ53c_OIVqAjdss3v5JV6AXX_54q9zkv-6u7l7HKVGYv2Gl-lbWXzu4dzdSszywrBjJtYgaDw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiRVFnYTNDNk12UzhNS1VwazFLdkZUMHNpVXB5cldQRjVDX29xYTAycTM3VSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQyIn0` |
+| SHA-256(signing input), base64url | `-ARiYZtLJBFbFygMxFLgk5-f9Tv1_ZIUMg8osUrVKec` |
+| signature_b64 | `ukn31xAxJ4MoniQwBy7okTrtswWlFItUvpPD7aO4UzdG5VPhTh0Uo0rpS85mn2aCVosjwm08hWIXJEcoWxAZAQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQyIn0.-G6Svu1TgxbdXAJ53c_OIVqAjdss3v5JV6AXX_54q9zkv-6u7l7HKVGYv2Gl-lbWXzu4dzdSszywrBjJtYgaDw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiRVFnYTNDNk12UzhNS1VwazFLdkZUMHNpVXB5cldQRjVDX29xYTAycTM3VSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQyIn0.ukn31xAxJ4MoniQwBy7okTrtswWlFItUvpPD7aO4UzdG5VPhTh0Uo0rpS85mn2aCVosjwm08hWIXJEcoWxAZAQ
 ```
 
 ---
@@ -3837,7 +3856,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000043","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a43"}
+{"aat_aud":"https://tools.example.com","aat_hash":"hJcbaMa53W66gVVqWQ-Ilcr_PtFqLaVpPYSL6zKQuE4","aat_id":"019471f8-0000-7000-8000-000000000043","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a43"}
 ```
 Pretty payload:
 ```json
@@ -3845,6 +3864,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a43",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000043",
+  "aat_hash": "hJcbaMa53W66gVVqWQ-Ilcr_PtFqLaVpPYSL6zKQuE4",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -3855,13 +3875,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQzIn0` |
-| SHA-256(signing input), base64url | `oc021Gu19cNrAV13kE1m13_EKoj4RHWyeuSl05zN0f0` |
-| signature_b64 | `oJXzjlGRbJXj_cru51BuHj2c7J6c40rsPNT-YdPq0ooDB4Ckd6St44sy0tWmFTwAhpI3NXind55HfwYnyezXDA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaEpjYmFNYTUzVzY2Z1ZWcVdRLUlsY3JfUHRGcUxhVnBQWVNMNnpLUXVFNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQzIn0` |
+| SHA-256(signing input), base64url | `8SqZzaOF5d7_Dq_e3dmfZ_n9E-Lwtz2yMnjkOZJsb5A` |
+| signature_b64 | `YUFAG9D9vGdY7BRWsJJNdLauJ78qCwuGwz0In2pH11GQBe4nHQymF2eYgLf8zcKN-WpYjLppt59ia_0XK2uYDQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQzIn0.oJXzjlGRbJXj_cru51BuHj2c7J6c40rsPNT-YdPq0ooDB4Ckd6St44sy0tWmFTwAhpI3NXind55HfwYnyezXDA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaEpjYmFNYTUzVzY2Z1ZWcVdRLUlsY3JfUHRGcUxhVnBQWVNMNnpLUXVFNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA0MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTQzIn0.YUFAG9D9vGdY7BRWsJJNdLauJ78qCwuGwz0In2pH11GQBe4nHQymF2eYgLf8zcKN-WpYjLppt59ia_0XK2uYDQ
 ```
 
 ---
@@ -3947,7 +3967,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000050","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a50"}
+{"aat_aud":"https://tools.example.com","aat_hash":"ZKaZamykNkADSvRXt8FQDTljU7LqTgXyR5ljs7uB-Vc","aat_id":"019471f8-0000-7000-8000-000000000050","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a50"}
 ```
 Pretty payload:
 ```json
@@ -3955,6 +3975,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a50",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000050",
+  "aat_hash": "ZKaZamykNkADSvRXt8FQDTljU7LqTgXyR5ljs7uB-Vc",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -3965,13 +3986,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA1MCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTUwIn0` |
-| SHA-256(signing input), base64url | `uYSd8GCmVFkGpoA94Z5Vu8vsXJYSE8XCleCIVXaPLUo` |
-| signature_b64 | `hu5aGOYQT8Vjc3MRHkuUpTM-JIWKPlym_5AgXKkLtfxtnMVwmNoX_gE1khzk0843t9Hnvw98zn23Ovc-SYYSBg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiWkthWmFteWtOa0FEU3ZSWHQ4RlFEVGxqVTdMcVRnWHlSNWxqczd1Qi1WYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA1MCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTUwIn0` |
+| SHA-256(signing input), base64url | `91jq08vxwKOn2UDfCtEiSySDULpXZDc31eCTNMJozTs` |
+| signature_b64 | `Vu6JYXpimgV_k6uQUW1D9VWs5SswF0ip084TCBanYniB8t5YGqz74qI3AVx9rlkfdGvHGEp5UGZm5lHIjvQ3Cg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA1MCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTUwIn0.hu5aGOYQT8Vjc3MRHkuUpTM-JIWKPlym_5AgXKkLtfxtnMVwmNoX_gE1khzk0843t9Hnvw98zn23Ovc-SYYSBg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiWkthWmFteWtOa0FEU3ZSWHQ4RlFEVGxqVTdMcVRnWHlSNWxqczd1Qi1WYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA1MCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTUwIn0.Vu6JYXpimgV_k6uQUW1D9VWs5SswF0ip084TCBanYniB8t5YGqz74qI3AVx9rlkfdGvHGEp5UGZm5lHIjvQ3Cg
 ```
 
 ---
@@ -4123,7 +4144,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000061","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a61"}
+{"aat_aud":"https://tools.example.com","aat_hash":"tDm_oFLsjxC5ccAJBF313FyK8O9msl63WPfbvKicNBY","aat_id":"019471f8-0000-7000-8000-000000000061","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a61"}
 ```
 Pretty payload:
 ```json
@@ -4131,6 +4152,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a61",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000061",
+  "aat_hash": "tDm_oFLsjxC5ccAJBF313FyK8O9msl63WPfbvKicNBY",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -4141,13 +4163,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYxIn0` |
-| SHA-256(signing input), base64url | `HfOuAy7Wyh5_FwX3o18HMHiVv-matJuDl7FHyQAISNA` |
-| signature_b64 | `knC1R2Ssb4tM6gvs2S_kDuOmPNPckgpKxzghjzOwVNzFo5t-IkAGA6adJBUKuDSCjm72BqRCUPQjP2Rex3IUCA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoidERtX29GTHNqeEM1Y2NBSkJGMzEzRnlLOE85bXNsNjNXUGZidktpY05CWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYxIn0` |
+| SHA-256(signing input), base64url | `48U-Jr4mEoUoais4fXlZmciVlvgF6EQZRQxb7-ohepo` |
+| signature_b64 | `vJmykPH4LN3FnEc3yIKCZrybpItTEbv4GUGg-kUo_1JZ15EkFxzZO_uoinirJID3DHdxCH9V3rDp_b1oEJJMAQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYxIn0.knC1R2Ssb4tM6gvs2S_kDuOmPNPckgpKxzghjzOwVNzFo5t-IkAGA6adJBUKuDSCjm72BqRCUPQjP2Rex3IUCA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoidERtX29GTHNqeEM1Y2NBSkJGMzEzRnlLOE85bXNsNjNXUGZidktpY05CWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYxIn0.vJmykPH4LN3FnEc3yIKCZrybpItTEbv4GUGg-kUo_1JZ15EkFxzZO_uoinirJID3DHdxCH9V3rDp_b1oEJJMAQ
 ```
 
 ---
@@ -4299,7 +4321,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000062","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a62"}
+{"aat_aud":"https://tools.example.com","aat_hash":"YdJRgjqgti_jF305H6V0StaeQtRLUuCBe5S19bA2Omo","aat_id":"019471f8-0000-7000-8000-000000000062","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a62"}
 ```
 Pretty payload:
 ```json
@@ -4307,6 +4329,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a62",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000062",
+  "aat_hash": "YdJRgjqgti_jF305H6V0StaeQtRLUuCBe5S19bA2Omo",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -4317,13 +4340,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYyIn0` |
-| SHA-256(signing input), base64url | `CsEG63LYrtlhF-LZQ4xQ9_MgZKqO1_4sxB_3dUimt6U` |
-| signature_b64 | `xoYDQMf3QkfwEY7-wR964ePTXQOLVj-Uy_8nVPBK-yiEXaG0Hng6U2dNu-MNKFpkcPJXNbaefch60F6L7ShFCg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiWWRKUmdqcWd0aV9qRjMwNUg2VjBTdGFlUXRSTFV1Q0JlNVMxOWJBMk9tbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYyIn0` |
+| SHA-256(signing input), base64url | `er6J42lNlFfRx5HrLcOLxPav9PDzKwG-xOCOhu48ucY` |
+| signature_b64 | `nudv_FNPuUiorVAhBUKDY-1G3nvOFeUXg1Xghw4jbom1Yphz2jsJyqVlvCb3b7euXWIVMZWl6WtG5yEDsPQqDw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYyIn0.xoYDQMf3QkfwEY7-wR964ePTXQOLVj-Uy_8nVPBK-yiEXaG0Hng6U2dNu-MNKFpkcPJXNbaefch60F6L7ShFCg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiWWRKUmdqcWd0aV9qRjMwNUg2VjBTdGFlUXRSTFV1Q0JlNVMxOWJBMk9tbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYyIn0.nudv_FNPuUiorVAhBUKDY-1G3nvOFeUXg1Xghw4jbom1Yphz2jsJyqVlvCb3b7euXWIVMZWl6WtG5yEDsPQqDw
 ```
 
 ---
@@ -4583,7 +4606,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000063","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a63"}
+{"aat_aud":"https://tools.example.com","aat_hash":"I7rj4_sGAv_fC8HkRLMonxKP4_WEH0SznnOm5idB3Wg","aat_id":"019471f8-0000-7000-8000-000000000063","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a63"}
 ```
 Pretty payload:
 ```json
@@ -4591,6 +4614,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a63",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000063",
+  "aat_hash": "I7rj4_sGAv_fC8HkRLMonxKP4_WEH0SznnOm5idB3Wg",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -4601,13 +4625,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYzIn0` |
-| SHA-256(signing input), base64url | `sK-kiMbPsUmJhUFNKhpMC8SeCyudTO_JAOz1hHZzOZg` |
-| signature_b64 | `LD_gwwmNNROzvzeMke7JxjKrGCWidf-QBti14cupOrMG49zhbE4J8NVk5eHV2UQzDZ-S6GsS9nSNNVWsx90cBQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSTdyajRfc0dBdl9mQzhIa1JMTW9ueEtQNF9XRUgwU3pubk9tNWlkQjNXZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYzIn0` |
+| SHA-256(signing input), base64url | `rthpidVEJ_sBLWBYuBwGBoYLjZ_uvgofd7XV29BUT8E` |
+| signature_b64 | `zLYNF3R_J104DZtIJjr_vzPf2nTlYfU5p9gp7HI6mQlIxbHzcKF-CMO9Ye_Ge-yIxg4fmakODh1ZkYTpofdgCg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYzIn0.LD_gwwmNNROzvzeMke7JxjKrGCWidf-QBti14cupOrMG49zhbE4J8NVk5eHV2UQzDZ-S6GsS9nSNNVWsx90cBQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSTdyajRfc0dBdl9mQzhIa1JMTW9ueEtQNF9XRUgwU3pubk9tNWlkQjNXZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA2MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTYzIn0.zLYNF3R_J104DZtIJjr_vzPf2nTlYfU5p9gp7HI6mQlIxbHzcKF-CMO9Ye_Ge-yIxg4fmakODh1ZkYTpofdgCg
 ```
 
 ---
@@ -4761,7 +4785,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000071","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a71"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Hw1lXzHLDy_FxyGp_7hvPLt7sxBi21Hl6ct4reafcC8","aat_id":"019471f8-0000-7000-8000-000000000071","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a71"}
 ```
 Pretty payload:
 ```json
@@ -4769,6 +4793,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a71",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000071",
+  "aat_hash": "Hw1lXzHLDy_FxyGp_7hvPLt7sxBi21Hl6ct4reafcC8",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -4779,13 +4804,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTcxIn0` |
-| SHA-256(signing input), base64url | `25ANGUmI5niqzKUJLcJWHYOynKf5zNR1taFxiEVPswY` |
-| signature_b64 | `HoO0qvSmWiacuJi_BDjBivm1JomSMNdyAoyA8tLlJ_pSPrcPb_VHXSUmexSFEgjkqTtIeMVXiL-KClobSLstBg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSHcxbFh6SExEeV9GeHlHcF83aHZQTHQ3c3hCaTIxSGw2Y3Q0cmVhZmNDOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTcxIn0` |
+| SHA-256(signing input), base64url | `70TSfjY4ETPvsB35o-sGqkfLDc-hYA419XYH51H9cc8` |
+| signature_b64 | `OgHnPPGmZskSEOOGcgl15SU27kUru9vFEeHyaRdAoeiYvQA-1bJp8vEX1kwQ1xybN5bzRJbTutEjHN7KE_uSCg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTcxIn0.HoO0qvSmWiacuJi_BDjBivm1JomSMNdyAoyA8tLlJ_pSPrcPb_VHXSUmexSFEgjkqTtIeMVXiL-KClobSLstBg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSHcxbFh6SExEeV9GeHlHcF83aHZQTHQ3c3hCaTIxSGw2Y3Q0cmVhZmNDOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTcxIn0.OgHnPPGmZskSEOOGcgl15SU27kUru9vFEeHyaRdAoeiYvQA-1bJp8vEX1kwQ1xybN5bzRJbTutEjHN7KE_uSCg
 ```
 
 ---
@@ -4938,7 +4963,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000072","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a72"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Lf-s3yWcXrCGQvEvSGG_2B1N5y-_u9ltnj_A1jzWSSY","aat_id":"019471f8-0000-7000-8000-000000000072","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a72"}
 ```
 Pretty payload:
 ```json
@@ -4946,6 +4971,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a72",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000072",
+  "aat_hash": "Lf-s3yWcXrCGQvEvSGG_2B1N5y-_u9ltnj_A1jzWSSY",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -4956,13 +4982,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTcyIn0` |
-| SHA-256(signing input), base64url | `DdTBTU6yTO_OeAs_Hx6DxNtNXbkIqqpVMA2bDxReEiI` |
-| signature_b64 | `cdp9GMxFcpg6rvOTW1eSITqysdWjRoxzYfGxSxPHZhNw5f8fpW-PAqU92E5Xd7-aObP10uhzQtap9G3FIZRZBw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTGYtczN5V2NYckNHUXZFdlNHR18yQjFONXktX3U5bHRual9BMWp6V1NTWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTcyIn0` |
+| SHA-256(signing input), base64url | `Vfg-vJDec8QACnAxpvm0z4aZ2CtGBRGP5_n6GQB9n4k` |
+| signature_b64 | `D9TIFQyPi915o289Ekw5HjPuG-CI27ye2aUIBXD0VPhkNWFzj29FFourlw-4UARdbqb6Y_Cg0CzHGAzYKKc_DQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTcyIn0.cdp9GMxFcpg6rvOTW1eSITqysdWjRoxzYfGxSxPHZhNw5f8fpW-PAqU92E5Xd7-aObP10uhzQtap9G3FIZRZBw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTGYtczN5V2NYckNHUXZFdlNHR18yQjFONXktX3U5bHRual9BMWp6V1NTWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTcyIn0.D9TIFQyPi915o289Ekw5HjPuG-CI27ye2aUIBXD0VPhkNWFzj29FFourlw-4UARdbqb6Y_Cg0CzHGAzYKKc_DQ
 ```
 
 ---
@@ -5110,7 +5136,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000073","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a73"}
+{"aat_aud":"https://tools.example.com","aat_hash":"bx_WVFll_PMTSSEGB29K3jDm9SufCiaug7LUtuL-_0M","aat_id":"019471f8-0000-7000-8000-000000000073","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a73"}
 ```
 Pretty payload:
 ```json
@@ -5118,6 +5144,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a73",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000073",
+  "aat_hash": "bx_WVFll_PMTSSEGB29K3jDm9SufCiaug7LUtuL-_0M",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -5128,13 +5155,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTczIn0` |
-| SHA-256(signing input), base64url | `cju5_gp0m619cNlkINxPsmQBPL_moPDbA7sZY4xwsII` |
-| signature_b64 | `D7KAjMBV1VyskyWND9Zu_s6w_c2ewOQ8CqgFoW-FoQDzs2jjD4scE5lOu5xKR3kUv3vj7hQD0cpNr7EqKeb9Ag` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiYnhfV1ZGbGxfUE1UU1NFR0IyOUszakRtOVN1ZkNpYXVnN0xVdHVMLV8wTSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTczIn0` |
+| SHA-256(signing input), base64url | `UGz800jR0DzD8Gl-1X69_RRp8jKBAIsV5gLFCgKVcWs` |
+| signature_b64 | `tLkoFAwLIIncT8gemx5-XEs7MBm1n70vD52JLeAbkZSQke_jFtkjEfbnf03j3mkJ5TvU7--wVVukFbs-JIYKBg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTczIn0.D7KAjMBV1VyskyWND9Zu_s6w_c2ewOQ8CqgFoW-FoQDzs2jjD4scE5lOu5xKR3kUv3vj7hQD0cpNr7EqKeb9Ag
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiYnhfV1ZGbGxfUE1UU1NFR0IyOUszakRtOVN1ZkNpYXVnN0xVdHVMLV8wTSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTczIn0.tLkoFAwLIIncT8gemx5-XEs7MBm1n70vD52JLeAbkZSQke_jFtkjEfbnf03j3mkJ5TvU7--wVVukFbs-JIYKBg
 ```
 
 ---
@@ -5283,7 +5310,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000074","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a74"}
+{"aat_aud":"https://tools.example.com","aat_hash":"f7FjNc53Skkivj1441DtIwDNLqw9VkCchJXPsllsZOU","aat_id":"019471f8-0000-7000-8000-000000000074","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a74"}
 ```
 Pretty payload:
 ```json
@@ -5291,6 +5318,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a74",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000074",
+  "aat_hash": "f7FjNc53Skkivj1441DtIwDNLqw9VkCchJXPsllsZOU",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -5301,13 +5329,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3NCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTc0In0` |
-| SHA-256(signing input), base64url | `Bl5eFrDMz4E9Bujf0sDeYXtLfUzUqAyE2ZApfulybh0` |
-| signature_b64 | `yK-TzPl-diGD1_Xia0687hlIdzKrGiFP9vLwnOX1niwu3jfOZVlO7B9oryzAtbxkYaL4X8IFhcZyjVlf2Kt9Dg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiZjdGak5jNTNTa2tpdmoxNDQxRHRJd0ROTHF3OVZrQ2NoSlhQc2xsc1pPVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3NCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTc0In0` |
+| SHA-256(signing input), base64url | `VhWhAq3p18ATIHLrr8NZOLw4LjK8dssSJSW9RZ502xc` |
+| signature_b64 | `ehAW_x5yf7J60o4qmhgPqbH22VweDEHDLoVzfRQ-KDBr3ZU8lVnKr6zBomaTL4ppP-rOyq0fComGNon9xPYaCw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3NCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTc0In0.yK-TzPl-diGD1_Xia0687hlIdzKrGiFP9vLwnOX1niwu3jfOZVlO7B9oryzAtbxkYaL4X8IFhcZyjVlf2Kt9Dg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiZjdGak5jNTNTa2tpdmoxNDQxRHRJd0ROTHF3OVZrQ2NoSlhQc2xsc1pPVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA3NCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTc0In0.ehAW_x5yf7J60o4qmhgPqbH22VweDEHDLoVzfRQ-KDBr3ZU8lVnKr6zBomaTL4ppP-rOyq0fComGNon9xPYaCw
 ```
 
 ---
@@ -5459,7 +5487,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000081","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a81"}
+{"aat_aud":"https://tools.example.com","aat_hash":"0cJ1wTjtad0ZKH7olrV2LytxkC1JCnMpJ9HOStysoUA","aat_id":"019471f8-0000-7000-8000-000000000081","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a81"}
 ```
 Pretty payload:
 ```json
@@ -5467,6 +5495,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a81",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000081",
+  "aat_hash": "0cJ1wTjtad0ZKH7olrV2LytxkC1JCnMpJ9HOStysoUA",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -5477,13 +5506,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTgxIn0` |
-| SHA-256(signing input), base64url | `irpRUF1l_Vk4PjzhdhfMEzYAQj5oC9bhiPufikVonkQ` |
-| signature_b64 | `mhDLxfkZYW-2VaxeEL2zyOC_thAMKf8KQcj29ycSLNY3aPgz2VRavwANVhDh_Kj_vMWrOIw6FGBwHGmapOysBQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMGNKMXdUanRhZDBaS0g3b2xyVjJMeXR4a0MxSkNuTXBKOUhPU3R5c29VQSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTgxIn0` |
+| SHA-256(signing input), base64url | `8H6FHH2dpDbRASXkTpBC5XgEldhKBlIZAYj0ZuUHXfA` |
+| signature_b64 | `28TN429SStocsOgrd11luth1tUQQt8bo288dqr4AydysyWc4OPLlF4H27Y0cG3mV60DZskDWzx28wGuEACUeAg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTgxIn0.mhDLxfkZYW-2VaxeEL2zyOC_thAMKf8KQcj29ycSLNY3aPgz2VRavwANVhDh_Kj_vMWrOIw6FGBwHGmapOysBQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMGNKMXdUanRhZDBaS0g3b2xyVjJMeXR4a0MxSkNuTXBKOUhPU3R5c29VQSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTgxIn0.28TN429SStocsOgrd11luth1tUQQt8bo288dqr4AydysyWc4OPLlF4H27Y0cG3mV60DZskDWzx28wGuEACUeAg
 ```
 
 ---
@@ -5635,7 +5664,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000082","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a82"}
+{"aat_aud":"https://tools.example.com","aat_hash":"PDyaLOfTf0qb4IStBs5G4Qd5DSp9OZ-kEPdUBSTTRJU","aat_id":"019471f8-0000-7000-8000-000000000082","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a82"}
 ```
 Pretty payload:
 ```json
@@ -5643,6 +5672,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a82",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000082",
+  "aat_hash": "PDyaLOfTf0qb4IStBs5G4Qd5DSp9OZ-kEPdUBSTTRJU",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -5653,13 +5683,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTgyIn0` |
-| SHA-256(signing input), base64url | `s4qctncVNaqFkRNO8idXFiMDoBlNjXndWc5rWIM_WRE` |
-| signature_b64 | `xeqjVPSAOKLTCoVFICgqFJEdSfN8ECMmzlPUJ5UxVViFPoi13w8QroY4gaqJFLG37ybjeQlKLAUd32M9wUz4Dw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiUER5YUxPZlRmMHFiNElTdEJzNUc0UWQ1RFNwOU9aLWtFUGRVQlNUVFJKVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTgyIn0` |
+| SHA-256(signing input), base64url | `k8MJOFK3gKkFId-bVRjYYnzCStbpTN93PxeiaOBY3xQ` |
+| signature_b64 | `-m79Pz4swP6tUiQVN3lj8Tmt2MAQG8Jy-dy1CkiEgwarXd2lQ4vth04G4CwxapGBNDa0VAXdgfQziejZaRgUAw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTgyIn0.xeqjVPSAOKLTCoVFICgqFJEdSfN8ECMmzlPUJ5UxVViFPoi13w8QroY4gaqJFLG37ybjeQlKLAUd32M9wUz4Dw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiUER5YUxPZlRmMHFiNElTdEJzNUc0UWQ1RFNwOU9aLWtFUGRVQlNUVFJKVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTgyIn0.-m79Pz4swP6tUiQVN3lj8Tmt2MAQG8Jy-dy1CkiEgwarXd2lQ4vth04G4CwxapGBNDa0VAXdgfQziejZaRgUAw
 ```
 
 ---
@@ -5811,7 +5841,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000091","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a91"}
+{"aat_aud":"https://tools.example.com","aat_hash":"USOtWJUnkTzrIhsQTnruWS4rwffzU9McOzc2wjD_m7U","aat_id":"019471f8-0000-7000-8000-000000000091","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a91"}
 ```
 Pretty payload:
 ```json
@@ -5819,6 +5849,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a91",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000091",
+  "aat_hash": "USOtWJUnkTzrIhsQTnruWS4rwffzU9McOzc2wjD_m7U",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -5829,13 +5860,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA5MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTkxIn0` |
-| SHA-256(signing input), base64url | `iC6efRMdXLC5cXuCjajDJgonCr2yn6veBc6yYWWuMT4` |
-| signature_b64 | `H557MgEO7Umhvga3KOcpdwVDZ4MVAMaWRAGgPKWPc1LmZR_0h-rYGzMG5y4goTv2pjOOx-poPXpVK4JCt49aDw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiVVNPdFdKVW5rVHpySWhzUVRucnVXUzRyd2ZmelU5TWNPemMyd2pEX203VSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA5MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTkxIn0` |
+| SHA-256(signing input), base64url | `uQ01Jkpns4FtS-IodsFd_siHwFpV_jOvldMKO9JCoiE` |
+| signature_b64 | `Vur8ucWKHiIAp79zvpqqt3LF5g5rYkWgCfqenbv_RlBJVlh9kZeoxGzwVz3WIo1V2k4o5logSTIvvgPPEa42CA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA5MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTkxIn0.H557MgEO7Umhvga3KOcpdwVDZ4MVAMaWRAGgPKWPc1LmZR_0h-rYGzMG5y4goTv2pjOOx-poPXpVK4JCt49aDw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiVVNPdFdKVW5rVHpySWhzUVRucnVXUzRyd2ZmelU5TWNPemMyd2pEX203VSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA5MSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTkxIn0.Vur8ucWKHiIAp79zvpqqt3LF5g5rYkWgCfqenbv_RlBJVlh9kZeoxGzwVz3WIo1V2k4o5logSTIvvgPPEa42CA
 ```
 
 ---
@@ -5987,7 +6018,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000092","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a92"}
+{"aat_aud":"https://tools.example.com","aat_hash":"p0JSbS64VpUU7CJARajtbkmmEeYfoQpPqUpVPmONLjo","aat_id":"019471f8-0000-7000-8000-000000000092","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a92"}
 ```
 Pretty payload:
 ```json
@@ -5995,6 +6026,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000a92",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000092",
+  "aat_hash": "p0JSbS64VpUU7CJARajtbkmmEeYfoQpPqUpVPmONLjo",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -6005,13 +6037,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA5MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTkyIn0` |
-| SHA-256(signing input), base64url | `yQcpaFxKJOOWOJoYmycLjcszVQ34oxsH4k_aVM6gBxM` |
-| signature_b64 | `8mAzRv7TIkbPccADdXHxjaADcEShjlWcbiqHkdM7oXt3XN-rzKLlInYu7tNz8XBp-hVZNB1-U5dhTf-dUMhLBg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicDBKU2JTNjRWcFVVN0NKQVJhanRia21tRWVZZm9RcFBxVXBWUG1PTkxqbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA5MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTkyIn0` |
+| SHA-256(signing input), base64url | `YwvanVFbfCcjB6cvGlsxcI8RH_e5YFgFRg95mIIwLJM` |
+| signature_b64 | `7JyDhKZ3gywA6meZEKB_MwQDXWv_kGWcos1I3gXyHhNDKceo5YyqrxbTkQ05LqOZX0RsFoCkJHeQqxz1VtHfBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA5MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTkyIn0.8mAzRv7TIkbPccADdXHxjaADcEShjlWcbiqHkdM7oXt3XN-rzKLlInYu7tNz8XBp-hVZNB1-U5dhTf-dUMhLBg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicDBKU2JTNjRWcFVVN0NKQVJhanRia21tRWVZZm9RcFBxVXBWUG1PTkxqbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA5MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTkyIn0.7JyDhKZ3gywA6meZEKB_MwQDXWv_kGWcos1I3gXyHhNDKceo5YyqrxbTkQ05LqOZX0RsFoCkJHeQqxz1VtHfBQ
 ```
 
 ---
@@ -6097,7 +6129,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000010","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000aa1"}
+{"aat_aud":"https://tools.example.com","aat_hash":"cTUrFuyDx9UHutl_nhb-ycZt39eyTxE7AAocLN1-BJ8","aat_id":"019471f8-0000-7000-8000-000000000010","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000aa1"}
 ```
 Pretty payload:
 ```json
@@ -6105,6 +6137,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000aa1",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000010",
+  "aat_hash": "cTUrFuyDx9UHutl_nhb-ycZt39eyTxE7AAocLN1-BJ8",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -6115,13 +6148,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWExIn0` |
-| SHA-256(signing input), base64url | `dsCkMn-Tffr7fKqRBwhwqT-TQtwNZrhdp34GsVdUSK8` |
-| signature_b64 | `0EbsAMMbP92OGHVm6IlD-iNAkxg3RwfdMMglI1Yjz3KkfGlviBRwWRwdBGwCMyINlpa33xjpWfcjvVqzEgNcBQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiY1RVckZ1eUR4OVVIdXRsX25oYi15Y1p0MzlleVR4RTdBQW9jTE4xLUJKOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWExIn0` |
+| SHA-256(signing input), base64url | `aRoMOHSmVYGDDhZ14x0twsS5lt3KYPa17SGy4QSlaN0` |
+| signature_b64 | `inzwKkp7aBK8LA5E26-sX3nUnL2vu9Uw2VnZGhkldWLEMnA3nAV_5V6rPMorPcL0zDim7QgT-us-1PfR1DSdBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWExIn0.0EbsAMMbP92OGHVm6IlD-iNAkxg3RwfdMMglI1Yjz3KkfGlviBRwWRwdBGwCMyINlpa33xjpWfcjvVqzEgNcBQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiY1RVckZ1eUR4OVVIdXRsX25oYi15Y1p0MzlleVR4RTdBQW9jTE4xLUJKOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWExIn0.inzwKkp7aBK8LA5E26-sX3nUnL2vu9Uw2VnZGhkldWLEMnA3nAV_5V6rPMorPcL0zDim7QgT-us-1PfR1DSdBQ
 ```
 
 ---
@@ -6207,7 +6240,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000010","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000aa2"}
+{"aat_aud":"https://tools.example.com","aat_hash":"NEdVCkeYrCGEiO75bi-XhfK2oNlSP2rRcV3vUxgIvu0","aat_id":"019471f8-0000-7000-8000-000000000010","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000aa2"}
 ```
 Pretty payload:
 ```json
@@ -6215,6 +6248,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000aa2",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000010",
+  "aat_hash": "NEdVCkeYrCGEiO75bi-XhfK2oNlSP2rRcV3vUxgIvu0",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -6225,13 +6259,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWEyIn0` |
-| SHA-256(signing input), base64url | `YIWt7XfJa6A2FRajA_Z0j2T-32x7vJ2iaOrNrvZTxZQ` |
-| signature_b64 | `1MUGhPHkQDnarsF-O-_rmC8NaVYAhZg-IDdhxTT7ss4Ndrdj__eO7nbid5Y8oIMP_aneJI8g7JDG1dlWM0snCw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTkVkVkNrZVlyQ0dFaU83NWJpLVhoZksyb05sU1AyclJjVjN2VXhnSXZ1MCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWEyIn0` |
+| SHA-256(signing input), base64url | `57AQvd7kQMZojZ29VBmqhSQmZPAp4WYQSE79NWoWV5k` |
+| signature_b64 | `J5QUH7PZnNCBxRZHqhvfR54401VuYf9OBWsNUQkzBGZ4CU9Cs_zB_kWdSc5nm87oDXueuNp42EKOihDVyZ97Bw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWEyIn0.1MUGhPHkQDnarsF-O-_rmC8NaVYAhZg-IDdhxTT7ss4Ndrdj__eO7nbid5Y8oIMP_aneJI8g7JDG1dlWM0snCw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTkVkVkNrZVlyQ0dFaU83NWJpLVhoZksyb05sU1AyclJjVjN2VXhnSXZ1MCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWEyIn0.J5QUH7PZnNCBxRZHqhvfR54401VuYf9OBWsNUQkzBGZ4CU9Cs_zB_kWdSc5nm87oDXueuNp42EKOihDVyZ97Bw
 ```
 
 ---
@@ -6437,7 +6471,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab1"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab1"}
 ```
 Pretty payload:
 ```json
@@ -6445,6 +6479,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ab1",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -6455,13 +6490,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIxIn0` |
-| SHA-256(signing input), base64url | `ftTf_yEPDS7Yqmkb5TpY5vJ06YD-XCDWhsMGKGJHDwI` |
-| signature_b64 | `9qyiy5KO2gdm42WIBL0uCWDRB0O-WO7ht3ogInozHbqLpHE9MX56Xakal-_czOCburnTKIIGfzeqy9qUwHNsAg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIxIn0` |
+| SHA-256(signing input), base64url | `i_RS_SK1cyZHh3_j70vLjkxLHIwgx0axLTav9TzdJR8` |
+| signature_b64 | `TerCyLoyrJ_so8VF-UJiGuDUyYwCn6U99ru_6QKKgDNbfSSuBaXSGNUiViYPER6NV_XO4KJ0aujSNhgYGH3MAg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIxIn0.9qyiy5KO2gdm42WIBL0uCWDRB0O-WO7ht3ogInozHbqLpHE9MX56Xakal-_czOCburnTKIIGfzeqy9qUwHNsAg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIxIn0.TerCyLoyrJ_so8VF-UJiGuDUyYwCn6U99ru_6QKKgDNbfSSuBaXSGNUiViYPER6NV_XO4KJ0aujSNhgYGH3MAg
 ```
 
 ---
@@ -6667,7 +6702,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000011","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab2"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000011","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab2"}
 ```
 Pretty payload:
 ```json
@@ -6675,6 +6710,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ab2",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000011",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -6685,13 +6721,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIyIn0` |
-| SHA-256(signing input), base64url | `kST1lHq7X9_7RKRnrwYzkwYcM9gGwpdoW_qe7PTaDMg` |
-| signature_b64 | `yzfWxS_yVQPSAH0B67NHUlpTSJSzzB3pv8c_mkRhiLHSGHobjzKq6nLxBfRjC6YjeFEqSIUxpPGHI573D0xPAg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIyIn0` |
+| SHA-256(signing input), base64url | `NU0IOVUxFrWZgmrom6vfiBAK2vVZTfPZWtYhZkG6CIc` |
+| signature_b64 | `gqMQh98KfoxMYuTzGpPI5KdWfbwBgRZeoop1uhMoXuBSEPvhtaNSrv6LFmlARfY0wOW0qMZvswz9fd5NECDaCw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIyIn0.yzfWxS_yVQPSAH0B67NHUlpTSJSzzB3pv8c_mkRhiLHSGHobjzKq6nLxBfRjC6YjeFEqSIUxpPGHI573D0xPAg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIyIn0.gqMQh98KfoxMYuTzGpPI5KdWfbwBgRZeoop1uhMoXuBSEPvhtaNSrv6LFmlARfY0wOW0qMZvswz9fd5NECDaCw
 ```
 
 ---
@@ -6897,7 +6933,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab3"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab3"}
 ```
 Pretty payload:
 ```json
@@ -6905,6 +6941,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ab3",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -6915,13 +6952,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIzIn0` |
-| SHA-256(signing input), base64url | `ZpIdeI_ZnARu_fJju60Tsl5NqDKqr8SOuBnlAh7hpDY` |
-| signature_b64 | `TrAskoWN-7QeNAH06TOTjBxmWgsMzXD6DruRaEehMLMaFJZ3ZYCyFe7zkkUJGOsWTxTKY5KbaMTrzIxBIbnvDQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIzIn0` |
+| SHA-256(signing input), base64url | `GMkJAE6iOY_OxLMXktIwLSjUUoByqmLMY_XvJ68hWWk` |
+| signature_b64 | `IS9wcuQ5NBrj0LtLZ1UOTlzfrFU8eOpY-O4_N0rItc6_j2KU0ph0i9BLPUOTtL2xg3cmgeKHYAJk7QAmFHtGCg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIzIn0.TrAskoWN-7QeNAH06TOTjBxmWgsMzXD6DruRaEehMLMaFJZ3ZYCyFe7zkkUJGOsWTxTKY5KbaMTrzIxBIbnvDQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWIzIn0.IS9wcuQ5NBrj0LtLZ1UOTlzfrFU8eOpY-O4_N0rItc6_j2KU0ph0i9BLPUOTtL2xg3cmgeKHYAJk7QAmFHtGCg
 ```
 
 ---
@@ -7127,7 +7164,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067469,"jti":"019471f8-0000-7000-8000-000000000ab4"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067469,"jti":"019471f8-0000-7000-8000-000000000ab4"}
 ```
 Pretty payload:
 ```json
@@ -7135,6 +7172,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ab4",
   "iat": 1704067469,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -7145,13 +7183,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzQ2OSwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI0In0` |
-| SHA-256(signing input), base64url | `YONzstDwZuRc34hBn100-rFKivqvRbf3jqgQC6TyYzI` |
-| signature_b64 | `a4bjDenohy95_hPOUYZrb7Swo3nLLNwGd1JE0-aVsXlcNmMQAE2-IWYjBAaLliBNLIcl2oQJrBOODLR2NuN4DQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzQ2OSwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI0In0` |
+| SHA-256(signing input), base64url | `PHCNrwXHPUEByFzvojBOjEO8Xwlb6CB03BeYqUQKlik` |
+| signature_b64 | `6N29A4ibKmCic0OzzI4E5tI_BHdUwOBYGWYDUIYsphRK1Lr1OLoLFpl6SLQzTk9skK0FaUIk92a5_KX1wSl8AA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzQ2OSwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI0In0.a4bjDenohy95_hPOUYZrb7Swo3nLLNwGd1JE0-aVsXlcNmMQAE2-IWYjBAaLliBNLIcl2oQJrBOODLR2NuN4DQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzQ2OSwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI0In0.6N29A4ibKmCic0OzzI4E5tI_BHdUwOBYGWYDUIYsphRK1Lr1OLoLFpl6SLQzTk9skK0FaUIk92a5_KX1wSl8AA
 ```
 
 ---
@@ -7237,7 +7275,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000010","aat_tool":"read_file","hta":{"path":"/data/q4-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab5"}
+{"aat_aud":"https://tools.example.com","aat_hash":"cTUrFuyDx9UHutl_nhb-ycZt39eyTxE7AAocLN1-BJ8","aat_id":"019471f8-0000-7000-8000-000000000010","aat_tool":"read_file","hta":{"path":"/data/q4-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab5"}
 ```
 Pretty payload:
 ```json
@@ -7245,6 +7283,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ab5",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000010",
+  "aat_hash": "cTUrFuyDx9UHutl_nhb-ycZt39eyTxE7AAocLN1-BJ8",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q4-report.pdf"
@@ -7255,13 +7294,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xNC1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI1In0` |
-| SHA-256(signing input), base64url | `91M0GULZaBZaksNyPH-O4iYLOTyURZoBxjhtln2vrzk` |
-| signature_b64 | `J7Po2ngxiDvWQaN6MMrcwZct9KnxesPAv8o0kJNP2HLuY3q_dpllu0W8TGuVmEAi_BFj06pVLDRJTD4ab5HgBw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiY1RVckZ1eUR4OVVIdXRsX25oYi15Y1p0MzlleVR4RTdBQW9jTE4xLUJKOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xNC1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI1In0` |
+| SHA-256(signing input), base64url | `FAz8hlfXTdb607xgO4LpGwrphwwK3ftv1Hr1XAfnfLA` |
+| signature_b64 | `JrMNdNsOsd5XR-OSNh-bqArlYsoxEhr_lG7XTv1B4o5XWSCwbIsjgWJ21UjNLxPgA-ZEXEq7lHP1pUrFmaAzBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xNC1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI1In0.J7Po2ngxiDvWQaN6MMrcwZct9KnxesPAv8o0kJNP2HLuY3q_dpllu0W8TGuVmEAi_BFj06pVLDRJTD4ab5HgBw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiY1RVckZ1eUR4OVVIdXRsX25oYi15Y1p0MzlleVR4RTdBQW9jTE4xLUJKOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xNC1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI1In0.JrMNdNsOsd5XR-OSNh-bqArlYsoxEhr_lG7XTv1B4o5XWSCwbIsjgWJ21UjNLxPgA-ZEXEq7lHP1pUrFmaAzBQ
 ```
 
 ---
@@ -7413,7 +7452,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000011","aat_tool":"read_file","hta":{"limit":5,"query":"public filings"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab6"}
+{"aat_aud":"https://tools.example.com","aat_hash":"759t6JrK8NVbg5Q64gFO2JKjW-M2jBnQt68MCFTDH_4","aat_id":"019471f8-0000-7000-8000-000000000011","aat_tool":"read_file","hta":{"limit":5,"query":"public filings"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ab6"}
 ```
 Pretty payload:
 ```json
@@ -7421,6 +7460,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ab6",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000011",
+  "aat_hash": "759t6JrK8NVbg5Q64gFO2JKjW-M2jBnQt68MCFTDH_4",
   "aat_tool": "read_file",
   "hta": {
     "query": "public filings",
@@ -7432,13 +7472,243 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI2In0` |
-| SHA-256(signing input), base64url | `IhZ3Ghdy55HCarh_2wLZeuo5yw-LjRdhrfS8w8DaDbE` |
-| signature_b64 | `DuifbZuzgwrZrE7Z1W6dPL11hcizrfWvXG5VhxPE9V7qqGcNEiGWbqmGKBqNSmTE0egMK3a9kJskpW-ZfuHAAg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNzU5dDZKcks4TlZiZzVRNjRnRk8ySktqVy1NMmpCblF0NjhNQ0ZUREhfNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI2In0` |
+| SHA-256(signing input), base64url | `oDnt7gzk9hYKc7crSZNz71n3sqkmeCa1l1szAY0PF9A` |
+| signature_b64 | `gwpoiKXBGA4MSdJ1GlnRwy2S7sQePqCS7qvT_2to4pTOC6dfYuJAVWxmAVrcdULTTrdTuYKxOLumnROdR4xdDw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI2In0.DuifbZuzgwrZrE7Z1W6dPL11hcizrfWvXG5VhxPE9V7qqGcNEiGWbqmGKBqNSmTE0egMK3a9kJskpW-ZfuHAAg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNzU5dDZKcks4TlZiZzVRNjRnRk8ySktqVy1NMmpCblF0NjhNQ0ZUREhfNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWI2In0.gwpoiKXBGA4MSdJ1GlnRwy2S7sQePqCS7qvT_2to4pTOC6dfYuJAVWxmAVrcdULTTrdTuYKxOLumnROdR4xdDw
+```
+
+---
+
+## J.20.7 PoP replayed on a sibling leaf with the same jti
+
+The Worker re-derives a sibling of the J.3 L2 with the same jti and holder but a different exp, and presents it with the PoP Worker2 made for L2. aat_id matches; aat_hash does not (step 7c).
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
+**Expected:** **DENY** at step 7c
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"EdDSA","typ":"aat+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf","/data/q4-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":100},"query":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000010"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000010",
+  "iss": "https://auth.example.com",
+  "iat": 1704067200,
+  "exp": 1704070800,
+  "del_depth": 0,
+  "del_max_depth": 3,
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token",
+      "tools": {
+        "read_file": {
+          "path": {
+            "constraint_type": "one_of",
+            "values": [
+              "/data/q3-report.pdf",
+              "/data/q4-report.pdf"
+            ]
+          }
+        },
+        "search_index": {
+          "query": {
+            "constraint_type": "wildcard"
+          },
+          "limit": {
+            "constraint_type": "range",
+            "max": 100
+          }
+        }
+      }
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ` |
+| SHA-256(signing input), base64url | `cTUrFuyDx9UHutl_nhb-ycZt39eyTxE7AAocLN1-BJ8` |
+| signature_b64 | `IJ57sKNY7MtiHIz7PF-M8bTH_8GC6SBoV2WWPt1o8SdY43ZRU5kDBIMtqKGV1IOLHPXOlhnoM4tz1TE-GRsGCw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ.IJ57sKNY7MtiHIz7PF-M8bTH_8GC6SBoV2WWPt1o8SdY43ZRU5kDBIMtqKGV1IOLHPXOlhnoM4tz1TE-GRsGCw
+```
+
+**Chain[1] (del_depth 1)** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"EdDSA","typ":"aat+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":20},"query":{"constraint_type":"exact","value":"public filings"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"}},"del_depth":1,"del_max_depth":2,"exp":1704069000,"iat":1704067260,"iss":"urn:ietf:params:oauth:jwk-thumbprint:sha-256:aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU","jti":"019471f8-0000-7000-8000-000000000011","par_hash":"cTUrFuyDx9UHutl_nhb-ycZt39eyTxE7AAocLN1-BJ8"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000011",
+  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU",
+  "iat": 1704067260,
+  "exp": 1704069000,
+  "del_depth": 1,
+  "del_max_depth": 2,
+  "par_hash": "cTUrFuyDx9UHutl_nhb-ycZt39eyTxE7AAocLN1-BJ8",
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token",
+      "tools": {
+        "read_file": {
+          "path": {
+            "constraint_type": "one_of",
+            "values": [
+              "/data/q3-report.pdf"
+            ]
+          }
+        },
+        "search_index": {
+          "query": {
+            "constraint_type": "exact",
+            "value": "public filings"
+          },
+          "limit": {
+            "constraint_type": "range",
+            "max": 20
+          }
+        }
+      }
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoyMH0sInF1ZXJ5Ijp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiJwdWJsaWMgZmlsaW5ncyJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifX0sImRlbF9kZXB0aCI6MSwiZGVsX21heF9kZXB0aCI6MiwiZXhwIjoxNzA0MDY5MDAwLCJpYXQiOjE3MDQwNjcyNjAsImlzcyI6InVybjppZXRmOnBhcmFtczpvYXV0aDpqd2stdGh1bWJwcmludDpzaGEtMjU2OmFWQnRhcExkMTFTVVZLSU1HSmZQek9FRHVOMHNYY216SlFOVlQtX3NLRVUiLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTEiLCJwYXJfaGFzaCI6ImNUVXJGdXlEeDlVSHV0bF9uaGIteWNadDM5ZXlUeEU3QUFvY0xOMS1CSjgifQ` |
+| SHA-256(signing input), base64url | `759t6JrK8NVbg5Q64gFO2JKjW-M2jBnQt68MCFTDH_4` |
+| signature_b64 | `tcA08HUyM5yKDo8L07-JVZh-aC4RdfBDtVwoN4eBIss-I9-n2cF6uq8kaIM8zokYG6B9rusxf7bvBlZ9V_9uDg` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoyMH0sInF1ZXJ5Ijp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiJwdWJsaWMgZmlsaW5ncyJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifX0sImRlbF9kZXB0aCI6MSwiZGVsX21heF9kZXB0aCI6MiwiZXhwIjoxNzA0MDY5MDAwLCJpYXQiOjE3MDQwNjcyNjAsImlzcyI6InVybjppZXRmOnBhcmFtczpvYXV0aDpqd2stdGh1bWJwcmludDpzaGEtMjU2OmFWQnRhcExkMTFTVVZLSU1HSmZQek9FRHVOMHNYY216SlFOVlQtX3NLRVUiLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTEiLCJwYXJfaGFzaCI6ImNUVXJGdXlEeDlVSHV0bF9uaGIteWNadDM5ZXlUeEU3QUFvY0xOMS1CSjgifQ.tcA08HUyM5yKDo8L07-JVZh-aC4RdfBDtVwoN4eBIss-I9-n2cF6uq8kaIM8zokYG6B9rusxf7bvBlZ9V_9uDg
+```
+
+**Chain[2] (del_depth 2)** (signed by `worker`)
+
+Protected header (JCS):
+```json
+{"alg":"EdDSA","typ":"aat+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"exact","value":"/data/q3-report.pdf"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw"}},"del_depth":2,"del_max_depth":2,"exp":1704068700,"iat":1704067320,"iss":"urn:ietf:params:oauth:jwk-thumbprint:sha-256:nRIE2VmKdMjL1JD7tbV7fXVgXxmv0GKnMFWRUJMTf9Q","jti":"019471f8-0000-7000-8000-000000000012","par_hash":"759t6JrK8NVbg5Q64gFO2JKjW-M2jBnQt68MCFTDH_4"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000012",
+  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:nRIE2VmKdMjL1JD7tbV7fXVgXxmv0GKnMFWRUJMTf9Q",
+  "iat": 1704067320,
+  "exp": 1704068700,
+  "del_depth": 2,
+  "del_max_depth": 2,
+  "par_hash": "759t6JrK8NVbg5Q64gFO2JKjW-M2jBnQt68MCFTDH_4",
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token",
+      "tools": {
+        "read_file": {
+          "path": {
+            "constraint_type": "exact",
+            "value": "/data/q3-report.pdf"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoieXBPc0Z3VVljSEhXZTRQSF93Ny1nUWpvN0VVd1YxMTNKb2VUTTl2YXZudyJ9fSwiZGVsX2RlcHRoIjoyLCJkZWxfbWF4X2RlcHRoIjoyLCJleHAiOjE3MDQwNjg3MDAsImlhdCI6MTcwNDA2NzMyMCwiaXNzIjoidXJuOmlldGY6cGFyYW1zOm9hdXRoOmp3ay10aHVtYnByaW50OnNoYS0yNTY6blJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsInBhcl9oYXNoIjoiNzU5dDZKcks4TlZiZzVRNjRnRk8ySktqVy1NMmpCblF0NjhNQ0ZUREhfNCJ9` |
+| SHA-256(signing input), base64url | `nwvXyXwpmWt3rXjc7DbAd34mzHVHikWa3IerEPmc7pg` |
+| signature_b64 | `2ywdsQKyRN4Vs3SdAfSv-hfzkMKQ6higdwwn3eFc8EMrFcQMxheU4-6UTswXj1cjkl_zpKWEQdQyPdkMOCMaDA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoieXBPc0Z3VVljSEhXZTRQSF93Ny1nUWpvN0VVd1YxMTNKb2VUTTl2YXZudyJ9fSwiZGVsX2RlcHRoIjoyLCJkZWxfbWF4X2RlcHRoIjoyLCJleHAiOjE3MDQwNjg3MDAsImlhdCI6MTcwNDA2NzMyMCwiaXNzIjoidXJuOmlldGY6cGFyYW1zOm9hdXRoOmp3ay10aHVtYnByaW50OnNoYS0yNTY6blJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsInBhcl9oYXNoIjoiNzU5dDZKcks4TlZiZzVRNjRnRk8ySktqVy1NMmpCblF0NjhNQ0ZUREhfNCJ9.2ywdsQKyRN4Vs3SdAfSv-hfzkMKQ6higdwwn3eFc8EMrFcQMxheU4-6UTswXj1cjkl_zpKWEQdQyPdkMOCMaDA
+```
+
+**PoP JWT** (signed by `worker2`)
+
+Protected header (JCS):
+```json
+{"alg":"EdDSA","typ":"aat-pop+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a03"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000a03",
+  "iat": 1704067500,
+  "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
+  "aat_tool": "read_file",
+  "hta": {
+    "path": "/data/q3-report.pdf"
+  },
+  "aat_aud": "https://tools.example.com"
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0` |
+| SHA-256(signing input), base64url | `uceSc5RU-ldamppR-mI9q791yukVXCVwEAoU3uToJu4` |
+| signature_b64 | `MLhTuijzM23ScPEWv80VfheOWPb3CMFkjss2OrkHMdNqvc3oxjYcoPAMFc6ahkndBgPAqAo99u3vbnLYeGaMBQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0.MLhTuijzM23ScPEWv80VfheOWPb3CMFkjss2OrkHMdNqvc3oxjYcoPAMFc6ahkndBgPAqAo99u3vbnLYeGaMBQ
 ```
 
 ---
@@ -7643,7 +7913,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"mode":"r","path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac1"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"mode":"r","path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac1"}
 ```
 Pretty payload:
 ```json
@@ -7651,6 +7921,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ac1",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf",
@@ -7662,13 +7933,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7Im1vZGUiOiJyIiwicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhYzEifQ` |
-| SHA-256(signing input), base64url | `t3Y10D6Dg6_3gHxJWlsQcoAs-iFILxxIdWUdf6bpbCI` |
-| signature_b64 | `ugXR2K5J7_e9kM3YiSFoB5XzPq8gSIok61SeA-Ls0xvLziHd5kdzTI7j9tOiQzDCozZSrvj8LBTD9p5vzwRqCA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7Im1vZGUiOiJyIiwicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhYzEifQ` |
+| SHA-256(signing input), base64url | `TLDC944Uh3LH9UQz1ErcTcK0kMtEFdbjuoIqCjDcNpA` |
+| signature_b64 | `1zkE9h5Q4D-WJ64SBks2Zsk_UQcPiFlRIF4yPFJGgV7wbj5G6BU4iimFI1FhAInNIaSlDVF0tfsVf4wTOawtAA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7Im1vZGUiOiJyIiwicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhYzEifQ.ugXR2K5J7_e9kM3YiSFoB5XzPq8gSIok61SeA-Ls0xvLziHd5kdzTI7j9tOiQzDCozZSrvj8LBTD9p5vzwRqCA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7Im1vZGUiOiJyIiwicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhYzEifQ.1zkE9h5Q4D-WJ64SBks2Zsk_UQcPiFlRIF4yPFJGgV7wbj5G6BU4iimFI1FhAInNIaSlDVF0tfsVf4wTOawtAA
 ```
 
 ---
@@ -7873,7 +8144,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac2"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac2"}
 ```
 Pretty payload:
 ```json
@@ -7881,6 +8152,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ac2",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "read_file",
   "hta": {},
   "aat_aud": "https://tools.example.com"
@@ -7889,13 +8161,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7fSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhYzIifQ` |
-| SHA-256(signing input), base64url | `3-R8e_xSw8l3JqPI2VSpAT8s3hrPY6Zy20tckjL6TKA` |
-| signature_b64 | `yPHRnzeMomPyqr1NePoEcrgiB8I5I3EoifWPTEuFDiHuMKRVj9YfYDlIIp5XWn_uva4PgsWlSO6nvZ39hs-hDg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7fSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhYzIifQ` |
+| SHA-256(signing input), base64url | `sD9voL1jpQjSDhNNtHkLPMTKq3qUfcxXJMu3QX8LJgY` |
+| signature_b64 | `1gyU7s1q2iJz3vK3cd7CkVsaqlZplZzS5p3sIQZ2qqJn1JJ1I8MOLh3KeKeYupVL8hesSmRikVlVszGXaRK8DQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7fSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhYzIifQ.yPHRnzeMomPyqr1NePoEcrgiB8I5I3EoifWPTEuFDiHuMKRVj9YfYDlIIp5XWn_uva4PgsWlSO6nvZ39hs-hDg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7fSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhYzIifQ.1gyU7s1q2iJz3vK3cd7CkVsaqlZplZzS5p3sIQZ2qqJn1JJ1I8MOLh3KeKeYupVL8hesSmRikVlVszGXaRK8DQ
 ```
 
 ---
@@ -8100,7 +8372,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"search_index","hta":{"limit":5,"query":"public filings"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac3"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"search_index","hta":{"limit":5,"query":"public filings"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac3"}
 ```
 Pretty payload:
 ```json
@@ -8108,6 +8380,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ac3",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000012",
+  "aat_hash": "Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno",
   "aat_tool": "search_index",
   "hta": {
     "query": "public filings",
@@ -8119,13 +8392,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoic2VhcmNoX2luZGV4IiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWMzIn0` |
-| SHA-256(signing input), base64url | `ga9sOHshKMt6_fbOwstagHvP1DcyofE4ymWKMblM_AE` |
-| signature_b64 | `WSSsA6P7bIUEMmMQHXKGbJm-mikrDzzdjkgWePOUEA40JiAGVc36BFTxLjLXgP_OPKiWUSETotL5i15EvzBhAQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoic2VhcmNoX2luZGV4IiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWMzIn0` |
+| SHA-256(signing input), base64url | `v1WrGZzubZHpSqCTLgeJ1pacTC0JaxFVXftnTdf2woY` |
+| signature_b64 | `Vuhexc5cXjEBV0j3vHAvFS8NSf3VmGhnt69F7lKXBHweg9moCh6na8SLkFxyoJ_UZ2KmoyKAs6ct1Qv1A_VhDA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoic2VhcmNoX2luZGV4IiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWMzIn0.WSSsA6P7bIUEMmMQHXKGbJm-mikrDzzdjkgWePOUEA40JiAGVc36BFTxLjLXgP_OPKiWUSETotL5i15EvzBhAQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSmN1OHdTRnBWMF9vSm9OY3d1Z2tKNVM2ZDRSdTU0ZzkwRUVRRjZiNXJubyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoic2VhcmNoX2luZGV4IiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWMzIn0.Vuhexc5cXjEBV0j3vHAvFS8NSf3VmGhnt69F7lKXBHweg9moCh6na8SLkFxyoJ_UZ2KmoyKAs6ct1Qv1A_VhDA
 ```
 
 ---
@@ -8278,7 +8551,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000011","aat_tool":"search_index","hta":{"limit":5,"query":"public filings"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac4"}
+{"aat_aud":"https://tools.example.com","aat_hash":"759t6JrK8NVbg5Q64gFO2JKjW-M2jBnQt68MCFTDH_4","aat_id":"019471f8-0000-7000-8000-000000000011","aat_tool":"search_index","hta":{"limit":5,"query":"public filings"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac4"}
 ```
 Pretty payload:
 ```json
@@ -8286,6 +8559,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ac4",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000011",
+  "aat_hash": "759t6JrK8NVbg5Q64gFO2JKjW-M2jBnQt68MCFTDH_4",
   "aat_tool": "search_index",
   "hta": {
     "query": "public filings",
@@ -8297,13 +8571,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoic2VhcmNoX2luZGV4IiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWM0In0` |
-| SHA-256(signing input), base64url | `F5O9JvbWQNdFf4eOOAdhTUdIcS7HP5HHK0OVTsu_tqA` |
-| signature_b64 | `18XYVPhlWobWdNUEHt115vwa6e0IdWPAFR9z1obxL6lfA9VV_P-RqAD1--zsiNFRAMwIyyWE1xG8Z-RU8NC2AA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNzU5dDZKcks4TlZiZzVRNjRnRk8ySktqVy1NMmpCblF0NjhNQ0ZUREhfNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoic2VhcmNoX2luZGV4IiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWM0In0` |
+| SHA-256(signing input), base64url | `5vHpjAKUTiyZ8sKPd7hdZINfeopDgGOFeGWSVpp8m0o` |
+| signature_b64 | `_QjksJ5QJ8k2REyNOZFLqRozpPi1b5MzSVDJzC0OPJY8hEmhQbha05PWhp3j15CWG3sWpztQ3aPxnNDGcVtWCg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoic2VhcmNoX2luZGV4IiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWM0In0.18XYVPhlWobWdNUEHt115vwa6e0IdWPAFR9z1obxL6lfA9VV_P-RqAD1--zsiNFRAMwIyyWE1xG8Z-RU8NC2AA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNzU5dDZKcks4TlZiZzVRNjRnRk8ySktqVy1NMmpCblF0NjhNQ0ZUREhfNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMSIsImFhdF90b29sIjoic2VhcmNoX2luZGV4IiwiaHRhIjp7ImxpbWl0Ijo1LCJxdWVyeSI6InB1YmxpYyBmaWxpbmdzIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWM0In0._QjksJ5QJ8k2REyNOZFLqRozpPi1b5MzSVDJzC0OPJY8hEmhQbha05PWhp3j15CWG3sWpztQ3aPxnNDGcVtWCg
 ```
 
 ---
@@ -8455,7 +8729,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000010","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ad1"}
+{"aat_aud":"https://tools.example.com","aat_hash":"HWW1M_SoxiLjZw1NflTgauNCf6a39oDztcJdSFC8OD0","aat_id":"019471f8-0000-7000-8000-000000000010","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ad1"}
 ```
 Pretty payload:
 ```json
@@ -8463,6 +8737,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000ad1",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000010",
+  "aat_hash": "HWW1M_SoxiLjZw1NflTgauNCf6a39oDztcJdSFC8OD0",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -8473,13 +8748,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWQxIn0` |
-| SHA-256(signing input), base64url | `L9N9sB8FT-SJDfsdJVeEB8-fB2Si2x_8fQ9VywE6-rM` |
-| signature_b64 | `Eb_f20Eoeah4l85DXxs720aM-ZC_a3sOTWiQ7leP5q8KVDOjV8UO8ziyCHMGPmBTaEcGnNIqx-6awy_HyGD6BQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSFdXMU1fU294aUxqWncxTmZsVGdhdU5DZjZhMzlvRHp0Y0pkU0ZDOE9EMCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWQxIn0` |
+| SHA-256(signing input), base64url | `wisrqVIHV1uSusPDxkxWXMVnYcym4vWlXnkxl4MMr0I` |
+| signature_b64 | `uXUol2fcy0nHmAR19r3Ireqr4RM-kRK-C3Bwigw_P7bgbJA08-gvZvYU5ihxkhZFhRWlc0LGWDogdHI7H1okCw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWQxIn0.Eb_f20Eoeah4l85DXxs720aM-ZC_a3sOTWiQ7leP5q8KVDOjV8UO8ziyCHMGPmBTaEcGnNIqx-6awy_HyGD6BQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiSFdXMU1fU294aUxqWncxTmZsVGdhdU5DZjZhMzlvRHp0Y0pkU0ZDOE9EMCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWQxIn0.uXUol2fcy0nHmAR19r3Ireqr4RM-kRK-C3Bwigw_P7bgbJA08-gvZvYU5ihxkhZFhRWlc0LGWDogdHI7H1okCw
 ```
 
 ---
@@ -8654,7 +8929,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f11","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af1"}
+{"aat_aud":"https://tools.example.com","aat_hash":"oUfRNsr8ryQblWcEEv88zO_4bAFQsYD2zyaQZs0WwEA","aat_id":"019471f8-0000-7000-8000-000000000f11","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af1"}
 ```
 Pretty payload:
 ```json
@@ -8662,6 +8937,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af1",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f11",
+  "aat_hash": "oUfRNsr8ryQblWcEEv88zO_4bAFQsYD2zyaQZs0WwEA",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -8673,13 +8949,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYxIn0` |
-| SHA-256(signing input), base64url | `Va82mXQ_7PTeuSVfEhNwl_Sf1qpuf6-7K_xT-DC8rK0` |
-| signature_b64 | `9vcRpQUhiTT1lFeZmpvYcGCayJ3u6Vn9Zy2C_2oLTGG-5TeSUYb9Nbdkk-2N_XLtnsb9HnSIZihacktjY7yfCQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoib1VmUk5zcjhyeVFibFdjRUV2ODh6T180YkFGUXNZRDJ6eWFRWnMwV3dFQSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYxIn0` |
+| SHA-256(signing input), base64url | `RD_Gt8cOGBwcI2baggp1WeeXjrMp_HTMR3TwKqu9bn8` |
+| signature_b64 | `nXu5s_U7x1xSF74l-q0e3gRBBk5LpMkx51-u46XOiS9YrCVUdHdynGcydrO77dw19GachVMFWVv7AaMkWc3YCw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYxIn0.9vcRpQUhiTT1lFeZmpvYcGCayJ3u6Vn9Zy2C_2oLTGG-5TeSUYb9Nbdkk-2N_XLtnsb9HnSIZihacktjY7yfCQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoib1VmUk5zcjhyeVFibFdjRUV2ODh6T180YkFGUXNZRDJ6eWFRWnMwV3dFQSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYxIn0.nXu5s_U7x1xSF74l-q0e3gRBBk5LpMkx51-u46XOiS9YrCVUdHdynGcydrO77dw19GachVMFWVv7AaMkWc3YCw
 ```
 
 ---
@@ -8846,7 +9122,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f12","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af2"}
+{"aat_aud":"https://tools.example.com","aat_hash":"hDFHjGsNw-KaCmKQqhzKkJkaWlth7Wfd3fIoVzWrSOo","aat_id":"019471f8-0000-7000-8000-000000000f12","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af2"}
 ```
 Pretty payload:
 ```json
@@ -8854,6 +9130,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af2",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f12",
+  "aat_hash": "hDFHjGsNw-KaCmKQqhzKkJkaWlth7Wfd3fIoVzWrSOo",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -8865,13 +9142,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYyIn0` |
-| SHA-256(signing input), base64url | `ZoY7v7UsYG0eYV0xVaAuqyoZgyKz2L0vEogChOnYdY8` |
-| signature_b64 | `nf1EiRpqmm2E_ApBQeC37g6Dn34N7CnohG6-AaYXOc2wXFe7W9_Ug6WR66gESNT6nRtjIKvmoK0QJICQyVqfBA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaERGSGpHc053LUthQ21LUXFoektrSmthV2x0aDdXZmQzZklvVnpXclNPbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYyIn0` |
+| SHA-256(signing input), base64url | `x1Ja5jKG3h1ItF2pbjSfOZeiypnw3nUFsh1O0qDSpRc` |
+| signature_b64 | `M1cWG5-R5hFoDedKvbSryaZMtADdyr8mjV4ZA_A64DuU4E362_7ECNpq4csOEVWnJtx5EDbK4JvhtkwSz7I0Bw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYyIn0.nf1EiRpqmm2E_ApBQeC37g6Dn34N7CnohG6-AaYXOc2wXFe7W9_Ug6WR66gESNT6nRtjIKvmoK0QJICQyVqfBA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaERGSGpHc053LUthQ21LUXFoektrSmthV2x0aDdXZmQzZklvVnpXclNPbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYyIn0.M1cWG5-R5hFoDedKvbSryaZMtADdyr8mjV4ZA_A64DuU4E362_7ECNpq4csOEVWnJtx5EDbK4JvhtkwSz7I0Bw
 ```
 
 ---
@@ -9041,7 +9318,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f13","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af3"}
+{"aat_aud":"https://tools.example.com","aat_hash":"82twN0YhwSVH77O1FBonqiTGgg5LVBiM9WV4qIX38rM","aat_id":"019471f8-0000-7000-8000-000000000f13","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af3"}
 ```
 Pretty payload:
 ```json
@@ -9049,6 +9326,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af3",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f13",
+  "aat_hash": "82twN0YhwSVH77O1FBonqiTGgg5LVBiM9WV4qIX38rM",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -9060,13 +9338,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMyIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYzIn0` |
-| SHA-256(signing input), base64url | `H485Jhh68XyFtsNZ9KAitlfolzL-5105Nt6AKkqkflA` |
-| signature_b64 | `VP0LjTgyAca4GLXFeE7MJVJuCllPp0vJRtS55CUgQ7ATMT9s-s0Ey-jGFsP0kRDyCVCkiXsleaQiMT0UD_tKBw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiODJ0d04wWWh3U1ZINzdPMUZCb25xaVRHZ2c1TFZCaU05V1Y0cUlYMzhyTSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMyIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYzIn0` |
+| SHA-256(signing input), base64url | `J8dA9IW0CRgbASDqnXR6h1uG0hGaPTbLBlOlnGizuSs` |
+| signature_b64 | `pWkUhevHtXRajo2ujvTxZ9w1xY5P15P2oUpTrzE4DqFvEyQmluaCoXjcS5Jw4_Fqk69IIft1fhldGT22h-l4BA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMyIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYzIn0.VP0LjTgyAca4GLXFeE7MJVJuCllPp0vJRtS55CUgQ7ATMT9s-s0Ey-jGFsP0kRDyCVCkiXsleaQiMT0UD_tKBw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiODJ0d04wWWh3U1ZINzdPMUZCb25xaVRHZ2c1TFZCaU05V1Y0cUlYMzhyTSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxMyIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWYzIn0.pWkUhevHtXRajo2ujvTxZ9w1xY5P15P2oUpTrzE4DqFvEyQmluaCoXjcS5Jw4_Fqk69IIft1fhldGT22h-l4BA
 ```
 
 ---
@@ -9213,7 +9491,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f14","aat_tool":"export","hta":{"format":"pdf","limit":5},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af4"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Vx-scOWvc2YT8c03VcIC9svknfpnZTbSK8F1d6fS-Mk","aat_id":"019471f8-0000-7000-8000-000000000f14","aat_tool":"export","hta":{"format":"pdf","limit":5},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af4"}
 ```
 Pretty payload:
 ```json
@@ -9221,6 +9499,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af4",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f14",
+  "aat_hash": "Vx-scOWvc2YT8c03VcIC9svknfpnZTbSK8F1d6fS-Mk",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -9232,13 +9511,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNCIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0Ijo1fSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjQifQ` |
-| SHA-256(signing input), base64url | `9uAZsZwr5BzWnmSuiLPHrh5_AulK_X8yIGiErRrzAzE` |
-| signature_b64 | `SQ4wiKyHcm_YexRj9PMqJoHUs-mjHJ6qqR_BMI76xYEy6CvDMjftv5TvkJioKzG64CPTJ0J4FY7h8p7NpwEzBg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiVngtc2NPV3ZjMllUOGMwM1ZjSUM5c3ZrbmZwblpUYlNLOEYxZDZmUy1NayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNCIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0Ijo1fSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjQifQ` |
+| SHA-256(signing input), base64url | `E4LsGT7ZH1yY3V9g0L8md_HUkB6oXqoRuJygafeI89s` |
+| signature_b64 | `GlTYOkzfmP4z4yK6VNii5VlQ0_yHqID7_CA3Q20j4gVTyinPcLjndxx94bLvAV3Jwzh9xGsTkQrETDnAqBQMAw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNCIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0Ijo1fSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjQifQ.SQ4wiKyHcm_YexRj9PMqJoHUs-mjHJ6qqR_BMI76xYEy6CvDMjftv5TvkJioKzG64CPTJ0J4FY7h8p7NpwEzBg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiVngtc2NPV3ZjMllUOGMwM1ZjSUM5c3ZrbmZwblpUYlNLOEYxZDZmUy1NayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNCIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0Ijo1fSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjQifQ.GlTYOkzfmP4z4yK6VNii5VlQ0_yHqID7_CA3Q20j4gVTyinPcLjndxx94bLvAV3Jwzh9xGsTkQrETDnAqBQMAw
 ```
 
 ---
@@ -9409,7 +9688,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f15","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af5"}
+{"aat_aud":"https://tools.example.com","aat_hash":"qz4LTIq8hHKgk3DKDFCdTZcFADEtrap5bey_odfn2Fk","aat_id":"019471f8-0000-7000-8000-000000000f15","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af5"}
 ```
 Pretty payload:
 ```json
@@ -9417,6 +9696,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af5",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f15",
+  "aat_hash": "qz4LTIq8hHKgk3DKDFCdTZcFADEtrap5bey_odfn2Fk",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -9428,13 +9708,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY1In0` |
-| SHA-256(signing input), base64url | `Gbd2WzAIgp1IZ4mUhThxepoV9PhHO2kjTkFqAf_0TFs` |
-| signature_b64 | `pEIxYnrKRcqyVsFJd8wI__4c-0BntUs1uid5DCgdrdRgr5AHXVZZ1q6pao6aFGYWXUeaJmgrgpQ1pBdA-P5pAQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicXo0TFRJcThoSEtnazNES0RGQ2RUWmNGQURFdHJhcDViZXlfb2RmbjJGayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY1In0` |
+| SHA-256(signing input), base64url | `dwhiswP3uhkkZGszB6QCCnUsUlWeLCiANb8XgeruM9Q` |
+| signature_b64 | `E2rQbsfoInPeTnuZ5arCGhh9tJZ9QVSd_xdhbGx646wQnpCD7zaTmhJk5n6KGyIQpa9U_xAfRLW0GXzt1WBSBw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY1In0.pEIxYnrKRcqyVsFJd8wI__4c-0BntUs1uid5DCgdrdRgr5AHXVZZ1q6pao6aFGYWXUeaJmgrgpQ1pBdA-P5pAQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicXo0TFRJcThoSEtnazNES0RGQ2RUWmNGQURFdHJhcDViZXlfb2RmbjJGayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY1In0.E2rQbsfoInPeTnuZ5arCGhh9tJZ9QVSd_xdhbGx646wQnpCD7zaTmhJk5n6KGyIQpa9U_xAfRLW0GXzt1WBSBw
 ```
 
 ---
@@ -9609,7 +9889,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f16","aat_tool":"export","hta":{"format":"pdf","limit":0},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af6"}
+{"aat_aud":"https://tools.example.com","aat_hash":"itsebvaEqnrswhf8n2h5XBSBThovgqAjYfhAtYQ35Uo","aat_id":"019471f8-0000-7000-8000-000000000f16","aat_tool":"export","hta":{"format":"pdf","limit":0},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af6"}
 ```
 Pretty payload:
 ```json
@@ -9617,6 +9897,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af6",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f16",
+  "aat_hash": "itsebvaEqnrswhf8n2h5XBSBThovgqAjYfhAtYQ35Uo",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -9628,13 +9909,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjowfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjYifQ` |
-| SHA-256(signing input), base64url | `SKjJqzdCJzV0c526_1DHGmmuO1TUHflo9TanStObq78` |
-| signature_b64 | `jqcotEdxel9Hc8D5UERH9dOIF50IZGrNNjTswWfwnYc2UjtUQTdHLjE4dkAaB_I9YUXm8qnFMEC8LNibBOE2Dw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaXRzZWJ2YUVxbnJzd2hmOG4yaDVYQlNCVGhvdmdxQWpZZmhBdFlRMzVVbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjowfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjYifQ` |
+| SHA-256(signing input), base64url | `oK8wkqK81WzoZWyZJYmqnG56UqHLtRUWr89xoVOgsrQ` |
+| signature_b64 | `PVJgfMdoE_wpr-X_QD7BPbUH5lcFweheHATAxwh_mNkzvRE4jZgTVnX1HdWmMhf8xSUtSheBTcOI9FsKiVAUDA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjowfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjYifQ.jqcotEdxel9Hc8D5UERH9dOIF50IZGrNNjTswWfwnYc2UjtUQTdHLjE4dkAaB_I9YUXm8qnFMEC8LNibBOE2Dw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaXRzZWJ2YUVxbnJzd2hmOG4yaDVYQlNCVGhvdmdxQWpZZmhBdFlRMzVVbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjowfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjYifQ.PVJgfMdoE_wpr-X_QD7BPbUH5lcFweheHATAxwh_mNkzvRE4jZgTVnX1HdWmMhf8xSUtSheBTcOI9FsKiVAUDA
 ```
 
 ---
@@ -9809,7 +10090,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f17","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af7"}
+{"aat_aud":"https://tools.example.com","aat_hash":"Ct5cSSOq8Rjwc1_T4WGLAIAi9Qhx6iOAGYwujnRBIZc","aat_id":"019471f8-0000-7000-8000-000000000f17","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af7"}
 ```
 Pretty payload:
 ```json
@@ -9817,6 +10098,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af7",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f17",
+  "aat_hash": "Ct5cSSOq8Rjwc1_T4WGLAIAi9Qhx6iOAGYwujnRBIZc",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -9828,13 +10110,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNyIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY3In0` |
-| SHA-256(signing input), base64url | `O_puVZJuQKGr-KEwLo8rkcwca9DBnqfAA87mJTKQHGM` |
-| signature_b64 | `2GGLSqxUql9AgG08AhJPwcR5WadiBxcFXN3N_LeNsJqTqqJxE0n57jmlIw3m4ScJH2aAEm7sl2aLpQyszwcbBA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiQ3Q1Y1NTT3E4Ump3YzFfVDRXR0xBSUFpOVFoeDZpT0FHWXd1am5SQklaYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNyIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY3In0` |
+| SHA-256(signing input), base64url | `neApfGqlY7uXSBu16z-LoSCxRi8VYjGeRbxemdTEh9k` |
+| signature_b64 | `s7p0Fs253zAYhrrbeCHbc7qcHHspUtddOBOYPd0wOxk2hhsga2MgYoUYNcfPjnPD1Ku4GdkMAfOXuqSr5m45Aw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNyIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY3In0.2GGLSqxUql9AgG08AhJPwcR5WadiBxcFXN3N_LeNsJqTqqJxE0n57jmlIw3m4ScJH2aAEm7sl2aLpQyszwcbBA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiQ3Q1Y1NTT3E4Ump3YzFfVDRXR0xBSUFpOVFoeDZpT0FHWXd1am5SQklaYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNyIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY3In0.s7p0Fs253zAYhrrbeCHbc7qcHHspUtddOBOYPd0wOxk2hhsga2MgYoUYNcfPjnPD1Ku4GdkMAfOXuqSr5m45Aw
 ```
 
 ---
@@ -10009,7 +10291,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f18","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af8"}
+{"aat_aud":"https://tools.example.com","aat_hash":"h8uirK61cFVzgMmtHMVIHJ3jj9rSoLKt7l1mBYmD5Ug","aat_id":"019471f8-0000-7000-8000-000000000f18","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af8"}
 ```
 Pretty payload:
 ```json
@@ -10017,6 +10299,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af8",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f18",
+  "aat_hash": "h8uirK61cFVzgMmtHMVIHJ3jj9rSoLKt7l1mBYmD5Ug",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -10028,13 +10311,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxOCIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY4In0` |
-| SHA-256(signing input), base64url | `Imwz8Nkh0LJcuthsnuvcLD5QNr4GuBsaiDalsvRl5l4` |
-| signature_b64 | `zSmHuXPs2dBM8zD_NHgzzaiuusCSvakeDlrRXuCHCxPI6yIJW0o-KyL4IvcjMUHAM7OjFZvfSTyPYCRa35mvDQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaDh1aXJLNjFjRlZ6Z01tdEhNVklISjNqajlyU29MS3Q3bDFtQlltRDVVZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxOCIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY4In0` |
+| SHA-256(signing input), base64url | `7fsVOx8ASgs3oG8pZyuJ_krg0LUbgXo-mvmaBi4oDOw` |
+| signature_b64 | `XiZ5k22slr86r4xQt_bJbNzUk3DEZ8W2KjK7g0OVyKs43kZnNhSEjxR4hFjOHqYzo6H4bXvwZA10W7Yl0JqdCg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxOCIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY4In0.zSmHuXPs2dBM8zD_NHgzzaiuusCSvakeDlrRXuCHCxPI6yIJW0o-KyL4IvcjMUHAM7OjFZvfSTyPYCRa35mvDQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaDh1aXJLNjFjRlZ6Z01tdEhNVklISjNqajlyU29MS3Q3bDFtQlltRDVVZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxOCIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY4In0.XiZ5k22slr86r4xQt_bJbNzUk3DEZ8W2KjK7g0OVyKs43kZnNhSEjxR4hFjOHqYzo6H4bXvwZA10W7Yl0JqdCg
 ```
 
 ---
@@ -10200,7 +10483,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f19","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af9"}
+{"aat_aud":"https://tools.example.com","aat_hash":"VbMTQevzPbRuUxYRFXXjtXNlSSrro3Pkpex_fu7QOvg","aat_id":"019471f8-0000-7000-8000-000000000f19","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af9"}
 ```
 Pretty payload:
 ```json
@@ -10208,6 +10491,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af9",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f19",
+  "aat_hash": "VbMTQevzPbRuUxYRFXXjtXNlSSrro3Pkpex_fu7QOvg",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -10219,13 +10503,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxOSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY5In0` |
-| SHA-256(signing input), base64url | `EhAkxPslZ6T9vkTDkArDS9w9hhqGYlJFKiJeAu_iawA` |
-| signature_b64 | `xnOwNQptOB0bUkuNQ0yLE3RLoNAXevsHbTFSztN8TqrGTMfKR4wO9rng9loccBp9U4KZdrTBSuEVWN9cweYpDg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiVmJNVFFldnpQYlJ1VXhZUkZYWGp0WE5sU1Nycm8zUGtwZXhfZnU3UU92ZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxOSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY5In0` |
+| SHA-256(signing input), base64url | `sECAEgCdtVFFKy5E9AnTSOAhZTC_j9XUKoLDKbtC_fs` |
+| signature_b64 | `cPpENSpWvVF1OpoDDLosuvXuGRGr_-pxLCsbXrjiY9OQqWOavJQ2jU74Gk5B6Up91sO_sR9JCcLhW8-c-fYkBw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxOSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY5In0.xnOwNQptOB0bUkuNQ0yLE3RLoNAXevsHbTFSztN8TqrGTMfKR4wO9rng9loccBp9U4KZdrTBSuEVWN9cweYpDg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiVmJNVFFldnpQYlJ1VXhZUkZYWGp0WE5sU1Nycm8zUGtwZXhfZnU3UU92ZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxOSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWY5In0.cPpENSpWvVF1OpoDDLosuvXuGRGr_-pxLCsbXrjiY9OQqWOavJQ2jU74Gk5B6Up91sO_sR9JCcLhW8-c-fYkBw
 ```
 
 ---
@@ -10400,7 +10684,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f1a","aat_tool":"export","hta":{"format":"csv","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000afa"}
+{"aat_aud":"https://tools.example.com","aat_hash":"-ueypDmrfTYIt-ZVI-6YICR0NPm6_faK9sxCwCmiyW4","aat_id":"019471f8-0000-7000-8000-000000000f1a","aat_tool":"export","hta":{"format":"csv","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000afa"}
 ```
 Pretty payload:
 ```json
@@ -10408,6 +10692,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000afa",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f1a",
+  "aat_hash": "-ueypDmrfTYIt-ZVI-6YICR0NPm6_faK9sxCwCmiyW4",
   "aat_tool": "export",
   "hta": {
     "format": "csv",
@@ -10419,13 +10704,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxYSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6ImNzdiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWZhIn0` |
-| SHA-256(signing input), base64url | `pcECkqSdKtJFhkcJLPRSFk4ssjdWb7AHwOhPihJCB8g` |
-| signature_b64 | `IBnQWz29yOeRvRnivxJg21tOG6nHfR--5GCx3yNvFvKqW6Rpgz7kliel3IYP2y6_o1czgJ6s3eReot97WwRrCQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiLXVleXBEbXJmVFlJdC1aVkktNllJQ1IwTlBtNl9mYUs5c3hDd0NtaXlXNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxYSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6ImNzdiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWZhIn0` |
+| SHA-256(signing input), base64url | `NN6busTeZpSJRg0o5WrHZqkwZFPcVMmhuFggvKenoeo` |
+| signature_b64 | `NKh6xjOhJXNCtk-lPn48HVJJKW5ZsW-mlRSKCoTe7QT4iMtJUjc2sW0E2srZ85iteG9y0BkgkgtOBnwkV8XfDg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxYSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6ImNzdiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWZhIn0.IBnQWz29yOeRvRnivxJg21tOG6nHfR--5GCx3yNvFvKqW6Rpgz7kliel3IYP2y6_o1czgJ6s3eReot97WwRrCQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiLXVleXBEbXJmVFlJdC1aVkktNllJQ1IwTlBtNl9mYUs5c3hDd0NtaXlXNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxYSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6ImNzdiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWZhIn0.NKh6xjOhJXNCtk-lPn48HVJJKW5ZsW-mlRSKCoTe7QT4iMtJUjc2sW0E2srZ85iteG9y0BkgkgtOBnwkV8XfDg
 ```
 
 ---
@@ -10600,7 +10885,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f1b","aat_tool":"export","hta":{"format":"xlsx","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000afb"}
+{"aat_aud":"https://tools.example.com","aat_hash":"CXuFBZ26RtfEUYd01b-O4LxrDW-BESsPx7yXYs3tEug","aat_id":"019471f8-0000-7000-8000-000000000f1b","aat_tool":"export","hta":{"format":"xlsx","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000afb"}
 ```
 Pretty payload:
 ```json
@@ -10608,6 +10893,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000afb",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f1b",
+  "aat_hash": "CXuFBZ26RtfEUYd01b-O4LxrDW-BESsPx7yXYs3tEug",
   "aat_tool": "export",
   "hta": {
     "format": "xlsx",
@@ -10619,13 +10905,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxYiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6Inhsc3giLCJsaW1pdCI6MTB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGFmYiJ9` |
-| SHA-256(signing input), base64url | `gwsW-T1ToDSYqs5xKpidP0WJeJeYBrqRESVLBWjW2wg` |
-| signature_b64 | `ImzLXbc6l90Y7ixP7UB9JcZTY4hMBTApiiGck-ppiVr0cEqOvChxIBT2mxRQXDASRYd-jVnRw443zTUVuK1GDw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiQ1h1RkJaMjZSdGZFVVlkMDFiLU80THhyRFctQkVTc1B4N3lYWXMzdEV1ZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxYiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6Inhsc3giLCJsaW1pdCI6MTB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGFmYiJ9` |
+| SHA-256(signing input), base64url | `z87yTqdTBGouqaY_D2-jKAw3Ehy3S-qtxsTZj6oxu6Q` |
+| signature_b64 | `oMJ3LtW2z86oPqxCMwQ2xUDzpzfQNwpqy_MJk__61ebFv5ZDTNb0hlp7dzPPnRfIAXfP6VGGxpKoIai81qHKBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxYiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6Inhsc3giLCJsaW1pdCI6MTB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGFmYiJ9.ImzLXbc6l90Y7ixP7UB9JcZTY4hMBTApiiGck-ppiVr0cEqOvChxIBT2mxRQXDASRYd-jVnRw443zTUVuK1GDw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiQ1h1RkJaMjZSdGZFVVlkMDFiLU80THhyRFctQkVTc1B4N3lYWXMzdEV1ZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxYiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6Inhsc3giLCJsaW1pdCI6MTB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGFmYiJ9.oMJ3LtW2z86oPqxCMwQ2xUDzpzfQNwpqy_MJk__61ebFv5ZDTNb0hlp7dzPPnRfIAXfP6VGGxpKoIai81qHKBQ
 ```
 
 ---
@@ -10775,7 +11061,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000f16","aat_tool":"export","hta":{"format":"pdf","limit":3},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af6"}
+{"aat_aud":"https://tools.example.com","aat_hash":"QeqYKwg0uFacaHcyLTfT8Hror97rI9uHHwl10yGcUBQ","aat_id":"019471f8-0000-7000-8000-000000000f16","aat_tool":"export","hta":{"format":"pdf","limit":3},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000af6"}
 ```
 Pretty payload:
 ```json
@@ -10783,6 +11069,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000af6",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000f16",
+  "aat_hash": "QeqYKwg0uFacaHcyLTfT8Hror97rI9uHHwl10yGcUBQ",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -10794,13 +11081,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjozfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjYifQ` |
-| SHA-256(signing input), base64url | `RIqWRwwUWzZuJsGS9cPab3MXE95kwsPeZgnTXBc7GvY` |
-| signature_b64 | `xpx2DumVsSBJo3dKalSe7glDAzMFFyXX97ZDlVHGhEVjF3SNN21jyHfUYgn0Smtr4ZAJ1_qoZAWUa6LqM87DBg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiUWVxWUt3ZzB1RmFjYUhjeUxUZlQ4SHJvcjk3ckk5dUhId2wxMHlHY1VCUSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjozfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjYifQ` |
+| SHA-256(signing input), base64url | `lopm75FYV1NjHwcuDVZwh7gwSL0G4Mwrgn1kfGLcSRo` |
+| signature_b64 | `bS_h20etltBAgAH-g-NhPb50awy9CiBsHQPzsYAb3p7Dhk6d5lu57uX1TSLQsRJuKOuilju0KDpdQwIcfhjnBA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjozfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjYifQ.xpx2DumVsSBJo3dKalSe7glDAzMFFyXX97ZDlVHGhEVjF3SNN21jyHfUYgn0Smtr4ZAJ1_qoZAWUa6LqM87DBg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiUWVxWUt3ZzB1RmFjYUhjeUxUZlQ4SHJvcjk3ckk5dUhId2wxMHlHY1VCUSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGYxNiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjozfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBhZjYifQ.bS_h20etltBAgAH-g-NhPb50awy9CiBsHQPzsYAb3p7Dhk6d5lu57uX1TSLQsRJuKOuilju0KDpdQwIcfhjnBA
 ```
 
 ---
@@ -10922,7 +11209,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000b11","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b01"}
+{"aat_aud":"https://tools.example.com","aat_hash":"hDDlLD2DFiaLY0_-cZSEG-Jsvc0FAqKv6AidIHvLR8k","aat_id":"019471f8-0000-7000-8000-000000000b11","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b01"}
 ```
 Pretty payload:
 ```json
@@ -10930,6 +11217,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000b01",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000b11",
+  "aat_hash": "hDDlLD2DFiaLY0_-cZSEG-Jsvc0FAqKv6AidIHvLR8k",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -10940,13 +11228,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjAxIn0` |
-| SHA-256(signing input), base64url | `FjZTWCgux8ziZhlxBXrBWBjSulb-HnwCwVOTbc5pqxk` |
-| signature_b64 | `OuQu7o2Ozy0g20WY4ZnvL9qAZxVF676_RONNs2bTO9TIsccSPPcihDS1OY9UzKfEcTmhVC1z6c2xTUBd9U7nCA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaEREbExEMkRGaWFMWTBfLWNaU0VHLUpzdmMwRkFxS3Y2QWlkSUh2TFI4ayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjAxIn0` |
+| SHA-256(signing input), base64url | `utFiP7nFnv-x9JWmIptP6FnMLFO3NsAty2zhxxMkI_E` |
+| signature_b64 | `VCoGlb_yvkjxdtV4OuidPGAfyRB4nzlGGEHDPPIk4WqtR4vCC-pfTshLL9iwseXXug3WE3xcZwDc4pFjCYGOBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjAxIn0.OuQu7o2Ozy0g20WY4ZnvL9qAZxVF676_RONNs2bTO9TIsccSPPcihDS1OY9UzKfEcTmhVC1z6c2xTUBd9U7nCA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaEREbExEMkRGaWFMWTBfLWNaU0VHLUpzdmMwRkFxS3Y2QWlkSUh2TFI4ayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjAxIn0.VCoGlb_yvkjxdtV4OuidPGAfyRB4nzlGGEHDPPIk4WqtR4vCC-pfTshLL9iwseXXug3WE3xcZwDc4pFjCYGOBQ
 ```
 
 ---
@@ -11014,7 +11302,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000b10","aat_tool":"read_file","hta":{"mode":"r","path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b02"}
+{"aat_aud":"https://tools.example.com","aat_hash":"-voTW2LbWbrvcyJhiKB0ejZJnX8s-TvJDXNPM9KQPNk","aat_id":"019471f8-0000-7000-8000-000000000b10","aat_tool":"read_file","hta":{"mode":"r","path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b02"}
 ```
 Pretty payload:
 ```json
@@ -11022,6 +11310,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000b02",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000b10",
+  "aat_hash": "-voTW2LbWbrvcyJhiKB0ejZJnX8s-TvJDXNPM9KQPNk",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf",
@@ -11033,13 +11322,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7Im1vZGUiOiJyIiwicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBiMDIifQ` |
-| SHA-256(signing input), base64url | `S4soB2-vJIXi4uvjBmbkxH9EmwIKLuWI-cXJmEpQbf8` |
-| signature_b64 | `SAk-3b96izZ-edW1C-V88RPci6N_pu0tDAtSQddbGTqmTARtYH_wwLpBDUGQKdpF0HPnLxxnrcxDlFgvEnSqAw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiLXZvVFcyTGJXYnJ2Y3lKaGlLQjBlalpKblg4cy1UdkpEWE5QTTlLUVBOayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7Im1vZGUiOiJyIiwicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBiMDIifQ` |
+| SHA-256(signing input), base64url | `NPnn9y8JeHWz2JMkOUhDueBYdgHpxvEVIrCLKY4wumM` |
+| signature_b64 | `zY2z4noo5bq9IXHDr__XXq1EaFhj3yohau8CsBES2R7Fr1sVhwRVlr0jmxx6hEsvpiqPEjuiEqK0akFlpK-QAA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7Im1vZGUiOiJyIiwicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBiMDIifQ.SAk-3b96izZ-edW1C-V88RPci6N_pu0tDAtSQddbGTqmTARtYH_wwLpBDUGQKdpF0HPnLxxnrcxDlFgvEnSqAw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiLXZvVFcyTGJXYnJ2Y3lKaGlLQjBlalpKblg4cy1UdkpEWE5QTTlLUVBOayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7Im1vZGUiOiJyIiwicGF0aCI6Ii9kYXRhL3EzLXJlcG9ydC5wZGYifSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBiMDIifQ.zY2z4noo5bq9IXHDr__XXq1EaFhj3yohau8CsBES2R7Fr1sVhwRVlr0jmxx6hEsvpiqPEjuiEqK0akFlpK-QAA
 ```
 
 ---
@@ -11114,7 +11403,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000b13","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b03"}
+{"aat_aud":"https://tools.example.com","aat_hash":"cdYB291i14-W2UZqIfVqOb-7B_1CvHXSc8msiXyPbQc","aat_id":"019471f8-0000-7000-8000-000000000b13","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b03"}
 ```
 Pretty payload:
 ```json
@@ -11122,6 +11411,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000b03",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000b13",
+  "aat_hash": "cdYB291i14-W2UZqIfVqOb-7B_1CvHXSc8msiXyPbQc",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -11132,13 +11422,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjAzIn0` |
-| SHA-256(signing input), base64url | `4XdfhSn0q995p1EeF55-XbfFUny4RgcBkmyu9dgetqk` |
-| signature_b64 | `5aL7qPgMsjNjOaiflIt0h36XEXYmM-viyEVYjCOh5pBPYhc0FBjlShFvXZA6-go_eBYWfz__7S4L9NnN7Xa3Bw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiY2RZQjI5MWkxNC1XMlVacUlmVnFPYi03Ql8xQ3ZIWFNjOG1zaVh5UGJRYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjAzIn0` |
+| SHA-256(signing input), base64url | `RJj851PAO2xdA2zhOwBUXzQOc_MMljDTQMZuYlpKItU` |
+| signature_b64 | `cASP4aWiH_bXHmFkYExgbH81eb8wHNEbv0P6XdNPlwQuKEDml06fEsEOvR4kwWTp2OR04ppOLolBZPjQdQYbBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjAzIn0.5aL7qPgMsjNjOaiflIt0h36XEXYmM-viyEVYjCOh5pBPYhc0FBjlShFvXZA6-go_eBYWfz__7S4L9NnN7Xa3Bw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiY2RZQjI5MWkxNC1XMlVacUlmVnFPYi03Ql8xQ3ZIWFNjOG1zaVh5UGJRYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjAzIn0.cASP4aWiH_bXHmFkYExgbH81eb8wHNEbv0P6XdNPlwQuKEDml06fEsEOvR4kwWTp2OR04ppOLolBZPjQdQYbBQ
 ```
 
 ---
@@ -11277,7 +11567,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000b15","aat_tool":"export","hta":{"limit":20},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b04"}
+{"aat_aud":"https://tools.example.com","aat_hash":"NKPWtfdxOgZMVQas3yAfuyctVjY9G3p8fqAjFXphBLI","aat_id":"019471f8-0000-7000-8000-000000000b15","aat_tool":"export","hta":{"limit":20},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b04"}
 ```
 Pretty payload:
 ```json
@@ -11285,6 +11575,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000b04",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000b15",
+  "aat_hash": "NKPWtfdxOgZMVQas3yAfuyctVjY9G3p8fqAjFXphBLI",
   "aat_tool": "export",
   "hta": {
     "limit": 20
@@ -11295,13 +11586,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxNSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImxpbWl0IjoyMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjA0In0` |
-| SHA-256(signing input), base64url | `YuAiIwJ40gKxqhmyFR1UMmCIvHqD6j5Px2myOhPhu-0` |
-| signature_b64 | `0bf6FF9DBAGLlZuvWM1qQvJ86Z-FTl8pk2M9OC5hOVmlfeW_pFOsfIY_I9g2P03XybnUldpp2VjbzPXzJwnFBg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTktQV3RmZHhPZ1pNVlFhczN5QWZ1eWN0VmpZOUczcDhmcUFqRlhwaEJMSSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxNSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImxpbWl0IjoyMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjA0In0` |
+| SHA-256(signing input), base64url | `MjZ_0lu1r3OGQdHce6dlEdXvGuJ69UAcGiJ2wsrVQvU` |
+| signature_b64 | `XGjd8rdWvfBAw1_f5RNwxHE2ADzzDteINH_z2cdSrO5AHoeIQEEDA-24ymOAqp3Hks1MewQPun6PCLKDy00PCg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxNSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImxpbWl0IjoyMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjA0In0.0bf6FF9DBAGLlZuvWM1qQvJ86Z-FTl8pk2M9OC5hOVmlfeW_pFOsfIY_I9g2P03XybnUldpp2VjbzPXzJwnFBg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTktQV3RmZHhPZ1pNVlFhczN5QWZ1eWN0VmpZOUczcDhmcUFqRlhwaEJMSSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxNSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImxpbWl0IjoyMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjA0In0.XGjd8rdWvfBAw1_f5RNwxHE2ADzzDteINH_z2cdSrO5AHoeIQEEDA-24ymOAqp3Hks1MewQPun6PCLKDy00PCg
 ```
 
 ---
@@ -11473,7 +11764,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000c11","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c81"}
+{"aat_aud":"https://tools.example.com","aat_hash":"QaOfq1kFJKLcSPd6xn8hcg0vfLGWTZycp43KRssJ7Ss","aat_id":"019471f8-0000-7000-8000-000000000c11","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c81"}
 ```
 Pretty payload:
 ```json
@@ -11481,6 +11772,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000c81",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000c11",
+  "aat_hash": "QaOfq1kFJKLcSPd6xn8hcg0vfLGWTZycp43KRssJ7Ss",
   "aat_tool": "publish",
   "hta": {
     "label": "public",
@@ -11498,13 +11790,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMSIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4MSJ9` |
-| SHA-256(signing input), base64url | `UAddFOLVglJB9l11CkNeZ7Uv0m9fryPsaVFsOBXIVFY` |
-| signature_b64 | `hAUpKQuG3_fXLhnIBeSYOsHSdTS38P4NG0f1iZFMyRg3vg8r3BglCfyDcmnmC1menX4Zs1NoFPBMm96e-YhfDQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiUWFPZnExa0ZKS0xjU1BkNnhuOGhjZzB2ZkxHV1RaeWNwNDNLUnNzSjdTcyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMSIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4MSJ9` |
+| SHA-256(signing input), base64url | `wGwkC5VGwn9VKZykvlNRo0etbbNDl04mo8yWuufoLnE` |
+| signature_b64 | `GTu-YWRLeqUxgLn3c6GDAw1K0S4CsEtFwfr3EDjpxOIo1pkLaaOY30rbOvk2d7rhFrSqHSKruYu7rf4XUmMJCA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMSIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4MSJ9.hAUpKQuG3_fXLhnIBeSYOsHSdTS38P4NG0f1iZFMyRg3vg8r3BglCfyDcmnmC1menX4Zs1NoFPBMm96e-YhfDQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiUWFPZnExa0ZKS0xjU1BkNnhuOGhjZzB2ZkxHV1RaeWNwNDNLUnNzSjdTcyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMSIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4MSJ9.GTu-YWRLeqUxgLn3c6GDAw1K0S4CsEtFwfr3EDjpxOIo1pkLaaOY30rbOvk2d7rhFrSqHSKruYu7rf4XUmMJCA
 ```
 
 ---
@@ -11674,7 +11966,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000c12","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c82"}
+{"aat_aud":"https://tools.example.com","aat_hash":"yna5yMBRXKEE-PPVYSeS8n3oiSX8bx7VZdLUuJQdljI","aat_id":"019471f8-0000-7000-8000-000000000c12","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c82"}
 ```
 Pretty payload:
 ```json
@@ -11682,6 +11974,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000c82",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000c12",
+  "aat_hash": "yna5yMBRXKEE-PPVYSeS8n3oiSX8bx7VZdLUuJQdljI",
   "aat_tool": "publish",
   "hta": {
     "label": "public",
@@ -11699,13 +11992,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMiIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4MiJ9` |
-| SHA-256(signing input), base64url | `eS14H3gbbAhtfPmw81isJreQTNlutBPz9S3H62OG2K0` |
-| signature_b64 | `CRLEWezIwxVZpInMt3zY3FbIWXN48PS7JGAn0P4boK14v8vMz-RKqhfNBUAgLa_YPCiEkuLijMarRY8D90JSBg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoieW5hNXlNQlJYS0VFLVBQVllTZVM4bjNvaVNYOGJ4N1ZaZExVdUpRZGxqSSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMiIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4MiJ9` |
+| SHA-256(signing input), base64url | `_8ejkHW951HENiYNoNsk6vTy5Mn7wWoCJGvuyFOVTuw` |
+| signature_b64 | `4LwF12WAtOfqIqgPE87OcC7Sbnh91kmKGdduLZLXmh4hUpVyY7N3QiY--cL_3Belvs_p1e3MBBF-ZqpeRGK5Dg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMiIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4MiJ9.CRLEWezIwxVZpInMt3zY3FbIWXN48PS7JGAn0P4boK14v8vMz-RKqhfNBUAgLa_YPCiEkuLijMarRY8D90JSBg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoieW5hNXlNQlJYS0VFLVBQVllTZVM4bjNvaVNYOGJ4N1ZaZExVdUpRZGxqSSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMiIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4MiJ9.4LwF12WAtOfqIqgPE87OcC7Sbnh91kmKGdduLZLXmh4hUpVyY7N3QiY--cL_3Belvs_p1e3MBBF-ZqpeRGK5Dg
 ```
 
 ---
@@ -11877,7 +12170,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000c13","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public","reviewed"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c83"}
+{"aat_aud":"https://tools.example.com","aat_hash":"xNnnuisIVrvbQEaLfLTZK07mMWCzGLXtyHCVwlkEW1U","aat_id":"019471f8-0000-7000-8000-000000000c13","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public","reviewed"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c83"}
 ```
 Pretty payload:
 ```json
@@ -11885,6 +12178,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000c83",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000c13",
+  "aat_hash": "xNnnuisIVrvbQEaLfLTZK07mMWCzGLXtyHCVwlkEW1U",
   "aat_tool": "publish",
   "hta": {
     "label": "public",
@@ -11903,13 +12197,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMyIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIiwicmV2aWV3ZWQiXX0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYzgzIn0` |
-| SHA-256(signing input), base64url | `5JtBnuJdD1IZDBE-CgGo6DVnY9qCCLunMVFSUEb6dz8` |
-| signature_b64 | `0sTMEeVV6cirMmGcE3v41IanyyZwCbJ7ok81QVtDgEhoNd8tq3lqZwJQKXa-AVkvrVNvVTalenFEY4YxlqJvDg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoieE5ubnVpc0lWcnZiUUVhTGZMVFpLMDdtTVdDekdMWHR5SENWd2xrRVcxVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMyIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIiwicmV2aWV3ZWQiXX0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYzgzIn0` |
+| SHA-256(signing input), base64url | `hFExy-obUdVgAhkwjamcL4gG8bPaDey6skL03LvomEQ` |
+| signature_b64 | `B5_u6W1zNrAS4dRy6bXwGEVMTM2xR1BmVO6QiPryYHZTTIiQdPT-_aIVK9fIpmZnYDdzDLzOS-GxAFswtuQPDg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMyIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIiwicmV2aWV3ZWQiXX0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYzgzIn0.0sTMEeVV6cirMmGcE3v41IanyyZwCbJ7ok81QVtDgEhoNd8tq3lqZwJQKXa-AVkvrVNvVTalenFEY4YxlqJvDg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoieE5ubnVpc0lWcnZiUUVhTGZMVFpLMDdtTVdDekdMWHR5SENWd2xrRVcxVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxMyIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIiwicmV2aWV3ZWQiXX0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYzgzIn0.B5_u6W1zNrAS4dRy6bXwGEVMTM2xR1BmVO6QiPryYHZTTIiQdPT-_aIVK9fIpmZnYDdzDLzOS-GxAFswtuQPDg
 ```
 
 ---
@@ -12078,7 +12372,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000c14","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c84"}
+{"aat_aud":"https://tools.example.com","aat_hash":"h1rYmPVJN8UOJfnWT_T-N0Y5HDQPyxAVes4y7cDp69Q","aat_id":"019471f8-0000-7000-8000-000000000c14","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c84"}
 ```
 Pretty payload:
 ```json
@@ -12086,6 +12380,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000c84",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000c14",
+  "aat_hash": "h1rYmPVJN8UOJfnWT_T-N0Y5HDQPyxAVes4y7cDp69Q",
   "aat_tool": "publish",
   "hta": {
     "label": "public",
@@ -12103,13 +12398,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNCIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NCJ9` |
-| SHA-256(signing input), base64url | `KuejNBDfeXGMaFC0zTQCxhMII-acQOxVIAKOsJ4Z16U` |
-| signature_b64 | `GjazOyLfkrHzbx0WAZwy9M2pChht74PQWW_8VtKWZSlwfdKafO8jmTYa48oLVfKlmoAigVEQJ2w64X-eHNjJCg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaDFyWW1QVkpOOFVPSmZuV1RfVC1OMFk1SERRUHl4QVZlczR5N2NEcDY5USIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNCIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NCJ9` |
+| SHA-256(signing input), base64url | `hqgNRQBpXWpkwr0icJGSJfFo_H_iBug_6n83-WruaNI` |
+| signature_b64 | `jz8qevrUB3tocz0olNprQq4tSC5gBTHC2nU5qNe5j2tRofGlOkK8dNUAsXNMr50fpQXn95B5WZOVGhqxBjEpAw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNCIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NCJ9.GjazOyLfkrHzbx0WAZwy9M2pChht74PQWW_8VtKWZSlwfdKafO8jmTYa48oLVfKlmoAigVEQJ2w64X-eHNjJCg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiaDFyWW1QVkpOOFVPSmZuV1RfVC1OMFk1SERRUHl4QVZlczR5N2NEcDY5USIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNCIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NCJ9.jz8qevrUB3tocz0olNprQq4tSC5gBTHC2nU5qNe5j2tRofGlOkK8dNUAsXNMr50fpQXn95B5WZOVGhqxBjEpAw
 ```
 
 ---
@@ -12279,7 +12574,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000c15","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c85"}
+{"aat_aud":"https://tools.example.com","aat_hash":"kQ1gRKS2PvUGYvoNqx2H7h0DqlhZKu-rlzrgxCL2m5g","aat_id":"019471f8-0000-7000-8000-000000000c15","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c85"}
 ```
 Pretty payload:
 ```json
@@ -12287,6 +12582,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000c85",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000c15",
+  "aat_hash": "kQ1gRKS2PvUGYvoNqx2H7h0DqlhZKu-rlzrgxCL2m5g",
   "aat_tool": "publish",
   "hta": {
     "label": "public",
@@ -12304,13 +12600,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNSIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NSJ9` |
-| SHA-256(signing input), base64url | `R3Vdl-QmFnUnKVWwNWxYJh2tEyjXjMvXA0cHbtYrI48` |
-| signature_b64 | `YzBfVG0gwThUvAaYbj8xSUC-GlNV4Lnu_TCpG3yq5rmx0Ksce9plPbawUpjM2k3IDWhTJra04XGkALTmtKApBA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoia1ExZ1JLUzJQdlVHWXZvTnF4Mkg3aDBEcWxoWkt1LXJsenJneENMMm01ZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNSIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NSJ9` |
+| SHA-256(signing input), base64url | `M2g2cNpWRQUJK7gzrDQtrCV982vBrDKBk9J4r_19QK0` |
+| signature_b64 | `5t5kyX59S1fxd2HkwHVs--HNgnECf6YlcNlA5L8YkFHn1LyzHysLdrqmSwB1J8SnB97ew30OEWVv_rVhdx80Ag` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNSIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NSJ9.YzBfVG0gwThUvAaYbj8xSUC-GlNV4Lnu_TCpG3yq5rmx0Ksce9plPbawUpjM2k3IDWhTJra04XGkALTmtKApBA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoia1ExZ1JLUzJQdlVHWXZvTnF4Mkg3aDBEcWxoWkt1LXJsenJneENMMm01ZyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNSIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NSJ9.5t5kyX59S1fxd2HkwHVs--HNgnECf6YlcNlA5L8YkFHn1LyzHysLdrqmSwB1J8SnB97ew30OEWVv_rVhdx80Ag
 ```
 
 ---
@@ -12482,7 +12778,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000c16","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c86"}
+{"aat_aud":"https://tools.example.com","aat_hash":"8HTYDRD6wnRVS1-tDFcB9Tlgr10Xx7hcHLHA92f1c_k","aat_id":"019471f8-0000-7000-8000-000000000c16","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c86"}
 ```
 Pretty payload:
 ```json
@@ -12490,6 +12786,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000c86",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000c16",
+  "aat_hash": "8HTYDRD6wnRVS1-tDFcB9Tlgr10Xx7hcHLHA92f1c_k",
   "aat_tool": "publish",
   "hta": {
     "label": "public",
@@ -12507,13 +12804,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNiIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NiJ9` |
-| SHA-256(signing input), base64url | `63LOt4dPmciBQ-dvGfNnKfmITLg4-XPkoYzwQh7_crk` |
-| signature_b64 | `FDRpeydxp5-MW_mQ9ssyxmhNKa4Lhm8MVQOF5T7NHt6hYGCD8Ux3oVGLiU0ESqQ_TVF32UUghz2rhpbbkRV-Dg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiOEhUWURSRDZ3blJWUzEtdERGY0I5VGxncjEwWHg3aGNITEhBOTJmMWNfayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNiIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NiJ9` |
+| SHA-256(signing input), base64url | `depbwmHF3cp56s2crsMKni3g2tWqTqVnvjaXteThwn8` |
+| signature_b64 | `UJlS2oBVH5HiM7BIIB0TE05l0kfJvSX6C1RRMi4O4-PTvM9_mgyrQXLEShRPsQuESKw12OVL_n-3DWIKp228CA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNiIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NiJ9.FDRpeydxp5-MW_mQ9ssyxmhNKa4Lhm8MVQOF5T7NHt6hYGCD8Ux3oVGLiU0ESqQ_TVF32UUghz2rhpbbkRV-Dg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiOEhUWURSRDZ3blJWUzEtdERGY0I5VGxncjEwWHg3aGNITEhBOTJmMWNfayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNiIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NiJ9.UJlS2oBVH5HiM7BIIB0TE05l0kfJvSX6C1RRMi4O4-PTvM9_mgyrQXLEShRPsQuESKw12OVL_n-3DWIKp228CA
 ```
 
 ---
@@ -12685,7 +12982,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000c17","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c87"}
+{"aat_aud":"https://tools.example.com","aat_hash":"dhmbzTcJEOV9DvhaGW9qGrhqHzsdx6zpx1Uo5s-pFQ8","aat_id":"019471f8-0000-7000-8000-000000000c17","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c87"}
 ```
 Pretty payload:
 ```json
@@ -12693,6 +12990,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000c87",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000c17",
+  "aat_hash": "dhmbzTcJEOV9DvhaGW9qGrhqHzsdx6zpx1Uo5s-pFQ8",
   "aat_tool": "publish",
   "hta": {
     "label": "public",
@@ -12710,13 +13008,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNyIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NyJ9` |
-| SHA-256(signing input), base64url | `PbdWdJ3a-vexsAsRF3wTKXSR2CPIE5HUv2z3ho8spvg` |
-| signature_b64 | `c9cha10-EI2mi2c4Ufg1L8l-rxvh-Hb0XPCza8KfxdYEycMGDkHPU141XWzsAchn5wcKb-scWWwhcF2o_rpjAQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiZGhtYnpUY0pFT1Y5RHZoYUdXOXFHcmhxSHpzZHg2enB4MVVvNXMtcEZROCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNyIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NyJ9` |
+| SHA-256(signing input), base64url | `5tDhLxYRKwQOcX2R0HjK1vaw-J9BmO5BZ0voGbPrLBw` |
+| signature_b64 | `dAk2mJb_1kKdT96r0B2GJlqT5bd3LVd7X6ou_Wvv0NSYwg5KkcnuwLc-3ZRMkiw9uAhnjKv_VYsncEskGniIBw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNyIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NyJ9.c9cha10-EI2mi2c4Ufg1L8l-rxvh-Hb0XPCza8KfxdYEycMGDkHPU141XWzsAchn5wcKb-scWWwhcF2o_rpjAQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiZGhtYnpUY0pFT1Y5RHZoYUdXOXFHcmhxSHpzZHg2enB4MVVvNXMtcEZROCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxNyIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4NyJ9.dAk2mJb_1kKdT96r0B2GJlqT5bd3LVd7X6ou_Wvv0NSYwg5KkcnuwLc-3ZRMkiw9uAhnjKv_VYsncEskGniIBw
 ```
 
 ---
@@ -12888,7 +13186,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-000000000c18","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c88"}
+{"aat_aud":"https://tools.example.com","aat_hash":"nI0nyJJY8YDw2Vqsy1XCJpjct7TVI2GroAYGH8NQ16c","aat_id":"019471f8-0000-7000-8000-000000000c18","aat_tool":"publish","hta":{"label":"public","limit":10,"roles":["reader"],"tags":["public"]},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000c88"}
 ```
 Pretty payload:
 ```json
@@ -12896,6 +13194,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000c88",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-000000000c18",
+  "aat_hash": "nI0nyJJY8YDw2Vqsy1XCJpjct7TVI2GroAYGH8NQ16c",
   "aat_tool": "publish",
   "hta": {
     "label": "public",
@@ -12913,13 +13212,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxOCIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4OCJ9` |
-| SHA-256(signing input), base64url | `b5g1H9bHjVbd6h_gEIdtkxRrG2vsJ7SSRnTU14poS8w` |
-| signature_b64 | `8zcXd6ZzIElBzFNbDNTFm9j1H1_8Qe5Sa4O_sRxXT15mydV3zEZqYwN_Zu-I4rf9nB3MTHY0yaViK69AS7M5CQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoibkkwbnlKSlk4WUR3MlZxc3kxWENKcGpjdDdUVkkyR3JvQVlHSDhOUTE2YyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxOCIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4OCJ9` |
+| SHA-256(signing input), base64url | `iG2dqDOChjXvGumciv3XYFnHnGQYNRLaSS3rPNA2JC8` |
+| signature_b64 | `dbelRi0o1VpEsV_6mibEaXzbselY8hVIaCbdPyIZ1Sq_p6pSopkSWdyhMobT2GQDkfW3_YOSytPsxorns89ABA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxOCIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4OCJ9.8zcXd6ZzIElBzFNbDNTFm9j1H1_8Qe5Sa4O_sRxXT15mydV3zEZqYwN_Zu-I4rf9nB3MTHY0yaViK69AS7M5CQ
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoibkkwbnlKSlk4WUR3MlZxc3kxWENKcGpjdDdUVkkyR3JvQVlHSDhOUTE2YyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGMxOCIsImFhdF90b29sIjoicHVibGlzaCIsImh0YSI6eyJsYWJlbCI6InB1YmxpYyIsImxpbWl0IjoxMCwicm9sZXMiOlsicmVhZGVyIl0sInRhZ3MiOlsicHVibGljIl19LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGM4OCJ9.dbelRi0o1VpEsV_6mibEaXzbselY8hVIaCbdPyIZ1Sq_p6pSopkSWdyhMobT2GQDkfW3_YOSytPsxorns89ABA
 ```
 
 ---
@@ -13092,7 +13391,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-0000000000d1","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000d81"}
+{"aat_aud":"https://tools.example.com","aat_hash":"ZWsM4NnKIFJwPGU-luG_sOVX--AvhmVaK3xvDBuDDCU","aat_id":"019471f8-0000-7000-8000-0000000000d1","aat_tool":"export","hta":{"format":"pdf","limit":10},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000d81"}
 ```
 Pretty payload:
 ```json
@@ -13100,6 +13399,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000d81",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-0000000000d1",
+  "aat_hash": "ZWsM4NnKIFJwPGU-luG_sOVX--AvhmVaK3xvDBuDDCU",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -13111,13 +13411,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBkMSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZDgxIn0` |
-| SHA-256(signing input), base64url | `jCsxd7QCHvA7R9pdPK6PRToCkZfnq1e8dmfjFrOHfTA` |
-| signature_b64 | `OICZe7b3wDngWw8GO8_gR6Fl7NrVVBjqXflFN1yX8mpfSMdvInWMtHHrwlKwCdcVDi1Z7z1k6lyD8XYpyg5BBw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiWldzTTRObktJRkp3UEdVLWx1R19zT1ZYLS1BdmhtVmFLM3h2REJ1RERDVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBkMSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZDgxIn0` |
+| SHA-256(signing input), base64url | `XIlVvyzMyRVtbPI82wjb5uMrciQFxKul3L7LQ-3Fuhg` |
+| signature_b64 | `yEL1zQp1-Gg28Vqeij9DfGIJBpHIjxGOJgiqU4oQg-A_sZKOMTuSufqCEE3HeDquBIeQD1DIa8Yx-ND1zEKgAw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBkMSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZDgxIn0.OICZe7b3wDngWw8GO8_gR6Fl7NrVVBjqXflFN1yX8mpfSMdvInWMtHHrwlKwCdcVDi1Z7z1k6lyD8XYpyg5BBw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiWldzTTRObktJRkp3UEdVLWx1R19zT1ZYLS1BdmhtVmFLM3h2REJ1RERDVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBkMSIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjoxMH0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZDgxIn0.yEL1zQp1-Gg28Vqeij9DfGIJBpHIjxGOJgiqU4oQg-A_sZKOMTuSufqCEE3HeDquBIeQD1DIa8Yx-ND1zEKgAw
 ```
 
 ---
@@ -13278,7 +13578,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-0000000000d2","aat_tool":"export","hta":{"format":"pdf","limit":3},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000d82"}
+{"aat_aud":"https://tools.example.com","aat_hash":"GyeoZFIf8GMDFjvdZm_SjesnnTUYh7f-TkjQnTeDqlE","aat_id":"019471f8-0000-7000-8000-0000000000d2","aat_tool":"export","hta":{"format":"pdf","limit":3},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000d82"}
 ```
 Pretty payload:
 ```json
@@ -13286,6 +13586,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000d82",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-0000000000d2",
+  "aat_hash": "GyeoZFIf8GMDFjvdZm_SjesnnTUYh7f-TkjQnTeDqlE",
   "aat_tool": "export",
   "hta": {
     "format": "pdf",
@@ -13297,13 +13598,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBkMiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjozfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBkODIifQ` |
-| SHA-256(signing input), base64url | `kdqz30maNcNSTSsS5AdhWNKE_ZDn__3CHsuxKTjqtRk` |
-| signature_b64 | `zA4LZVPEtLqRy4B8BkOVXVgdBVU1PBr3VYf4fzn5my1BX3VVvFG9VpPjyxwbt7BYKrDrHL8PYA_M-G6XPwX-CA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiR3llb1pGSWY4R01ERmp2ZFptX1NqZXNublRVWWg3Zi1Ua2pRblRlRHFsRSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBkMiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjozfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBkODIifQ` |
+| SHA-256(signing input), base64url | `cTb5pxdiem5zYf_oN3xmAp1xfBBzgCKX4Hx8lBN7Vb4` |
+| signature_b64 | `P4ZtixoR17bS6hqTWFa8WwYXM0gkcMNDpISOxDUPYhFWR4Zi0CJfP_XCX2I__ERpx6iFhBpeJA4HkZs6M4nKCw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBkMiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjozfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBkODIifQ.zA4LZVPEtLqRy4B8BkOVXVgdBVU1PBr3VYf4fzn5my1BX3VVvFG9VpPjyxwbt7BYKrDrHL8PYA_M-G6XPwX-CA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiR3llb1pGSWY4R01ERmp2ZFptX1NqZXNublRVWWg3Zi1Ua2pRblRlRHFsRSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBkMiIsImFhdF90b29sIjoiZXhwb3J0IiwiaHRhIjp7ImZvcm1hdCI6InBkZiIsImxpbWl0IjozfSwiaWF0IjoxNzA0MDY3NTAwLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDBkODIifQ.P4ZtixoR17bS6hqTWFa8WwYXM0gkcMNDpISOxDUPYhFWR4Zi0CJfP_XCX2I__ERpx6iFhBpeJA4HkZs6M4nKCw
 ```
 
 ---
@@ -13376,7 +13677,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-0000000000e1","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e81"}
+{"aat_aud":"https://tools.example.com","aat_hash":"W-0BUF33jWuDkDeQr07-4YPDw4qyLFG9mPNBQGPfiQw","aat_id":"019471f8-0000-7000-8000-0000000000e1","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e81"}
 ```
 Pretty payload:
 ```json
@@ -13384,6 +13685,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000e81",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-0000000000e1",
+  "aat_hash": "W-0BUF33jWuDkDeQr07-4YPDw4qyLFG9mPNBQGPfiQw",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -13394,13 +13696,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgxIn0` |
-| SHA-256(signing input), base64url | `BTPB8sUI8pLo81_HPtUtVvVipk0zq_jdR_UI4RaiHYI` |
-| signature_b64 | `dzWiIi_vwO_e0Nv9M6gg6de_jJyAS_-dzQpdfEe6ZCjT5dSYuj9B1u0zDItJO6GnslkPFF4KUPqePDl066yiAw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiVy0wQlVGMzNqV3VEa0RlUXIwNy00WVBEdzRxeUxGRzltUE5CUUdQZmlRdyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgxIn0` |
+| SHA-256(signing input), base64url | `igSrCpQWjD8j0fb0pJNikKapznFXikETCg2X9I5cA7U` |
+| signature_b64 | `I3p_1FvwBVM4kKKEXVxBoSVoGdSzK06LqUClhn8qrS02AaNA2Vvk-9dx_djMZ_bUM6dzTywEnF8fDCWnj6QjBg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgxIn0.dzWiIi_vwO_e0Nv9M6gg6de_jJyAS_-dzQpdfEe6ZCjT5dSYuj9B1u0zDItJO6GnslkPFF4KUPqePDl066yiAw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiVy0wQlVGMzNqV3VEa0RlUXIwNy00WVBEdzRxeUxGRzltUE5CUUdQZmlRdyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgxIn0.I3p_1FvwBVM4kKKEXVxBoSVoGdSzK06LqUClhn8qrS02AaNA2Vvk-9dx_djMZ_bUM6dzTywEnF8fDCWnj6QjBg
 ```
 
 ---
@@ -13472,7 +13774,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-0000000000e2","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e82"}
+{"aat_aud":"https://tools.example.com","aat_hash":"NfUBRYoMW6k54okUW-0RAoJh80teyiUPTNyWrJuV-MA","aat_id":"019471f8-0000-7000-8000-0000000000e2","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e82"}
 ```
 Pretty payload:
 ```json
@@ -13480,6 +13782,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000e82",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-0000000000e2",
+  "aat_hash": "NfUBRYoMW6k54okUW-0RAoJh80teyiUPTNyWrJuV-MA",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -13490,13 +13793,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgyIn0` |
-| SHA-256(signing input), base64url | `0snJzhvijFX2IT-YLvPbKQE4JWxmXR6imPAl1XYejwg` |
-| signature_b64 | `vcQFopfLZwDGGavbskmiMs0YoN08QFZbCFoDVuu6EdGMKRdb8-LufKnakHJH23CTpN3yxDQITnSUX309-d6yDw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTmZVQlJZb01XNms1NG9rVVctMFJBb0poODB0ZXlpVVBUTnlXckp1Vi1NQSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgyIn0` |
+| SHA-256(signing input), base64url | `g0KHJAiE5-_oDC7dbsMGfSSq2R2L6aCLIzGRQBb7DO4` |
+| signature_b64 | `LrylNyTjR944UmN-D020yZaYLY7PzF98543mRHVN9iJesaD1kDgJ8Bs9HOKSF3NYnDYyip3Hxot2WJ1oorZ8Cw` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgyIn0.vcQFopfLZwDGGavbskmiMs0YoN08QFZbCFoDVuu6EdGMKRdb8-LufKnakHJH23CTpN3yxDQITnSUX309-d6yDw
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTmZVQlJZb01XNms1NG9rVVctMFJBb0poODB0ZXlpVVBUTnlXckp1Vi1NQSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgyIn0.LrylNyTjR944UmN-D020yZaYLY7PzF98543mRHVN9iJesaD1kDgJ8Bs9HOKSF3NYnDYyip3Hxot2WJ1oorZ8Cw
 ```
 
 ---
@@ -13571,7 +13874,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-0000000000e3","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e83"}
+{"aat_aud":"https://tools.example.com","aat_hash":"xJ-Z4AEgOiQRBeF8KpuXsH8avPh485kwlENwRfCFR3A","aat_id":"019471f8-0000-7000-8000-0000000000e3","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e83"}
 ```
 Pretty payload:
 ```json
@@ -13579,6 +13882,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000e83",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-0000000000e3",
+  "aat_hash": "xJ-Z4AEgOiQRBeF8KpuXsH8avPh485kwlENwRfCFR3A",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -13589,13 +13893,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgzIn0` |
-| SHA-256(signing input), base64url | `25nSUIuiQq3x4G9-2oj2UtB7X-ybN8ZphH19NnKWzm8` |
-| signature_b64 | `nJMp8lmy7_uNcETlpWxLSa3uw2Tm1gnQDJuFK5W-HTerReWfPdFSR84sEkxQ_EklbTpfX2ZpH5_oRdFhHbJRBA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoieEotWjRBRWdPaVFSQmVGOEtwdVhzSDhhdlBoNDg1a3dsRU53UmZDRlIzQSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgzIn0` |
+| SHA-256(signing input), base64url | `O0R3v-RukZ2c4IwxtXYrtUJho0Q4bPMGL5S5ethIS0s` |
+| signature_b64 | `Rrxc2pq7cUtEQmNc_FgeddduU0d42qZsqGjbG30qMf4qZuxj8IP65FZYwhXzDSjoy2g76A8NoyRf7ZH0odSmCQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgzIn0.nJMp8lmy7_uNcETlpWxLSa3uw2Tm1gnQDJuFK5W-HTerReWfPdFSR84sEkxQ_EklbTpfX2ZpH5_oRdFhHbJRBA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoieEotWjRBRWdPaVFSQmVGOEtwdVhzSDhhdlBoNDg1a3dsRU53UmZDRlIzQSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlMyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTgzIn0.Rrxc2pq7cUtEQmNc_FgeddduU0d42qZsqGjbG30qMf4qZuxj8IP65FZYwhXzDSjoy2g76A8NoyRf7ZH0odSmCQ
 ```
 
 ---
@@ -13667,7 +13971,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-0000000000e4","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e84"}
+{"aat_aud":"https://tools.example.com","aat_hash":"8MWerveBdegaCVMit2sSXwlyVHe0NK_LpNLd4nRYxpY","aat_id":"019471f8-0000-7000-8000-0000000000e4","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e84"}
 ```
 Pretty payload:
 ```json
@@ -13675,6 +13979,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000e84",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-0000000000e4",
+  "aat_hash": "8MWerveBdegaCVMit2sSXwlyVHe0NK_LpNLd4nRYxpY",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -13685,13 +13990,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg0In0` |
-| SHA-256(signing input), base64url | `Y-p3uQaiCDnKWFppMd8g8oQ5HUiw3Pa2qUf3Dpq7N64` |
-| signature_b64 | `4czc1krngIiJWu8W1kwzEqxh3VabQqbRyB78D-FGLm0AAF9WJlPII6_UAi8B655eNUdnv58NbU0Rhjf4wjEYDg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiOE1XZXJ2ZUJkZWdhQ1ZNaXQyc1NYd2x5VkhlME5LX0xwTkxkNG5SWXhwWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg0In0` |
+| SHA-256(signing input), base64url | `UtIRjRCoOOQ_lZalgZ35VbNlLA48awqbOUaDhbOy3WI` |
+| signature_b64 | `day0mlm9m6n1QCjUTFdlDAVefTBOqzcSmNhSNWC-OzTdFOc4zslLj1FJwHW8sn3WIAqrTu6rwtGiMuTQVklqBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg0In0.4czc1krngIiJWu8W1kwzEqxh3VabQqbRyB78D-FGLm0AAF9WJlPII6_UAi8B655eNUdnv58NbU0Rhjf4wjEYDg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiOE1XZXJ2ZUJkZWdhQ1ZNaXQyc1NYd2x5VkhlME5LX0xwTkxkNG5SWXhwWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg0In0.day0mlm9m6n1QCjUTFdlDAVefTBOqzcSmNhSNWC-OzTdFOc4zslLj1FJwHW8sn3WIAqrTu6rwtGiMuTQVklqBQ
 ```
 
 ---
@@ -13763,7 +14068,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-0000000000e5","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e85"}
+{"aat_aud":"https://tools.example.com","aat_hash":"15bor-ioruxzEyNqQFrpP1ZyS9JWh8wHzDnC_FNGWVY","aat_id":"019471f8-0000-7000-8000-0000000000e5","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e85"}
 ```
 Pretty payload:
 ```json
@@ -13771,6 +14076,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000e85",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-0000000000e5",
+  "aat_hash": "15bor-ioruxzEyNqQFrpP1ZyS9JWh8wHzDnC_FNGWVY",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -13781,13 +14087,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg1In0` |
-| SHA-256(signing input), base64url | `hmbtByqQNoo7383UIYVKA_P6KduWYbWJ_4DzzYbbYZo` |
-| signature_b64 | `OKRF6IW9RvUTxB-tEY6CMNtqD2Nar5mGViXrnthB3PJBnbPf1BJ2dOY_Gl_OPsq8O2LsyyWAcnj2WYWZY_JzCg` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMTVib3ItaW9ydXh6RXlOcVFGcnBQMVp5UzlKV2g4d0h6RG5DX0ZOR1dWWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg1In0` |
+| SHA-256(signing input), base64url | `C8uDzNdZNZFKxJXul_V1sKRqPj_9DNs7mCu5n-ytFRA` |
+| signature_b64 | `YIY7pd2bIRTka-DxjKaH7RYG7yQS5OcQwr1fPcDHxi6wpU8pMwL13W5qAg66bh-XaglOCx1XxbI5CzCp7nOlBA` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg1In0.OKRF6IW9RvUTxB-tEY6CMNtqD2Nar5mGViXrnthB3PJBnbPf1BJ2dOY_Gl_OPsq8O2LsyyWAcnj2WYWZY_JzCg
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMTVib3ItaW9ydXh6RXlOcVFGcnBQMVp5UzlKV2g4d0h6RG5DX0ZOR1dWWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg1In0.YIY7pd2bIRTka-DxjKaH7RYG7yQS5OcQwr1fPcDHxi6wpU8pMwL13W5qAg66bh-XaglOCx1XxbI5CzCp7nOlBA
 ```
 
 ---
@@ -13859,7 +14165,7 @@ Protected header (JCS):
 ```
 Payload (JCS, this exact byte string is what is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8000-0000000000e6","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e86"}
+{"aat_aud":"https://tools.example.com","aat_hash":"zpQgJ7lIFY7B1J7q2e7Rfo557TP4qL_jfn_ssZqR1Ko","aat_id":"019471f8-0000-7000-8000-0000000000e6","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e86"}
 ```
 Pretty payload:
 ```json
@@ -13867,6 +14173,7 @@ Pretty payload:
   "jti": "019471f8-0000-7000-8000-000000000e86",
   "iat": 1704067500,
   "aat_id": "019471f8-0000-7000-8000-0000000000e6",
+  "aat_hash": "zpQgJ7lIFY7B1J7q2e7Rfo557TP4qL_jfn_ssZqR1Ko",
   "aat_tool": "read_file",
   "hta": {
     "path": "/data/q3-report.pdf"
@@ -13877,13 +14184,13 @@ Pretty payload:
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg2In0` |
-| SHA-256(signing input), base64url | `KL0JAzCa0dbsEaiB-jE8N8UZT1zcAOKrV-paGr1S8KY` |
-| signature_b64 | `iJkemjplYlFmaebdeZBqAXIs5w5uBH1VocPwvn0WegXwta_zj5d58yLCLjVKLQFyQu_1rPXmyz3vkn21WzACCA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoienBRZ0o3bElGWTdCMUo3cTJlN1JmbzU1N1RQNHFMX2pmbl9zc1pxUjFLbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg2In0` |
+| SHA-256(signing input), base64url | `nL8Yo0wP6zMQMpGDYtFFTFxvmsZxn8qhgdQrkEC3eSQ` |
+| signature_b64 | `r8Ybbcy6VRS3gxtVnV5ejbNWx9zxBm7A5pIXDiqfBJI1c7JIiRLSe4AOGAPeNwOfVi-juoSzOv0MuJKSmdLbCg` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg2In0.iJkemjplYlFmaebdeZBqAXIs5w5uBH1VocPwvn0WegXwta_zj5d58yLCLjVKLQFyQu_1rPXmyz3vkn21WzACCA
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoienBRZ0o3bElGWTdCMUo3cTJlN1JmbzU1N1RQNHFMX2pmbl9zc1pxUjFLbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg2In0.r8Ybbcy6VRS3gxtVnV5ejbNWx9zxBm7A5pIXDiqfBJI1c7JIiRLSe4AOGAPeNwOfVi-juoSzOv0MuJKSmdLbCg
 ```
 
 ---

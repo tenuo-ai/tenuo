@@ -603,8 +603,6 @@ named in it, and every named argument must be present. An argument that
 is sometimes omitted can be authorized only by an empty constraint map,
 which leaves every argument unrestricted. To authorize an argument
 without restricting its value, use a `wildcard` constraint (see below).
-Profiles or extension constraint types that need optional constrained
-arguments must define that behavior explicitly.
 
 A token issuer that wishes to allow unconstrained arguments alongside
 constrained ones MUST explicitly include a `wildcard` constraint for
@@ -763,8 +761,8 @@ containment algorithms.
 
 **Cross-type subsumption rules.** The registration MUST list every
 (parent type, child type) pair involving the new type and a core type
-defined in Section 3.4 that is a valid attenuation, with its
-conditions. Enforcement points MUST treat unlisted pairs as invalid.
+defined in Section 3.4 or a previously registered extension type that
+is a valid attenuation, with its conditions. Enforcement points MUST treat unlisted pairs as invalid.
 A parent `wildcard` subsumes every type, including extension types,
 and need not be listed.
 
@@ -1432,9 +1430,10 @@ holder's private key. It MUST contain the required claims listed below.
 | `jti` | string | REQUIRED | Fresh random identifier. The holder MUST NOT reuse a `jti` value across PoP JWTs it produces. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 8.5). |
 | `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3). |
 | `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
+| `aat_hash` | string | REQUIRED | Base64url-encoded SHA-256 digest of the leaf token's signing input, computed as for `par_hash` (Section 4.6). Binds the proof to the exact leaf token presented, following the DPoP `ath` claim ({{RFC9449}} Section 4.2). |
 | `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
 | `aat_aud` | string | OPTIONAL | Presentation audience: identifies the party to which the holder presents this PoP JWT, with the semantics of the JWT `aud` claim ({{RFC7519}} Section 4.1.3) and the target binding of DPoP `htu` ({{RFC9449}}). It names the next hop, never a resource behind it that the holder cannot see (Section 8.5). When present, an enforcement point MUST reject a PoP JWT whose `aat_aud` does not identify itself. An enforcement point MAY require the claim. |
-| `nonce` | string | OPTIONAL | A value previously supplied by this enforcement point, following the server-provided nonce pattern of DPoP ({{RFC9449}} Section 8). An enforcement point that requires a nonce MUST reject a PoP JWT that omits it or carries a value the enforcement point did not issue or no longer accepts. How the nonce reaches the holder is transport-specific and out of scope. The claim name is the registered `nonce` claim ({{OIDC.Core}}, as updated by {{RFC9449}} Section 12.7.1). |
+| `nonce` | string | OPTIONAL | A value previously supplied by this enforcement point, following the server-provided nonce pattern of DPoP ({{RFC9449}} Section 9). An enforcement point that requires a nonce MUST reject a PoP JWT that omits it or carries a value the enforcement point did not issue or no longer accepts. How the nonce reaches the holder is transport-specific and out of scope. The claim name is the registered `nonce` claim ({{OIDC.Core}}, as updated by {{RFC9449}} Section 12.7.1). |
 | `hta` | object | REQUIRED | The tool arguments for this invocation. Keys are argument names; values are argument values. |
 
 The PoP JWT payload MUST be serialized as JCS-canonical JSON
@@ -1463,6 +1462,7 @@ Payload:
   "jti": "c980f2a1-4a37-4e88-bb3c-9defd37c1a45",
   "iat": 1741600300,
   "aat_id": "01957a41-0081-7c20-bf3a-00a0c91e1234",
+  "aat_hash": "sha256_base64url_of_leaf_token_signing_input",
   "aat_tool": "read_file",
   "aat_aud": "https://tools.example.com",
   "hta": { "path": "/data/q3-report.pdf" }
@@ -1484,7 +1484,8 @@ The enforcement point MUST reject a PoP JWT that:
 2. Has a signature that does not verify under the leaf token's
    `cnf.jwk`.
 3. References an `aat_id` that does not match the `jti` of the
-   presented leaf token.
+   presented leaf token, or carries an `aat_hash` that does not
+   match the digest of the presented leaf token's signing input.
 4. Contains an `aat_aud` claim that does not identify the
    enforcement point receiving the presentation, or omits
    `aat_aud` when this enforcement point requires it (Section
@@ -1505,7 +1506,9 @@ a captured PoP JWT remains usable until its `iat` leaves the window. It
 MUST NOT be the only replay control for tool invocations that have side
 effects or are not idempotent. For those, the enforcement point MUST
 track presented `jti` values, retaining each one only until its `iat`
-leaves the window.
+leaves the window (Section 7, step 7i). The enforcement point
+determines which of its tools have side effects; tokens do not carry
+this.
 
 Accepting a PoP JWT at most once across a deployment additionally
 requires that no other enforcement point accept the same proof: either
@@ -1812,7 +1815,9 @@ Algorithm:
                                                      (Sec 8.13)
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
       signature verification succeeds, parse the PoP JWT claims. (I6)
-   c. Verify pop_jwt.aat_id == leaf.jti.
+   c. Verify pop_jwt.jti is present and is a non-empty string,
+      pop_jwt.aat_id == leaf.jti, and pop_jwt.aat_hash equals
+      base64url-nopad(SHA-256(leaf token signing input)).
    d. If pop_jwt.aat_aud is present, verify it identifies this
       enforcement point. If it does not, DENY. If it is absent
       and this enforcement point requires PoP audience binding
@@ -1828,6 +1833,10 @@ Algorithm:
       verify pop_jwt.nonce is present and is a value this
       enforcement point issued and still accepts. If absent,
       unknown, or expired, DENY.
+   i. If this enforcement point tracks PoP `jti` values for the
+      invoked tool (Section 5.3), verify pop_jwt.jti has not been
+      accepted within the tolerance window, then record it. If it
+      has, DENY.
 
 8. PERMIT.
 ~~~
@@ -2104,14 +2113,14 @@ at least one where the exposure exists:
 - **Presentation audience.** `aat_aud` names the party the holder
   hands the PoP JWT to, with the semantics of the JWT `aud` claim
   {{RFC7519}} and the target binding of DPoP `htu` {{RFC9449}}. It
-  is the next hop, never a resource behind it. A holder always knows
-  the next hop, so the claim is always settable. It is OPTIONAL
-  because a transparent intermediary between the holder and the
-  enforcement point would otherwise force the enforcement point to
-  accept an audience value it does not own.
+  is the next hop, never a resource behind it. The holder always
+  knows its next hop, so it can set the claim whenever that hop is
+  the enforcement point. It is OPTIONAL because when an intermediary
+  forwards the presentation unchanged, the next hop is not the
+  enforcement point, and the holder omits the claim (see below).
 - **Enforcement-point nonce.** The enforcement point supplies a
   nonce and requires the PoP JWT to carry it, following the DPoP
-  server-provided nonce pattern ({{RFC9449}} Section 8). A proof
+  server-provided nonce pattern ({{RFC9449}} Section 9). A proof
   bound to one enforcement point's nonce cannot be replayed at
   another, and the holder never needs to name or know the
   enforcement point.
@@ -2340,6 +2349,7 @@ Registry.
 | Claim Name | Claim Description | Change Controller | Reference |
 |---|---|---|---|
 | `aat_id` | AAT `jti` being presented | IETF | This document |
+| `aat_hash` | Hash of the AAT being presented | IETF | This document |
 | `aat_tool` | Tool identifier for PoP binding | IETF | This document |
 | `aat_aud` | Presentation audience for PoP binding | IETF | This document |
 | `hta` | Tool arguments for PoP binding | IETF | This document |
@@ -2385,9 +2395,10 @@ satisfies all of the following criteria before approving it:
    its soundness.
 
 4. The cross-type subsumption rules enumerate every (parent
-   type, child type) pair involving both the new type and
-   all existing core types that the registration declares
-   valid, with explicit conditions. Unlisted pairs are invalid. A
+   type, child type) pair involving the new type and a core
+   type or previously registered extension type that the
+   registration declares valid, with explicit conditions.
+   Unlisted pairs are invalid. A
    parent `wildcard` subsumes every type and need not be listed.
 
 5. The reference is a stable, publicly accessible specification
@@ -2434,7 +2445,6 @@ cross-type subsumption rules:
   Example:
     - (this_type, exact): valid if the exact value satisfies this
       type's check predicate.
-    - (exact, this_type): invalid.
     - (this_type, this_type): valid if [condition].)
 
 security considerations:
@@ -2665,13 +2675,15 @@ requests, and a URI alone carries insufficient information for
 argument-level constraint evaluation. This is why `aat_tool` and `hta`
 differ structurally from `htm` and `htu`: (1) `hta` carries the full
 argument map required for constraint evaluation at the enforcement
-point; (2) `aat_id` binds the proof to a specific leaf token `jti` and
-chain position, which DPoP does not define.
+point; (2) `aat_id` names the leaf token being presented. As DPoP's
+`ath` binds a proof to one access token, `aat_hash` binds an AAT PoP
+JWT to the exact leaf token, so a token re-derived with the same `jti`
+cannot reuse a captured proof.
 
 Two proof-level mechanisms are borrowed from DPoP directly. `aat_aud`
 follows the `htu` model of naming the target the proof is presented
 to, and the OPTIONAL `nonce` claim follows the DPoP server-provided
-nonce ({{RFC9449}} Section 8), so an enforcement point can bind proofs
+nonce ({{RFC9449}} Section 9), so an enforcement point can bind proofs
 to itself without the holder knowing its identity (Section 8.5).
 
 The cryptographic mechanism is the same: an asymmetric key in `cnf.jwk`,
@@ -2961,10 +2973,10 @@ PoP Payload (JCS):
 ~~~
 ========== NOTE: '\' line wrapping per RFC 8792 ==========
 
-{"aat_aud":"https://tools.example.com","aat_id":"019471f8-0000-7000-8\
-000-000000000001","aat_tool":"read_file","hta":{"path":"/data/q3-repo\
-rt.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a01\
-"}
+{"aat_aud":"https://tools.example.com","aat_hash":"c5dLB2dC4svl2kfnuL\
+N307nhKkSnxROsSD7pF954omo","aat_id":"019471f8-0000-7000-8000-00000000\
+0001","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"ia\
+t":1704067500,"jti":"019471f8-0000-7000-8000-000000000a01"}
 ~~~
 PoP compact serialization:
 
@@ -2972,11 +2984,13 @@ PoP compact serialization:
 ========== NOTE: '\' line wrapping per RFC 8792 ==========
 
 eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0c\
-HM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC\
-04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InB\
-hdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoi\
-MDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0.53KUJeP0FxoTOZhTp\
-fG2IuIUeO-RxktIu2-MTvRf15tf-bN6M92QRW4rjCoZcbY1309WClkSryoasNW3FYDaDg
+HM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiYzVkTEIyZEM0c3ZsMmtmbn\
+VMTjMwN25oS2tTbnhST3NTRDdwRjk1NG9tbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDA\
+tNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRh\
+Ijp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwia\
+nRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0.WpV5uIDDzs\
+7jo_t8IsHAfPrUI6iM4ytaM8cYN4wPOLhM4v1Y2wrvife4f-VPbKCrXDDVNDNXCzKGn7U\
+8LVavAA
 ~~~
 
 ## Three-Level Chain Linkage (Vector J.3)
@@ -3050,7 +3064,7 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision makes five normative changes. They are breaking for
+This revision makes seven normative changes. They are breaking for
 implementations that followed the -01 text.
 
 - **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
@@ -3090,6 +3104,16 @@ implementations that followed the -01 text.
   (Section 3.7.3). The -01 text both allowed a subset grant and
   required rejecting the whole request when any tool failed
   verification.
+- **Empty `all` rejected.** An `all` constraint with an empty
+  `constraints` array is invalid in any position (Section 4.5): an
+  empty conjunction accepts every value while appearing to constrain
+  it. The -01 text did not address it.
+- **PoP bound to the exact leaf token.** PoP JWTs carry a REQUIRED
+  `aat_hash`, the digest of the leaf token's signing input, checked in
+  Section 7 step 7c, following DPoP's `ath`. In -01 the proof named
+  the leaf only by `jti`, which the deriver chooses, so a holder
+  upstream of the leaf could re-derive a sibling with the same `jti`
+  and reuse a captured proof.
 
 Editorial and alignment changes, not intended to change behavior
 relative to the Section 7 algorithm in -01:
@@ -3103,9 +3127,6 @@ relative to the Section 7 algorithm in -01:
 - Section 5.3 now lists the `typ` and `alg` header check first, since
   Section 7 step 7a runs before signature verification.
 - The JWS Protected Header requirements are collected in Section 3.8.
-- An `all` constraint with an empty `constraints` array is now
-  explicitly invalid (Section 4.5), mirroring the existing rule for
-  `any`.
 - Section 1.3 states why HMAC chaining is unsuitable for the target
   verifier model and relates AAT to SPKI/SDSI {{RFC2693}}. Section
   8.1.1 adds parent- and intermediate-token replay to the mitigated
@@ -3116,12 +3137,14 @@ relative to the Section 7 algorithm in -01:
 - Byte-exact JWS test vectors are published as described in
   Appendix E. They encode the verifier-side normative changes above;
   a -01 implementation will disagree on `typ`, audience mismatch
-  handling, the `all` clause-reuse cases, and root `iss` binding.
+  handling, the `all` clause-reuse cases, root `iss` binding, and
+  `aat_hash`.
 - Section 4.5 uses one subsumption direction throughout: the parent
   constraint subsumes the derived one. The -01 text mixed both
   directions.
-- Section 3.5 states that evaluating an unregistered constraint type
-  is non-conforming. Registrations list only valid cross-type pairs,
+- Section 3.5 states the consequence of the existing registration
+  requirement: evaluating an unregistered constraint type is
+  non-conforming. Registrations list only valid cross-type pairs,
   a parent `wildcard` subsumes every type implicitly, and the
   registration template example now gives pairs in (parent, child)
   order.

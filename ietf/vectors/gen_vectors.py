@@ -487,8 +487,13 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
         raise Deny("6c", "chain audience required by policy but no token carries aud")
 
     pop = _verify_jws(pop_jwt, _jwk_pub(leaf["cnf"]["jwk"], "7b"), "7a", "7b", expected_typ="aat-pop+jwt")
+    if not (isinstance(pop.get("jti"), str) and pop["jti"]):
+        raise Deny("7c", "PoP jti missing")
     if pop.get("aat_id") != leaf["jti"]:
         raise Deny("7c", "aat_id != leaf.jti")
+    leaf_si = ".".join(_split(chain[-1])[:2])
+    if pop.get("aat_hash") != b64u(hashlib.sha256(leaf_si.encode("ascii")).digest()):
+        raise Deny("7c", "aat_hash does not match the presented leaf")
     pop_aud = pop.get("aat_aud")
     if pop_aud is not None and pop_aud != audience:
         raise Deny("7d", "aat_aud does not identify this enforcement point")
@@ -546,7 +551,8 @@ def pop_sign(payload: dict, signer: Key, header: dict = POP_HEADER) -> dict:
 
 def pop_claims(jti: str, leaf_tok: dict, tool: str, hta: dict, iat=NOW, aud=AUDIENCE,
                nonce: str | None = None) -> dict:
-    c = {"jti": jti, "iat": iat, "aat_id": leaf_tok["payload"]["jti"], "aat_tool": tool, "hta": hta}
+    c = {"jti": jti, "iat": iat, "aat_id": leaf_tok["payload"]["jti"], "aat_hash": par_hash_of(leaf_tok),
+         "aat_tool": tool, "hta": hta}
     if aud is not None:
         c["aat_aud"] = aud
     if nonce is not None:
@@ -846,6 +852,12 @@ add("J.20.6", "PoP aat_tool does not match the invocation tool", "A.20",
     [L0, L1], pop_sign(pop_claims(uuid7ish(0xAB6), L1, "read_file",
                                  {"query": "public filings", "limit": 5}), WK),
     "search_index", {"query": "public filings", "limit": 5}, "DENY", "7e")
+L2_sibling = jws_sign({**derived_claims(uuid7ish(0x12), L1, WK, WK2, L2_TOOLS, IAT_ROOT + 120, 1704068400, 2),
+                       "exp": 1704068700}, WK)
+add("J.20.7", "PoP replayed on a sibling leaf with the same jti", None,
+    "The Worker re-derives a sibling of the J.3 L2 with the same jti and holder but a different exp, and "
+    "presents it with the PoP Worker2 made for L2. aat_id matches; aat_hash does not (step 7c).",
+    [L0, L1, L2_sibling], POP3, "read_file", {"path": Q3}, "DENY", "7c")
 
 # --- J.9 closed-world enforcement at the leaf (§3.3, step 6b) ----------------
 add("J.9.1", "Closed-world: unconstrained extra argument", None,
