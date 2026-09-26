@@ -9,9 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
+  `ServerMiddleware` for `MCPServer` / low-level `Server` that runs
+  `MCPVerifier` on every `tools/call` before params validation, accepting the
+  envelope from `_meta.tenuo` or the gateway-safe `arguments._tenuo` carrier,
+  and forwarding `clean_arguments` with the carrier removed. Tools keep plain
+  signatures. This is what makes `inject_warrant="argument"` usable with
+  decorated tools: pydantic rejects a `_tenuo` parameter, and the SDK prunes
+  unknown arguments before the handler runs, so the carrier could previously
+  only be consumed by a raw `tools/call` handler (#719).
+  Register decorated tools with `@authorization.tool(mcp)` so a post-validation
+  guard also checks that final arguments match the verified request. Unsigned
+  defaults and SDK transformations fail closed; callers must send exact final
+  values. `raw_handler=True` is restricted to low-level dispatch that executes
+  clean arguments unchanged.
+
 - Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
 
 ### Fixed
+
+- **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**
+  That signature fails at registration on the official SDK; the docs now point
+  at the two middlewares and the raw-handler form.
 
 - **`TenuoPlugin` (Google ADK) now works under a real ADK `Runner`.** It did
   not match ADK's `BasePlugin` contract: it never called

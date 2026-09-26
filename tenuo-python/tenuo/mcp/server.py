@@ -83,18 +83,23 @@ reserved ``arguments._tenuo`` key. ``MCPVerifier`` removes that key before PoP
 verification, constraint extraction, and returning ``clean_arguments``. If
 both carriers are present, they must be identical or verification fails.
 
-With :class:`TenuoMiddleware`, ``_tenuo`` is removed before FastMCP dispatches
-to the tool, so tool signatures do not need to declare it. A high-level tool
-that invokes ``MCPVerifier`` itself must accept and forward the optional field::
+Use a middleware so tool signatures stay plain: :class:`TenuoMiddleware` on
+FastMCP, or :class:`~tenuo.mcp.mcpserver_middleware.TenuoServerMiddleware` on
+the official SDK's ``MCPServer`` (``mcp>=2``). Both remove ``_tenuo`` before
+the SDK validates and dispatches the call. With ``TenuoServerMiddleware``,
+register tools using ``@authorization.tool(mcp)`` so the final arguments
+are checked after SDK validation and before the effect. Callers must explicitly
+supply defaults; SDK changes to the verified arguments fail closed.
+A decorated tool cannot declare
+``_tenuo`` itself: the SDK builds a pydantic model from the signature, and
+pydantic rejects field names with a leading underscore. Only a raw
+``tools/call`` handler can pass the carrier through by hand::
 
-    @mcp.tool()
-    async def read_file(
-        path: str, _tenuo: dict | None = None
-    ) -> str:
-        clean = verifier.verify_or_raise(
-            "read_file", {"path": path, "_tenuo": _tenuo}
-        )
-        return open(clean["path"]).read()
+    async def handle_call_tool(req: types.CallToolRequest) -> types.ServerResult:
+        params = req.params
+        result = verifier.verify(params.name, params.arguments or {}, meta=params.meta)
+        result.raise_if_denied()
+        return execute_tool(result.clean_arguments)
 
 On the server, ``MCPVerifier.verify()`` reads ``_meta`` via its ``meta``
 parameter and automatically falls back to ``arguments._tenuo``. Pass
