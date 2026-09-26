@@ -1912,11 +1912,9 @@ re-associated with task `B` rather than task `A`. The `par_hash` check
 rejects this because `C` commits to the signing input of `A`, not
 `B`.
 
-**Token replay for irreversible operations.** For irreversible or
-side-effecting tool invocations, stateful `jti` tracking at the
-enforcement point enables prevention of PoP JWT replay. See Section 9.5
-for the distinction between stateful and probabilistic replay controls
-and the deployment requirements for each.
+**PoP JWT replay.** For tool invocations with side effects, stateful
+`jti` tracking at the enforcement point prevents PoP JWT replay
+(Section 7.3); Section 9.5 covers replay across enforcement points.
 
 ### Threats Not Mitigated
 
@@ -2032,20 +2030,13 @@ verification.
 
 ## Replay Attacks
 
-The PoP JWT binds a specific invocation to a fresh PoP `jti`, a
-timestamp, the target tool, the presented arguments, and, when
-present, the presentation audience and enforcement-point nonce. The
-timestamp window limits the interval during which a captured PoP JWT
-remains usable to approximately twice the clock tolerance (RECOMMENDED:
-±30 seconds, giving a window of roughly 60 seconds). This provides
-probabilistic replay resistance and is appropriate only for idempotent,
-read-only tool invocations where duplicate execution is harmless.
-
-For tool invocations that are irreversible or have significant side
-effects, including financial transactions, data deletion, writes to
-external systems, and any operation that cannot be undone: enforcement
-points MUST implement stateful `jti` tracking for PoP JWTs and MUST NOT
-rely solely on the timestamp window for replay protection.
+The `iat` window alone is a probabilistic control: a captured PoP JWT
+can be replayed for up to about twice the clock tolerance, roughly 60
+seconds at the RECOMMENDED setting (Section 9.10). Section 7.3
+therefore requires `jti` tracking for tool invocations that have side
+effects or are not idempotent, such as financial transactions, data
+deletion, writes to external systems, or anything that cannot be
+undone.
 
 PoP JWTs are scoped to the invocation data they contain. Without
 further binding, a PoP JWT captured at one enforcement point may be
@@ -2093,13 +2084,11 @@ require `aat_aud`, require a nonce, or share `jti` tracking state with
 the others. Which one is a deployment choice; this
 specification does not prefer among them.
 
-This specification requires stateful `jti` tracking for irreversible
-operations but does not define the storage backend, consistency model,
-or distribution protocol for that state. The required consistency
-properties depend on the deployment topology and the risk tolerance of
-the application. Deployments SHOULD treat the time-windowed PoP as a
-probabilistic control and layer additional idempotency mechanisms at the
-application level for high-value operations.
+This specification does not define the storage backend, consistency
+model, or distribution protocol for `jti` state; the required
+consistency depends on the deployment topology. Deployments SHOULD
+layer application-level idempotency mechanisms for high-value
+operations.
 
 ## Constraint Evaluation
 
@@ -2171,30 +2160,23 @@ or quorum requirements.
 ## Clock Skew
 
 This specification uses clock-based checks in two distinct contexts with
-different semantics. MAX_IAT_SKEW (Section 4.4, RECOMMENDED: 30 seconds)
-is a one-sided future-dating tolerance applied to token `iat` values: it
-prevents a token issued slightly in the future from being rejected due
-to minor clock drift between issuer and enforcement point. The PoP
-JWT timestamp window (Section 8, step 7g, RECOMMENDED: ±30 seconds)
-is a bilateral replay window applied to PoP JWT `iat` values: it bounds how long a captured
-PoP JWT remains usable. These are independent parameters enforced at
-different points in the verification algorithm and SHOULD be configured
-separately.
+different semantics. MAX_IAT_SKEW (Section 4.4) is a one-sided
+future-dating tolerance applied to token `iat` values: it prevents a
+token issued slightly in the future from being rejected due to minor
+clock drift between issuer and enforcement point. The PoP JWT timestamp
+window (Section 8, step 7g) is a bilateral replay window applied to PoP
+JWT `iat` values: it bounds how long a captured PoP JWT remains usable.
+These are independent parameters enforced at different points in the
+verification algorithm and SHOULD be configured separately.
 
 PoP JWT timestamp verification requires synchronized clocks. The
-RECOMMENDED tolerance window is ±30 seconds, which accommodates typical
-Network Time Protocol (NTP) synchronized deployments with generous
-margin. Deployments with well-synchronized clocks can use ±5 to ±10
-seconds. Deployments with
-stricter security requirements MAY reduce this window further.
-
-Implementations MUST enforce a finite maximum tolerance window. Values
-beyond ±60 seconds provide negligible additional clock skew tolerance
-while meaningfully expanding the PoP replay window and are NOT
-RECOMMENDED. A value of ±30 seconds is the conservative baseline; the
-upper end of ±60 seconds is intended only for heterogeneous
-environments such as embedded systems or degraded connectivity
-scenarios.
+RECOMMENDED window is ±30 seconds, which accommodates typical
+NTP-synchronized deployments; deployments with well-synchronized clocks
+can use ±5 to ±10 seconds, or less. Implementations MUST enforce a finite window.
+Values beyond ±60 seconds add little clock-skew tolerance while widening
+the replay window and are NOT RECOMMENDED; values near ±60 seconds suit
+only heterogeneous environments such as embedded systems or degraded
+connectivity.
 
 ## Role-Based Key Separation
 
