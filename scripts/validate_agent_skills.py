@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import os
 import re
@@ -270,7 +271,7 @@ def check_release_drift(
         else:
             warnings.append(
                 f"{message}; after tagging the release, the agent-skill-repin workflow "
-                "re-pins release.json, the reference links, and the behavioral evidence"
+                "re-pins release.json and the reference links while preserving behavioral evidence"
             )
 
 
@@ -302,8 +303,11 @@ def validate_behavioral_eval_result(
     errors: list[str],
     location: str = "payment-boundary-result.json",
     language: Optional[str] = None,
+    warnings: Optional[list[str]] = None,
 ) -> List[str]:
-    """Validate one language's result file and return the inputs it covers."""
+    """Reject malformed evidence; report outcomes/freshness without gating on them."""
+    if warnings is None:
+        warnings = []
     inputs = result.get("inputs")
     if (
         not isinstance(inputs, list)
@@ -317,6 +321,14 @@ def validate_behavioral_eval_result(
         return []
     if "SKILL.md" not in inputs:
         errors.append(f"{location}: inputs must include SKILL.md")
+    if any(
+        Path(item).is_absolute()
+        or ".." in Path(item).parts
+        or not (INTEGRATION_SKILL / item).resolve().is_relative_to(INTEGRATION_SKILL.resolve())
+        for item in inputs
+    ):
+        errors.append(f"{location}: inputs must stay inside the skill directory")
+        return []
     if language is not None:
         if result.get("language") != language:
             errors.append(f"{location}: language must be {language!r} to match the file name")
@@ -331,35 +343,67 @@ def validate_behavioral_eval_result(
         return []
 
     kind = result.get("evidence_kind")
-    if kind not in EVIDENCE_KINDS:
+    if not isinstance(kind, str) or kind not in EVIDENCE_KINDS:
         errors.append(f"{location}: evidence_kind must be one of {sorted(EVIDENCE_KINDS)}")
     elif kind == "carried_forward" and not str(result.get("carried_forward_review", "")).strip():
         errors.append(
             f"{location}: carried_forward evidence requires a carried_forward_review rationale"
         )
 
-    if result.get("result") != "pass":
-        errors.append(f"{location}: latest behavioral eval did not pass")
+    outcome = result.get("result")
+    if outcome not in ("pass", "fail"):
+        errors.append(f"{location}: result must be 'pass' or 'fail'")
+    elif outcome == "fail":
+        warnings.append(f"{location}: behavioral eval failed; review findings before merging")
+
+    evidence = result.get("evidence", {})
+    if not isinstance(evidence, dict):
+        errors.append(f"{location}: evidence must be an object")
+    else:
+        for field in ("critical_items", "required_reporting"):
+            value = evidence.get(field)
+            if value is not None and value not in ("passed", "failed"):
+                errors.append(f"{location}: evidence.{field} must be 'passed' or 'failed'")
+            if outcome == "pass" and value == "failed":
+                errors.append(f"{location}: passing result contradicts evidence.{field}")
+
+    fingerprint = result.get("skill_fingerprint")
+    if not isinstance(fingerprint, str) or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None:
+        errors.append(f"{location}: skill_fingerprint must be a SHA-256 hex digest")
+        return []
 
     current = behavioral_eval_fingerprint(inputs)
-    if result.get("skill_fingerprint") != current:
-        errors.append(
+    if fingerprint != current:
+        warnings.append(
             f"{location}: behavioral eval evidence is stale for {sorted(set(inputs))}; "
-            "rerun payment-boundary-eval.md (or record a carried_forward review for a "
-            f"non-behavioral change) with skill fingerprint {current}"
+            "historical results do not establish behavior of the current skill. "
+            "Review the change and decide whether a bounded replay is needed; preserve the recorded fingerprint."
         )
     return list(inputs)
 
 
-def load_behavioral_eval_results(errors: list[str], notices: list[str]) -> None:
-    """Validate every per-language result and report skill files none of them cover."""
+def load_behavioral_eval_results(
+    errors: list[str], notices: list[str], warnings: list[str]
+) -> str:
+    """Validate evidence and render an advisory report, not a model pass/fail gate."""
+    report = [
+        "## Skill behavioral evaluations (advisory)", "",
+        "CI validates evidence structure, not model quality. Failed or stale results require "
+        "a review decision, not automatic reruns. Green CI is not a behavioral pass.", "",
+        "| Language | Overall | Critical implementation | Reporting | Freshness | Evidence |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+
+    def cell(value: Any) -> str:
+        return (html.escape(str(value)).replace("|", "&#124;")
+                .replace("\n", " ").replace("\r", " "))
+
     covered: set[str] = set()
     result_files = sorted(BEHAVIORAL_EVAL_DIR.glob(BEHAVIORAL_EVAL_GLOB))
     if not result_files:
-        errors.append(
+        warnings.append(
             f"{BEHAVIORAL_EVAL_DIR.relative_to(ROOT)}: no {BEHAVIORAL_EVAL_GLOB} evidence found"
         )
-        return
     for path in result_files:
         location = str(path.relative_to(ROOT))
         language = path.name[len("payment-boundary-result.") : -len(".json")]
@@ -371,7 +415,25 @@ def load_behavioral_eval_results(errors: list[str], notices: list[str]) -> None:
         if not isinstance(result, dict):
             errors.append(f"{location}: eval result must be an object")
             continue
-        covered.update(validate_behavioral_eval_result(result, errors, location, language))
+        error_count = len(errors)
+        inputs = validate_behavioral_eval_result(result, errors, location, language, warnings)
+        covered.update(inputs)
+        freshness = "invalid evidence"
+        if len(errors) == error_count:
+            freshness = (
+                "current" if result["skill_fingerprint"] == behavioral_eval_fingerprint(inputs)
+                else "stale"
+            )
+        evidence = result.get("evidence", {})
+        if not isinstance(evidence, dict):
+            evidence = {}
+        report.append("| " + " | ".join(cell(value) for value in (
+            language, result.get("result", "missing"), evidence.get("critical_items", "not recorded"),
+            evidence.get("required_reporting", "not recorded"), freshness,
+            result.get("evidence_kind", "missing"),
+        )) + " |")
+        if evidence.get("notes"):
+            notices.append(f"{location}: {evidence['notes']}")
 
     uncovered = [item for item in skill_instruction_files() if item not in covered]
     if uncovered:
@@ -379,6 +441,12 @@ def load_behavioral_eval_results(errors: list[str], notices: list[str]) -> None:
             f"{BEHAVIORAL_EVAL_DIR.relative_to(ROOT)}: no committed behavioral evidence "
             f"covers {uncovered}"
         )
+    report.extend(["", "### Findings and coverage", ""])
+    report.extend(f"- {cell(message)}" for message in warnings + notices)
+    if errors:
+        report.extend(["", "### Validation errors", ""])
+        report.extend(f"- {cell(message)}" for message in errors)
+    return "\n".join(report) + "\n"
 
 
 def validate_skill(skill_dir: Path, documents: Dict[Path, str], errors: list[str]) -> None:
@@ -516,6 +584,10 @@ def _emit(level: str, message: str) -> None:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--summary", type=Path,
+        help="write the advisory behavioral evaluation report as Markdown",
+    )
+    parser.add_argument(
         "--require-current-release",
         action="store_true",
         help="fail when release.json does not match the SDK manifests at HEAD "
@@ -532,7 +604,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     tag_available = validate_release_contract(contract, errors) if contract else False
     if contract:
         check_release_drift(contract, errors, warnings, args.require_current_release)
-    load_behavioral_eval_results(errors, notices)
+    evaluation_report = load_behavioral_eval_results(errors, notices, warnings)
+    if args.summary:
+        args.summary.write_text(evaluation_report, encoding="utf-8")
 
     skill_dirs = sorted(path for path in SKILLS.iterdir() if path.is_dir())
     if not skill_dirs:
