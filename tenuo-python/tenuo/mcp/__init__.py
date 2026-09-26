@@ -72,6 +72,24 @@ except ImportError:
 
     __all__.append("TenuoMiddleware")
 
+# Official MCP SDK 2.x server middleware (MCPServer / low-level Server).
+try:
+    from .mcpserver_middleware import TenuoServerMiddleware  # noqa: F401
+
+    __all__.append("TenuoServerMiddleware")
+except ImportError:
+
+    class TenuoServerMiddleware:  # type: ignore[no-redef]
+        """Placeholder: real :class:`TenuoServerMiddleware` requires the MCP SDK 2.x."""
+
+        def __init__(self, *_a: object, **_kw: object) -> None:
+            raise ImportError(
+                "TenuoServerMiddleware requires the MCP SDK 2.x (mcp>=2). "
+                'Install with: pip install "tenuo[mcp]" mcp>=2. On FastMCP use TenuoMiddleware.'
+            ) from None
+
+    __all__.append("TenuoServerMiddleware")
+
 # Only export LangChain adapter if both MCP and LangChain are available
 try:
     from .langchain import MCPToolAdapter, mcp_tool_to_langchain  # noqa: F401
