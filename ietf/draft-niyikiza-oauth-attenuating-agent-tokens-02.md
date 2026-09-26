@@ -24,6 +24,7 @@ normative:
   RFC8725:   # JSON Web Token Best Current Practices
   RFC7800:   # Proof-of-Possession Key Semantics for JWTs
   RFC8032:   # EdDSA
+  RFC9864:   # Fully-Specified Algorithms for JOSE and COSE
   RFC8785:   # JSON Canonicalization Scheme (JCS)
   RFC9278:   # JWK Thumbprint URI
   RFC9396:   # Rich Authorization Requests
@@ -529,8 +530,10 @@ their absence carries the semantics described in the table.
 | `par_hash` | string | MUST (derived) / MUST NOT (root) | Base64url-encoded SHA-256 digest of the parent token signing input, using base64url encoding without padding as defined in {{RFC7515}} Appendix C. For JWT/JWS AATs, the parent token signing input is the JWS Signing Input. MUST be absent in root tokens. MUST be present in all derived tokens. |
 | `authorization_details` | array | REQUIRED | Tool capability claims. Format defined in Section 3.3. |
 
-Implementations MUST support Ed25519 {{RFC8032}} for token signing and
-verification. Implementations MAY support additional algorithms.
+Implementations MUST support Ed25519 {{RFC8032}}, JWS `alg` value
+`"Ed25519"` ({{RFC9864}}), for token signing and verification.
+Implementations MAY support additional asymmetric algorithms
+(Section 8.13).
 
 In both root and derived tokens, `iss` is a URI. For root tokens,
 `iss` is a URI identifying the root issuer, consistent with
@@ -824,7 +827,7 @@ All other cross-type pairs involving `path_containment` are invalid.
 Protected header:
 
 ~~~json
-{"alg":"EdDSA","typ":"aat+jwt"}
+{"alg":"Ed25519","typ":"aat+jwt"}
 ~~~
 
 Payload:
@@ -866,7 +869,7 @@ Payload:
 Protected header:
 
 ~~~json
-{"alg":"EdDSA","typ":"aat+jwt"}
+{"alg":"Ed25519","typ":"aat+jwt"}
 ~~~
 
 Payload:
@@ -1456,7 +1459,7 @@ signature against the leaf token's `cnf.jwk`.
 Protected header:
 
 ~~~json
-{"alg":"EdDSA","typ":"aat-pop+jwt"}
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
 ~~~
 
 Payload:
@@ -1622,10 +1625,10 @@ Algorithm:
       MAX_STACK_SIZE. If the chain exceeds this limit, DENY.
    c. For each token, decode the base64url payload segment and
       extract only the `jti` field using minimal JSON parsing.
-      If the payload is not valid JSON or does not contain a
-      string-valued `jti` field, DENY. Collect all extracted
-      `jti` values; if any value appears more than once in the
-      presented chain, DENY (token-instance cycle detection). This check
+      If a string-valued `jti` field cannot be extracted, DENY.
+      Collect all extracted `jti` values; if any value appears
+      more than once in the presented chain, DENY (token-instance
+      cycle detection). This check
       does not forbid the same actor, holder key, or organizational
       component from appearing more than once in a delegation graph,
       provided each occurrence is represented by a distinct token and
@@ -1887,8 +1890,8 @@ key used to verify the signature: the trust anchor public key for root
 tokens, and the `cnf.jwk` of the parent token for derived tokens.
 Enforcement points MUST reject any token where the declared `alg` is not
 compatible with the verifying key's `kty` and `crv` parameters. For
-example, a token whose `alg` is `"EdDSA"` MUST be verified against an
-OKP key with `"crv": "Ed25519"` or `"crv": "Ed448"`. A mismatch between
+example, a token whose `alg` is `"Ed25519"` MUST be verified against an
+OKP key with `"crv": "Ed25519"`. A mismatch between
 the declared algorithm and the verifying key type MUST result in denial,
 regardless of whether the signature bytes would verify under an
 alternate interpretation.
@@ -2323,7 +2326,9 @@ AATs and PoP JWTs MUST be signed with an asymmetric algorithm; `none`
 and MAC algorithms MUST NOT be used ({{RFC9449}} Section 4.2). Any key
 that can verify a MAC can also forge one. Ed25519 is mandatory to
 implement (Section 3.2). ES256 is RECOMMENDED as the second algorithm,
-and PS256 for root issuers with RSA keys.
+and PS256 for root issuers with RSA keys. Algorithms are identified by
+fully-specified values ({{RFC9864}}): Ed25519 is `"Ed25519"`, and the
+deprecated polymorphic `"EdDSA"` MUST NOT be used.
 
 # Privacy Considerations
 
@@ -2731,9 +2736,9 @@ than as a sequence of policy blocks.
 ## Algorithm Recommendations
 
 - **Signing algorithm:** Ed25519 {{RFC8032}}. The normative requirement
-  is in Section 3.2. EdDSA provides compact 64-byte signatures suitable
+  is in Section 3.2. Ed25519 provides compact 64-byte signatures suitable
   for constrained agent environments. The JWS `alg` header value for
-  Ed25519 is `"EdDSA"`.
+  Ed25519 is `"Ed25519"` {{RFC9864}}.
 - **Key representation:** JWK {{RFC7517}} with `"kty": "OKP"` and
   `"crv": "Ed25519"`.
 - **Token identifier:** UUIDv7 is recommended for `jti` values,
@@ -2960,7 +2965,7 @@ AAT Protected Header (JCS):
 ~~~
 ========== NOTE: '\' line wrapping per RFC 8792 ==========
 
-{"alg":"EdDSA","typ":"aat+jwt"}
+{"alg":"Ed25519","typ":"aat+jwt"}
 ~~~
 AAT Payload (JCS; this exact byte string is base64url-encoded):
 
@@ -2979,23 +2984,23 @@ AAT compact serialization:
 ~~~
 ========== NOTE: '\' line wrapping per RFC 8792 ==========
 
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldG\
-FpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHl\
-wZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1d\
-LCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM\
-0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcH\
-RoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA\
-2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcx\
-ZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAxIn0.janOtGK5OZxoGG1R_gWUD2hKo\
-rVQLPwekMOn0CHNv2292JVwbvyhvD99gHHwl6cXDxuif_foTzGdv7-0CGq6AA
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2Rl\
+dGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfd\
+HlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn\
+1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1R\
+sM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2Rl\
+cHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwN\
+DA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5ND\
+cxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAxIn0.G2ZIeMAY5H1nbG0j2f6R9hW\
+8WsP98CC8ZA9-dLpNATy-i7DMR6iAHzgSrAhpdTVt1Y5urMK9iE0ZXMcLHzrHBg
 ~~~
 PoP Payload (JCS):
 
 ~~~
 ========== NOTE: '\' line wrapping per RFC 8792 ==========
 
-{"aat_aud":"https://tools.example.com","aat_hash":"c5dLB2dC4svl2kfnuL\
-N307nhKkSnxROsSD7pF954omo","aat_id":"019471f8-0000-7000-8000-00000000\
+{"aat_aud":"https://tools.example.com","aat_hash":"qz05CjO1S-iTk93CGK\
+miB8y7bRUdUAe67kXzUwyMzUU","aat_id":"019471f8-0000-7000-8000-00000000\
 0001","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"ia\
 t":1704067500,"jti":"019471f8-0000-7000-8000-000000000a01"}
 ~~~
@@ -3004,14 +3009,14 @@ PoP compact serialization:
 ~~~
 ========== NOTE: '\' line wrapping per RFC 8792 ==========
 
-eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0c\
-HM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiYzVkTEIyZEM0c3ZsMmtmbn\
-VMTjMwN25oS2tTbnhST3NTRDdwRjk1NG9tbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDA\
-tNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRh\
-Ijp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwia\
-nRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0.WpV5uIDDzs\
-7jo_t8IsHAfPrUI6iM4ytaM8cYN4wPOLhM4v1Y2wrvife4f-VPbKCrXDDVNDNXCzKGn7U\
-8LVavAA
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaH\
+R0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicXowNUNqTzFTLWlUazk\
+zQ0dLbWlCOHk3YlJVZFVBZTY3a1h6VXd5TXpVVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAw\
+MDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwia\
+HRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMC\
+wianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0.Dod0rnn\
+_6OlvM2upQlbY0trWOJPM80GEuZn6gUJr0vOmWrjdWEg_voQT-f-iKsgqGJ1KRdQqisbN\
+gaNJ5OBOAQ
 ~~~
 
 ## Three-Level Chain Linkage (Vector J.3)
@@ -3024,9 +3029,9 @@ tokens are in the published suite.
 
 | Token | `jti` | SHA-256 of JWS Signing Input (base64url) |
 |---|---|---|
-| root | `019471f8-0000-7000-8000-000000000010` | `cTUrFuyDx9UHutl_nhb-ycZt39eyTxE7AAocLN1-BJ8` |
-| L1 | `019471f8-0000-7000-8000-000000000011` | `759t6JrK8NVbg5Q64gFO2JKjW-M2jBnQt68MCFTDH_4` |
-| L2 | `019471f8-0000-7000-8000-000000000012` | `Jcu8wSFpV0_oJoNcwugkJ5S6d4Ru54g90EEQF6b5rno` |
+| root | `019471f8-0000-7000-8000-000000000010` | `BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g` |
+| L1 | `019471f8-0000-7000-8000-000000000011` | `3kFpxq53WreeYGKbIxNqnCqjRSmVjwNoHjjZKIuqRw0` |
+| L2 | `019471f8-0000-7000-8000-000000000012` | `6JQpH_zCOFYgK-F4EjOrO9yssdlA24Ygm3JRH6stIdk` |
 
 L1 carries `par_hash` equal to the root row above, and L2 carries
 `par_hash` equal to the L1 row. L1's `iss` is
@@ -3035,7 +3040,7 @@ L1 carries `par_hash` equal to the root row above, and L2 carries
 ## Chain Splice (Vector J.12)
 
 Identical to the J.3 root and L1 except that L1's `par_hash` is
-`c5dLB2dC4svl2kfnuLN307nhKkSnxROsSD7pF954omo`, the digest of a different
+`qz05CjO1S-iTk93CGKmiB8y7bRUdUAe67kXzUwyMzUU`, the digest of a different
 root token held by the same key. Signature verification and I1 both
 pass; the chain MUST be denied at Section 7 step 4q.
 
@@ -3085,7 +3090,7 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision makes seven normative changes. They are breaking for
+This revision makes eight normative changes. They are breaking for
 implementations that followed the -01 text.
 
 - **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
@@ -3137,6 +3142,10 @@ implementations that followed the -01 text.
   the leaf only by `jti`, which the deriver chooses, so a holder
   upstream of the leaf could re-derive a sibling with the same `jti`
   and reuse a captured proof.
+- **Fully-specified `alg`.** Ed25519 signatures use the JWS `alg`
+  value `"Ed25519"` ({{RFC9864}}); the deprecated polymorphic
+  `"EdDSA"` MUST NOT be used (Section 8.13). The -01 text used
+  `"EdDSA"`.
 
 Editorial and alignment changes, not intended to change behavior
 relative to the Section 7 algorithm in -01:
@@ -3160,8 +3169,8 @@ relative to the Section 7 algorithm in -01:
 - Byte-exact JWS test vectors are published as described in
   Appendix E. They encode the verifier-side normative changes above;
   a -01 implementation will disagree on `typ`, audience mismatch
-  handling, the `all` clause-reuse cases, root `iss` binding, and
-  `aat_hash`.
+  handling, the `all` clause-reuse cases, root `iss` binding,
+  `aat_hash`, and the `alg` value.
 - Section 4.5 uses one subsumption direction throughout: the parent
   constraint subsumes the derived one. The -01 text mixed both
   directions.
