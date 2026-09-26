@@ -222,6 +222,9 @@ def _verify_jws(compact: str, pub: Ed25519PublicKey, step_alg: str, step_sig: st
         raise Deny(step_alg, f"alg={header.get('alg')!r} not on allowlist")
     if header.get("typ") != expected_typ:
         raise Deny(step_alg, f"typ={header.get('typ')!r}, expected {expected_typ!r}")
+    if "crit" in header:
+        # This verifier understands no extension header parameters (§3.5, RFC 7515 §4.1.11).
+        raise Deny(step_alg, f"crit lists parameters this verifier does not understand: {header['crit']!r}")
     try:
         pub.verify(b64u_dec(s), f"{h}.{p}".encode("ascii"))
     except InvalidSignature:
@@ -260,6 +263,8 @@ def _aat_entry(claims: dict, step: str, exactly_one: bool):
         raise Deny(step, f"{len(ents)} attenuating_agent_token entries")
     if len(ents) > 1:
         raise Deny(step, "more than one attenuating_agent_token entry")
+    if ents and not isinstance(ents[0].get("tools"), dict):
+        raise Deny(step, "attenuating_agent_token entry has no tools object")
     return ents[0] if ents else {"type": "attenuating_agent_token", "tools": {}}
 
 
@@ -487,7 +492,8 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
     for k in ("iat", "exp"):
         if not (isinstance(root.get(k), int) and not isinstance(root.get(k), bool)):
             raise Deny("3b", f"root {k} missing")
-    if root.get("del_depth") != 0:
+    if not (isinstance(root.get("del_depth"), int) and not isinstance(root.get("del_depth"), bool)
+            and root["del_depth"] == 0):
         raise Deny("3c", "root del_depth != 0")
     if "par_hash" in root:
         raise Deny("3d", "root has par_hash")
@@ -523,6 +529,11 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
                         ("iss", "4b5"), ("iat", "4b5"), ("exp", "4b5"), ("par_hash", "4b5")):
             if f not in child:
                 raise Deny(step, f"{f} missing")
+        if not (isinstance(child["jti"], str) and child["jti"]):
+            raise Deny("4b1", "jti not a non-empty string")
+        if not all(isinstance(child[k], int) and not isinstance(child[k], bool) and child[k] >= 0
+                   for k in ("del_depth", "del_max_depth")):
+            raise Deny("4b4", "del_depth/del_max_depth not non-negative integers")
         if not (isinstance(child["iss"], str) and isinstance(child["par_hash"], str)
                 and all(isinstance(child[k], int) and not isinstance(child[k], bool) for k in ("iat", "exp"))):
             raise Deny("4b5", "iss/par_hash not strings or iat/exp not NumericDate")
@@ -957,6 +968,14 @@ add("J.14.b", "alg: none rejected unconditionally", "A.14",
     "Same payload as the J.3 root with header {\"alg\":\"none\"} and an empty signature (§9.13).",
     [none_root], pop_sign(pop_claims(uuid7ish(0xAA2), none_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3a")
+crit_root = jws_sign(root_claims(uuid7ish(0x82), ROOT_TOOLS, ORCH), CP,
+                     header={"alg": "Ed25519", "typ": "aat+jwt", "crit": ["urn:example:unknown"],
+                             "urn:example:unknown": True})
+add("J.7.6", "crit lists a header parameter the enforcement point does not understand", None,
+    "Root is correctly typed and signed by the root issuer, but its crit header names an extension "
+    "parameter the enforcement point does not understand (RFC 7515 Section 4.1.11, step 3a).",
+    [crit_root], pop_sign(pop_claims(uuid7ish(0xAE6), crit_root, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3a")
 hdr_key_root = jws_sign(root_claims(uuid7ish(0x81), ROOT_TOOLS, ORCH), ATK,
                         header={"alg": "Ed25519", "typ": "aat+jwt", "jwk": ATK.jwk})
 add("J.14.c", "Header-supplied key is not used", None,
@@ -1327,6 +1346,17 @@ add("J.21.5", "Root lifetime exceeds MAX_TOKEN_LIFETIME", None,
     "exp = iat + 90 days + 1 (step 3h).",
     [long_root], pop_sign(pop_claims(uuid7ish(0xE85), long_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3h")
+no_tools = jws_sign({**root_claims(uuid7ish(0xE7F), {}, ORCH),
+                     "authorization_details": [{"type": "attenuating_agent_token"}]}, CP)
+add("J.21.8", "AAT entry without a tools member", None,
+    "The root's attenuating_agent_token entry has no tools member (step 3m).",
+    [no_tools], pop_sign(pop_claims(uuid7ish(0xE8F), no_tools, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3m")
+bool_depth = jws_sign(root_claims(uuid7ish(0xE7E), {"read_file": {"path": WILD}}, ORCH, del_depth=False), CP)
+add("J.21.9", "Root del_depth is false rather than the integer 0", None,
+    "del_depth must be an integer (Section 3.2); false is not 0 (step 3c).",
+    [bool_depth], pop_sign(pop_claims(uuid7ish(0xE8E), bool_depth, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3c")
 iss_root = jws_sign(root_claims(uuid7ish(0xE6), {"read_file": {"path": WILD}}, ORCH,
                                iss="https://other-issuer.example.com"), CP)
 add("J.21.6", "Root iss does not match the verifying trust anchor", None,

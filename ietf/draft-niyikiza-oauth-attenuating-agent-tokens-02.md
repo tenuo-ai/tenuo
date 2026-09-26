@@ -475,6 +475,13 @@ for verifying agent identity and requested authority before issuance.
 In the token endpoint profile of Section 6.1, the root issuer is an
 OAuth authorization server (AS).
 
+**Presentation:** The chain and PoP JWT that a presenter sends to an
+enforcement point for one tool invocation (Section 7.4).
+
+**Binding:** A specification of how presentations are carried over a
+particular protocol, such as MCP or HTTP. Bindings are outside the
+scope of this document.
+
 **Presenter:** The party that presents a chain and a PoP JWT to an
 enforcement point. An invocation is authorized only when the presenter
 is the holder of the leaf token.
@@ -604,8 +611,7 @@ claims outside this specification (see Appendix B.6).
 This specification profiles {{RFC9396}} for tool-level capability
 claims. An AAT capability entry is an `authorization_details` entry
 whose `type` is set to `"attenuating_agent_token"`. Such an entry MUST
-include a `tools` member that maps tool names to argument constraint
-sets.
+include a `tools` member that maps tool identifiers to constraint maps.
 
 ~~~json
 {
@@ -838,16 +844,16 @@ Enforcement points MUST reject an AAT whose `typ` is absent or is not
 prevents an AAT from being accepted where a PoP JWT is required, and
 vice versa.
 
-Additional header parameters MAY be present. The verification key for
-an AAT or PoP JWT comes only from the configured trust anchors or from
-a `cnf.jwk` in the chain: enforcement points MUST NOT use a key supplied
+Additional header parameters MAY be present. The verification key for an
+AAT or PoP JWT comes only from the configured trust anchors or from a
+`cnf.jwk` in the chain: enforcement points MUST NOT use a key supplied
 by a header parameter such as `jwk`, `jku`, `x5c`, or `x5u`; a token
 carrying one is verified as if it were absent. Enforcement points MAY
-use `kid` only to select among configured trust anchors. Enforcement points
-MUST ignore other header parameters they do not recognize. If `crit` is present, it MUST be
-processed per {{RFC7515}} Section 4.1.11: an enforcement point that
-does not understand every parameter listed in `crit` MUST reject the
-token.
+use `kid` only to select among configured trust anchors. Enforcement
+points MUST ignore other header parameters they do not recognize. If
+`crit` is present, it MUST be processed per {{RFC7515}} Section 4.1.11:
+an enforcement point that does not understand every parameter listed in
+`crit` MUST reject the token.
 
 The JWS Payload is the serialized claims object. An enforcement point
 MUST verify the signature over the JWS Signing Input exactly as
@@ -980,7 +986,7 @@ Every delegation step moves down or stays at the same position in this
 partial order. A derived token can only authorize a subset of what its
 parent authorized. It cannot add tools, loosen argument constraints, or
 extend the chain's authority in any dimension this specification
-defines (Section 3.3).
+defines (Sections 3.3 and 4).
 
 The `⊆` relation is not defined by enumerating `(tool, args)` pairs
 (argument spaces are typically infinite) but by the structural
@@ -1292,9 +1298,11 @@ defined in {{RFC7515}} Section 5.1.
 
 This binding prevents grant-context substitution: a child token signed
 by a key that holds multiple compatible parent tokens cannot be
-re-associated with a different parent task grant. The capability set may
-still be attenuated, but the task/session lineage, revocation ancestry,
-approval context, or policy snapshot would change.
+re-associated with a different parent. Without it, a presenter could
+pair a child derived under one parent with another parent the same key
+holds, discarding restrictions only the first parent carries, such as
+its `aud`, and attributing the child to a grant it was not derived
+under.
 
 ## I6: Proof of Possession
 
@@ -1731,7 +1739,7 @@ Inputs:
                  root issuers
   tool:          the tool being invoked
   args:          the arguments being passed to the tool
-  pop_jwt:       the PoP JWT presented by the agent
+  pop_jwt:       the PoP JWT for this invocation
                  (aat_pop in a presentation, Section 7.4)
 
 Algorithm:
@@ -1769,7 +1777,8 @@ Algorithm:
       crv parameters. Verify the JWS typ header equals
       "aat+jwt". If alg is "none", not on the allowlist,
       inconsistent with the key type, or typ is absent or not
-      "aat+jwt", DENY.                               (Sec 9.12)
+      "aat+jwt", DENY. If a crit header lists a parameter this
+      enforcement point does not understand, DENY.   (Sec 3.5)
    b. Verify the root token signature against the public key
       of a trust anchor. After signature verification succeeds,
       parse the root token's claims, rejecting any JSON object
@@ -1777,7 +1786,8 @@ Algorithm:
       verify root.iat and root.exp are present and are
       NumericDate values (Section 3.2). If not, DENY. All subsequent root
       checks (3c through 3n) operate on parsed claims.
-   c. Verify root.del_depth == 0.
+   c. Verify root.del_depth is an integer (Section 3.2) equal to
+      0.
    d. Verify root.par_hash is absent.
    e. Verify root.exp > now.
    f. Verify root.iat <= now + MAX_IAT_SKEW.
@@ -1797,8 +1807,8 @@ Algorithm:
       `p`, `q` for RSA keys). If absent or invalid, DENY.
    m. Verify root.authorization_details is present and is a
       non-empty array containing exactly one entry with type
-      "attenuating_agent_token". If absent, empty, or if the
-      number of such entries is not exactly one, DENY.
+      "attenuating_agent_token", and that the entry's `tools`
+      member is present and is a JSON object. If not, DENY.
       Note: for a single-token chain (root = leaf), step 4 has
       no adjacent parent-child pair to evaluate. Validation is
       therefore performed by step 3 (root checks), step 5
@@ -1822,7 +1832,9 @@ Algorithm:
       consistent with parent.cnf.jwk's kty and crv parameters.
       Verify the JWS typ header equals "aat+jwt". If alg is
       "none", not on the allowlist, inconsistent with the key
-      type, or typ is absent or not "aat+jwt", DENY.  (Sec 9.12)
+      type, or typ is absent or not "aat+jwt", DENY. If a crit
+      header lists a parameter this enforcement point does not
+      understand, DENY.                              (Sec 3.5)
    b. Verify child signature under the key in parent.cnf.jwk. (I1)
       After signature verification succeeds, parse the child
       token's claims, rejecting any JSON object with duplicate
@@ -1869,8 +1881,9 @@ Algorithm:
       defense in depth.
    m. Verify child.del_depth <= child.del_max_depth.     (I2)
    n. Verify child.authorization_details contains at most
-      one entry with type "attenuating_agent_token". If
-      more than one such entry is present, DENY. Note: zero
+      one entry with type "attenuating_agent_token", and that
+      such an entry's `tools` member is present and is a JSON
+      object. If not, DENY. Note: zero
       entries of this type are permitted at this step and
       represent an empty capability set. Step 4p will verify
       this is a valid attenuation of the parent (an empty tool
@@ -1954,7 +1967,8 @@ Algorithm:
       Verify the JWS typ header equals "aat-pop+jwt". If alg
       is "none", not on the allowlist, inconsistent with the
       key type, or typ is absent or not "aat-pop+jwt", DENY.
-                                                     (Sec 9.12)
+      If a crit header lists a parameter this enforcement point
+      does not understand, DENY.                     (Sec 3.5)
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
       signature verification succeeds, parse the PoP JWT claims,
       rejecting any JSON object with duplicate member names. (I6)
@@ -1983,8 +1997,9 @@ Algorithm:
       unknown, or expired, DENY.
    i. If this enforcement point tracks PoP `jti` values for the
       invoked tool (Section 7.3), verify pop_jwt.jti has not been
-      accepted within the tolerance window, then record it. If it
-      has, DENY.
+      accepted within the tolerance window. If it has, DENY. The
+      jti is recorded as accepted only when step 8 permits the
+      invocation, so a denied invocation consumes no jti.
 
 8. PERMIT.
 ~~~
@@ -2081,8 +2096,9 @@ chain `(B, C)`. The link may satisfy delegation authority, depth,
 lifetime, and capability monotonicity: `C` is signed by the key named in
 `B.cnf.jwk`, has the expected depth, does not outlive `B`, and
 authorizes no capability outside `B`. However, the chain has been
-re-associated with task `B` rather than task `A`. The `par_hash` check
-rejects this because `C` commits to the signing input of `A`, not
+re-associated with task `B` rather than task `A`, and any restriction
+only `A` carries, such as an `aud`, no longer applies. The `par_hash`
+check rejects this because `C` commits to the signing input of `A`, not
 `B`.
 
 **PoP JWT replay.** For tool invocations with side effects, stateful
@@ -2218,7 +2234,7 @@ require a nonce, for tools whose responses are sensitive.
 PoP JWTs are scoped to the invocation data they contain. Without
 further binding, a PoP JWT captured at one enforcement point may be
 replayable at another enforcement point that accepts the same chain,
-tool name, and argument map within the timestamp window. This
+tool identifier, and argument map within the timestamp window. This
 specification provides three bindings against that replay, each
 borrowed from an existing mechanism, and requires deployments to use
 at least one where the exposure exists:
@@ -2748,7 +2764,7 @@ chain model, the invariants, and the constraint registry of this
 specification address questions outside its scope.
 
 At the proof level, DPoP binds to an HTTP method (`htm`) and URI
-(`htu`). AAT PoP JWTs bind to a tool name (`aat_tool`) and a structured
+(`htu`). AAT PoP JWTs bind to a tool identifier (`aat_tool`) and a structured
 argument map (`hta`). Tool invocations are function calls, not HTTP
 requests, and a URI alone carries insufficient information for
 argument-level constraint evaluation. This is why `aat_tool` and `hta`
@@ -2967,7 +2983,7 @@ composite `all` / `any` subsumption including clause reuse, optional
 and unnamed arguments and their attenuation, the
 remaining core constraint types (`not_one_of`, `contains`, `subset`,
 range inclusivity), and the structural root checks in Section 8 steps
-3c, 3d, 3f, 3h, 3k, 3l, and 3n. Implementers targeting the -01 text should not
+3c, 3d, 3f, 3h, 3k, 3l, 3m, and 3n. Implementers targeting the -01 text should not
 treat that suite as a -01 conformance pack; the cases that encode the
 changes in Appendix G are marked.
 
@@ -2975,7 +2991,8 @@ This appendix reproduces a minimal subset so that the encoding rules of
 Section 3.5, Section 4.6, and Section 7.2 can be checked without
 external material. Long lines are folded per {{RFC8792}}. Vector
 identifiers (J.1, J.3, J.12) are those of the published suite. Each
-vector's expected verdict is normative; the failing step it names
+vector's expected verdict is what this specification requires; the
+failing step it names
 follows the order of Section 8 and can differ where that section
 permits reordering, so test harnesses compare verdicts.
 
@@ -3134,7 +3151,7 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision makes twelve normative changes. They are breaking for
+This revision makes thirteen normative changes. They are breaking for
 implementations that followed the -01 text.
 
 - **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
@@ -3198,7 +3215,10 @@ implementations that followed the -01 text.
   `contains` and `subset` use set semantics (Sections 3.2 and 3.4);
   numbers in arguments and constraints must survive the JCS round trip
   (Section 3.4); constraint depth counting is defined; and
-  MAX_DELEGATION_DEPTH is at least 8. Replicas of an enforcement point
+  MAX_DELEGATION_DEPTH is at least 8. Steps 3b, 4b, and 7b reject JSON
+  objects with duplicate member names, steps 3a, 4a, and 7a process
+  `crit`, and steps 3m and 4n require the `tools` member. Replicas of
+  an enforcement point
   share `jti` state (Section 7.3), and tools returning sensitive data
   SHOULD get replay protection too (Section 9.5). The -01 text did not
   address these.
@@ -3211,6 +3231,13 @@ implementations that followed the -01 text.
   argument could not be constrained at all without denying one of its
   call shapes. This responds to findings from an independent
   implementation (see Acknowledgments).
+- **Registration requirements.** A subsumption procedure must run in
+  polynomial time, with the existing conservative-strategy fallback for
+  more expressive languages, and a registration states its worst-case
+  cost (Section 5.1). Registrations list only valid cross-type pairs,
+  and a parent `wildcard` subsumes every type implicitly. Evaluating an
+  unregistered constraint type is non-conforming (Section 5). The -01
+  text required only termination and did not state these consequences.
 - **Presentation object.** Section 7.4 defines the JSON object that
   carries a chain and its PoP JWT (`aat_chain`, `aat_pop`) to an
   enforcement point, leaving where it is carried to protocol bindings.
@@ -3242,16 +3269,10 @@ behavior relative to the Section 8 algorithm in -01:
   Appendix E. They encode the verifier-side normative changes above;
   a -01 implementation will disagree on `typ`, audience mismatch
   handling, the `all` clause-reuse cases, root `iss` binding,
-  `aat_hash`, the `alg` value, empty `all`/`any`, and the new
-  validation checks.
+  `aat_hash`, the `alg` value, empty `all`/`any`, optional and
+  unnamed arguments, and the new validation checks.
 - Section 4.5 uses one subsumption direction throughout: the parent
   constraint subsumes the derived one. The -01 text mixed both
   directions.
-- Section 5 states the consequence of the existing registration
-  requirement: evaluating an unregistered constraint type is
-  non-conforming. Registrations list only valid cross-type pairs,
-  a parent `wildcard` subsumes every type implicitly, and the
-  registration template example now gives pairs in (parent, child)
-  order. The decidability property is now a polynomial-time bound,
-  with the existing conservative-strategy fallback for more
-  expressive languages.
+- The registration template example now gives cross-type pairs in
+  (parent, child) order.

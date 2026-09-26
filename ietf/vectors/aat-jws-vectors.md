@@ -92,6 +92,7 @@ Thumbprint URIs used as derived-token `iss`:
 | J.13.b | I3 violation: derived iat earlier than parent iat | A.13 | DENY at step 4j |
 | J.14 | Invalid signature: one bit flipped in the root signature | A.14 | DENY at step 3b |
 | J.14.b | alg: none rejected unconditionally | A.14 | DENY at step 3a |
+| J.7.6 | crit lists a header parameter the enforcement point does not understand | — | DENY at step 3a |
 | J.14.c | Header-supplied key is not used | — | DENY at step 3b |
 | J.20.1 | PoP signed by the wrong holder key | A.20.1 | DENY at step 7b |
 | J.20.2 | PoP aat_id references a different token | A.20 | DENY at step 7c |
@@ -142,6 +143,8 @@ Thumbprint URIs used as derived-token `iss`:
 | J.21.3 | cnf.jwk contains private key material | — | DENY at step 3l |
 | J.21.4 | Root iat is more than MAX_IAT_SKEW in the future | — | DENY at step 3f |
 | J.21.5 | Root lifetime exceeds MAX_TOKEN_LIFETIME | — | DENY at step 3h |
+| J.21.8 | AAT entry without a tools member | — | DENY at step 3m |
+| J.21.9 | Root del_depth is false rather than the integer 0 | — | DENY at step 3c |
 | J.21.6 | Root iss does not match the verifying trust anchor | — | DENY at step 3k |
 | J.21.7 | Root carries an empty all constraint | — | DENY at step 3n/4o |
 | J.22.1 | Optional arguments may be omitted | — | PERMIT |
@@ -6408,6 +6411,116 @@ Pretty payload:
 Compact JWS:
 ```
 eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTkVkVkNrZVlyQ0dFaU83NWJpLVhoZksyb05sU1AyclJjVjN2VXhnSXZ1MCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWEyIn0.g7iv2Dgl3jrJqVMBROz5kvyE9jKYmr8I-NyX5TUeo1rrYN4fXuDM3xfskYERvycawM-MjpYmmve_DwguJePyDg
+```
+
+---
+
+## J.7.6 crit lists a header parameter the enforcement point does not understand
+
+Root is correctly typed and signed by the root issuer, but its crit header names an extension parameter the enforcement point does not understand (RFC 7515 Section 4.1.11, step 3a).
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
+**Expected:** **DENY** at step 3a
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","crit":["urn:example:unknown"],"typ":"aat+jwt","urn:example:unknown":true}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf","/data/q4-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":100},"query":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000082"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000082",
+  "iss": "https://auth.example.com",
+  "iat": 1704067200,
+  "exp": 1704070800,
+  "del_depth": 0,
+  "del_max_depth": 3,
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token",
+      "tools": {
+        "read_file": {
+          "path": {
+            "constraint_type": "one_of",
+            "values": [
+              "/data/q3-report.pdf",
+              "/data/q4-report.pdf"
+            ]
+          }
+        },
+        "search_index": {
+          "query": {
+            "constraint_type": "wildcard"
+          },
+          "limit": {
+            "constraint_type": "range",
+            "max": 100
+          }
+        }
+      }
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwiY3JpdCI6WyJ1cm46ZXhhbXBsZTp1bmtub3duIl0sInR5cCI6ImFhdCtqd3QiLCJ1cm46ZXhhbXBsZTp1bmtub3duIjp0cnVlfQ` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwODIifQ` |
+| SHA-256(signing input), base64url | `vYm-SajSbj7WHD4o7_j-UKDwp11MUhx1ywm7Zan0kZQ` |
+| signature_b64 | `NkbUc6H_vg_ibATw9DEiq4gx3SLeC6J1PuAH4qBn38WkFc4wSjSRod7i6RyohhSMlN73AmY5puluyywMZPAIBQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwiY3JpdCI6WyJ1cm46ZXhhbXBsZTp1bmtub3duIl0sInR5cCI6ImFhdCtqd3QiLCJ1cm46ZXhhbXBsZTp1bmtub3duIjp0cnVlfQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwODIifQ.NkbUc6H_vg_ibATw9DEiq4gx3SLeC6J1PuAH4qBn38WkFc4wSjSRod7i6RyohhSMlN73AmY5puluyywMZPAIBQ
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"vYm-SajSbj7WHD4o7_j-UKDwp11MUhx1ywm7Zan0kZQ","aat_id":"019471f8-0000-7000-8000-000000000082","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae6"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000ae6",
+  "iat": 1704067500,
+  "aat_id": "019471f8-0000-7000-8000-000000000082",
+  "aat_hash": "vYm-SajSbj7WHD4o7_j-UKDwp11MUhx1ywm7Zan0kZQ",
+  "aat_tool": "read_file",
+  "hta": {
+    "path": "/data/q3-report.pdf"
+  },
+  "aat_aud": "https://tools.example.com"
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoidlltLVNhalNiajdXSEQ0bzdfai1VS0R3cDExTVVoeDF5d203WmFuMGtaUSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWU2In0` |
+| SHA-256(signing input), base64url | `dqwAZrCri1xWX4KLw5fQ8YDHBhi8LJZP9F1Jc5zjOv8` |
+| signature_b64 | `wq9QiFWt4xQGISy2_3r7QaWktn00CwLLt6AGEMz0csdhYXi-eAqEyUmvE5uCE1YrJw8_1CXMODP37eCp_MkQBA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoidlltLVNhalNiajdXSEQ0bzdfai1VS0R3cDExTVVoeDF5d203WmFuMGtaUSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWU2In0.wq9QiFWt4xQGISy2_3r7QaWktn00CwLLt6AGEMz0csdhYXi-eAqEyUmvE5uCE1YrJw8_1CXMODP37eCp_MkQBA
 ```
 
 ---
@@ -15076,6 +15189,193 @@ Pretty payload:
 Compact JWS:
 ```
 eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoia0hfc05xOWhsc1RxS0VtVEtuaWJuTEFWdktWTVVkbkZnd0RZVGlyNkJjdyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg1In0.6u3uhJqGGHKyke0NW4z6_ntKuVKfy87jsodTE5ryI3mq_OBqest-cjV81fZg4vIxMvfjXgDm1_qOTmX0l9IxCQ
+```
+
+---
+
+## J.21.8 AAT entry without a tools member
+
+The root's attenuating_agent_token entry has no tools member (step 3m).
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
+**Expected:** **DENY** at step 3m
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000e7f"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000e7f",
+  "iss": "https://auth.example.com",
+  "iat": 1704067200,
+  "exp": 1704070800,
+  "del_depth": 0,
+  "del_max_depth": 3,
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token"
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3ZiJ9` |
+| SHA-256(signing input), base64url | `usn80_EhCw0LnB2KlW8ze6_9O4OGutCAJ5qRNIjFqo8` |
+| signature_b64 | `lA7bQzDd14XxwfUMH0dusLB2PAIgYcT3wgkThhLDnpl188h-mamEOI5grrR7zTc8eTzTNnrBSE6Xse_XwiXHCA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3ZiJ9.lA7bQzDd14XxwfUMH0dusLB2PAIgYcT3wgkThhLDnpl188h-mamEOI5grrR7zTc8eTzTNnrBSE6Xse_XwiXHCA
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"usn80_EhCw0LnB2KlW8ze6_9O4OGutCAJ5qRNIjFqo8","aat_id":"019471f8-0000-7000-8000-000000000e7f","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e8f"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000e8f",
+  "iat": 1704067500,
+  "aat_id": "019471f8-0000-7000-8000-000000000e7f",
+  "aat_hash": "usn80_EhCw0LnB2KlW8ze6_9O4OGutCAJ5qRNIjFqo8",
+  "aat_tool": "read_file",
+  "hta": {
+    "path": "/data/q3-report.pdf"
+  },
+  "aat_aud": "https://tools.example.com"
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoidXNuODBfRWhDdzBMbkIyS2xXOHplNl85TzRPR3V0Q0FKNXFSTklqRnFvOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3ZiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZThmIn0` |
+| SHA-256(signing input), base64url | `ffCnwJtU4L9LrciIVM9sJaF5bp-_6fuD0Y3CPGa0Nww` |
+| signature_b64 | `I3e2hipr6cU9KpJLGtC2zrhilCrG_L5PWIxoS7e4P2XWxtm1JlxrMK0k2q0GWoQZOS65RRUnL4jpcI8QQHZLAw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoidXNuODBfRWhDdzBMbkIyS2xXOHplNl85TzRPR3V0Q0FKNXFSTklqRnFvOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3ZiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZThmIn0.I3e2hipr6cU9KpJLGtC2zrhilCrG_L5PWIxoS7e4P2XWxtm1JlxrMK0k2q0GWoQZOS65RRUnL4jpcI8QQHZLAw
+```
+
+---
+
+## J.21.9 Root del_depth is false rather than the integer 0
+
+del_depth must be an integer (Section 3.2); false is not 0 (step 3c).
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
+**Expected:** **DENY** at step 3c
+
+**Chain[0] (del_depth False)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":false,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000e7e"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000e7e",
+  "iss": "https://auth.example.com",
+  "iat": 1704067200,
+  "exp": 1704070800,
+  "del_depth": false,
+  "del_max_depth": 3,
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token",
+      "tools": {
+        "read_file": {
+          "path": {
+            "constraint_type": "wildcard"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjpmYWxzZSwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3ZSJ9` |
+| SHA-256(signing input), base64url | `Riyf8etNUshVrsWH8OKzmFoXTiyNzHBlgR_MoMTi4xY` |
+| signature_b64 | `u1xDN4521I0WfU7C0NqnhRl7v9oWcmpg-oOqVjOsrX6cAZ_yv3_9KEGX51PjMpvzBw8dvktryeKSwQ7eIWyVCA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjpmYWxzZSwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3ZSJ9.u1xDN4521I0WfU7C0NqnhRl7v9oWcmpg-oOqVjOsrX6cAZ_yv3_9KEGX51PjMpvzBw8dvktryeKSwQ7eIWyVCA
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"Riyf8etNUshVrsWH8OKzmFoXTiyNzHBlgR_MoMTi4xY","aat_id":"019471f8-0000-7000-8000-000000000e7e","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e8e"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000e8e",
+  "iat": 1704067500,
+  "aat_id": "019471f8-0000-7000-8000-000000000e7e",
+  "aat_hash": "Riyf8etNUshVrsWH8OKzmFoXTiyNzHBlgR_MoMTi4xY",
+  "aat_tool": "read_file",
+  "hta": {
+    "path": "/data/q3-report.pdf"
+  },
+  "aat_aud": "https://tools.example.com"
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiUml5ZjhldE5Vc2hWcnNXSDhPS3ptRm9YVGl5TnpIQmxnUl9Nb01UaTR4WSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3ZSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZThlIn0` |
+| SHA-256(signing input), base64url | `wo5dU2nIsa2E8LaFm2zcv-EZd6_CHo3DUgBm6CmudkE` |
+| signature_b64 | `HEBqxbxdHmJVWHpdvUC-uCyu_BLvHqSFM4hzyAHXJtLgyEy0Q4QPL1ZXYvQ9tdRJLQhuMyO-wRNa8PzUMH9uDg` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiUml5ZjhldE5Vc2hWcnNXSDhPS3ptRm9YVGl5TnpIQmxnUl9Nb01UaTR4WSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3ZSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZThlIn0.HEBqxbxdHmJVWHpdvUC-uCyu_BLvHqSFM4hzyAHXJtLgyEy0Q4QPL1ZXYvQ9tdRJLQhuMyO-wRNa8PzUMH9uDg
 ```
 
 ---
