@@ -263,9 +263,59 @@ def _aat_entry(claims: dict, step: str, exactly_one: bool):
     return ents[0] if ents else {"type": "attenuating_agent_token", "tools": {}}
 
 
+CORE_TYPES = ("exact", "range", "one_of", "not_one_of", "contains", "subset", "wildcard", "all", "any")
+MAX_SAFE_INT = 2**53 - 1
+
+
+def _has_big_int(v) -> bool:
+    """§3.4: any number whose magnitude exceeds 2^53 - 1."""
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, (int, float)):
+        return abs(v) > MAX_SAFE_INT
+    if isinstance(v, list):
+        return any(_has_big_int(x) for x in v)
+    if isinstance(v, dict):
+        return any(_has_big_int(x) for x in v.values())
+    return False
+
+
+def _well_formed(c) -> bool:
+    """§3.4 well-formedness for the core types."""
+    t = c.get("constraint_type")
+    if _has_big_int(c):
+        return False
+    if t == "exact":
+        return "value" in c and (c["value"] is None or isinstance(c["value"], (str, int, float, bool)))
+    if t == "one_of":
+        return isinstance(c.get("values"), list) and len(c["values"]) > 0
+    if t == "not_one_of":
+        return isinstance(c.get("excluded"), list)
+    if t == "contains":
+        return isinstance(c.get("required"), list)
+    if t == "subset":
+        return isinstance(c.get("allowed"), list)
+    if t == "range":
+        lo, hi = c.get("min"), c.get("max")
+        if "min_inclusive" in c and lo is None or "max_inclusive" in c and hi is None:
+            return False
+        for k in ("min", "max"):
+            if k in c and (isinstance(c[k], bool) or not isinstance(c[k], (int, float))):
+                return False
+        for k in ("min_inclusive", "max_inclusive"):
+            if k in c and not isinstance(c[k], bool):
+                return False
+        return lo is None or hi is None or lo <= hi
+    return True
+
+
 def _cdepth(c, d=1):
     if d > MAX_CONSTRAINT_DEPTH:
         raise Deny("3n/4o", "constraint tree too deep")
+    if c.get("constraint_type") not in CORE_TYPES:
+        raise Deny("3n/4o", f"unrecognized constraint_type {c.get('constraint_type')!r} (fail-closed)")
+    if not _well_formed(c):
+        raise Deny("3n/4o", "constraint not well-formed")
     if c.get("constraint_type") in ("all", "any") and not c.get("constraints"):
         raise Deny("3n/4o", "empty all/any")
     for sub in c.get("constraints", []) if c.get("constraint_type") in ("all", "any") else []:
@@ -440,6 +490,9 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
                         ("iss", "4b5"), ("iat", "4b5"), ("exp", "4b5"), ("par_hash", "4b5")):
             if f not in child:
                 raise Deny(step, f"{f} missing")
+        if not (isinstance(child["iss"], str) and isinstance(child["par_hash"], str)
+                and all(isinstance(child[k], int) and not isinstance(child[k], bool) for k in ("iat", "exp"))):
+            raise Deny("4b5", "iss/par_hash not strings or iat/exp not NumericDate")
         _jwk_pub(child["cnf"].get("jwk", {}), "4b2")
         if child["iss"] != _thumb_uri(parent["cnf"]["jwk"]):
             raise Deny("4c", "iss != thumbprint(parent.cnf.jwk)")
@@ -488,6 +541,8 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
     leaf_aat = _aat_entry(leaf, "6a", exactly_one=True)
     if tool not in leaf_aat["tools"]:
         raise Deny("6b", f"tool {tool!r} not authorized")
+    if _has_big_int(args):
+        raise Deny("6b", "argument integer beyond 2^53-1")
     cmap = leaf_aat["tools"][tool]
     if cmap:
         for a in args:
@@ -511,8 +566,13 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
         raise Deny("6c", "chain audience required by policy but no token carries aud")
 
     pop = _verify_jws(pop_jwt, _jwk_pub(leaf["cnf"]["jwk"], "7b"), "7a", "7b", expected_typ="aat-pop+jwt")
-    if not (isinstance(pop.get("jti"), str) and pop["jti"]):
-        raise Deny("7c", "PoP jti missing")
+    for k in ("jti", "aat_id", "aat_hash", "aat_tool"):
+        if not (isinstance(pop.get(k), str) and pop[k]):
+            raise Deny("7c", f"PoP {k} missing or not a string")
+    if not (isinstance(pop.get("iat"), int) and not isinstance(pop.get("iat"), bool)):
+        raise Deny("7c", "PoP iat not a NumericDate")
+    if not isinstance(pop.get("hta"), dict):
+        raise Deny("7c", "PoP hta missing or not an object")
     if pop.get("aat_id") != leaf["jti"]:
         raise Deny("7c", "aat_id != leaf.jti")
     leaf_si = ".".join(_split(chain[-1])[:2])
@@ -853,6 +913,14 @@ add("J.14.b", "alg: none rejected unconditionally", "A.14",
     "Same payload as the J.3 root with header {\"alg\":\"none\"} and an empty signature (§9.13).",
     [none_root], pop_sign(pop_claims(uuid7ish(0xAA2), none_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3a")
+hdr_key_root = jws_sign(root_claims(uuid7ish(0x81), ROOT_TOOLS, ORCH), ATK,
+                        header={"alg": "Ed25519", "typ": "aat+jwt", "jwk": ATK.jwk})
+add("J.14.c", "Header-supplied key is not used", None,
+    "Root signed by the Attacker, whose public key is embedded in the JWS header as jwk. Keys come only "
+    "from trust anchors or cnf.jwk (Section 3.5), so the signature is checked against the root issuer's "
+    "key and fails.",
+    [hdr_key_root], pop_sign(pop_claims(uuid7ish(0xAA3), hdr_key_root, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3b")
 
 # --- J.20 PoP failures (twin of A.20) ----------------------------------------
 add("J.20.1", "PoP signed by the wrong holder key", "A.20.1",
@@ -889,6 +957,11 @@ add("J.20.7", "PoP replayed on a sibling leaf with the same jti", None,
     "The Worker re-derives a sibling of the J.3 L2 with the same jti and holder but a different exp, and "
     "presents it with the PoP Worker2 made for L2. aat_id matches; aat_hash does not (step 7c).",
     [L0, L1, L2_sibling], POP3, "read_file", {"path": Q3}, "DENY", "7c")
+no_hta = {k: v for k, v in pop_claims(uuid7ish(0xAB8), L2, "read_file", {"path": Q3}).items() if k != "hta"}
+add("J.20.8", "PoP without hta", None,
+    "Valid J.3 chain; the PoP omits hta. Step 7c requires hta to be present and an object, so an "
+    "implementation cannot default it to {}.",
+    [L0, L1, L2], pop_sign(no_hta, WK2), "read_file", {"path": Q3}, "DENY", "7c")
 
 # --- J.9 closed-world enforcement at the leaf (§3.3, step 6b) ----------------
 add("J.9.1", "Closed-world: unconstrained extra argument", None,
@@ -1011,11 +1084,36 @@ add("J.8.2", "Empty tool map at the leaf: extra arguments are permitted", None,
     "read_file", {"path": Q3, "mode": "r"}, "PERMIT")
 unk_root = jws_sign(root_claims(uuid7ish(0xB13), {"read_file": {"path": {"constraint_type": "no_such_type"}}}, ORCH), CP)
 add("J.8.3", "Unknown constraint_type is fail-closed at the leaf", "A.9.2",
-    "Root carries path:{constraint_type: no_such_type}. Step 6b denies unrecognized types.",
+    "Root carries path:{constraint_type: no_such_type}. Step 3n rejects constraint types the enforcement "
+    "point does not implement when it walks the root's constraint trees.",
     [unk_root], pop_sign(pop_claims(uuid7ish(0xB03), unk_root, "read_file", {"path": Q3}), ORCH),
-    "read_file", {"path": Q3}, "DENY", "6b",
-    notes=["The draft fixes the outcome, not the step: a verifier that validates constraint types while "
-           "walking the tree at step 3n will report 3n instead of 6b. Both are conformant."])
+    "read_file", {"path": Q3}, "DENY", "3n/4o")
+unk_other = jws_sign(root_claims(uuid7ish(0xB16), {"read_file": {"path": WILD},
+                                                   "export": {"format": {"constraint_type": "no_such_type"}}}, ORCH), CP)
+add("J.8.5", "Unknown constraint_type on a tool that is not invoked", None,
+    "Root authorizes read_file (wildcard path) and export, whose format constraint has an unknown type. "
+    "The invocation is read_file. The chain is still rejected at step 3n: the unknown type is found when "
+    "the root's constraint trees are walked, not only when the constrained tool is invoked.",
+    [unk_other], pop_sign(pop_claims(uuid7ish(0xB05), unk_other, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3n/4o")
+bad_range = jws_sign(root_claims(uuid7ish(0xB17), {"read_file": {"path": WILD},
+                                                   "export": {"limit": {"constraint_type": "range", "min": 10, "max": 5}}},
+                                 ORCH), CP)
+add("J.8.6", "Malformed range (min greater than max)", None,
+    "Root carries export.limit = range(min 10, max 5), which is not well-formed (Section 3.4). The invocation "
+    "is read_file; the chain is rejected at step 3n.",
+    [bad_range], pop_sign(pop_claims(uuid7ish(0xB06), bad_range, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3n/4o")
+BIG = 2**53 + 1
+big_root = jws_sign(root_claims(uuid7ish(0xB18), {"get_account": {"id": WILD}}, ORCH), CP)
+add("J.8.7", "Argument integer beyond 2^53 - 1", None,
+    "Root authorizes get_account with a wildcard id. The invocation passes id = 2^53 + 1, which JCS cannot "
+    "represent exactly (Section 3.4). Denied at step 6b.",
+    [big_root], pop_sign(pop_claims(uuid7ish(0xB07), big_root, "get_account", {"id": BIG}), ORCH),
+    "get_account", {"id": BIG}, "DENY", "6b",
+    notes=["The PoP payload carries the exact decimal digits of 2^53 + 1. A JCS implementation would "
+           "serialize the value as 9007199254740992; the verdict does not depend on it, because step 6b "
+           "denies before the PoP is compared."])
 FLAT_ROOT = jws_sign(root_claims(uuid7ish(0xB14), {"export": {"limit": ALL(rng(min=0), rng(max=100))}}, ORCH), CP)
 flat_child = jws_sign(derived_claims(uuid7ish(0xB15), FLAT_ROOT, ORCH, WK,
                                     {"export": {"limit": rng(min=10, max=50)}}, IAT_ROOT + 60, 1704069000, 2), ORCH)

@@ -566,6 +566,12 @@ Implementations MUST support Ed25519 {{RFC8032}}, JWS `alg` value
 Implementations MAY support additional asymmetric algorithms
 (Section 9.12).
 
+In AATs and PoP JWTs, NumericDate values and the integer claims
+`del_depth` and `del_max_depth` are JSON numbers with no fraction or
+exponent part. An `aud` or `aat_aud` value identifies an enforcement
+point when it is identical, by exact string comparison, to an audience
+identifier configured at that enforcement point.
+
 In both root and derived tokens, `iss` is a URI. For root tokens,
 `iss` is a URI identifying the root issuer, consistent with
 conventional OAuth usage. For derived tokens, `iss` is a JWK
@@ -646,6 +652,12 @@ specification process only entries with `type` set to
 "attenuating_agent_token"` is invalid; the tools map in a single entry
 provides sufficient structure for all tool-level capability claims.
 
+Only the `attenuating_agent_token` entry is attenuated by derivation.
+Any holder can add or change other claims and other
+`authorization_details` entries in a token it derives, so a consumer
+MUST NOT derive authority from them in a derived token unless a profile
+defines how they attenuate.
+
 Root tokens and leaf tokens MUST contain exactly one entry with `type:
 "attenuating_agent_token"`. Non-leaf derived tokens MAY contain zero
 entries of this type, in which case they represent the empty capability
@@ -713,7 +725,26 @@ a decidable, sound, and deterministic `subsumes` procedure.
 
 Constraint values and arguments are compared by their JCS
 serializations ({{RFC8785}}), the canonical form step 7f uses for
-`hta`.
+`hta`; `contains` and `subset` treat their arrays as sets. JCS
+represents numbers as IEEE 754 double-precision values, so a number
+whose magnitude exceeds 2^53 - 1 cannot be compared exactly: arguments
+and constraint values MUST NOT contain one. Such values, for example
+large identifiers, are carried as strings. The check needs no special
+parser: any such number still exceeds 2^53 - 1 after conversion to a
+double.
+
+A constraint is well-formed when:
+
+- `exact.value` is a string, number, boolean, or null;
+- `one_of.values` is a non-empty array, and `excluded`, `required`, and
+  `allowed` are arrays;
+- in a `range`, `min` and `max` are numbers, `min` is not greater than
+  `max`, and `min_inclusive` and `max_inclusive` are booleans present
+  only with the corresponding bound; and
+- no number in it has a magnitude exceeding 2^53 - 1.
+
+Enforcement points MUST reject a token containing a constraint that is
+not well-formed (Section 8, steps 3n and 4o).
 
 Enforcement points MUST reject invocations where any argument violates
 its associated constraint. Enforcement points MUST deny authorization if
@@ -727,7 +758,9 @@ contains claims outside those defined in this specification.
 
 Composite constraint types (`all`, `any`) are recursive.
 MAX_CONSTRAINT_DEPTH is an implementation-defined finite integer
-specifying the maximum nesting depth of a constraint tree.
+specifying the maximum nesting depth of a constraint tree. A constraint
+other than `all` or `any` has depth 1; an `all` or `any` has depth one
+more than its deepest clause.
 Implementations MUST enforce a finite MAX_CONSTRAINT_DEPTH to prevent
 resource exhaustion from pathologically deep constraint trees. A value
 of 32 is RECOMMENDED. Enforcement points MUST reject any constraint tree
@@ -752,9 +785,13 @@ Enforcement points MUST reject an AAT whose `typ` is absent or is not
 prevents an AAT from being accepted where a PoP JWT is required, and
 vice versa.
 
-Additional header parameters (for example `kid`) MAY be present.
-Enforcement points MUST ignore unrecognized header parameters that do
-not affect signature verification. If `crit` is present, it MUST be
+Additional header parameters MAY be present. The verification key for
+an AAT or PoP JWT comes only from the configured trust anchors or from
+a `cnf.jwk` in the chain: enforcement points MUST NOT use a key supplied
+by a header parameter such as `jwk`, `jku`, `x5c`, or `x5u`; a token
+carrying one is verified as if it were absent. Enforcement points MAY
+use `kid` only to select among configured trust anchors. Enforcement points
+MUST ignore other header parameters they do not recognize. If `crit` is present, it MUST be
 processed per {{RFC7515}} Section 4.1.11: an enforcement point that
 does not understand every parameter listed in `crit` MUST reject the
 token.
@@ -889,7 +926,8 @@ C(child) ⊆ C(parent)
 Every delegation step moves down or stays at the same position in this
 partial order. A derived token can only authorize a subset of what its
 parent authorized. It cannot add tools, loosen argument constraints, or
-extend the chain's authority in any dimension.
+extend the chain's authority in any dimension this specification
+defines (Section 3.3).
 
 The `⊆` relation is not defined by enumerating `(tool, args)` pairs
 (argument spaces are typically infinite) but by the structural
@@ -978,7 +1016,8 @@ MAX_DELEGATION_DEPTH is an implementation-defined finite integer
 specifying the maximum permitted delegation chain depth. Implementations
 MUST enforce a finite maximum delegation depth to prevent resource
 exhaustion, and SHOULD size it to their deployment topology (Appendix
-B.4).
+B.4). So that chains verify across implementations, MAX_DELEGATION_DEPTH
+MUST be at least 8.
 
 The `del_max_depth` claim in any token in the chain MUST NOT exceed the
 implementation's MAX_DELEGATION_DEPTH.
@@ -1081,7 +1120,8 @@ rules are:
   `max_inclusive`.
 
 - **one_of:** A derived `one_of` constraint is valid only if
-  its value set is a subset of the parent's value set.
+  its value set is a non-empty subset of the parent's value set; to
+  authorize no value, the deriver omits the tool.
   Cross-type pairs involving a derived `not_one_of` against a
   parent `one_of` are invalid: a `not_one_of` constraint
   accepts values outside the parent's permitted set, so a parent
@@ -1457,7 +1497,10 @@ A holder of any AAT whose `del_depth` is strictly less than
 
 8. Set `cnf.jwk` to the intended holder's public key. The
    value MUST be a public key; private key material MUST NOT
-   appear in this field.
+   appear in this field. When the child is delivered across a
+   process or trust boundary, `cnf.jwk` MUST NOT be the parent's
+   key: a recipient holding the parent's key could also present
+   the parent's token (Section 9.1.1).
 
 9. If the holder knows where the derived token will be presented,
    set `aud` to restrict it and its descendants to those
@@ -1479,7 +1522,7 @@ narrowed (the tool set is identical, all constraints are unchanged,
 valid by the invariants. Such a child has the same capability and
 lifetime authority as its parent while consuming one delegation depth. It
 does not improve least privilege, but deployments may use it for
-holder-key handoff or subprocess delegation.
+holder-key handoff.
 Enforcement points MAY log same-scope derivations as anomalous according
 to deployment policy.
 
@@ -1564,7 +1607,8 @@ effects or are not idempotent. For those, the enforcement point MUST
 track presented `jti` values, retaining each one only until its `iat`
 leaves the window (Section 8, step 7i). The enforcement point
 determines which of its tools have side effects; tokens do not carry
-this.
+this. Replicas of one enforcement point, such as instances behind a
+load balancer, share `jti` state.
 
 Accepting a PoP JWT at most once across a deployment additionally
 requires that no other enforcement point accept the same proof: either
@@ -1634,7 +1678,7 @@ Algorithm:
       parse the root token's claims, rejecting any JSON object
       with duplicate member names ({{RFC8259}} Section 4), and
       verify root.iat and root.exp are present and are
-      NumericDate values. If not, DENY. All subsequent root
+      NumericDate values (Section 3.2). If not, DENY. All subsequent root
       checks (3c through 3n) operate on parsed claims.
    c. Verify root.del_depth == 0.
    d. Verify root.par_hash is absent.
@@ -1669,9 +1713,11 @@ Algorithm:
       bypass window that exists when step 4 does not run.
    n. For each constraint in each constraint map in the root
       token's attenuating_agent_token entry, verify the
-      constraint tree depth does not exceed MAX_CONSTRAINT_DEPTH
-      and that no `all` or `any` constraint has an empty
-      `constraints` array. If either check fails, DENY.
+      constraint tree depth does not exceed MAX_CONSTRAINT_DEPTH,
+      that every constraint in it is of a type this enforcement
+      point implements (Sections 3.4 and 5.2) and is well-formed
+      (Section 3.4), and that no `all` or `any` constraint has an
+      empty `constraints` array. If any check fails, DENY.
 
 4. For each adjacent pair (parent, child) in chain:
    a. Verify child token's JWS alg header is on the
@@ -1696,8 +1742,9 @@ Algorithm:
       b4. Verify child.del_depth and child.del_max_depth are
           both present and are non-negative integers. If
           absent or not integers, DENY.
-      b5. Verify child.iss, child.iat, child.exp, and
-          child.par_hash are all present. If any is absent, DENY.
+      b5. Verify child.iss and child.par_hash are present and are
+          strings, and child.iat and child.exp are present and are
+          NumericDate values (Section 3.2). If not, DENY.
    c. Verify child.iss equals jwk_thumbprint_uri(parent.cnf.jwk). (I1)
    d. Verify child.del_depth == parent.del_depth + 1.    (I2)
    e. Verify child.del_depth <= parent.del_max_depth.    (I2)
@@ -1745,9 +1792,11 @@ Algorithm:
       by this algorithm.
    o. For each constraint in each constraint map in child_aat.tools,
       verify the constraint tree depth does not exceed
-      MAX_CONSTRAINT_DEPTH and that no `all` or `any` constraint
-      has an empty `constraints` array. If either check fails,
-      DENY.
+      MAX_CONSTRAINT_DEPTH, that every constraint in it is of a
+      type this enforcement point implements (Sections 3.4 and 5.2)
+      and is well-formed (Section 3.4),
+      and that no `all` or `any` constraint has an empty
+      `constraints` array. If any check fails, DENY.
    p. Verify capability monotonicity (Section 4.5):   (I4)
       p1. Verify every tool in child_aat.tools
           is also present in parent_aat.tools.
@@ -1781,7 +1830,9 @@ Algorithm:
       more than one such entry is present, DENY.
       Define leaf_aat as that entry. Entries of other types in
       `authorization_details` are ignored by this algorithm.
-   b. Verify tool is present in leaf_aat.tools. Then, for each argument
+   b. Verify tool is present in leaf_aat.tools, and that args
+      contains no number whose magnitude exceeds 2^53 - 1
+      (Section 3.4). Then, for each argument
       in args: if the tool's constraint map is non-empty and
       the argument name is not present in the constraint map,
       DENY (closed-world mode). For each argument name present
@@ -1808,9 +1859,14 @@ Algorithm:
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
       signature verification succeeds, parse the PoP JWT claims,
       rejecting any JSON object with duplicate member names. (I6)
-   c. Verify pop_jwt.jti is present and is a non-empty string,
-      pop_jwt.aat_id == leaf.jti, and pop_jwt.aat_hash equals
-      base64url-nopad(SHA-256(leaf token signing input)).
+   c. Verify pop_jwt.jti, pop_jwt.aat_id, pop_jwt.aat_hash, and
+      pop_jwt.aat_tool are present and are non-empty strings,
+      pop_jwt.iat is a NumericDate value (Section 3.2), and
+      pop_jwt.hta is
+      present and is a JSON object; then verify pop_jwt.aat_id ==
+      leaf.jti and pop_jwt.aat_hash equals
+      base64url-nopad(SHA-256(leaf token signing input)). If not,
+      DENY.
    d. If pop_jwt.aat_aud is present, verify it identifies this
       enforcement point. If it does not, DENY. If it is absent
       and this enforcement point requires PoP audience binding
@@ -1868,7 +1924,10 @@ threat environment requires.
 attacker who injects instructions into an agent's input cannot cause the
 agent to invoke tools outside the scope encoded in its token. The
 enforcement point rejects any invocation of an unauthorized tool
-regardless of the agent's stated rationale.
+regardless of the agent's stated rationale. This holds only while the
+holder private key is out of the model's reach: an agent that can read
+or exfiltrate its key can act with the full scope of every token bound
+to it.
 
 **Hallucinated tool invocations with out-of-scope arguments.** Even
 when an agent invokes an authorized tool, argument constraints in the
@@ -2044,7 +2103,9 @@ seconds at the RECOMMENDED setting (Section 9.10). Section 7.3
 therefore requires `jti` tracking for tool invocations that have side
 effects or are not idempotent, such as financial transactions, data
 deletion, writes to external systems, or anything that cannot be
-undone.
+undone. Replaying a read-only invocation returns its result to whoever
+replays it, so enforcement points SHOULD also track `jti` values, or
+require a nonce, for tools whose responses are sensitive.
 
 PoP JWTs are scoped to the invocation data they contain. Without
 further binding, a PoP JWT captured at one enforcement point may be
@@ -2626,7 +2687,7 @@ delegation and attenuation mechanism that WIMSE does not standardize.
 ## Delegation Depth Guidance
 
 The normative requirement is only that implementations enforce a finite
-MAX_DELEGATION_DEPTH. This appendix provides non-normative guidance for
+MAX_DELEGATION_DEPTH of at least 8 (Section 4.3). This appendix provides non-normative guidance for
 selecting an appropriate value.
 
 The appropriate MAX_DELEGATION_DEPTH depends on the deployment topology.
@@ -2939,7 +3000,7 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision makes eight normative changes. They are breaking for
+This revision makes ten normative changes. They are breaking for
 implementations that followed the -01 text.
 
 - **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
@@ -2995,6 +3056,24 @@ implementations that followed the -01 text.
   value `"Ed25519"` ({{RFC9864}}); the deprecated polymorphic
   `"EdDSA"` MUST NOT be used (Section 9.12). The -01 text used
   `"EdDSA"`.
+- **Validation gaps closed.** Steps 3n and 4o reject constraint types the
+  enforcement point does not implement and constraints that are not
+  well-formed (Section 3.4), wherever they appear in the chain; steps
+  4b5 and 7c check claim types, and 7c requires `hta`; integers have
+  no fraction or exponent, audiences compare by exact string, and
+  `contains` and `subset` use set semantics (Sections 3.2 and 3.4);
+  numbers in arguments and constraints must not exceed 2^53 - 1 in
+  magnitude; constraint depth counting is defined; and
+  MAX_DELEGATION_DEPTH is at least 8. Replicas of an enforcement point
+  share `jti` state (Section 7.3), and tools returning sensitive data
+  SHOULD get replay protection too (Section 9.5). The -01 text did not
+  address these.
+- **Key sourcing and holder keys.** Verification keys come only from
+  trust anchors or `cnf.jwk`, never from JWS header parameters (Section
+  3.5); a child delivered across a process or trust boundary is not
+  bound to its parent's key (Section 6.2, step 8); and claims
+  or `authorization_details` entries other than the AAT entry carry no
+  authority in derived tokens (Section 3.3).
 
 Editorial and alignment changes, not intended to change behavior
 relative to the Section 8 algorithm in -01:
