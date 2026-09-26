@@ -1853,17 +1853,16 @@ accept. An agent that hallucinates an argument value outside the
 authorized range is denied at the enforcement point before the tool
 executes.
 
-**Confused deputy attacks.** In the classic form, a deputy is induced to
-use its own authority on a resource designated by another party. In
-agentic systems, that designation can come from an invoking principal,
-prompt injection, tool output, or model error. AATs avoid relying on the
-standing authority the classic form exploits: an agent acts under a token
-presented for the current invocation. When the invoker derives that token
-to designate the task's resource, designation and authority travel
-together, and the agent cannot be steered outside the authority carried
-by the token. A token authorizing more than one resource can still be
-steered within its scope, so the holder deriving a leaf token SHOULD
-scope it as narrowly as the task permits. The delegation chain verifies provenance and
+**Confused deputy attacks.** In agentic systems, the designation a
+confused deputy acts on (Section 1) can come from an invoking principal,
+prompt injection, tool output, or model error. AATs avoid relying on
+standing authority: an agent acts under a token presented for the
+current invocation. When the invoker derives that token to designate the
+task's resource, designation and authority travel together, and the
+agent cannot be steered outside the authority carried by the token. A
+token authorizing more than one resource can still be steered within its
+scope, so the holder deriving a leaf token SHOULD scope it as narrowly
+as the task permits. The delegation chain verifies provenance and
 attenuation, and the enforcement point checks the presented invocation
 against the leaf token's constraints. How a constraint value maps to the
 resource the tool ultimately acts upon is defined by the tool contract
@@ -1871,19 +1870,11 @@ and implemented by the tool: the protocol authorizes the presented
 invocation, and the tool remains responsible for resolving that
 invocation to the correct resource.
 
-**Privilege escalation across delegation hops.** The capability
-monotonicity invariant (I4) ensures that authority can only narrow at
-each delegation step. A derived token cannot authorize tools or
-argument values absent from its parent token. An agent that attempts
-to mint a derived token with
-broader scope will produce a token that fails chain verification at the
-enforcement point.
-
-**Compromised sub-agents.** If a sub-agent is compromised, the blast
-radius is bounded by the scope of the token it holds. The attacker
-cannot use the compromised agent to escalate to broader authority,
-invoke tools outside the token's scope, or derive tokens with wider
-permissions than the compromised token encodes.
+**Privilege escalation and compromised sub-agents.** Authority can only
+narrow at each delegation step (I4). A compromised or misbehaving
+sub-agent is bounded by the scope of the token it holds: it cannot
+invoke tools outside that scope, and any token it derives with broader
+scope fails chain verification.
 
 **Replay of a parent or intermediate token.** Derivation is additive:
 a parent token remains valid after a child is derived from it, and an
@@ -1918,14 +1909,12 @@ rejects this because `C` commits to the signing input of `A`, not
 
 ### Threats Not Mitigated
 
-**Malicious or compromised root issuer.** The security of all chains
-depends on the integrity of the trust anchor key. A root issuer that
-mints tokens with overly broad scopes, or whose signing key is
-compromised, undermines the authorization guarantees of every chain it
-anchors. AATs provide no mechanism to detect or constrain a malicious
-root issuer. Key management, rotation procedures, and root issuer
-accountability are deployment concerns outside the scope of this
-specification.
+**Malicious or compromised root issuer.** A root issuer that mints
+tokens with overly broad scopes, or whose key is compromised,
+undermines the authorization guarantees of every chain it anchors, and
+AATs provide no mechanism to detect or constrain it. Root issuer
+accountability is a deployment concern; key compromise and rotation are
+discussed in Section 9.3.
 
 **Compromised enforcement point.** An enforcement point that skips chain
 verification, ignores constraint evaluation, or accepts forged tokens
@@ -1942,11 +1931,9 @@ unintended use of its authorized tools within the bounds of its token is
 not detectable at the enforcement point. Rate limiting, audit logging,
 and behavioral monitoring are complementary controls for this threat.
 
-**Compromised holder key.** If an agent's private key is stolen, the
-attacker can exercise the full authority encoded in that agent's token
-until the token expires. The blast radius is bounded by the token scope,
-but within that scope the attacker has full authorization. Short token
-lifetimes (Appendix B.7) limit the exposure window.
+**Compromised holder key.** Tokens bound to a stolen holder key are
+usable at their full scope until they expire or are revoked; short
+lifetimes bound the window (Section 9.4).
 
 **Model exfiltration and side-channel attacks.** An attacker who
 extracts an agent's model weights, system prompt, or in-context state
@@ -1956,24 +1943,21 @@ have no visibility into the model layer.
 
 ## Attenuation as the Security Invariant
 
-The capability-containment guarantee of this specification rests on
-the enforcement of the capability monotonicity invariant (I4). An
-enforcement point that fails to check I4, or that checks it
-incorrectly, provides no blast radius containment. The broader chain
-security properties also depend on the remaining invariants: delegation
-authority (I1), depth bounds (I2), lifetime bounds (I3), parent-token
-linkage (I5), and proof of possession (I6). Implementers should test I4
-enforcement against every (parent type, child type) pair in Section
-4.5, including the pairs that enforcement points MUST reject.
+The capability-containment guarantee of this specification rests on the
+enforcement of the capability monotonicity invariant (I4). An
+enforcement point that fails to check I4, or that checks it incorrectly,
+provides no blast radius containment. Implementers should test I4
+enforcement against every (parent type, child type) pair in Section 4.5,
+including the pairs that enforcement points MUST reject.
 
-Those other invariants rely on well-established
+The remaining invariants (I1-I3, I5, I6) rely on well-established
 cryptographic primitives and validation patterns with substantial prior
 art in deployed systems. I4 carries this specification's main
 contribution: SPKI/SDSI (Section 1.3) established attenuation by
 reduction, and this document defines typed subsumption rules over tool
-arguments that make it checkable offline. Implementers are encouraged
-to publish independent analyses of both the core subsumption rules and
-any extension constraint types they deploy. Implementation and formal
+arguments that make it checkable offline. Implementers are encouraged to
+publish independent analyses of both the core subsumption rules and any
+extension constraint types they deploy. Implementation and formal
 verification status is described in Appendix F.
 
 ## Root Key Compromise
@@ -1989,19 +1973,19 @@ attestation mechanisms, such as the RATS architecture {{RFC9334}}, can
 complement AAT deployments by providing evidence about root issuer or
 enforcement point environments.
 
-Deployments SHOULD implement key rotation procedures and revocation
-mechanisms appropriate to their risk model. The specific mechanism for
-root key revocation, including revocation list formats, distribution
-protocols, and enforcement point update procedures, is outside the scope
-of this specification.
+Deployments SHOULD implement key rotation and revocation procedures
+appropriate to their risk model. Rotating a compromised trust anchor
+means replacing its key and re-issuing root tokens; enforcement points
+SHOULD support configurable trust-anchor sets so rotation needs no
+downtime. Revocation list formats and distribution are outside the
+scope of this specification.
 
 ## Holder Key Compromise
 
 A compromised holder key allows an attacker to present existing tokens
-issued to that holder. The attacker cannot derive tokens with broader
-scope than the compromised token grants. Mitigation is revocation of
-tokens bound to the compromised key, or expiry-based recovery for
-short-lived tokens.
+issued to that holder, but not to derive broader ones. The response is
+revoking tokens bound to that key where the deployment supports
+revocation (Section 9.8), or letting short-lived tokens expire.
 
 AATs do not provide the re-keying property of HMAC-chained designs
 such as Macaroons {{MACAROONS}}, where adding a caveat replaces the
@@ -2130,11 +2114,6 @@ compromise, token theft, or scope misconfiguration. A short-lived leaf
 token provides a bounded damage window even when no revocation mechanism
 is deployed. Root tokens SHOULD be issued with the shortest lifetime
 that covers the delegated task (Appendix B.7).
-
-Root trust anchor rotation (replacing the trust anchor signing key and
-re-issuing root tokens) is the appropriate response to a root key
-compromise. Enforcement points SHOULD support configurable trust anchor
-sets to enable rotation without downtime.
 
 A companion document may define lineage-scoped cascading revocation. In
 such a model, revocation is enforced by the enforcement point that
