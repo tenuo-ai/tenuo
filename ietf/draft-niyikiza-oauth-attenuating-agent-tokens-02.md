@@ -779,7 +779,7 @@ chain verification, it MUST:
 
 2. Evaluate the subsumption relation at every chain link where
    the constraint appears, as part of the I4 check. A chain link
-   where the derived constraint does not subsume the parent
+   where the parent constraint does not subsume the derived
    constraint MUST be rejected.
 
 3. Evaluate the constraint's `check` predicate against the
@@ -811,8 +811,8 @@ strings without normalization do not conform to this registration.
 only if `C_child.root` is `C_parent.root` or lies beneath
 `C_parent.root` under the normalized path-segment ordering.
 
-**Cross-type subsumption:** A derived `exact` constraint subsumes a
-parent `path_containment` constraint if and only if the exact value,
+**Cross-type subsumption:** A parent `path_containment` constraint
+subsumes a derived `exact` constraint if and only if the exact value,
 after normalization, is equal to the parent's `root` or lies beneath it.
 All other cross-type pairs involving `path_containment` are invalid.
 
@@ -1100,9 +1100,10 @@ When the parent's map is empty, the derived token may introduce
 keys, transitioning from open-world to closed-world. No per-key parent
 constraint exists in this case; the derived closed-world invocation set
 is a subset of the parent's unrestricted invocation set. When a parent
-constraint exists, a derived constraint `c_child` subsumes a parent
-constraint `c_parent` (written `c_child ⊑ c_parent`) if every argument
-value that satisfies `c_child` also satisfies `c_parent`.
+constraint exists, a parent constraint `c_parent` subsumes a derived
+constraint `c_child` (written `c_child ⊑ c_parent`) if every argument
+value that satisfies `c_child` also satisfies `c_parent`. A derived
+constraint attenuates its parent exactly when the parent subsumes it.
 
 Two boundary cases complete the structure. The empty capability set
 `∅` is the bottom element: a token with no tools authorized is a
@@ -1261,14 +1262,14 @@ parent's constraint.
 Constraint subsumption is defined per constraint type. The normative
 rules are:
 
-- **exact:** A derived `exact` constraint subsumes a parent
-  constraint of the same or different type as follows: it subsumes
-  a parent `exact` if the values are identical; it subsumes a parent
-  `range` if the exact value is a number that falls within the parent
-  range; it subsumes a parent `one_of` if the exact value is a member of
-  the parent set; it subsumes a parent `wildcard` unconditionally. All
-  other parent types are invalid cross-type targets for a derived `exact`
-  constraint.
+- **exact:** A derived `exact` constraint attenuates a parent
+  constraint of the same or different type as follows: a parent
+  `exact` subsumes it if the values are identical; a parent `range`
+  subsumes it if the exact value is a number that falls within the
+  parent range; a parent `one_of` subsumes it if the exact value is a
+  member of the parent set; a parent `wildcard` subsumes it
+  unconditionally. All other parent types are invalid cross-type
+  targets for a derived `exact` constraint.
 
 - **range:** A derived `range` constraint is valid only if its
   bounds are at least as restrictive as the parent's
@@ -1285,8 +1286,8 @@ rules are:
   its value set is a subset of the parent's value set.
   Cross-type pairs involving a derived `not_one_of` against a
   parent `one_of` are invalid: a `not_one_of` constraint
-  accepts values outside the parent's permitted set and
-  cannot be verified as subsuming a `one_of` without domain knowledge.
+  accepts values outside the parent's permitted set, so a parent
+  `one_of` cannot be verified to subsume it without domain knowledge.
   Enforcement points MUST reject this cross-type pair.
 
 - **not_one_of:** A derived `not_one_of` constraint is valid
@@ -1294,22 +1295,21 @@ rules are:
   set (can only add exclusions, never remove them).
 
 - **wildcard:** A derived `wildcard` is valid only if the parent
-  is also `wildcard`. Any other constraint type subsumes a
-  parent `wildcard`.
+  is also `wildcard`. A parent `wildcard` subsumes a derived
+  constraint of any other type.
 
-- **all:** A derived `all` constraint is valid attenuation of a
-  parent `all` if every parent clause is subsumed by at least one
-  derived clause. Formally: for each `clause_p` in
+- **all:** A derived `all` constraint attenuates a parent `all`
+  if every parent clause subsumes at least one derived clause. Formally: for each `clause_p` in
   `parent.all.constraints`, there MUST exist a `clause_d` in
   `derived.all.constraints` such that `clause_d ⊑ clause_p` per this
   section. A single derived clause MAY satisfy more than one parent
   clause. The derived constraint MAY add additional clauses, which
   only further restrict the accepted value set. If any parent clause
-  is not subsumed by at least one derived clause, the check MUST
-  fail. An `all` constraint whose `constraints` array is empty is
-  invalid in both the parent and the derived position and MUST be
-  rejected; an empty conjunction would accept every value while
-  appearing to constrain it.
+  subsumes no derived clause, the check MUST fail. An `all`
+  constraint whose `constraints` array is empty is invalid in both
+  the parent and the derived position and MUST be rejected; an empty
+  conjunction would accept every value while appearing to constrain
+  it.
 
   This matching rule is sound: if `C_d ⊑ C_p1` and `C_d ⊑ C_p2`, then
   `C_d.check(v)` implies both `C_p1.check(v)` and `C_p2.check(v)`, so
@@ -1322,12 +1322,12 @@ rules are:
   ~~~
   function check_all_subsumption(parent_clauses, derived_clauses):
     for C_p in parent_clauses:
-      if not any(subsumes(C_d, C_p) for C_d in derived_clauses):
+      if not any(subsumes(C_p, C_d) for C_d in derived_clauses):
         return FAIL
     return PASS
   ~~~
 
-- **any:** A derived `any` constraint subsumes a parent `any`
+- **any:** A derived `any` constraint attenuates a parent `any`
   constraint if every clause in the derived constraint is
   subsumed by at least one clause in the parent constraint,
   using the per-type subsumption rules defined in this section.
@@ -1765,9 +1765,10 @@ Algorithm:
           child_aat.tools: if the parent's constraint map is empty,
           the child's constraint map MAY contain any set of keys.
       p4. For each argument key present in both constraint maps
-          for a matched tool, verify the child's constraint subsumes
-          the parent's per the per-type rules in Section 4.5. If
-          any constraint fails subsumption, DENY.
+          for a matched tool, verify the parent's constraint
+          subsumes the child's per the per-type rules in Section
+          4.5. If any child constraint does not attenuate its
+          parent constraint, DENY.
    q. Verify child.par_hash equals base64url-nopad(      (I5)
       SHA-256(parent token signing input)), where
       base64url-nopad denotes base64url encoding without
@@ -2009,18 +2010,13 @@ permitted.
 
 Those other invariants rely on well-established
 cryptographic primitives and validation patterns with substantial prior
-art in deployed systems. I4 is novel. Formal verification of the I4
-subsumption rules is in progress, using bounded model checking
-({{ALLOY}}) for set-theoretic constraint types and SMT solving ({{Z3}})
-for numeric and structural constraint types. Implementers are encouraged
+art in deployed systems. I4 carries this specification's main
+contribution: SPKI/SDSI (Section 1.3) established attenuation by
+reduction, and this document defines typed subsumption rules over tool
+arguments that make it checkable offline. Implementers are encouraged
 to publish independent analyses of both the core subsumption rules and
-any extension constraint types they deploy.
-
-The Tenuo reference implementation includes a test suite covering monotonicity
-of the attenuation invariants under arbitrary sequences, normalization
-idempotence across encode/decode round-trips, and enforcement agreement
-between in-memory and deserialized constraint evaluation. See
-Appendix F for implementation status.
+any extension constraint types they deploy. Implementation and formal
+verification status is described in Appendix F.
 
 ## Root Key Compromise
 
@@ -2123,10 +2119,12 @@ at least one where the exposure exists:
 
 An intermediary that forwards a presentation MUST either derive its
 own token and present its own PoP JWT to the next hop, as in token
-exchange {{RFC8693}}, or forward the presentation unchanged only to an
-enforcement point that does not require `aat_aud`. Requiring
-`aat_aud` while accepting transparent intermediaries is not a
-coherent policy.
+exchange {{RFC8693}}, or forward the presentation unchanged. A
+forwarded presentation is accepted only if its `aat_aud` is absent or
+identifies the receiving enforcement point (Section 7, step 7d). A
+holder whose presentation may be forwarded therefore omits `aat_aud`,
+and an enforcement point that requires `aat_aud` does not accept
+forwarded presentations.
 
 An enforcement point that accepts a chain which other enforcement
 points, resource servers, tenants, or resource contexts also accept
@@ -2737,8 +2735,9 @@ endpoint. The verification key for derived tokens is
 The WIMSE architecture {{WIMSE-ARCH}} and service-to-service protocol
 {{WIMSE-S2S}} address workload identity and authentication for entities
 that hold and present AATs. A WIMSE workload credential identifies an
-agent; the `iss` claim in a root AAT issued to that agent may reference
-the agent's WIMSE workload identifier. The two specifications are
+agent and can authenticate it to the token endpoint at root issuance
+(Section 3.7.2). The AAT itself binds the agent by its holder key in
+`cnf.jwk`; `iss` identifies the root issuer. The two specifications are
 complementary: WIMSE establishes workload identity and authentication;
 this specification defines a holder-derivable, invocation-scoped
 delegation and attenuation mechanism that WIMSE does not standardize.
@@ -3019,6 +3018,11 @@ experience supports the format independence of the core protocol model,
 but does not define a fully interoperable CWT profile; the CWT profile is
 deferred as described in Appendix D.
 
+The reference implementation's test suite covers monotonicity of the
+attenuation invariants under arbitrary sequences, normalization
+idempotence across encode/decode round-trips, and agreement between
+in-memory and deserialized constraint evaluation.
+
 JWS test vectors for the algorithm in Section 7 are published as
 described in Appendix E.
 
@@ -3066,7 +3070,7 @@ implementations that followed the -01 text.
   `htu` and server nonce {{RFC9449}}. The -01 text left audience to
   deployment policy without defining what the value meant.
 - **`all` subsumption without one-to-one assignment.** A derived `all`
-  is valid if every parent clause is subsumed by at least one derived
+  is valid if every parent clause subsumes at least one derived
   clause. A single derived clause MAY satisfy several parent clauses.
   Extra derived clauses remain permitted. The -01 text required a
   one-to-one assignment of derived clauses to parent clauses, which
