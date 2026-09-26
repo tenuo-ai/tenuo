@@ -324,13 +324,13 @@ Enforcement Point
 
 At each derivation step, authority can stay the same or narrow, but
 never widen. This document defines the token format, derivation, proof
-of possession, and verification. It leaves three things to deployments
-or companion specifications: token revocation, which would reintroduce
-the online dependency that offline verification avoids (Section 9.8); a
-CBOR encoding (Appendix D); and how chains are carried to enforcement
-points, since agent frameworks carry tool calls over different
-protocols, for example MCP {{MCP}}, A2A {{A2A}}, or plain HTTP, and each
-needs its own binding.
+of possession, the presentation an enforcement point receives (Section
+7.4), and verification. It leaves three things to deployments or
+companion specifications: token revocation, which would reintroduce the
+online dependency that offline verification avoids (Section 9.8); a CBOR
+encoding (Appendix D); and where a presentation is carried, since agent
+frameworks carry tool calls over different protocols, for example MCP
+{{MCP}}, A2A {{A2A}}, or plain HTTP, and each needs its own binding.
 
 ## Limitations of Existing OAuth Mechanisms for Agentic Delegation
 
@@ -1678,6 +1678,38 @@ requires that no other enforcement point accept the same proof: either
 by sharing `jti` state or by binding the proof to one enforcement point
 through chain audience, `aat_aud`, or a nonce (Section 9.5).
 
+## Presentation
+
+A presentation is what a holder sends to an enforcement point for one
+tool invocation: the delegation chain and the PoP JWT for that
+invocation. This specification defines what a presentation contains, not
+how it is carried; a binding to a particular protocol defines where the
+presentation travels and how the enforcement point obtains the
+invocation's tool identifier and arguments (Section 1).
+
+When a binding carries a presentation as JSON, it uses an object with
+these members:
+
+| Member | Type | Description |
+|---|---|---|
+| `aat_chain` | array of strings | The chain in root-to-leaf order, each token in JWS Compact Serialization. |
+| `aat_pop` | string | The PoP JWT in JWS Compact Serialization. |
+
+~~~json
+{
+  "aat_chain": ["eyJhbGciOiJFZDI1NTE5Ii...", "eyJhbGciOiJFZDI1NTE5Ii..."],
+  "aat_pop": "eyJhbGciOiJFZDI1NTE5Ii..."
+}
+~~~
+
+The two members are the `chain` and `pop_jwt` inputs of the Section 8
+algorithm. A binding MUST preserve the order of the chain and MUST NOT
+separate a PoP JWT from the chain it was produced for. Enforcement
+points ignore members they do not recognize. A chain of several tokens
+can exceed the header size limits of common HTTP intermediaries
+(Appendix B.5), so bindings SHOULD carry the presentation in a message
+body or in protocol metadata rather than in an HTTP header field.
+
 
 # Chain Verification Algorithm
 
@@ -1694,11 +1726,13 @@ inputs of this algorithm.
 ~~~
 Inputs:
   chain:         ordered array of signed JWTs, [root, ..., leaf]
+                 (aat_chain in a presentation, Section 7.4)
   trust_anchors: set of (issuer, public key) pairs trusted as
                  root issuers
   tool:          the tool being invoked
   args:          the arguments being passed to the tool
   pop_jwt:       the PoP JWT presented by the agent
+                 (aat_pop in a presentation, Section 7.4)
 
 Algorithm:
 
@@ -2835,13 +2869,12 @@ may extract `jti` using a length-limited byte scan rather than a
 full JSON parser, provided the extraction correctly handles JSON
 whitespace and string escaping.
 
-A single AAT is typically 1-4 KB when base64url-encoded. Chains
-of two or more tokens will commonly exceed the 4-8 KB header size
-limits enforced by common reverse proxies and load balancers,
-resulting in 431 errors. Deployments should transmit AAT chains
-in a request body field rather than an HTTP header. For size-constrained
-environments, Appendix D notes considerations for a future CBOR/CWT
-profile.
+A single AAT is typically 1-4 KB when base64url-encoded. Chains of two
+or more tokens will commonly exceed the 4-8 KB header size limits
+enforced by common reverse proxies and load balancers, resulting in 431
+errors, which is why Section 7.4 recommends carrying presentations in a
+message body or protocol metadata. For size-constrained environments,
+Appendix D notes considerations for a future CBOR/CWT profile.
 
 ## Signed Passthrough Metadata
 
@@ -3101,7 +3134,7 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision makes eleven normative changes. They are breaking for
+This revision makes twelve normative changes. They are breaking for
 implementations that followed the -01 text.
 
 - **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
@@ -3178,6 +3211,11 @@ implementations that followed the -01 text.
   argument could not be constrained at all without denying one of its
   call shapes. This responds to findings from an independent
   implementation (see Acknowledgments).
+- **Presentation object.** Section 7.4 defines the JSON object that
+  carries a chain and its PoP JWT (`aat_chain`, `aat_pop`) to an
+  enforcement point, leaving where it is carried to protocol bindings.
+  The -01 text defined neither, so two implementations could not
+  exchange a presentation without inventing one.
 - **Key sourcing and holder keys.** Verification keys come only from
   trust anchors or `cnf.jwk`, never from JWS header parameters (Section
   3.5); a child delivered across a process or trust boundary is not

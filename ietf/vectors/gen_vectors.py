@@ -1582,7 +1582,9 @@ json_out = {
         "notes": v["notes"], "now": v["verification_time"], "tool": v["tool"], "args": v["args"],
         "policy": v["policy"],
         "chain": [tok_json(t) for t in v["chain"]], "chain_compact": [t["compact"] for t in v["chain"]],
-        "pop": tok_json(v["pop"]), "expected": v["expected"],
+        "pop": tok_json(v["pop"]),
+        "presentation": {"aat_chain": [t["compact"] for t in v["chain"]], "aat_pop": v["pop"]["compact"]},
+        "expected": v["expected"],
     } for v in VECTORS],
 }
 ARGS.json_out.write_text(json.dumps(json_out, indent=2) + "\n")
