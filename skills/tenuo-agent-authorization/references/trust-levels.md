@@ -4,6 +4,16 @@ Use these labels when reporting an integration. They describe the guarantee actu
 
 Choose a label only when its conditions are evidenced. A missing or unverified production requirement rules out "production boundary"; use "development loop" only if its complete allow/deny flow is demonstrated, "observation only" when no authorization is enforced, and "incomplete integration" otherwise.
 
+## SDK tiers are distinct from deployment trust
+
+Tier 1 enforces local tool allowlists and argument constraints in trusted application code. It can reject out-of-policy model calls, including calls induced by prompt injection, without relying on model compliance. It does not verify signed issuer authority, holder proof, or delegation chains. Do not describe an enforcing local policy as observation-only or imply it is useful only for prototypes.
+
+Tier 2 adds cryptographically verifiable, holder-bound authority and delegation that can only narrow scope. It lets an independently configured verifier check authority without trusting the caller's claimed permissions. Warrants may come from an application-owned issuer or a control plane; signed receipts require their own signing and collection configuration.
+
+Either tier can run in a bypassable agent process. Adding signatures does not isolate the verifier or remove alternate resource access. Report both what is checked and where it is enforced. In ADK, `require_pop=False` remains local policy checking even when a warrant supplies constraints; do not describe that mode as verified delegation.
+
+For a user-requested local-policy integration, report the checks and their boundary directly; do not invent an issuance requirement or upgrade it to Tier 2 without a need. The issuer-to-effect labels below describe warrant-based integrations. An in-process guardrail can accompany either mode.
+
 ## Incomplete integration
 
 Some enforcement or issuance exists, but a complete, usable issuer-to-effect path has not been demonstrated. For example, a fail-closed verifier with no known legitimate warrant source is incomplete, not observation-only and not a production boundary.

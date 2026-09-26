@@ -14,6 +14,8 @@ Identify the action-selecting process, the effecting component, every direct or 
 - An **in-process guardrail** limits calls reaching a wrapper. It is not an independent boundary when the agent process can bypass it or reach the resource directly.
 - **Effect-boundary enforcement** verifies in a server, gateway, sidecar, worker, or tool host outside the agent's authority before performing the effect.
 
+Distinguish SDK mode from deployment isolation: Tier 1 enforces local policy; Tier 2 adds signed, holder-bound, verifiably delegated authority. Neither mode alone prevents process-level bypass. When a user requests local policy only, preserve that scope and report its actual checks rather than imposing the warrant issuance/completion gate below. Read [Integration trust levels](references/trust-levels.md) for the tier-to-guarantee mapping.
+
 If an original unguarded application route remains, close it or report the integration as incomplete; a residual-risk disclaimer does not make that route protected. Read [Architectural patterns](references/architectural-patterns.md) only when the enforcement location is undecided or the task changes deployment topology.
 
 For an MCP integration, run `scripts/inspect_mcp_project.py --root .`, confirm its findings in source, then read [End-to-end MCP integration](references/mcp.md). Do not add a verifier in isolation: identify how legitimate callers receive holder-bound warrants and send proof with each protected call. If issuance is missing, observation and policy discovery may still be useful, but report that enforcement is incomplete.

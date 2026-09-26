@@ -11,15 +11,15 @@ Tenuo integrates with [CrewAI](https://crewai.com) using a **two-tier** protecti
 
 | Tier | Setup | Best For |
 |------|-------|----------|
-| **Tier 1: Guardrails** | Inline constraints | Quick hardening, prototyping, single-crew agents |
-| **Tier 2: Warrants** | Warrant + signing key | Hierarchical crews, distributed execution, audit requirements |
+| **Tier 1: Guardrails** | Inline constraints | Application-owned local policy, quick hardening |
+| **Tier 2: Warrants** | Warrant + signing key | Hierarchical delegation, verifiable authority, distributed execution |
 
-**Tier 1** catches LLM mistakes and prompt injection with minimal setup. Constraints are defined inline in your code.
+**Tier 1** enforces application-defined tool and argument policies. It blocks out-of-policy calls on the guarded path, including calls induced by prompt injection, without relying on model compliance.
 
-**Tier 2** adds cryptographic proof. Warrants are issued by a control plane and include Proof-of-Possession (PoP) for each tool call. Required for hierarchical crews and delegation.
+**Tier 2** adds signed, holder-bound authority and verifiable delegation that can only narrow scope. Your own issuer or a control plane issues warrants; the holder supplies Proof-of-Possession (PoP) for each call. Use it when a crew or downstream tool must verify delegated authority rather than rely only on local policy.
 
 > [!IMPORTANT]
-> **Production Recommendation**: Use **Tier 2** with `guard.register()` for production deployments. The hooks API intercepts all tool calls at the framework level—no wrapping needed.
+> **Production Recommendation**: Use **Tier 2** when tools must independently verify issuer-granted authority. Register enforcement on the actual execution path and test hook coverage for the tool types you use. Either tier can enforce policy through a framework hook, but neither makes a mutable agent process a sandbox. If the agent can bypass hooks or access the resource directly, move enforcement and resource credentials outside its control.
 
 ---
 
@@ -731,7 +731,7 @@ Moving from unprotected CrewAI to Tenuo GuardedCrew:
 
 ## Performance Considerations
 
-- **Tier 1 (Guardrails):** Pure regex/string matching — not the bottleneck on any realistic agent workload.
+- **Tier 1 (Guardrails):** Local constraint evaluation without warrant signature verification. Cost depends on the constraints and inputs; benchmark your workload.
 - **Tier 2 (Warrants):** Verification is local and offline — no runtime network call, no shared database. See [Performance Benchmarks](./api-reference#performance-benchmarks) for measured timings.
 - **Audit Logging:** The `audit_callback` is synchronous. For high-throughput production, use a non-blocking logger (e.g., `logging` with a queue handler) to avoid stalling the agent thread.
 
@@ -742,7 +742,7 @@ Moving from unprotected CrewAI to Tenuo GuardedCrew:
 Before deploying CrewAI agents with Tenuo protection:
 
 ### Security Review
-- [ ] **Tier 2 Enabled:** Application uses Warrants + Signing Keys for all production crews.
+- [ ] **Authority Model:** Use warrants and holder proof when crews need verifiable delegated authority. Local-policy-only deployments explicitly use Tier 1 and keep policy enforcement in trusted code.
 - [ ] **Hooks Registered:** Guards use `guard.register()` or explicitly register the callable returned by `as_hook()` for framework-level enforcement. Both use global hooks; `as_hook()` does not provide crew isolation.
 - [ ] **Least Privilege:** Each agent has specific allowed tools (no `*` patterns unless necessary).
 - [ ] **Delegation Depth:** Max delegation depth configured (via `chain_scope`) to prevent infinite chains.
@@ -751,7 +751,7 @@ Before deploying CrewAI agents with Tenuo protection:
 
 | Feature | Dev / Prototype | Production |
 |---------|----------------|------------|
-| Tier | Tier 1 (Guardrails) | Tier 2 (Warrants) |
+| Tier | Either, according to the authority model | Tier 2 for verifiable delegation; Tier 1 for trusted local policy |
 | Denial Mode | "log" or "raise" | "raise" (Fail Closed) |
 | Constraints | Loose (Wildcards) | Strict (Specific Patterns) |
 | Hook Scope | Global (`register()`) | Crew-scoped (`as_hook()`) or Global |
