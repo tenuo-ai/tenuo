@@ -97,7 +97,7 @@ Use an observable effect sentinel, mock, transaction boundary, or temporary reso
 Use one of the labels in [Integration trust levels](trust-levels.md):
 
 ```text
-Authorization result: observation only | development loop | production boundary
+Authorization result: incomplete integration | observation only | development loop | production boundary
 
 Issuer owner:
 Holder:

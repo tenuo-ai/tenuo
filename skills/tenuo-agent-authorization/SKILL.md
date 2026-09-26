@@ -82,4 +82,4 @@ Prefer a bounded statement:
 
 Do not claim that Tenuo proves human intent, covers every application action, or proves that an authorized downstream effect completed.
 
-For MCP and native agent tools, classify the delivered result using the labels in [Integration trust levels](references/trust-levels.md): observation only, development loop, or production boundary. Report an in-process guardrail separately when it can be bypassed by the agent process.
+For MCP and native agent tools, classify the delivered result using the labels in [Integration trust levels](references/trust-levels.md): incomplete integration, observation only, development loop, or production boundary. Report an in-process guardrail separately when it can be bypassed by the agent process.

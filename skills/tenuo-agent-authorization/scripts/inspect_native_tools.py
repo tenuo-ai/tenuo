@@ -143,7 +143,9 @@ def inspect(root: Path) -> list[Finding]:
         relative = str(path.relative_to(root))
         for number, line in enumerate(lines, start=1):
             stripped = line.strip()
-            if not stripped or stripped.startswith(("#", "//", "/*", "*")):
+            # Rust attributes are executable metadata, not hash comments.
+            comment_prefixes = ("//", "/*", "*") if path.suffix.lower() == ".rs" else ("#", "//", "/*", "*")
+            if not stripped or stripped.startswith(comment_prefixes):
                 continue
             for kind, pattern in PATTERNS.items():
                 if pattern.search(line):

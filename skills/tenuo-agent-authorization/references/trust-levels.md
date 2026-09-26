@@ -2,6 +2,14 @@
 
 Use these labels when reporting an integration. They describe the guarantee actually achieved, not the intended future architecture.
 
+Choose a label only when its conditions are evidenced. A missing or unverified production requirement rules out "production boundary"; use "development loop" only if its complete allow/deny flow is demonstrated, "observation only" when no authorization is enforced, and "incomplete integration" otherwise.
+
+## Incomplete integration
+
+Some enforcement or issuance exists, but a complete, usable issuer-to-effect path has not been demonstrated. For example, a fail-closed verifier with no known legitimate warrant source is incomplete, not observation-only and not a production boundary.
+
+Report the components and denial behavior that are verified, the missing issuer, holder, transport, key-management, or test evidence, and what must be completed. Do not disable existing enforcement to fit another label, infer deployment evidence from tests, or claim production readiness for architecture alone.
+
 ## Observation only
 
 The application inventories or logs tool calls but does not require valid authority before an effect.
@@ -38,7 +46,7 @@ Do not infer a production boundary merely because the code contains a verifier, 
 
 ## In-process guardrail
 
-Report this property separately from the three states above when enforcement runs inside the same mutable process as the agent:
+Report this property separately from the states above when enforcement runs inside the same mutable process as the agent:
 
 - It can prevent accidental or model-driven calls through the protected path.
 - It does not constrain a process that can bypass, replace, or disable the guard.

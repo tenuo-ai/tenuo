@@ -192,11 +192,13 @@ jobs:
             fastapi)
               pytest tenuo-python/tests/adapters/test_fastapi_integration.py \
                 tenuo-python/tests/adapters/test_fastapi_delegation.py \
+                tenuo-python/tests/adapters/test_fastapi_secure_router.py \
                 -v --tb=short
               ;;
             google_adk)
               pytest tenuo-python/tests/adapters/test_google_adk.py \
                 tenuo-python/tests/adapters/test_google_adk_adversarial.py \
+                tenuo-python/tests/adapters/test_google_adk_runner.py \
                 -v --tb=short
               ;;
             mcp)

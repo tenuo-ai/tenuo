@@ -95,7 +95,7 @@ Also test wrong-holder proof, expiry, tampering, untrusted roots, and normalizat
 Use one label from [Integration trust levels](trust-levels.md) and report process-local guardrails separately:
 
 ```text
-Authorization result: observation only | development loop | production boundary
+Authorization result: incomplete integration | observation only | development loop | production boundary
 In-process guardrail: yes | no
 
 Issuer owner:

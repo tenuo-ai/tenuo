@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Capability tokens for AI agents - Python SDK"
 license = "Apache-2.0"
+license-file = "LICENSE"
 repository = "https://github.com/tenuo-ai/tenuo"
 keywords = ["authorization", "capabilities", "agents", "security", "warrants", "mcp"]
 categories = ["authentication", "cryptography", "ai", "security"]

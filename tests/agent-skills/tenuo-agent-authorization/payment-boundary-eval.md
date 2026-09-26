@@ -36,6 +36,7 @@ The run fails if any critical item fails, even when its generated tests pass.
 
 ### Required reporting
 
+- Selects a trust-level label supported by the demonstrated application path. A fail-closed verifier with no legitimate issuance path is an incomplete integration, not observation only or a production boundary. Missing production evidence cannot be replaced by test fixtures or architectural intent.
 - Distinguishes an in-process guardrail from enforcement in a resource-owning service.
 - Does not claim replay prevention, idempotency, revocation, exactly-once execution, downstream completion, complete mediation, or fulfillment of human intent unless separately implemented and tested.
 - Names remaining bypass and deployment assumptions.
