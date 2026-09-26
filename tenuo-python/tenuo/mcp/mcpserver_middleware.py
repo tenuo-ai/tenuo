@@ -12,8 +12,9 @@ that key: the SDK builds a pydantic model from the function signature, pydantic
 rejects field names with a leading underscore, and unknown arguments are pruned
 before the handler runs. A ``ServerMiddleware`` runs *before* params validation,
 so it can verify the envelope, whichever carrier it arrived in, and hand the
-handler ``clean_arguments`` with the carrier removed. Tool signatures stay
-plain.
+handler ``clean_arguments`` with the carrier removed. The ``tool`` decorator
+then checks the actual arguments after SDK validation, immediately before the
+effect. Tool signatures stay plain, but every decorated tool needs this guard.
 
 Usage::
 
@@ -22,9 +23,10 @@ Usage::
     from tenuo.mcp import MCPVerifier, TenuoServerMiddleware
 
     verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[root_public_key]))
-    mcp = MCPServer("app", middleware=[TenuoServerMiddleware(verifier)])
+    authorization = TenuoServerMiddleware(verifier)
+    mcp = MCPServer("app", middleware=[authorization])
 
-    @mcp.tool()
+    @authorization.tool(mcp)
     def read_file(path: str) -> str:
         return open(path).read()
 
@@ -36,12 +38,34 @@ the error flag set, the reason as text content, and a ``tenuo`` block in
 :class:`~tenuo.mcp.SecureMCPClient` maps them to the same exceptions.
 
 Every other method, and every notification, passes through untouched.
+
+Argument contract
+-----------------
+Callers must explicitly supply the exact final arguments, including defaults.
+Coercions, added defaults, custom-validator transformations, aliases that change
+argument names, nulls, and non-JSON Python values fail closed. Values cannot be
+removed from the proof just because the SDK fills them in. SDK ``Context`` is
+trusted server injection and excluded; other injected values are not excluded.
+Validators and dependency resolvers must not perform protected effects: those
+belong in the guarded function body. Verification happens once, so nonce stores,
+approval gates, receipts and audit callbacks are not repeated by the guard.
+
+For a low-level ``Server`` only, ``raw_handler=True`` explicitly opts out of the
+decorator requirement. Its owner must dispatch the clean argument map unchanged,
+without schema defaulting, coercion, or post-verification transformations. Do not
+use that option with ``MCPServer`` or other high-level tool dispatchers.
 """
 
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Optional
+import functools
+import inspect
+import json
+from contextvars import ContextVar
+from typing import Any, Callable, Optional, get_type_hints
+
+import anyio
 
 from .server import MCPVerificationResult, MCPVerifier
 
@@ -49,6 +73,8 @@ _MCP_INSTALL = 'pip install "tenuo[mcp]"'
 
 try:
     from mcp.server.context import ServerRequestContext  # noqa: F401  (mcp >= 2.0)
+    from mcp.server.mcpserver import Context
+    from mcp.shared.exceptions import MCPError
     from mcp.types import TextContent
 
     from ._compat import make_error_call_tool_result, request_params_meta_as_dict
@@ -93,6 +119,58 @@ def _resolve_meta(ctx: Any, params: dict[str, Any]) -> Optional[dict[str, Any]]:
     return None
 
 
+def _argument_snapshot(arguments: dict[str, Any]) -> str:
+    """Freeze values before SDK validation, without coercion or mutable aliases.
+
+    Null is excluded because MCPVerifier's PoP canonicalization omits it.
+    Non-JSON Python objects (including models, enums and tuples) are rejected
+    rather than silently serialized into a different representation.
+    """
+    def check(value: Any) -> None:
+        if type(value) in (str, int, float, bool):
+            return
+        if type(value) is list:
+            for item in value:
+                check(item)
+            return
+        if type(value) is dict and all(type(key) is str for key in value):
+            for item in value.values():
+                check(item)
+            return
+        raise ValueError("Tool arguments must be non-null JSON values")
+
+    check(arguments)
+    return json.dumps(arguments, sort_keys=True, allow_nan=False, separators=(",", ":"))
+
+
+@dataclasses.dataclass
+class _VerifiedCall:
+    tool: str
+    arguments: str
+    claimed: bool = False
+
+
+def _boundary_denial(tool: str, message: str) -> Any:
+    return _denial_result(MCPVerificationResult(
+        allowed=False, tool=tool, clean_arguments={}, constraints={},
+        denial_reason=message, jsonrpc_error_code=-32001,
+    ))
+
+
+class _ArgumentBoundaryDenied(MCPError):
+    """Escape SDK output-schema validation; middleware renders the denial.
+
+    MCP 2.0 validates even error CallToolResults against the tool's success
+    schema. Its dispatchers preserve MCPError, allowing us to return the
+    structured authorization denial outside that validation step.
+    """
+
+    def __init__(self, tool: str, message: str) -> None:
+        super().__init__(code=-32001, message=message)
+        self.tool = tool
+        self.reason = message
+
+
 class TenuoServerMiddleware:
     """Verify every ``tools/call`` with :class:`MCPVerifier` before it is dispatched.
 
@@ -101,13 +179,85 @@ class TenuoServerMiddleware:
     and the ``tenuo`` key is removed from ``_meta``. On failure the tool is not
     invoked and an error ``CallToolResult`` is returned.
 
-    Install it on the server's ``middleware`` list. It is listed after the
-    SDK's own built-ins, so it sees the raw inbound params exactly as the
+    Install it on the server's ``middleware`` list and register tools with
+    ``@middleware.tool(mcp)``. Unguarded tool names fail closed. Use
+    ``@middleware.tool(mcp, name="alias")`` to rename a tool.
+    It is listed after the SDK's own built-ins, so it sees the raw inbound params as the
     client sent them.
     """
 
-    def __init__(self, verifier: MCPVerifier) -> None:
+    def __init__(self, verifier: MCPVerifier, *, raw_handler: bool = False) -> None:
         self._verifier = verifier
+        self._raw_handler = raw_handler
+        self._protected: dict[str, tuple[Any, Callable[..., Any]]] = {}
+        self._server: Any = None
+        self._call: ContextVar[Optional[_VerifiedCall]] = ContextVar("tenuo_mcp_call", default=None)
+
+    def tool(self, server: Any, *, name: Optional[str] = None, **options: Any) -> Any:
+        """Register a guarded tool through the SDK's public ``server.tool`` API.
+
+        Use this instead of stacking a guard with ``@server.tool()``: registering
+        the original function before wrapping it would leave the SDK executing
+        an unguarded callback. Other SDK tool options are forwarded unchanged.
+        """
+        def register(fn: Callable[..., Any]) -> Any:
+            tool = name or fn.__name__
+            if self._raw_handler:
+                raise ValueError("raw_handler=True is only for low-level dispatch, not decorated tools")
+            if self._server is not None and self._server is not server:
+                raise ValueError("Use a separate TenuoServerMiddleware for each MCPServer")
+            # MCP 2.x silently retains the original callback on duplicate
+            # registration. Never mark an existing unguarded callback protected.
+            manager = getattr(server, "_tool_manager", None)
+            if manager is None:
+                raise TypeError("Unsupported MCPServer tool registry")
+            if manager.get_tool(tool) is not None:
+                raise ValueError(f"Tool {tool!r} is already registered")
+            guarded = self._protect(fn, tool)
+            server.tool(name=tool, **options)(guarded)
+            if getattr(manager.get_tool(tool), "fn", None) is not guarded:
+                raise ValueError("MCPServer did not register the guarded callback")
+            self._server = server
+            self._protected[tool] = (manager, guarded)
+            return guarded
+
+        return register
+
+    def _protect(self, fn: Callable[..., Any], tool: str) -> Any:
+        hints = get_type_hints(fn, include_extras=True)
+        signature = inspect.signature(fn)
+        signature = signature.replace(
+            parameters=[p.replace(annotation=hints.get(p.name, p.annotation))
+                        for p in signature.parameters.values()],
+            return_annotation=hints.get("return", signature.return_annotation),
+        )
+        context_names = {
+            p.name for p in signature.parameters.values()
+            if p.annotation is Context or getattr(p.annotation, "__origin__", None) is Context
+        }
+
+        @functools.wraps(fn)
+        async def guarded(*args: Any, **kwargs: Any) -> Any:
+            call = self._call.get()
+            if call is None or call.tool != tool or call.claimed:
+                raise _ArgumentBoundaryDenied(tool, "No verified request for this protected tool")
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            effective = {key: value for key, value in bound.arguments.items() if key not in context_names}
+            try:
+                matches = _argument_snapshot(effective) == call.arguments
+            except (TypeError, ValueError):
+                matches = False
+            if not matches:
+                raise _ArgumentBoundaryDenied(tool, "Tool arguments changed after authorization; send exact final values")
+            call.claimed = True
+            if inspect.iscoroutinefunction(fn):
+                return await fn(*args, **kwargs)
+            return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+        guarded.__signature__ = signature  # type: ignore[attr-defined]
+        guarded.__annotations__ = hints
+        return guarded
 
     async def __call__(self, ctx: Any, call_next: Any) -> Any:
         if ctx.method != TOOLS_CALL or ctx.request_id is None:
@@ -125,6 +275,15 @@ class TenuoServerMiddleware:
         if not verification.allowed:
             return _denial_result(verification)
 
+        if not self._raw_handler:
+            registration = self._protected.get(name)
+            if registration is None or getattr(registration[0].get_tool(name), "fn", None) is not registration[1]:
+                return _boundary_denial(name, "Tool must be registered with TenuoServerMiddleware.tool")
+        try:
+            snapshot = _argument_snapshot(verification.clean_arguments)
+        except (TypeError, ValueError):
+            return _boundary_denial(name, "Tool arguments must be non-null JSON values")
+
         clean_meta = {k: v for k, v in (meta or {}).items() if k != "tenuo"} or None
         new_params: dict[str, Any] = {**params, "arguments": dict(verification.clean_arguments)}
         if "_meta" in new_params:
@@ -132,4 +291,10 @@ class TenuoServerMiddleware:
                 new_params["_meta"] = clean_meta
             else:
                 new_params.pop("_meta")
-        return await call_next(dataclasses.replace(ctx, params=new_params, meta=clean_meta))
+        token = self._call.set(_VerifiedCall(name, snapshot))
+        try:
+            return await call_next(dataclasses.replace(ctx, params=new_params, meta=clean_meta))
+        except _ArgumentBoundaryDenied as exc:
+            return _boundary_denial(exc.tool, exc.reason)
+        finally:
+            self._call.reset(token)

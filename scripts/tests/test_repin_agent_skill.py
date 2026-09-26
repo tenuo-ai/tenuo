@@ -1,10 +1,11 @@
 import json
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from scripts.repin_agent_skill import (
     RepinError,
-    default_review,
     repin,
     rewrite_links,
     updated_contract,
@@ -76,10 +77,24 @@ class RepinTests(unittest.TestCase):
         self.assertIn("python.md", names)
         self.assertIn("rust.md", names)
 
-    def test_default_review_names_both_tags(self) -> None:
-        review = default_review("v0.3.0", "v0.4.0")
-        self.assertIn("v0.3.0", review)
-        self.assertIn("v0.4.0", review)
+    def test_repin_preserves_historical_evidence_and_dry_run_matches(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            contract = root / "release.json"
+            contract.write_text(json.dumps({"repository_tag": "v0.3.0", "packages": []}))
+            reference = root / "SKILL.md"
+            reference.write_text("https://github.com/tenuo-ai/tenuo/blob/v0.3.0/README.md")
+            evidence = root / "payment-boundary-result.rust.json"
+            original = '{"result":"fail","skill_fingerprint":"historical"}\n'
+            evidence.write_text(original)
+            with patch("scripts.repin_agent_skill.RELEASE_CONTRACT", contract), \
+                 patch("scripts.repin_agent_skill.INTEGRATION_SKILL", root), \
+                 patch("scripts.repin_agent_skill.repository_tag_exists", return_value=True):
+                expected = repin("v0.4.0", dry_run=True)
+                self.assertEqual(repin("v0.4.0"), expected)
+            self.assertEqual(set(expected), {contract, reference})
+            self.assertEqual(evidence.read_text(), original)
+            self.assertIn("v0.4.0", reference.read_text())
 
 
 if __name__ == "__main__":

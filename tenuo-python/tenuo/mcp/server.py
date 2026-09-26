@@ -86,7 +86,11 @@ both carriers are present, they must be identical or verification fails.
 Use a middleware so tool signatures stay plain: :class:`TenuoMiddleware` on
 FastMCP, or :class:`~tenuo.mcp.mcpserver_middleware.TenuoServerMiddleware` on
 the official SDK's ``MCPServer`` (``mcp>=2``). Both remove ``_tenuo`` before
-the SDK validates and dispatches the call. A decorated tool cannot declare
+the SDK validates and dispatches the call. With ``TenuoServerMiddleware``,
+register tools using ``@authorization.tool(mcp)`` so the final arguments
+are checked after SDK validation and before the effect. Callers must explicitly
+supply defaults; SDK changes to the verified arguments fail closed.
+A decorated tool cannot declare
 ``_tenuo`` itself: the SDK builds a pydantic model from the signature, and
 pydantic rejects field names with a leading underscore. Only a raw
 ``tools/call`` handler can pass the carrier through by hand::

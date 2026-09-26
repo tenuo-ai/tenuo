@@ -85,7 +85,7 @@ except ImportError:
         def __init__(self, *_a: object, **_kw: object) -> None:
             raise ImportError(
                 "TenuoServerMiddleware requires the MCP SDK 2.x (mcp>=2). "
-                'Install with: pip install "tenuo[mcp]" mcp>=2. On FastMCP use TenuoMiddleware.'
+                'Install with: pip install "tenuo[mcp]" "mcp>=2". On FastMCP use TenuoMiddleware.'
             ) from None
 
     __all__.append("TenuoServerMiddleware")

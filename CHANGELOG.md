@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decorated tools: pydantic rejects a `_tenuo` parameter, and the SDK prunes
   unknown arguments before the handler runs, so the carrier could previously
   only be consumed by a raw `tools/call` handler (#719).
+  Register decorated tools with `@authorization.tool(mcp)` so a post-validation
+  guard also checks that final arguments match the verified request. Unsigned
+  defaults and SDK transformations fail closed; callers must send exact final
+  values. `raw_handler=True` is restricted to low-level dispatch that executes
+  clean arguments unchanged.
 
 - Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
 
@@ -175,6 +180,14 @@ updating; see the linked entries below for the full rationale.
 
 ### Added
 
+- **`tenuo-denial-triage` agent skill.** Diagnoses a denied call from the
+  SDK's own diagnostics and receipts, classifies the denied check, and ranks
+  fixes from "fix the call" to "widen minimally at the issuer", with an
+  explicit never-list (closed-world opt-out, wildcards on material
+  arguments, longer TTLs, new trusted roots, optional-warrant modes). Install
+  with `npx skills add tenuo-ai/tenuo --skill tenuo-denial-triage`. The skills
+  validator now validates evidence structure and reports advisory behavioral
+  results for any skill under `tests/agent-skills/<skill>/`.
 - **`tenuo.enforce_tool_call`, `tenuo.enforce_tool_call_async`, and
   `tenuo.EnforcementResult`** are exported from the package. They are what
   every adapter calls under the hood, and are the right entry point for tests

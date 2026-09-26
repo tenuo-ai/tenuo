@@ -273,12 +273,31 @@ from tenuo import Authorizer, PublicKey
 from tenuo.mcp import MCPVerifier, TenuoServerMiddleware
 
 verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)]))
-mcp = MCPServer("app", middleware=[TenuoServerMiddleware(verifier)])
+authorization = TenuoServerMiddleware(verifier)
+mcp = MCPServer("app", middleware=[authorization])
 
-@mcp.tool()
+@authorization.tool(mcp)
 def read_file(path: str) -> str:
     return open(path).read()
 ```
+
+`TenuoServerMiddleware` requires registration through `@authorization.tool(mcp)`
+instead of `@mcp.tool()`. It uses the SDK's public decorator and forwards its
+options, including `name="alias"`. Registration and guarding happen together,
+so decorator order cannot leave the registered callback unguarded.
+The guard runs after SDK argument validation and refuses to
+execute if the final arguments differ from the verified request. Callers must
+explicitly supply defaults and sign the exact final values. Added defaults,
+coercions, transforming validators, changed argument names, nulls, and non-JSON
+Python values fail closed; only the SDK's injected `Context` is excluded.
+Keep protected effects out of validators and dependency resolvers and inside
+the guarded function body. This check does not repeat verification or consume
+the nonce twice.
+
+For a **low-level `Server` only**, `TenuoServerMiddleware(verifier,
+raw_handler=True)` permits an undecorated raw handler whose owner guarantees
+that it executes the returned clean argument map unchanged. Never use that
+option to bypass the guard on `MCPServer` tools.
 
 ### Pattern 3: MCPVerifier (Framework-Agnostic Server)
 
