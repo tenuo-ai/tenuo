@@ -9,7 +9,7 @@ same key seeds, same timestamps, matching scenario ids.
 |---|---|
 | `gen_vectors.py` | Generator. Builds every vector and re-verifies it with an independent §8 implementation before writing. |
 | `aat-jws-vectors.md` | Human-readable rendering of the suite, kept next to the draft. |
-| [`../../tests/vectors/aat-jws-vectors.json`](../../tests/vectors/aat-jws-vectors.json) | Machine-readable suite: 107 vectors with expected verdict and cited §8 step. The verdict is normative; the step follows §8's order and can differ where §8 permits reordering, so harnesses compare verdicts. Lives with the other cross-language vectors; `tenuo-core/tests/aat_conformance.rs` compiles it in with `include_str!`. |
+| [`../../tests/vectors/aat-jws-vectors.json`](../../tests/vectors/aat-jws-vectors.json) | Machine-readable suite: 109 vectors with expected verdict and cited §8 step. The verdict is normative; the step follows §8's order and can differ where §8 permits reordering, so harnesses compare verdicts. Lives with the other cross-language vectors; `tenuo-core/tests/aat_conformance.rs` compiles it in with `include_str!`. |
 
 Both output files are generated. Do not edit them by hand; change the generator
 and regenerate.

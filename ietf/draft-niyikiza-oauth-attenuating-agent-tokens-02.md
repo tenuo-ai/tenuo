@@ -767,13 +767,21 @@ a decidable, sound, and deterministic `subsumes` procedure.
 
 Constraint values and arguments are compared by their JCS
 serializations ({{RFC8785}}), the canonical form step 7f uses for
-`hta`; `contains` and `subset` treat their arrays as sets. JCS
-represents numbers as IEEE 754 double-precision values, so a number
-whose magnitude exceeds 2^53 - 1 cannot be compared exactly: arguments
-and constraint values MUST NOT contain one. Such values, for example
-large identifiers, are carried as strings. The check needs no special
-parser: any such number still exceeds 2^53 - 1 after conversion to a
-double.
+`hta`; `contains` and `subset` treat their arrays as sets.
+
+JCS serializes a number through its IEEE 754 double-precision value
+({{RFC8785}} Section 3.2.2.3), so distinct JSON numbers can share a
+canonical form: `9007199254740993` and `9007199254740992` both serialize
+as `9007199254740992`. A tool that reads the original text would then
+act on a value no constraint evaluated. A JSON number is admissible
+when the JCS serialization of its double-precision value denotes the
+same number as the text it was parsed from: `0.1`, `1e20`, and
+`9007199254740994` are admissible; `9007199254740993` and
+`1.00000000000000001` are not. Arguments and constraint values MUST
+contain only admissible numbers. The check needs the number as written:
+once parsed into a double, the lost digits cannot be recovered. Values
+that need more precision, such as large identifiers, are carried as
+strings.
 
 A constraint is well-formed when:
 
@@ -783,7 +791,7 @@ A constraint is well-formed when:
 - in a `range`, `min` and `max` are numbers, `min` is not greater than
   `max`, and `min_inclusive` and `max_inclusive` are booleans present
   only with the corresponding bound;
-- no number in it has a magnitude exceeding 2^53 - 1; and
+- every number in it is admissible (above); and
 - `optional`, where present, is a boolean on a top-level constraint-map
   entry, and a `*` entry is a `wildcard` constraint with no `optional`
   member (Section 3.3).
@@ -1889,8 +1897,8 @@ Algorithm:
       more than one such entry is present, DENY.
       Define leaf_aat as that entry. Entries of other types in
       `authorization_details` are ignored by this algorithm.
-   b. Verify tool is present in leaf_aat.tools, and that args
-      contains no number whose magnitude exceeds 2^53 - 1
+   b. Verify tool is present in leaf_aat.tools, and that every
+      number in args, as written in the invocation, is admissible
       (Section 3.4). Let M be the tool's constraint map,
       normalized (Section 3.3). For each argument in args: if M
       names it, verify its value satisfies that constraint;
@@ -3155,8 +3163,8 @@ implementations that followed the -01 text.
   4b5 and 7c check claim types, and 7c requires `hta`; integers have
   no fraction or exponent, audiences compare by exact string, and
   `contains` and `subset` use set semantics (Sections 3.2 and 3.4);
-  numbers in arguments and constraints must not exceed 2^53 - 1 in
-  magnitude; constraint depth counting is defined; and
+  numbers in arguments and constraints must survive the JCS round trip
+  (Section 3.4); constraint depth counting is defined; and
   MAX_DELEGATION_DEPTH is at least 8. Replicas of an enforcement point
   share `jti` state (Section 7.3), and tools returning sensitive data
   SHOULD get replay protection too (Section 9.5). The -01 text did not

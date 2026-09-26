@@ -268,11 +268,18 @@ MAX_SAFE_INT = 2**53 - 1
 
 
 def _has_big_int(v) -> bool:
-    """§3.4: any number whose magnitude exceeds 2^53 - 1."""
+    """§3.4: True if any number is not admissible, i.e. does not survive the
+    JCS round trip through an IEEE 754 double. Python ints keep the digits as
+    written, so the check is exact for them; the vectors contain no floats."""
     if isinstance(v, bool):
         return False
-    if isinstance(v, (int, float)):
-        return abs(v) > MAX_SAFE_INT
+    if isinstance(v, int):
+        try:
+            return int(float(v)) != v
+        except OverflowError:
+            return True
+    if isinstance(v, float):
+        return False
     if isinstance(v, list):
         return any(_has_big_int(x) for x in v)
     if isinstance(v, dict):
@@ -577,7 +584,7 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
     if tool not in leaf_aat["tools"]:
         raise Deny("6b", f"tool {tool!r} not authorized")
     if _has_big_int(args):
-        raise Deny("6b", "argument integer beyond 2^53-1")
+        raise Deny("6b", "argument number does not survive the JCS round trip")
     m = _norm(leaf_aat["tools"][tool])
     for a, v in args.items():
         if a in m and a != "*":
@@ -1143,14 +1150,27 @@ add("J.8.6", "Malformed range (min greater than max)", None,
     "read_file", {"path": Q3}, "DENY", "3n/4o")
 BIG = 2**53 + 1
 big_root = jws_sign(root_claims(uuid7ish(0xB18), {"get_account": {"id": WILD}}, ORCH), CP)
-add("J.8.7", "Argument integer beyond 2^53 - 1", None,
-    "Root authorizes get_account with a wildcard id. The invocation passes id = 2^53 + 1, which JCS cannot "
-    "represent exactly (Section 3.4). Denied at step 6b.",
+add("J.8.7", "Argument number that does not survive the JCS round trip", None,
+    "Root authorizes get_account with a wildcard id. The invocation passes id = 2^53 + 1, whose double is "
+    "2^53, so it is not admissible (Section 3.4). Denied at step 6b.",
     [big_root], pop_sign(pop_claims(uuid7ish(0xB07), big_root, "get_account", {"id": BIG}), ORCH),
     "get_account", {"id": BIG}, "DENY", "6b",
     notes=["The PoP payload carries the exact decimal digits of 2^53 + 1. A JCS implementation would "
            "serialize the value as 9007199254740992; the verdict does not depend on it, because step 6b "
            "denies before the PoP is compared."])
+add("J.8.8", "Argument above 2^53 that survives the JCS round trip", None,
+    "The invocation passes id = 2^53 + 2, which a double represents exactly, so its JCS form is the same "
+    "number and it is admissible. PERMIT: the rule is the round trip, not a magnitude limit.",
+    [big_root], pop_sign(pop_claims(uuid7ish(0xB08), big_root, "get_account", {"id": 2**53 + 2}), ORCH),
+    "get_account", {"id": 2**53 + 2}, "PERMIT")
+big_lit = jws_sign(root_claims(uuid7ish(0xB19), {"read_file": {"path": WILD},
+                                                 "get_account": {"id": {"constraint_type": "range", "max": BIG}}},
+                               ORCH), CP)
+add("J.8.9", "Constraint literal that does not survive the JCS round trip", None,
+    "Root carries get_account.id = range(max 2^53 + 1). The invocation is read_file, but the chain is "
+    "rejected at step 3n: constraint values are checked when the chain is verified, not only when used.",
+    [big_lit], pop_sign(pop_claims(uuid7ish(0xB09), big_lit, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3n/4o")
 FLAT_ROOT = jws_sign(root_claims(uuid7ish(0xB14), {"export": {"limit": ALL(rng(min=0), rng(max=100))}}, ORCH), CP)
 flat_child = jws_sign(derived_claims(uuid7ish(0xB15), FLAT_ROOT, ORCH, WK,
                                     {"export": {"limit": rng(min=10, max=50)}}, IAT_ROOT + 60, 1704069000, 2), ORCH)

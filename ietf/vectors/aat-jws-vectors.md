@@ -123,7 +123,9 @@ Thumbprint URIs used as derived-token `iss`:
 | J.8.3 | Unknown constraint_type is fail-closed at the leaf | A.9.2 | DENY at step 3n/4o |
 | J.8.5 | Unknown constraint_type on a tool that is not invoked | — | DENY at step 3n/4o |
 | J.8.6 | Malformed range (min greater than max) | — | DENY at step 3n/4o |
-| J.8.7 | Argument integer beyond 2^53 - 1 | — | DENY at step 6b |
+| J.8.7 | Argument number that does not survive the JCS round trip | — | DENY at step 6b |
+| J.8.8 | Argument above 2^53 that survives the JCS round trip | — | PERMIT |
+| J.8.9 | Constraint literal that does not survive the JCS round trip | — | DENY at step 3n/4o |
 | J.8.4 | Flatten all to a bare range is rejected even when the range is narrower | — | DENY at step 4p4 |
 | J.17.1 | not_one_of: derived adds an exclusion | — | PERMIT |
 | J.17.2 | not_one_of: derived drops an exclusion | — | DENY at step 4p4 |
@@ -12114,9 +12116,9 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ---
 
-## J.8.7 Argument integer beyond 2^53 - 1
+## J.8.7 Argument number that does not survive the JCS round trip
 
-Root authorizes get_account with a wildcard id. The invocation passes id = 2^53 + 1, which JCS cannot represent exactly (Section 3.4). Denied at step 6b.
+Root authorizes get_account with a wildcard id. The invocation passes id = 2^53 + 1, whose double is 2^53, so it is not admissible (Section 3.4). Denied at step 6b.
 
 > The PoP payload carries the exact decimal digits of 2^53 + 1. A JCS implementation would serialize the value as 9007199254740992; the verdict does not depend on it, because step 6b denies before the PoP is compared.
 
@@ -12209,6 +12211,206 @@ Pretty payload:
 Compact JWS:
 ```
 eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9.p9xQ0hAo6UHGDLCIzU2sJPX_BJuUkLRCjl_vWUFYTCDAl6nQ-sXFuoL0y3eQ7-XWAdk4Sp8bMEakudtw3019DA
+```
+
+---
+
+## J.8.8 Argument above 2^53 that survives the JCS round trip
+
+The invocation passes id = 2^53 + 2, which a double represents exactly, so its JCS form is the same number and it is admissible. PERMIT: the rule is the round trip, not a magnitude limit.
+
+**Invocation:** tool `get_account`, args `{"id":9007199254740994}`, now = `1704067500`  
+**Expected:** **PERMIT**
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"get_account":{"id":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000b18"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000b18",
+  "iss": "https://auth.example.com",
+  "iat": 1704067200,
+  "exp": 1704070800,
+  "del_depth": 0,
+  "del_max_depth": 3,
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token",
+      "tools": {
+        "get_account": {
+          "id": {
+            "constraint_type": "wildcard"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0` |
+| SHA-256(signing input), base64url | `W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc` |
+| signature_b64 | `Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0.Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc","aat_id":"019471f8-0000-7000-8000-000000000b18","aat_tool":"get_account","hta":{"id":9007199254740994},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b08"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000b08",
+  "iat": 1704067500,
+  "aat_id": "019471f8-0000-7000-8000-000000000b18",
+  "aat_hash": "W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc",
+  "aat_tool": "get_account",
+  "hta": {
+    "id": 9007199254740994
+  },
+  "aat_aud": "https://tools.example.com"
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTR9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwOCJ9` |
+| SHA-256(signing input), base64url | `ok84SGZiXGxfIL2QJG2634EXAixiMFCIiK2uXWojXt8` |
+| signature_b64 | `xMMySQneGTf3UPRaYB-J3o31Q8RrIXckAvKHIDUQBL40q8oSBv5dBUo9XP5IHl68ecVoOxazV5f3ZCdfgIF5BA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTR9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwOCJ9.xMMySQneGTf3UPRaYB-J3o31Q8RrIXckAvKHIDUQBL40q8oSBv5dBUo9XP5IHl68ecVoOxazV5f3ZCdfgIF5BA
+```
+
+---
+
+## J.8.9 Constraint literal that does not survive the JCS round trip
+
+Root carries get_account.id = range(max 2^53 + 1). The invocation is read_file, but the chain is rejected at step 3n: constraint values are checked when the chain is verified, not only when used.
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
+**Expected:** **DENY** at step 3n/4o
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"get_account":{"id":{"constraint_type":"range","max":9007199254740993}},"read_file":{"path":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000b19"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000b19",
+  "iss": "https://auth.example.com",
+  "iat": 1704067200,
+  "exp": 1704070800,
+  "del_depth": 0,
+  "del_max_depth": 3,
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token",
+      "tools": {
+        "read_file": {
+          "path": {
+            "constraint_type": "wildcard"
+          }
+        },
+        "get_account": {
+          "id": {
+            "constraint_type": "range",
+            "max": 9007199254740993
+          }
+        }
+      }
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4Ijo5MDA3MTk5MjU0NzQwOTkzfX0sInJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE5In0` |
+| SHA-256(signing input), base64url | `qokTYtMx5npSyaQS3dd15CvdkQ62rELQui3AQio9oFU` |
+| signature_b64 | `bv0iPKwUNCz49pE7bEuz6m6DVahe8hMKALfil1agHwFlW_GWGi_R1yT6f8eCxKektD0-kt-B3gi7RTGBkmVgBA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4Ijo5MDA3MTk5MjU0NzQwOTkzfX0sInJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE5In0.bv0iPKwUNCz49pE7bEuz6m6DVahe8hMKALfil1agHwFlW_GWGi_R1yT6f8eCxKektD0-kt-B3gi7RTGBkmVgBA
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"qokTYtMx5npSyaQS3dd15CvdkQ62rELQui3AQio9oFU","aat_id":"019471f8-0000-7000-8000-000000000b19","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b09"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000b09",
+  "iat": 1704067500,
+  "aat_id": "019471f8-0000-7000-8000-000000000b19",
+  "aat_hash": "qokTYtMx5npSyaQS3dd15CvdkQ62rELQui3AQio9oFU",
+  "aat_tool": "read_file",
+  "hta": {
+    "path": "/data/q3-report.pdf"
+  },
+  "aat_aud": "https://tools.example.com"
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicW9rVFl0TXg1bnBTeWFRUzNkZDE1Q3Zka1E2MnJFTFF1aTNBUWlvOW9GVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjA5In0` |
+| SHA-256(signing input), base64url | `326toQeP9WULd7Q72c6_3r9PoguCOdVD40nCwC9oO-c` |
+| signature_b64 | `WVD_og9KQYso2qYC5uQdq5ZzBetarYgqZfv0b9KLdDRXbXIBE1jghQMY0LpygxXkQJcnoX0y2RFpGgb4x4jZBw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicW9rVFl0TXg1bnBTeWFRUzNkZDE1Q3Zka1E2MnJFTFF1aTNBUWlvOW9GVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjA5In0.WVD_og9KQYso2qYC5uQdq5ZzBetarYgqZfv0b9KLdDRXbXIBE1jghQMY0LpygxXkQJcnoX0y2RFpGgb4x4jZBw
 ```
 
 ---
