@@ -472,6 +472,12 @@ token type.
 **Root Issuer:** The entity that mints root tokens. The root issuer
 holds the private key corresponding to a trust anchor and is responsible
 for verifying agent identity and requested authority before issuance.
+In the token endpoint profile of Section 6.1, the root issuer is an
+OAuth authorization server (AS).
+
+**Presenter:** The party that presents a chain and a PoP JWT to an
+enforcement point. An invocation is authorized only when the presenter
+is the holder of the leaf token.
 
 **Token Holder:** The entity that possesses an AAT and the private key
 corresponding to its `cnf.jwk` claim. The token holder is the party
@@ -931,7 +937,10 @@ defines (Section 3.3).
 
 The `⊆` relation is not defined by enumerating `(tool, args)` pairs
 (argument spaces are typically infinite) but by the structural
-subsumption rules in Section 4.5. At the tool level, the derived
+subsumption rules in Section 4.5, which alone decide validity. Those
+rules are conservative: some attenuations that are valid in the
+semantic sense below, such as an `exact` under a parent `any`, are
+rejected. At the tool level, the derived
 token's tool set must be a subset of the parent's. At the argument
 level, when the parent's constraint map is non-empty, the derived
 token must preserve the parent's key set exactly (Section 4.5
@@ -1106,7 +1115,8 @@ rules are:
   parent range's `check`; a parent `one_of` subsumes it if the exact
   value is a member of the parent set; a parent `wildcard` subsumes it
   unconditionally. All other parent types are invalid cross-type
-  targets for a derived `exact` constraint.
+  targets for a derived `exact` constraint unless a registered
+  extension type declares the pair (Section 5.1).
 
 - **range:** A derived `range` constraint is valid only if its
   bounds are at least as restrictive as the parent's
@@ -1276,7 +1286,9 @@ constraint type. This procedure MUST satisfy three properties:
    type's constraint language is more expensive than that, the
    registration MUST prescribe a conservative syntactic strategy
    that meets this bound and MUST formally justify that the
-   strategy is sound (never accepts a non-subsuming pair).
+   strategy is sound (never accepts a non-subsuming pair). The
+   registration MUST state the worst-case cost of both the
+   procedure and the type's `check` predicate (Section 9.6).
 
 2. **Sound.** The procedure MUST NOT return true unless the
    semantic subsumption relation holds. That is, if the procedure
@@ -2090,6 +2102,11 @@ presented or used to derive further tokens. A holder that destroys
 that key also gives up deriving further children from the parent, so
 this approximation of re-keying suits single-delegation hops.
 
+Derivation times are asserted by the deriver: a stolen holder key can
+be used to derive children with any `iat` at or after the parent's,
+until the parent expires, so I3 bounds how long authority lasts but not
+when a derivation happened.
+
 The protocol assumes that holder private keys are not shared across
 delegation boundaries. Key generation, storage, rotation, and recovery
 are deployment concerns and are outside the semantics of chain
@@ -2164,14 +2181,12 @@ operations.
 The core constraint types are intended to have predictable evaluation
 cost. Extension constraint types can introduce parser complexity,
 algorithmic cost, normalization requirements, or external policy-engine
-dependencies. Extension constraint types defined in Section 5 and
-registered in the IANA AAT Constraint Type Registry (Section 11.3)
-MUST document their computational complexity and any resource limits
-implementations SHOULD enforce. Enforcement points SHOULD impose
-evaluation timeouts on any extension constraint type whose `check`
-predicate is not O(n) in the length of the argument value. A
-constraint type the enforcement point does not recognize or implement
-fails closed (Sections 3.4 and 5.2).
+dependencies, so each registration states its worst-case cost and any
+resource limits implementations should enforce (Section 5.1).
+Enforcement points SHOULD impose evaluation timeouts on any extension
+constraint type whose `check` predicate is not O(n) in the length of the
+argument value. A constraint type the enforcement point does not
+recognize or implement fails closed (Sections 3.4 and 5.2).
 
 ## Depth Limit
 
@@ -2184,7 +2199,7 @@ remaining within the invariants. The depth limit bounds the number of
 such trust extensions that a single root grant can produce. Enforcement
 points MUST check both `del_max_depth`, which is the root issuer's
 policy for the chain, and their own MAX_DELEGATION_DEPTH, which protects
-the enforcement point (Section 8, steps 4e-4g and 4m); enforcing only
+the enforcement point (Section 8, steps 3i, 4e-4g, and 4m); enforcing only
 one ignores the other.
 
 ## Token Revocation
@@ -2366,11 +2381,11 @@ satisfies all of the following criteria before approving it:
    ambiguity whether the predicate returns true or false.
 
 3. The `subsumes` verification procedure satisfies the decidable,
-   sound, and deterministic properties defined in Section 5.1.
-   If the constraint language does not support a general
-   containment algorithm, the registration prescribes a
-   conservative syntactic strategy and formally justifies
-   its soundness.
+   sound, and deterministic properties defined in Section 5.1,
+   including its polynomial time bound. If full containment for the
+   constraint language is more expensive than that, the
+   registration prescribes a conservative syntactic strategy that
+   meets the bound and formally justifies its soundness.
 
 4. The cross-type subsumption rules enumerate every (parent
    type, child type) pair involving the new type and a core
@@ -2424,6 +2439,11 @@ cross-type subsumption rules:
     - (this_type, exact): valid if the exact value satisfies this
       type's check predicate.
     - (this_type, this_type): valid if [condition].)
+
+cost:
+  (The worst-case cost of the check predicate and the subsumes
+  procedure in terms of input size, and any resource limits
+  implementations should enforce.)
 
 security considerations:
   (Any security properties, limitations, or attack surfaces specific
@@ -2843,7 +2863,10 @@ changes in Appendix G are marked.
 This appendix reproduces a minimal subset so that the encoding rules of
 Section 3.5, Section 4.6, and Section 7.2 can be checked without
 external material. Long lines are folded per {{RFC8792}}. Vector
-identifiers (J.1, J.3, J.12) are those of the published suite.
+identifiers (J.1, J.3, J.12) are those of the published suite. Each
+vector's expected verdict is normative; the failing step it names
+follows the order of Section 8 and can differ where that section
+permits reordering, so test harnesses compare verdicts.
 
 ## Parameters
 
@@ -2949,9 +2972,9 @@ L1 carries `par_hash` equal to the root row above, and L2 carries
 
 ## Chain Splice (Vector J.12)
 
-Identical to the J.3 root and L1 except that L1's `par_hash` is
-`qz05CjO1S-iTk93CGKmiB8y7bRUdUAe67kXzUwyMzUU`, the digest of a different
-root token held by the same key. Signature verification and I1 both
+The same root and holders as J.3, with an L1 that has its own `jti`
+and a `par_hash` of `qz05CjO1S-iTk93CGKmiB8y7bRUdUAe67kXzUwyMzUU`, the
+digest of a different root token held by the same key. Signature verification and I1 both
 pass; the chain MUST be denied at Section 8 step 4q.
 
 # Implementation Status (Non-Normative)
@@ -3075,8 +3098,8 @@ implementations that followed the -01 text.
   or `authorization_details` entries other than the AAT entry carry no
   authority in derived tokens (Section 3.3).
 
-Editorial and alignment changes, not intended to change behavior
-relative to the Section 8 algorithm in -01:
+Editorial and alignment changes, not intended to change verifier
+behavior relative to the Section 8 algorithm in -01:
 
 - Section 7.3 no longer repeats the PoP checks; it points to Section
   8, step 7. The -01 list there disagreed with the -01 algorithm:
@@ -3094,7 +3117,8 @@ relative to the Section 8 algorithm in -01:
   Appendix E. They encode the verifier-side normative changes above;
   a -01 implementation will disagree on `typ`, audience mismatch
   handling, the `all` clause-reuse cases, root `iss` binding,
-  `aat_hash`, and the `alg` value.
+  `aat_hash`, the `alg` value, empty `all`/`any`, and the new
+  validation checks.
 - Section 4.5 uses one subsumption direction throughout: the parent
   constraint subsumes the derived one. The -01 text mixed both
   directions.
