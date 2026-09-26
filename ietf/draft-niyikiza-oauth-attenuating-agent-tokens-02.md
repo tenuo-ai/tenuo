@@ -2062,8 +2062,12 @@ exposure with holder binding on every chain position, attenuation at
 every hop, and short lifetimes (Appendix B.7), rather than by making
 parent tokens unrecoverable. Deployments that require a holder to be
 unable to exercise a parent's authority after delegating SHOULD derive
-across a fresh holder key (Section 8.12) and let the parent token
-expire.
+the child to a fresh holder key (Section 8.12) and then destroy the
+private key bound to the parent token. The parent token remains
+cryptographically valid until its `exp`, but it can no longer be
+presented or used to derive further tokens. A holder that destroys
+that key also gives up deriving further children from the parent, so
+this approximation of re-keying suits single-delegation hops.
 
 The protocol assumes that holder private keys are not shared across
 delegation boundaries. Key generation, storage, rotation, and recovery
@@ -2599,6 +2603,11 @@ The author thanks Antoine Fressancourt for review and discussion of
 cross-domain privacy, transport binding, remote attestation, and
 constraint expressiveness.
 
+The author thanks Neil Madden for review of -01 on the OAuth list,
+including the comparison with HMAC-chained Macaroons, replay of parent
+and intermediate tokens, the absence of re-keying on attenuation, and
+the pointer to SPKI/SDSI.
+
 --- back
 
 # Comparison with Related Authorization Mechanisms (Non-Normative)
@@ -3085,8 +3094,9 @@ relative to the Section 7 algorithm in -01:
   verifier model and relates AAT to SPKI/SDSI {{RFC2693}}. Section
   8.1.1 adds parent- and intermediate-token replay to the mitigated
   threats. Section 8.4 records that AATs lack Macaroons' re-keying on
-  attenuation and what bounds that exposure instead. These respond to
-  list review of -01.
+  attenuation, what bounds that exposure instead, and how a holder can
+  approximate re-keying by destroying the parent's holder key. These
+  respond to Neil Madden's list review of -01.
 - Byte-exact JWS test vectors are published as described in
   Appendix E. They encode the three normative changes above; a -01
   implementation will disagree on `typ`, audience mismatch handling, and the
