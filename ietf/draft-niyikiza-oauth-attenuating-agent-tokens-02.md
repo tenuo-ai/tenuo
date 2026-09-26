@@ -294,12 +294,9 @@ Enforcement Point
   (verifies chain offline, Section 8)
 ~~~
 
-At each derivation step, the derived token's authorized capabilities are a
-subset of the parent's: authority can stay the same or narrow, but never widen. The
-enforcement point verifies the complete chain using only the root
-token's trust anchor key; no network calls are required. How token
-chains are carried to enforcement points is deployment-specific; this
-document does not define a transport binding.
+At each derivation step, authority can stay the same or narrow, but
+never widen. How token chains are carried to enforcement points is
+deployment-specific; this document does not define a transport binding.
 
 ## Limitations of Existing OAuth Mechanisms for Agentic Delegation
 
@@ -331,10 +328,6 @@ user approved the delegation. They do not constrain which tools the
 agent may invoke or with what argument values. AATs are
 complementary: they scope authority to specific tools and arguments
 after identity and consent have been established.
-
-To the author's knowledge, no existing OAuth standard defines a
-delegation chain protocol with token-local chain authentication,
-deterministic attenuation checks, and offline chain verification.
 
 ## Design Goals
 
@@ -1382,20 +1375,13 @@ The AS returns the token in a standard OAuth 2.0 token endpoint response
 }
 ~~~
 
-The `token_type` value `"aat"` is registered in Section 11.5. Clients
-MUST NOT treat the returned token as a bearer token for use with
-arbitrary resource servers. Its only valid use is as the root of an AAT
-delegation chain presented to an enforcement point per Section 8.
-
-Note: this specification defines token endpoint issuance for
-interoperability with existing OAuth 2.0 deployments. Unlike bearer
-tokens, an AAT carries its own holder key binding and is not usable as a
-credential for HTTP resource access. Alternative issuance profiles are
-outside the scope of this document.
-
-The AS does not need to store or track derived tokens issued downstream
-by the initial token holder. Chain verification is performed by
-enforcement points using only the root issuer's trust anchor.
+The `token_type` value `"aat"` is registered in Section 11.5. This
+specification uses the token endpoint so that existing OAuth 2.0
+deployments can issue root tokens; other issuance profiles are out of
+scope. Clients MUST NOT treat the returned token as a bearer token: its
+only valid use is as the root of an AAT delegation chain presented to
+an enforcement point (Section 8). The AS does not store or track
+derived tokens, which holders create without contacting it.
 
 
 ## Token Derivation
