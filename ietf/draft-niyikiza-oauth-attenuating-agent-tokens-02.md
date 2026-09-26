@@ -321,7 +321,8 @@ Rich Authorization Requests (RAR) {{RFC9396}} extend OAuth tokens with
 structured authorization detail objects, enabling expressive capability
 descriptions. RAR addresses the expressiveness problem. It does not
 define how a token holder can produce a narrower token, or how a
-chain of such derivations can be verified.
+chain of such derivations can be verified; AATs profile RAR for
+tool-level claims (Section 3.3) and add both.
 
 Proposals to extend the authorization code flow with explicit agent
 consent, such as introducing a `requested_actor` parameter at the
@@ -389,10 +390,12 @@ vocabulary rather than S-expression tags.
 Biscuit {{BISCUIT}} extends the Macaroons model with public-key
 signatures and offline attenuation. Biscuit expresses authorization
 policies in a Datalog variant, requiring a logic engine at verification
-time. This specification uses structured constraint types decidable by
-structural analysis and defines an explicit delegation-chain model with
-holder-bound invocation-time proof of possession, chain-position claims,
-and attenuation invariants. A detailed comparison appears in Appendix A.
+time, and it is commonly used as a bearer credential. This
+specification uses structured constraint types decidable by structural
+analysis, and encodes in the token model the delegation-chain claims
+Biscuit does not natively carry (depth limits, parent-token linkage,
+chain position), together with holder-bound invocation-time proof of
+possession and attenuation invariants.
 
 Recent OAuth work on transaction tokens {{OAUTH-TXN-TOKENS}} and
 identity and authorization chaining {{OAUTH-ID-CHAINING}} addresses the
@@ -419,7 +422,8 @@ motivate a protocol-layer mechanism that encodes delegation scope in
 verifiable credential artifacts enforced independently of model
 behavior. AATs realize one protocol-layer approach to that goal.
 
-Changes from the previous revision are listed in Appendix G.
+Appendix A relates the proof-of-possession mechanism to DPoP
+{{RFC9449}}. Changes from the previous revision are listed in Appendix G.
 
 
 # Terminology
@@ -2510,32 +2514,7 @@ the pointer to SPKI/SDSI.
 
 --- back
 
-# Comparison with Related Authorization Mechanisms (Non-Normative)
-
-## Token Exchange (RFC 8693)
-
-RFC 8693 allows a client to exchange one token for another, potentially
-with reduced scope, by contacting the authorization server. The server
-enforces scope reduction. This requires network connectivity to the
-authorization server at each delegation hop and cannot be performed
-offline.
-
-This specification allows a token holder to derive a new token
-locally, without contacting the authorization server. The attenuation
-invariant is enforced by the chain verification algorithm, not by a
-server-side policy check.
-
-## Rich Authorization Requests (RFC 9396)
-
-RFC 9396 defines a structured format for expressing fine-grained
-authorization details in OAuth tokens. This specification uses the
-`authorization_details` claim format from RFC 9396 and extends it with:
-(1) a delegation chain model that links tokens via cryptographic hashes,
-(2) monotonic attenuation invariants that constrain what derived tokens
-may express, and (3) proof-of-possession binding that ties invocations
-to specific key holders.
-
-## DPoP (RFC 9449)
+# Relationship to DPoP (Non-Normative)
 
 DPoP ({{RFC9449}}) is a token theft prevention mechanism that binds an
 existing OAuth access token to a holder key, ensuring that a stolen
@@ -2546,20 +2525,15 @@ the access token permits; DPoP adds a cryptographic proof that the
 presenter holds the bound key.
 
 AATs encode the authorization itself. The token specifies which tools
-may be invoked, with what argument constraints, and by which key holder.
-Holders can derive tokens with authority equal to or narrower than
-their own, without contacting the authorization server. The PoP JWT in
-Section 7 serves a similar cryptographic role to a DPoP proof, binding a
-specific invocation to the leaf token's holder key, but operates in a
-different context. Everything else in this specification (the chain
-model, the attenuation invariants, the constraint type registry, the
-subsumption matrix) addresses questions outside DPoP's scope.
-
-Structurally, DPoP is a two-party protocol between a client and a
-resource server. There is no delegation model, no parent-child chain,
-and no attenuation invariant. The chain model of this specification
-(`del_depth`, `par_hash`, `del_max_depth`, and the six attenuation
-invariants) is not defined by DPoP.
+may be invoked, with what argument constraints, and by which key holder,
+and holders can derive tokens with equal or narrower authority without
+contacting the authorization server. The PoP JWT in Section 7 serves a
+similar cryptographic role to a DPoP proof, binding a specific
+invocation to the leaf token's holder key. DPoP, by contrast, is a
+two-party protocol between a client and a resource server: it has no
+delegation model, parent-child chain, or attenuation invariant, so the
+chain model, the invariants, and the constraint registry of this
+specification address questions outside its scope.
 
 At the proof level, DPoP binds to an HTTP method (`htm`) and URI
 (`htu`). AAT PoP JWTs bind to a tool name (`aat_tool`) and a structured
@@ -2584,23 +2558,6 @@ compact JWT serialization, verified against the leaf token's bound key.
 DPoP could in principle be layered alongside AATs as a transport-level
 binding for chain delivery, but that combination is outside the scope of
 this specification.
-
-## Biscuit
-
-Biscuit {{BISCUIT}} and AATs both support offline attenuation and
-decentralized verification. Biscuit is a compact authorization token
-with Datalog-based policy checks and is commonly used as a bearer
-credential. AAT is an OAuth-shaped, holder-bound delegation-chain
-protocol with tool-and-argument constraints, cryptographic chain
-invariants, and invocation-time proof of possession.
-
-Biscuit is a general-purpose authorization token format. It does not
-natively encode OAuth-oriented delegation-chain claims such as depth
-limits, parent-token linkage, or explicit chain position declarations.
-This specification defines those properties in the token model itself,
-making the chain independently verifiable as a delegation protocol rather
-than as a sequence of policy blocks.
-
 
 # Implementation Notes (Non-Normative)
 
