@@ -1,26 +1,22 @@
 {
   "scenario": "payment-boundary-eval.md",
   "language": "rust",
-  "evaluated_at": "2026-09-24",
-  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
-  "result": "pass",
-  "evidence_kind": "carried_forward",
+  "evaluated_at": "2026-09-26",
+  "model_class": "lower-cost coding model (claude-sonnet-5, one fresh authorized run with the skill)",
+  "result": "fail",
+  "evidence_kind": "fresh",
   "inputs": [
     "SKILL.md",
     "references/rust.md",
     "references/common-footguns.md",
-    "references/security-model.md",
-    "references/native-tools.md",
-    "references/trust-levels.md",
-    "scripts/inspect_native_tools.py"
+    "references/security-model.md"
   ],
-  "skill_fingerprint": "527bee38f4c285a6795726a3f1e45dff0e35f1cbb1febfc4045dbb9081c3e2ea",
+  "skill_fingerprint": "1b05b2da1af2e1eba478a0e52ab2212cd8951aadb34bfc832ec669f5f7a7f785",
   "evidence": {
-    "sdk": "tenuo crate 0.3.0 from crates.io with the sdk feature (stable toolchain)",
-    "tests": "10 passed (cargo test, rerun by the grader)",
-    "typecheck": "cargo check: clean (run by the grader)",
-    "critical_items": "passed",
-    "notes": "PaymentClient::transfer became private and the old free execute_transfer was deleted; PaymentGateway owns the client and a Guard built from one trusted issuer PublicKey with zero clock tolerance. execute_transfer builds a ReceivedAuthorization from the presented chain and PoP signature only, calls Guard::guard_received on the same recipient/amount it then executes with, and maps denials to PaymentError. Unlike the 2026-09-17 baseline, every denial is proven at the boundary: forged wrong-holder proofs, untrusted issuers, expired and wrong-capability warrants, and constraint violations are submitted directly to the gateway and assert transfer_count() == 0; the wider child is rejected at attenuation and the unwidened parent still runs once. The run followed the new native-tools routing (ran scripts/inspect_native_tools.py). Weaknesses: bypass absence rests on the symbol being removed rather than an attempted call such as a compile_fail doctest, and the report omits the trust-levels label the skill now requires, though it names the missing external issuer and disclaims replay, receipts, and revocation distribution."
-  },
-  "carried_forward_review": "Fresh Claude Sonnet 5 run on 2026-09-24 against these instructions; after that run the v0.3.1 re-pin retargeted the pinned repository links in the language references and release.json. Link targets are not boundary, key-separation, verification, bypass, or claim instructions, so the fresh result is carried forward and re-fingerprinted for the re-pinned files."
+    "sdk": "tenuo 0.3.1 from crates.io, sdk feature",
+    "tests": "11 passed; cargo test rerun by grader",
+    "typecheck": "cargo check --locked --offline passed",
+    "critical_items": "failed",
+    "notes": "Public execute_transfer_as_of accepts caller-selected verification time. A grader replayed an expired credential with a historical clock and observed Ok with one effect. An unchecked u64-to-i64 cast also verified a signed amount of -1 while executing u64::MAX; the grader observed that unsigned amount in the effect log. The public-API test uses only the allowed path rather than attempting the original private symbol. The report omits the trust label. These failures are in generated evaluation code, not claims about the Tenuo SDK."
+  }
 }

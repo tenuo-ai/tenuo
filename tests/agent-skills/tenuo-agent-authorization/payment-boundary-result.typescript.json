@@ -1,26 +1,20 @@
 {
   "scenario": "payment-boundary-eval.md",
   "language": "typescript",
-  "evaluated_at": "2026-09-24",
-  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
-  "result": "pass",
-  "evidence_kind": "carried_forward",
+  "evaluated_at": "2026-09-26",
+  "model_class": "lower-cost coding model (claude-sonnet-5, one fresh authorized run with the skill)",
+  "result": "fail",
+  "evidence_kind": "fresh",
   "inputs": [
     "SKILL.md",
-    "references/typescript.md",
-    "references/common-footguns.md",
-    "references/security-model.md",
-    "references/native-tools.md",
-    "references/trust-levels.md",
-    "scripts/inspect_native_tools.py"
+    "references/typescript.md"
   ],
-  "skill_fingerprint": "7bf028ee9687ac98fca3b05edcbfb2edff7ad6f03968e2e62c419cf132a5e2be",
+  "skill_fingerprint": "f377997b363e6133414ca2329cfdc56449d2a137902b423acc2ec6c0d03039a2",
   "evidence": {
-    "sdk": "@tenuo/core 0.3.0-beta.0 from npm (Node 23, vitest 3, tsc 5)",
-    "tests": "12 passed (npx vitest run, rerun by the grader)",
-    "typecheck": "tsc --noEmit: clean (run by the grader)",
-    "critical_items": "passed",
-    "notes": "PaymentClient became a private class field of a new PaymentGateway; the client singleton and executeTransfer exports are removed and a test asserts they no longer exist. The gateway is built from trustedRoots only, verifies via tenuo.verify() before the effect, and executes the verifier's returned recipient and amount. Issuer and holder keys live in separate TransferIssuer/TransferHolder modules; only the wire warrant and a PresentedCall cross to the gateway. Twelve SDK-backed tests assert an empty ledger for every denial, including wider child delegation via narrow() and execution-argument mismatch. The run followed the new native-tools routing: it ran scripts/inspect_native_tools.py and reported with the trust-levels labels (development loop, no in-process guardrail). Weakness: wrong-holder, wrong-capability, and constraint denials are refused by the holder's own present() before reaching the gateway; the untrusted-issuer and argument-mismatch cases are the boundary-side proofs. Replay, revocation, and exactly-once are explicitly disclaimed."
-  },
-  "carried_forward_review": "Fresh Claude Sonnet 5 run on 2026-09-24 against these instructions; after that run the v0.3.1 re-pin retargeted the pinned repository links in the language references and release.json. Link targets are not boundary, key-separation, verification, bypass, or claim instructions, so the fresh result is carried forward and re-fingerprinted for the re-pinned files."
+    "sdk": "@tenuo/core 0.3.1-beta.0 from npm",
+    "tests": "10 passed; npm test rerun by grader",
+    "typecheck": "tsc --noEmit passed",
+    "critical_items": "failed",
+    "notes": "The wider-child test calls issuer.narrow without the actual holder key and catches TENUO_CONFIGURATION. A grader reproduced the same missing-holder-key error for narrower and wider ceilings (50 and 1000000), so this does not test widening enforcement. Several argument denials are caller-side only. The raw exports are removed and the effect client is an ECMAScript private field, but the report omits the trust label and in-process versus independently operated boundary distinction. Transcript confirms only SKILL.md and typescript.md were read; native-tools and trust-levels were not consulted."
+  }
 }
