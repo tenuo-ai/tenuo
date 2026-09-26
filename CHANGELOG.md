@@ -26,6 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
 
+- **Delegated warrants verify in the CrewAI, Google ADK, AutoGen, OpenAI, and
+  LangChain adapters without `chain_scope`.** Every place these adapters
+  accept a warrant (constructors, `with_warrant(...)` builders, and helpers
+  such as `guard()`, `verify_tool_call()`, `create_tier2_guardrail()`, and
+  `guarded_step()`) now takes an optional `warrant_chain=` (parents,
+  root-first, excluding the leaf), matching LangGraph and `BoundWarrant`. The
+  warrant itself may also be the whole chain as one token: an encoded
+  WarrantStack string or a root-first list of warrants. For Google ADK this
+  includes the session-state warrant. Passing a stack together with
+  `warrant_chain=` raises `ConfigurationError`. Parents are passed to
+  `enforce_tool_call` unchanged, so verification is the same as before: the
+  chain must reach a trusted root and the leaf's constraints still apply.
+  When no chain is given, `chain_scope()` still applies.
+
 ### Fixed
 
 - **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**

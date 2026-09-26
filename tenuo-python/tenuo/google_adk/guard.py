@@ -66,9 +66,14 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
-from tenuo._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async
+from tenuo._enforcement import (
+    EnforcementResult,
+    enforce_tool_call,
+    enforce_tool_call_async,
+    split_presented_warrant,
+)
 from tenuo.config import resolve_trusted_roots
-from tenuo.exceptions import InsufficientApprovals
+from tenuo.exceptions import ConfigurationError, InsufficientApprovals
 
 if TYPE_CHECKING:
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
@@ -133,18 +138,24 @@ class TenuoGuard:
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         control_plane: Optional[Any] = None,
+        *,
+        warrant_chain: Optional[List["Warrant"]] = None,
     ) -> None:
         """
         Initialize TenuoGuard.
 
         Args:
-            warrant: Static warrant to use for all tool calls
+            warrant: Static warrant to use for all tool calls. May also be the
+                whole delegation chain as one token: an encoded WarrantStack
+                string or a root-first list of warrants (the last is the leaf).
             signing_key: Signing key for Proof-of-Possession (required for Tier 2)
             trusted_roots: List of trusted issuer public keys (tenuo_core.PublicKey).
                 Warrant issuers are verified against these roots via
                 Authorizer.authorize_one() — closes the self-signed trust gap.
                 Always supply in production. Emits SecurityWarning when omitted.
-            warrant_key: Key to look up warrant in ToolContext.state (for dynamic warrants)
+            warrant_key: Key to look up warrant in ToolContext.state (for dynamic warrants).
+                The state value may be a Warrant, a base64 warrant or WarrantStack
+                string, or a root-first list of warrants.
             skill_map: Map ADK tool names to warrant skill names
             arg_map: Map tool argument names to constraint parameter names
             constraints: Direct constraints for Tier 1 mode (no warrant)
@@ -162,6 +173,14 @@ class TenuoGuard:
             control_plane: Optional :class:`tenuo.control_plane.ControlPlaneClient` instance.
                            When provided, every allow and deny decision is emitted
                            for audit and observability.
+            warrant_chain: Parent warrants of a delegated warrant, root-first and
+                excluding the leaf, so the chain verifies back to a trusted root
+                without ``chain_scope``. Also used as the default parents for a
+                session-state warrant that does not carry its own stack.
+
+        Raises:
+            ConfigurationError: If ``warrant`` is a multi-warrant stack and
+                ``warrant_chain`` is also given, or a token does not decode.
         """
         if on_deny is not None:
             import warnings
@@ -171,7 +190,7 @@ class TenuoGuard:
                 stacklevel=2,
             )
             on_denial = on_deny
-        self._warrant = warrant
+        self._warrant, self._warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._signing_key = signing_key
         self._trusted_roots = trusted_roots
         self._warrant_key = warrant_key
@@ -230,7 +249,7 @@ class TenuoGuard:
             - For direct constraints (Tier 1), uses the allowlist/constraints
             - Only explicitly granted tools are returned (Tenuo philosophy)
         """
-        effective_warrant = warrant or self._warrant
+        effective_warrant = split_presented_warrant(warrant)[0] if warrant is not None else self._warrant
 
         # Build set of allowed skills
         if effective_warrant is not None:
@@ -367,7 +386,10 @@ class TenuoGuard:
         # =======================================================================
         # MODE DETECTION: Warrant vs Direct Constraints
         # =======================================================================
-        warrant = self._get_warrant(tool_context)
+        try:
+            warrant, warrant_chain = self._get_warrant_and_chain(tool_context)
+        except ConfigurationError as e:
+            return self._deny(f"Invalid warrant: {e}", tool.name, args, start_ns=start_ns)
         use_direct_constraints = warrant is None and (self._constraints or self._allow_tools)
 
         if warrant is None and not use_direct_constraints:
@@ -394,6 +416,7 @@ class TenuoGuard:
                     trusted_roots=resolve_trusted_roots(self._trusted_roots),
                     approval_handler=self._approval_handler,
                     approvals=self._approvals,
+                    warrant_chain=warrant_chain,
                 )
 
                 if self._control_plane is not None:
@@ -401,7 +424,7 @@ class TenuoGuard:
                     _warrant_stack = None
                     try:
                         from tenuo_core import encode_warrant_stack
-                        _warrant_stack = encode_warrant_stack([bound_warrant.warrant])
+                        _warrant_stack = encode_warrant_stack([*(warrant_chain or []), bound_warrant.warrant])
                     except Exception:
                         logger.warning(
                             "encode_warrant_stack failed; warrant stack will be missing "
@@ -572,7 +595,10 @@ class TenuoGuard:
         skill_name = self._skill_map.get(tool.name, tool.name)
         validation_args = self._remap_args(skill_name, args)
 
-        warrant = self._get_warrant(tool_context)
+        try:
+            warrant, warrant_chain = self._get_warrant_and_chain(tool_context)
+        except ConfigurationError as e:
+            return self._deny(f"Invalid warrant: {e}", tool.name, args, start_ns=start_ns)
         use_direct_constraints = warrant is None and (self._constraints or self._allow_tools)
 
         if warrant is None and not use_direct_constraints:
@@ -593,6 +619,7 @@ class TenuoGuard:
                     trusted_roots=resolve_trusted_roots(self._trusted_roots),
                     approval_handler=self._approval_handler,
                     approvals=self._approvals,
+                    warrant_chain=warrant_chain,
                 )
 
                 if self._control_plane is not None:
@@ -600,7 +627,7 @@ class TenuoGuard:
                     _warrant_stack = None
                     try:
                         from tenuo_core import encode_warrant_stack
-                        _warrant_stack = encode_warrant_stack([bound_warrant.warrant])
+                        _warrant_stack = encode_warrant_stack([*(warrant_chain or []), bound_warrant.warrant])
                     except Exception:
                         logger.warning(
                             "encode_warrant_stack failed; warrant stack will be missing "
@@ -669,7 +696,10 @@ class TenuoGuard:
             None: Use original result
             Any: Replace result (not used here)
         """
-        warrant = self._get_warrant(tool_context)
+        try:
+            warrant = self._get_warrant(tool_context)
+        except ConfigurationError:
+            warrant = None
         self._audit("tool_completed", tool.name, args, warrant, result=result)
         return None
 
@@ -678,16 +708,43 @@ class TenuoGuard:
     # -------------------------------------------------------------------------
 
     def _get_warrant(self, tool_context: Optional["ToolContext"]) -> Optional["Warrant"]:
-        """Get warrant from instance or session state."""
+        """Get the leaf warrant from instance or session state."""
+        return self._get_warrant_and_chain(tool_context)[0]
+
+    def _get_warrant_and_chain(
+        self, tool_context: Optional["ToolContext"]
+    ) -> tuple[Optional["Warrant"], Optional[List["Warrant"]]]:
+        """Get ``(leaf, parents)`` from instance or session state.
+
+        A session-state value may be a Warrant, a base64 warrant or WarrantStack
+        string, or a root-first list of warrants (optionally wrapped in a
+        ScopedWarrant). Parents carried by a state stack take precedence over
+        the constructor ``warrant_chain``, which is the default for state
+        warrants that carry none. ``parents`` is None when neither supplies
+        any, leaving any ambient ``chain_scope()`` in effect.
+
+        Raises:
+            ConfigurationError: If a state token does not decode.
+        """
         if self._warrant is not None:
-            return self._warrant
+            return self._warrant, self._warrant_chain
+        value = None
         if self._warrant_key and tool_context:
             # Check session_state (standard) then state (fallback)
             if hasattr(tool_context, "session_state"):
-                return tool_context.session_state.get(self._warrant_key)
-            if hasattr(tool_context, "state"):
-                return tool_context.state.get(self._warrant_key)
-        return None
+                value = tool_context.session_state.get(self._warrant_key)
+            elif hasattr(tool_context, "state"):
+                value = tool_context.state.get(self._warrant_key)
+        if value is None:
+            return None, None
+        # A ScopedWarrant around a stack token or list: unwrap it (the plugin
+        # already checked the agent scope). A ScopedWarrant around a Warrant
+        # stays as is, since it delegates attribute access to the warrant.
+        inner = getattr(value, "warrant", None) if hasattr(value, "valid_for_agent") else None
+        if isinstance(inner, (str, list, tuple)):
+            value = inner
+        leaf, parents = split_presented_warrant(value)
+        return leaf, (parents if parents is not None else self._warrant_chain)
 
     def _check_expiry(self, warrant: Any) -> bool:
         """Check if warrant is expired.
@@ -1011,6 +1068,7 @@ class GuardBuilder:
     def __init__(self):
         """Initialize builder with defaults."""
         self._warrant: Optional["Warrant"] = None
+        self._warrant_chain: Optional[List["Warrant"]] = None
         self._signing_key: Optional["SigningKey"] = None
         self._warrant_key: Optional[str] = None
         self._skill_map: Dict[str, str] = {}
@@ -1089,18 +1147,32 @@ class GuardBuilder:
         self,
         warrant: "Warrant",
         signing_key: Optional["SigningKey"] = None,
+        *,
+        warrant_chain: Optional[List["Warrant"]] = None,
     ) -> "GuardBuilder":
         """
         Set the warrant and optional signing key for PoP.
 
+        A delegated warrant only verifies when its path back to a trusted root
+        is presented with it. Pass the parents as ``warrant_chain``, or pass
+        the whole chain as ``warrant`` in one token: an encoded WarrantStack
+        string or a root-first list of warrants (the last one is the leaf).
+
         Args:
-            warrant: The warrant to use for authorization
+            warrant: The warrant to use for authorization, or the whole chain
+                as a WarrantStack string or root-first list
             signing_key: Signing key for Proof-of-Possession (recommended)
+            warrant_chain: Parent warrants of a delegated ``warrant``,
+                root-first and excluding the leaf
 
         Returns:
             self for chaining
+
+        Raises:
+            ConfigurationError: If a stack and ``warrant_chain`` are both given,
+                or a token does not decode
         """
-        self._warrant = warrant
+        self._warrant, self._warrant_chain = split_presented_warrant(warrant, warrant_chain)
         if signing_key is not None:
             self._signing_key = signing_key
         return self
@@ -1351,4 +1423,5 @@ class GuardBuilder:
             approvals=self._approvals,
             control_plane=self._control_plane,
             trusted_roots=self._trusted_roots,
+            warrant_chain=self._warrant_chain,
         )

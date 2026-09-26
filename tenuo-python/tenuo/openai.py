@@ -133,7 +133,14 @@ from tenuo.constraints import Subpath, UrlSafe
 check_openai_compat()
 
 # Import shared enforcement logic (after version check)
-from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, enforce_tool_call_async, handle_denial  # noqa: E402
+from tenuo._enforcement import (  # noqa: E402
+    DenialPolicy,
+    EnforcementResult,
+    enforce_tool_call,
+    enforce_tool_call_async,
+    handle_denial,
+    split_presented_warrant,
+)
 from tenuo.config import resolve_trusted_roots  # noqa: E402
 from tenuo.exceptions import InsufficientApprovals  # noqa: E402
 
@@ -498,6 +505,8 @@ def verify_tool_call(
     trusted_roots: Optional[list] = None,
     approval_handler: Optional[Any] = None,
     approvals: Optional[list] = None,
+    *,
+    warrant_chain: Optional[List[Warrant]] = None,
 ) -> None:
     """Verify a tool call against guardrails and/or warrant.
 
@@ -523,8 +532,13 @@ def verify_tool_call(
         allow_tools: Tier 1 - Allowlist of tool names (checked even with warrant)
         deny_tools: Tier 1 - Denylist of tool names (checked even with warrant)
         constraints: Tier 1 - Per-tool argument constraints (skipped if warrant present)
-        warrant: Tier 2 - Cryptographic warrant (its constraints take precedence)
+        warrant: Tier 2 - Cryptographic warrant (its constraints take precedence).
+            May also be the whole delegation chain as one token: an encoded
+            WarrantStack string or a root-first list of warrants (leaf last).
         signing_key: Tier 2 - Key for PoP signature (REQUIRED if warrant provided)
+        warrant_chain: Tier 2 - Parent warrants of a delegated ``warrant``,
+            root-first and excluding the leaf, so the chain verifies back to a
+            trusted root without ``chain_scope``.
 
     Raises:
         ToolDenied: If tool is not allowed (Tier 1 allow/deny lists)
@@ -535,6 +549,7 @@ def verify_tool_call(
     # ==========================================================================
     # Tier 2: Warrant-based authorization (cryptographic)
     # ==========================================================================
+    warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
     if warrant is not None:
         logger.debug(f"Tier 2: Verifying tool '{tool_name}' with warrant")
 
@@ -553,6 +568,7 @@ def verify_tool_call(
             trusted_roots=resolve_trusted_roots(trusted_roots),
             approval_handler=approval_handler,
             approvals=approvals,
+            warrant_chain=warrant_chain,
         )
 
         if not result.allowed:
@@ -633,12 +649,15 @@ async def verify_tool_call_async(
     trusted_roots: Optional[list] = None,
     approval_handler: Optional[Any] = None,
     approvals: Optional[list] = None,
+    *,
+    warrant_chain: Optional[List[Warrant]] = None,
 ) -> None:
     """Async variant of verify_tool_call — uses enforce_tool_call_async for Tier 2.
 
     Required for async streaming paths so approval handlers can be awaited.
     See verify_tool_call for full documentation.
     """
+    warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
     if warrant is not None:
         if signing_key is None:
             raise MissingSigningKey()
@@ -652,6 +671,7 @@ async def verify_tool_call_async(
             trusted_roots=resolve_trusted_roots(trusted_roots),
             approval_handler=approval_handler,
             approvals=approvals,
+            warrant_chain=warrant_chain,
         )
 
         if not result.allowed:
@@ -783,6 +803,7 @@ class GuardedCompletions:
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
+        warrant_chain: Optional[List[Warrant]] = None,
     ):
         self._original = original
         self._allow_tools = allow_tools
@@ -790,7 +811,9 @@ class GuardedCompletions:
         self._constraints = constraints
         self._on_denial = on_denial
         self._stream_buffer_limit = stream_buffer_limit
+        warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._warrant = warrant
+        self._warrant_chain = warrant_chain
         self._signing_key = signing_key
         self._audit_callback = audit_callback
         self._session_id = session_id or str(uuid.uuid4())[:8]
@@ -875,6 +898,7 @@ class GuardedCompletions:
                 self._trusted_roots,
                 self._approval_handler,
                 self._approvals,
+                warrant_chain=self._warrant_chain,
             )
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
             self._emit_cp(tool_name, arguments, allowed=True)
@@ -998,6 +1022,7 @@ class GuardedCompletions:
                     self._trusted_roots,
                     self._approval_handler,
                     self._approvals,
+                    warrant_chain=self._warrant_chain,
                 )
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
@@ -1167,6 +1192,7 @@ class GuardedCompletions:
                     self._trusted_roots,
                     self._approval_handler,
                     self._approvals,
+                    warrant_chain=self._warrant_chain,
                 )
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
@@ -1214,13 +1240,16 @@ class GuardedResponses:
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
+        warrant_chain: Optional[List[Warrant]] = None,
     ):
         self._original = original
         self._allow_tools = allow_tools
         self._deny_tools = deny_tools
         self._constraints = constraints
         self._on_denial = on_denial
+        warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._warrant = warrant
+        self._warrant_chain = warrant_chain
         self._signing_key = signing_key
         self._audit_callback = audit_callback
         self._session_id = session_id or str(uuid.uuid4())[:8]
@@ -1296,6 +1325,7 @@ class GuardedResponses:
                 self._trusted_roots,
                 self._approval_handler,
                 self._approvals,
+                warrant_chain=self._warrant_chain,
             )
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
             self._emit_cp(tool_name, arguments, allowed=True)
@@ -1395,7 +1425,12 @@ class GuardedClient:
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
+        *,
+        warrant_chain: Optional[List[Warrant]] = None,
     ):
+        # warrant may also be a WarrantStack string or root-first list; split
+        # it once so every wrapped endpoint verifies the same leaf and parents.
+        warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._client = client
         self._allow_tools = allow_tools
         self._deny_tools = deny_tools
@@ -1403,6 +1438,7 @@ class GuardedClient:
         self._on_denial = on_denial
         self._stream_buffer_limit = stream_buffer_limit
         self._warrant = warrant
+        self._warrant_chain = warrant_chain
         self._signing_key = signing_key
         self._audit_callback = audit_callback
         self._approval_handler = approval_handler
@@ -1431,6 +1467,7 @@ class GuardedClient:
                     approval_handler,
                     approvals,
                     trusted_roots,
+                    warrant_chain,
                 )
             )
 
@@ -1450,6 +1487,7 @@ class GuardedClient:
                 approval_handler,
                 approvals,
                 trusted_roots,
+                warrant_chain,
             )
 
     def __getattr__(self, name: str) -> Any:
@@ -1586,6 +1624,7 @@ class GuardBuilder:
         self._stream_buffer_limit: int = 65536
         self._audit_callback: Optional[AuditCallback] = None
         self._warrant: Optional[Warrant] = None
+        self._warrant_chain: Optional[List[Warrant]] = None
         self._signing_key: Optional[SigningKey] = None
         self._approval_handler: Optional[Any] = None
         self._approvals: Optional[list] = None
@@ -1726,6 +1765,8 @@ class GuardBuilder:
         self,
         warrant: Warrant,
         signing_key: SigningKey,
+        *,
+        warrant_chain: Optional[List[Warrant]] = None,
     ) -> "GuardBuilder":
         """Configure Tier 2 (warrant + PoP) authorization.
 
@@ -1733,17 +1774,30 @@ class GuardBuilder:
         over Tier 1 constraints. The signing key is used to sign
         Proof-of-Possession for each tool call.
 
+        A delegated warrant only verifies when its path back to a trusted
+        root is presented with it. Pass the parents as ``warrant_chain``, or
+        pass the whole chain as ``warrant`` in one token: an encoded
+        WarrantStack string or a root-first list of warrants (leaf last).
+
         Args:
-            warrant: Cryptographic warrant (from control plane)
+            warrant: Cryptographic warrant (from control plane), or the whole
+                chain as a WarrantStack string or root-first list
             signing_key: Agent's signing key for PoP
+            warrant_chain: Parent warrants of a delegated ``warrant``,
+                root-first and excluding the leaf
 
         Returns:
             self for chaining
 
+        Raises:
+            ConfigurationError: If a stack and ``warrant_chain`` are both given,
+                or a token does not decode
+
         Example:
             builder.with_warrant(warrant, agent_key)
+            builder.with_warrant(leaf, agent_key, warrant_chain=[root])
         """
-        self._warrant = warrant
+        self._warrant, self._warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._signing_key = signing_key
         return self
 
@@ -1963,6 +2017,7 @@ class GuardBuilder:
             audit_callback=self._audit_callback,
             approval_handler=self._approval_handler,
             approvals=self._approvals,
+            warrant_chain=self._warrant_chain,
         )
 
 
@@ -1978,6 +2033,7 @@ def guard(
     on_denial: DenialMode = "raise",
     stream_buffer_limit: int = 65536,
     audit_callback: Optional[AuditCallback] = None,
+    warrant_chain: Optional[List[Warrant]] = None,
 ) -> GuardedClient:
     """Wrap an OpenAI client with Tenuo guardrails.
 
@@ -2004,7 +2060,9 @@ def guard(
         allow_tools: Tier 1 - Allowlist of tool names (checked even with warrant)
         deny_tools: Tier 1 - Denylist of tool names (checked even with warrant)
         constraints: Tier 1 - Per-tool argument constraints (skipped if warrant present)
-        warrant: Tier 2 - Cryptographic warrant (its constraints take precedence)
+        warrant: Tier 2 - Cryptographic warrant (its constraints take precedence).
+            May also be the whole delegation chain as one token: an encoded
+            WarrantStack string or a root-first list of warrants (leaf last).
         signing_key: Tier 2 - Agent's signing key for PoP (REQUIRED if warrant provided)
         on_denial: Behavior when tool call is denied:
             - "raise": Raise ToolDenied/WarrantDenied exception (recommended)
@@ -2014,6 +2072,9 @@ def guard(
         audit_callback: Optional callback for every authorization decision.
             Receives AuditEvent with session_id, tool, decision, reason.
             Useful for compliance logging and debugging.
+        warrant_chain: Tier 2 - Parent warrants of a delegated ``warrant``,
+            root-first and excluding the leaf, so the chain verifies back to
+            a trusted root without ``chain_scope``.
 
     Returns:
         Wrapped client that enforces constraints
@@ -2082,6 +2143,7 @@ def guard(
         signing_key=signing_key,
         trusted_roots=trusted_roots,
         audit_callback=audit_callback,
+        warrant_chain=warrant_chain,
     )
 
 
@@ -2188,6 +2250,7 @@ class TenuoToolGuardrail:
         audit_callback: Optional[AuditCallback] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
+        warrant_chain: Optional[List[Warrant]] = None,
     ):
         """Initialize the guardrail.
 
@@ -2195,18 +2258,23 @@ class TenuoToolGuardrail:
             allow_tools: Allowlist of permitted tool names (None = allow all)
             deny_tools: Denylist of forbidden tool names
             constraints: Per-tool argument constraints
-            warrant: Optional Tier 2 warrant for cryptographic authorization
+            warrant: Optional Tier 2 warrant for cryptographic authorization, or
+                the whole delegation chain as a WarrantStack string or root-first list
             signing_key: Required if warrant is provided (for PoP)
             trusted_roots: Trusted issuer public keys (required for Tier 2 warrant path)
             tripwire: If True, halt agent on violation. If False, log and continue.
             audit_callback: Optional callback for audit events
             approval_handler: Handler invoked when the warrant requires human approval
             approvals: Pre-collected signed approvals for warrant approval gates
+            warrant_chain: Parent warrants of a delegated ``warrant``, root-first
+                and excluding the leaf
         """
+        warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self.allow_tools = allow_tools
         self.deny_tools = deny_tools
         self.constraints = constraints
         self.warrant = warrant
+        self.warrant_chain = warrant_chain
         self.signing_key = signing_key
         self.trusted_roots = trusted_roots
         self.tripwire = tripwire
@@ -2269,6 +2337,7 @@ class TenuoToolGuardrail:
                     self.trusted_roots,
                     self.approval_handler,
                     self.approvals,
+                    warrant_chain=self.warrant_chain,
                 )
                 self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
                 self._emit_cp(tool_name, arguments, allowed=True)
@@ -2490,6 +2559,7 @@ def create_tier2_guardrail(
     trusted_roots: Optional[list] = None,
     tripwire: bool = True,
     audit_callback: Optional[AuditCallback] = None,
+    warrant_chain: Optional[List[Warrant]] = None,
 ) -> TenuoToolGuardrail:
     """Create a Tier 2 guardrail for OpenAI Agents SDK.
 
@@ -2498,10 +2568,13 @@ def create_tier2_guardrail(
     scenarios where cryptographic authorization is needed.
 
     Args:
-        warrant: The warrant authorizing tool usage
+        warrant: The warrant authorizing tool usage, or the whole delegation
+            chain as a WarrantStack string or root-first list (leaf last)
         signing_key: The agent's signing key (must match warrant holder)
         tripwire: If True, halt agent on violation
         audit_callback: Optional callback for audit events
+        warrant_chain: Parent warrants of a delegated ``warrant``, root-first
+            and excluding the leaf
 
     Returns:
         A guardrail compatible with Agent's input_guardrails
@@ -2540,6 +2613,7 @@ def create_tier2_guardrail(
         trusted_roots=trusted_roots,
         tripwire=tripwire,
         audit_callback=audit_callback,
+        warrant_chain=warrant_chain,
     )
 
 
