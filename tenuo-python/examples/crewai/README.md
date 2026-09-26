@@ -73,7 +73,7 @@ python guarded_crew_builder.py
 - Fluent `GuardedCrew` builder chaining:
   - `.policy({role: [tool_names]})` to map agent roles to authorized capabilities
   - `.constraints({role: {tool: {arg: constraint}}})` for fine-grained argument control (e.g. `Pattern("topic:*")`)
-  - `.strict()` to ensure execution fails closed if any unguarded tool calls occur
+  - `.strict()` to audit and raise `UnguardedToolError` after kickoff if any unguarded tool calls occurred
 - Public `crew.kickoff()` execution through CrewAI's native `before_tool_call` hooks
 - Reproducible, offline testing using a deterministic LLM double (no provider keys or network required)
 

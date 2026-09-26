@@ -7,7 +7,7 @@ Verifies:
 3. Constraint violations are blocked by the authorization hook; tool bodies never run.
 4. Cross-role unauthorized tool calls fail closed without executing tool bodies.
 5. Closed-world semantics block unlisted arguments from executing tool bodies.
-6. Strict mode fails closed on kickoff when unguarded tool calls occur (UnguardedToolError).
+6. Strict mode detects unguarded calls after kickoff and raises UnguardedToolError.
 7. Per-agent guard introspection provides accurate policy evaluation via .allows().
 8. The example main() runs cleanly end-to-end without requiring external LLM API keys.
 """
@@ -162,6 +162,8 @@ def test_strict_mode_unguarded_tool_raises_on_kickoff(example):
 
     assert "admin_reset" in str(exc_info.value)
     assert "GuardedCrew.kickoff" in str(exc_info.value)
+    # Tool body executed before strict mode detected the bypass after kickoff
+    assert ("admin_reset", {}) in example.executed_tools
 
 
 def test_guard_allows_policy_evaluation(example):
@@ -198,5 +200,5 @@ def test_main_runs_end_to_end(example, capsys):
     assert "Researcher search('unapproved_query'): False" in captured
     assert "Researcher write_report('topic:ai_safety'): False" in captured
     assert "Writer search('topic:ai_safety'): False" in captured
-    assert "[FAIL-CLOSED] Caught UnguardedToolError as expected" in captured
-    assert "GuardedCrew successfully executed with strict enforcement." in captured
+    assert "[STRICT] Unguarded call detected after kickoff" in captured
+    assert "GuardedCrew successfully executed with strict audit." in captured

@@ -4,7 +4,7 @@ GuardedCrew Builder Quickstart Example
 Demonstrates the public Tenuo 0.3.0 GuardedCrew() builder API for CrewAI:
 - Role-based policy: map CrewAI agent roles to permitted tools
 - Granular constraints: restrict argument values per agent and tool
-- Strict mode: fail closed if any unguarded tool calls occur
+- Strict mode: detect unguarded tool calls after kickoff
 - Deterministic double: execute end-to-end offline without LLM API keys
 """
 
@@ -20,7 +20,8 @@ except ImportError:
         pass
 
     class BaseLLM:  # type: ignore[no-redef]
-        pass
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
 
 from tenuo.crewai import (
     GuardedCrew,
@@ -73,6 +74,15 @@ class DeterministicDoubleLLM(BaseLLM):
     model: str = "custom/deterministic-double"
     responses: List[str] = []
     _step_index: int = 0
+
+    def __init__(
+        self,
+        model: str = "custom/deterministic-double",
+        responses: Optional[List[str]] = None,
+    ) -> None:
+        super().__init__(model=model)
+        self.responses = list(responses) if responses is not None else []
+        self._step_index = 0
 
     def call(self, messages: Any, **kwargs: Any) -> str:
         if self._step_index < len(self.responses):
@@ -211,9 +221,9 @@ def main():
         strict_crew.kickoff()
         print("Strict mode check: unexpected pass")
     except UnguardedToolError as e:
-        print(f" - [FAIL-CLOSED] Caught UnguardedToolError as expected: {e}")
+        print(f" - [STRICT] Unguarded call detected after kickoff: {e}")
 
-    print("\nGuardedCrew successfully executed with strict enforcement.")
+    print("\nGuardedCrew successfully executed with strict audit.")
 
 
 if __name__ == "__main__":
