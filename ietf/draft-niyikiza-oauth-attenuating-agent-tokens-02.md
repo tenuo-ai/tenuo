@@ -138,6 +138,16 @@ informative:
       - name: Simon Osindero
     date: 2026
     target: https://arxiv.org/abs/2602.11865
+  MCP:
+    title: "Model Context Protocol Specification"
+    author:
+      - org: Model Context Protocol
+    target: https://modelcontextprotocol.io/specification
+  A2A:
+    title: "Agent2Agent (A2A) Protocol Specification"
+    author:
+      - org: A2A Project
+    target: https://a2a-protocol.org/latest/specification/
   WIMSE-ARCH:
     title: "Workload Identity in a Multi System Environment (WIMSE) Architecture"
     author:
@@ -223,6 +233,12 @@ steps performed by multiple agents, services, or tools. Each step may
 need authority derived from the user or an originating service, but
 rarely needs the full authority available to the workflow as a whole.
 
+A token broad enough to support a multi-step workflow can carry more
+authority than an intermediate agent needs for its current step. Prompt
+injection, model hallucination, or compromise can then exercise that
+excess authority. Attenuation limits this exposure by letting each
+delegation step pass onward only the authority needed for the next step.
+
 Existing OAuth mechanisms can scope tokens to principals, resources,
 APIs, or authorization details, but they do not define an offline,
 holder-derivable delegation chain in which each downstream holder can
@@ -230,45 +246,53 @@ attenuate authority and any enforcement point can verify that the
 resulting token is no broader than its parent. In particular, OAuth does
 not define a standard way for a token holder to derive a token that
 cryptographically constrains a receiving agent to specific tools and
-argument values for a specific task.
+argument values for a specific task. Section 1.1 explains why Token
+Exchange {{RFC8693}} and Rich Authorization Requests {{RFC9396}} do not
+fill this gap.
 
-Without such attenuation, a token broad enough to support a multi-step
-workflow can carry more authority than an intermediate agent needs for
-its current step. Prompt injection, model hallucination, or compromise
-can then exercise that excess authority. Attenuation limits this exposure
-by letting each delegation step pass onward only the authority needed for
-the next step.
+AATs apply the capability model {{DENNIS66}} to OAuth-based agent
+systems. Authority travels in unforgeable tokens scoped to specific
+operations; a holder can attenuate a token before passing it on but
+cannot amplify it {{SALTZER75}}. Enforcement points verify the leaf
+token and the delegation path that produced it offline, so the
+authorization server is not a participant in each hop. That matters for
+agentic workflows that invoke tools in rapid succession, cross trust
+boundaries, or run with intermittent connectivity. AATs add this
+delegation and attenuation layer to OAuth 2.0 {{RFC6749}} token issuance
+and scoping and to WIMSE {{WIMSE-ARCH}} workload identity; they replace
+neither.
 
-A distinct problem is the confused deputy {{HARDY88}}: a deputy that
-combines a caller-supplied resource designation with the deputy's own
-standing authority can be induced to perform an action the caller could
-not perform directly. Capability systems address this by carrying
-designation and authority together in an unforgeable artifact. AATs apply
-that pattern to agentic delegation: the invoker can derive a token whose
-tool and argument constraints designate the task's resource and
-authority, and the agent acts under that received token rather than under
-ambient authority of its own. Section 9 describes the resulting
-guarantees and limits.
+The same structure addresses a distinct problem, the confused deputy
+{{HARDY88}}: a deputy that combines a caller-supplied resource
+designation with the deputy's own standing authority can be induced to
+perform an action the caller could not perform directly. Capability
+systems address this by carrying designation and authority together in
+an unforgeable artifact. AATs apply that pattern to agentic delegation:
+the invoker can derive a token whose tool and argument constraints
+designate the task's resource and authority, and the agent acts under
+that received token rather than under ambient authority of its own.
+Section 9.1 describes the resulting guarantees and limits.
 
-WIMSE {{WIMSE-ARCH}} provides mechanisms for establishing workload
-identity and propagating it across service boundaries. OAuth 2.0
-{{RFC6749}} provides token issuance and scoping. AATs complement these
-mechanisms with delegation-aware attenuation semantics: a holder can
-derive a narrower token and pass it downstream, while enforcement points
-can verify the resulting chain offline. This avoids making the
-authorization server a participant in every delegation hop, which is
-important for agentic workflows that execute tool invocations in rapid
-succession, operate across trust boundaries, or run with intermittent
-connectivity.
+An AAT combines four mechanisms that the rest of this document builds
+on:
 
-Capability-based systems {{DENNIS66}} provide the underlying model.
-Authority is carried by unforgeable tokens scoped to specific operations; a
-holder can attenuate a capability before passing it on, but cannot
-amplify it {{SALTZER75}}. This document defines such a mechanism for
-OAuth-based agent systems, complementing WIMSE's identity layer with
-a delegation and attenuation layer. The resulting chain lets
-enforcement points evaluate both the leaf token and the delegation path
-that produced it.
+- **Capabilities as claims.** A profile of Rich Authorization Requests
+  (RAR) `authorization_details` lists the tools a holder may invoke and
+  typed constraints on each argument (Section 3).
+- **Attenuation invariants.** A holder derives a child token offline,
+  and the child can only narrow tools, argument constraints, delegation
+  depth, and lifetime (Section 4).
+- **Chain linkage.** Each child is signed by the key its parent names in
+  `cnf.jwk` and carries a hash of its parent, so the chain verifies back
+  to a trust anchor without contacting the issuer (Sections 4.2 and
+  4.6).
+- **Holder binding.** Every token names a holder key, and each tool
+  invocation carries a PoP JWT signed by the leaf holder over the tool
+  and its exact arguments (Sections 3.2 and 7).
+
+Root tokens are issued at an OAuth token endpoint and later tokens are
+derived locally (Section 6); an enforcement point verifies the chain and
+the proof in one algorithm (Section 8).
 
 The following diagram shows the delegation flow this specification
 enables:
@@ -295,8 +319,14 @@ Enforcement Point
 ~~~
 
 At each derivation step, authority can stay the same or narrow, but
-never widen. How token chains are carried to enforcement points is
-deployment-specific; this document does not define a transport binding.
+never widen. This document defines the token format, derivation, proof
+of possession, and verification. It leaves three things to deployments
+or companion specifications: token revocation, which would reintroduce
+the online dependency that offline verification avoids (Section 9.8); a
+CBOR encoding (Appendix D); and how chains are carried to enforcement
+points, since agent frameworks carry tool calls over different
+protocols, for example MCP {{MCP}}, A2A {{A2A}}, or plain HTTP, and each
+needs its own binding.
 
 ## Limitations of Existing OAuth Mechanisms for Agentic Delegation
 
