@@ -33,7 +33,7 @@ Happy-path chains (single token, three levels, prefix presentation), each
 attenuation invariant I1 through I6, closed-world leaf checks, explicit JWT
 typing, optional PoP audience with mandatory mismatch rejection, chain audience, enforcement-point nonce, composite `all`/`any` subsumption including
 clause reuse, the remaining core constraint types, and the structural root
-checks of §7 steps 3c, 3d, 3f, 3h, 3l.
+checks of §7 steps 3c, 3d, 3f, 3h, 3k, 3l.
 
 ## Conventions worth knowing
 

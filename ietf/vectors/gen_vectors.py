@@ -346,7 +346,7 @@ def subsumes(child: dict, parent: dict) -> bool:
     return False  # every undeclared pair is invalid
 
 
-def verify_chain(chain: list[str], trust_anchors: list[Ed25519PublicKey], tool: str, args: dict,
+def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicKey]], tool: str, args: dict,
                  pop_jwt: str, now: int = NOW, audience: str = AUDIENCE,
                  require_pop_aud: bool = False, require_chain_aud: bool = False,
                  nonce: str | None = None) -> str:
@@ -368,10 +368,12 @@ def verify_chain(chain: list[str], trust_anchors: list[Ed25519PublicKey], tool: 
 
     # 3: root
     root = None
+    anchor_iss = None
     last_err = None
-    for ta in trust_anchors:
+    for ta_iss, ta_pub in trust_anchors:
         try:
-            root = _verify_jws(chain[0], ta, "3a", "3b")
+            root = _verify_jws(chain[0], ta_pub, "3a", "3b")
+            anchor_iss = ta_iss
             break
         except Deny as e:
             last_err = e
@@ -396,6 +398,8 @@ def verify_chain(chain: list[str], trust_anchors: list[Ed25519PublicKey], tool: 
         raise Deny("3j", "jti")
     if not (isinstance(root.get("iss"), str) and ":" in root["iss"]):
         raise Deny("3k", "iss not URI")
+    if root["iss"] != anchor_iss:
+        raise Deny("3k", "iss does not match the verifying trust anchor")
     _jwk_pub(root.get("cnf", {}).get("jwk", {}), "3l")
     root_aat = _aat_entry(root, "3m", exactly_one=True)
     for cm in root_aat["tools"].values():
@@ -505,7 +509,7 @@ def verify_chain(chain: list[str], trust_anchors: list[Ed25519PublicKey], tool: 
 # Vector construction
 # ---------------------------------------------------------------------------
 CP, ORCH, WK, WK2, ATK = (KEYS[n] for n in ("control_plane", "orchestrator", "worker", "worker2", "attacker"))
-TRUST = [CP.pub]
+TRUST = [(ROOT_ISS, CP.pub)]
 
 Q3, Q4 = "/data/q3-report.pdf", "/data/q4-report.pdf"
 
@@ -1124,6 +1128,13 @@ add("J.21.5", "Root lifetime exceeds MAX_TOKEN_LIFETIME", None,
     "exp = iat + 90 days + 1 (step 3h).",
     [long_root], pop_sign(pop_claims(uuid7ish(0xE85), long_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3h")
+iss_root = jws_sign(root_claims(uuid7ish(0xE6), {"read_file": {"path": WILD}}, ORCH,
+                               iss="https://other-issuer.example.com"), CP)
+add("J.21.6", "Root iss does not match the verifying trust anchor", None,
+    "Signed by the Control Plane key, whose trust anchor issuer is https://auth.example.com, but "
+    "iss names a different issuer (step 3k, RFC 8725 Section 3.8).",
+    [iss_root], pop_sign(pop_claims(uuid7ish(0xE86), iss_root, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3k")
 
 
 # ---------------------------------------------------------------------------
@@ -1182,7 +1193,7 @@ md.append(f"| MAX_DELEGATION_DEPTH | {MAX_DELEGATION_DEPTH} |")
 md.append(f"| MAX_CONSTRAINT_DEPTH | {MAX_CONSTRAINT_DEPTH} |")
 md.append(f"| PoP clock window | ±{POP_WINDOW} s |")
 md.append(f"| Required PoP audience | `{AUDIENCE}` (deployment policy for these vectors) |")
-md.append(f"| Trust anchors | Control Plane public key only |")
+md.append(f"| Trust anchors | Control Plane public key, bound to issuer `https://auth.example.com` |")
 md.append("")
 md.append("## Key material\n")
 md.append("Same seeds as `docs/spec/test-vectors.md`.\n")
@@ -1244,7 +1255,7 @@ json_out = {
                "max_delegation_depth": MAX_DELEGATION_DEPTH, "pop_window": POP_WINDOW, "audience": AUDIENCE},
     "keys": {n: {"seed_hex": k.seed.hex(), "public_hex": k.pub_raw.hex(), "jwk": k.jwk,
                  "thumbprint": k.thumbprint, "thumbprint_uri": k.thumbprint_uri} for n, k in KEYS.items()},
-    "trust_anchors": [CP.jwk],
+    "trust_anchors": [{"iss": ROOT_ISS, "jwk": CP.jwk}],
     "vectors": [{
         "id": v["id"], "title": v["title"], "cbor_twin": v["cbor_twin"], "description": v["description"],
         "notes": v["notes"], "now": v["verification_time"], "tool": v["tool"], "args": v["args"],

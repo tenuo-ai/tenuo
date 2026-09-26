@@ -477,9 +477,10 @@ signed by the private key corresponding to the leaf token's `cnf.jwk`.
 invocation request, verifies the presented token chain, evaluates
 argument constraints, and permits or denies execution.
 
-**Trust Anchor:** A public key that enforcement points are configured to
-trust as the root of a delegation chain. Root tokens are signed by the
-private key corresponding to a trust anchor.
+**Trust Anchor:** A public key, bound to the issuer identifier of the
+root issuer that holds the corresponding private key, that enforcement
+points are configured to trust as the root of a delegation chain. Root
+tokens are signed by the private key corresponding to a trust anchor.
 
 **Proof of Possession (PoP):** A cryptographic demonstration that the
 presenter of a token controls the private key corresponding to the
@@ -654,9 +655,8 @@ collision is not a concern.
 
 A tool identifier carries no inherent authorization semantics beyond
 naming a capability. The root issuer is responsible for verifying that
-requested tool identifiers are meaningful in the deployment and that the
-requester is authorized to receive authority for those tools before
-minting a root token (Section 3.7.3).
+requested tools are recognized and that the requester is authorized to
+receive authority for them before minting a root token (Section 3.7.3).
 
 ## Argument Constraints
 
@@ -988,15 +988,17 @@ Upon a valid request, the AS constructs and returns a root AAT. The AS:
    root issuer SHOULD require the agent to demonstrate
    possession of the corresponding private key, for example via
    a signed proof-of-possession assertion in the token request.
-6. Sets `authorization_details` to the capability claims
-   granted, which MAY be a subset of what the agent requested.
-7. For each tool identifier in the requested `authorization_details`,
-   the root issuer SHOULD verify that the identifier is meaningful in
-   the deployment and that the requester is authorized to receive
-   authority for that tool. If this verification fails, the root issuer
-   MUST reject the request. The mechanism for mapping requester identity
-   to tool authority is deployment-specific and outside the scope of this
-   specification.
+6. For each tool identifier in the requested `authorization_details`,
+   verifies that the tool is recognized by the root issuer and that the
+   requester is authorized to receive authority for it. The mechanism
+   for mapping requester identity to tool authority is
+   deployment-specific and outside the scope of this specification.
+7. Sets `authorization_details` to the capability claims granted. The
+   granted claims MUST attenuate the requested claims under the rules
+   of Section 4.5, treating the request as the parent, and MUST NOT
+   include a tool that failed verification in step 6. If no requested
+   tool can be granted, the root issuer MUST reject the request with
+   the `invalid_authorization_details` error ({{RFC9396}} Section 5).
 8. Signs the token with the AS's own private key.
 
 The AS returns the token in a standard OAuth 2.0 token endpoint response
@@ -1600,7 +1602,8 @@ of this algorithm.
 ~~~
 Inputs:
   chain:         ordered array of signed JWTs, [root, ..., leaf]
-  trust_anchors: set of public keys trusted as root issuers
+  trust_anchors: set of (issuer, public key) pairs trusted as
+                 root issuers
   tool:          the tool being invoked
   args:          the arguments being passed to the tool
   pop_jwt:       the PoP JWT presented by the agent
@@ -1641,8 +1644,8 @@ Algorithm:
       "aat+jwt". If alg is "none", not on the allowlist,
       inconsistent with the key type, or typ is absent or not
       "aat+jwt", DENY.                               (Sec 8.13)
-   b. Verify the root token signature against a key in
-      trust_anchors. After signature verification succeeds,
+   b. Verify the root token signature against the public key
+      of a trust anchor. After signature verification succeeds,
       parse the root token's claims. All subsequent root
       checks (3c through 3n) operate on parsed claims.
    c. Verify root.del_depth == 0.
@@ -1655,8 +1658,10 @@ Algorithm:
       exceeding MAX_DELEGATION_DEPTH. If absent or invalid, DENY.
    j. Verify root.jti is present and is a non-empty string.
       If absent or not a string, DENY.
-   k. Verify root.iss is present and is a URI. If absent or
-      not a URI-formatted string, DENY.
+   k. Verify root.iss is present, is a URI, and equals the
+      issuer of the trust anchor whose key verified the
+      signature in step 3b ({{RFC8725}} Section 3.8). If
+      absent, not a URI-formatted string, or not equal, DENY.
    l. Verify root.cnf is present, contains a `jwk` member, and
       that the `jwk` encodes a public key (MUST NOT contain a
       private key parameter such as `d` for EC/OKP keys or
@@ -2889,7 +2894,7 @@ closed-world leaf checks, explicit typing, required PoP audience,
 composite `all` / `any` subsumption including clause reuse, the
 remaining core constraint types (`not_one_of`, `contains`, `subset`,
 range inclusivity), and the structural root checks in Section 7 steps
-3c, 3d, 3f, 3h, and 3l. Implementers targeting the -01 text should not
+3c, 3d, 3f, 3h, 3k, and 3l. Implementers targeting the -01 text should not
 treat that suite as a -01 conformance pack; the cases that encode the
 changes in Appendix G are marked.
 
@@ -2902,7 +2907,8 @@ external material. Long lines are folded per {{RFC8792}}.
 Ed25519 keys are derived from fixed 32-byte seeds. Verification time
 is 1704067500 (2024-01-01T00:05:00Z). MAX_IAT_SKEW is 30 seconds. The
 enforcement point audience is `https://tools.example.com`. The only
-trust anchor is the Control Plane key.
+trust anchor is the Control Plane key, bound to the issuer
+`https://auth.example.com`.
 
 | Role | Seed (hex) | JWK `x` |
 |---|---|---|
@@ -3048,7 +3054,7 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision makes three normative changes. They are breaking for
+This revision makes five normative changes. They are breaking for
 implementations that followed the -01 text.
 
 - **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
@@ -3076,6 +3082,18 @@ implementations that followed the -01 text.
   one-to-one assignment of derived clauses to parent clauses, which
   added backtracking without adding soundness and rejected valid
   attenuations such as `all([wildcard, wildcard])` to `all([exact(5)])`.
+- **Root `iss` bound to its trust anchor.** A trust anchor is an
+  (issuer, public key) pair, and step 3k rejects a root whose `iss`
+  differs from the issuer of the anchor that verified it, as
+  {{RFC8725}} Section 3.8 requires. The -01 text checked only that
+  `iss` was a URI, so any configured anchor could assert any issuer.
+- **Root grants attenuate the request.** The root issuer verifies each
+  requested tool first, and the granted `authorization_details` MUST
+  attenuate the requested ones under Section 4.5. A request with no
+  grantable tool is rejected with `invalid_authorization_details`
+  (Section 3.7.3). The -01 text both allowed a subset grant and
+  required rejecting the whole request when any tool failed
+  verification.
 
 Editorial and alignment changes, not intended to change behavior
 relative to the Section 7 algorithm in -01:
@@ -3102,6 +3120,9 @@ relative to the Section 7 algorithm in -01:
   approximate re-keying by destroying the parent's holder key. These
   respond to Neil Madden's list review of -01.
 - Byte-exact JWS test vectors are published as described in
-  Appendix E. They encode the three normative changes above; a -01
-  implementation will disagree on `typ`, audience mismatch handling, and the
-  `all` clause-reuse cases.
+  Appendix E. They encode the verifier-side normative changes above;
+  a -01 implementation will disagree on `typ`, audience mismatch
+  handling, the `all` clause-reuse cases, and root `iss` binding.
+- Section 4.5 uses one subsumption direction throughout: the parent
+  constraint subsumes the derived one. The -01 text mixed both
+  directions.

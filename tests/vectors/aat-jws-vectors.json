@@ -84,9 +84,12 @@
   },
   "trust_anchors": [
     {
-      "kty": "OKP",
-      "crv": "Ed25519",
-      "x": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+      "iss": "https://auth.example.com",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+      }
     }
   ],
   "vectors": [
@@ -12071,6 +12074,91 @@
       "expected": {
         "verdict": "DENY",
         "step": "3h"
+      }
+    },
+    {
+      "id": "J.21.6",
+      "title": "Root iss does not match the verifying trust anchor",
+      "cbor_twin": null,
+      "description": "Signed by the Control Plane key, whose trust anchor issuer is https://auth.example.com, but iss names a different issuer (step 3k, RFC 8725 Section 3.8).",
+      "notes": [],
+      "now": 1704067500,
+      "tool": "read_file",
+      "args": {
+        "path": "/data/q3-report.pdf"
+      },
+      "policy": {},
+      "chain": [
+        {
+          "header": {
+            "alg": "EdDSA",
+            "typ": "aat+jwt"
+          },
+          "payload": {
+            "jti": "019471f8-0000-7000-8000-0000000000e6",
+            "iss": "https://other-issuer.example.com",
+            "iat": 1704067200,
+            "exp": 1704070800,
+            "del_depth": 0,
+            "del_max_depth": 3,
+            "cnf": {
+              "jwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+              }
+            },
+            "authorization_details": [
+              {
+                "type": "attenuating_agent_token",
+                "tools": {
+                  "read_file": {
+                    "path": {
+                      "constraint_type": "wildcard"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "header_b64": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ",
+          "payload_b64": "eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9vdGhlci1pc3N1ZXIuZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwZTYifQ",
+          "signing_input": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9vdGhlci1pc3N1ZXIuZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwZTYifQ",
+          "signing_input_sha256_b64u": "zpQgJ7lIFY7B1J7q2e7Rfo557TP4qL_jfn_ssZqR1Ko",
+          "signature_b64": "dIyD5-Cv3b3PfZPhQVg9HiFhXJqY033MyD_KMM-d9UnqMjMEH43b3Mu1Bf5m6afrp1HlF09geOepl0Pun9mEBQ",
+          "compact": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9vdGhlci1pc3N1ZXIuZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwZTYifQ.dIyD5-Cv3b3PfZPhQVg9HiFhXJqY033MyD_KMM-d9UnqMjMEH43b3Mu1Bf5m6afrp1HlF09geOepl0Pun9mEBQ",
+          "signer": "control_plane"
+        }
+      ],
+      "chain_compact": [
+        "eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9vdGhlci1pc3N1ZXIuZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwZTYifQ.dIyD5-Cv3b3PfZPhQVg9HiFhXJqY033MyD_KMM-d9UnqMjMEH43b3Mu1Bf5m6afrp1HlF09geOepl0Pun9mEBQ"
+      ],
+      "pop": {
+        "header": {
+          "alg": "EdDSA",
+          "typ": "aat-pop+jwt"
+        },
+        "payload": {
+          "jti": "019471f8-0000-7000-8000-000000000e86",
+          "iat": 1704067500,
+          "aat_id": "019471f8-0000-7000-8000-0000000000e6",
+          "aat_tool": "read_file",
+          "hta": {
+            "path": "/data/q3-report.pdf"
+          },
+          "aat_aud": "https://tools.example.com"
+        },
+        "header_b64": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0",
+        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg2In0",
+        "signing_input": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg2In0",
+        "signing_input_sha256_b64u": "KL0JAzCa0dbsEaiB-jE8N8UZT1zcAOKrV-paGr1S8KY",
+        "signature_b64": "iJkemjplYlFmaebdeZBqAXIs5w5uBH1VocPwvn0WegXwta_zj5d58yLCLjVKLQFyQu_1rPXmyz3vkn21WzACCA",
+        "compact": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg2In0.iJkemjplYlFmaebdeZBqAXIs5w5uBH1VocPwvn0WegXwta_zj5d58yLCLjVKLQFyQu_1rPXmyz3vkn21WzACCA",
+        "signer": "orchestrator"
+      },
+      "expected": {
+        "verdict": "DENY",
+        "step": "3k"
       }
     }
   ]
