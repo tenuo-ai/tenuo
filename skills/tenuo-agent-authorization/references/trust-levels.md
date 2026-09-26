@@ -24,6 +24,8 @@ Report that:
 
 A working issuer, holder, propagation path, and verifier exist, and behavioral tests prove allow and deny behavior. However, the issuer is ephemeral, stored with the application, or controlled by the same agent process whose authority it is supposed to bound.
 
+Identify the actual development issuance and invocation entrypoints. Minting fixtures in tests alone do not make a verifier-only application a development loop; report incomplete integration until a legitimate caller path exists. A retained original raw-effect route also prevents claiming the protected workflow is complete, even when its preferred entrypoint passes tests.
+
 Report that:
 
 - the cryptographic flow is functional;

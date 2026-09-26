@@ -61,7 +61,9 @@ On 2026-09-24, after the MCP and native-tool workflows, trust levels, and invent
 
 On 2026-09-26, three fresh authorized Claude Sonnet 5 runs against the updated instructions and released 0.3.1 SDKs failed critical acceptance despite passing generated tests (Python 11, TypeScript 10, Rust 11). Python retained the public raw-effect class; TypeScript's wider-child test rejected for a missing holder key rather than widening; Rust exposed caller-controlled verification time and verified a wrapping signed amount different from the unsigned effect amount. Independent grader probes confirmed these failures. Reporting and reference-routing gaps also remained. The result files record fresh failures, not carried-forward passes; CI must remain blocked until corrections and new replays pass.
 
-Record future results in the pull request that changes the skill. A regression in any critical item blocks review even if link validation and generated tests pass.
+On 2026-09-26, a second authorized round used fresh projects and the revised skill, without prior findings or corrective prompts. All three passed the critical implementation checks: Python 10 tests and mypy, TypeScript 10 tests and tsc, Rust 10 unit tests plus a compile-fail doctest and cargo check. Independent checks confirmed original-route closure, meaningful narrower-child controls and widening rejections, and the Rust clock/conversion fixes. Required reporting still failed: Python claimed a development loop with test-only issuance; Rust claimed a production boundary for in-process enforcement with test-only issuance; TypeScript correctly selected development loop but omitted the required replacement-authority and mutable-process guard warnings. The result files preserve overall failures while recording the critical checks as passed. Passing generated code is not sufficient to waive required security-guarantee reporting.
+
+Record future results in the pull request that changes the skill. A regression in any critical item or required reporting blocks review even if link validation and generated tests pass.
 
 ## CI freshness gate
 

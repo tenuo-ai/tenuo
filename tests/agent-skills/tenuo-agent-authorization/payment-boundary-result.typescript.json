@@ -7,14 +7,20 @@
   "evidence_kind": "fresh",
   "inputs": [
     "SKILL.md",
-    "references/typescript.md"
+    "references/native-tools.md",
+    "references/typescript.md",
+    "references/trust-levels.md",
+    "references/common-footguns.md",
+    "references/security-model.md",
+    "scripts/inspect_native_tools.py"
   ],
-  "skill_fingerprint": "f377997b363e6133414ca2329cfdc56449d2a137902b423acc2ec6c0d03039a2",
+  "skill_fingerprint": "c84d0b7bb38747c2b1df8f7cf6e8156c723e4a680302ac52d20aba4ddfd7e09d",
   "evidence": {
     "sdk": "@tenuo/core 0.3.1-beta.0 from npm",
-    "tests": "10 passed; npm test rerun by grader",
+    "tests": "10 passed; rerun by grader",
     "typecheck": "tsc --noEmit passed",
-    "critical_items": "failed",
-    "notes": "The wider-child test calls issuer.narrow without the actual holder key and catches TENUO_CONFIGURATION. A grader reproduced the same missing-holder-key error for narrower and wider ceilings (50 and 1000000), so this does not test widening enforcement. Several argument denials are caller-side only. The raw exports are removed and the effect client is an ECMAScript private field, but the report omits the trust label and in-process versus independently operated boundary distinction. Transcript confirms only SKILL.md and typescript.md were read; native-tools and trust-levels were not consulted."
+    "critical_items": "passed",
+    "notes": "Second fresh authorized run. All critical implementation checks pass: receiving-boundary denials, host-configured recipient/amount ceilings, verified effect arguments, actual import failure of the original exports, and correct holder-owned narrowing with a successful child control. Independent widening diagnostic confirms TENUO_CHAIN_INVALID with a range-expanded message, not the prior missing-key setup error. The development-loop label is supported by real issuer/caller/service APIs. Required reporting remains incomplete: it mentions same-process roles and missing secret-store wiring but omits the required warnings that the process can mint replacement authority or replace/disable the guard, and that issuance/root signing must move outside the agent boundary for production. Inputs include actual reference reads and executed inventory script.",
+    "required_reporting": "failed"
   }
 }

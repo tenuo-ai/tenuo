@@ -7,16 +7,15 @@
   "evidence_kind": "fresh",
   "inputs": [
     "SKILL.md",
-    "references/rust.md",
-    "references/common-footguns.md",
-    "references/security-model.md"
+    "references/rust.md"
   ],
-  "skill_fingerprint": "1b05b2da1af2e1eba478a0e52ab2212cd8951aadb34bfc832ec669f5f7a7f785",
+  "skill_fingerprint": "6586b23944d2eaeeda72613493cd65f3ddd3fd765287b2278030981a53005549",
   "evidence": {
     "sdk": "tenuo 0.3.1 from crates.io, sdk feature",
-    "tests": "11 passed; cargo test rerun by grader",
+    "tests": "10 unit tests and 1 compile-fail doctest passed; rerun by grader",
     "typecheck": "cargo check --locked --offline passed",
-    "critical_items": "failed",
-    "notes": "Public execute_transfer_as_of accepts caller-selected verification time. A grader replayed an expired credential with a historical clock and observed Ok with one effect. An unchecked u64-to-i64 cast also verified a signed amount of -1 while executing u64::MAX; the grader observed that unsigned amount in the effect log. The public-API test uses only the allowed path rather than attempting the original private symbol. The report omits the trust label. These failures are in generated evaluation code, not claims about the Tenuo SDK."
+    "critical_items": "passed",
+    "notes": "Second fresh authorized run. All critical implementation checks pass: checked u64-to-i64 conversion replaces wrapping, no caller-selected execution clock remains, a compile-fail doctest attempts the original private transfer method, receiving-boundary denials check specific errors and zero effects, and a valid narrower child precedes a RangeExpanded widening rejection. Required reporting fails: the final report calls this a production boundary despite in-process enforcement and test-only issuance. The model skipped mandated trust-levels and common-footguns references; inputs record only actual reads. Verifier configuration must remain host-owned.",
+    "required_reporting": "failed"
   }
 }
