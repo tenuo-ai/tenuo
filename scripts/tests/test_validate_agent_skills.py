@@ -1,4 +1,6 @@
+import json
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -8,6 +10,8 @@ from scripts.validate_agent_skills import (
     ROOT,
     SKILLS,
     behavioral_eval_fingerprint,
+    load_behavioral_eval_results,
+    main,
     check_release_drift,
     manifest_version,
     markdown_link_destination,
@@ -202,8 +206,8 @@ class BehavioralEvalTests(unittest.TestCase):
             behavioral_eval_fingerprint(["SKILL.md", "references/rust.md"]),
         )
 
-    def test_stale_result_fails_with_rerun_guidance(self) -> None:
-        errors = []
+    def test_stale_result_warns_without_rewriting_evidence(self) -> None:
+        errors, warnings = [], []
         validate_behavioral_eval_result(
             {
                 "result": "pass",
@@ -212,9 +216,188 @@ class BehavioralEvalTests(unittest.TestCase):
                 "skill_fingerprint": "0" * 64,
             },
             errors,
+            warnings=warnings,
         )
-        self.assertEqual(len(errors), 1)
-        self.assertIn("behavioral eval evidence is stale", errors[0])
+        self.assertEqual(errors, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("behavioral eval evidence is stale", warnings[0])
+
+    def result(self, **updates):
+        inputs = ["SKILL.md", "references/rust.md"]
+        return dict({
+            "result": "fail", "language": "rust", "evidence_kind": "fresh",
+            "inputs": inputs, "skill_fingerprint": behavioral_eval_fingerprint(inputs),
+            "evidence": {"critical_items": "passed", "required_reporting": "failed",
+                         "notes": "Known reporting deficiency."},
+        }, **updates)
+
+    def test_failed_result_is_advisory_even_for_critical_failure(self) -> None:
+        for critical in ("passed", "failed"):
+            with self.subTest(critical=critical):
+                errors, warnings = [], []
+                result = self.result(evidence={"critical_items": critical})
+                validate_behavioral_eval_result(result, errors, warnings=warnings)
+                self.assertEqual(errors, [])
+                self.assertIn("review findings", warnings[0])
+                self.assertEqual(result["result"], "fail")
+
+    def test_invalid_evidence_still_fails(self) -> None:
+        for updates in (
+            {"result": "unknown"}, {"result": None},
+            {"evidence_kind": []},
+            {"skill_fingerprint": "not-a-hash"},
+            {"evidence": []}, {"evidence": {"critical_items": "maybe"}},
+            {"evidence": {"required_reporting": "maybe"}},
+            {"result": "pass"},  # Contradicts failed reporting.
+            {"inputs": ["SKILL.md", "../README.md"]},
+            {"inputs": ["SKILL.md", "/etc/passwd"]},
+        ):
+            with self.subTest(updates=updates):
+                errors = []
+                validate_behavioral_eval_result(self.result(**updates), errors)
+                self.assertTrue(errors)
+
+    def test_report_distinguishes_results_and_freshness_and_preserves_files(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            path = Path(directory) / "payment-boundary-result.rust.json"
+            original = json.dumps(self.result(skill_fingerprint="0" * 64))
+            path.write_text(original)
+            errors, notices, warnings = [], [], []
+            with patch("scripts.validate_agent_skills.BEHAVIORAL_EVAL_DIR", Path(directory)):
+                report = load_behavioral_eval_results(errors, notices, warnings)
+            self.assertEqual(errors, [])
+            self.assertIn("| rust | fail | passed | failed | stale | fresh |", report)
+            self.assertIn("Known reporting deficiency", report)
+            self.assertEqual(len([w for w in warnings if path.name in w and Path(directory).name in w]), 2)
+            self.assertEqual(path.read_text(), original)
+
+    def test_missing_evidence_is_advisory_but_malformed_json_fails(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            with patch("scripts.validate_agent_skills.BEHAVIORAL_EVAL_DIR", Path(directory)):
+                errors, notices, warnings = [], [], []
+                load_behavioral_eval_results(errors, notices, warnings)
+                self.assertEqual(errors, [])
+                self.assertTrue(warnings)
+                path = Path(directory) / "payment-boundary-result.rust.json"
+                path.write_text("{broken")
+                report = load_behavioral_eval_results(errors, [], [])
+                self.assertTrue(errors)
+                self.assertIn("invalid eval result", report)
+
+    def test_cli_succeeds_with_failed_evidence_and_writes_summary(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            (root / "payment-boundary-result.rust.json").write_text(json.dumps(self.result()))
+            with patch("scripts.validate_agent_skills.BEHAVIORAL_EVAL_DIR", root), \
+                 patch("scripts.validate_agent_skills._emit"):
+                self.assertEqual(main(["--summary", str(root / "summary.md")]), 0)
+            self.assertIn("| rust | fail | passed | failed | current |", (root / "summary.md").read_text())
+
+    def test_cli_still_fails_on_malformed_evidence(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            (root / "payment-boundary-result.rust.json").write_text("[]")
+            with patch("scripts.validate_agent_skills.BEHAVIORAL_EVAL_DIR", root), \
+                 patch("scripts.validate_agent_skills._emit"):
+                self.assertEqual(main([]), 1)
+
+    def test_other_skill_evidence_is_fingerprinted_against_its_own_directory(self) -> None:
+        with TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "tenuo-example"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: tenuo-example\ndescription: x\n---\n")
+            inputs = ["SKILL.md"]
+            result = {
+                "language": "python",
+                "inputs": inputs,
+                "evidence_kind": "fresh",
+                "result": "pass",
+                "skill_fingerprint": behavioral_eval_fingerprint(inputs, skill),
+            }
+            errors: list[str] = []
+            covered = validate_behavioral_eval_result(
+                result, errors, "x-result.python.json", "python",
+                skill_dir=skill, scenario="x-eval.md",
+            )
+        # No references/python.md in this skill, so the language reference is not required.
+        self.assertEqual(errors, [])
+        self.assertEqual(covered, ["SKILL.md"])
+
+    def test_other_skill_stale_evidence_names_its_scenario(self) -> None:
+        with TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "tenuo-example"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: tenuo-example\ndescription: x\n---\n")
+            result = {
+                "language": "python", "inputs": ["SKILL.md"], "evidence_kind": "fresh",
+                "result": "pass", "skill_fingerprint": "0" * 64,
+            }
+            errors: list[str] = []
+            warnings: list[str] = []
+            validate_behavioral_eval_result(
+                result, errors, "x-result.python.json", "python",
+                warnings=warnings, skill_dir=skill, scenario="x-eval.md",
+            )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Review x-eval.md", warnings[0])
+
+    def test_multi_skill_report_keeps_failed_and_stale_results_advisory(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            skills, evaluations = root / "skills", root / "evaluations"
+            originals = {}
+            for name, outcome in (("first", "fail"), ("second", "pass")):
+                skill = skills / name
+                skill.mkdir(parents=True)
+                (skill / "SKILL.md").write_text(f"# {name}\n")
+                evidence_dir = evaluations / name
+                evidence_dir.mkdir(parents=True)
+                result = {
+                    "result": outcome, "language": "python", "evidence_kind": "fresh",
+                    "inputs": ["SKILL.md"],
+                    "skill_fingerprint": behavioral_eval_fingerprint(["SKILL.md"], skill),
+                }
+                path = evidence_dir / "example-result.python.json"
+                originals[path] = json.dumps(result)
+                path.write_text(originals[path])
+                if name == "second":
+                    (skill / "SKILL.md").write_text("# Changed after evaluation\n")
+            errors, notices, warnings = [], [], []
+            with patch("scripts.validate_agent_skills.SKILLS", skills), \
+                 patch("scripts.validate_agent_skills.BEHAVIORAL_EVAL_ROOT", evaluations):
+                report = load_behavioral_eval_results(errors, notices, warnings)
+            self.assertEqual(errors, [])
+            self.assertEqual(len(warnings), 2)
+            self.assertIn("| first | example-eval.md | python | fail | not recorded | not recorded | current |", report)
+            self.assertIn("| second | example-eval.md | python | pass | not recorded | not recorded | stale |", report)
+            for path, original in originals.items():
+                self.assertEqual(path.read_text(), original)
+
+    def test_other_skill_cannot_read_outside_its_directory(self) -> None:
+        with TemporaryDirectory() as directory:
+            skill = Path(directory) / "skill"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("# Example\n")
+            (Path(directory) / "outside.md").write_text("outside")
+            (skill / "linked.md").symlink_to(Path(directory) / "outside.md")
+            for item in ("../outside.md", "linked.md"):
+                with self.subTest(item=item):
+                    result = self.result(inputs=["SKILL.md", item])
+                    errors = []
+                    validate_behavioral_eval_result(result, errors, skill_dir=skill)
+                    self.assertIn("inputs must stay inside", errors[0])
+
+    def test_other_skill_requires_language_reference_when_it_ships_one(self) -> None:
+        with TemporaryDirectory() as directory:
+            skill = Path(directory)
+            (skill / "SKILL.md").write_text("# Example\n")
+            (skill / "references").mkdir()
+            (skill / "references/rust.md").write_text("# Rust\n")
+            result = self.result(inputs=["SKILL.md"], skill_fingerprint=behavioral_eval_fingerprint(["SKILL.md"], skill))
+            errors = []
+            validate_behavioral_eval_result(result, errors, language="rust", skill_dir=skill)
+            self.assertIn("must include references/rust.md", errors[0])
 
     def test_inputs_must_include_entrypoint(self) -> None:
         errors = []

@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
+  `ServerMiddleware` for `MCPServer` / low-level `Server` that runs
+  `MCPVerifier` on every `tools/call` before params validation, accepting the
+  envelope from `_meta.tenuo` or the gateway-safe `arguments._tenuo` carrier,
+  and forwarding `clean_arguments` with the carrier removed. Tools keep plain
+  signatures. This is what makes `inject_warrant="argument"` usable with
+  decorated tools: pydantic rejects a `_tenuo` parameter, and the SDK prunes
+  unknown arguments before the handler runs, so the carrier could previously
+  only be consumed by a raw `tools/call` handler (#719).
+  Register decorated tools with `@authorization.tool(mcp)` so a post-validation
+  guard also checks that final arguments match the verified request. Unsigned
+  defaults and SDK transformations fail closed; callers must send exact final
+  values. `raw_handler=True` is restricted to low-level dispatch that executes
+  clean arguments unchanged.
+
+- Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
+
+### Fixed
+
+- **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**
+  That signature fails at registration on the official SDK; the docs now point
+  at the two middlewares and the raw-handler form.
+
+- **`TenuoPlugin` (Google ADK) now works under a real ADK `Runner`.** It did
+  not match ADK's `BasePlugin` contract: it never called
+  `BasePlugin.__init__(name=...)`, so the `PluginManager` failed on
+  `plugin.name`; its callbacks were synchronous, but ADK awaits them; and
+  `before_tool_callback` / `after_tool_callback` took `args`, while ADK passes
+  `tool_args=` by keyword. The callbacks are now `async` with ADK's
+  keyword-only signatures, and the tool check uses
+  `TenuoGuard.async_before_tool`. A new `name=` argument (default `"tenuo"`)
+  sets the plugin name. Code that called these callbacks directly must now
+  `await` them and pass keywords. The existing tests mocked `google.adk`, so a
+  new test drives the plugin through a real `InMemoryRunner`.
+  Expired and wrong-agent session warrants are cleared through ADK's tracked
+  state assignment API, preserving revocation without calling unsupported `pop`.
+
+- **`SecureAPIRouter` (FastAPI) works again on FastAPI 0.120 and later.**
+  It was a wrapper that delegated to an inner `APIRouter`. FastAPI 0.120+
+  includes routers lazily, by reference, which a wrapper cannot satisfy, so
+  `app.include_router(router)` silently registered nothing and every protected
+  route returned 404. `SecureAPIRouter` is now a real `APIRouter` subclass, so
+  the documented `app.include_router(router)` and nested includes work on
+  every supported FastAPI version. `router._router` still works for code that
+  used it as a workaround. No test included a `SecureAPIRouter` in an app;
+  one now does, and it fails on the old class under current FastAPI.
+
 ## [0.3.1] - 2026-09-23
 
 ### Breaking
@@ -131,6 +180,14 @@ updating; see the linked entries below for the full rationale.
 
 ### Added
 
+- **`tenuo-denial-triage` agent skill.** Diagnoses a denied call from the
+  SDK's own diagnostics and receipts, classifies the denied check, and ranks
+  fixes from "fix the call" to "widen minimally at the issuer", with an
+  explicit never-list (closed-world opt-out, wildcards on material
+  arguments, longer TTLs, new trusted roots, optional-warrant modes). Install
+  with `npx skills add tenuo-ai/tenuo --skill tenuo-denial-triage`. The skills
+  validator now validates evidence structure and reports advisory behavioral
+  results for any skill under `tests/agent-skills/<skill>/`.
 - **`tenuo.enforce_tool_call`, `tenuo.enforce_tool_call_async`, and
   `tenuo.EnforcementResult`** are exported from the package. They are what
   every adapter calls under the hood, and are the right entry point for tests

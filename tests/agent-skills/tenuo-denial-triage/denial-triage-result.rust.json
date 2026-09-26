@@ -1,0 +1,19 @@
+{
+  "scenario": "denial-triage-eval.md",
+  "language": "rust",
+  "evaluated_at": "2026-09-24",
+  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md"
+  ],
+  "skill_fingerprint": "bc96b2df2a16a0c08e0d73baa9fb430f938807ee0e6c5b5968abed4a935e7eac",
+  "evidence": {
+    "sdk": "tenuo crate 0.3.0 from crates.io with the sdk feature, starting from the payment-boundary result project (10 tests)",
+    "tests": "12 passed (cargo test, rerun by the grader): 10 prior, the legitimate acct-2/500/memo call allowed once, and a 141-character memo denied",
+    "typecheck": "cargo check: clean (run by the grader)",
+    "critical_items": "passed",
+    "notes": "Third run, against the materiality revision. Reproduced the denial with a red test and read the code: signature-invalid, because the gateway rebuilt the verified argument map without memo while the holder signed over it; the note also states that closed-world would have rejected memo next. Fix: memo enters the single args map used for both PoP and constraint checking, is stored by the effect, and is named in transfer_constraints with RegexConstraint('^[\\\\x20-\\\\x7E]{0,140}$'). Recipient and amount are per-warrant parameters; no widening. Trusted root, clock tolerance, revocation mode, closed-world mode, TTL, and depth unchanged; residual risk stated as bounded opaque text with a note that forwarding it downstream would need its own review. This is the bounded-constraint shape for a kept value; no wildcard."
+  }
+}
