@@ -309,9 +309,36 @@ def _well_formed(c) -> bool:
     return True
 
 
+WILDCARD = {"constraint_type": "wildcard"}
+
+
+def _norm(cmap: dict) -> dict:
+    """§3.3: an empty constraint map is {"*": wildcard}."""
+    return cmap if cmap else {"*": WILDCARD}
+
+
+def _req(c: dict) -> bool:
+    """§3.3: an entry is required unless it carries `optional: true`."""
+    return not c.get("optional", False)
+
+
+def _check_map(cmap: dict):
+    """§3.4 well-formedness of a whole constraint map (steps 3n/4o)."""
+    for k, c in cmap.items():
+        if not isinstance(c, dict):
+            raise Deny("3n/4o", f"constraint for {k!r} is not an object")
+        if "optional" in c and not isinstance(c["optional"], bool):
+            raise Deny("3n/4o", "optional is not a boolean")
+        if k == "*" and (c.get("constraint_type") != "wildcard" or "optional" in c):
+            raise Deny("3n/4o", "the * entry must be a wildcard constraint")
+        _cdepth(c)
+
+
 def _cdepth(c, d=1):
     if d > MAX_CONSTRAINT_DEPTH:
         raise Deny("3n/4o", "constraint tree too deep")
+    if d > 1 and "optional" in c:
+        raise Deny("3n/4o", "optional appears inside all/any")
     if c.get("constraint_type") not in CORE_TYPES:
         raise Deny("3n/4o", f"unrecognized constraint_type {c.get('constraint_type')!r} (fail-closed)")
     if not _well_formed(c):
@@ -477,8 +504,7 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
     _jwk_pub(root.get("cnf", {}).get("jwk", {}), "3l")
     root_aat = _aat_entry(root, "3m", exactly_one=True)
     for cm in root_aat["tools"].values():
-        for c in cm.values():
-            _cdepth(c)
+        _check_map(cm)
 
     # 4: adjacent pairs
     claims = [root]
@@ -519,16 +545,25 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
         child_aat = _aat_entry(child, "4n", exactly_one=False)
         parent_aat = _aat_entry(parent, "4n", exactly_one=False)
         for cm in child_aat["tools"].values():
-            for c in cm.values():
-                _cdepth(c)
+            _check_map(cm)
         for tname, cmap in child_aat["tools"].items():
             if tname not in parent_aat["tools"]:
                 raise Deny("4p1", f"tool {tname!r} not in parent")
-            pmap = parent_aat["tools"][tname]
-            if pmap and set(pmap) != set(cmap):
-                raise Deny("4p2", f"constraint keys differ for {tname!r}")
-            for k in set(pmap) & set(cmap):
-                if not subsumes(cmap[k], pmap[k]):
+            pm, cm = _norm(parent_aat["tools"][tname]), _norm(cmap)
+            # 4p2: key rules of §4.5
+            for k in cm:
+                if k not in pm and "*" not in pm:
+                    raise Deny("4p2", f"{tname}: child names {k!r}, which the parent neither names nor admits via *")
+            for k in pm:
+                if k != "*" and k not in cm and (_req(pm[k]) or "*" in cm):
+                    raise Deny("4p2", f"{tname}: child omits {k!r}, which the parent requires or which * would readmit")
+            # 4p3: a required argument stays required
+            for k in cm:
+                if k != "*" and k in pm and _req(pm[k]) and not _req(cm[k]):
+                    raise Deny("4p3", f"{tname}.{k}: child makes a required argument optional")
+            # 4p4: each child constraint attenuates the parent's (or the parent's *)
+            for k, c in cm.items():
+                if not subsumes(c, pm[k] if k in pm else pm["*"]):
                     raise Deny("4p4", f"{tname}.{k} does not subsume")
         h, p, _ = _split(chain[i - 1])
         if child["par_hash"] != b64u(hashlib.sha256(f"{h}.{p}".encode("ascii")).digest()):
@@ -543,17 +578,19 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
         raise Deny("6b", f"tool {tool!r} not authorized")
     if _has_big_int(args):
         raise Deny("6b", "argument integer beyond 2^53-1")
-    cmap = leaf_aat["tools"][tool]
-    if cmap:
-        for a in args:
-            if a not in cmap:
-                raise Deny("6b", f"argument {a!r} not in closed-world map")
-        for a in cmap:
-            if a not in args:
-                raise Deny("6b", f"constrained argument {a!r} absent")
-        for a, c in cmap.items():
-            if not check(c, args[a]):
+    m = _norm(leaf_aat["tools"][tool])
+    for a, v in args.items():
+        if a in m and a != "*":
+            if not check(m[a], v):
                 raise Deny("6b", f"argument {a!r} violates constraint")
+        elif "*" in m:
+            if not check(m["*"], v):
+                raise Deny("6b", f"argument {a!r} violates the * constraint")
+        else:
+            raise Deny("6b", f"argument {a!r} not in closed-world map")
+    for a, c in m.items():
+        if a != "*" and _req(c) and a not in args:
+            raise Deny("6b", f"required argument {a!r} absent")
     # 6c: chain audience. Every token that carries aud must name this
     # enforcement point (RFC 7519 §4.1.3 applied per token); a derived token
     # can add or narrow the restriction but never remove one.
@@ -1073,9 +1110,9 @@ add("J.16.6", "any: cross-type clause subsumption", None,
 EMPTY_ROOT = jws_sign(root_claims(uuid7ish(0xB10), {"read_file": {}}, ORCH), CP)
 empty_child = jws_sign(derived_claims(uuid7ish(0xB11), EMPTY_ROOT, ORCH, WK,
                                      {"read_file": {"path": ex(Q3)}}, IAT_ROOT + 60, 1704069000, 2), ORCH)
-add("J.8.1", "Empty parent map: derived introduces constraint keys (step 4p3)", None,
+add("J.8.1", "Empty parent map: derived introduces constraint keys (step 4p2)", None,
     "Root authorizes read_file with an empty constraint map. L1 introduces path:exact. "
-    "§4.5 / step 4p3 permits adding keys when the parent map is empty.",
+    "§4.5 / step 4p2 permits adding keys when the parent map is empty (an empty map is *).",
     [EMPTY_ROOT, empty_child], pop_sign(pop_claims(uuid7ish(0xB01), empty_child, "read_file", {"path": Q3}), WK),
     "read_file", {"path": Q3}, "PERMIT")
 add("J.8.2", "Empty tool map at the leaf: extra arguments are permitted", None,
@@ -1284,6 +1321,121 @@ add("J.21.7", "Root carries an empty all constraint", None,
     "value; it is rejected when the root's constraint trees are walked (step 3n).",
     [empty_all_root], pop_sign(pop_claims(uuid7ish(0xE87), empty_all_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3n/4o")
+
+
+# --- J.22 optional and unnamed arguments (§3.3, §4.5, steps 4p and 6b) ---------
+RT = "read_text_file"
+P = "/srv/api/README.md"
+EXP = {"constraint_type": "exact", "value": P}
+
+
+def lines(mx, optional=True):
+    c = {"constraint_type": "range", "max": mx}
+    if optional:
+        c["optional"] = True
+    return c
+
+
+OPEN_MAP = {"path": EXP, "head": lines(200), "tail": lines(200), "*": WILDCARD}
+CLOSED_MAP = {"path": EXP, "head": lines(200)}
+OR = jws_sign(root_claims(uuid7ish(0x2200), {RT: OPEN_MAP}, ORCH), CP)
+CR = jws_sign(root_claims(uuid7ish(0x2201), {RT: CLOSED_MAP}, ORCH), CP)
+
+
+def leaf_case(vid, title, desc, root, args, expect, step=None, n=0):
+    add(vid, title, None, desc, [root],
+        pop_sign(pop_claims(uuid7ish(0x2280 + n), root, RT, args), ORCH), RT, args, expect, step)
+
+
+def derive_case(vid, title, desc, root, child_map, args, expect, step=None, n=0):
+    d = jws_sign(derived_claims(uuid7ish(0x2240 + n), root, ORCH, WK, {RT: child_map},
+                                IAT_ROOT + 60, 1704069000, 2), ORCH)
+    add(vid, title, None, desc, [root, d],
+        pop_sign(pop_claims(uuid7ish(0x22C0 + n), d, RT, args), WK), RT, args, expect, step)
+
+
+leaf_case("J.22.1", "Optional arguments may be omitted",
+          "path is required; head and tail are optional; the invocation carries only path.",
+          OR, {"path": P}, "PERMIT", n=1)
+leaf_case("J.22.2", "A present optional argument is constrained",
+          "head is optional with max 200; the invocation sets head to 100.",
+          OR, {"path": P, "head": 100}, "PERMIT", n=2)
+leaf_case("J.22.3", "A present optional argument that violates its constraint",
+          "head is optional with max 200; the invocation sets head to 500.",
+          OR, {"path": P, "head": 500}, "DENY", "6b", n=3)
+leaf_case("J.22.4", "The * entry admits an unnamed argument",
+          "The map carries *; the invocation adds encoding, which the map does not name.",
+          OR, {"path": P, "encoding": "utf-8"}, "PERMIT", n=4)
+leaf_case("J.22.5", "A required argument is still required",
+          "path is required; the invocation carries only head.",
+          OR, {"head": 10}, "DENY", "6b", n=5)
+leaf_case("J.22.6", "Without *, an unnamed argument is rejected",
+          "The map has path and optional head but no *; the invocation adds encoding.",
+          CR, {"path": P, "encoding": "utf-8"}, "DENY", "6b", n=6)
+derive_case("J.22.7", "Derived token makes an optional argument required",
+            "Parent head is optional (max 200); child head is required (max 100). Required narrows.",
+            CR, {"path": EXP, "head": lines(100, optional=False)}, {"path": P, "head": 50}, "PERMIT", n=7)
+derive_case("J.22.8", "Derived token makes a required argument optional",
+            "Parent path is required; child marks it optional, admitting invocations that omit it.",
+            CR, {"path": {**EXP, "optional": True}, "head": lines(200)}, {"path": P}, "DENY", "4p3", n=8)
+derive_case("J.22.9", "Derived token omits an optional argument, which forbids it",
+            "Parent head is optional and the parent has no *; child omits head. The chain is valid, and "
+            "an invocation that carries head is now rejected as unnamed.",
+            CR, {"path": EXP}, {"path": P, "head": 10}, "DENY", "6b", n=9)
+derive_case("J.22.10", "Derived token omits an optional argument; invocation without it",
+            "Same derivation as J.22.9; the invocation carries only path.",
+            CR, {"path": EXP}, {"path": P}, "PERMIT", n=10)
+derive_case("J.22.11", "Derived token omits a required argument",
+            "Parent path is required; the child omits it.",
+            CR, {"head": lines(200)}, {"head": 10}, "DENY", "4p2", n=11)
+derive_case("J.22.12", "Derived token constrains an argument the parent admitted via *",
+            "Parent has *; child keeps * and adds encoding = exact utf-8. The invocation passes latin-1.",
+            OR, {**OPEN_MAP, "encoding": {"constraint_type": "exact", "value": "utf-8"}},
+            {"path": P, "encoding": "latin-1"}, "DENY", "6b", n=12)
+derive_case("J.22.13", "Derived token constrains an argument the parent admitted via *; value allowed",
+            "Same derivation as J.22.12; the invocation passes utf-8.",
+            OR, {**OPEN_MAP, "encoding": {"constraint_type": "exact", "value": "utf-8"}},
+            {"path": P, "encoding": "utf-8"}, "PERMIT", n=13)
+derive_case("J.22.14", "Derived token adds * when the parent has none",
+            "Parent map has no *; the child adds one, admitting arguments the parent forbids.",
+            CR, {**CLOSED_MAP, "*": WILDCARD}, {"path": P}, "DENY", "4p2", n=14)
+derive_case("J.22.15", "Derived token names an argument the parent neither names nor admits",
+            "Parent map has no *; the child adds encoding.",
+            CR, {**CLOSED_MAP, "encoding": WILDCARD}, {"path": P}, "DENY", "4p2", n=15)
+derive_case("J.22.16", "Derived token omits an optional argument but keeps *",
+            "Parent has * and optional head; the child omits head and keeps *, so head would come back "
+            "under * with any value.",
+            OR, {"path": EXP, "tail": lines(200), "*": WILDCARD}, {"path": P}, "DENY", "4p2", n=16)
+EMPTY_RT = jws_sign(root_claims(uuid7ish(0x2202), {RT: {}}, ORCH), CP)
+derive_case("J.22.17", "Empty parent map is equivalent to *",
+            "Parent map is empty; the child pins path and keeps *. Normalization treats the parent as {*: wildcard}.",
+            EMPTY_RT, {"path": EXP, "*": WILDCARD}, {"path": P, "head": 5}, "PERMIT", n=17)
+BAD_NEST = jws_sign(root_claims(uuid7ish(0x2203), {RT: {"path": {"constraint_type": "all", "constraints": [
+    {**EXP, "optional": True}]}}}, ORCH), CP)
+leaf_case("J.22.18", "optional inside all is not well-formed",
+          "The optional member may appear only on a top-level constraint-map entry.",
+          BAD_NEST, {"path": P}, "DENY", "3n/4o", n=18)
+derive_case("J.22.20", "Derived token names a new optional argument under the parent's *",
+            "Parent has *; the child keeps * and adds encoding as an optional exact utf-8. The invocation omits it.",
+            OR, {**OPEN_MAP, "encoding": {"constraint_type": "exact", "value": "utf-8", "optional": True}},
+            {"path": P}, "PERMIT", n=20)
+derive_case("J.22.21", "Derived token drops *",
+            "Parent has *; the child keeps every named key and drops *. An invocation using only named arguments.",
+            OR, {"path": EXP, "head": lines(200), "tail": lines(200)}, {"path": P, "tail": 20}, "PERMIT", n=21)
+derive_case("J.22.22", "Derived token drops *; unnamed argument rejected",
+            "Same derivation as J.22.21; the invocation adds encoding, which the child no longer admits.",
+            OR, {"path": EXP, "head": lines(200), "tail": lines(200)}, {"path": P, "encoding": "utf-8"},
+            "DENY", "6b", n=22)
+BAD_STAR_OPT = jws_sign(root_claims(uuid7ish(0x2205), {RT: {"path": EXP, "*": {**WILDCARD, "optional": True}}},
+                                    ORCH), CP)
+leaf_case("J.22.23", "A * entry carrying optional is not well-formed",
+          "The * entry must be a wildcard constraint without an optional member.",
+          BAD_STAR_OPT, {"path": P}, "DENY", "3n/4o", n=23)
+BAD_STAR = jws_sign(root_claims(uuid7ish(0x2204), {RT: {"path": EXP, "*": {"constraint_type": "range", "max": 5}}},
+                                ORCH), CP)
+leaf_case("J.22.19", "A * entry that is not a wildcard is not well-formed",
+          "In this specification the * entry must be a wildcard constraint.",
+          BAD_STAR, {"path": P}, "DENY", "3n/4o", n=19)
 
 
 # ---------------------------------------------------------------------------

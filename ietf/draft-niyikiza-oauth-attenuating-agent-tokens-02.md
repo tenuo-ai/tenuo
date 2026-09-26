@@ -635,19 +635,55 @@ sets.
 A tool entry with an empty constraint map `{}` is valid and indicates
 that the tool is authorized without argument restrictions.
 
-When a tool entry contains one or more argument constraints, the
-enforcement point operates in closed-world mode for that tool invocation
-(Section 8, step 6b): any argument not named in the constraint map MUST
-be rejected, and a constrained argument absent from the invocation MUST
-also be rejected. The presence of a constraint asserts that the issuer
-has reasoned about that argument; an invocation that omits it has not
-been validated against that reasoning.
+Enforcement points check every invocation against its tool's
+constraint map in closed-world mode (Section 8, step 6b): an argument
+the map does not name MUST be rejected unless the map carries the `*`
+entry described below, and a named argument absent from the invocation
+MUST be rejected unless its constraint is optional. An empty map is
+shorthand for `*`, so it admits any argument. The presence of a constraint asserts that the
+issuer has reasoned about that argument; an invocation that omits a
+required one has not been validated against that reasoning. To authorize
+an argument without restricting its value while keeping the map closed,
+the issuer names it with a `wildcard` constraint (Section 3.4).
 
-There is no optional-argument mechanism. An argument that is sometimes
-omitted can be authorized only by an empty constraint map, which leaves
-every argument unrestricted. To authorize an argument without
-restricting its value alongside constrained ones, the issuer MUST
-include a `wildcard` constraint for it (Section 3.4).
+**Optional arguments.** A top-level entry in a constraint map MAY carry
+the member `optional` with the boolean value `true`. The argument may
+then be omitted; when present, it MUST satisfy the constraint.
+`optional` defaults to `false` and MUST NOT appear on a constraint
+nested inside `all` or `any`. Subsumption (Section 4.5) compares
+constraints without this member; Section 4.5 states separately how it
+attenuates.
+An omitted argument takes the tool's own default, which the enforcement
+point cannot see, so issuers mark an argument optional only when that
+default is acceptable (Section 9.13).
+
+**Unnamed arguments.** The reserved key `*` in a constraint map gives the
+constraint for every argument the map does not name. In this
+specification its value MUST be a `wildcard` constraint without an
+`optional` member, so `*` permits arguments the issuer did not name,
+with any value. An empty constraint
+map is equivalent to `{"*": {"constraint_type": "wildcard"}}`, and
+enforcement points treat it that way (Section 8, steps 4p and 6b). The
+key `*` does not name a tool argument; a tool argument literally named
+`*` is treated as unnamed. Because `*` admits any argument
+the tool accepts, including arguments added in later versions of the
+tool, issuers SHOULD NOT use it for tools with side effects (Section
+9.13).
+
+For example, the following entry pins `path`, bounds the optional
+`head` and `tail` line counts without requiring them, and permits any
+other argument:
+
+~~~json
+{
+  "read_text_file": {
+    "path": { "constraint_type": "exact", "value": "/srv/api/README.md" },
+    "head": { "constraint_type": "range", "max": 200, "optional": true },
+    "tail": { "constraint_type": "range", "max": 200, "optional": true },
+    "*": { "constraint_type": "wildcard" }
+  }
+}
+~~~
 
 The `authorization_details` array MAY contain entries of other types
 alongside `attenuating_agent_token` entries, consistent with the
@@ -746,8 +782,11 @@ A constraint is well-formed when:
   `allowed` are arrays;
 - in a `range`, `min` and `max` are numbers, `min` is not greater than
   `max`, and `min_inclusive` and `max_inclusive` are booleans present
-  only with the corresponding bound; and
-- no number in it has a magnitude exceeding 2^53 - 1.
+  only with the corresponding bound;
+- no number in it has a magnitude exceeding 2^53 - 1; and
+- `optional`, where present, is a boolean on a top-level constraint-map
+  entry, and a `*` entry is a `wildcard` constraint with no `optional`
+  member (Section 3.3).
 
 Enforcement points MUST reject a token containing a constraint that is
 not well-formed (Section 8, steps 3n and 4o).
@@ -940,20 +979,18 @@ The `⊆` relation is not defined by enumerating `(tool, args)` pairs
 subsumption rules in Section 4.5, which alone decide validity. Those
 rules are conservative: some attenuations that are valid in the
 semantic sense below, such as an `exact` under a parent `any`, are
-rejected. At the tool level, the derived
-token's tool set must be a subset of the parent's. At the argument
-level, when the parent's constraint map is non-empty, the derived
-token must preserve the parent's key set exactly (Section 4.5
-explains why closed-world semantics require this).
+rejected. At the tool level, the derived token's tool set must be a
+subset of the parent's. At the argument level, a derived token may
+narrow constraints, make optional arguments required, forbid an
+optional argument by omitting it (when the derived map has no `*`), and
+stop permitting unnamed arguments; it may name a new argument only where the parent permits
+unnamed ones (Section 4.5).
 
-When the parent's map is empty, the derived token may introduce
-keys, transitioning from open-world to closed-world. No per-key parent
-constraint exists in this case; the derived closed-world invocation set
-is a subset of the parent's unrestricted invocation set. When a parent
-constraint exists, a parent constraint `c_parent` subsumes a derived
-constraint `c_child` (written `c_child ⊑ c_parent`) if every argument
-value that satisfies `c_child` also satisfies `c_parent`. A derived
-constraint attenuates its parent exactly when the parent subsumes it.
+When a parent constraint exists, a parent constraint `c_parent` subsumes
+a derived constraint `c_child` (written `c_child ⊑ c_parent`) if every
+argument value that satisfies `c_child` also satisfies `c_parent`. A
+derived constraint attenuates its parent exactly when the parent
+subsumes it.
 
 Two boundary cases complete the structure. The empty capability set
 `∅` is the bottom element: a token with no tools authorized is a
@@ -1083,27 +1120,31 @@ tools(derived) ⊆ tools(parent)
 ~~~
 
 A derived token MUST NOT authorize tools that the parent did not
-authorize. For each tool that appears in both parent and derived token:
+authorize. For each tool that appears in both parent and derived token,
+with both constraint maps normalized so that an empty map is
+`{"*": {"constraint_type": "wildcard"}}` (Section 3.3):
 
-- If the parent's constraint map for that tool is non-empty, the
-  derived token's constraint map MUST contain exactly the same set
-  of argument keys. Under closed-world semantics (Section 3.3),
-  the constraint map keys define the required invocation shape:
-  any argument not named is forbidden, and any named argument must
-  be present. Adding a key would produce invocations that the
-  parent's closed-world check rejects (the extra argument is
-  unknown). Dropping a key would produce invocations that omit a
-  parent-required argument. In both cases the derived invocation
-  set is disjoint from the parent's, not a subset.
+- Each argument key the derived map names MUST also be named by the
+  parent's map, unless the parent's map contains `*`. A key named only
+  under the parent's `*` is an argument the parent already permitted
+  with any value, so constraining it narrows.
+- An argument the parent requires MUST remain required in the derived
+  map. Making an optional argument required narrows; the reverse would
+  admit invocations that omit an argument the parent requires.
+- The derived map MAY omit a key the parent names only if the parent
+  marks it optional and the derived map does not contain `*`. The
+  omitted argument then becomes forbidden, which narrows; if the parent
+  requires it, every derived invocation would lack it.
+- The derived map MAY contain `*` only if the parent's map does.
+  Dropping `*` narrows; adding it would admit arguments the parent
+  forbids.
 
-- If the parent's constraint map is empty (open-world), the derived
-  token MAY introduce constraint keys, transitioning to
-  closed-world. Any closed-world constraint set is a subset of the
-  unrestricted open-world set.
+For each argument key named in both maps, the derived constraint MUST be
+at least as restrictive as the parent's constraint.
 
-For each argument constraint key present in both parent and derived
-token, the derived constraint MUST be at least as restrictive as the
-parent's constraint.
+These rules do not let a derived token forbid one argument while keeping
+`*`: the argument would return under `*`. A deriver that needs this
+drops `*` and names the arguments it keeps.
 
 Constraint subsumption is defined per constraint type. The normative
 rules are:
@@ -1311,6 +1352,9 @@ or any other mechanism that satisfies the three properties above. See
 Appendix C for non-normative guidance on policy languages with decidable
 containment algorithms.
 
+A registration MUST NOT define a member named `optional`, which Section
+3.3 reserves.
+
 **Cross-type subsumption rules.** The registration MUST list every
 (parent type, child type) pair involving the new type and a core type
 defined in Section 3.4 or a previously registered extension type that
@@ -1485,12 +1529,11 @@ A holder of any AAT whose `del_depth` is strictly less than
 3. Select the set of tools to authorize. This set MUST be a
    subset of the tools authorized by the parent token.
 
-4. For each tool, construct a constraint map with the same
-   argument keys as the parent's constraint map for that tool
-   (Section 4.5). For each key, select a constraint that is at
-   least as restrictive as the parent's, per the subsumption
-   rules in Section 4.5. If the parent's constraint map is
-   empty, the derived token MAY introduce constraint keys.
+4. For each tool, construct a constraint map whose keys satisfy
+   the key rules of Section 4.5 relative to the parent's map, with
+   each constraint at least as restrictive as the parent's
+   corresponding constraint (or the parent's `*` constraint, for a
+   key the parent does not name).
 
 5. Set `del_depth` to `parent.del_depth + 1`.
 
@@ -1814,18 +1857,22 @@ Algorithm:
           is also present in parent_aat.tools.
           If any child tool is absent from the parent, DENY.
       p2. For each tool present in both parent_aat.tools and
-          child_aat.tools: if the parent's constraint map is
-          non-empty, verify the child's constraint map contains
-          exactly the same set of argument keys. If any key is
-          added or removed, DENY.
-      p3. For each tool present in both parent_aat.tools and
-          child_aat.tools: if the parent's constraint map is empty,
-          the child's constraint map MAY contain any set of keys.
-      p4. For each argument key present in both constraint maps
-          for a matched tool, verify the parent's constraint
+          child_aat.tools, normalize both constraint maps (Section
+          3.3) and verify the key rules of Section 4.5: every key
+          the child names is named by the parent unless the parent
+          contains `*`; every key the parent names and the child
+          omits is optional in the parent, and the child then does
+          not contain `*`; and the child contains `*` only if the
+          parent does. If any rule fails, DENY.
+      p3. For each argument key named in both maps, verify that
+          the child's constraint is required if the parent's is.
+          If not, DENY.
+      p4. For each argument key named in the child's map, verify
+          that the parent's constraint for that key, or the
+          parent's `*` constraint if the parent does not name it,
           subsumes the child's per the per-type rules in Section
-          4.5. If any child constraint does not attenuate its
-          parent constraint, DENY.
+          4.5, ignoring `optional`. If any child constraint does
+          not attenuate its parent constraint, DENY.
    q. Verify child.par_hash equals base64url-nopad(      (I5)
       SHA-256(parent token signing input)), where
       base64url-nopad denotes base64url encoding without
@@ -1844,15 +1891,13 @@ Algorithm:
       `authorization_details` are ignored by this algorithm.
    b. Verify tool is present in leaf_aat.tools, and that args
       contains no number whose magnitude exceeds 2^53 - 1
-      (Section 3.4). Then, for each argument
-      in args: if the tool's constraint map is non-empty and
-      the argument name is not present in the constraint map,
-      DENY (closed-world mode). For each argument name present
-      in the constraint map, if that argument is absent from
-      args, DENY (constrained argument MUST be present). For
-      each argument name present in both the constraint map
-      and args, verify the argument value satisfies the
-      constraint. If any constraint check fails, DENY.
+      (Section 3.4). Let M be the tool's constraint map,
+      normalized (Section 3.3). For each argument in args: if M
+      names it, verify its value satisfies that constraint;
+      otherwise, if M contains `*`, verify the value satisfies
+      M's `*` constraint; otherwise DENY (closed-world mode). For
+      each argument M names that is required, if it is absent from
+      args, DENY. If any constraint check fails, DENY.
    c. For each token in chain that carries an `aud` claim, verify
       that at least one of its values identifies this enforcement
       point (RFC 7519 Section 4.1.3). If any such token does not,
@@ -2025,6 +2070,10 @@ in what order, or how many times. An agent that makes excessive or
 unintended use of its authorized tools within the bounds of its token is
 not detectable at the enforcement point. Rate limiting, audit logging,
 and behavioral monitoring are complementary controls for this threat.
+The constraint vocabulary cannot express them, because constraints apply
+to argument values, not to sequences of invocations; a profile that
+defines invocation-level controls needs its own attenuation rules and
+enforcement state, as approval gates do (Section 9.9).
 
 **Compromised holder key.** Tokens bound to a stolen holder key are
 usable at their full scope until they expire or are revoked; short
@@ -2300,6 +2349,20 @@ implement (Section 3.2). ES256 is RECOMMENDED as the second algorithm,
 and PS256 for root issuers with RSA keys. Algorithms are identified by
 fully-specified values ({{RFC9864}}): Ed25519 is `"Ed25519"`, and the
 deprecated polymorphic `"EdDSA"` MUST NOT be used.
+
+## Optional and Unnamed Arguments
+
+Optional and unnamed arguments trade enforcement for compatibility with
+real tools, and each has a cost the enforcement point cannot see. When
+an optional argument is omitted, the tool applies its own default: an
+optional `head` on a file-reading tool lets a caller read the whole
+file. Issuers SHOULD mark an argument optional only when the tool's
+default for it is acceptable for the token's purpose. The `*` entry
+admits any argument the tool accepts, including arguments that later
+versions of the tool add, which a token issued earlier then authorizes
+without anyone having reviewed them. Issuers SHOULD NOT use `*` for
+tools with side effects, and enforcement points MAY reject arguments
+absent from the tool's published input schema.
 
 # Privacy Considerations
 
@@ -2608,6 +2671,12 @@ The author thanks Antoine Fressancourt for review and discussion of
 cross-domain privacy, transport binding, remote attestation, and
 constraint expressiveness.
 
+The author thanks Igor Kammer Grahl, whose independent implementation
+of -01 identified that closed-world mode left no way to constrain an
+optional argument and that JCS number canonicalization lets distinct
+integers collide, and documented several other places where -01
+underdetermined behavior.
+
 The author thanks Neil Madden for review of -01 on the OAuth list,
 including the comparison with HMAC-chained Macaroons, replay of parent
 and intermediate tokens, the absence of re-keying on attenuation, and
@@ -2853,7 +2922,8 @@ through its own implementation of Section 8, which shares no code with
 Tenuo. The suite covers the
 happy-path chains, each attenuation invariant (I1 through I6),
 closed-world leaf checks, explicit typing, required PoP audience,
-composite `all` / `any` subsumption including clause reuse, the
+composite `all` / `any` subsumption including clause reuse, optional
+and unnamed arguments and their attenuation, the
 remaining core constraint types (`not_one_of`, `contains`, `subset`,
 range inclusivity), and the structural root checks in Section 8 steps
 3c, 3d, 3f, 3h, 3k, 3l, and 3n. Implementers targeting the -01 text should not
@@ -3023,7 +3093,7 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision makes ten normative changes. They are breaking for
+This revision makes eleven normative changes. They are breaking for
 implementations that followed the -01 text.
 
 - **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
@@ -3091,6 +3161,15 @@ implementations that followed the -01 text.
   share `jti` state (Section 7.3), and tools returning sensitive data
   SHOULD get replay protection too (Section 9.5). The -01 text did not
   address these.
+- **Optional and unnamed arguments.** A constraint-map entry can be
+  marked `optional: true`, so the argument may be omitted but is
+  constrained when present, and the reserved `*` entry permits
+  arguments the map does not name; an empty map is shorthand for `*`
+  (Section 3.3). The attenuation rules for both are in Section 4.5, and
+  steps 4p and 6b implement them. In -01 a tool with an optional
+  argument could not be constrained at all without denying one of its
+  call shapes. This responds to findings from an independent
+  implementation (see Acknowledgments).
 - **Key sourcing and holder keys.** Verification keys come only from
   trust anchors or `cnf.jwk`, never from JWS header parameters (Section
   3.5); a child delivered across a process or trust boundary is not
