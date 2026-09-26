@@ -940,20 +940,14 @@ for the grant. Intermediate token holders can only lower
 enforced by chain verification across the entire chain.
 
 Issuers SHOULD set `del_max_depth` to accommodate the expected
-delegation topology, including subprocess delegation, operational
-handoffs, and holder-key handoff. A value that is too low can prevent
-downstream holders from expressing legitimate attenuation, increasing
-pressure to reuse broader tokens directly. Once a chain reaches
-`del_max_depth`, no descendant can extend it further; this specification
-defines no in-chain mechanism for increasing that ceiling.
+delegation topology (Appendix B.4). Once a chain reaches it, no
+descendant can extend it; more depth requires a new root grant.
 
 MAX_DELEGATION_DEPTH is an implementation-defined finite integer
 specifying the maximum permitted delegation chain depth. Implementations
 MUST enforce a finite maximum delegation depth to prevent resource
-exhaustion from pathologically deep chains. The appropriate value
-depends on the deployment topology; swarm architectures with deep
-fan-out may require significantly larger values than linear delegation
-chains. See Appendix B.4 for guidance.
+exhaustion, and SHOULD size it to their deployment topology (Appendix
+B.4).
 
 The `del_max_depth` claim in any token in the chain MUST NOT exceed the
 implementation's MAX_DELEGATION_DEPTH.
@@ -1410,11 +1404,7 @@ A holder of any AAT whose `del_depth` is strictly less than
 
 2. Set `iat` to the current time, but not earlier than `parent.iat`.
    Set `exp` to any value <= `parent.exp`, subject to the
-   constraints in Section 4.4.
-   Token lifetime is a mandatory attenuation dimension. Every
-   derived token is temporally bounded by its parent regardless
-   of capability scope. Expiration is the base specification's built-in
-   limit on token lifetime; see Appendix B.7 for deployment guidance.
+   constraints in Section 4.4 (see Appendix B.7 for guidance).
 
 3. Select the set of tools to authorize. This set MUST be a
    subset of the tools authorized by the parent token.
@@ -2127,34 +2117,17 @@ fails closed (Sections 3.4 and 5.2).
 
 ## Depth Limit
 
-Enforcement points MUST enforce a finite MAX_DELEGATION_DEPTH to prevent
-resource exhaustion from artificially deep chains. The appropriate value
-is deployment-specific: linear orchestration chains require far fewer
-hops than swarm architectures with deep fan-out delegation.
-Implementations SHOULD choose a value that reflects the maximum chain
-depth their deployment topology requires, without imposing an artificial
-ceiling on legitimate use cases. See Appendix B.4 for guidance on
-selecting an appropriate value.
-
-The security rationale for depth limiting goes beyond resource
-exhaustion. Each delegation hop introduces an additional agent into the
-trust chain: the enforcement point necessarily trusts not only that the
-leaf token holder is honest, but that every intermediate holder made
-sound attenuation decisions. A compromised or misdirected intermediate
-agent can narrow constraints in ways that serve an attacker's goals
-while remaining within the invariants. The depth limit bounds the number
-of such trust extensions that a single root grant can produce.
-
-The `del_max_depth` claim in the root token is the root issuer's
-explicit policy on chain topology. An implementation that ignores
-`del_max_depth` or enforces only a global implementation limit without
-checking per-token values violates this policy. Enforcement points MUST
-check the per-token depth ceilings (`child.del_depth <=
-parent.del_max_depth` in step 4e, `child.del_max_depth <=
-parent.del_max_depth` in step 4g, and `child.del_depth <=
-child.del_max_depth` in step 4m of Section 8) and the global
-MAX_DELEGATION_DEPTH limit (step 4f of Section 8). Neither the per-token
-policy checks nor the global implementation limit is sufficient alone.
+Each delegation hop introduces an additional agent into the trust chain:
+the enforcement point necessarily trusts not only that the leaf token
+holder is honest, but that every intermediate holder made sound
+attenuation decisions. A compromised or misdirected intermediate agent
+can narrow constraints in ways that serve an attacker's goals while
+remaining within the invariants. The depth limit bounds the number of
+such trust extensions that a single root grant can produce. Enforcement
+points MUST check both `del_max_depth`, which is the root issuer's
+policy for the chain, and their own MAX_DELEGATION_DEPTH, which protects
+the enforcement point (Section 8, steps 4e-4g and 4m); enforcing only
+one ignores the other.
 
 ## Token Revocation
 
