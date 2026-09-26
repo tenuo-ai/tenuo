@@ -74,7 +74,7 @@ _MCP_INSTALL = 'pip install "tenuo[mcp]"'
 try:
     from mcp.server.context import ServerRequestContext  # noqa: F401  (mcp >= 2.0)
     from mcp.server.mcpserver import Context
-    from mcp.shared.exceptions import MCPError
+    from mcp.shared.exceptions import MCPError  # type: ignore[attr-defined]  # SDK 2.x only
     from mcp.types import TextContent
 
     from ._compat import make_error_call_tool_result, request_params_meta_as_dict
@@ -223,7 +223,7 @@ class TenuoServerMiddleware:
 
         return register
 
-    def _protect(self, fn: Callable[..., Any], tool: str) -> Any:
+    def _protect(self, fn: Callable[..., Any], tool: str) -> Callable[..., Any]:
         hints = get_type_hints(fn, include_extras=True)
         signature = inspect.signature(fn)
         signature = signature.replace(
