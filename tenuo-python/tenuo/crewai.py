@@ -51,16 +51,18 @@ Usage (Global Hook - Recommended):
     # Register as global hook - ALL tool calls go through this guard
     guard.register()
 
-Usage (Crew-Scoped Hook):
-    from crewai import CrewBase
-    from crewai.hooks import before_tool_call_crew
+Usage (Class-Based Hook, Global Scope):
+    # CrewAI registers these methods globally when the class is instantiated.
+    # They also apply to other crews in the process, not just this class.
+    from crewai.project import CrewBase
+    from crewai.hooks import before_tool_call
 
     @CrewBase
     class MyProjCrew:
         def __init__(self):
             self.guard = GuardBuilder().allow(...).build()
 
-        @before_tool_call_crew
+        @before_tool_call
         def authorize(self, context):
             return self.guard.authorize_hook(context)
 
@@ -627,7 +629,8 @@ class CrewAIGuard:
     and Tier 2 (warrant + PoP).
 
     Use register() to install as a global hook, or as_hook() to get
-    the hook function for crew-scoped registration.
+    the hook function for manual registration. Neither provides crew isolation;
+    CrewAI also registers @CrewBase method hooks globally.
     """
 
     def __init__(
@@ -714,7 +717,8 @@ class CrewAIGuard:
     def as_hook(self, *, agent_role: Optional[str] = None) -> Callable[["ToolCallHookContext"], Optional[bool]]:
         """Get the hook function for manual registration.
 
-        Use this when you need crew-scoped hooks instead of global registration.
+        Use this for manual hook registration. This does not scope the hook to
+        a crew: CrewAI registers decorated @CrewBase methods globally too.
 
         Args:
             agent_role: Optional agent role for namespaced constraint lookup
@@ -729,7 +733,7 @@ class CrewAIGuard:
                 def __init__(self):
                     self.guard = GuardBuilder().allow(...).build()
 
-                @before_tool_call_crew
+                @before_tool_call
                 def authorize(self, context):
                     return self.guard.authorize_hook(context)
         """
@@ -778,7 +782,9 @@ class CrewAIGuard:
     def authorize_hook(self, context: Any, *, agent_role: Optional[str] = None) -> Optional[bool]:
         """Authorize a tool call from a CrewAI hook context.
 
-        Direct authorization method for use in crew-scoped hooks.
+        Direct authorization method for use in hook callbacks.
+        Decorated @CrewBase methods are registered globally by CrewAI, so they
+        also authorize calls from other crews in the process.
         This is a convenience wrapper around _create_hook for direct use.
 
         Args:
@@ -791,7 +797,7 @@ class CrewAIGuard:
         Example:
             @CrewBase
             class MyProjCrew:
-                @before_tool_call_crew
+                @before_tool_call
                 def authorize(self, context):
                     return self.guard.authorize_hook(context)
         """
