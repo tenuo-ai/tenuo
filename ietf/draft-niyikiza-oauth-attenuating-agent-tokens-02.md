@@ -1507,7 +1507,7 @@ holder's private key. It MUST contain the required claims listed below.
 | Claim | Type | Required | Description |
 |---|---|---|---|
 | `jti` | string | REQUIRED | Fresh random identifier. The holder MUST NOT reuse a `jti` value across PoP JWTs it produces. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 9.5). |
-| `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 7.3). |
+| `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (Section 9.11). |
 | `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
 | `aat_hash` | string | REQUIRED | Base64url-encoded SHA-256 digest of the leaf token's signing input, computed as for `par_hash` (Section 4.6). Binds the proof to the exact leaf token presented, following the DPoP `ath` claim ({{RFC9449}} Section 4.2). |
 | `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
@@ -1522,7 +1522,8 @@ not specific to the `hta` member. The JWS signing input is therefore
 Whole-payload JCS canonicalization ensures a deterministic byte
 representation; in particular, it gives `hta` stable equality semantics
 so that argument map comparison is unambiguous across implementations
-and languages regardless of JSON serialization choices.
+and languages regardless of JSON serialization choices, such as key
+order or `1.0` versus `1`.
 
 The PoP JWT MUST be signed using the private key corresponding to the
 leaf token's `cnf.jwk`. The enforcement point verifies the PoP JWT
@@ -1556,29 +1557,8 @@ chain verification (Section 8, steps 1-5) before evaluating the PoP JWT.
 A valid PoP JWT against an unverified or invalid chain MUST NOT result
 in authorization.
 
-The enforcement point MUST reject a PoP JWT that:
-
-1. Has a JWS `typ` header that is absent or is not `aat-pop+jwt`,
-   or has an `alg` header that is not on the allowlist.
-2. Has a signature that does not verify under the leaf token's
-   `cnf.jwk`.
-3. References an `aat_id` that does not match the `jti` of the
-   presented leaf token, or carries an `aat_hash` that does not
-   match the digest of the presented leaf token's signing input.
-4. Contains an `aat_aud` claim that does not identify the
-   enforcement point receiving the presentation, or omits
-   `aat_aud` when this enforcement point requires it (Section
-   9.5).
-5. Names a tool in `aat_tool` that does not exactly match the
-   tool being invoked.
-6. Presents arguments in `hta` whose JCS-canonical form differs
-   from the JCS-canonical form of the invocation `args` map
-   (Section 8, step 7f).
-7. Has `iat` that is outside the enforcement point's accepted
-   clock tolerance window (RECOMMENDED: ±30 seconds).
-8. Omits `nonce` when this enforcement point requires one, or
-   carries a `nonce` value this enforcement point did not issue
-   or no longer accepts.
+The enforcement point verifies the PoP JWT as specified in Section 8,
+step 7; any failed check denies the invocation.
 
 The `iat` check is stateless and bounds replay to the tolerance window:
 a captured PoP JWT remains usable until its `iat` leaves the window. It
@@ -1844,7 +1824,7 @@ Algorithm:
       JCS-canonical form of the args map for this invocation. If the
       canonical byte sequences differ, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
-      window. If outside the window, DENY.
+      window (Section 9.11). If outside the window, DENY.
    h. If this enforcement point requires a nonce (Sec 9.5),
       verify pop_jwt.nonce is present and is a value this
       enforcement point issued and still accepts. If absent,
@@ -1873,30 +1853,7 @@ attacks on maliciously crafted payloads. The sole exception is step 2c:
 extracting only the `jti` string field for cycle detection prior to
 signature verification is permitted, provided the implementation treats
 the extracted value as untrusted until the corresponding signature is
-verified. Enforcement points MUST reject any token whose JWS `alg`
-header is `"none"`. The `"none"` algorithm provides no cryptographic
-protection and MUST NOT be used in any AAT or PoP JWT.
-
-The `hta` comparison in step 7f requires both the enforcement point and
-the holder producing the PoP JWT to use JCS canonicalization
-({{RFC8785}}). The enforcement point MUST canonicalize the `args` map
-independently and compare the resulting byte sequence against the
-canonical form committed to by the PoP JWT signature. Implementations
-MUST NOT compare raw JSON
-strings; surface differences such as key ordering or numeric
-representation (e.g., 1.0 vs 1) are resolved by canonicalization before
-comparison.
-
-The JWS `alg` header value MUST be consistent with the key type of the
-key used to verify the signature: the trust anchor public key for root
-tokens, and the `cnf.jwk` of the parent token for derived tokens.
-Enforcement points MUST reject any token where the declared `alg` is not
-compatible with the verifying key's `kty` and `crv` parameters. For
-example, a token whose `alg` is `"Ed25519"` MUST be verified against an
-OKP key with `"crv": "Ed25519"`. A mismatch between
-the declared algorithm and the verifying key type MUST result in denial,
-regardless of whether the signature bytes would verify under an
-alternate interpretation.
+verified.
 
 
 # Security Considerations
@@ -2267,9 +2224,8 @@ different semantics. MAX_IAT_SKEW (Section 4.4, RECOMMENDED: 30 seconds)
 is a one-sided future-dating tolerance applied to token `iat` values: it
 prevents a token issued slightly in the future from being rejected due
 to minor clock drift between issuer and enforcement point. The PoP
-JWT timestamp window (Section 7.3, RECOMMENDED: ±30 seconds) is a
-bilateral replay
-window applied to PoP JWT `iat` values: it bounds how long a captured
+JWT timestamp window (Section 8, step 7g, RECOMMENDED: ±30 seconds)
+is a bilateral replay window applied to PoP JWT `iat` values: it bounds how long a captured
 PoP JWT remains usable. These are independent parameters enforced at
 different points in the verification algorithm and SHOULD be configured
 separately.
@@ -2313,12 +2269,12 @@ and algorithm substitution across tokens in the same chain.
 
 Enforcement points MUST maintain an explicit allowlist of permitted
 signature algorithms and MUST reject any token whose `alg` header value
-is not on that list. Implementations MUST reject tokens with `alg:
-"none"` unconditionally and MUST NOT treat the absence of an `alg`
-header as equivalent to any permitted algorithm. Implementations MUST
-also reject an AAT whose `typ` is absent or is not `aat+jwt`, and MUST
-reject a PoP JWT whose `typ` is absent or is not `aat-pop+jwt`. A
-missing `typ` MUST NOT be treated as equivalent to either value.
+is not on that list. Implementations MUST NOT treat the absence of an
+`alg` header as equivalent to any permitted algorithm. An `alg`
+inconsistent with the verifying key's `kty` and `crv` is rejected even
+when the signature would verify under another interpretation (Section
+8, steps 3a, 4a, and 7a); for example, `"Ed25519"` requires an OKP key
+with `"crv": "Ed25519"`.
 
 Implementations MUST apply the algorithm allowlist independently to each
 AAT in the chain and to the PoP JWT. Accepting a weaker algorithm on an
@@ -3154,14 +3110,10 @@ implementations that followed the -01 text.
 Editorial and alignment changes, not intended to change behavior
 relative to the Section 8 algorithm in -01:
 
-- The PoP rejection list in Section 7.3 is aligned with Section 8:
-  `aat_tool` MUST equal the invoked tool (step 7e) rather than merely
-  be authorized by the leaf, and `hta` MUST match the invocation
-  arguments byte-for-byte after JCS canonicalization (step 7f) rather
-  than merely satisfy the leaf's constraints. The -01 list disagreed
-  with the -01 algorithm on both points.
-- Section 7.3 now lists the `typ` and `alg` header check first, since
-  Section 8 step 7a runs before signature verification.
+- Section 7.3 no longer repeats the PoP checks; it points to Section
+  8, step 7. The -01 list there disagreed with the -01 algorithm:
+  `aat_tool` must equal the invoked tool (step 7e), and `hta` must
+  match the invocation arguments after JCS canonicalization (step 7f).
 - The JWS Protected Header requirements are collected in Section 3.5.
 - Section 1.3 states why HMAC chaining is unsuitable for the target
   verifier model and relates AAT to SPKI/SDSI {{RFC2693}}. Section
