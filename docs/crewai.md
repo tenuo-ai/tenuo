@@ -75,9 +75,11 @@ agent = Agent(
 # agent.execute("Read /etc/passwd") -- CrewAIConstraintViolation!
 ```
 
-### Crew-Scoped Hook
+### Class-Based Hook (Global Scope)
 
-For crew-scoped authorization (instead of global), call `guard.authorize_hook(context)` from a method decorated with CrewAI's `@before_tool_call` on a `@CrewBase` class. CrewAI registers method hooks for that crew only:
+To organize authorization in a `@CrewBase` class, call `guard.authorize_hook(context)` from a method decorated with CrewAI's `@before_tool_call`:
+
+> **These hooks are global, not crew-scoped.** Constructing the class registers its method in CrewAI's process-wide hook registry. Its policy also applies to other crews in that process. Do not use separate class instances to isolate different crews' authorization policies; use separately protected tools or separate processes instead.
 
 ```python
 from crewai.project import CrewBase
@@ -741,7 +743,7 @@ Before deploying CrewAI agents with Tenuo protection:
 
 ### Security Review
 - [ ] **Tier 2 Enabled:** Application uses Warrants + Signing Keys for all production crews.
-- [ ] **Hooks Registered:** All guards use `guard.register()` or crew-scoped `as_hook()` for framework-level enforcement.
+- [ ] **Hooks Registered:** Guards use `guard.register()` or explicitly register the callable returned by `as_hook()` for framework-level enforcement. Both use global hooks; `as_hook()` does not provide crew isolation.
 - [ ] **Least Privilege:** Each agent has specific allowed tools (no `*` patterns unless necessary).
 - [ ] **Delegation Depth:** Max delegation depth configured (via `chain_scope`) to prevent infinite chains.
 
