@@ -533,7 +533,7 @@ their absence carries the semantics described in the table.
 Implementations MUST support Ed25519 {{RFC8032}}, JWS `alg` value
 `"Ed25519"` ({{RFC9864}}), for token signing and verification.
 Implementations MAY support additional asymmetric algorithms
-(Section 9.13).
+(Section 9.12).
 
 In both root and derived tokens, `iss` is a URI. For root tokens,
 `iss` is a URI identifying the root issuer, consistent with
@@ -593,28 +593,18 @@ A tool entry with an empty constraint map `{}` is valid and indicates
 that the tool is authorized without argument restrictions.
 
 When a tool entry contains one or more argument constraints, the
-enforcement point operates in closed-world mode for that tool
-invocation: any argument not named in the constraint map MUST be
-rejected. A constrained argument that is absent from the invocation MUST
-also be rejected. The presence of a constraint asserts that the
-issuer has reasoned about that argument. An invocation that omits
-it has not been validated against that reasoning. This is a
-security property, not a configuration option.
+enforcement point operates in closed-world mode for that tool invocation
+(Section 8, step 6b): any argument not named in the constraint map MUST
+be rejected, and a constrained argument absent from the invocation MUST
+also be rejected. The presence of a constraint asserts that the issuer
+has reasoned about that argument; an invocation that omits it has not
+been validated against that reasoning.
 
-There is no optional-argument mechanism. A non-empty constraint map is
-a closed specification of the invocation shape: every argument must be
-named in it, and every named argument must be present. An argument that
-is sometimes omitted can be authorized only by an empty constraint map,
-which leaves every argument unrestricted. To authorize an argument
-without restricting its value, use a `wildcard` constraint (see below).
-
-A token issuer that wishes to allow unconstrained arguments alongside
-constrained ones MUST explicitly include a `wildcard` constraint for
-each argument that should be unrestricted. A `wildcard` constraint
-satisfies closed-world mode while permitting any value for that argument
-(see Section 3.4). Enforcement points MUST enforce closed-world mode and
-MUST NOT permit unconstrained arguments when any constraint is present
-for the tool (see Section 8, step 6b).
+There is no optional-argument mechanism. An argument that is sometimes
+omitted can be authorized only by an empty constraint map, which leaves
+every argument unrestricted. To authorize an argument without
+restricting its value alongside constrained ones, the issuer MUST
+include a `wildcard` constraint for it (Section 3.4).
 
 The `authorization_details` array MAY contain entries of other types
 alongside `attenuating_agent_token` entries, consistent with the
@@ -697,7 +687,9 @@ serializations ({{RFC8785}}), the canonical form step 7f uses for
 Enforcement points MUST reject invocations where any argument violates
 its associated constraint. Enforcement points MUST deny authorization if
 they encounter a `constraint_type` they do not recognize (fail-closed
-behavior). This fail-closed rule applies only to constraint types within
+behavior): an unrecognized constraint is a restriction the issuer
+intended, and skipping it would remove that restriction. This
+fail-closed rule applies only to constraint types within
 `authorization_details`. Enforcement points MUST ignore unrecognized
 top-level JWT claims; a token MUST NOT be rejected solely because it
 contains claims outside those defined in this specification.
@@ -717,7 +709,7 @@ AATs are compact-serialization JWTs {{RFC7519}} signed as JWS
 
 | Header Parameter | Required | Description |
 |---|---|---|
-| `alg` | REQUIRED | Signature algorithm. MUST be on the enforcement point's allowlist (Section 9.13). |
+| `alg` | REQUIRED | Signature algorithm. MUST be on the enforcement point's allowlist (Section 9.12). |
 | `typ` | REQUIRED | JWT type. MUST be `aat+jwt`. |
 
 The JWS Protected Header of every PoP JWT MUST contain `alg` as above
@@ -1200,10 +1192,7 @@ whose expert review checks that its subsumption procedure is sound. An
 implementation that evaluates an unregistered constraint type does not
 conform to this specification for chains that contain it. The registry
 does not require all implementations to support every registered
-extension. An enforcement point
-that does not recognize a registered extension type MUST deny
-authorization (Section 5.2), but it is not required to implement that
-type.
+extension.
 
 ## Attenuation Compliance Requirement
 
@@ -1269,12 +1258,6 @@ chain verification, it MUST:
 3. Evaluate the constraint's `check` predicate against the
    presented argument value during authorization. If the predicate
    returns false, the invocation MUST be denied.
-
-An enforcement point that does not implement a registered extension
-constraint type MUST deny authorization rather than skip the constraint.
-The presence of an unrecognized constraint type in a token represents a
-restriction the issuer intended to enforce. Silently omitting that check
-would violate the attenuation guarantee.
 
 ## Example Registration: Path Containment
 
@@ -1507,7 +1490,7 @@ holder's private key. It MUST contain the required claims listed below.
 | Claim | Type | Required | Description |
 |---|---|---|---|
 | `jti` | string | REQUIRED | Fresh random identifier. The holder MUST NOT reuse a `jti` value across PoP JWTs it produces. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 9.5). |
-| `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (Section 9.11). |
+| `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (Section 9.10). |
 | `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
 | `aat_hash` | string | REQUIRED | Base64url-encoded SHA-256 digest of the leaf token's signing input, computed as for `par_hash` (Section 4.6). Binds the proof to the exact leaf token presented, following the DPoP `ath` claim ({{RFC9449}} Section 4.2). |
 | `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
@@ -1631,7 +1614,7 @@ Algorithm:
       crv parameters. Verify the JWS typ header equals
       "aat+jwt". If alg is "none", not on the allowlist,
       inconsistent with the key type, or typ is absent or not
-      "aat+jwt", DENY.                               (Sec 9.13)
+      "aat+jwt", DENY.                               (Sec 9.12)
    b. Verify the root token signature against the public key
       of a trust anchor. After signature verification succeeds,
       parse the root token's claims, rejecting any JSON object
@@ -1682,7 +1665,7 @@ Algorithm:
       consistent with parent.cnf.jwk's kty and crv parameters.
       Verify the JWS typ header equals "aat+jwt". If alg is
       "none", not on the allowlist, inconsistent with the key
-      type, or typ is absent or not "aat+jwt", DENY.  (Sec 9.13)
+      type, or typ is absent or not "aat+jwt", DENY.  (Sec 9.12)
    b. Verify child signature under the key in parent.cnf.jwk. (I1)
       After signature verification succeeds, parse the child
       token's claims, rejecting any JSON object with duplicate
@@ -1807,7 +1790,7 @@ Algorithm:
       Verify the JWS typ header equals "aat-pop+jwt". If alg
       is "none", not on the allowlist, inconsistent with the
       key type, or typ is absent or not "aat-pop+jwt", DENY.
-                                                     (Sec 9.13)
+                                                     (Sec 9.12)
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
       signature verification succeeds, parse the PoP JWT claims,
       rejecting any JSON object with duplicate member names. (I6)
@@ -1824,7 +1807,7 @@ Algorithm:
       JCS-canonical form of the args map for this invocation. If the
       canonical byte sequences differ, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
-      window (Section 9.11). If outside the window, DENY.
+      window (Section 9.10). If outside the window, DENY.
    h. If this enforcement point requires a nonce (Sec 9.5),
       verify pop_jwt.nonce is present and is a value this
       enforcement point issued and still accepts. If absent,
@@ -2045,7 +2028,7 @@ exposure with holder binding on every chain position, attenuation at
 every hop, and short lifetimes (Appendix B.7), rather than by making
 parent tokens unrecoverable. Deployments that require a holder to be
 unable to exercise a parent's authority after delegating SHOULD derive
-the child to a fresh holder key (Section 9.12) and then destroy the
+the child to a fresh holder key (Section 9.11) and then destroy the
 private key bound to the parent token. The parent token remains
 cryptographically valid until its `exp`, but it can no longer be
 presented or used to derive further tokens. A holder that destroys
@@ -2138,7 +2121,9 @@ registered in the IANA AAT Constraint Type Registry (Section 11.3)
 MUST document their computational complexity and any resource limits
 implementations SHOULD enforce. Enforcement points SHOULD impose
 evaluation timeouts on any extension constraint type whose `check`
-predicate is not O(n) in the length of the argument value.
+predicate is not O(n) in the length of the argument value. A
+constraint type the enforcement point does not recognize or implement
+fails closed (Sections 3.4 and 5.2).
 
 ## Depth Limit
 
@@ -2170,13 +2155,6 @@ parent.del_max_depth` in step 4g, and `child.del_depth <=
 child.del_max_depth` in step 4m of Section 8) and the global
 MAX_DELEGATION_DEPTH limit (step 4f of Section 8). Neither the per-token
 policy checks nor the global implementation limit is sufficient alone.
-
-## Unknown Constraint Types
-
-Enforcement points MUST deny authorization when they encounter an
-unknown constraint type. Permitting invocation in the presence of an
-unrecognized constraint would silently remove a restriction the issuer
-intended to enforce.
 
 ## Token Revocation
 
@@ -2704,7 +2682,7 @@ than as a sequence of policy blocks.
   providing time-ordered identifiers without central coordination.
 
 The algorithm allowlist requirement is normatively defined in Section 8
-(steps 3a, 4a, and 7a) and discussed in Section 9.13.
+(steps 3a, 4a, and 7a) and discussed in Section 9.12.
 
 The `cnf.jwk` key type is not hardcoded to Ed25519. Implementations
 should be designed to support algorithm migration without requiring
@@ -3104,7 +3082,7 @@ implementations that followed the -01 text.
   and reuse a captured proof.
 - **Fully-specified `alg`.** Ed25519 signatures use the JWS `alg`
   value `"Ed25519"` ({{RFC9864}}); the deprecated polymorphic
-  `"EdDSA"` MUST NOT be used (Section 9.13). The -01 text used
+  `"EdDSA"` MUST NOT be used (Section 9.12). The -01 text used
   `"EdDSA"`.
 
 Editorial and alignment changes, not intended to change behavior
