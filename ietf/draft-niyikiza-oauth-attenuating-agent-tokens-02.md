@@ -524,7 +524,7 @@ their absence carries the semantics described in the table.
 | `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a derived token's `iat` MUST NOT be earlier than its parent's `iat`. |
 | `exp` | NumericDate | REQUIRED | Time at which the token expires. MUST be greater than `iat`. MUST NOT exceed `iat` plus MAX_TOKEN_LIFETIME (see Section 4.4). |
 | `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}}. MUST contain `jwk` with the holder's public key. The `jwk` value MUST be a public key; private key material MUST NOT appear in this field. |
-| `aud` | string or array of strings | OPTIONAL | Audience, with the semantics of {{RFC7519}} Section 4.1.3: the enforcement points or resource contexts at which this token, and every token derived from it, may be presented. A holder that knows where a token will be presented SHOULD set `aud` when deriving it, in the manner of a contextual caveat {{MACAROONS}} or a resource indicator {{RFC8707}}; a holder that does not know leaves `aud` unset, since a wrong value makes the token and every token derived from it unusable where it is actually presented. Every token in a chain that carries `aud` is checked against the enforcement point (Section 7, step 6c), so a derived token can add or narrow an audience restriction but cannot remove one. |
+| `aud` | string or array of strings | OPTIONAL | Audience, with the semantics of {{RFC7519}} Section 4.1.3: the enforcement points at which this token, and every token derived from it, may be presented. A holder that knows where a token will be presented SHOULD set `aud` when deriving it, in the manner of a contextual caveat {{MACAROONS}} or a resource indicator {{RFC8707}}; a holder that does not know leaves `aud` unset, since a wrong value makes the token and every token derived from it unusable where it is actually presented. Every token in a chain that carries `aud` is checked against the enforcement point (Section 7, step 6c), so a derived token can add or narrow an audience restriction but cannot remove one. |
 | `del_depth` | integer | REQUIRED | Delegation depth. 0 for root tokens. Incremented by exactly 1 at each derivation step (see Section 4.3). |
 | `del_max_depth` | integer | REQUIRED | Maximum delegation depth permitted in this chain. MUST be a non-negative integer not exceeding the implementation's MAX_DELEGATION_DEPTH (Section 4.3). |
 | `par_hash` | string | MUST (derived) / MUST NOT (root) | Base64url-encoded SHA-256 digest of the parent token signing input, using base64url encoding without padding as defined in {{RFC7515}} Appendix C. For JWT/JWS AATs, the parent token signing input is the JWS Signing Input. MUST be absent in root tokens. MUST be present in all derived tokens. |
@@ -673,11 +673,10 @@ with simple, deterministic, format-independent `check` and `subsumes`
 rules. Domain-specific matchers and policy-language constraints, such as
 resource-identifier matchers, URI or path normalization rules, or
 authorization policy expressions, are not core constraint types. They
-MUST be defined as registered extension constraint types (Section 3.5). The registration
-process confirms that the extension defines an unambiguous runtime
-`check` predicate and a decidable, sound, and deterministic `subsumes`
-procedure. Deployments requiring richer policy expressiveness SHOULD use
-a registered extension constraint type (see Appendix C).
+MUST be defined as registered extension constraint types (Section 3.5;
+see Appendix C for policy languages). The registration process confirms
+that the extension defines an unambiguous runtime `check` predicate and
+a decidable, sound, and deterministic `subsumes` procedure.
 
 | `constraint_type` | Additional Members | Semantics |
 |---|---|---|
@@ -768,9 +767,9 @@ containment algorithms.
 **Cross-type subsumption rules.** The registration MUST list every
 (parent type, child type) pair involving the new type and a core type
 defined in Section 3.4 or a previously registered extension type that
-is a valid attenuation, with its conditions. Enforcement points MUST treat unlisted pairs as invalid.
-A parent `wildcard` subsumes every type, including extension types,
-and need not be listed.
+is a valid attenuation, with its conditions. Enforcement points MUST
+treat unlisted pairs as invalid. A parent `wildcard` subsumes every
+type, including extension types, and need not be listed.
 
 ### Enforcement Point Obligations
 
@@ -1068,10 +1067,10 @@ PoP JWT payload MUST be JCS-canonical (Section 5.2).
 
 # Attenuation Invariants
 
-Every derived token in a chain MUST satisfy all of the following
-invariants. The verification algorithm in Section 7 enforces these
-invariants; enforcement points MUST reject any chain that violates
-any invariant.
+Every presented chain MUST satisfy the following invariants: I1
+through I5 at each derivation step, and I6 for the presentation. The
+verification algorithm in Section 7 enforces these invariants;
+enforcement points MUST reject any chain that violates any invariant.
 
 ## Capability Lattice Model (Non-Normative)
 
@@ -1198,7 +1197,7 @@ the maximum encoded size of a single token in bytes. Implementations
 MUST enforce this limit to prevent memory exhaustion from pathologically
 large tokens. A value of 65536 bytes (64 KiB) is RECOMMENDED.
 
-MAX_STACK_SIZE is an implementation-defined finite integer specifying
+MAX_CHAIN_SIZE is an implementation-defined finite integer specifying
 the maximum total encoded size of a chain in bytes. Implementations MUST
 enforce this limit. A value of 262144 bytes (256 KiB) is RECOMMENDED.
 
@@ -1305,8 +1304,9 @@ rules are:
   constraint of any other type.
 
 - **all:** A derived `all` constraint attenuates a parent `all`
-  if every parent clause subsumes at least one derived clause. Formally: for each `clause_p` in
-  `parent.all.constraints`, there MUST exist a `clause_d` in
+  if every parent clause subsumes at least one derived clause.
+  Formally: for each `clause_p` in `parent.all.constraints`, there
+  MUST exist a `clause_d` in
   `derived.all.constraints` such that `clause_d ⊑ clause_p` per this
   section. A single derived clause MAY satisfy more than one parent
   clause. The derived constraint MAY add additional clauses, which
@@ -1622,7 +1622,7 @@ Algorithm:
    a. Verify the encoded size of each token does not exceed
       MAX_TOKEN_SIZE. If any token exceeds this limit, DENY.
    b. Verify the total encoded size of the chain does not exceed
-      MAX_STACK_SIZE. If the chain exceeds this limit, DENY.
+      MAX_CHAIN_SIZE. If the chain exceeds this limit, DENY.
    c. For each token, decode the base64url payload segment and
       extract only the `jti` field using minimal JSON parsing.
       If a string-valued `jti` field cannot be extracted, DENY.
@@ -1902,9 +1902,9 @@ alternate interpretation.
 ## Threat Model
 
 This section characterizes the threats that AATs mitigate and the
-threats that are outside the scope of this mechanism. Implementations
-SHOULD use this characterization to identify required
-complementary controls for their threat environment.
+threats that are outside the scope of this mechanism. Deployments can
+use this characterization to identify the complementary controls their
+threat environment requires.
 
 ### Threats Mitigated
 
@@ -1930,8 +1930,8 @@ presented for the current invocation. When the invoker derives that token
 to designate the task's resource, designation and authority travel
 together, and the agent cannot be steered outside the authority carried
 by the token. A token authorizing more than one resource can still be
-steered within its scope, so issuers SHOULD scope leaf tokens as narrowly
-as the task permits. The delegation chain verifies provenance and
+steered within its scope, so the holder deriving a leaf token SHOULD
+scope it as narrowly as the task permits. The delegation chain verifies provenance and
 attenuation, and the enforcement point checks the presented invocation
 against the leaf token's constraints. How a constraint value maps to the
 resource the tool ultimately acts upon is defined by the tool contract
@@ -2145,20 +2145,20 @@ at least one where the exposure exists:
   another, and the holder never needs to name or know the
   enforcement point.
 
-An intermediary that forwards a presentation MUST either derive its
-own token and present its own PoP JWT to the next hop, as in token
-exchange {{RFC8693}}, or forward the presentation unchanged. A
+An intermediary, a party that relays a presentation without being its
+target, MUST either present under its own AAT with its own PoP JWT, as
+in token exchange {{RFC8693}}, or forward the presentation unchanged. A
 forwarded presentation is accepted only if its `aat_aud` is absent or
 identifies the receiving enforcement point (Section 7, step 7d). A
 holder whose presentation may be forwarded therefore omits `aat_aud`,
 and an enforcement point that requires `aat_aud` does not accept
 forwarded presentations.
 
-An enforcement point that accepts a chain which other enforcement
-points, resource servers, tenants, or resource contexts also accept
-MUST do at least one of the following: require chain audience,
-require `aat_aud`, require a nonce, or share `jti` tracking state
-with those contexts. Which one is a deployment choice; this
+A deployment in which more than one enforcement point, resource
+server, or tenant can accept the same chain MUST ensure that each of
+them does at least one of the following: require chain audience,
+require `aat_aud`, require a nonce, or share `jti` tracking state with
+the others. Which one is a deployment choice; this
 specification does not prefer among them.
 
 This specification requires stateful `jti` tracking for irreversible
@@ -2275,16 +2275,17 @@ separately.
 PoP JWT timestamp verification requires synchronized clocks. The
 RECOMMENDED tolerance window is ±30 seconds, which accommodates typical
 Network Time Protocol (NTP) synchronized deployments with generous
-margin. Deployments running on cloud infrastructure with guaranteed NTP
-synchronization SHOULD target ±5 to ±10 seconds. Deployments with
+margin. Deployments with well-synchronized clocks can use ±5 to ±10
+seconds. Deployments with
 stricter security requirements MAY reduce this window further.
 
 Implementations MUST enforce a finite maximum tolerance window. Values
 beyond ±60 seconds provide negligible additional clock skew tolerance
 while meaningfully expanding the PoP replay window and are NOT
 RECOMMENDED. A value of ±30 seconds is the conservative baseline; the
-±60 second ceiling is intended only for heterogeneous environments such
-as embedded systems or degraded connectivity scenarios.
+upper end of ±60 seconds is intended only for heterogeneous
+environments such as embedded systems or degraded connectivity
+scenarios.
 
 ## Role-Based Key Separation
 
@@ -2941,7 +2942,8 @@ identifiers (J.1, J.3, J.12) are those of the published suite.
 Ed25519 keys are derived from fixed 32-byte seeds. Verification time
 is 1704067500 (2024-01-01T00:05:00Z). MAX_IAT_SKEW is 30 seconds. The
 enforcement point audience is `https://tools.example.com`. The only
-trust anchor is the Control Plane key, bound to the issuer
+trust anchor is the root issuer's key (`control_plane` in the suite),
+bound to the issuer
 `https://auth.example.com`.
 
 | Role | Seed (hex) | JWK `x` |
@@ -2957,7 +2959,7 @@ RFC 7638 thumbprint of the Orchestrator key, computed over the JCS form
 
 ## Single-Token Chain (Vector J.1)
 
-Root token issued by the Control Plane to the Orchestrator, presented
+Root token issued by the root issuer to the Orchestrator, presented
 alone (root = leaf) with a PoP from the Orchestrator. Expected: PERMIT.
 
 AAT Protected Header (JCS):
@@ -3021,7 +3023,7 @@ gaNJ5OBOAQ
 
 ## Three-Level Chain Linkage (Vector J.3)
 
-Root (Control Plane to Orchestrator, `del_max_depth` 3), L1
+Root (root issuer to Orchestrator, `del_max_depth` 3), L1
 (Orchestrator to Worker, `del_max_depth` 2), L2 (Worker to Worker2,
 terminal). Expected: PERMIT. The linkage values below are sufficient to
 check Section 4.6 against an independent implementation; the full
