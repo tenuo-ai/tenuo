@@ -7,6 +7,7 @@ These tests focus on the protection layer and don't require LLM calls.
 Run with: pytest tests/test_crewai_integration.py -v
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,6 +27,56 @@ from tenuo.crewai import (  # noqa: E402 - must be after importorskip
     guarded_step,
     is_strict_mode,
 )
+
+
+def test_crewbase_method_hook_has_process_wide_scope():
+    """Class-based hooks enforce globally; class membership is not isolation."""
+    from crewai import LLM, Agent, Crew, Task
+    from crewai.hooks import before_tool_call
+    from crewai.hooks.tool_hooks import (
+        get_before_tool_call_hooks,
+        unregister_before_tool_call_hook,
+    )
+    from crewai.project import CrewBase
+
+    original_hooks = list(get_before_tool_call_hooks())
+
+    @CrewBase
+    class Policy:
+        def __init__(self):
+            self.guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
+
+        @before_tool_call
+        def authorize(self, context):
+            return self.guard.authorize_hook(context)
+
+    try:
+        policy = Policy()
+        hooks = [h for h in get_before_tool_call_hooks() if h not in original_hooks]
+        assert len(hooks) == 1
+        assert hooks[0].__self__ is policy
+
+        def make_crew(role):
+            agent = Agent(
+                role=role, goal="Read files", backstory="Test agent",
+                llm=LLM(model="openai/gpt-4o-mini", api_key="unused-test-key"),
+            )
+            task = Task(description="Read a file", expected_output="File contents", agent=agent)
+            return Crew(agents=[agent], tasks=[task])
+
+        first_crew = make_crew("first")
+        unrelated_crew = make_crew("unrelated")
+        for crew in (first_crew, unrelated_crew):
+            for path, expected in (("/data/a.txt", None), ("/etc/passwd", False)):
+                context = SimpleNamespace(
+                    crew=crew, agent=crew.agents[0], tool_name="read_file", tool_input={"path": path}
+                )
+                assert hooks[0](context) is expected
+    finally:
+        # Preserve any hooks installed by other tests or application fixtures.
+        for hook in list(get_before_tool_call_hooks()):
+            if hook not in original_hooks:
+                unregister_before_tool_call_hook(hook)
 
 
 class TestCrewAIToolStructure:

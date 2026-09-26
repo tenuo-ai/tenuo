@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
+
+### Fixed
+
+- **`TenuoPlugin` (Google ADK) now works under a real ADK `Runner`.** It did
+  not match ADK's `BasePlugin` contract: it never called
+  `BasePlugin.__init__(name=...)`, so the `PluginManager` failed on
+  `plugin.name`; its callbacks were synchronous, but ADK awaits them; and
+  `before_tool_callback` / `after_tool_callback` took `args`, while ADK passes
+  `tool_args=` by keyword. The callbacks are now `async` with ADK's
+  keyword-only signatures, and the tool check uses
+  `TenuoGuard.async_before_tool`. A new `name=` argument (default `"tenuo"`)
+  sets the plugin name. Code that called these callbacks directly must now
+  `await` them and pass keywords. The existing tests mocked `google.adk`, so a
+  new test drives the plugin through a real `InMemoryRunner`.
+  Expired and wrong-agent session warrants are cleared through ADK's tracked
+  state assignment API, preserving revocation without calling unsupported `pop`.
+
+- **`SecureAPIRouter` (FastAPI) works again on FastAPI 0.120 and later.**
+  It was a wrapper that delegated to an inner `APIRouter`. FastAPI 0.120+
+  includes routers lazily, by reference, which a wrapper cannot satisfy, so
+  `app.include_router(router)` silently registered nothing and every protected
+  route returned 404. `SecureAPIRouter` is now a real `APIRouter` subclass, so
+  the documented `app.include_router(router)` and nested includes work on
+  every supported FastAPI version. `router._router` still works for code that
+  used it as a workaround. No test included a `SecureAPIRouter` in an app;
+  one now does, and it fails on the old class under current FastAPI.
+
 ## [0.3.1] - 2026-09-23
 
 ### Breaking
@@ -137,8 +167,8 @@ updating; see the linked entries below for the full rationale.
   explicit never-list (closed-world opt-out, wildcards on material
   arguments, longer TTLs, new trusted roots, optional-warrant modes). Install
   with `npx skills add tenuo-ai/tenuo --skill tenuo-denial-triage`. The skills
-  validator now gates any skill that carries evidence under
-  `tests/agent-skills/<skill>/`.
+  validator now validates evidence structure and reports advisory behavioral
+  results for any skill under `tests/agent-skills/<skill>/`.
 - **`tenuo.enforce_tool_call`, `tenuo.enforce_tool_call_async`, and
   `tenuo.EnforcementResult`** are exported from the package. They are what
   every adapter calls under the hood, and are the right entry point for tests

@@ -26,8 +26,8 @@ jobs:
           fetch-depth: 0
       - name: Test skill validator
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - name: Validate skill metadata and portable references
-        run: python3 scripts/validate_agent_skills.py
+      - name: Validate skill structure and report behavioral evidence
+        run: python3 scripts/validate_agent_skills.py --summary "$GITHUB_STEP_SUMMARY"
 
   version-check:
     name: Version check
@@ -710,6 +710,8 @@ jobs:
   # ============================================================================
   # TYPESCRIPT SDK (WASM-backed @tenuo/core)
   # ============================================================================
+  # Node 20 is the minimum in tenuo-ts/package.json engines. The job keeps the
+  # bare name because the repository ruleset requires the "TypeScript SDK" check.
   tenuo-ts:
     name: TypeScript SDK
     runs-on: ubuntu-latest
@@ -816,7 +818,7 @@ jobs:
         with:
           version: 9.15.9
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         if: steps.lane.outputs.needed == 'true'
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -876,8 +878,8 @@ jobs:
           NEXT_TELEMETRY_DISABLED: "1"
         run: node examples/nextjs-node/scripts/verify-packed.mjs
 
-  # Test the committed WASM package on every supported active Node line without
-  # rebuilding it. Node 20 above remains the reproducible Rust/WASM build lane.
+  # Test the committed WASM package on the remaining supported Node lines
+  # without rebuilding it. Node 24 is the active LTS.
   tenuo-ts-node-compat:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest

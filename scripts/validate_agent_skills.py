@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import os
 import re
@@ -22,8 +23,6 @@ RELEASE_CONTRACT = INTEGRATION_SKILL / "release.json"
 BEHAVIORAL_EVAL_ROOT = ROOT / "tests/agent-skills"
 BEHAVIORAL_EVAL_DIR = BEHAVIORAL_EVAL_ROOT / "tenuo-agent-authorization"
 BEHAVIORAL_EVAL_GLOB = "payment-boundary-result.*.json"
-# Any skill may carry evidence under tests/agent-skills/<skill>/<scenario>-result.<language>.json,
-# fingerprinted against that skill's own directory. The integration skill must have some.
 RESULT_FILE_RE = re.compile(r"^(?P<scenario>[a-z0-9-]+)-result\.(?P<language>[a-z]+)\.json$")
 LANGUAGE_REFERENCES = {
     "python": "references/python.md",
@@ -274,7 +273,7 @@ def check_release_drift(
         else:
             warnings.append(
                 f"{message}; after tagging the release, the agent-skill-repin workflow "
-                "re-pins release.json, the reference links, and the behavioral evidence"
+                "re-pins release.json and the reference links while preserving behavioral evidence"
             )
 
 
@@ -306,10 +305,14 @@ def validate_behavioral_eval_result(
     errors: list[str],
     location: str = "payment-boundary-result.json",
     language: Optional[str] = None,
+    warnings: Optional[list[str]] = None,
+    *,
     skill_dir: Path = INTEGRATION_SKILL,
     scenario: str = "payment-boundary-eval.md",
 ) -> List[str]:
-    """Validate one language's result file and return the inputs it covers."""
+    """Reject malformed evidence; report outcomes/freshness without gating on them."""
+    if warnings is None:
+        warnings = []
     inputs = result.get("inputs")
     if (
         not isinstance(inputs, list)
@@ -323,6 +326,14 @@ def validate_behavioral_eval_result(
         return []
     if "SKILL.md" not in inputs:
         errors.append(f"{location}: inputs must include SKILL.md")
+    if any(
+        Path(item).is_absolute()
+        or ".." in Path(item).parts
+        or not (skill_dir / item).resolve().is_relative_to(skill_dir.resolve())
+        for item in inputs
+    ):
+        errors.append(f"{location}: inputs must stay inside the skill directory")
+        return []
     if language is not None:
         if result.get("language") != language:
             errors.append(f"{location}: language must be {language!r} to match the file name")
@@ -330,7 +341,6 @@ def validate_behavioral_eval_result(
         if reference is None:
             errors.append(f"{location}: unknown language {language!r}")
         elif (skill_dir / reference).is_file() and reference not in inputs:
-            # Only skills that ship a per-language reference must list it.
             errors.append(f"{location}: inputs must include {reference}")
     missing = [item for item in inputs if not (skill_dir / item).is_file()]
     if missing:
@@ -338,57 +348,82 @@ def validate_behavioral_eval_result(
         return []
 
     kind = result.get("evidence_kind")
-    if kind not in EVIDENCE_KINDS:
+    if not isinstance(kind, str) or kind not in EVIDENCE_KINDS:
         errors.append(f"{location}: evidence_kind must be one of {sorted(EVIDENCE_KINDS)}")
     elif kind == "carried_forward" and not str(result.get("carried_forward_review", "")).strip():
         errors.append(
             f"{location}: carried_forward evidence requires a carried_forward_review rationale"
         )
 
-    if result.get("result") != "pass":
-        errors.append(f"{location}: latest behavioral eval did not pass")
+    outcome = result.get("result")
+    if outcome not in ("pass", "fail"):
+        errors.append(f"{location}: result must be 'pass' or 'fail'")
+    elif outcome == "fail":
+        warnings.append(f"{location}: behavioral eval failed; review findings before merging")
+
+    evidence = result.get("evidence", {})
+    if not isinstance(evidence, dict):
+        errors.append(f"{location}: evidence must be an object")
+    else:
+        for field in ("critical_items", "required_reporting"):
+            value = evidence.get(field)
+            if value is not None and value not in ("passed", "failed"):
+                errors.append(f"{location}: evidence.{field} must be 'passed' or 'failed'")
+            if outcome == "pass" and value == "failed":
+                errors.append(f"{location}: passing result contradicts evidence.{field}")
+
+    fingerprint = result.get("skill_fingerprint")
+    if not isinstance(fingerprint, str) or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None:
+        errors.append(f"{location}: skill_fingerprint must be a SHA-256 hex digest")
+        return []
 
     current = behavioral_eval_fingerprint(inputs, skill_dir)
-    if result.get("skill_fingerprint") != current:
-        errors.append(
+    if fingerprint != current:
+        warnings.append(
             f"{location}: behavioral eval evidence is stale for {sorted(set(inputs))}; "
-            f"rerun {scenario} (or record a carried_forward review for a "
-            f"non-behavioral change) with skill fingerprint {current}"
+            "historical results do not establish behavior of the current skill. "
+            f"Review {scenario} and decide whether a bounded replay is needed; preserve the recorded fingerprint."
         )
     return list(inputs)
 
 
-def load_behavioral_eval_results(errors: list[str], notices: list[str]) -> None:
-    """Validate every skill's result files and report skill files none of them cover.
+def load_behavioral_eval_results(
+    errors: list[str], notices: list[str], warnings: list[str]
+) -> str:
+    """Validate evidence and render an advisory report, not a model pass/fail gate."""
+    report = [
+        "## Skill behavioral evaluations (advisory)", "",
+        "CI validates evidence structure, not model quality. Failed or stale results require "
+        "a review decision, not automatic reruns. Green CI is not a behavioral pass.", "",
+        "| Skill | Scenario | Language | Overall | Critical implementation | Reporting | Freshness | Evidence |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
 
-    Evidence lives in ``tests/agent-skills/<skill>/<scenario>-result.<language>.json``
-    and is fingerprinted against that skill's directory. The integration skill
-    must have evidence; another skill without an evidence directory is only
-    reported, so adding a skill and adding its gate are separate decisions.
-    """
-    integration_results = sorted(BEHAVIORAL_EVAL_DIR.glob(BEHAVIORAL_EVAL_GLOB))
-    if not integration_results:
-        errors.append(
-            f"{BEHAVIORAL_EVAL_DIR.relative_to(ROOT)}: no {BEHAVIORAL_EVAL_GLOB} evidence found"
-        )
+    def cell(value: Any) -> str:
+        return (html.escape(str(value)).replace("|", "&#124;")
+                .replace("\n", " ").replace("\r", " "))
+
     for skill_dir in sorted(path for path in SKILLS.iterdir() if path.is_dir()):
-        evidence_dir = BEHAVIORAL_EVAL_ROOT / skill_dir.name
-        if not evidence_dir.is_dir():
-            notices.append(f"{skill_dir.relative_to(ROOT)}: no behavioral evidence directory")
-            continue
+        evidence_dir = (
+            BEHAVIORAL_EVAL_DIR if skill_dir == INTEGRATION_SKILL
+            else BEHAVIORAL_EVAL_ROOT / skill_dir.name
+        )
         covered: set[str] = set()
         result_files = sorted(
-            path for path in evidence_dir.iterdir() if RESULT_FILE_RE.match(path.name)
+            path for path in evidence_dir.glob("*-result.*.json") if path.is_file()
         )
         if not result_files:
-            errors.append(f"{evidence_dir.relative_to(ROOT)}: no *-result.<language>.json evidence found")
-            continue
+            warnings.append(
+                f"{evidence_dir.relative_to(ROOT)}: no *-result.<language>.json evidence found"
+            )
         for path in result_files:
             location = str(path.relative_to(ROOT))
-            match = RESULT_FILE_RE.match(path.name)
-            assert match is not None
-            scenario = f"{match.group('scenario')}-eval.md"
+            match = RESULT_FILE_RE.fullmatch(path.name)
+            if match is None:
+                errors.append(f"{location}: invalid behavioral result filename")
+                continue
             language = match.group("language")
+            scenario = f"{match.group('scenario')}-eval.md"
             try:
                 result = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
@@ -397,17 +432,42 @@ def load_behavioral_eval_results(errors: list[str], notices: list[str]) -> None:
             if not isinstance(result, dict):
                 errors.append(f"{location}: eval result must be an object")
                 continue
-            covered.update(
-                validate_behavioral_eval_result(
-                    result, errors, location, language, skill_dir=skill_dir, scenario=scenario
-                )
+            error_count = len(errors)
+            inputs = validate_behavioral_eval_result(
+                result, errors, location, language, warnings,
+                skill_dir=skill_dir, scenario=scenario,
             )
+            covered.update(inputs)
+            freshness = "invalid evidence"
+            if len(errors) == error_count:
+                freshness = (
+                    "current" if result["skill_fingerprint"] == behavioral_eval_fingerprint(inputs, skill_dir)
+                    else "stale"
+                )
+            evidence = result.get("evidence", {})
+            if not isinstance(evidence, dict):
+                evidence = {}
+            report.append("| " + " | ".join(cell(value) for value in (
+                skill_dir.name, scenario, language, result.get("result", "missing"),
+                evidence.get("critical_items", "not recorded"),
+                evidence.get("required_reporting", "not recorded"), freshness,
+                result.get("evidence_kind", "missing"),
+            )) + " |")
+            if evidence.get("notes"):
+                notices.append(f"{location}: {evidence['notes']}")
+
         uncovered = [item for item in skill_instruction_files(skill_dir) if item not in covered]
         if uncovered:
             notices.append(
                 f"{evidence_dir.relative_to(ROOT)}: no committed behavioral evidence "
                 f"covers {uncovered}"
             )
+    report.extend(["", "### Findings and coverage", ""])
+    report.extend(f"- {cell(message)}" for message in warnings + notices)
+    if errors:
+        report.extend(["", "### Validation errors", ""])
+        report.extend(f"- {cell(message)}" for message in errors)
+    return "\n".join(report) + "\n"
 
 
 def validate_skill(skill_dir: Path, documents: Dict[Path, str], errors: list[str]) -> None:
@@ -545,6 +605,10 @@ def _emit(level: str, message: str) -> None:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--summary", type=Path,
+        help="write the advisory behavioral evaluation report as Markdown",
+    )
+    parser.add_argument(
         "--require-current-release",
         action="store_true",
         help="fail when release.json does not match the SDK manifests at HEAD "
@@ -561,7 +625,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     tag_available = validate_release_contract(contract, errors) if contract else False
     if contract:
         check_release_drift(contract, errors, warnings, args.require_current_release)
-    load_behavioral_eval_results(errors, notices)
+    evaluation_report = load_behavioral_eval_results(errors, notices, warnings)
+    if args.summary:
+        args.summary.write_text(evaluation_report, encoding="utf-8")
 
     skill_dirs = sorted(path for path in SKILLS.iterdir() if path.is_dir())
     if not skill_dirs:
