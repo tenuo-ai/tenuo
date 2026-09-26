@@ -38,10 +38,8 @@ class SearchTool(BaseTool):
     name: str = "search"
     description: str = "Search for research topics"
 
-    def _run(self, query: str, **kwargs: Any) -> str:
+    def _run(self, query: str) -> str:
         call_args = {"query": query}
-        if kwargs:
-            call_args.update(kwargs)
         executed_tools.append(("search", call_args))
         return f"Research results for: {query}"
 
@@ -50,10 +48,8 @@ class WriteReportTool(BaseTool):
     name: str = "write_report"
     description: str = "Write a report based on research"
 
-    def _run(self, topic: str, **kwargs: Any) -> str:
+    def _run(self, topic: str) -> str:
         call_args = {"topic": topic}
-        if kwargs:
-            call_args.update(kwargs)
         executed_tools.append(("write_report", call_args))
         return f"Report published for: {topic}"
 

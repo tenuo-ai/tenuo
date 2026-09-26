@@ -90,7 +90,7 @@ def test_constraint_violation_denied_and_never_runs(example):
 def test_cross_role_tool_denied_and_never_runs(example):
     """Tools attempted by unauthorized agent roles are blocked without running."""
     # Researcher attempting to invoke Writer's tool (write_report)
-    crew, _, _ = example.build_guarded_crew(
+    crew, researcher, _ = example.build_guarded_crew(
         researcher_responses=[
             'Thought: Try writer tool\nAction: write_report\nAction Input: {"topic": "topic:model_safety"}\n',
             'Thought: Conclude\nFinal Answer: Complete.',
@@ -100,6 +100,8 @@ def test_cross_role_tool_denied_and_never_runs(example):
         ],
     )
 
+    # Make the tool available to CrewAI so Tenuo's policy must deny it.
+    researcher.tools.append(example.WriteReportTool())
     crew.kickoff()
 
     # Researcher cannot call write_report; tool body must never run
@@ -109,7 +111,7 @@ def test_cross_role_tool_denied_and_never_runs(example):
 
 def test_cross_role_writer_denied_researcher_tool(example):
     """Writer attempting to invoke Researcher's search tool is blocked without running."""
-    crew, _, _ = example.build_guarded_crew(
+    crew, _, writer = example.build_guarded_crew(
         researcher_responses=[
             'Thought: Conclude\nFinal Answer: Done.',
         ],
@@ -119,6 +121,8 @@ def test_cross_role_writer_denied_researcher_tool(example):
         ],
     )
 
+    # Make the tool available to CrewAI so Tenuo's policy must deny it.
+    writer.tools.append(example.SearchTool())
     crew.kickoff()
 
     # Writer cannot call search; tool body must never run
