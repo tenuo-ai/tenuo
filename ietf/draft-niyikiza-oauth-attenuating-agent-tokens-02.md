@@ -635,12 +635,12 @@ sets.
 A tool entry with an empty constraint map `{}` is valid and indicates
 that the tool is authorized without argument restrictions.
 
-Enforcement points check every invocation against its tool's
-constraint map in closed-world mode (Section 8, step 6b): an argument
-the map does not name MUST be rejected unless the map carries the `*`
-entry described below, and a named argument absent from the invocation
-MUST be rejected unless its constraint is optional. An empty map is
-shorthand for `*`, so it admits any argument. The presence of a constraint asserts that the
+Enforcement points check every invocation against its tool's constraint
+map in closed-world mode (Section 8, step 6b): an argument the map does
+not name MUST be rejected unless the map carries the `*` entry described
+below, and a named argument absent from the invocation MUST be rejected
+unless its constraint is optional. An empty map is shorthand for `*`, so
+it admits any argument. The presence of a constraint asserts that the
 issuer has reasoned about that argument; an invocation that omits a
 required one has not been validated against that reasoning. To authorize
 an argument without restricting its value while keeping the map closed,
