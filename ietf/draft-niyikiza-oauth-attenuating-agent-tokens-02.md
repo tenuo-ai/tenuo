@@ -270,8 +270,12 @@ systems address this by carrying designation and authority together in
 an unforgeable artifact. AATs apply that pattern to agentic delegation:
 the invoker can derive a token whose tool and argument constraints
 designate the task's resource and authority, and the agent acts under
-that received token rather than under ambient authority of its own.
-Section 9.1 describes the resulting guarantees and limits.
+that received token rather than under ambient authority of its own. AATs
+make this possible but do not force it: an agent that also holds a
+broader token can still act under that one. Deployments get the benefit
+by giving each agent only the token derived for its task, under its own
+holder key (Section 9.11); Section 9.1 describes the resulting
+guarantees and limits.
 
 An AAT combines four mechanisms that the rest of this document builds
 on:
