@@ -247,7 +247,7 @@ designation and authority together in an unforgeable artifact. AATs apply
 that pattern to agentic delegation: the invoker can derive a token whose
 tool and argument constraints designate the task's resource and
 authority, and the agent acts under that received token rather than under
-ambient authority of its own. Section 8 describes the resulting
+ambient authority of its own. Section 9 describes the resulting
 guarantees and limits.
 
 WIMSE {{WIMSE-ARCH}} provides mechanisms for establishing workload
@@ -276,22 +276,22 @@ enables:
 ~~~
 Root Issuer
        |
-       | issues root AAT (Section 3.7)
+       | issues root AAT (Section 6.1)
        v
 Orchestrating Agent
        |
-       | derives AAT (Section 6)
+       | derives AAT (Section 6.2)
        v
 Planning Agent
        |
-       | derives AAT (Section 6)
+       | derives AAT (Section 6.2)
        v
 Tool-Invoking Agent
        |
-       | presents AAT with PoP JWT (Section 5)
+       | presents AAT with PoP JWT (Section 7)
        v
 Enforcement Point
-  (verifies chain offline, Section 7)
+  (verifies chain offline, Section 8)
 ~~~
 
 At each derivation step, the derived token's authorized capabilities are a
@@ -376,7 +376,7 @@ tool-level capability claims, and a typed constraint vocabulary.
 It defines a normative subsumption relation, enabling any party
 holding the chain to verify monotonicity structurally, without
 predicate evaluation at a central service. The trade-off relative to
-HMAC chaining is discussed in Section 8.4.
+HMAC chaining is discussed in Section 9.4.
 
 SPKI/SDSI {{RFC2693}} defines public keys as principals, delegation
 certificates whose effective authority is the intersection of the
@@ -524,7 +524,7 @@ their absence carries the semantics described in the table.
 | `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a derived token's `iat` MUST NOT be earlier than its parent's `iat`. |
 | `exp` | NumericDate | REQUIRED | Time at which the token expires. MUST be greater than `iat`. MUST NOT exceed `iat` plus MAX_TOKEN_LIFETIME (see Section 4.4). |
 | `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}}. MUST contain `jwk` with the holder's public key. The `jwk` value MUST be a public key; private key material MUST NOT appear in this field. |
-| `aud` | string or array of strings | OPTIONAL | Audience, with the semantics of {{RFC7519}} Section 4.1.3: the enforcement points at which this token, and every token derived from it, may be presented. A holder that knows where a token will be presented SHOULD set `aud` when deriving it, in the manner of a contextual caveat {{MACAROONS}} or a resource indicator {{RFC8707}}; a holder that does not know leaves `aud` unset, since a wrong value makes the token and every token derived from it unusable where it is actually presented. Every token in a chain that carries `aud` is checked against the enforcement point (Section 7, step 6c), so a derived token can add or narrow an audience restriction but cannot remove one. |
+| `aud` | string or array of strings | OPTIONAL | Audience, with the semantics of {{RFC7519}} Section 4.1.3: the enforcement points at which this token, and every token derived from it, may be presented. A holder that knows where a token will be presented SHOULD set `aud` when deriving it, in the manner of a contextual caveat {{MACAROONS}} or a resource indicator {{RFC8707}}; a holder that does not know leaves `aud` unset, since a wrong value makes the token and every token derived from it unusable where it is actually presented. Every token in a chain that carries `aud` is checked against the enforcement point (Section 8, step 6c), so a derived token can add or narrow an audience restriction but cannot remove one. |
 | `del_depth` | integer | REQUIRED | Delegation depth. 0 for root tokens. Incremented by exactly 1 at each derivation step (see Section 4.3). |
 | `del_max_depth` | integer | REQUIRED | Maximum delegation depth permitted in this chain. MUST be a non-negative integer not exceeding the implementation's MAX_DELEGATION_DEPTH (Section 4.3). |
 | `par_hash` | string | MUST (derived) / MUST NOT (root) | Base64url-encoded SHA-256 digest of the parent token signing input, using base64url encoding without padding as defined in {{RFC7515}} Appendix C. For JWT/JWS AATs, the parent token signing input is the JWS Signing Input. MUST be absent in root tokens. MUST be present in all derived tokens. |
@@ -533,7 +533,7 @@ their absence carries the semantics described in the table.
 Implementations MUST support Ed25519 {{RFC8032}}, JWS `alg` value
 `"Ed25519"` ({{RFC9864}}), for token signing and verification.
 Implementations MAY support additional asymmetric algorithms
-(Section 8.13).
+(Section 9.13).
 
 In both root and derived tokens, `iss` is a URI. For root tokens,
 `iss` is a URI identifying the root issuer, consistent with
@@ -614,7 +614,7 @@ each argument that should be unrestricted. A `wildcard` constraint
 satisfies closed-world mode while permitting any value for that argument
 (see Section 3.4). Enforcement points MUST enforce closed-world mode and
 MUST NOT permit unconstrained arguments when any constraint is present
-for the tool (see Section 7, step 6b).
+for the tool (see Section 8, step 6b).
 
 The `authorization_details` array MAY contain entries of other types
 alongside `attenuating_agent_token` entries, consistent with the
@@ -658,7 +658,7 @@ collision is not a concern.
 A tool identifier carries no inherent authorization semantics beyond
 naming a capability. The root issuer is responsible for verifying that
 requested tools are recognized and that the requester is authorized to
-receive authority for them before minting a root token (Section 3.7.3).
+receive authority for them before minting a root token (Section 6.1.3).
 
 ## Argument Constraints
 
@@ -673,7 +673,7 @@ with simple, deterministic, format-independent `check` and `subsumes`
 rules. Domain-specific matchers and policy-language constraints, such as
 resource-identifier matchers, URI or path normalization rules, or
 authorization policy expressions, are not core constraint types. They
-MUST be defined as registered extension constraint types (Section 3.5;
+MUST be defined as registered extension constraint types (Section 5;
 see Appendix C for policy languages). The registration process confirms
 that the extension defines an unambiguous runtime `check` predicate and
 a decidable, sound, and deterministic `subsumes` procedure.
@@ -710,114 +710,39 @@ resource exhaustion from pathologically deep constraint trees. A value
 of 32 is RECOMMENDED. Enforcement points MUST reject any constraint tree
 whose nesting depth exceeds MAX_CONSTRAINT_DEPTH.
 
-## Extension Constraint Registry
+## JWS Protected Header
 
-Implementations MAY support extension constraint types beyond those
-listed in Section 3.4. Every extension constraint type MUST be
-registered in the IANA AAT Constraint Type Registry (Section 10.3),
-whose expert review checks that its subsumption procedure is sound. An
-implementation that evaluates an unregistered constraint type does not
-conform to this specification for chains that contain it. The registry
-does not require all implementations to support every registered
-extension. An enforcement point
-that does not recognize a registered extension type MUST deny
-authorization (Section 3.5.2), but it is not required to implement that
-type.
+AATs are compact-serialization JWTs {{RFC7519}} signed as JWS
+{{RFC7515}}. The JWS Protected Header of every AAT MUST contain:
 
-### Attenuation Compliance Requirement
+| Header Parameter | Required | Description |
+|---|---|---|
+| `alg` | REQUIRED | Signature algorithm. MUST be on the enforcement point's allowlist (Section 9.13). |
+| `typ` | REQUIRED | JWT type. MUST be `aat+jwt`. |
 
-The capability monotonicity invariant (I4, Section 4.5) applies to
-extension constraint types without exception. An extension constraint
-type MUST NOT be registered unless its registration defines all of the
-following.
+The JWS Protected Header of every PoP JWT MUST contain `alg` as above
+and MUST contain `typ` set to `aat-pop+jwt`.
 
-**A subsumption verification procedure.** The registration MUST provide
-a complete, formal definition of what it means for one instance of the
-constraint to be at least as restrictive as another instance of the same
-constraint type. This procedure MUST satisfy three properties:
+Enforcement points MUST reject an AAT whose `typ` is absent or is not
+`aat+jwt`, and MUST reject a PoP JWT whose `typ` is absent or is not
+`aat-pop+jwt`. Explicit typing follows {{RFC8725}} Section 3.11. It
+prevents an AAT from being accepted where a PoP JWT is required, and
+vice versa.
 
-1. **Decidable.** The procedure MUST terminate in time polynomial
-   in the size of its inputs. If deciding containment for the
-   type's constraint language is more expensive than that, the
-   registration MUST prescribe a conservative syntactic strategy
-   that meets this bound and MUST formally justify that the
-   strategy is sound (never accepts a non-subsuming pair).
+Additional header parameters (for example `kid`) MAY be present.
+Enforcement points MUST ignore unrecognized header parameters that do
+not affect signature verification. If `crit` is present, it MUST be
+processed per {{RFC7515}} Section 4.1.11: an enforcement point that
+does not understand every parameter listed in `crit` MUST reject the
+token.
 
-2. **Sound.** The procedure MUST NOT return true unless the
-   semantic subsumption relation holds. That is, if the procedure
-   returns true for (C_parent, C_child), then for all argument
-   values v: C_child.check(v) implies C_parent.check(v). The
-   procedure MAY be conservative: it MAY return false for
-   semantically subsuming pairs that it cannot verify, but it
-   MUST NOT return true for non-subsuming pairs.
-
-3. **Deterministic.** Two independent implementations of the
-   procedure MUST produce identical results for the same inputs.
-   The procedure MUST be specified precisely enough to ensure
-   this. Ambiguity in the specification of the procedure is
-   grounds for rejection of the registration.
-
-This specification does not prescribe the internal mechanism of the
-subsumption verification procedure. Registrations MAY use structural
-comparison of token claims, formal type-checking, proof-carrying tokens,
-or any other mechanism that satisfies the three properties above. See
-Appendix C for non-normative guidance on policy languages with decidable
-containment algorithms.
-
-**Cross-type subsumption rules.** The registration MUST list every
-(parent type, child type) pair involving the new type and a core type
-defined in Section 3.4 or a previously registered extension type that
-is a valid attenuation, with its conditions. Enforcement points MUST
-treat unlisted pairs as invalid. A parent `wildcard` subsumes every
-type, including extension types, and need not be listed.
-
-### Enforcement Point Obligations
-
-When an enforcement point encounters an extension constraint type during
-chain verification, it MUST:
-
-1. Apply the type's subsumption procedure and `check` predicate as
-   defined by its registration. An enforcement point that does not
-   implement the type MUST reject the chain (fail-closed).
-
-2. Evaluate the subsumption relation at every chain link where
-   the constraint appears, as part of the I4 check. A chain link
-   where the parent constraint does not subsume the derived
-   constraint MUST be rejected.
-
-3. Evaluate the constraint's `check` predicate against the
-   presented argument value during authorization. If the predicate
-   returns false, the invocation MUST be denied.
-
-An enforcement point that does not implement a registered extension
-constraint type MUST deny authorization rather than skip the constraint.
-The presence of an unrecognized constraint type in a token represents a
-restriction the issuer intended to enforce. Silently omitting that check
-would violate the attenuation guarantee.
-
-### Example Registration: Path Containment
-
-The following is an illustrative example of a conforming extension
-constraint registration. It is not defined normatively in this document.
-
-**Type name:** `path_containment`
-
-**Additional members:** `root` (string, required). An absolute path root.
-
-**`check` predicate:** The argument, after resolving all `.` and `..`
-components and removing redundant separators, must be equal to `root` or
-lie beneath `root` after path-segment normalization. The normalization
-step is part of the predicate; implementations that compare raw argument
-strings without normalization do not conform to this registration.
-
-**`subsumes` relation:** `subsumes(C_parent, C_child)` is true if and
-only if `C_child.root` is `C_parent.root` or lies beneath
-`C_parent.root` under the normalized path-segment ordering.
-
-**Cross-type subsumption:** A parent `path_containment` constraint
-subsumes a derived `exact` constraint if and only if the exact value,
-after normalization, is equal to the parent's `root` or lies beneath it.
-All other cross-type pairs involving `path_containment` are invalid.
+The JWS Payload is the serialized claims object. An enforcement point
+MUST verify the signature over the JWS Signing Input exactly as
+presented and MUST NOT re-serialize or canonicalize the payload before
+verification. Issuers and derivers SHOULD serialize AAT payloads as
+JCS-canonical JSON {{RFC8785}} so that the signing input, and therefore
+`par_hash` (Section 4.6), is reproducible across implementations; the
+PoP JWT payload MUST be JCS-canonical (Section 7.2).
 
 ## Examples
 
@@ -916,160 +841,11 @@ Note that the derived token:
 - Expires 1800s after its own issuance, versus the parent's 3600s
   window.
 
-## Root Issuer Support and Root Token Issuance
-
-The token endpoint is used only for root AAT issuance. Derived tokens are
-created locally by token holders as described in Section 6 and do not
-require token endpoint interaction. Enforcement points verify presented
-chains offline as described in Section 7.
-
-### Root Issuer Discovery
-
-A root issuer that supports AAT issuance SHOULD advertise this
-capability using the following metadata parameter in its
-authorization server metadata document {{RFC8414}}, if supported.
-
-| Metadata Parameter | Value |
-|---|---|
-| `aat_issuer` | Boolean. `true` if the AS can issue AAT root tokens. |
-
-This document requests registration of `aat_issuer` in the IANA OAuth
-Authorization Server Metadata registry (Section 10.4).
-
-### Agent Token Request
-
-An agent requesting a root AAT MUST include a `req_cnf` parameter in its
-token endpoint request (in the OAuth 2.0 sense, the agent acts as the
-client for this request). This specification profiles the `req_cnf`
-token request parameter defined by {{RFC9201}} for AAT root token
-issuance. The parameter carries a key confirmation object whose JSON
-syntax and semantics follow {{RFC7800}} Section 3.1. This document does
-not define a new OAuth token endpoint key-confirmation parameter. The
-value MUST be a JSON object containing a `jwk` member with the agent's
-public key in JWK format {{RFC7517}}. This is the key that the root
-issuer will bind into the root token's `cnf.jwk` claim.
-
-The key submitted in `req_cnf` is the AAT holder key that will be
-embedded in the root token's `cnf.jwk`. This key is distinct from any
-credential the client uses to authenticate to the token endpoint. Client
-authentication establishes which OAuth client is requesting issuance;
-`req_cnf` establishes which key will hold the issued AAT and derive or
-present downstream tokens. Deployments MAY require these credentials to
-be controlled by the same workload or agent.
-
-~~~
-POST /token HTTP/1.1
-Host: as.example.com
-Content-Type: application/x-www-form-urlencoded
-
-grant_type=client_credentials
-&authorization_details=%5B%7B%22type%22%3A%22attenuating_agent_
-  token%22%2C...%7D%5D
-&req_cnf=%7B%22jwk%22%3A%7B%22kty%22%3A%22OKP%22%2C...%7D%7D
-~~~
-
-The request MUST also include `authorization_details` in RAR format
-{{RFC9396}} with `type` set to `attenuating_agent_token`, enumerating
-the tools and argument constraints the agent is requesting authority to
-invoke or delegate.
-
-### Root Token Issuance
-
-Upon a valid request, the AS constructs and returns a root AAT. The AS:
-
-1. Sets `iss` to the AS's own URI.
-2. Sets `jti` to a unique token identifier, RECOMMENDED to be
-   a UUIDv7 value per {{RFC9562}}.
-3. Sets `iat` to the current time and `exp` to the token's
-   expiry time, subject to the constraints in Section 4.4.
-4. Sets `del_depth` to 0, `del_max_depth` to the maximum
-   delegation depth permitted for this grant, and `par_hash`
-   to absent.
-5. Sets `cnf.jwk` to the public key submitted in the agent's
-   `req_cnf` request parameter. The root issuer MUST validate that
-   the submitted key is well-formed and is a public key. The
-   root issuer SHOULD require the agent to demonstrate
-   possession of the corresponding private key, for example via
-   a signed proof-of-possession assertion in the token request.
-6. For each tool identifier in the requested `authorization_details`,
-   verifies that the tool is recognized by the root issuer and that the
-   requester is authorized to receive authority for it. The mechanism
-   for mapping requester identity to tool authority is
-   deployment-specific and outside the scope of this specification.
-7. Sets `authorization_details` to the capability claims granted. The
-   granted claims MUST attenuate the requested claims under the rules
-   of Section 4.5, treating the request as the parent, and MUST NOT
-   include a tool that failed verification in step 6. If no requested
-   tool can be granted, the root issuer MUST reject the request with
-   the `invalid_authorization_details` error ({{RFC9396}} Section 5).
-8. Signs the token with the AS's own private key.
-
-The AS returns the token in a standard OAuth 2.0 token endpoint response
-({{RFC6749}} Section 5.1) with the following field values:
-
-~~~
-{
-  "access_token": "<compact-serialized AAT JWT>",
-  "token_type": "aat",
-  "expires_in": <seconds until exp>
-}
-~~~
-
-The `token_type` value `"aat"` is registered in Section 10.5. Clients
-MUST NOT treat the returned token as a bearer token for use with
-arbitrary resource servers. Its only valid use is as the root of an AAT
-delegation chain presented to an enforcement point per Section 7.
-
-Note: this specification defines token endpoint issuance for
-interoperability with existing OAuth 2.0 deployments. Unlike bearer
-tokens, an AAT carries its own holder key binding and is not usable as a
-credential for HTTP resource access. Alternative issuance profiles are
-outside the scope of this document.
-
-The AS does not need to store or track derived tokens issued downstream
-by the initial token holder. Chain verification is performed by
-enforcement points using only the root issuer's trust anchor.
-
-
-## JWS Protected Header
-
-AATs are compact-serialization JWTs {{RFC7519}} signed as JWS
-{{RFC7515}}. The JWS Protected Header of every AAT MUST contain:
-
-| Header Parameter | Required | Description |
-|---|---|---|
-| `alg` | REQUIRED | Signature algorithm. MUST be on the enforcement point's allowlist (Section 8.13). |
-| `typ` | REQUIRED | JWT type. MUST be `aat+jwt`. |
-
-The JWS Protected Header of every PoP JWT MUST contain `alg` as above
-and MUST contain `typ` set to `aat-pop+jwt`.
-
-Enforcement points MUST reject an AAT whose `typ` is absent or is not
-`aat+jwt`, and MUST reject a PoP JWT whose `typ` is absent or is not
-`aat-pop+jwt`. Explicit typing follows {{RFC8725}} Section 3.11. It
-prevents an AAT from being accepted where a PoP JWT is required, and
-vice versa.
-
-Additional header parameters (for example `kid`) MAY be present.
-Enforcement points MUST ignore unrecognized header parameters that do
-not affect signature verification. If `crit` is present, it MUST be
-processed per {{RFC7515}} Section 4.1.11: an enforcement point that
-does not understand every parameter listed in `crit` MUST reject the
-token.
-
-The JWS Payload is the serialized claims object. An enforcement point
-MUST verify the signature over the JWS Signing Input exactly as
-presented and MUST NOT re-serialize or canonicalize the payload before
-verification. Issuers and derivers SHOULD serialize AAT payloads as
-JCS-canonical JSON {{RFC8785}} so that the signing input, and therefore
-`par_hash` (Section 4.6), is reproducible across implementations; the
-PoP JWT payload MUST be JCS-canonical (Section 5.2).
-
 # Attenuation Invariants
 
 Every presented chain MUST satisfy the following invariants: I1
 through I5 at each derivation step, and I6 for the presentation. The
-verification algorithm in Section 7 enforces these invariants;
+verification algorithm in Section 8 enforces these invariants;
 enforcement points MUST reject any chain that violates any invariant.
 
 ## Capability Lattice Model (Non-Normative)
@@ -1228,7 +1004,7 @@ A derived token cannot outlive its parent. Authority cannot extend
 beyond the lifetime of the token that granted it. A derived token's
 issuance time MUST NOT precede its parent's issuance time; a deriver
 whose clock lags the parent's issuer sets `iat` to `parent.iat`
-(Section 6, step 2). Tokens
+(Section 6.2, step 2). Tokens
 with `iat` more than MAX_IAT_SKEW in the future relative to the
 enforcement point's clock MUST be rejected. A token's lifetime
 MUST NOT exceed MAX_TOKEN_LIFETIME.
@@ -1371,7 +1147,7 @@ rules are:
 
 Any (parent constraint type, derived constraint type) pair not
 explicitly permitted by the above rules, or by a registered extension
-constraint's cross-type subsumption declaration (Section 3.5.1), MUST be
+constraint's cross-type subsumption declaration (Section 5.1), MUST be
 rejected.
 
 ## I5: Cryptographic Linkage
@@ -1412,118 +1188,236 @@ pop_signature verifies under leaf.cnf.jwk
 
 The presenter of a token chain MUST demonstrate control of the private
 key corresponding to the leaf token's `cnf.jwk`. Proof of Possession is
-defined in Section 5.
+defined in Section 7.
 
 
-# Proof of Possession
+# Extension Constraint Registry
 
-## Rationale
+Implementations MAY support extension constraint types beyond those
+listed in Section 3.4. Every extension constraint type MUST be
+registered in the IANA AAT Constraint Type Registry (Section 11.3),
+whose expert review checks that its subsumption procedure is sound. An
+implementation that evaluates an unregistered constraint type does not
+conform to this specification for chains that contain it. The registry
+does not require all implementations to support every registered
+extension. An enforcement point
+that does not recognize a registered extension type MUST deny
+authorization (Section 5.2), but it is not required to implement that
+type.
 
-A token without proof of possession can be replayed by any party that
-obtains a copy of the token. In agent systems, tokens flow through
-model context, tool invocation results, and inter-agent message
-channels, all of which are observable by other components. PoP
-binds a specific invocation to the private key of the leaf
-token's holder.
+## Attenuation Compliance Requirement
 
-## PoP Token Structure
+The capability monotonicity invariant (I4, Section 4.5) applies to
+extension constraint types without exception. An extension constraint
+type MUST NOT be registered unless its registration defines all of the
+following.
 
-The holder of the leaf token produces a PoP JWT for each tool
-invocation. The PoP JWT is a compact serialization signed with the
-holder's private key. It MUST contain the required claims listed below.
+**A subsumption verification procedure.** The registration MUST provide
+a complete, formal definition of what it means for one instance of the
+constraint to be at least as restrictive as another instance of the same
+constraint type. This procedure MUST satisfy three properties:
 
-| Claim | Type | Required | Description |
-|---|---|---|---|
-| `jti` | string | REQUIRED | Fresh random identifier. The holder MUST NOT reuse a `jti` value across PoP JWTs it produces. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 8.5). |
-| `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3). |
-| `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
-| `aat_hash` | string | REQUIRED | Base64url-encoded SHA-256 digest of the leaf token's signing input, computed as for `par_hash` (Section 4.6). Binds the proof to the exact leaf token presented, following the DPoP `ath` claim ({{RFC9449}} Section 4.2). |
-| `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
-| `aat_aud` | string | OPTIONAL | Presentation audience: identifies the party to which the holder presents this PoP JWT, with the semantics of the JWT `aud` claim ({{RFC7519}} Section 4.1.3) and the target binding of DPoP `htu` ({{RFC9449}}). It names the next hop, never a resource behind it that the holder cannot see (Section 8.5). When present, an enforcement point MUST reject a PoP JWT whose `aat_aud` does not identify itself. An enforcement point MAY require the claim. |
-| `nonce` | string | OPTIONAL | A value previously supplied by this enforcement point, following the server-provided nonce pattern of DPoP ({{RFC9449}} Section 9). An enforcement point that requires a nonce MUST reject a PoP JWT that omits it or carries a value the enforcement point did not issue or no longer accepts. How the nonce reaches the holder is transport-specific and out of scope. The claim name is the registered `nonce` claim ({{OIDC.Core}}, as updated by {{RFC9449}} Section 12.7.1). |
-| `hta` | object | REQUIRED | The tool arguments for this invocation. Keys are argument names; values are argument values. |
+1. **Decidable.** The procedure MUST terminate in time polynomial
+   in the size of its inputs. If deciding containment for the
+   type's constraint language is more expensive than that, the
+   registration MUST prescribe a conservative syntactic strategy
+   that meets this bound and MUST formally justify that the
+   strategy is sound (never accepts a non-subsuming pair).
 
-The PoP JWT payload MUST be serialized as JCS-canonical JSON
-({{RFC8785}}) before JWS signing. This is a whole-payload requirement,
-not specific to the `hta` member. The JWS signing input is therefore
-`BASE64URL(JWS Protected Header) || '.' || BASE64URL(JCS(PoP claims))`.
-Whole-payload JCS canonicalization ensures a deterministic byte
-representation; in particular, it gives `hta` stable equality semantics
-so that argument map comparison is unambiguous across implementations
-and languages regardless of JSON serialization choices.
+2. **Sound.** The procedure MUST NOT return true unless the
+   semantic subsumption relation holds. That is, if the procedure
+   returns true for (C_parent, C_child), then for all argument
+   values v: C_child.check(v) implies C_parent.check(v). The
+   procedure MAY be conservative: it MAY return false for
+   semantically subsuming pairs that it cannot verify, but it
+   MUST NOT return true for non-subsuming pairs.
 
-The PoP JWT MUST be signed using the private key corresponding to the
-leaf token's `cnf.jwk`. The enforcement point verifies the PoP JWT
-signature against the leaf token's `cnf.jwk`.
+3. **Deterministic.** Two independent implementations of the
+   procedure MUST produce identical results for the same inputs.
+   The procedure MUST be specified precisely enough to ensure
+   this. Ambiguity in the specification of the procedure is
+   grounds for rejection of the registration.
 
-Protected header:
+This specification does not prescribe the internal mechanism of the
+subsumption verification procedure. Registrations MAY use structural
+comparison of token claims, formal type-checking, proof-carrying tokens,
+or any other mechanism that satisfies the three properties above. See
+Appendix C for non-normative guidance on policy languages with decidable
+containment algorithms.
 
-~~~json
-{"alg":"Ed25519","typ":"aat-pop+jwt"}
+**Cross-type subsumption rules.** The registration MUST list every
+(parent type, child type) pair involving the new type and a core type
+defined in Section 3.4 or a previously registered extension type that
+is a valid attenuation, with its conditions. Enforcement points MUST
+treat unlisted pairs as invalid. A parent `wildcard` subsumes every
+type, including extension types, and need not be listed.
+
+## Enforcement Point Obligations
+
+When an enforcement point encounters an extension constraint type during
+chain verification, it MUST:
+
+1. Apply the type's subsumption procedure and `check` predicate as
+   defined by its registration. An enforcement point that does not
+   implement the type MUST reject the chain (fail-closed).
+
+2. Evaluate the subsumption relation at every chain link where
+   the constraint appears, as part of the I4 check. A chain link
+   where the parent constraint does not subsume the derived
+   constraint MUST be rejected.
+
+3. Evaluate the constraint's `check` predicate against the
+   presented argument value during authorization. If the predicate
+   returns false, the invocation MUST be denied.
+
+An enforcement point that does not implement a registered extension
+constraint type MUST deny authorization rather than skip the constraint.
+The presence of an unrecognized constraint type in a token represents a
+restriction the issuer intended to enforce. Silently omitting that check
+would violate the attenuation guarantee.
+
+## Example Registration: Path Containment
+
+The following is an illustrative example of a conforming extension
+constraint registration. It is not defined normatively in this document.
+
+**Type name:** `path_containment`
+
+**Additional members:** `root` (string, required). An absolute path root.
+
+**`check` predicate:** The argument, after resolving all `.` and `..`
+components and removing redundant separators, must be equal to `root` or
+lie beneath `root` after path-segment normalization. The normalization
+step is part of the predicate; implementations that compare raw argument
+strings without normalization do not conform to this registration.
+
+**`subsumes` relation:** `subsumes(C_parent, C_child)` is true if and
+only if `C_child.root` is `C_parent.root` or lies beneath
+`C_parent.root` under the normalized path-segment ordering.
+
+**Cross-type subsumption:** A parent `path_containment` constraint
+subsumes a derived `exact` constraint if and only if the exact value,
+after normalization, is equal to the parent's `root` or lies beneath it.
+All other cross-type pairs involving `path_containment` are invalid.
+
+# Issuance and Derivation
+
+## Root Issuer Support and Root Token Issuance
+
+The token endpoint is used only for root AAT issuance. Derived tokens are
+created locally by token holders as described in Section 6.2 and do not
+require token endpoint interaction. Enforcement points verify presented
+chains offline as described in Section 8.
+
+### Root Issuer Discovery
+
+A root issuer that supports AAT issuance SHOULD advertise this
+capability using the following metadata parameter in its
+authorization server metadata document {{RFC8414}}, if supported.
+
+| Metadata Parameter | Value |
+|---|---|
+| `aat_issuer` | Boolean. `true` if the AS can issue AAT root tokens. |
+
+This document requests registration of `aat_issuer` in the IANA OAuth
+Authorization Server Metadata registry (Section 11.4).
+
+### Agent Token Request
+
+An agent requesting a root AAT MUST include a `req_cnf` parameter in its
+token endpoint request (in the OAuth 2.0 sense, the agent acts as the
+client for this request). This specification profiles the `req_cnf`
+token request parameter defined by {{RFC9201}} for AAT root token
+issuance. The parameter carries a key confirmation object whose JSON
+syntax and semantics follow {{RFC7800}} Section 3.1. This document does
+not define a new OAuth token endpoint key-confirmation parameter. The
+value MUST be a JSON object containing a `jwk` member with the agent's
+public key in JWK format {{RFC7517}}. This is the key that the root
+issuer will bind into the root token's `cnf.jwk` claim.
+
+The key submitted in `req_cnf` is the AAT holder key that will be
+embedded in the root token's `cnf.jwk`. This key is distinct from any
+credential the client uses to authenticate to the token endpoint. Client
+authentication establishes which OAuth client is requesting issuance;
+`req_cnf` establishes which key will hold the issued AAT and derive or
+present downstream tokens. Deployments MAY require these credentials to
+be controlled by the same workload or agent.
+
+~~~
+POST /token HTTP/1.1
+Host: as.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+&authorization_details=%5B%7B%22type%22%3A%22attenuating_agent_
+  token%22%2C...%7D%5D
+&req_cnf=%7B%22jwk%22%3A%7B%22kty%22%3A%22OKP%22%2C...%7D%7D
 ~~~
 
-Payload:
+The request MUST also include `authorization_details` in RAR format
+{{RFC9396}} with `type` set to `attenuating_agent_token`, enumerating
+the tools and argument constraints the agent is requesting authority to
+invoke or delegate.
 
-~~~json
+### Root Token Issuance
+
+Upon a valid request, the AS constructs and returns a root AAT. The AS:
+
+1. Sets `iss` to the AS's own URI.
+2. Sets `jti` to a unique token identifier, RECOMMENDED to be
+   a UUIDv7 value per {{RFC9562}}.
+3. Sets `iat` to the current time and `exp` to the token's
+   expiry time, subject to the constraints in Section 4.4.
+4. Sets `del_depth` to 0, `del_max_depth` to the maximum
+   delegation depth permitted for this grant, and `par_hash`
+   to absent.
+5. Sets `cnf.jwk` to the public key submitted in the agent's
+   `req_cnf` request parameter. The root issuer MUST validate that
+   the submitted key is well-formed and is a public key. The
+   root issuer SHOULD require the agent to demonstrate
+   possession of the corresponding private key, for example via
+   a signed proof-of-possession assertion in the token request.
+6. For each tool identifier in the requested `authorization_details`,
+   verifies that the tool is recognized by the root issuer and that the
+   requester is authorized to receive authority for it. The mechanism
+   for mapping requester identity to tool authority is
+   deployment-specific and outside the scope of this specification.
+7. Sets `authorization_details` to the capability claims granted. The
+   granted claims MUST attenuate the requested claims under the rules
+   of Section 4.5, treating the request as the parent, and MUST NOT
+   include a tool that failed verification in step 6. If no requested
+   tool can be granted, the root issuer MUST reject the request with
+   the `invalid_authorization_details` error ({{RFC9396}} Section 5).
+8. Signs the token with the AS's own private key.
+
+The AS returns the token in a standard OAuth 2.0 token endpoint response
+({{RFC6749}} Section 5.1) with the following field values:
+
+~~~
 {
-  "jti": "c980f2a1-4a37-4e88-bb3c-9defd37c1a45",
-  "iat": 1741600300,
-  "aat_id": "01957a41-0081-7c20-bf3a-00a0c91e1234",
-  "aat_hash": "sha256_base64url_of_leaf_token_signing_input",
-  "aat_tool": "read_file",
-  "aat_aud": "https://tools.example.com",
-  "hta": { "path": "/data/q3-report.pdf" }
+  "access_token": "<compact-serialized AAT JWT>",
+  "token_type": "aat",
+  "expires_in": <seconds until exp>
 }
 ~~~
 
-## Verification
+The `token_type` value `"aat"` is registered in Section 11.5. Clients
+MUST NOT treat the returned token as a bearer token for use with
+arbitrary resource servers. Its only valid use is as the root of an AAT
+delegation chain presented to an enforcement point per Section 8.
 
-PoP verification is only meaningful against a leaf token whose chain has
-been fully verified per Section 7. An enforcement point MUST complete
-chain verification (Section 7, steps 1-5) before evaluating the PoP JWT.
-A valid PoP JWT against an unverified or invalid chain MUST NOT result
-in authorization.
+Note: this specification defines token endpoint issuance for
+interoperability with existing OAuth 2.0 deployments. Unlike bearer
+tokens, an AAT carries its own holder key binding and is not usable as a
+credential for HTTP resource access. Alternative issuance profiles are
+outside the scope of this document.
 
-The enforcement point MUST reject a PoP JWT that:
-
-1. Has a JWS `typ` header that is absent or is not `aat-pop+jwt`,
-   or has an `alg` header that is not on the allowlist.
-2. Has a signature that does not verify under the leaf token's
-   `cnf.jwk`.
-3. References an `aat_id` that does not match the `jti` of the
-   presented leaf token, or carries an `aat_hash` that does not
-   match the digest of the presented leaf token's signing input.
-4. Contains an `aat_aud` claim that does not identify the
-   enforcement point receiving the presentation, or omits
-   `aat_aud` when this enforcement point requires it (Section
-   8.5).
-5. Names a tool in `aat_tool` that does not exactly match the
-   tool being invoked.
-6. Presents arguments in `hta` whose JCS-canonical form differs
-   from the JCS-canonical form of the invocation `args` map
-   (Section 7, step 7f).
-7. Has `iat` that is outside the enforcement point's accepted
-   clock tolerance window (RECOMMENDED: ±30 seconds).
-8. Omits `nonce` when this enforcement point requires one, or
-   carries a `nonce` value this enforcement point did not issue
-   or no longer accepts.
-
-The `iat` check is stateless and bounds replay to the tolerance window:
-a captured PoP JWT remains usable until its `iat` leaves the window. It
-MUST NOT be the only replay control for tool invocations that have side
-effects or are not idempotent. For those, the enforcement point MUST
-track presented `jti` values, retaining each one only until its `iat`
-leaves the window (Section 7, step 7i). The enforcement point
-determines which of its tools have side effects; tokens do not carry
-this.
-
-Accepting a PoP JWT at most once across a deployment additionally
-requires that no other enforcement point accept the same proof: either
-by sharing `jti` state or by binding the proof to one enforcement point
-through chain audience, `aat_aud`, or a nonce (Section 8.5).
+The AS does not need to store or track derived tokens issued downstream
+by the initial token holder. Chain verification is performed by
+enforcement points using only the root issuer's trust anchor.
 
 
-# Token Derivation
+## Token Derivation
 
 A holder of any AAT whose `del_depth` is strictly less than
 `del_max_depth` MAY derive a child token as follows.
@@ -1571,11 +1465,11 @@ A holder of any AAT whose `del_depth` is strictly less than
 9. If the holder knows where the derived token will be presented,
    set `aud` to restrict it and its descendants to those
    enforcement points (Section 3.2). A parent's `aud` need not be
-   copied; every `aud` in the chain is checked (Section 7, step 6c).
+   copied; every `aud` in the chain is checked (Section 8, step 6c).
 
 10. Sign the token with the private key corresponding to the
     parent token's `cnf.jwk`, using the JWS Protected Header
-    defined in Section 3.8. The `iss` claim MUST be set to the
+    defined in Section 3.5. The `iss` claim MUST be set to the
     JWK Thumbprint URI {{RFC9278}} of that signing key, using the
     SHA-256 hash algorithm.
 
@@ -1593,6 +1487,114 @@ Enforcement points MAY log same-scope derivations as anomalous according
 to deployment policy.
 
 
+# Proof of Possession
+
+## Rationale
+
+A token without proof of possession can be replayed by any party that
+obtains a copy of the token. In agent systems, tokens flow through
+model context, tool invocation results, and inter-agent message
+channels, all of which are observable by other components. PoP
+binds a specific invocation to the private key of the leaf
+token's holder.
+
+## PoP Token Structure
+
+The holder of the leaf token produces a PoP JWT for each tool
+invocation. The PoP JWT is a compact serialization signed with the
+holder's private key. It MUST contain the required claims listed below.
+
+| Claim | Type | Required | Description |
+|---|---|---|---|
+| `jti` | string | REQUIRED | Fresh random identifier. The holder MUST NOT reuse a `jti` value across PoP JWTs it produces. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 9.5). |
+| `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 7.3). |
+| `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
+| `aat_hash` | string | REQUIRED | Base64url-encoded SHA-256 digest of the leaf token's signing input, computed as for `par_hash` (Section 4.6). Binds the proof to the exact leaf token presented, following the DPoP `ath` claim ({{RFC9449}} Section 4.2). |
+| `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
+| `aat_aud` | string | OPTIONAL | Presentation audience: identifies the party to which the holder presents this PoP JWT, with the semantics of the JWT `aud` claim ({{RFC7519}} Section 4.1.3) and the target binding of DPoP `htu` ({{RFC9449}}). It names the next hop, never a resource behind it that the holder cannot see (Section 9.5). When present, an enforcement point MUST reject a PoP JWT whose `aat_aud` does not identify itself. An enforcement point MAY require the claim. |
+| `nonce` | string | OPTIONAL | A value previously supplied by this enforcement point, following the server-provided nonce pattern of DPoP ({{RFC9449}} Section 9). An enforcement point that requires a nonce MUST reject a PoP JWT that omits it or carries a value the enforcement point did not issue or no longer accepts. How the nonce reaches the holder is transport-specific and out of scope. The claim name is the registered `nonce` claim ({{OIDC.Core}}, as updated by {{RFC9449}} Section 12.7.1). |
+| `hta` | object | REQUIRED | The tool arguments for this invocation. Keys are argument names; values are argument values. |
+
+The PoP JWT payload MUST be serialized as JCS-canonical JSON
+({{RFC8785}}) before JWS signing. This is a whole-payload requirement,
+not specific to the `hta` member. The JWS signing input is therefore
+`BASE64URL(JWS Protected Header) || '.' || BASE64URL(JCS(PoP claims))`.
+Whole-payload JCS canonicalization ensures a deterministic byte
+representation; in particular, it gives `hta` stable equality semantics
+so that argument map comparison is unambiguous across implementations
+and languages regardless of JSON serialization choices.
+
+The PoP JWT MUST be signed using the private key corresponding to the
+leaf token's `cnf.jwk`. The enforcement point verifies the PoP JWT
+signature against the leaf token's `cnf.jwk`.
+
+Protected header:
+
+~~~json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+~~~
+
+Payload:
+
+~~~json
+{
+  "jti": "c980f2a1-4a37-4e88-bb3c-9defd37c1a45",
+  "iat": 1741600300,
+  "aat_id": "01957a41-0081-7c20-bf3a-00a0c91e1234",
+  "aat_hash": "sha256_base64url_of_leaf_token_signing_input",
+  "aat_tool": "read_file",
+  "aat_aud": "https://tools.example.com",
+  "hta": { "path": "/data/q3-report.pdf" }
+}
+~~~
+
+## Verification
+
+PoP verification is only meaningful against a leaf token whose chain has
+been fully verified per Section 8. An enforcement point MUST complete
+chain verification (Section 8, steps 1-5) before evaluating the PoP JWT.
+A valid PoP JWT against an unverified or invalid chain MUST NOT result
+in authorization.
+
+The enforcement point MUST reject a PoP JWT that:
+
+1. Has a JWS `typ` header that is absent or is not `aat-pop+jwt`,
+   or has an `alg` header that is not on the allowlist.
+2. Has a signature that does not verify under the leaf token's
+   `cnf.jwk`.
+3. References an `aat_id` that does not match the `jti` of the
+   presented leaf token, or carries an `aat_hash` that does not
+   match the digest of the presented leaf token's signing input.
+4. Contains an `aat_aud` claim that does not identify the
+   enforcement point receiving the presentation, or omits
+   `aat_aud` when this enforcement point requires it (Section
+   9.5).
+5. Names a tool in `aat_tool` that does not exactly match the
+   tool being invoked.
+6. Presents arguments in `hta` whose JCS-canonical form differs
+   from the JCS-canonical form of the invocation `args` map
+   (Section 8, step 7f).
+7. Has `iat` that is outside the enforcement point's accepted
+   clock tolerance window (RECOMMENDED: ±30 seconds).
+8. Omits `nonce` when this enforcement point requires one, or
+   carries a `nonce` value this enforcement point did not issue
+   or no longer accepts.
+
+The `iat` check is stateless and bounds replay to the tolerance window:
+a captured PoP JWT remains usable until its `iat` leaves the window. It
+MUST NOT be the only replay control for tool invocations that have side
+effects or are not idempotent. For those, the enforcement point MUST
+track presented `jti` values, retaining each one only until its `iat`
+leaves the window (Section 8, step 7i). The enforcement point
+determines which of its tools have side effects; tokens do not carry
+this.
+
+Accepting a PoP JWT at most once across a deployment additionally
+requires that no other enforcement point accept the same proof: either
+by sharing `jti` state or by binding the proof to one enforcement point
+through chain audience, `aat_aud`, or a nonce (Section 9.5).
+
+
 # Chain Verification Algorithm
 
 The enforcement point receives a chain of tokens ordered from root to
@@ -1602,7 +1604,7 @@ in denial.
 Verification requires only the token chain and the configured trust
 anchors; no network calls or authorization server availability are
 required. An enforcement point that tracks PoP `jti` values (Section
-5.3) or issues nonces (step 7h) keeps that state locally, outside the
+7.3) or issues nonces (step 7h) keeps that state locally, outside the
 inputs of this algorithm.
 
 ~~~
@@ -1649,7 +1651,7 @@ Algorithm:
       crv parameters. Verify the JWS typ header equals
       "aat+jwt". If alg is "none", not on the allowlist,
       inconsistent with the key type, or typ is absent or not
-      "aat+jwt", DENY.                               (Sec 8.13)
+      "aat+jwt", DENY.                               (Sec 9.13)
    b. Verify the root token signature against the public key
       of a trust anchor. After signature verification succeeds,
       parse the root token's claims, rejecting any JSON object
@@ -1700,7 +1702,7 @@ Algorithm:
       consistent with parent.cnf.jwk's kty and crv parameters.
       Verify the JWS typ header equals "aat+jwt". If alg is
       "none", not on the allowlist, inconsistent with the key
-      type, or typ is absent or not "aat+jwt", DENY.  (Sec 8.13)
+      type, or typ is absent or not "aat+jwt", DENY.  (Sec 9.13)
    b. Verify child signature under the key in parent.cnf.jwk. (I1)
       After signature verification succeeds, parse the child
       token's claims, rejecting any JSON object with duplicate
@@ -1815,7 +1817,7 @@ Algorithm:
       that at least one of its values identifies this enforcement
       point (RFC 7519 Section 4.1.3). If any such token does not,
       DENY. If this enforcement point requires chain audience
-      restriction (Sec 8.5) and no token in chain carries `aud`,
+      restriction (Sec 9.5) and no token in chain carries `aud`,
       DENY.
 
 7. Verify PoP JWT:
@@ -1825,7 +1827,7 @@ Algorithm:
       Verify the JWS typ header equals "aat-pop+jwt". If alg
       is "none", not on the allowlist, inconsistent with the
       key type, or typ is absent or not "aat-pop+jwt", DENY.
-                                                     (Sec 8.13)
+                                                     (Sec 9.13)
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
       signature verification succeeds, parse the PoP JWT claims,
       rejecting any JSON object with duplicate member names. (I6)
@@ -1835,7 +1837,7 @@ Algorithm:
    d. If pop_jwt.aat_aud is present, verify it identifies this
       enforcement point. If it does not, DENY. If it is absent
       and this enforcement point requires PoP audience binding
-      (Sec 8.5), DENY.
+      (Sec 9.5), DENY.
    e. Verify pop_jwt.aat_tool equals tool using the exact-string
       matching rules in Section 3.3.1.
    f. Verify pop_jwt.hta, when JCS-canonicalized, equals the
@@ -1843,12 +1845,12 @@ Algorithm:
       canonical byte sequences differ, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
       window. If outside the window, DENY.
-   h. If this enforcement point requires a nonce (Sec 8.5),
+   h. If this enforcement point requires a nonce (Sec 9.5),
       verify pop_jwt.nonce is present and is a value this
       enforcement point issued and still accepts. If absent,
       unknown, or expired, DENY.
    i. If this enforcement point tracks PoP `jti` values for the
-      invoked tool (Section 5.3), verify pop_jwt.jti has not been
+      invoked tool (Section 7.3), verify pop_jwt.jti has not been
       accepted within the tolerance window, then record it. If it
       has, DENY.
 
@@ -1958,12 +1960,12 @@ a parent token remains valid after a child is derived from it, and an
 orchestrator commonly derives several narrower tokens while retaining
 its own. Every AAT in a chain, not only the leaf, carries a `cnf.jwk`
 holder key, and an invocation is authorized only when the presenter
-proves possession of the leaf token's key (I6, Section 5). A
+proves possession of the leaf token's key (I6, Section 7). A
 sub-agent that obtains the bytes of its parent's token, or of the
 root token, therefore cannot invoke with that token's authority and
 cannot present it as the leaf of a chain: doing either requires the
 parent holder's private key, which the protocol assumes is never
-shared across a delegation boundary (Section 8.4). Possession of a
+shared across a delegation boundary (Section 9.4). Possession of a
 token without the corresponding holder key is not sufficient for
 authorization.
 
@@ -1982,7 +1984,7 @@ rejects this because `C` commits to the signing input of `A`, not
 
 **Token replay for irreversible operations.** For irreversible or
 side-effecting tool invocations, stateful `jti` tracking at the
-enforcement point enables prevention of PoP JWT replay. See Section 8.5
+enforcement point enables prevention of PoP JWT replay. See Section 9.5
 for the distinction between stateful and probabilistic replay controls
 and the deployment requirements for each.
 
@@ -2001,7 +2003,7 @@ specification.
 verification, ignores constraint evaluation, or accepts forged tokens
 provides no security guarantee regardless of the token format. AATs
 assume enforcement points are honest and implement the verification
-algorithm in Section 7 correctly. Enforcement point integrity is a
+algorithm in Section 8 correctly. Enforcement point integrity is a
 deployment concern.
 
 **Actions within authorized argument constraints.** AATs restrict which
@@ -2086,7 +2088,7 @@ exposure with holder binding on every chain position, attenuation at
 every hop, and short lifetimes (Appendix B.7), rather than by making
 parent tokens unrecoverable. Deployments that require a holder to be
 unable to exercise a parent's authority after delegating SHOULD derive
-the child to a fresh holder key (Section 8.12) and then destroy the
+the child to a fresh holder key (Section 9.12) and then destroy the
 private key bound to the parent token. The parent token remains
 cryptographically valid until its `exp`, but it can no longer be
 presented or used to derive further tokens. A holder that destroys
@@ -2128,7 +2130,7 @@ at least one where the exposure exists:
   contextual-caveat pattern of Macaroons {{MACAROONS}} and the
   resource-indicator pattern of {{RFC8707}}: the restriction is added
   by the party that knows the target, and every enforcement point
-  checks every `aud` in the chain against itself (Section 7, step
+  checks every `aud` in the chain against itself (Section 8, step
   6c). A holder further down the chain need not know the target.
 - **Presentation audience.** `aat_aud` names the party the holder
   hands the PoP JWT to, with the semantics of the JWT `aud` claim
@@ -2149,7 +2151,7 @@ An intermediary, a party that relays a presentation without being its
 target, MUST either present under its own AAT with its own PoP JWT, as
 in token exchange {{RFC8693}}, or forward the presentation unchanged. A
 forwarded presentation is accepted only if its `aat_aud` is absent or
-identifies the receiving enforcement point (Section 7, step 7d). A
+identifies the receiving enforcement point (Section 8, step 7d). A
 holder whose presentation may be forwarded therefore omits `aat_aud`,
 and an enforcement point that requires `aat_aud` does not accept
 forwarded presentations.
@@ -2174,8 +2176,8 @@ application level for high-value operations.
 The core constraint types are intended to have predictable evaluation
 cost. Extension constraint types can introduce parser complexity,
 algorithmic cost, normalization requirements, or external policy-engine
-dependencies. Extension constraint types defined in Section 3.5 and
-registered in the IANA AAT Constraint Type Registry (Section 10.3)
+dependencies. Extension constraint types defined in Section 5 and
+registered in the IANA AAT Constraint Type Registry (Section 11.3)
 MUST document their computational complexity and any resource limits
 implementations SHOULD enforce. Enforcement points SHOULD impose
 evaluation timeouts on any extension constraint type whose `check`
@@ -2208,8 +2210,8 @@ checking per-token values violates this policy. Enforcement points MUST
 check the per-token depth ceilings (`child.del_depth <=
 parent.del_max_depth` in step 4e, `child.del_max_depth <=
 parent.del_max_depth` in step 4g, and `child.del_depth <=
-child.del_max_depth` in step 4m of Section 7) and the global
-MAX_DELEGATION_DEPTH limit (step 4f of Section 7). Neither the per-token
+child.del_max_depth` in step 4m of Section 8) and the global
+MAX_DELEGATION_DEPTH limit (step 4f of Section 8). Neither the per-token
 policy checks nor the global implementation limit is sufficient alone.
 
 ## Unknown Constraint Types
@@ -2265,7 +2267,7 @@ different semantics. MAX_IAT_SKEW (Section 4.4, RECOMMENDED: 30 seconds)
 is a one-sided future-dating tolerance applied to token `iat` values: it
 prevents a token issued slightly in the future from being rejected due
 to minor clock drift between issuer and enforcement point. The PoP
-JWT timestamp window (Section 5.3, RECOMMENDED: ±30 seconds) is a
+JWT timestamp window (Section 7.3, RECOMMENDED: ±30 seconds) is a
 bilateral replay
 window applied to PoP JWT `iat` values: it bounds how long a captured
 PoP JWT remains usable. These are independent parameters enforced at
@@ -2363,7 +2365,7 @@ JSON Web Token Claims Registry {{RFC7519}}.
 The `tools` map is not a top-level JWT claim; it is a member nested
 inside the `authorization_details` array entry with `type:
 "attenuating_agent_token"`, as defined in Section 3.3. Its structure and
-semantics are governed by the AAT Constraint Type Registry (Section 10.3)
+semantics are governed by the AAT Constraint Type Registry (Section 11.3)
 and the RAR profile defined in this document, not by the JWT Claims
 Registry.
 
@@ -2378,7 +2380,7 @@ Registry.
 | `hta` | Tool arguments for PoP binding | IETF | This document |
 
 The `aud` claim on AATs (Section 3.2) and the `nonce` claim on PoP JWTs
-(Section 5.2) are existing registered claims, from {{RFC7519}} and
+(Section 7.2) are existing registered claims, from {{RFC7519}} and
 {{OIDC.Core}} (as updated by {{RFC9449}}) respectively, and are not
 re-registered.
 
@@ -2411,7 +2413,7 @@ satisfies all of the following criteria before approving it:
    ambiguity whether the predicate returns true or false.
 
 3. The `subsumes` verification procedure satisfies the decidable,
-   sound, and deterministic properties defined in Section 3.5.1.
+   sound, and deterministic properties defined in Section 5.1.
    If the constraint language does not support a general
    containment algorithm, the registration prescribes a
    conservative syntactic strategy and formally justifies
@@ -2510,7 +2512,7 @@ IANA OAuth Authorization Server Metadata registry established by
 
 `aat_issuer` is a boolean value. When present and `true`, it indicates
 that the root issuer supports issuance of AAT root tokens as described
-in Section 3.7. When absent, the AS is assumed not to support AAT
+in Section 6.1. When absent, the AS is assumed not to support AAT
 issuance.
 
 ## OAuth Token Type Registration
@@ -2545,7 +2547,7 @@ structured-syntax convention used by DPoP {{RFC9449}}.
 of base64url-encoded values (some of which may be the empty string)
 separated by period ('.') characters.
 
-**Security considerations:** See Section 8 of this document.
+**Security considerations:** See Section 9 of this document.
 
 **Interoperability considerations:** n/a
 
@@ -2587,7 +2589,7 @@ Niki Aimable Niyikiza, niki@tenuo.ai
 of base64url-encoded values (some of which may be the empty string)
 separated by period ('.') characters.
 
-**Security considerations:** See Section 5 and Section 8 of this document.
+**Security considerations:** See Section 7 and Section 9 of this document.
 
 **Interoperability considerations:** n/a
 
@@ -2679,7 +2681,7 @@ AATs encode the authorization itself. The token specifies which tools
 may be invoked, with what argument constraints, and by which key holder.
 Holders can derive tokens with authority equal to or narrower than
 their own, without contacting the authorization server. The PoP JWT in
-Section 5 serves a similar cryptographic role to a DPoP proof, binding a
+Section 7 serves a similar cryptographic role to a DPoP proof, binding a
 specific invocation to the leaf token's holder key, but operates in a
 different context. Everything else in this specification (the chain
 model, the attenuation invariants, the constraint type registry, the
@@ -2707,7 +2709,7 @@ Two proof-level mechanisms are borrowed from DPoP directly. `aat_aud`
 follows the `htu` model of naming the target the proof is presented
 to, and the OPTIONAL `nonce` claim follows the DPoP server-provided
 nonce ({{RFC9449}} Section 9), so an enforcement point can bind proofs
-to itself without the holder knowing its identity (Section 8.5).
+to itself without the holder knowing its identity (Section 9.5).
 
 The cryptographic mechanism is the same: an asymmetric key in `cnf.jwk`,
 compact JWT serialization, verified against the leaf token's bound key.
@@ -2745,8 +2747,8 @@ than as a sequence of policy blocks.
 - **Token identifier:** UUIDv7 is recommended for `jti` values,
   providing time-ordered identifiers without central coordination.
 
-The algorithm allowlist requirement is normatively defined in Section 7
-(steps 3a, 4a, and 7a) and discussed in Section 8.13.
+The algorithm allowlist requirement is normatively defined in Section 8
+(steps 3a, 4a, and 7a) and discussed in Section 9.13.
 
 The `cnf.jwk` key type is not hardcoded to Ed25519. Implementations
 should be designed to support algorithm migration without requiring
@@ -2770,7 +2772,7 @@ The WIMSE architecture {{WIMSE-ARCH}} and service-to-service protocol
 {{WIMSE-S2S}} address workload identity and authentication for entities
 that hold and present AATs. A WIMSE workload credential identifies an
 agent and can authenticate it to the token endpoint at root issuance
-(Section 3.7.2). The AAT itself binds the agent by its holder key in
+(Section 6.1.2). The AAT itself binds the agent by its holder key in
 `cnf.jwk`; `iss` identifies the root issuer. The two specifications are
 complementary: WIMSE establishes workload identity and authentication;
 this specification defines a holder-derivable, invocation-scoped
@@ -2825,7 +2827,7 @@ policy permits, as these types produce compact tokens and simple
 subsumption checks.
 
 Implementations concerned about parser exposure on unverified
-payloads in step 2c of the chain verification algorithm (Section 7)
+payloads in step 2c of the chain verification algorithm (Section 8)
 may extract `jti` using a length-limited byte scan rather than a
 full JSON parser, provided the extraction correctly handles JSON
 whitespace and string escaping.
@@ -2890,12 +2892,12 @@ authorized is not, by itself, sufficient for AAT attenuation; the
 extension must also define how an enforcement point determines that a
 derived policy is no less restrictive than its parent. Where full
 containment analysis for such a language exceeds the polynomial bound in
-Section 3.5.1, as solver-based analysis can, the registration defines a
+Section 5.1, as solver-based analysis can, the registration defines a
 conservative syntactic check for enforcement points; derivers remain
 free to use the full analysis offline when choosing what to derive.
 This document does not recommend a specific policy language. The normative requirement is
 that every extension registration satisfy the decidable, sound, and
-deterministic properties defined in Section 3.5.1.
+deterministic properties defined in Section 5.1.
 
 # CBOR/CWT Considerations (Non-Normative)
 
@@ -2915,25 +2917,25 @@ CWT `par_hash` signing input. Those details are deferred to a companion
 document.
 
 # Test Vectors (Non-Normative)
-Byte-exact JWS test vectors for the Section 7 algorithm are published
+Byte-exact JWS test vectors for the Section 8 algorithm are published
 in the reference implementation's repository: the machine-readable suite
 at <https://github.com/tenuo-ai/tenuo/blob/main/tests/vectors/aat-jws-vectors.json>
 and a readable companion with its generator at
 <https://github.com/tenuo-ai/tenuo/tree/main/ietf/vectors>. Expected
 verdicts are computed, not hand-written: the generator runs every vector
-through its own implementation of Section 7, which shares no code with
+through its own implementation of Section 8, which shares no code with
 Tenuo. The suite covers the
 happy-path chains, each attenuation invariant (I1 through I6),
 closed-world leaf checks, explicit typing, required PoP audience,
 composite `all` / `any` subsumption including clause reuse, the
 remaining core constraint types (`not_one_of`, `contains`, `subset`,
-range inclusivity), and the structural root checks in Section 7 steps
+range inclusivity), and the structural root checks in Section 8 steps
 3c, 3d, 3f, 3h, 3k, 3l, and 3n. Implementers targeting the -01 text should not
 treat that suite as a -01 conformance pack; the cases that encode the
 changes in Appendix G are marked.
 
 This appendix reproduces a minimal subset so that the encoding rules of
-Section 3.8, Section 4.6, and Section 5.2 can be checked without
+Section 3.5, Section 4.6, and Section 7.2 can be checked without
 external material. Long lines are folded per {{RFC8792}}. Vector
 identifiers (J.1, J.3, J.12) are those of the published suite.
 
@@ -3044,7 +3046,7 @@ L1 carries `par_hash` equal to the root row above, and L2 carries
 Identical to the J.3 root and L1 except that L1's `par_hash` is
 `qz05CjO1S-iTk93CGKmiB8y7bRUdUAe67kXzUwyMzUU`, the digest of a different
 root token held by the same key. Signature verification and I1 both
-pass; the chain MUST be denied at Section 7 step 4q.
+pass; the chain MUST be denied at Section 8 step 4q.
 
 # Implementation Status (Non-Normative)
 
@@ -3054,8 +3056,8 @@ at the time of submission, per the practice described in {{RFC7942}}.
 ## Reference Implementation
 
 Tenuo provides a reference implementation of this protocol. The chain
-verification algorithm (Section 7) and token derivation procedure
-(Section 6) are both implemented. Tenuo also includes an
+verification algorithm (Section 8) and token derivation procedure
+(Section 6.2) are both implemented. Tenuo also includes an
 implementation-specific CBOR/COSE wire representation, with Ed25519
 signatures carried in COSE_Sign1 structures. That implementation
 experience supports the format independence of the core protocol model,
@@ -3067,7 +3069,7 @@ attenuation invariants under arbitrary sequences, normalization
 idempotence across encode/decode round-trips, and agreement between
 in-memory and deserialized constraint evaluation.
 
-JWS test vectors for the algorithm in Section 7 are published as
+JWS test vectors for the algorithm in Section 8 are published as
 described in Appendix E.
 
 RFC Editor Note: This section will be updated or removed before
@@ -3098,17 +3100,17 @@ implementations that followed the -01 text.
 - **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
   `typ` value of `aat+jwt`. Every PoP JWT MUST carry `typ` of
   `aat-pop+jwt`. Enforcement points MUST reject a missing or mismatched
-  `typ` at the header step (Section 7, steps 3a, 4a, and 7a). This
+  `typ` at the header step (Section 8, steps 3a, 4a, and 7a). This
   follows {{RFC8725}} Section 3.11 and matches the pattern used by DPoP
   {{RFC9449}} (`dpop+jwt`). The -01 text defined no `typ` value.
 - **Audience defined as a presentation target; chain audience and
   nonce added.** `aat_aud` is OPTIONAL and, when present, MUST identify
   the party the PoP JWT is presented to, never a resource behind it
-  (Section 5.2, Section 7 step 7d). AATs MAY carry the standard `aud`
+  (Section 7.2, Section 8 step 7d). AATs MAY carry the standard `aud`
   claim, checked for every token in the chain (Section 3.2, step 6c),
   and PoP JWTs MAY carry an enforcement-point `nonce` (step 7h).
   Deployments in which several enforcement points accept one chain
-  MUST use at least one of these or share `jti` state (Section 8.5).
+  MUST use at least one of these or share `jti` state (Section 9.5).
   Each mechanism follows an existing one: JWT `aud` {{RFC7519}},
   Macaroon caveats and resource indicators {{RFC8707}}, and the DPoP
   `htu` and server nonce {{RFC9449}}. The -01 text left audience to
@@ -3129,42 +3131,42 @@ implementations that followed the -01 text.
   requested tool first, and the granted `authorization_details` MUST
   attenuate the requested ones under Section 4.5. A request with no
   grantable tool is rejected with `invalid_authorization_details`
-  (Section 3.7.3). The -01 text both allowed a subset grant and
+  (Section 6.1.3). The -01 text both allowed a subset grant and
   required rejecting the whole request when any tool failed
   verification.
 - **Empty `all` and `any` rejected.** An `all` or `any` constraint
   with an empty `constraints` array is invalid in any position
-  (Section 4.5), checked in Section 7 steps 3n and 4o. An empty
+  (Section 4.5), checked in Section 8 steps 3n and 4o. An empty
   conjunction accepts every value while appearing to constrain it.
   The -01 text did not address `all` and required a non-empty `any`
   only in the derived position.
 - **PoP bound to the exact leaf token.** PoP JWTs carry a REQUIRED
   `aat_hash`, the digest of the leaf token's signing input, checked in
-  Section 7 step 7c, following DPoP's `ath`. In -01 the proof named
+  Section 8 step 7c, following DPoP's `ath`. In -01 the proof named
   the leaf only by `jti`, which the deriver chooses, so a holder
   upstream of the leaf could re-derive a sibling with the same `jti`
   and reuse a captured proof.
 - **Fully-specified `alg`.** Ed25519 signatures use the JWS `alg`
   value `"Ed25519"` ({{RFC9864}}); the deprecated polymorphic
-  `"EdDSA"` MUST NOT be used (Section 8.13). The -01 text used
+  `"EdDSA"` MUST NOT be used (Section 9.13). The -01 text used
   `"EdDSA"`.
 
 Editorial and alignment changes, not intended to change behavior
-relative to the Section 7 algorithm in -01:
+relative to the Section 8 algorithm in -01:
 
-- The PoP rejection list in Section 5.3 is aligned with Section 7:
+- The PoP rejection list in Section 7.3 is aligned with Section 8:
   `aat_tool` MUST equal the invoked tool (step 7e) rather than merely
   be authorized by the leaf, and `hta` MUST match the invocation
   arguments byte-for-byte after JCS canonicalization (step 7f) rather
   than merely satisfy the leaf's constraints. The -01 list disagreed
   with the -01 algorithm on both points.
-- Section 5.3 now lists the `typ` and `alg` header check first, since
-  Section 7 step 7a runs before signature verification.
-- The JWS Protected Header requirements are collected in Section 3.8.
+- Section 7.3 now lists the `typ` and `alg` header check first, since
+  Section 8 step 7a runs before signature verification.
+- The JWS Protected Header requirements are collected in Section 3.5.
 - Section 1.3 states why HMAC chaining is unsuitable for the target
   verifier model and relates AAT to SPKI/SDSI {{RFC2693}}. Section
-  8.1.1 adds parent- and intermediate-token replay to the mitigated
-  threats. Section 8.4 records that AATs lack Macaroons' re-keying on
+  9.1.1 adds parent- and intermediate-token replay to the mitigated
+  threats. Section 9.4 records that AATs lack Macaroons' re-keying on
   attenuation, what bounds that exposure instead, and how a holder can
   approximate re-keying by destroying the parent's holder key. These
   respond to Neil Madden's list review of -01.
@@ -3176,7 +3178,7 @@ relative to the Section 7 algorithm in -01:
 - Section 4.5 uses one subsumption direction throughout: the parent
   constraint subsumes the derived one. The -01 text mixed both
   directions.
-- Section 3.5 states the consequence of the existing registration
+- Section 5 states the consequence of the existing registration
   requirement: evaluating an unregistered constraint type is
   non-conforming. Registrations list only valid cross-type pairs,
   a parent `wildcard` subsumes every type implicitly, and the
