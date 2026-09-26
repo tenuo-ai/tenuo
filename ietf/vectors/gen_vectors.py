@@ -226,7 +226,17 @@ def _verify_jws(compact: str, pub: Ed25519PublicKey, step_alg: str, step_sig: st
         pub.verify(b64u_dec(s), f"{h}.{p}".encode("ascii"))
     except InvalidSignature:
         raise Deny(step_sig, "signature does not verify")
-    return json.loads(b64u_dec(p))
+    try:
+        return json.loads(b64u_dec(p), object_pairs_hook=_no_dup_keys)
+    except ValueError:
+        raise Deny(step_sig, "duplicate JSON member name")
+
+
+def _no_dup_keys(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate member name")
+    return dict(pairs)
 
 
 def _jwk_pub(jwk: dict, step: str = "3l") -> Ed25519PublicKey:
@@ -256,8 +266,19 @@ def _aat_entry(claims: dict, step: str, exactly_one: bool):
 def _cdepth(c, d=1):
     if d > MAX_CONSTRAINT_DEPTH:
         raise Deny("3n/4o", "constraint tree too deep")
+    if c.get("constraint_type") in ("all", "any") and not c.get("constraints"):
+        raise Deny("3n/4o", "empty all/any")
     for sub in c.get("constraints", []) if c.get("constraint_type") in ("all", "any") else []:
         _cdepth(sub, d + 1)
+
+
+def _eq(a, b) -> bool:
+    """Value equality per §3.4: identical JCS serializations."""
+    return jcs(a) == jcs(b)
+
+
+def _in(v, xs) -> bool:
+    return any(_eq(v, x) for x in xs)
 
 
 def check(c: dict, v) -> bool:
@@ -265,9 +286,9 @@ def check(c: dict, v) -> bool:
     if t == "wildcard":
         return True
     if t == "exact":
-        return v == c["value"] and type(v) is type(c["value"])
+        return _eq(v, c["value"])
     if t == "one_of":
-        return any(v == x and type(v) is type(x) for x in c["values"])
+        return _in(v, c["values"])
     if t == "range":
         if isinstance(v, bool) or not isinstance(v, (int, float)):
             return False
@@ -278,15 +299,15 @@ def check(c: dict, v) -> bool:
             return False
         return True
     if t == "not_one_of":
-        return all(v != x or type(v) is not type(x) for x in c["excluded"])
+        return not _in(v, c["excluded"])
     if t == "contains":
         if not isinstance(v, list):
             return False
-        return all(any(x == r and type(x) is type(r) for x in v) for r in c["required"])
+        return all(_in(r, v) for r in c["required"])
     if t == "subset":
         if not isinstance(v, list):
             return False
-        return all(any(x == a and type(x) is type(a) for a in c["allowed"]) for x in v)
+        return all(_in(x, c["allowed"]) for x in v)
     if t == "all":
         return all(check(s, v) for s in c["constraints"])
     if t == "any":
@@ -315,14 +336,14 @@ def subsumes(child: dict, parent: dict) -> bool:
         return all(any(subsumes(cd, cp) for cp in parent["constraints"]) for cd in child["constraints"])
     if ct == "exact":
         if pt == "exact":
-            return child["value"] == parent["value"]
+            return _eq(child["value"], parent["value"])
         if pt == "one_of":
-            return child["value"] in parent["values"]
+            return _in(child["value"], parent["values"])
         if pt == "range":
             return isinstance(child["value"], (int, float)) and not isinstance(child["value"], bool) and check(parent, child["value"])
         return False
     if ct == "one_of" and pt == "one_of":
-        return all(x in parent["values"] for x in child["values"])
+        return all(_in(x, parent["values"]) for x in child["values"])
     if ct == "range" and pt == "range":
         pmin, pmax = parent.get("min"), parent.get("max")
         cmin, cmax = child.get("min"), child.get("max")
@@ -338,11 +359,11 @@ def subsumes(child: dict, parent: dict) -> bool:
                 return False
         return True
     if ct == "not_one_of" and pt == "not_one_of":
-        return all(x in child["excluded"] for x in parent["excluded"])
+        return all(_in(x, child["excluded"]) for x in parent["excluded"])
     if ct == "contains" and pt == "contains":
-        return all(x in child["required"] for x in parent["required"])
+        return all(_in(x, child["required"]) for x in parent["required"])
     if ct == "subset" and pt == "subset":
-        return all(x in parent["allowed"] for x in child["allowed"])
+        return all(_in(x, parent["allowed"]) for x in child["allowed"])
     return False  # every undeclared pair is invalid
 
 
@@ -379,6 +400,9 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
             last_err = e
     if root is None:
         raise last_err
+    for k in ("iat", "exp"):
+        if not (isinstance(root.get(k), int) and not isinstance(root.get(k), bool)):
+            raise Deny("3b", f"root {k} missing")
     if root.get("del_depth") != 0:
         raise Deny("3c", "root del_depth != 0")
     if "par_hash" in root:
@@ -946,8 +970,9 @@ composite("J.16.1", "any: derived removes alternatives", "format: any[pdf, csv, 
           {"export": {"format": ANY(ex("pdf"), ex("csv")), "limit": ALL(rng(max=100), rng(min=0))}}, "PERMIT", n=7)
 composite("J.16.2", "any: derived adds an alternative", "format: any[pdf, csv, xlsx] -> any[pdf, docx]. §4.5 example.",
           {"export": {"format": ANY(ex("pdf"), ex("docx")), "limit": ALL(rng(max=100), rng(min=0))}}, "DENY", "4p4", n=8)
-composite("J.16.3", "any: empty derived any", "format: any[...] -> any[]. §4.5: derived any MUST contain at least one clause.",
-          {"export": {"format": ANY(), "limit": ALL(rng(max=100), rng(min=0))}}, "DENY", "4p4", n=9)
+composite("J.16.3", "any: empty derived any", "format: any[...] -> any[]. §4.5: an empty any is invalid in any "
+          "position; rejected when the child's constraint trees are walked (step 4o).",
+          {"export": {"format": ANY(), "limit": ALL(rng(max=100), rng(min=0))}}, "DENY", "3n/4o", n=9)
 composite("J.16.4", "any: leaf check accepts a listed alternative", "Valid any[pdf, csv]; invocation format csv.",
           {"export": {"format": ANY(ex("pdf"), ex("csv")), "limit": ALL(rng(max=100), rng(min=0))}}, "PERMIT",
           args={"format": "csv", "limit": 10}, n=10)
@@ -1147,6 +1172,13 @@ add("J.21.6", "Root iss does not match the verifying trust anchor", None,
     "iss names a different issuer (step 3k, RFC 8725 Section 3.8).",
     [iss_root], pop_sign(pop_claims(uuid7ish(0xE86), iss_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3k")
+empty_all_root = jws_sign(root_claims(uuid7ish(0xE7), {"read_file": {"path": {"constraint_type": "all",
+                                                                              "constraints": []}}}, ORCH), CP)
+add("J.21.7", "Root carries an empty all constraint", None,
+    "Single-token chain whose root constrains path with all([]). An empty conjunction would accept every "
+    "value; it is rejected when the root's constraint trees are walked (step 3n).",
+    [empty_all_root], pop_sign(pop_claims(uuid7ish(0xE87), empty_all_root, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3n/4o")
 
 
 # ---------------------------------------------------------------------------

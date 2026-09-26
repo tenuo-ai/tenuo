@@ -35,6 +35,7 @@ normative:
 
 informative:
   RFC2693:   # SPKI Certificate Theory
+  RFC8259:   # The JavaScript Object Notation (JSON) Data Interchange Format
   RFC8792:   # Handling Long Lines in Content of Internet-Drafts and RFCs
   RFC7942:   # Improving Awareness of Running Code: The Implementation Status Section
   RFC8949:   # Concise Binary Object Representation (CBOR)
@@ -687,6 +688,10 @@ a registered extension constraint type (see Appendix C).
 | `all` | `constraints` (array) | Logical AND of nested constraints. See Section 4.5 for subsumption rules. |
 | `any` | `constraints` (array) | Logical OR of nested constraints. See Section 4.5 for subsumption rules. |
 
+Constraint values and arguments are compared by their JCS
+serializations ({{RFC8785}}), the canonical form step 7f uses for
+`hta`.
+
 Enforcement points MUST reject invocations where any argument violates
 its associated constraint. Enforcement points MUST deny authorization if
 they encounter a `constraint_type` they do not recognize (fail-closed
@@ -729,14 +734,12 @@ a complete, formal definition of what it means for one instance of the
 constraint to be at least as restrictive as another instance of the same
 constraint type. This procedure MUST satisfy three properties:
 
-1. **Decidable.** The procedure MUST terminate in finite time for
-   all inputs. It MUST NOT require solving problems that are
-   undecidable or computationally intractable in the general
-   case. If the constraint language used by the type is not
-   closed under decidable containment analysis, the registration
-   MUST prescribe a conservative syntactic strategy and MUST
-   formally justify that the strategy is sound (never accepts
-   a non-subsuming pair).
+1. **Decidable.** The procedure MUST terminate in time polynomial
+   in the size of its inputs. If deciding containment for the
+   type's constraint language is more expensive than that, the
+   registration MUST prescribe a conservative syntactic strategy
+   that meets this bound and MUST formally justify that the
+   strategy is sound (never accepts a non-subsuming pair).
 
 2. **Sound.** The procedure MUST NOT return true unless the
    semantic subsumption relation holds. That is, if the procedure
@@ -1265,9 +1268,9 @@ rules are:
 - **exact:** A derived `exact` constraint attenuates a parent
   constraint of the same or different type as follows: a parent
   `exact` subsumes it if the values are identical; a parent `range`
-  subsumes it if the exact value is a number that falls within the
-  parent range; a parent `one_of` subsumes it if the exact value is a
-  member of the parent set; a parent `wildcard` subsumes it
+  subsumes it if the exact value is a number that satisfies the
+  parent range's `check`; a parent `one_of` subsumes it if the exact
+  value is a member of the parent set; a parent `wildcard` subsumes it
   unconditionally. All other parent types are invalid cross-type
   targets for a derived `exact` constraint.
 
@@ -1335,8 +1338,9 @@ rules are:
   `derived.any.constraints`, there MUST exist a `clause_p` in
   `parent.any.constraints` such that `clause_d ⊑ clause_p`.
   Removing clauses is valid (it narrows the accepted set).
-  Adding clauses is invalid (it widens it). The derived `any`
-  MUST contain at least one clause. Cross-type subsumption
+  Adding clauses is invalid (it widens it). An `any` constraint
+  whose `constraints` array is empty is invalid in both the parent
+  and the derived position and MUST be rejected. Cross-type subsumption
   between clauses is permitted: for example, a derived clause
   of `exact("pdf")` is subsumed by a parent clause of
   `one_of(["pdf", "csv"])` under the cross-type rules in this section.
@@ -1473,7 +1477,7 @@ Payload:
 
 PoP verification is only meaningful against a leaf token whose chain has
 been fully verified per Section 7. An enforcement point MUST complete
-chain verification (Section 7, steps 1-6) before evaluating the PoP JWT.
+chain verification (Section 7, steps 1-5) before evaluating the PoP JWT.
 A valid PoP JWT against an unverified or invalid chain MUST NOT result
 in authorization.
 
@@ -1645,7 +1649,10 @@ Algorithm:
       "aat+jwt", DENY.                               (Sec 8.13)
    b. Verify the root token signature against the public key
       of a trust anchor. After signature verification succeeds,
-      parse the root token's claims. All subsequent root
+      parse the root token's claims, rejecting any JSON object
+      with duplicate member names ({{RFC8259}} Section 4), and
+      verify root.iat and root.exp are present and are
+      NumericDate values. If not, DENY. All subsequent root
       checks (3c through 3n) operate on parsed claims.
    c. Verify root.del_depth == 0.
    d. Verify root.par_hash is absent.
@@ -1675,13 +1682,14 @@ Algorithm:
       (chain-length consistency), step 6 (leaf
       capability/constraint checks), and step 7 (PoP), before
       permit in step 8.
-      Steps 3j through 3m ensure that required claims are
-      present before step 6 depends on them, closing the
+      Steps 3b and 3j through 3m ensure that required claims
+      are present before later steps depend on them, closing the
       bypass window that exists when step 4 does not run.
    n. For each constraint in each constraint map in the root
       token's attenuating_agent_token entry, verify the
-      constraint tree depth does not exceed MAX_CONSTRAINT_DEPTH.
-      If any constraint tree exceeds this limit, DENY.
+      constraint tree depth does not exceed MAX_CONSTRAINT_DEPTH
+      and that no `all` or `any` constraint has an empty
+      `constraints` array. If either check fails, DENY.
 
 4. For each adjacent pair (parent, child) in chain:
    a. Verify child token's JWS alg header is on the
@@ -1691,8 +1699,9 @@ Algorithm:
       "none", not on the allowlist, inconsistent with the key
       type, or typ is absent or not "aat+jwt", DENY.  (Sec 8.13)
    b. Verify child signature under the key in parent.cnf.jwk. (I1)
-      After signature verification, verify required claims are
-      present:
+      After signature verification succeeds, parse the child
+      token's claims, rejecting any JSON object with duplicate
+      member names, and verify required claims are present:
       b1. Verify child.jti is present and is a non-empty
           string. If absent or not a string, DENY.
       b2. Verify child.cnf is present, contains a `jwk`
@@ -1754,8 +1763,9 @@ Algorithm:
       by this algorithm.
    o. For each constraint in each constraint map in child_aat.tools,
       verify the constraint tree depth does not exceed
-      MAX_CONSTRAINT_DEPTH. If any constraint tree exceeds
-      this limit, DENY.
+      MAX_CONSTRAINT_DEPTH and that no `all` or `any` constraint
+      has an empty `constraints` array. If either check fails,
+      DENY.
    p. Verify capability monotonicity (Section 4.5):   (I4)
       p1. Verify every tool in child_aat.tools
           is also present in parent_aat.tools.
@@ -1814,7 +1824,8 @@ Algorithm:
       key type, or typ is absent or not "aat-pop+jwt", DENY.
                                                      (Sec 8.13)
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
-      signature verification succeeds, parse the PoP JWT claims. (I6)
+      signature verification succeeds, parse the PoP JWT claims,
+      rejecting any JSON object with duplicate member names. (I6)
    c. Verify pop_jwt.jti is present and is a non-empty string,
       pop_jwt.aat_id == leaf.jti, and pop_jwt.aat_hash equals
       base64url-nopad(SHA-256(leaf token signing input)).
@@ -1840,6 +1851,12 @@ Algorithm:
 
 8. PERMIT.
 ~~~
+
+Every step denies on failure, so the verdict does not depend on the
+order of steps 6 and 7. Enforcement points SHOULD verify the PoP
+signature (steps 7a and 7b) before evaluating argument constraints
+(step 6b), so that a presenter who does not hold the leaf key cannot
+trigger constraint evaluation.
 
 Enforcement points MUST verify the JWS signature of each token before
 deserializing its payload claims into application-layer data structures.
@@ -2865,8 +2882,12 @@ encoding of the policy, and a sound, deterministic subsumption procedure.
 The fact that a policy language can decide whether an invocation is
 authorized is not, by itself, sufficient for AAT attenuation; the
 extension must also define how an enforcement point determines that a
-derived policy is no less restrictive than its parent. This document does
-not recommend a specific policy language. The normative requirement is
+derived policy is no less restrictive than its parent. Where full
+containment analysis for such a language exceeds the polynomial bound in
+Section 3.5.1, as solver-based analysis can, the registration defines a
+conservative syntactic check for enforcement points; derivers remain
+free to use the full analysis offline when choosing what to derive.
+This document does not recommend a specific policy language. The normative requirement is
 that every extension registration satisfy the decidable, sound, and
 deterministic properties defined in Section 3.5.1.
 
@@ -2901,7 +2922,7 @@ closed-world leaf checks, explicit typing, required PoP audience,
 composite `all` / `any` subsumption including clause reuse, the
 remaining core constraint types (`not_one_of`, `contains`, `subset`,
 range inclusivity), and the structural root checks in Section 7 steps
-3c, 3d, 3f, 3h, 3k, and 3l. Implementers targeting the -01 text should not
+3c, 3d, 3f, 3h, 3k, 3l, and 3n. Implementers targeting the -01 text should not
 treat that suite as a -01 conformance pack; the cases that encode the
 changes in Appendix G are marked.
 
@@ -3104,10 +3125,12 @@ implementations that followed the -01 text.
   (Section 3.7.3). The -01 text both allowed a subset grant and
   required rejecting the whole request when any tool failed
   verification.
-- **Empty `all` rejected.** An `all` constraint with an empty
-  `constraints` array is invalid in any position (Section 4.5): an
-  empty conjunction accepts every value while appearing to constrain
-  it. The -01 text did not address it.
+- **Empty `all` and `any` rejected.** An `all` or `any` constraint
+  with an empty `constraints` array is invalid in any position
+  (Section 4.5), checked in Section 7 steps 3n and 4o. An empty
+  conjunction accepts every value while appearing to constrain it.
+  The -01 text did not address `all` and required a non-empty `any`
+  only in the derived position.
 - **PoP bound to the exact leaf token.** PoP JWTs carry a REQUIRED
   `aat_hash`, the digest of the leaf token's signing input, checked in
   Section 7 step 7c, following DPoP's `ath`. In -01 the proof named
@@ -3147,4 +3170,6 @@ relative to the Section 7 algorithm in -01:
   non-conforming. Registrations list only valid cross-type pairs,
   a parent `wildcard` subsumes every type implicitly, and the
   registration template example now gives pairs in (parent, child)
-  order.
+  order. The decidability property is now a polynomial-time bound,
+  with the existing conservative-strategy fallback for more
+  expressive languages.

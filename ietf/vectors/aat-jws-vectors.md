@@ -111,7 +111,7 @@ Thumbprint URIs used as derived-token `iss`:
 | J.15.6 | all: leaf check evaluates every clause | — | DENY at step 6b |
 | J.16.1 | any: derived removes alternatives | — | PERMIT |
 | J.16.2 | any: derived adds an alternative | — | DENY at step 4p4 |
-| J.16.3 | any: empty derived any | — | DENY at step 4p4 |
+| J.16.3 | any: empty derived any | — | DENY at step 3n/4o |
 | J.16.4 | any: leaf check accepts a listed alternative | — | PERMIT |
 | J.16.5 | any: leaf check rejects a removed alternative | — | DENY at step 6b |
 | J.16.6 | any: cross-type clause subsumption | — | PERMIT |
@@ -135,6 +135,7 @@ Thumbprint URIs used as derived-token `iss`:
 | J.21.4 | Root iat is more than MAX_IAT_SKEW in the future | — | DENY at step 3f |
 | J.21.5 | Root lifetime exceeds MAX_TOKEN_LIFETIME | — | DENY at step 3h |
 | J.21.6 | Root iss does not match the verifying trust anchor | — | DENY at step 3k |
+| J.21.7 | Root carries an empty all constraint | — | DENY at step 3n/4o |
 
 ## J.1 Minimal valid root token, single-token chain
 
@@ -10324,10 +10325,10 @@ eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29s
 
 ## J.16.3 any: empty derived any
 
-format: any[...] -> any[]. §4.5: derived any MUST contain at least one clause.
+format: any[...] -> any[]. §4.5: an empty any is invalid in any position; rejected when the child's constraint trees are walked (step 4o).
 
 **Invocation:** tool `export`, args `{"format":"pdf","limit":10}`, now = `1704067500`  
-**Expected:** **DENY** at step 4p4
+**Expected:** **DENY** at step 3n/4o
 
 **Chain[0] (del_depth 0)** (signed by `control_plane`)
 
@@ -14191,6 +14192,104 @@ Pretty payload:
 Compact JWS:
 ```
 eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoienBRZ0o3bElGWTdCMUo3cTJlN1JmbzU1N1RQNHFMX2pmbl9zc1pxUjFLbyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg2In0.r8Ybbcy6VRS3gxtVnV5ejbNWx9zxBm7A5pIXDiqfBJI1c7JIiRLSe4AOGAPeNwOfVi-juoSzOv0MuJKSmdLbCg
+```
+
+---
+
+## J.21.7 Root carries an empty all constraint
+
+Single-token chain whose root constrains path with all([]). An empty conjunction would accept every value; it is rejected when the root's constraint trees are walked (step 3n).
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
+**Expected:** **DENY** at step 3n/4o
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"EdDSA","typ":"aat+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"all","constraints":[]}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-0000000000e7"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-0000000000e7",
+  "iss": "https://auth.example.com",
+  "iat": 1704067200,
+  "exp": 1704070800,
+  "del_depth": 0,
+  "del_max_depth": 3,
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  },
+  "authorization_details": [
+    {
+      "type": "attenuating_agent_token",
+      "tools": {
+        "read_file": {
+          "path": {
+            "constraint_type": "all",
+            "constraints": []
+          }
+        }
+      }
+    }
+  ]
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6ImFsbCIsImNvbnN0cmFpbnRzIjpbXX19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGU3In0` |
+| SHA-256(signing input), base64url | `Nqxik4aWq0oY-fxPsSZDr6QhZGzY8d9a9y3s68QOPHw` |
+| signature_b64 | `9qJu77tYtEaIJCEbMhkjuhqoi1g7wwLPjC8RU1XELZzglLpLEcGXcCNhovjk209ssV9tbDBRLG7kxuaVgMiCDQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6ImFsbCIsImNvbnN0cmFpbnRzIjpbXX19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGU3In0.9qJu77tYtEaIJCEbMhkjuhqoi1g7wwLPjC8RU1XELZzglLpLEcGXcCNhovjk209ssV9tbDBRLG7kxuaVgMiCDQ
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"EdDSA","typ":"aat-pop+jwt"}
+```
+Payload (JCS, this exact byte string is what is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"Nqxik4aWq0oY-fxPsSZDr6QhZGzY8d9a9y3s68QOPHw","aat_id":"019471f8-0000-7000-8000-0000000000e7","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000e87"}
+```
+Pretty payload:
+```json
+{
+  "jti": "019471f8-0000-7000-8000-000000000e87",
+  "iat": 1704067500,
+  "aat_id": "019471f8-0000-7000-8000-0000000000e7",
+  "aat_hash": "Nqxik4aWq0oY-fxPsSZDr6QhZGzY8d9a9y3s68QOPHw",
+  "aat_tool": "read_file",
+  "hta": {
+    "path": "/data/q3-report.pdf"
+  },
+  "aat_aud": "https://tools.example.com"
+}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTnF4aWs0YVdxMG9ZLWZ4UHNTWkRyNlFoWkd6WThkOWE5eTNzNjhRT1BIdyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg3In0` |
+| SHA-256(signing input), base64url | `tDP6Jgq46ePUE2LyjD2uPGI7hTv3AMmNcNk-ckl2kxE` |
+| signature_b64 | `p3o0kAqDpa8QqGfdQ4lAKlgJGvjmKHHkTchAsIe5Pr6ipmwF2mt88cyfM6n1BxoGip-AtTMrleo-fKpIlIN4Aw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZERTQSIsInR5cCI6ImFhdC1wb3Arand0In0.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiTnF4aWs0YVdxMG9ZLWZ4UHNTWkRyNlFoWkd6WThkOWE5eTNzNjhRT1BIdyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBlNyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwZTg3In0.p3o0kAqDpa8QqGfdQ4lAKlgJGvjmKHHkTchAsIe5Pr6ipmwF2mt88cyfM6n1BxoGip-AtTMrleo-fKpIlIN4Aw
 ```
 
 ---
