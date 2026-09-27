@@ -176,7 +176,11 @@ class TenuoGuard:
             warrant_chain: Parent warrants of a delegated warrant, root-first and
                 excluding the leaf, so the chain verifies back to a trusted root
                 without ``chain_scope``. Also used as the default parents for a
-                session-state warrant that does not carry its own stack.
+                session-state warrant that does not carry its own stack. The
+                chain is only verified on the Tier 2 path (``require_pop=True``,
+                the default). With ``require_pop=False`` the guard stays Tier 1:
+                it checks the leaf's grants and constraints locally and does not
+                cryptographically verify the chain, the leaf, or its root.
 
         Raises:
             ConfigurationError: If ``warrant`` is a multi-warrant stack and
@@ -1163,7 +1167,10 @@ class GuardBuilder:
                 as a WarrantStack string or root-first list
             signing_key: Signing key for Proof-of-Possession (recommended)
             warrant_chain: Parent warrants of a delegated ``warrant``,
-                root-first and excluding the leaf
+                root-first and excluding the leaf. Verified on the Tier 2 path,
+                which the builder always uses for a warrant; a ``TenuoGuard``
+                constructed with ``require_pop=False`` stays Tier 1 and does
+                not cryptographically verify the chain.
 
         Returns:
             self for chaining

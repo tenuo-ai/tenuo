@@ -38,7 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `warrant_chain=` raises `ConfigurationError`. Parents are passed to
   `enforce_tool_call` unchanged, so verification is the same as before: the
   chain must reach a trusted root and the leaf's constraints still apply.
-  When no chain is given, `chain_scope()` still applies.
+  When no chain is given, `chain_scope()` still applies. The chain is only
+  verified on the Tier 2 (Proof-of-Possession) path; Google ADK with
+  `require_pop=False` stays Tier 1 and does not cryptographically verify it.
 
 ### Fixed
 

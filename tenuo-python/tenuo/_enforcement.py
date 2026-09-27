@@ -1919,28 +1919,48 @@ def parents_from_presented_chain(
     return items
 
 
+# Mirrors ``MAX_STACK_SIZE`` in tenuo-core/src/wire.rs (256 KiB of CBOR). The
+# Rust constant is not exported to Python, so keep the two in sync by hand.
+_MAX_STACK_SIZE = 256 * 1024
+
+# Longest string that can legitimately encode a stack of _MAX_STACK_SIZE bytes.
+# The decoder allocates the decoded buffer before decode_stack applies its size
+# limit, so the input length is checked here, before any stripping or decoding.
+#   * Padded base64 of N bytes is 4 * ceil(N / 3) chars (unpadded is shorter).
+_MAX_STACK_B64_CHARS = 4 * -(-_MAX_STACK_SIZE // 3)  # 349,528
+#   * encode_pem_stack wraps the body at 64 chars per line; allow CRLF endings.
+_PEM_LINE_CHARS = 64
+_PEM_NEWLINE_CHARS = 2 * -(-_MAX_STACK_B64_CHARS // _PEM_LINE_CHARS)
+#   * Plus its header and footer lines, each with a CRLF.
+_PEM_ARMOR_CHARS = len("-----BEGIN TENUO WARRANT CHAIN-----") + len("-----END TENUO WARRANT CHAIN-----") + 2 * 2
+_MAX_WARRANT_TOKEN_CHARS = _MAX_STACK_B64_CHARS + _PEM_NEWLINE_CHARS + _PEM_ARMOR_CHARS  # 360,524
+
+
 def _decode_warrant_token(token: str, *, what: str) -> List[Any]:
-    """Decode a base64 warrant token into a root-first list of warrants.
+    """Decode a base64 or PEM warrant token into a root-first list of warrants.
 
-    Accepts an encoded WarrantStack (which also covers a single-warrant
-    token) and falls back to ``Warrant.from_base64`` for tokens the stack
-    decoder rejects. Raises ConfigurationError when neither decodes.
+    ``decode_warrant_stack_base64`` accepts an encoded WarrantStack and every
+    single-warrant form ``Warrant.from_base64`` accepts (URL-safe base64, PEM,
+    whitespace-wrapped), returning a one-element list for the latter.
+
+    Raises:
+        ConfigurationError: If the token is empty, longer than any encoding of
+            a maximum-size stack (checked before decoding), or does not decode.
     """
-    from tenuo_core import Warrant, decode_warrant_stack_base64
+    from tenuo_core import decode_warrant_stack_base64
 
+    if len(token) > _MAX_WARRANT_TOKEN_CHARS:
+        raise ConfigurationError(
+            f"{what} is {len(token)} characters, exceeding the {_MAX_WARRANT_TOKEN_CHARS} character "
+            f"limit for an encoded warrant stack ({_MAX_STACK_SIZE} bytes)."
+        )
     text = token.strip()
     if not text:
         raise ConfigurationError(f"{what} is an empty string")
     try:
-        stack = list(decode_warrant_stack_base64(text))
-        if stack:
-            return stack
-    except Exception:
-        pass  # Not a WarrantStack; try a plain single-warrant token.
-    try:
-        return [Warrant.from_base64(text)]
+        return list(decode_warrant_stack_base64(text))
     except Exception as e:
-        raise ConfigurationError(f"Failed to decode {what} as a warrant or WarrantStack token: {e}") from e
+        raise ConfigurationError(f"Failed to decode {what}: {e}") from e
 
 
 def _coerce_chain_entry(entry: Any, *, what: str, allow_bound: bool) -> Any:

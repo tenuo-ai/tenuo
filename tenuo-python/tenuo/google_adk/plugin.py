@@ -135,7 +135,9 @@ class TenuoPlugin(BasePlugin):
             warrant_chain: Parent warrants of a delegated warrant, root-first and
                   excluding the leaf. ``warrant`` (or the session-state value)
                   may instead carry the whole chain as a WarrantStack string or
-                  root-first list; see ``TenuoGuard``.
+                  root-first list; see ``TenuoGuard``. Verified only when
+                  ``require_pop=True``; with ``require_pop=False`` the plugin
+                  stays Tier 1 and does not cryptographically verify the chain.
         """
         if BasePlugin is object:
             self.name = name

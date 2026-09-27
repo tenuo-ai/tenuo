@@ -174,7 +174,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         from .bound_warrant import BoundWarrant as _BoundWarrant
 
         bound_warrant = getattr(self, "_bound_warrant", None)
-        if bound_warrant:
+        if bound_warrant is not None:
             from tenuo_core import Warrant as _Warrant
 
             if not isinstance(bound_warrant, _Warrant):
@@ -495,11 +495,11 @@ def guard(
         # Delegated warrant with its parents:
         tools = guard([search], leaf.bind(key), warrant_chain=[root])
     """
+    # Split once, before the empty-tools shortcut, so a malformed or empty
+    # chain always fails here rather than per tool (or not at all).
+    bound, warrant_chain = split_presented_warrant(bound, warrant_chain)
     if not tools:
         return []
-
-    # Split once so a malformed stack fails here rather than per tool.
-    bound, warrant_chain = split_presented_warrant(bound, warrant_chain)
     return [
         TenuoTool(
             t, strict=strict, bound_warrant=bound,

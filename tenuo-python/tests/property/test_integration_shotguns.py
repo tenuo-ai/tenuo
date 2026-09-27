@@ -77,7 +77,7 @@ class TestPartialConfigPassthrough:
             pytest.skip("crewai not installed")
 
         source = inspect.getsource(CrewAIGuard._authorize_async)
-        assert "if self._warrant and self._signing_key:" in source, (
+        assert "if self._warrant is not None and self._signing_key is not None:" in source, (
             "_authorize_async must have the same Tier 2 gating pattern"
         )
 
@@ -101,8 +101,8 @@ class TestPartialConfigPassthrough:
                 break
 
     @pytest.mark.parametrize("module_path,method_name,pattern", [
-        ("tenuo.crewai", "_authorize", "if self._warrant and self._signing_key:"),
-        ("tenuo.crewai", "_authorize_async", "if self._warrant and self._signing_key:"),
+        ("tenuo.crewai", "_authorize", "if self._warrant is not None and self._signing_key is not None:"),
+        ("tenuo.crewai", "_authorize_async", "if self._warrant is not None and self._signing_key is not None:"),
     ])
     def test_tier2_gating_is_conjunctive(self, module_path, method_name, pattern):
         """Tier 2 gating uses AND — both must be set. Document this risk."""
