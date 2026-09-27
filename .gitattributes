@@ -44,3 +44,7 @@ docs/formal_verification/z3_bounds.py linguist-documentation
 /NOTICE text eol=lf
 /tenuo-python/LICENSE text eol=lf
 /tenuo-python/NOTICE text eol=lf
+/tenuo-core/LICENSE text eol=lf
+/tenuo-core/NOTICE text eol=lf
+/tenuo-wasm/LICENSE text eol=lf
+/tenuo-wasm/NOTICE text eol=lf
