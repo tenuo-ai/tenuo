@@ -3129,128 +3129,80 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision makes thirteen normative changes. They are breaking for
-implementations that followed the -01 text.
+This revision is reorganized and makes thirteen normative changes,
+which are breaking for implementations of -01. The test vectors in
+Appendix E encode the verifier-side changes.
 
-- **Explicit JWT typing.** Every AAT MUST carry a JWS Protected Header
-  `typ` value of `aat+jwt`. Every PoP JWT MUST carry `typ` of
-  `aat-pop+jwt`. Enforcement points MUST reject a missing or mismatched
-  `typ` at the header step (Section 8, steps 3a, 4a, and 7a). This
-  follows {{RFC8725}} Section 3.11 and matches the pattern used by DPoP
-  {{RFC9449}} (`dpop+jwt`). The -01 text defined no `typ` value.
-- **Audience defined as a presentation target; chain audience and
-  nonce added.** `aat_aud` is OPTIONAL and, when present, MUST identify
-  the party the PoP JWT is presented to, never a resource behind it
-  (Section 7.2, Section 8 step 7d). AATs MAY carry the standard `aud`
-  claim, checked for every token in the chain (Section 3.2, step 6c),
-  and PoP JWTs MAY carry an enforcement-point `nonce` (step 7h).
-  Deployments in which several enforcement points accept one chain
-  MUST use at least one of these or share `jti` state (Section 9.5).
-  Each mechanism follows an existing one: JWT `aud` {{RFC7519}},
-  Macaroon caveats and resource indicators {{RFC8707}}, and the DPoP
-  `htu` and server nonce {{RFC9449}}. The -01 text left audience to
-  deployment policy without defining what the value meant.
-- **`all` subsumption without one-to-one assignment.** A derived `all`
-  is valid if every parent clause subsumes at least one derived
-  clause. A single derived clause MAY satisfy several parent clauses.
-  Extra derived clauses remain permitted. The -01 text required a
-  one-to-one assignment of derived clauses to parent clauses, which
-  added backtracking without adding soundness and rejected valid
-  attenuations such as `all([wildcard, wildcard])` to `all([exact(5)])`.
-- **Root `iss` bound to its trust anchor.** A trust anchor is an
-  (issuer, public key) pair, and step 3k rejects a root whose `iss`
-  differs from the issuer of the anchor that verified it, as
-  {{RFC8725}} Section 3.8 requires. The -01 text checked only that
-  `iss` was a URI, so any configured anchor could assert any issuer.
-- **Root grants attenuate the request.** The root issuer verifies each
-  requested tool first, and the granted `authorization_details` MUST
-  attenuate the requested ones under Section 4.5. A request with no
-  grantable tool is rejected with `invalid_authorization_details`
-  (Section 6.1.3). The -01 text both allowed a subset grant and
-  required rejecting the whole request when any tool failed
-  verification.
-- **Empty `all` and `any` rejected.** An `all` or `any` constraint
-  with an empty `constraints` array is invalid in any position
-  (Section 4.5), checked in Section 8 steps 3n and 4o. An empty
-  conjunction accepts every value while appearing to constrain it.
-  The -01 text did not address `all` and required a non-empty `any`
-  only in the derived position.
-- **PoP bound to the exact leaf token.** PoP JWTs carry a REQUIRED
-  `aat_hash`, the digest of the leaf token's signing input, checked in
-  Section 8 step 7c, following DPoP's `ath`. In -01 the proof named
-  the leaf only by `jti`, which the deriver chooses, so a holder
-  upstream of the leaf could re-derive a sibling with the same `jti`
-  and reuse a captured proof.
-- **Fully-specified `alg`.** Ed25519 signatures use the JWS `alg`
-  value `"Ed25519"` ({{RFC9864}}); the deprecated polymorphic
-  `"EdDSA"` MUST NOT be used (Section 9.12). The -01 text used
-  `"EdDSA"`.
-- **Validation gaps closed.** Steps 3n and 4o reject constraint types the
-  enforcement point does not implement and constraints that are not
-  well-formed (Section 3.4), wherever they appear in the chain; steps
-  4b5 and 7c check claim types, and 7c requires `hta`; integers have
-  no fraction or exponent, audiences compare by exact string, and
-  `contains` and `subset` use set semantics (Sections 3.2 and 3.4);
-  numbers in arguments and constraints must survive the JCS round trip
-  (Section 3.4); constraint depth counting is defined; and
-  MAX_DELEGATION_DEPTH is at least 8. Steps 3b, 4b, and 7b reject JSON
-  objects with duplicate member names, steps 3a, 4a, and 7a process
-  `crit`, and steps 3m and 4n require the `tools` member. Replicas of
-  an enforcement point
-  share `jti` state (Section 7.3), and tools returning sensitive data
-  SHOULD get replay protection too (Section 9.5). The -01 text did not
-  address these.
-- **Optional and unnamed arguments.** A constraint-map entry can be
-  marked `optional: true`, so the argument may be omitted but is
-  constrained when present, and the reserved `*` entry permits
-  arguments the map does not name; an empty map is shorthand for `*`
-  (Section 3.3). The attenuation rules for both are in Section 4.5, and
-  steps 4p and 6b implement them. In -01 a tool with an optional
-  argument could not be constrained at all without denying one of its
-  call shapes. This responds to findings from an independent
-  implementation (see Acknowledgments).
-- **Registration requirements.** A subsumption procedure must run in
-  polynomial time, with the existing conservative-strategy fallback for
-  more expressive languages, and a registration states its worst-case
-  cost (Section 5.1). Registrations list only valid cross-type pairs,
-  and a parent `wildcard` subsumes every type implicitly. Evaluating an
-  unregistered constraint type is non-conforming (Section 5). The -01
-  text required only termination and did not state these consequences.
-- **Presentation object.** Section 7.4 defines the JSON object that
-  carries a chain and its PoP JWT (`aat_chain`, `aat_pop`) to an
-  enforcement point, leaving where it is carried to protocol bindings.
-  The -01 text defined neither, so two implementations could not
-  exchange a presentation without inventing one.
-- **Key sourcing and holder keys.** Verification keys come only from
-  trust anchors or `cnf.jwk`, never from JWS header parameters (Section
-  3.5); a child delivered across a process or trust boundary is not
-  bound to its parent's key (Section 6.2, step 8); and claims
-  or `authorization_details` entries other than the AAT entry carry no
-  authority in derived tokens (Section 3.3).
+Normative changes:
 
-Editorial and alignment changes, not intended to change verifier
-behavior relative to the Section 8 algorithm in -01:
+- `typ` is required: `aat+jwt` for AATs and `aat-pop+jwt` for PoP JWTs
+  (Section 3.5; steps 3a, 4a, and 7a).
+- Ed25519 signatures use the `alg` value `"Ed25519"`; `"EdDSA"` is not
+  used ({{RFC9864}}; Section 9.12).
+- A root token's `iss` must match the issuer of the trust anchor that
+  verified it (Section 2; step 3k).
+- PoP JWTs carry `aat_hash`, which binds the proof to the exact leaf
+  token (Section 7.2; step 7c).
+- Audience and replay: `aat_aud` names the party a proof is presented
+  to, AATs may carry `aud`, and PoP JWTs may carry an enforcement-point
+  `nonce`; deployments in which several enforcement points accept one
+  chain use at least one of these or share `jti` state, which replicas
+  of one enforcement point always share; tools returning sensitive data
+  SHOULD also get replay protection (Sections 7.2, 7.3, and 9.5; steps
+  6c, 7d, 7h, and 7i).
+- Optional and unnamed arguments: the `optional` member and the
+  reserved `*` entry, with their attenuation rules (Sections 3.3, 4.5,
+  and 9.13; steps 4p and 6b).
+- One derived `all` clause may satisfy several parent clauses (Section
+  4.5).
+- Empty `all` and `any` are invalid in any position (Section 4.5; steps
+  3n and 4o).
+- Validation: constraint types and well-formedness are checked
+  throughout the chain; claim types are checked and `hta` is required;
+  integers have no fraction or exponent; audiences compare by exact
+  string; `contains` and `subset` use set semantics; constraint depth
+  counting is defined; numbers must survive the JCS round trip;
+  duplicate JSON members are rejected; `crit` is processed; `tools` is
+  required; and MAX_DELEGATION_DEPTH is at least 8 (Sections
+  3.2, 3.4, 3.5, and 4.3; steps 3, 4, 6b, and 7a-7c).
+- Keys: verification keys come only from trust anchors or `cnf.jwk`,
+  never from header parameters; a child sent across a process or trust
+  boundary is not bound to its parent's key; and entries other than the
+  AAT entry carry no authority in derived tokens (Sections 3.3, 3.5,
+  and 6.2).
+- Root issuance: the granted authorization details attenuate the
+  request, and a request with nothing grantable fails with
+  `invalid_authorization_details` (Section 6.1.3).
+- The presentation object, `aat_chain` and `aat_pop` (Section 7.4).
+- Registration: subsumption procedures run in polynomial time (with a
+  conservative fallback for expressive languages), registrations state
+  their cost and list only valid cross-type pairs, a parent `wildcard`
+  subsumes every type, and evaluating an unregistered type is
+  non-conforming (Section 5).
 
-- Section 7.3 no longer repeats the PoP checks; it points to Section
-  8, step 7. The -01 list there disagreed with the -01 algorithm:
-  `aat_tool` must equal the invoked tool (step 7e), and `hta` must
-  match the invocation arguments after JCS canonicalization (step 7f).
-- The JWS Protected Header requirements are collected in Section 3.5.
-- Section 1.3 states why HMAC chaining is unsuitable for the target
-  verifier model and relates AAT to SPKI/SDSI {{RFC2693}}. Section
-  9.1.1 adds parent- and intermediate-token replay to the mitigated
-  threats. Section 9.4 records that AATs lack Macaroons' re-keying on
-  attenuation, what bounds that exposure instead, and how a holder can
-  approximate re-keying by destroying the parent's holder key. These
-  respond to Neil Madden's list review of -01.
-- Byte-exact JWS test vectors are published as described in
-  Appendix E. They encode the verifier-side normative changes above;
-  a -01 implementation will disagree on `typ`, audience mismatch
-  handling, the `all` clause-reuse cases, root `iss` binding,
-  `aat_hash`, the `alg` value, empty `all`/`any`, optional and
-  unnamed arguments, and the new validation checks.
-- Section 4.5 uses one subsumption direction throughout: the parent
-  constraint subsumes the derived one. The -01 text mixed both
-  directions.
-- The registration template example now gives cross-type pairs in
-  (parent, child) order.
+Structure and editorial changes, with no change to verifier behavior:
+
+- Sections follow a token's lifecycle. The extension registry moved
+  from 3.5 to 5, root issuance from 3.7 to 6.1, derivation from 6 to
+  6.2, proof of possession from 5 to 7, and verification from 7 to 8;
+  Security Considerations and later sections moved down by one. Within
+  Security Considerations, -01's Unknown Constraint Types subsection is
+  folded into Sections 3.4 and 9.6, so the subsections after it move
+  up by one. The JWS Protected Header requirements are collected in a
+  new Section 3.5, and Implementation Status is now Appendix F, after
+  the new Test Vectors appendix. Algorithm steps keep their -01 labels;
+  steps 6c, 7h, and 7i are new.
+- The Introduction sets out the mechanism and scope. Each rule is now
+  stated once, and verification checks are listed only in Section 8.
+  Section 4.5 gives its pairs as a table and uses one subsumption
+  direction. The comparison appendix covers only DPoP.
+- -01's list of PoP checks disagreed with its algorithm on `aat_tool`,
+  which must equal the invoked tool, and on `hta`, which is compared
+  after JCS canonicalization; -02 follows the algorithm (steps 7e and
+  7f), and Section 7.3 now points to it.
+- In response to Neil Madden's review of -01: Section 1.3 explains why
+  HMAC chaining does not fit and relates AATs to SPKI/SDSI, Section
+  9.1.1 covers replay of parent and intermediate tokens, and Section 9.4
+  covers re-keying and how destroying the parent's holder key
+  approximates it.
+- Byte-exact JWS test vectors are published (Appendix E).
