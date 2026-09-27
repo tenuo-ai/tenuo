@@ -411,10 +411,9 @@ Tier 2 provides cryptographic authorization:
      - Arguments satisfy constraints
      - Caller holds the warrant's private key
 
-Use Tier 2 when a verifier must check signed, holder-bound authority
-without trusting the caller's account of its permissions.
+Tier 2 gives a verifier proof of issued scope, holder possession, and narrowing delegation.
 
-Tier 1 enforces local policy in trusted application code:
+Tier 1 rejects out-of-policy calls in trusted application code:
   - See: tenuo-python/examples/openai/guardrails.py
 """)
 

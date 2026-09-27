@@ -128,9 +128,9 @@ For technical details, see **[Revocation](./spec/protocol-spec-v1#11-revocation)
 ## Production Deployment Policy
 
 > [!IMPORTANT]
-> **Choose the verification mode separately from where enforcement runs.**
+> **Tier 1 when trusted code owns the policy. Tier 2 when another component must verify the authority.**
 >
-> Tier 1 enforces application-owned local policy on the guarded path, including in production when trusted code is the trust boundary. Tier 2 adds signed, holder-bound authority that an independently configured verifier can check. If the agent process may be compromised, put enforcement and resource credentials outside its control. A warrant attached to a bypassable in-process wrapper leaves that process able to skip the check.
+> Tier 1 rejects out-of-policy tool calls on the guarded path, including calls a manipulated prompt induces. Tier 2 keeps those checks and adds signed, holder-bound warrants and delegation that can only narrow, so an independent verifier can check the caller locally. When the agent can skip the in-process guard, run that check in the component that performs the effect.
 
 ---
 
@@ -138,19 +138,22 @@ For technical details, see **[Revocation](./spec/protocol-spec-v1#11-revocation)
 
 **Tier 1** (local policy):
 - Tool allowlists and argument constraints in trusted application code
-- Trust boundary: the model proposes calls; trusted code enforces policy before dispatch
-- Blocks out-of-policy calls on the guarded path, including calls induced by prompt injection
-- Leaves issuer authority, holder proof, and delegation chains unchecked
-- Leaves a process that can bypass the guard, or reach the resource directly, able to skip the check
+- The model proposes calls; trusted code rejects anything outside policy before dispatch
+- Holds in production when that code is the trust boundary
+- A manipulated prompt cannot authorize a call the policy rejects
+
+Issuer, holder, and delegation signatures are Tier 2.
 
 **Tier 2** (signed authority):
-- Signed, holder-bound warrants and delegation that can only narrow scope
-- An independently configured verifier checks authority against trusted roots
-- Signed authorization receipts when receipt signing and collection are configured
-- A warrant proves the scope of issued authority. A signed receipt records an authorization decision. Neither record proves that the downstream effect completed
-- Leaves a compromised agent process able to skip an in-process check. Isolation requires enforcement outside that process
+- The same tool and argument checks, carried in a signed warrant
+- Holder-bound proof of possession on each call
+- Delegation that can only narrow scope, verified back to trusted roots
+- An independent verifier checks this locally, from trusted roots it configured
+- Signed receipts of the presented authority and the verifier's decision, including denials, when receipt signing is configured
 
-**When to use**: Tier 1 when trusted application code owns and enforces the policy. Tier 2 when the effecting component must independently verify issuer-granted, holder-bound authority, including across agents or processes. For either tier, close alternate effect paths when the agent can bypass the hook.
+A warrant is proof of what was authorized. A signed receipt is proof of what the verifier decided. Run the verifier on the path that performs the effect when the agent can skip an in-process guard.
+
+**When to use**: Tier 1 when trusted application code owns the policy. Tier 2 when the component that performs the effect must verify issuer-granted, holder-bound authority, including across agents or processes.
 
 See integration docs ([OpenAI](./openai.md#tier-1-security-model), [ADK](./google-adk.md#tier-1-security-model)) for detailed threat models.
 

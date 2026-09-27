@@ -4,10 +4,8 @@ Tier 1 API Demo (The "3-line API")
 This example demonstrates the simplified Tier 1 API for protecting tools
 and managing authority scopes.
 
-This demo uses Tier 1 guardrails: local policy, no cryptography.
-    Use Tier 2 when a verifier must check signed, holder-bound authority.
-    See examples/openai/warrant.py. Neither mode isolates a process that
-    can bypass the guard.
+This demo uses Tier 1: local policy checks that reject out-of-policy tool calls.
+    See examples/openai/warrant.py for signed, holder-bound authority.
 """
 
 import asyncio

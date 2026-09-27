@@ -46,7 +46,7 @@ def demo_tier1_guardrails():
     """
     Tier 1: Simple constraint checking without cryptography.
 
-    Enforces local policy in trusted application code before tool execution.
+    Rejects out-of-policy tool calls in trusted application code before execution.
     """
     print("=" * 60)
     print("Demo 1: Tier 1 Guardrails")
@@ -323,15 +323,13 @@ def main():
 Tenuo provides two tiers of protection for OpenAI Agents:
 
 Tier 1 (Guardrails):
-  - Runtime constraint checking
+  - Rejects out-of-policy tool calls in trusted code
   - No cryptography needed
-  - Local policy in trusted application code
   - Use: create_tier1_guardrail()
 
 Tier 2 (Warrants):
-  - Cryptographic authorization
-  - Proof-of-Possession verification
-  - Use when a verifier must check signed, holder-bound authority
+  - The same policy checks, plus signed holder-bound authority
+  - Proof-of-Possession on each call
   - Use: create_tier2_guardrail()
 
 Both integrate via the input_guardrails parameter:

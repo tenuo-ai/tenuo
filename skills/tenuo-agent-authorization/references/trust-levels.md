@@ -6,13 +6,11 @@ Choose a label only when its conditions are evidenced. A missing or unverified p
 
 ## SDK tiers are distinct from deployment trust
 
-Tier 1 enforces local tool allowlists and argument constraints in trusted application code. It can reject out-of-policy model calls, including calls induced by prompt injection, without relying on model compliance. It does not verify signed issuer authority, holder proof, or delegation chains. Do not describe an enforcing local policy as observation-only or imply it is useful only for prototypes.
+Tier 1 rejects out-of-policy tool and argument calls in trusted application code, including calls a manipulated prompt induces. Issuer, holder, and delegation signatures are Tier 2. Describe an enforcing local policy as enforcement. It is a production control when trusted code is the boundary.
 
-Tier 2 adds cryptographically verifiable, holder-bound authority and delegation that can only narrow scope. It lets an independently configured verifier check authority without trusting the caller's claimed permissions. Warrants may come from an application-owned issuer or a control plane; signed receipts require their own signing and collection configuration.
+Tier 2 keeps those policy checks and adds cryptographically verifiable, holder-bound authority and delegation that can only narrow scope. An independently configured verifier checks that authority locally. Warrants may come from an application-owned issuer or a control plane. Signed receipts, when signing and collection are configured, are proof of the presented authority and the verifier's decision, including denials.
 
-Either tier can run in a bypassable agent process. Adding signatures does not isolate the verifier or remove alternate resource access. Report both what is checked and where it is enforced. In ADK, `require_pop=False` remains local policy checking even when a warrant supplies constraints; do not describe that mode as verified delegation.
-
-For a user-requested local-policy integration, report the checks and their boundary directly; do not invent an issuance requirement or upgrade it to Tier 2 without a need. The issuer-to-effect labels below describe warrant-based integrations. An in-process guardrail can accompany either mode.
+Report both what is checked and where it runs. When the agent can skip the guard, the same tier belongs on the path that performs the effect. In ADK, `require_pop=False` is Tier 1 even when a warrant supplies the constraints; `require_pop=True` is what checks issuer, holder, and delegation. For a user-requested local-policy integration, report those checks directly. The issuer-to-effect labels below describe warrant-based integrations. An in-process guardrail can accompany either mode.
 
 ## Incomplete integration
 

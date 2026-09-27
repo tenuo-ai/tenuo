@@ -4,7 +4,7 @@ Tenuo Google ADK Integration - Warrant-Based Authorization
 Provides constraint enforcement for Google ADK agents with two tiers:
 
 **Tier 1 (Guardrails)**: Runtime constraint checking without cryptography.
-    Enforces local policy in trusted application code. Uses `allows()` for logic checks.
+    Rejects out-of-policy tool calls in trusted application code. Uses `allows()` for logic checks.
 
 **Tier 2 (Warrant + PoP)**: Cryptographic authorization with Proof-of-Possession.
     Uses warrant.authorize() which verifies signature, skill grant, AND constraints.
@@ -462,9 +462,8 @@ class TenuoGuard:
         # =======================================================================
         # Tier 1: Guardrails-Only Authorization (Logic Checks)
         # =======================================================================
-        # Local policy checks. A warrant on this path is a constraint source.
-        # Issuer, holder, and delegation signatures are not verified.
-        # An in-process guard the agent can bypass is not a sandbox.
+        # Tier 1: local policy checks. A warrant on this path supplies constraints.
+        # Issuer, holder, and delegation signatures are checked on the require_pop path.
 
         # Determine constraints source
         if use_direct_constraints:

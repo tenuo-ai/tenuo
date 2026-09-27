@@ -110,13 +110,15 @@ client = GuardBuilder(openai.OpenAI()).build()  # What tools are allowed?
 
 **Why Tier 1 exists:**
 
-The model proposes tool calls. Trusted application code can reject calls outside a tool allowlist or argument policy before they run. That check holds on the guarded path in one process or across many. It leaves issuer authority, holder proof, and delegation chains unchecked.
+Models invent tool calls. They name tools that were not allowed, pass arguments outside range, and try path traversal or a metadata URL. Tier 1 rejects those on the guarded path before the call runs. The policy is in trusted code, so changing the prompt cannot widen it. `Subpath` blocks traversal outside its root. `UrlSafe` rejects a literal private or metadata URL. Closed-world argument checks reject names the policy did not list.
+
+Issuer, holder, and delegation checks are Tier 2.
 
 **Why Tier 2 exists:**
 
-When another component must check authority without trusting the caller's account of its permissions, Tier 2 adds signed, holder-bound warrants and Proof-of-Possession. Delegation can only narrow that authority. An application-owned issuer can mint the warrant.
+Tier 2 keeps those tool and argument checks and puts them in a signed warrant. Proof-of-possession binds each call to the holder. Delegation can only narrow the parent's scope. A downstream tool or agent verifies the chain against trusted roots it configured, locally, with no runtime network call. Your own issuer can mint the warrant.
 
-Verification mode and enforcement placement are separate. If the agent can modify the guard or reach the resource directly, put enforcement and resource credentials outside its control. Signatures on a bypassable wrapper leave that process able to skip the check.
+When the agent can skip the guard and reach the resource, run that verification in the component that performs the effect.
 
 ```
 Which tier should I use?
@@ -138,10 +140,11 @@ Which tier should I use?
 - Example: an application-owned OpenAI or ADK guard
 
 **Tier 2**: Cryptographic authorization (warrant + PoP)
+- The same tool allowlists and argument constraints, carried in the warrant
 - Warrant signature validation via `warrant.authorize()`
 - Proof-of-Possession per tool call
 - Delegation chain verification against trusted roots
-- Use when the effecting component must verify issuer-granted authority
+- Signed receipts of the authorization decision, when configured
 - Example: agent-to-agent calls, or a tool service that checks issuer-granted authority itself
 
 **Both tiers must be supported.** Users choose the verification mode separately from where enforcement runs.

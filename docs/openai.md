@@ -11,15 +11,15 @@ Tenuo integrates with OpenAI's APIs using a **two-tier** protection model:
 
 | Tier | Setup | Best For |
 |------|-------|----------|
-| **Tier 1: Guardrails** | Inline constraints | Application-owned local policy, quick hardening |
+| **Tier 1: Guardrails** | Inline constraints | Policy in trusted code, including production |
 | **Tier 2: Warrants** | Warrant + signing key | Verifiable delegated authority, distributed enforcement |
 
-**Tier 1** enforces application-defined tool and argument policies with minimal setup. It blocks out-of-policy calls on the guarded path, including calls induced by prompt injection, without relying on the model to obey instructions.
+**Tier 1** rejects out-of-policy tool and argument calls in trusted application code. A manipulated prompt cannot authorize a call the policy rejects.
 
-**Tier 2** adds verifiable authority: signed warrants, holder proof, and delegation that can only narrow authority. An independently configured verifier can check that authority locally without trusting the caller's account of its permissions. Warrants can come from your own issuer or a control plane.
+**Tier 2** keeps those checks and adds signed warrants, holder proof, and delegation that can only narrow. An independently configured verifier checks that authority locally. Your own issuer or a control plane can mint the warrant.
 
 > [!IMPORTANT]
-> **Production Recommendation**: Use **Tier 2** when tools must verify issuer-granted authority independently of the caller. For either tier, enforcement must cover the actual effect path. This client wrapper checks returned tool calls; it is not a sandbox or a substitute for verification at a separate tool service. If the agent can modify the wrapper or call the resource directly, place enforcement and resource credentials outside its control.
+> **Production Recommendation**: Use **Tier 1** when trusted application code owns the policy. Use **Tier 2** when a tool or downstream service must verify issuer-granted, holder-bound authority on its own. This wrapper checks the tool calls the model returns before they run. When the agent can skip the wrapper, run that check in the component that performs the effect.
 
 ---
 
@@ -40,14 +40,13 @@ uv pip install tenuo
    - A separate verifier must check issuer, holder, or delegation -> Tier 2 (question 2).
 
 2. **Do you need independently verifiable issuer authority, holder proof, or delegation?**
-   - Use Tier 2, whether the workflow is single-process or distributed.
-   - If the agent can modify its runtime, also enforce at an effect boundary outside its control.
+   - Yes -> Tier 2. The verifier checks issuer, holder, and narrowing delegation locally, in one process or across many.
 
 3. **Are you using the OpenAI Agents SDK?**
    - Yes -> Use `create_tier1_guardrail()` or `create_tier2_guardrail()`
    - No -> Use `guard()` or `GuardBuilder()`
 
-**TL;DR:** Tier 1 enforces local policy. Tier 2 adds verifiable delegated authority. Neither choice alone determines whether the agent can bypass the enforcement boundary.
+**TL;DR:** Tier 1 rejects out-of-policy calls in trusted code. Tier 2 adds signed, holder-bound authority an independent verifier can check. Run the check on the path that performs the effect.
 
 ---
 
@@ -160,41 +159,31 @@ Tier 1 provides deterministic allowlist and argument checks, not another prompt 
 | Disallowed URL | URL constraints | `UrlSafe()` rejects a literal metadata-service URL such as `http://169.254.169.254/` |
 | Path traversal | Path constraints | `Subpath("/data")` rejects traversal outside the permitted root |
 
-**Why this matters:** changing the prompt does not change a policy held in trusted code. Tier 1 can contain the consequences of a manipulated model by rejecting out-of-policy calls. It does not detect every prompt injection or reject harmful actions that are still within policy.
+**Why this matters:** the policy lives in trusted code, outside the model. A fully manipulated prompt still cannot get an out-of-policy call through the guard. Tighten the policy for actions that are allowed and still harmful. Symlinks, URL redirects, DNS resolution, and shell behavior need a control at the resource too.
 
-The checks must cover the path that actually performs the effect and the values it uses. Filesystem symlinks and races, URL redirects and DNS resolution, and shell program behavior still require resource-appropriate controls. A wrapper does not protect alternate paths that bypass it.
+### Where Tier 2 and placement take over
 
-### What Tier 1 Does NOT Protect Against
+| Need | What covers it |
+|------|----------------|
+| **Forged or widened authority** | Tier 2: issuer signature, holder proof, and delegation that can only narrow |
+| **A service that must check the caller** | Tier 2: local verification against trusted roots |
+| **Proof of the allow or deny decision** | Tier 2 signed receipts, when configured. Tier 1 still emits audit events |
+| **A caller that can skip this wrapper** | The same tier, running in the component that performs the effect |
 
-| Threat | Protection | Why Not |
-|--------|------------|---------|
-| **Insider Threats** | None | Developer can modify code to bypass guards |
-| **Container Compromise** | None | Attacker with code execution can disable guards |
-| **Forged or modified authority** | Not checked | Local policy checks do not authenticate a warrant issuer or holder |
-| **Verifiable delegation** | Not provided | Tier 1 does not verify a chain of delegated authority |
+The guard runs on the client you wrap. A direct client skips it:
 
-**Example Bypass**:
 ```python
-# Production code with guard
 client = guard(openai.OpenAI(), allow_tools=[...])
-
-# Insider threat: Just remove the guard
-client = openai.OpenAI()  # Bypassed
+client = openai.OpenAI()  # this call is outside the guard
 ```
 
 ### When to Use Tier 1
 
 **Good for**:
 
-- Application-owned policies enforced in a trusted runtime, including production deployments that need local checks rather than delegated credentials.
-- Blocking model-selected calls outside a tool or argument policy.
-- Prototyping and defense in depth alongside other access controls.
-
-**Not a substitute for**:
-
-- Verifying who issued authority, which holder may exercise it, or whether delegation narrowed it.
-- An independent enforcement boundary when the agent can execute arbitrary code or access the resource directly.
-- Signed authorization evidence when that is an audit requirement. Tier 1 can still produce ordinary audit events.
+- Production agents whose trusted code holds the tool and argument policy.
+- Rejecting model-chosen calls outside that policy, including calls from a manipulated prompt.
+- A local check beside network and credential controls.
 
 ### When to Upgrade to Tier 2
 
@@ -206,12 +195,13 @@ Upgrade when you need:
 4. **Audit Requirements**: Need verifiable authority and, with receipt signing configured, signed records of authorization decisions
 
 **Tier 2 adds**:
+- The same tool allowlists and argument constraints, carried in the warrant
 - Warrant signatures (cryptographic authorization)
 - Proof-of-Possession (PoP) per tool call
 - Cross-process verification against independently configured trusted roots
-- Signed authorization receipts when receipt signing and collection are configured
+- Signed receipts of the authority presented and the verifier's decision, including denials, when receipt signing is configured
 
-A warrant proves the scope of issued authority; a signed receipt records an authorization decision. Neither alone proves that the downstream effect completed. Tier 2 does not require a hosted control plane: an application-owned issuer can mint warrants.
+A warrant is proof of the scope that was issued. A signed receipt is proof of what the verifier decided. Your own issuer can mint the warrant. Completion of the downstream effect is a separate record.
 
 **Migration is simple**:
 ```python
@@ -224,13 +214,11 @@ client = guard(openai.OpenAI(), warrant=my_warrant, signing_key=agent_key)
 
 ### Bottom Line
 
-**Tier 1 enforces local policy. Tier 2 verifies delegated authority.** Both can reject out-of-policy calls on their protected paths; Tier 2 additionally authenticates signed authority, checks holder proof, and verifies delegation back to trusted roots.
+**Tier 1 rejects out-of-policy calls in trusted code. Tier 2 keeps those checks and adds signed authority.** The prompt cannot widen a Tier 1 policy. An independent verifier accepts a Tier 2 warrant only when the issuer, the holder, and any narrowing delegation all check out.
 
-Choose the verification mode separately from the enforcement location:
-
-- Use Tier 1 when trusted application code owns and enforces the policy.
-- Use Tier 2 when the effecting component must independently verify issuer-granted, holder-bound authority, including across agents or processes.
-- If the agent process may be compromised, put enforcement and resource credentials outside its control and close alternate effect paths. Adding a warrant to a bypassable wrapper does not create that isolation.
+- Use Tier 1 when trusted application code owns the policy.
+- Use Tier 2 when the component that performs the effect must verify issuer-granted, holder-bound authority, including across agents or processes.
+- When the agent can skip an in-process wrapper, run that same check in the component that performs the effect.
 
 ---
 

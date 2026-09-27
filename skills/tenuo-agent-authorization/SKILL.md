@@ -14,7 +14,7 @@ Identify the action-selecting process, the effecting component, every direct or 
 - An **in-process guardrail** limits calls reaching a wrapper. It is not an independent boundary when the agent process can bypass it or reach the resource directly.
 - **Effect-boundary enforcement** verifies in a server, gateway, sidecar, worker, or tool host outside the agent's authority before performing the effect.
 
-Distinguish SDK mode from deployment isolation: Tier 1 enforces local policy; Tier 2 adds signed, holder-bound, verifiably delegated authority. Neither mode alone prevents process-level bypass. When a user requests local policy only, preserve that scope and report its actual checks rather than imposing the warrant issuance/completion gate below. Read [Integration trust levels](references/trust-levels.md) for the tier-to-guarantee mapping.
+Tier 1 rejects out-of-policy calls in trusted code, including calls a manipulated prompt induces. Tier 2 keeps those checks and adds signed, holder-bound authority and delegation that can only narrow, which an independent verifier can check. Describe a requested local-policy integration by those checks, as enforcement. Read [Integration trust levels](references/trust-levels.md). When the agent can skip the guard, say where the same check has to run. Do not invent a warrant-issuance requirement for a local-policy request.
 
 If an original unguarded application route remains, close it or report the integration as incomplete; a residual-risk disclaimer does not make that route protected. Read [Architectural patterns](references/architectural-patterns.md) only when the enforcement location is undecided or the task changes deployment topology.
 
