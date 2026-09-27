@@ -8,6 +8,8 @@ Read this reference before declaring an integration secure or production-ready. 
 
 **Leaving the original credential or route available.** Protecting one tool is ineffective if the agent can use the underlying API key, database client, queue producer, administrative endpoint, or alternate tool. Inventory and close every route to the effect.
 
+**Mistaking an export change for removal.** Test the original defining module and effect method, including direct construction of an effect client. Removing a package re-export or naming a singleton `_private` leaves ordinary direct access available in languages such as Python. Encapsulate the implementation behind the verified path or guard the original effect method itself; do not count a disclaimer as closing that path.
+
 **Verifying after the effect.** Logging, callbacks, or post-tool hooks cannot prevent an action that already ran. The verifier must complete successfully before the first irreversible operation.
 
 **Failing open through framework behavior.** Exceptions, timeouts, retries, streaming fallbacks, and optional middleware can skip a check. Test each framework path and map denial to a terminal outcome.
@@ -26,6 +28,8 @@ Read this reference before declaring an integration secure or production-ready. 
 
 **Authorizing one representation and executing another.** Defaults, aliases, URL decoding, path resolution, Unicode normalization, redirects, and framework coercion can change meaning. Normalize once at the trusted boundary and execute the verified representation.
 
+**Using lossy numeric conversions.** Signed/unsigned casts, floating-point precision loss, truncation, and unit conversion can change an authorized quantity. Restrict the accepted domain to values represented identically by the verifier and effect, or use checked conversion and reject overflow before either path. Test both representable edges and out-of-domain inputs.
+
 **Ignoring framework-inserted defaults.** A defaulted destination, method, tenant, namespace, or limit can materially change the effect even if absent from the model's call. Include effective values in authorization.
 
 **Assuming host schemas are authorization.** Type and shape validation answers whether input is valid, not whether this holder may perform this effect. Apply both schema validation and authority checks.
@@ -37,6 +41,10 @@ Read this reference before declaring an integration secure or production-ready. 
 **Missing time-of-check/time-of-use changes.** Paths, symlinks, DNS answers, mutable identifiers, and approval state can change after verification. Minimize the gap or use an operation that binds checking and use.
 
 ## Lifecycle and evidence mistakes
+
+**Giving the caller control of verification time.** An execution API that accepts an arbitrary `now` or `as_of` can make expired authority appear valid. Keep clocks in trusted verifier configuration; isolate deterministic test hooks from the production callable surface.
+
+**Accepting any error as a denial proof.** A missing holder key or malformed fixture can reject both valid and invalid delegations. Establish a working positive control with the same signer and transport, then vary the disputed policy property and assert the expected rejection. Caller-side `present` failures are not evidence that the receiving verifier denies the same input.
 
 **Equating PoP with replay prevention.** PoP binds a presentation to a holder and request. Rejecting a repeated presentation requires atomic nonce consumption; preventing duplicate effects requires idempotency or transactional deduplication.
 

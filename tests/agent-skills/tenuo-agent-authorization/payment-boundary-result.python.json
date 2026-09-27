@@ -1,24 +1,24 @@
 {
   "scenario": "payment-boundary-eval.md",
   "language": "python",
-  "evaluated_at": "2026-09-17",
-  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
-  "result": "pass",
-  "evidence_kind": "carried_forward",
+  "evaluated_at": "2026-09-26",
+  "model_class": "lower-cost coding model (claude-sonnet-5, one fresh authorized run with the skill)",
+  "result": "fail",
+  "evidence_kind": "fresh",
   "inputs": [
     "SKILL.md",
+    "references/native-tools.md",
     "references/python.md",
     "references/common-footguns.md",
-    "references/security-model.md",
-    "release.json"
+    "references/trust-levels.md"
   ],
-  "skill_fingerprint": "cc57552d1bad4fde15e2946804b70d639833328f46e399f23f6a35a20dc65942",
+  "skill_fingerprint": "557ac635f4cfc5210708ae3b1c729116e8e0e1735dc853988aa6c13acadc4863",
   "evidence": {
-    "sdk": "tenuo 0.3.0 from PyPI in a project .venv",
-    "tests": "16 passed (.venv/bin/pytest -q, rerun by the grader)",
-    "typecheck": "mypy --ignore-missing-imports payment_service: no issues (run by the grader)",
+    "sdk": "tenuo 0.3.1 from PyPI",
+    "tests": "10 passed; rerun by grader",
+    "typecheck": "mypy --check-untyped-defs: no issues in 4 source files",
     "critical_items": "passed",
-    "notes": "Verifier takes a base64 warrant chain and a PoP signature only; trusted roots come from PAYMENT_TRUSTED_ISSUERS or constructor injection. PaymentClient.transfer now requires a VerifiedTransfer matching the requested recipient/amount, and tests attempt both original bypass shapes (direct client call, old two-argument execute_transfer). Wider child delegation is proven at grant time via the SDK's MonotonicityError rather than by presenting a forged wider chain to the verifier. Report separates the in-process guardrail from a service boundary and disclaims replay, revocation, exactly-once, and intent."
-  },
-  "carried_forward_review": "Automated re-pin from v0.3.0 to v0.3.1 after the release was published. Only release.json and the pinned repository links changed; skill instructions did not. Before merging, confirm the linked examples at the new tag still match the reference prose, and rerun payment-boundary-eval.md if any behavioral input changed."
+    "notes": "Second fresh authorized run. All critical implementation checks pass: the raw effect is closure-private, original module-level bypass names are absent, receiving-boundary denials check specific errors and zero effects, and valid narrower delegation precedes a RangeExpanded widening rejection. Required reporting fails: the final report labels this a development loop despite issuance and holder presentation existing only in test fixtures. It correctly identifies same-process reflection/monkeypatch risks and does not claim replay prevention. Actual transcript reads determine inputs; no inventory script execution was observed.",
+    "required_reporting": "failed"
+  }
 }

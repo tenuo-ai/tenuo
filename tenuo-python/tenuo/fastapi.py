@@ -44,7 +44,7 @@ logger = logging.getLogger("tenuo.fastapi")
 
 # Use string forward refs or try import, FastAPI must be installed
 try:
-    from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
     from fastapi.responses import JSONResponse
     from fastapi.security import APIKeyHeader
 
@@ -52,6 +52,7 @@ try:
 except ImportError:
     # Allow import for type checking if needed, but raise at runtime use
     FastAPI = Any  # type: ignore
+    APIRouter = object  # type: ignore  # SecureAPIRouter raises ImportError at construction
     Header = Any  # type: ignore
     HTTPException = Any  # type: ignore
     def Depends(dep):  # type: ignore  # noqa: E301
@@ -671,7 +672,7 @@ async def extract_body_args(request: Request) -> Dict[str, Any]:
 # =============================================================================
 
 
-class SecureAPIRouter:
+class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
     """
     Drop-in replacement for FastAPI APIRouter with automatic Tenuo protection.
 
@@ -683,17 +684,27 @@ class SecureAPIRouter:
 
         @router.get("/users/{user_id}")  # Auto-protected as "users_read" (or similar)
         def get_user(user_id: str): ...
+
+        app.include_router(router)
+
+    This is a real ``APIRouter`` subclass, so ``app.include_router(router)``
+    and nested ``router.include_router(...)`` work on every supported FastAPI
+    version. (FastAPI 0.120+ includes routers lazily by reference, which a
+    delegating wrapper cannot satisfy: its routes were silently dropped.)
     """
 
     def __init__(self, *args: Any, tool_prefix: Optional[str] = None, require_pop: bool = True, **kwargs: Any) -> None:
         if not FASTAPI_AVAILABLE:
             raise ImportError("FastAPI is required for SecureAPIRouter")
 
-        from fastapi import APIRouter
-
-        self._router = APIRouter(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.tool_prefix = tool_prefix
         self.require_pop = require_pop
+
+    @property
+    def _router(self) -> "SecureAPIRouter":
+        """Backwards compatibility: this used to be a wrapper around ``_router``."""
+        return self
 
     def _get_tool_name(self, path: str, method: str, name: Optional[str] = None) -> str:
         """Infer tool name from route info."""
@@ -714,63 +725,52 @@ class SecureAPIRouter:
 
         return f"{prefix}{clean_path}_{suffix}"
 
-    def get(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+    def get(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:  # type: ignore[override]
         kwargs.pop("methods", None)  # Remove if present to avoid duplicate
         return self.api_route(path, methods=["GET"], tool=tool, **kwargs)
 
-    def post(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+    def post(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:  # type: ignore[override]
         kwargs.pop("methods", None)
         return self.api_route(path, methods=["POST"], tool=tool, **kwargs)
 
-    def put(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+    def put(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:  # type: ignore[override]
         kwargs.pop("methods", None)
         return self.api_route(path, methods=["PUT"], tool=tool, **kwargs)
 
-    def delete(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+    def delete(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:  # type: ignore[override]
         kwargs.pop("methods", None)
         return self.api_route(path, methods=["DELETE"], tool=tool, **kwargs)
 
-    def patch(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+    def patch(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:  # type: ignore[override]
         kwargs.pop("methods", None)
         return self.api_route(path, methods=["PATCH"], tool=tool, **kwargs)
 
-    def api_route(
+    def api_route(  # type: ignore[override]
         self,
         path: str,
-        methods: List[str],
+        methods: Optional[List[str]] = None,
         *args: Any,
         tool: Optional[str] = None,
         dependencies: Optional[List[Any]] = None,
         **kwargs: Any,
     ) -> Callable:
         """Add a route with auto-protection."""
+        methods = list(methods) if methods else ["GET"]
 
         def decorator(func: Callable) -> Callable:
             # Determine tool name
-            primary_method = methods[0] if methods else "GET"
-            actual_tool = tool or self._get_tool_name(path, primary_method, kwargs.get("name"))
+            actual_tool = tool or self._get_tool_name(path, methods[0], kwargs.get("name"))
 
-            # Create guard dependency
-            guard_dep = TenuoGuard(actual_tool)
-
-            # Append to dependencies
+            # The guard runs as a dependency, before the handler. The handler
+            # does not have to accept the SecurityContext for it to execute.
             final_deps = list(dependencies) if dependencies else []
-            # We add it as a dependency, so it runs before the handler.
-            # We don't necessarily inject the SecurityContext unless the user asks for it,
-            # but Depends() in the list ensures it executes.
-            final_deps.append(Depends(guard_dep))
+            final_deps.append(Depends(TenuoGuard(actual_tool)))
 
-            # Register with underlying router
-            return self._router.api_route(path, methods=methods, dependencies=final_deps, *args, **kwargs)(func)
+            return super(SecureAPIRouter, self).api_route(
+                path, *args, methods=methods, dependencies=final_deps, **kwargs
+            )(func)
 
         return decorator
-
-    def include_router(self, router: Any, *args: Any, **kwargs: Any) -> None:
-        self._router.include_router(router, *args, **kwargs)
-
-    # Delegate other methods to _router
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._router, name)
 
 
 __all__ = [

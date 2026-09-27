@@ -257,9 +257,47 @@ async with SecureMCPClient(
 tool argument. The PoP covers only the real tool arguments, excluding `_tenuo`.
 `MCPVerifier` strips the carrier before constraint extraction or tool dispatch
 and denies the request if `_meta.tenuo` and `_tenuo` are both present but differ.
-When using `TenuoMiddleware`, no tool signature change is needed. If a decorated
-tool calls `MCPVerifier` directly, declare `_tenuo: dict | None = None` and pass
-it into the arguments dict supplied to `verify()`.
+
+On the server, use a middleware so tool signatures stay plain: `TenuoMiddleware`
+on FastMCP, or `TenuoServerMiddleware` on the official SDK's `MCPServer`
+(`mcp>=2`). Both verify the envelope from either carrier and remove it before
+the SDK validates the arguments. A decorated tool cannot receive `_tenuo` as a
+parameter itself: the SDK builds a pydantic model from the signature, and
+pydantic rejects field names with a leading underscore. Only a raw `tools/call`
+handler that reads `params.arguments` directly can pass the carrier to
+`MCPVerifier.verify()` by hand.
+
+```python
+from mcp.server.mcpserver import MCPServer
+from tenuo import Authorizer, PublicKey
+from tenuo.mcp import MCPVerifier, TenuoServerMiddleware
+
+verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)]))
+authorization = TenuoServerMiddleware(verifier)
+mcp = MCPServer("app", middleware=[authorization])
+
+@authorization.tool(mcp)
+def read_file(path: str) -> str:
+    return open(path).read()
+```
+
+`TenuoServerMiddleware` requires registration through `@authorization.tool(mcp)`
+instead of `@mcp.tool()`. It uses the SDK's public decorator and forwards its
+options, including `name="alias"`. Registration and guarding happen together,
+so decorator order cannot leave the registered callback unguarded.
+The guard runs after SDK argument validation and refuses to
+execute if the final arguments differ from the verified request. Callers must
+explicitly supply defaults and sign the exact final values. Added defaults,
+coercions, transforming validators, changed argument names, nulls, and non-JSON
+Python values fail closed; only the SDK's injected `Context` is excluded.
+Keep protected effects out of validators and dependency resolvers and inside
+the guarded function body. This check does not repeat verification or consume
+the nonce twice.
+
+For a **low-level `Server` only**, `TenuoServerMiddleware(verifier,
+raw_handler=True)` permits an undecorated raw handler whose owner guarantees
+that it executes the returned clean argument map unchanged. Never use that
+option to bypass the guard on `MCPServer` tools.
 
 ### Pattern 3: MCPVerifier (Framework-Agnostic Server)
 

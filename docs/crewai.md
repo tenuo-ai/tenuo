@@ -11,15 +11,15 @@ Tenuo integrates with [CrewAI](https://crewai.com) using a **two-tier** protecti
 
 | Tier | Setup | Best For |
 |------|-------|----------|
-| **Tier 1: Guardrails** | Inline constraints | Quick hardening, prototyping, single-crew agents |
-| **Tier 2: Warrants** | Warrant + signing key | Hierarchical crews, distributed execution, audit requirements |
+| **Tier 1: Guardrails** | Inline constraints | Policy in trusted code, including production |
+| **Tier 2: Warrants** | Warrant + signing key | Hierarchical delegation, verifiable authority, distributed execution |
 
-**Tier 1** catches LLM mistakes and prompt injection with minimal setup. Constraints are defined inline in your code.
+**Tier 1** rejects out-of-policy tool and argument calls in trusted application code. A manipulated prompt cannot authorize a call the policy rejects.
 
-**Tier 2** adds cryptographic proof. Warrants are issued by a control plane and include Proof-of-Possession (PoP) for each tool call. Required for hierarchical crews and delegation.
+**Tier 2** keeps those checks and adds signed, holder-bound authority and delegation that can only narrow. Your own issuer or a control plane issues warrants; the holder supplies Proof-of-Possession (PoP) for each call. A crew or downstream tool can verify that authority on its own.
 
 > [!IMPORTANT]
-> **Production Recommendation**: Use **Tier 2** with `guard.register()` for production deployments. The hooks API intercepts all tool calls at the framework level—no wrapping needed.
+> **Production Recommendation**: Register `guard.register()` or the callable from `as_hook()` so CrewAI's hook intercepts tool calls at the framework, with no per-tool wrapper. Use **Tier 1** when the crew's trusted code owns the policy. Use **Tier 2** when a crew or downstream tool must verify signed, holder-bound authority. Both hooks are process-wide. When the agent can skip them, enforce in the component that performs the effect, outside the agent's control.
 
 ---
 
@@ -75,13 +75,15 @@ agent = Agent(
 # agent.execute("Read /etc/passwd") -- CrewAIConstraintViolation!
 ```
 
-### Crew-Scoped Hook
+### Class-Based Hook (Global Scope)
 
-For crew-scoped authorization (instead of global), use `as_hook()` with CrewAI's `@before_tool_call_crew` decorator:
+To organize authorization in a `@CrewBase` class, call `guard.authorize_hook(context)` from a method decorated with CrewAI's `@before_tool_call`:
+
+> **These hooks are global, not crew-scoped.** Constructing the class registers its method in CrewAI's process-wide hook registry. Its policy also applies to other crews in that process. Do not use separate class instances to isolate different crews' authorization policies; use separately protected tools or separate processes instead.
 
 ```python
-from crewai import CrewBase
-from crewai.hooks import before_tool_call_crew
+from crewai.project import CrewBase
+from crewai.hooks import before_tool_call
 from tenuo import Pattern
 from tenuo.crewai import GuardBuilder, Subpath
 
@@ -94,7 +96,7 @@ class MyProjCrew:
             .on_denial("raise")
             .build())
 
-    @before_tool_call_crew
+    @before_tool_call
     def authorize(self, context):
         return self.guard.authorize_hook(context)
 ```
@@ -729,7 +731,7 @@ Moving from unprotected CrewAI to Tenuo GuardedCrew:
 
 ## Performance Considerations
 
-- **Tier 1 (Guardrails):** Pure regex/string matching — not the bottleneck on any realistic agent workload.
+- **Tier 1 (Guardrails):** Local, in-process constraint evaluation with no warrant signature check and no network round trip. Benchmark workloads with heavy constraints.
 - **Tier 2 (Warrants):** Verification is local and offline — no runtime network call, no shared database. See [Performance Benchmarks](./api-reference#performance-benchmarks) for measured timings.
 - **Audit Logging:** The `audit_callback` is synchronous. For high-throughput production, use a non-blocking logger (e.g., `logging` with a queue handler) to avoid stalling the agent thread.
 
@@ -740,8 +742,8 @@ Moving from unprotected CrewAI to Tenuo GuardedCrew:
 Before deploying CrewAI agents with Tenuo protection:
 
 ### Security Review
-- [ ] **Tier 2 Enabled:** Application uses Warrants + Signing Keys for all production crews.
-- [ ] **Hooks Registered:** All guards use `guard.register()` or crew-scoped `as_hook()` for framework-level enforcement.
+- [ ] **Authority Model:** Use warrants and holder proof when crews need verifiable delegated authority. Local-policy-only deployments explicitly use Tier 1 and keep policy enforcement in trusted code.
+- [ ] **Hooks Registered:** Guards use `guard.register()` or explicitly register the callable returned by `as_hook()` for framework-level enforcement. Both use global hooks; `as_hook()` does not provide crew isolation.
 - [ ] **Least Privilege:** Each agent has specific allowed tools (no `*` patterns unless necessary).
 - [ ] **Delegation Depth:** Max delegation depth configured (via `chain_scope`) to prevent infinite chains.
 
@@ -749,10 +751,10 @@ Before deploying CrewAI agents with Tenuo protection:
 
 | Feature | Dev / Prototype | Production |
 |---------|----------------|------------|
-| Tier | Tier 1 (Guardrails) | Tier 2 (Warrants) |
+| Tier | Either, according to the authority model | Tier 2 for verifiable delegation; Tier 1 for trusted local policy |
 | Denial Mode | "log" or "raise" | "raise" (Fail Closed) |
 | Constraints | Loose (Wildcards) | Strict (Specific Patterns) |
-| Hook Scope | Global (`register()`) | Crew-scoped (`as_hook()`) or Global |
+| Hook Scope | `register()` or `as_hook()`, both process-wide | Same. Confirm the hook covers the tool types you use |
 
 ### Monitoring & Operations
 - [ ] **Audit Logging:** `audit_callback` configured and shipping logs to SIEM/storage.

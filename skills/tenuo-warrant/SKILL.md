@@ -41,7 +41,7 @@ Infer persona from context first — if the codebase scan, the user's language, 
 
 **"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
 
-- **Developer** → continue only for warrant design, minting, or delegation. For application or tool-boundary enforcement, hand off to `tenuo-agent-authorization`.
+- **Developer** → continue only for warrant design, minting, or delegation. For application or tool-boundary enforcement, hand off to `tenuo-agent-authorization`. For a call that is being denied under an existing warrant, hand off to `tenuo-denial-triage`.
 - **Security engineer** → suggest `/tenuo-audit` instead ("That skill is designed for reviewing and explaining existing warrants — it'll frame everything in IAM/RBAC terms you're used to")
 - **Platform engineer** → continue, but note the sidecar + policy file workflow is coming soon. For now, help them create warrants via the SDK
 

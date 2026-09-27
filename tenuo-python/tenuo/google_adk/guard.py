@@ -4,7 +4,7 @@ Tenuo Google ADK Integration - Warrant-Based Authorization
 Provides constraint enforcement for Google ADK agents with two tiers:
 
 **Tier 1 (Guardrails)**: Runtime constraint checking without cryptography.
-    Good for single-process scenarios. Uses `allows()` for logic checks.
+    Rejects out-of-policy tool calls in trusted application code. Uses `allows()` for logic checks.
 
 **Tier 2 (Warrant + PoP)**: Cryptographic authorization with Proof-of-Possession.
     Uses warrant.authorize() which verifies signature, skill grant, AND constraints.
@@ -109,7 +109,8 @@ class TenuoGuard:
         - Tier 2 (PoP): Full cryptographic Proof-of-Possession verification
 
     Security: By default, requires signing_key for PoP. Set require_pop=False
-    to use Tier 1 guardrails only (suitable for single-process scenarios).
+    for Tier 1 local policy checks. That mode does not verify issuer authority,
+    holder proof, or a delegation chain, even when a warrant supplies the constraints.
     """
 
     def __init__(
@@ -156,7 +157,8 @@ class TenuoGuard:
                 default) or "raise" (raise ToolAuthorizationError).
             on_deny: Deprecated alias for on_denial. Use on_denial instead.
             require_pop: If True (default), requires signing_key for Tier 2 authorization.
-                        Set to False for Tier 1 guardrails-only mode.
+                        Set to False for Tier 1 local policy checks. Issuer, holder,
+                        and delegation signatures are not verified in that mode.
             dry_run: If True, log denials but don't block. Useful for testing.
             include_hints: If True (default), include recovery hints in denial messages.
             control_plane: Optional :class:`tenuo.control_plane.ControlPlaneClient` instance.
@@ -460,8 +462,8 @@ class TenuoGuard:
         # =======================================================================
         # Tier 1: Guardrails-Only Authorization (Logic Checks)
         # =======================================================================
-        # Note: This mode is less secure - no cryptographic proof of authorization
-        # Use only when PoP is not feasible (e.g., single-process scenarios)
+        # Tier 1: local policy checks. A warrant on this path supplies constraints.
+        # Issuer, holder, and delegation signatures are checked on the require_pop path.
 
         # Determine constraints source
         if use_direct_constraints:
@@ -1123,8 +1125,7 @@ class GuardBuilder:
         Allow a tool with optional constraints (Tier 1 guardrails).
 
         This defines constraints directly in the guard without a warrant.
-        Use for single-process scenarios where cryptographic authorization
-        isn't needed.
+        Use it when trusted application code owns the policy.
 
         Args:
             tool_name: The tool/skill name to allow

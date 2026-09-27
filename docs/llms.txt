@@ -1,0 +1,66 @@
+# Tenuo
+
+> Tenuo is open-source, task-scoped authorization for AI agents. A warrant is a signed grant of which tools an agent may call, with which argument constraints, for how long. Warrants are bound to their holder by proof-of-possession, can only narrow when delegated, are verified offline where the action executes, and produce signed receipts of what was allowed or denied. Rust core with Python, TypeScript (beta), and Rust SDKs. Apache-2.0.
+
+Install:
+
+- Python: `uv pip install tenuo` or `pip install tenuo`. Framework extras: `tenuo[langchain]`, `tenuo[langgraph]`, `tenuo[crewai]`, `tenuo[autogen]`, `tenuo[openai]`, `tenuo[google_adk]`, `tenuo[a2a]`, `tenuo[mcp]`, `tenuo[fastmcp]`, `tenuo[fastapi]`, `tenuo[temporal]`.
+- TypeScript (beta, Node 20+): `npm i @tenuo/core@beta`; MCP: `npm i @tenuo/mcp@beta`.
+- Rust: `cargo add tenuo --features sdk`.
+- Coding agents: `npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization`.
+
+Guidance for agents writing code with Tenuo:
+
+- Enforce at the effect boundary (where the tool actually runs), not only in the planner.
+- Use the SDK and framework adapters; do not reimplement warrant signing, attenuation, or verification.
+- Test both an allowed call and a denied call that is blocked before any side effect.
+- Default to enforce mode. For a controlled audit rollout, configure trusted roots explicitly and follow the [production guide](https://tenuo.ai/production-guide). Audit mode logs violations but does not block unauthorized actions. Switching modes with `configure(...)` replaces the configuration, so supply the trusted roots and any other required settings again.
+
+## Docs
+
+- [Quick Start](https://tenuo.ai/quickstart): Get started with Tenuo in 5 minutes
+- [Concepts](https://tenuo.ai/concepts): Why Tenuo, threat model, and core invariants
+- [Constraints](https://tenuo.ai/constraints): Scope authority precisely with argument constraints
+- [Human Approvals](https://tenuo.ai/approvals): Cryptographically verified human-in-the-loop for tool calls
+- [Enforcement Architecture](https://tenuo.ai/enforcement): Warrants, proof-of-possession, attenuation, and where checks run
+- [Going to Production](https://tenuo.ai/production-guide): Enforcement modes, gradual rollout, and key management
+- [API Reference](https://tenuo.ai/api-reference): Python SDK reference
+- [Debugging Guide](https://tenuo.ai/debugging): Troubleshoot authorization failures
+- [Security](https://tenuo.ai/security): Threat model, PoP, integration safety, and best practices
+- [Compatibility Matrix](https://tenuo.ai/compatibility-matrix): Supported versions of Tenuo packages and upstream libraries
+
+## Integrations
+
+- [LangChain](https://tenuo.ai/langchain): Tool protection for LangChain agents
+- [LangGraph](https://tenuo.ai/langgraph): Secure LangGraph workflows and delegation between nodes
+- [CrewAI](https://tenuo.ai/crewai): Tool protection for CrewAI multi-agent workflows
+- [AutoGen](https://tenuo.ai/autogen): Authorize AutoGen AgentChat tool calls
+- [OpenAI](https://tenuo.ai/openai): Tool protection for OpenAI agents and the Agents SDK
+- [Google ADK](https://tenuo.ai/google-adk): Warrant-based authorization for ADK agents
+- [MCP](https://tenuo.ai/mcp): Secure MCP clients and servers with warrants and argument constraints
+- [A2A](https://tenuo.ai/a2a): Warrant-based authorization for inter-agent communication
+- [FastAPI](https://tenuo.ai/fastapi): API protection for FastAPI
+- [Temporal](https://tenuo.ai/temporal): Warrant-based authorization for Temporal AI agent workflows
+- [Temporal Quickstart](https://tenuo.ai/temporal-quickstart): Run a Tenuo-authorized Temporal workflow locally
+- [Temporal Nexus](https://tenuo.ai/temporal-nexus): Authorization across Temporal Nexus namespace boundaries
+- [Kubernetes](https://tenuo.ai/kubernetes): Deployment patterns for Kubernetes
+- [TypeScript SDK](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-ts/README.md): `@tenuo/core` and `@tenuo/mcp` (beta)
+- [Claude Code](https://github.com/tenuo-ai/tenuo-claude-code): Task-scoped governance for Claude Code via hooks and an MCP proxy
+
+## Protocol and spec
+
+- [Protocol Specification v1](https://github.com/tenuo-ai/tenuo/blob/main/docs/spec/protocol-spec-v1.md): Warrant semantics and verification rules
+- [Wire Format v1](https://github.com/tenuo-ai/tenuo/blob/main/docs/spec/wire-format-v1.md): Warrant encoding
+- [Test Vectors](https://github.com/tenuo-ai/tenuo/blob/main/docs/spec/test-vectors.md): Vectors for interoperable implementations
+- [Attenuating Authorization Tokens (IETF draft)](https://tenuo.ai/aat-ietf-summary): Summary of draft-niyikiza-oauth-attenuating-agent-tokens and how it relates to warrants
+
+## Optional
+
+- [AI Agent Security Patterns](https://tenuo.ai/ai-agents): Containing prompt injection and preventing privilege escalation
+- [OWASP Top 10 for Agentic Applications](https://tenuo.ai/owasp): How Tenuo maps to ASI01-ASI10
+- [EU AI Act](https://tenuo.ai/eu-act): How Tenuo controls map to EU AI Act obligations
+- [Related Work](https://tenuo.ai/related-work): CaMeL, FIDES, and other agent security research
+- [Thesis](https://tenuo.ai/thesis): Authorization for agentic systems
+- [Delegation Security Lab](https://tenuo.ai/lab/): Free hands-on challenge in agent delegation security
+- [Engineering Blog](https://tenuo.ai/blog/): Engineering notes on task-scoped authorization
+- [GitHub](https://github.com/tenuo-ai/tenuo): Source, issues, examples, and notebooks

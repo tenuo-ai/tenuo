@@ -1,22 +1,26 @@
 {
   "scenario": "payment-boundary-eval.md",
   "language": "typescript",
-  "evaluated_at": "2026-09-17",
-  "model_class": "lower-cost coding model",
-  "result": "pass",
-  "evidence_kind": "carried_forward",
+  "evaluated_at": "2026-09-26",
+  "model_class": "lower-cost coding model (claude-sonnet-5, one fresh authorized run with the skill)",
+  "result": "fail",
+  "evidence_kind": "fresh",
   "inputs": [
     "SKILL.md",
+    "references/native-tools.md",
     "references/typescript.md",
+    "references/trust-levels.md",
     "references/common-footguns.md",
-    "references/security-model.md"
+    "references/security-model.md",
+    "scripts/inspect_native_tools.py"
   ],
-  "skill_fingerprint": "56c7b3c1a4ea597b7f63bc3ae2bf0b2d59b3142629470602d66cc7cc2a6eb627",
+  "skill_fingerprint": "c84d0b7bb38747c2b1df8f7cf6e8156c723e4a680302ac52d20aba4ddfd7e09d",
   "evidence": {
-    "sdk": "@tenuo/core 0.3.0-beta.0",
-    "tests": "9 passed",
-    "typecheck": "passed",
-    "critical_items": "passed"
-  },
-  "carried_forward_review": "Automated re-pin from v0.3.0 to v0.3.1 after the release was published. Only release.json and the pinned repository links changed; skill instructions did not. Before merging, confirm the linked examples at the new tag still match the reference prose, and rerun payment-boundary-eval.md if any behavioral input changed."
+    "sdk": "@tenuo/core 0.3.1-beta.0 from npm",
+    "tests": "10 passed; rerun by grader",
+    "typecheck": "tsc --noEmit passed",
+    "critical_items": "passed",
+    "notes": "Second fresh authorized run. All critical implementation checks pass: receiving-boundary denials, host-configured recipient/amount ceilings, verified effect arguments, actual import failure of the original exports, and correct holder-owned narrowing with a successful child control. Independent widening diagnostic confirms TENUO_CHAIN_INVALID with a range-expanded message, not the prior missing-key setup error. The development-loop label is supported by real issuer/caller/service APIs. Required reporting remains incomplete: it mentions same-process roles and missing secret-store wiring but omits the required warnings that the process can mint replacement authority or replace/disable the guard, and that issuance/root signing must move outside the agent boundary for production. Inputs include actual reference reads and executed inventory script.",
+    "required_reporting": "failed"
+  }
 }

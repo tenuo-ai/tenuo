@@ -32,7 +32,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Re-pin release contract, links, and evidence
+      - name: Re-pin release contract and links
         id: repin
         run: |
           git fetch --tags --force
@@ -42,7 +42,7 @@ jobs:
           fi
           python3 scripts/repin_agent_skill.py --tag "$TAG"
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-          python3 scripts/validate_agent_skills.py --require-current-release
+          python3 scripts/validate_agent_skills.py --require-current-release --summary "$GITHUB_STEP_SUMMARY"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Push branch and open the change for review
@@ -64,11 +64,11 @@ jobs:
 
           - \`skills/tenuo-agent-authorization/release.json\` now pins \`$TAG\` with versions read from the manifests at that tag.
           - Pinned repository links in the skill references point at \`$TAG\`.
-          - Behavioral results whose inputs changed are marked \`carried_forward\` with a review naming this re-pin.
+          - Historical behavioral results and fingerprints are unchanged. Stale evidence is reported in the CI summary, not refreshed automatically.
 
           Before merging:
           - [ ] Confirm the linked examples at \`$TAG\` still match the reference prose.
-          - [ ] Rerun \`tests/agent-skills/tenuo-agent-authorization/payment-boundary-eval.md\` if any behavioral input changed.
+          - [ ] Review behavioral findings and decide whether the release needs a bounded replay using \`tests/agent-skills/tenuo-agent-authorization/payment-boundary-eval.md\`.
           - [ ] If CI did not run on this pull request (it was opened by a workflow token), close and reopen it to trigger checks.
           EOF
           )

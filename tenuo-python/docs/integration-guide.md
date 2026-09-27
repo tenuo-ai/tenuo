@@ -110,45 +110,44 @@ client = GuardBuilder(openai.OpenAI()).build()  # What tools are allowed?
 
 **Why Tier 1 exists:**
 
-LLMs hallucinate. They call tools that don't exist, pass arguments outside allowed ranges, and attempt path traversal or SSRF. In a single-process application (your code + OpenAI SDK), the LLM output never leaves your process. You don't need cryptographic proof that *you* authorized *yourself* - you just need to validate the LLM's output before executing it.
+Models invent tool calls. They name tools that were not allowed, pass arguments outside range, and try path traversal or a metadata URL. Tier 1 rejects those on the guarded path before the call runs. The policy is in trusted code, so changing the prompt cannot widen it. `Subpath` blocks traversal outside its root. `UrlSafe` rejects a literal private or metadata URL. Closed-world argument checks reject names the policy did not list.
 
-Tier 1 provides this: fast, in-process constraint checking without cryptographic overhead. It stops prompt injection and hallucinated tool calls at the point where LLM output meets your code.
+Issuer, holder, and delegation checks are Tier 2.
 
 **Why Tier 2 exists:**
 
-When authorization crosses process boundaries (Agent A calls Agent B over HTTP), you need proof. Agent B can't trust that the request "really came from Agent A with these permissions" without cryptographic verification. Tier 2 adds warrants (signed capability tokens) and Proof-of-Possession (proving the caller holds the private key).
+Tier 2 keeps those tool and argument checks and puts them in a signed warrant. Proof-of-possession binds each call to the holder. Delegation can only narrow the parent's scope. A downstream tool or agent verifies the chain against trusted roots it configured, locally, with no runtime network call. Your own issuer can mint the warrant.
+
+When the agent can skip the guard and reach the resource, run that verification in the component that performs the effect, outside the agent's control.
 
 ```
 Which tier should I use?
 │
-├─ Is the tool caller in the same process as the guard?
-│   └─ Yes: Tier 1 is sufficient (no network = no impersonation risk)
-│   └─ No:  Tier 2 required (network = need cryptographic proof)
+├─ Will trusted application code enforce the policy?
+│   └─ Yes: Tier 1
 │
-├─ Is the warrant delegated from another agent?
-│   └─ Yes: Tier 2 with chain validation
-│   └─ No:  Tier 2 without chain
+├─ Must a separate verifier check issuer, holder, or delegation?
+│   └─ Yes: Tier 2
 │
-└─ Do I need audit trail with cryptographic proof?
-    └─ Yes: Tier 2 always
-    └─ No:  Tier 1 for simplicity
+└─ Can the agent bypass the guard or reach the resource directly?
+    └─ Yes: Enforce outside that process, for either tier
 ```
 
 **Tier 1**: Runtime guardrails (no crypto)
 - Constraint checking via `constraint.satisfies(value)`
 - Tool allowlisting
-- Suitable for single-process, trusted environments
-- Example: OpenAI client in a monolith
+- Local policy in trusted application code, including production
+- Example: an application-owned OpenAI or ADK guard
 
 **Tier 2**: Cryptographic authorization (warrant + PoP)
-- All of Tier 1, plus:
+- The same tool allowlists and argument constraints, carried in the warrant
 - Warrant signature validation via `warrant.authorize()`
 - Proof-of-Possession per tool call
-- Delegation chain verification
-- Required for distributed systems
-- Example: Agent-to-Agent communication, microservices
+- Delegation chain verification against trusted roots
+- Signed receipts of the authorization decision, when configured
+- Example: agent-to-agent calls, or a tool service that checks issuer-granted authority itself
 
-**Both tiers must be supported.** Users choose based on threat model.
+**Both tiers must be supported.** Users choose the verification mode separately from where enforcement runs.
 
 ### 3. Zero Trust for Arguments
 
@@ -1067,4 +1066,3 @@ Study these for patterns and best practices:
 
 - Review [protocol spec](../../docs/spec/protocol-spec-v1.md) for wire format details
 - Ask in [GitHub Discussions](https://github.com/tenuo-ai/tenuo/discussions)
-

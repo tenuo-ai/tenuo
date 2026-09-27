@@ -174,6 +174,7 @@ jobs:
               pytest tenuo-python/tests/adapters/test_crewai.py \
                 tenuo-python/tests/adapters/test_crewai_adversarial.py \
                 tenuo-python/tests/adapters/test_crewai_integration.py \
+                tenuo-python/tests/examples/test_crewai_guarded_crew_builder.py \
                 -v --tb=short
               ;;
             autogen)
@@ -192,11 +193,13 @@ jobs:
             fastapi)
               pytest tenuo-python/tests/adapters/test_fastapi_integration.py \
                 tenuo-python/tests/adapters/test_fastapi_delegation.py \
+                tenuo-python/tests/adapters/test_fastapi_secure_router.py \
                 -v --tb=short
               ;;
             google_adk)
               pytest tenuo-python/tests/adapters/test_google_adk.py \
                 tenuo-python/tests/adapters/test_google_adk_adversarial.py \
+                tenuo-python/tests/adapters/test_google_adk_runner.py \
                 -v --tb=short
               ;;
             mcp)

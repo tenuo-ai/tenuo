@@ -143,6 +143,7 @@ This demo shows Tenuo's key capabilities:
   - **[quickstart.py](crewai/quickstart.py)**: Minimal CrewAI + Tenuo quickstart
   - **[demo_simple.py](crewai/demo_simple.py)**: Simple guarded crew with constraint enforcement
   - **[guarded_crew.py](crewai/guarded_crew.py)**: Full crew with GuardBuilder and tool protection
+  - **[guarded_crew_builder.py](crewai/guarded_crew_builder.py)**: Quickstart demonstrating fluent `GuardedCrew()` builder, role policies, constraints, and offline testing (#656)
   - **[guarded_flow.py](crewai/guarded_flow.py)**: CrewAI Flow with Tenuo guards (requires crewai with Flow support)
   - **[hierarchical_delegation.py](crewai/hierarchical_delegation.py)**: Tier 2 hierarchical delegation with WarrantDelegator and escalation prevention
   - **[research_team_demo.py](crewai/research_team_demo.py)**: Multi-agent research team with delegation chains
@@ -256,6 +257,7 @@ python openai/agents_sdk.py
 python crewai/quickstart.py
 python crewai/demo_simple.py
 python crewai/guarded_crew.py
+python crewai/guarded_crew_builder.py
 python crewai/hierarchical_delegation.py
 
 # Google ADK examples (requires: uv pip install tenuo[adk])

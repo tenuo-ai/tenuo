@@ -8,19 +8,18 @@ Tenuo provides first-class support for [Google's Agent Development Kit (ADK)](ht
 
 **Answer these questions:**
 
-1. **Are your tools running in the same process as the agent?**
-   - Yes -> Tier 1 (GuardBuilder with inline constraints)
-   - No -> Tier 2 (Warrant + Proof-of-Possession)
+1. **Do you need application-owned local policy checks?**
+   - Yes -> Tier 1. Trusted application code enforces tool allowlists and argument constraints, including in production.
+   - A separate verifier must check issuer, holder, or delegation -> Tier 2 (question 2).
 
-2. **Do you need protection against insider threats or code tampering?**
-   - Yes -> Tier 2 (constraints in cryptographic warrant)
-   - No -> Tier 1 is sufficient
+2. **Do you need independently verifiable issuer authority, holder proof, or delegation?**
+   - Yes -> Tier 2. The verifier checks issuer, holder, and narrowing delegation locally, in one process or across many.
 
 3. **Do you need to delegate tasks to other agents?**
    - Yes -> Tier 2 + [A2A integration](./a2a.md)
    - No -> ADK integration only
 
-**TL;DR:** Start with Tier 1. Move to Tier 2 when you need crypto.
+**TL;DR:** Tier 1 rejects out-of-policy calls in trusted code. Tier 2 adds signed, holder-bound authority an independent verifier can check. Run the check on the path that performs the effect.
 
 ---
 
@@ -115,7 +114,9 @@ agent = Agent(
 )
 ```
 
-**Why Tier 2?** Constraints live in the warrant (signed by control plane), not in your code. Even if an attacker modifies your Python, they can't change what the warrant allows.
+**Why Tier 2?** The issuer signs the authority envelope, and delegation can only narrow it. An independent verifier rejects a widened warrant. Your own issuer or a control plane can mint it. Changing the agent's Python cannot produce a broader warrant that verifier will accept. Run the verifier in the component that holds the resource.
+
+`TenuoGuard(require_pop=False)` selects Tier 1 checks. A warrant on that path supplies the constraints. Issuer, holder, and delegation signatures are checked when `require_pop` stays at its default, `True`.
 
 ### Human Approval
 
@@ -162,51 +163,42 @@ Fix: Add skill mapping to your GuardBuilder:
 
 ### What Tier 1 Protects Against
 
-**Trust Boundary**: Code access
+**Trust boundary:** the model proposes calls; trusted application code enforces policy before dispatch.
 
-Tier 1 enforces constraints at runtime, protecting against:
+Tier 1 provides deterministic allowlist and argument checks, not another prompt asking the model to behave. Calls that violate the configured policy are blocked on the guarded path, whether they originated from prompt injection, a model mistake, or application logic.
 
-| Threat | Protection | Example |
-|--------|------------|---------|
-| **Prompt Injection** | Strong | Attacker manipulates LLM to call `read_file("/etc/passwd")` - blocked by `Subpath("/data")` |
-| **LLM Hallucinations** | Strong | Model invents tool call with invalid args - blocked by constraints |
-| **SSRF Attempts** | Strong | LLM tries `http://169.254.169.254/` - blocked by `UrlSafe()` |
-| **Path Traversal** | Strong | `../../../etc/passwd` - normalized and blocked by `Subpath` |
-| **Development Bugs** | Strong | Accidental misconfiguration caught before production |
+| Attempt | Enforced check | Example |
+|---------|----------------|---------|
+| Out-of-policy tool call | Tool allowlist and argument constraints | A model-selected recipient outside the permitted set is rejected |
+| Invalid or unexpected arguments | Configured constraints and closed-world argument checking | An unlisted argument is rejected |
+| Disallowed URL | URL constraints | `UrlSafe()` rejects a literal metadata-service URL such as `http://169.254.169.254/` |
+| Path traversal | Path constraints | `Subpath("/data")` rejects traversal outside the permitted root |
 
-**Key Insight**: Tier 1 is effective because **constraints are outside the LLM's control**. Even if an attacker fully manipulates the prompt, they cannot bypass Python-enforced guardrails.
+**Why this matters:** the policy lives in trusted code, outside the model. A fully manipulated prompt still cannot get an out-of-policy call through the guard. Tighten the policy for actions that are allowed and still harmful. Symlinks, URL redirects, DNS resolution, and shell behavior need a control at the resource too.
 
-### What Tier 1 Does NOT Protect Against
+### Where Tier 2 and placement take over
 
-| Threat | Protection | Why Not |
-|--------|------------|---------|
-| **Insider Threats** | None | Developer can modify code to bypass guards |
-| **Container Compromise** | None | Attacker with code execution can disable guards |
-| **Tampering** | None | No cryptographic proof of enforcement |
-| **Multi-Process Delegation** | Limited | Downstream service must trust caller's honesty |
+| Need | What covers it |
+|------|----------------|
+| **Forged or widened authority** | Tier 2: issuer signature, holder proof, and delegation that can only narrow |
+| **A service that must check the caller** | Tier 2: local verification against trusted roots |
+| **Proof of the allow or deny decision** | Tier 2 signed receipts, when configured. Tier 1 still emits audit events |
+| **A caller that can skip this callback** | The same tier, running in the component that performs the effect |
 
-**Example Bypass**:
+The callback runs only where you register it. An agent built without it skips the check:
+
 ```python
-# Production code with guard
-guard = GuardBuilder().with_warrant(warrant, key).build()
-
-# Insider threat: Just don't use the guard
-agent = Agent(tools=[...])  # Bypassed
+guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
+agent = Agent(tools=[...])  # this agent has no before_tool_callback
 ```
 
 ### When to Use Tier 1
 
 **Good for**:
-- Single-process agents (LLM and tools in same Python runtime)
-- Trusted execution environment (your laptop, internal servers)
-- Prototyping and development
-- Defense against external attackers (via prompt injection)
 
-**Not suitable for**:
-- Untrusted execution environment (shared infrastructure)
-- Zero-trust security model
-- Compliance requirements for audit trails
-- Multi-process systems with untrusted intermediaries
+- Production agents whose trusted code holds the tool and argument policy.
+- Rejecting model-chosen calls outside that policy, including calls from a manipulated prompt.
+- A local check beside network and credential controls.
 
 ### When to Upgrade to Tier 2
 
@@ -215,13 +207,16 @@ Upgrade when you need:
 1. **Cryptographic Proof**: Verifiable evidence of what was authorized
 2. **Delegation Chains**: Multi-agent systems where agents delegate to each other
 3. **Untrusted Callers**: Cannot trust calling agent to honestly report tool calls
-4. **Audit Requirements**: Need non-repudiable logs of authorization decisions
+4. **Audit Requirements**: Need verifiable authority and, with receipt signing configured, signed records of authorization decisions
 
 **Tier 2 adds**:
+- The same tool allowlists and argument constraints, carried in the warrant
 - Warrant signatures (cryptographic authorization)
 - Proof-of-Possession (PoP) per tool call
-- Tamper-evident audit trail
-- Cross-process verification
+- Cross-process verification against independently configured trusted roots
+- Signed receipts of the authority presented and the verifier's decision, including denials, when receipt signing is configured
+
+A warrant is proof of the scope that was issued. A signed receipt is proof of what the verifier decided. Your own issuer can mint the warrant. Completion of the downstream effect is a separate record.
 
 **Migration is simple**:
 ```python
@@ -234,13 +229,11 @@ guard = GuardBuilder().with_warrant(warrant, signing_key).build()
 
 ### Bottom Line
 
-Tier 1 stops prompt injection, LLM hallucinations, and SSRF attacks. It enforces constraints at runtime within a single Python process.
+**Tier 1 rejects out-of-policy calls in trusted code. Tier 2 keeps those checks and adds signed authority.** The prompt cannot widen a Tier 1 policy. An independent verifier accepts a Tier 2 warrant only when the issuer, the holder, and any narrowing delegation all check out.
 
-Tier 2 adds cryptographic verification for distributed systems and untrusted execution environments.
-
-**Choose based on your threat model:**
-- Single-process, trusted execution: Tier 1
-- Multi-process, delegation, or untrusted execution: Tier 2
+- Use Tier 1 when trusted application code owns the policy.
+- Use Tier 2 when the component that performs the effect must verify issuer-granted, holder-bound authority, including across agents or processes.
+- When the agent can skip an in-process callback, run that same check in the component that performs the effect, outside the agent's control.
 
 ---
 
@@ -557,11 +550,13 @@ def handle_request(user_id):
 |---------|-----------------|------------------------|
 | **Setup** | `.allow()` builder | Warrant issuance + signing key |
 | **Cryptographic proof** | No | Yes (Ed25519 signatures) |
-| **Protection against insider threats** | No | Yes |
-| **Multi-agent delegation** | No | Yes (attenuation chains) |
-| **Audit trail** | Events only | Cryptographic receipts |
-| **Performance** | Fast (no crypto) | Slightly slower (signature checks) |
-| **Use case** | Prototyping, single-process | Production, distributed agents |
+| **Policy checks** | Allowlists and argument constraints | The same checks, carried in the signed warrant |
+| **Issuer and holder verification** | Local policy only | Yes, with trusted roots and valid PoP |
+| **If the agent can skip this process** | Run the policy check on the effect path | Run signature checks on the effect path |
+| **Multi-agent delegation** | Each agent enforces its own policy | Attenuation chains an independent verifier can check |
+| **Audit trail** | Allow and deny audit events | Signed receipts of the authorization decision, when configured |
+| **Performance** | Local, no signature checks | Local signature checks, no runtime network call |
+| **Use case** | Application-owned local policy | Verifiable delegated authority, distributed enforcement |
 
 ---
 

@@ -395,11 +395,11 @@ response = client.chat.completions.create(
 | `Pattern(glob)` | Glob pattern matching | `Pattern("*@company.com")` |
 | `UrlPattern(url)` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as Wildcard ("Any Path"). Use `/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
 
-For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.ai/openai).
+Tier 1 rejects out-of-policy calls on the guarded path. The constraints above are that policy: path scope, URL safety, shell allowlists, and patterns. Tier 2 carries the same policy in a signed, holder-bound warrant, with delegation that can only narrow. See [OpenAI Integration](https://tenuo.ai/openai). When the agent can skip the wrapper, enforce in the component that performs the effect, outside the agent's control.
 
 ## Google ADK Integration
 
-Warrant-based tool protection for Google ADK agents:
+Local policy checks for Google ADK agents (Tier 1):
 
 ```python
 from google.adk.agents import Agent
