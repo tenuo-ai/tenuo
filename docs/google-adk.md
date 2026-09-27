@@ -233,7 +233,7 @@ guard = GuardBuilder().with_warrant(warrant, signing_key).build()
 
 - Use Tier 1 when trusted application code owns the policy.
 - Use Tier 2 when the component that performs the effect must verify issuer-granted, holder-bound authority, including across agents or processes.
-- When the agent can skip an in-process callback, run that same check in the component that performs the effect.
+- When the agent can skip an in-process callback, run that same check in the component that performs the effect, outside the agent's control.
 
 ---
 

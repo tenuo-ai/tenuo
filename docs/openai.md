@@ -19,7 +19,7 @@ Tenuo integrates with OpenAI's APIs using a **two-tier** protection model:
 **Tier 2** keeps those checks and adds signed warrants, holder proof, and delegation that can only narrow. An independently configured verifier checks that authority locally. Your own issuer or a control plane can mint the warrant.
 
 > [!IMPORTANT]
-> **Production Recommendation**: Use **Tier 1** when trusted application code owns the policy. Use **Tier 2** when a tool or downstream service must verify issuer-granted, holder-bound authority on its own. This wrapper checks the tool calls the model returns before they run. When the agent can skip the wrapper, run that check in the component that performs the effect.
+> **Production Recommendation**: Use **Tier 1** when trusted application code owns the policy. Use **Tier 2** when a tool or downstream service must verify issuer-granted, holder-bound authority on its own. This wrapper checks the tool calls the model returns before they run. When the agent can skip the wrapper, run that check in the component that performs the effect, outside the agent's control.
 
 ---
 
@@ -204,6 +204,9 @@ Upgrade when you need:
 A warrant is proof of the scope that was issued. A signed receipt is proof of what the verifier decided. Your own issuer can mint the warrant. Completion of the downstream effect is a separate record.
 
 **Migration is simple**:
+
+In the OpenAI adapter, warrant constraints replace the inline argument constraints; explicit tool allow/deny lists still apply. Carry the intended argument restrictions into the warrant when migrating.
+
 ```python
 # Tier 1
 client = guard(openai.OpenAI(), allow_tools=[...], constraints={...})
@@ -218,7 +221,7 @@ client = guard(openai.OpenAI(), warrant=my_warrant, signing_key=agent_key)
 
 - Use Tier 1 when trusted application code owns the policy.
 - Use Tier 2 when the component that performs the effect must verify issuer-granted, holder-bound authority, including across agents or processes.
-- When the agent can skip an in-process wrapper, run that same check in the component that performs the effect.
+- When the agent can skip an in-process wrapper, run that same check in the component that performs the effect, outside the agent's control.
 
 ---
 

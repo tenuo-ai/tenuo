@@ -19,7 +19,7 @@ Tenuo integrates with [CrewAI](https://crewai.com) using a **two-tier** protecti
 **Tier 2** keeps those checks and adds signed, holder-bound authority and delegation that can only narrow. Your own issuer or a control plane issues warrants; the holder supplies Proof-of-Possession (PoP) for each call. A crew or downstream tool can verify that authority on its own.
 
 > [!IMPORTANT]
-> **Production Recommendation**: Register `guard.register()` or the callable from `as_hook()` so CrewAI's hook intercepts tool calls at the framework, with no per-tool wrapper. Use **Tier 1** when the crew's trusted code owns the policy. Use **Tier 2** when a crew or downstream tool must verify signed, holder-bound authority. Both hooks are process-wide. When the agent can skip them, enforce in the component that performs the effect.
+> **Production Recommendation**: Register `guard.register()` or the callable from `as_hook()` so CrewAI's hook intercepts tool calls at the framework, with no per-tool wrapper. Use **Tier 1** when the crew's trusted code owns the policy. Use **Tier 2** when a crew or downstream tool must verify signed, holder-bound authority. Both hooks are process-wide. When the agent can skip them, enforce in the component that performs the effect, outside the agent's control.
 
 ---
 

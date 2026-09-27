@@ -10,7 +10,7 @@ Tier 1 rejects out-of-policy tool and argument calls in trusted application code
 
 Tier 2 keeps those policy checks and adds cryptographically verifiable, holder-bound authority and delegation that can only narrow scope. An independently configured verifier checks that authority locally. Warrants may come from an application-owned issuer or a control plane. Signed receipts, when signing and collection are configured, are proof of the presented authority and the verifier's decision, including denials.
 
-Report both what is checked and where it runs. When the agent can skip the guard, the same tier belongs on the path that performs the effect. In ADK, `require_pop=False` is Tier 1 even when a warrant supplies the constraints; `require_pop=True` is what checks issuer, holder, and delegation. For a user-requested local-policy integration, report those checks directly. The issuer-to-effect labels below describe warrant-based integrations. An in-process guardrail can accompany either mode.
+Report both what is checked and where it runs. When the agent can skip the guard, enforce that same tier in the component that performs the effect, outside the agent's control. In ADK, `require_pop=False` is Tier 1 even when a warrant supplies the constraints; `require_pop=True` is what checks issuer, holder, and delegation. For a user-requested local-policy integration, report those checks directly. The issuer-to-effect labels below describe warrant-based integrations. An in-process guardrail can accompany either mode.
 
 ## Incomplete integration
 

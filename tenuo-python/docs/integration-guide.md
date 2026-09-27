@@ -118,7 +118,7 @@ Issuer, holder, and delegation checks are Tier 2.
 
 Tier 2 keeps those tool and argument checks and puts them in a signed warrant. Proof-of-possession binds each call to the holder. Delegation can only narrow the parent's scope. A downstream tool or agent verifies the chain against trusted roots it configured, locally, with no runtime network call. Your own issuer can mint the warrant.
 
-When the agent can skip the guard and reach the resource, run that verification in the component that performs the effect.
+When the agent can skip the guard and reach the resource, run that verification in the component that performs the effect, outside the agent's control.
 
 ```
 Which tier should I use?
@@ -1066,4 +1066,3 @@ Study these for patterns and best practices:
 
 - Review [protocol spec](../../docs/spec/protocol-spec-v1.md) for wire format details
 - Ask in [GitHub Discussions](https://github.com/tenuo-ai/tenuo/discussions)
-

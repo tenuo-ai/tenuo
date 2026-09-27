@@ -395,7 +395,7 @@ response = client.chat.completions.create(
 | `Pattern(glob)` | Glob pattern matching | `Pattern("*@company.com")` |
 | `UrlPattern(url)` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as Wildcard ("Any Path"). Use `/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
 
-Tier 1 rejects out-of-policy calls on the guarded path. The constraints above are that policy: path scope, URL safety, shell allowlists, and patterns. Tier 2 carries the same policy in a signed, holder-bound warrant, with delegation that can only narrow. See [OpenAI Integration](https://tenuo.ai/openai). Run the check in the component that performs the effect when the agent can skip the wrapper.
+Tier 1 rejects out-of-policy calls on the guarded path. The constraints above are that policy: path scope, URL safety, shell allowlists, and patterns. Tier 2 carries the same policy in a signed, holder-bound warrant, with delegation that can only narrow. See [OpenAI Integration](https://tenuo.ai/openai). When the agent can skip the wrapper, enforce in the component that performs the effect, outside the agent's control.
 
 ## Google ADK Integration
 

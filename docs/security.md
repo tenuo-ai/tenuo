@@ -130,7 +130,7 @@ For technical details, see **[Revocation](./spec/protocol-spec-v1#11-revocation)
 > [!IMPORTANT]
 > **Tier 1 when trusted code owns the policy. Tier 2 when another component must verify the authority.**
 >
-> Tier 1 rejects out-of-policy tool calls on the guarded path, including calls a manipulated prompt induces. Tier 2 keeps those checks and adds signed, holder-bound warrants and delegation that can only narrow, so an independent verifier can check the caller locally. When the agent can skip the in-process guard, run that check in the component that performs the effect.
+> Tier 1 rejects out-of-policy tool calls on the guarded path, including calls a manipulated prompt induces. Tier 2 keeps those checks and adds signed, holder-bound warrants and delegation that can only narrow, so an independent verifier can check the caller locally. When the agent can skip the in-process guard, run that check in the component that performs the effect, outside the agent's control.
 
 ---
 
@@ -151,7 +151,7 @@ Issuer, holder, and delegation signatures are Tier 2.
 - An independent verifier checks this locally, from trusted roots it configured
 - Signed receipts of the presented authority and the verifier's decision, including denials, when receipt signing is configured
 
-A warrant is proof of what was authorized. A signed receipt is proof of what the verifier decided. Run the verifier on the path that performs the effect when the agent can skip an in-process guard.
+A warrant is proof of what was authorized. A signed receipt is proof of what the verifier decided. When the agent can skip an in-process guard, enforce in the component that performs the effect, outside the agent's control.
 
 **When to use**: Tier 1 when trusted application code owns the policy. Tier 2 when the component that performs the effect must verify issuer-granted, holder-bound authority, including across agents or processes.
 
