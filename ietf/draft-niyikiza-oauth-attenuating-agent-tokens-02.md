@@ -1160,18 +1160,31 @@ These rules do not let a derived token forbid one argument while keeping
 `*`: the argument would return under `*`. A deriver that needs this
 drops `*` and names the arguments it keeps.
 
-Constraint subsumption is defined per constraint type. The normative
-rules are:
+Constraint subsumption is defined per constraint type. The following
+table lists every valid (parent, derived) pair of core types; each row
+is a parent type, and each entry a derived type that the parent
+subsumes, under the stated condition. Every other pair is invalid and
+MUST be rejected, unless a registered extension constraint type
+declares it (Section 5.1).
 
-- **exact:** A derived `exact` constraint attenuates a parent
-  constraint of the same or different type as follows: a parent
-  `exact` subsumes it if the values are identical; a parent `range`
-  subsumes it if the exact value is a number that satisfies the
-  parent range's `check`; a parent `one_of` subsumes it if the exact
-  value is a member of the parent set; a parent `wildcard` subsumes it
-  unconditionally. All other parent types are invalid cross-type
-  targets for a derived `exact` constraint unless a registered
-  extension type declares the pair (Section 5.1).
+| Parent | Valid derived constraints |
+|---|---|
+| `exact` | `exact` with the same value |
+| `range` | `range` at least as tight (below); `exact` whose value is a number the parent range accepts |
+| `one_of` | `one_of` whose values are a non-empty subset of the parent's; `exact` whose value is a member of the parent's values |
+| `not_one_of` | `not_one_of` whose excluded values are a superset of the parent's |
+| `contains` | `contains` whose required elements are a superset of the parent's |
+| `subset` | `subset` whose allowed elements are a subset of the parent's |
+| `all` | `all` in which every parent clause subsumes at least one derived clause (below) |
+| `any` | `any` in which every derived clause is subsumed by at least one parent clause (below) |
+| `wildcard` | any constraint |
+
+A derived `one_of` cannot be empty; to authorize no value, the deriver
+omits the tool. A derived `not_one_of` under a parent `one_of` is
+invalid: it accepts values outside the parent's set, and the parent
+cannot be verified to subsume it without domain knowledge.
+
+The rules for `range`, `all`, and `any` need more detail:
 
 - **range:** A derived `range` constraint is valid only if its
   bounds are at least as restrictive as the parent's
@@ -1183,23 +1196,6 @@ rules are:
   parent has `min_inclusive: true` at the same `min` value (exclusive is
   strictly tighter), but the reverse is not. The same applies to
   `max_inclusive`.
-
-- **one_of:** A derived `one_of` constraint is valid only if
-  its value set is a non-empty subset of the parent's value set; to
-  authorize no value, the deriver omits the tool.
-  Cross-type pairs involving a derived `not_one_of` against a
-  parent `one_of` are invalid: a `not_one_of` constraint
-  accepts values outside the parent's permitted set, so a parent
-  `one_of` cannot be verified to subsume it without domain knowledge.
-  Enforcement points MUST reject this cross-type pair.
-
-- **not_one_of:** A derived `not_one_of` constraint is valid
-  only if its excluded set is a superset of the parent's excluded
-  set (can only add exclusions, never remove them).
-
-- **wildcard:** A derived `wildcard` is valid only if the parent
-  is also `wildcard`. A parent `wildcard` subsumes a derived
-  constraint of any other type.
 
 - **all:** A derived `all` constraint attenuates a parent `all`
   if every parent clause subsumes at least one derived clause.
@@ -1253,24 +1249,6 @@ rules are:
   token MUST NOT carry `any([exact("pdf"), exact("docx")])`
   because `exact("docx")` is not subsumed by any parent
   clause.
-
-- **contains:** A derived `contains` constraint is valid
-  attenuation of a parent `contains` if the derived `required` set
-  is a superset of the parent's `required` set. Requiring
-  additional elements is a restriction; removing required
-  elements would expand the set of accepted argument
-  arrays and MUST be rejected.
-
-- **subset:** A derived `subset` constraint is valid attenuation
-  of a parent `subset` if the derived `allowed` set is a subset
-  of the parent's `allowed` set. Shrinking the allowed set is
-  a restriction; adding allowed elements would expand the set
-  of accepted argument arrays and MUST be rejected.
-
-Any (parent constraint type, derived constraint type) pair not
-explicitly permitted by the above rules, or by a registered extension
-constraint's cross-type subsumption declaration (Section 5.1), MUST be
-rejected.
 
 ## I5: Cryptographic Linkage
 
