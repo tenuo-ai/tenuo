@@ -27,7 +27,7 @@ use tenuo::{
 
 #[derive(Parser)]
 #[command(name = "tenuo")]
-#[command(about = "Agent Capability Flow Control", long_about = None)]
+#[command(about = "Task-scoped authorization for AI agents", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

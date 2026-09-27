@@ -3,7 +3,9 @@ name = "tenuo-wasm"
 version = "0.3.1"
 edition = "2021"
 authors = ["Tenuo Contributors"]
-description = "WASM bindings for Tenuo"
+description = "WebAssembly bindings for Tenuo, task-scoped authorization for AI agents"
+homepage = "https://tenuo.ai"
+repository = "https://github.com/tenuo-ai/tenuo"
 license = "Apache-2.0"
 license-file = "../LICENSE"
 

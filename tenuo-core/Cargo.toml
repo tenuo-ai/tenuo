@@ -3,12 +3,14 @@ name = "tenuo"
 version = "0.3.1"
 edition = "2021"
 authors = ["Tenuo Contributors"]
-description = "Agent Capability Flow Control - Rust core library"
+description = "Task-scoped authorization for AI agents: signed warrants that constrain tools and arguments, narrow on delegation, and verify offline. Rust core of Tenuo."
 license = "Apache-2.0"
 license-file = "../LICENSE"
 repository = "https://github.com/tenuo-ai/tenuo"
 readme = "README.md"
-keywords = ["authorization", "capabilities", "agents", "security", "middleware"]
+homepage = "https://tenuo.ai"
+documentation = "https://docs.rs/tenuo"
+keywords = ["authorization", "ai-agents", "capabilities", "delegation", "mcp"]
 categories = ["authentication", "cryptography", "network-programming", "web-programming", "security"]
 
 [package.metadata.docs.rs]
