@@ -9,5 +9,7 @@
     "Use the SDK and framework adapters; do not reimplement warrant signing, attenuation, or verification.",
     "Test both an allowed call and a denied call that is blocked before any side effect.",
     "Roll out with dry-run mode first, then switch to enforce."
-  ]
+  ],
+  "url": "https://context7.com/tenuo-ai/tenuo",
+  "public_key": "pk_A2pro0h6tdtLDOxZ2ChJN"
 }
