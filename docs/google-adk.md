@@ -9,7 +9,8 @@ Tenuo provides first-class support for [Google's Agent Development Kit (ADK)](ht
 **Answer these questions:**
 
 1. **Do you need application-owned local policy checks?**
-   - Tier 1 provides tool allowlists and argument constraints in trusted application code.
+   - Yes -> Tier 1. Trusted application code enforces tool allowlists and argument constraints, including in production.
+   - A separate verifier must check issuer, holder, or delegation -> Tier 2 (question 2).
 
 2. **Do you need independently verifiable issuer authority, holder proof, or delegation?**
    - Use Tier 2, whether the workflow is single-process or distributed.
@@ -564,7 +565,7 @@ def handle_request(user_id):
 | **Setup** | `.allow()` builder | Warrant issuance + signing key |
 | **Cryptographic proof** | No | Yes (Ed25519 signatures) |
 | **Issuer and holder verification** | No | Yes, with trusted roots and valid PoP |
-| **Resistance to agent-process bypass** | Requires an enforcement boundary outside that process | Requires an enforcement boundary outside that process |
+| **Agent-process bypass** | Local policy leaves this open. Enforce outside the agent process | Signatures leave this open. Enforce outside the agent process |
 | **Multi-agent delegation** | No | Yes (attenuation chains) |
 | **Audit trail** | Ordinary audit events | Verifiable authority; signed receipts when configured |
 | **Performance** | Fast (no crypto) | Slightly slower (signature checks) |

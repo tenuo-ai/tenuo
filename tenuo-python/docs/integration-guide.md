@@ -110,45 +110,41 @@ client = GuardBuilder(openai.OpenAI()).build()  # What tools are allowed?
 
 **Why Tier 1 exists:**
 
-LLMs hallucinate. They call tools that don't exist, pass arguments outside allowed ranges, and attempt path traversal or SSRF. In a single-process application (your code + OpenAI SDK), the LLM output never leaves your process. You don't need cryptographic proof that *you* authorized *yourself* - you just need to validate the LLM's output before executing it.
-
-Tier 1 provides this: fast, in-process constraint checking without cryptographic overhead. It stops prompt injection and hallucinated tool calls at the point where LLM output meets your code.
+The model proposes tool calls. Trusted application code can reject calls outside a tool allowlist or argument policy before they run. That check holds on the guarded path in one process or across many. It leaves issuer authority, holder proof, and delegation chains unchecked.
 
 **Why Tier 2 exists:**
 
-When authorization crosses process boundaries (Agent A calls Agent B over HTTP), you need proof. Agent B can't trust that the request "really came from Agent A with these permissions" without cryptographic verification. Tier 2 adds warrants (signed capability tokens) and Proof-of-Possession (proving the caller holds the private key).
+When another component must check authority without trusting the caller's account of its permissions, Tier 2 adds signed, holder-bound warrants and Proof-of-Possession. Delegation can only narrow that authority. An application-owned issuer can mint the warrant.
+
+Verification mode and enforcement placement are separate. If the agent can modify the guard or reach the resource directly, put enforcement and resource credentials outside its control. Signatures on a bypassable wrapper leave that process able to skip the check.
 
 ```
 Which tier should I use?
 │
-├─ Is the tool caller in the same process as the guard?
-│   └─ Yes: Tier 1 is sufficient (no network = no impersonation risk)
-│   └─ No:  Tier 2 required (network = need cryptographic proof)
+├─ Will trusted application code enforce the policy?
+│   └─ Yes: Tier 1
 │
-├─ Is the warrant delegated from another agent?
-│   └─ Yes: Tier 2 with chain validation
-│   └─ No:  Tier 2 without chain
+├─ Must a separate verifier check issuer, holder, or delegation?
+│   └─ Yes: Tier 2
 │
-└─ Do I need audit trail with cryptographic proof?
-    └─ Yes: Tier 2 always
-    └─ No:  Tier 1 for simplicity
+└─ Can the agent bypass the guard or reach the resource directly?
+    └─ Yes: Enforce outside that process, for either tier
 ```
 
 **Tier 1**: Runtime guardrails (no crypto)
 - Constraint checking via `constraint.satisfies(value)`
 - Tool allowlisting
-- Suitable for single-process, trusted environments
-- Example: OpenAI client in a monolith
+- Local policy in trusted application code, including production
+- Example: an application-owned OpenAI or ADK guard
 
 **Tier 2**: Cryptographic authorization (warrant + PoP)
-- All of Tier 1, plus:
 - Warrant signature validation via `warrant.authorize()`
 - Proof-of-Possession per tool call
-- Delegation chain verification
-- Required for distributed systems
-- Example: Agent-to-Agent communication, microservices
+- Delegation chain verification against trusted roots
+- Use when the effecting component must verify issuer-granted authority
+- Example: agent-to-agent calls, or a tool service that checks issuer-granted authority itself
 
-**Both tiers must be supported.** Users choose based on threat model.
+**Both tiers must be supported.** Users choose the verification mode separately from where enforcement runs.
 
 ### 3. Zero Trust for Arguments
 

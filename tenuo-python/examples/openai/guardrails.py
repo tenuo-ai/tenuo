@@ -4,9 +4,10 @@ OpenAI + Tenuo Tier 1 Guardrails Example
 A minimal example showing how to protect OpenAI tool calls with Tenuo guardrails.
 This uses Tier 1 (no cryptography) - runtime constraint checking only.
 
-⚠️  PRODUCTION WARNING: Tier 1 is suitable for prototyping and single-process scenarios.
-    For production systems where insider threats or container compromise are concerns,
-    use Tier 2 (Warrant + PoP). See examples/openai/warrant.py for cryptographic protection.
+Tier 1 enforces local policy in trusted application code, including in production.
+    It does not verify issuer authority, holder proof, or a delegation chain.
+    If the agent can bypass this client or reach the resource directly, enforce
+    outside that process. See examples/openai/warrant.py for signed authority.
 
 With Constraints (Builder - Recommended):
     client = (GuardBuilder(openai.OpenAI())

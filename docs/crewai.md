@@ -754,7 +754,7 @@ Before deploying CrewAI agents with Tenuo protection:
 | Tier | Either, according to the authority model | Tier 2 for verifiable delegation; Tier 1 for trusted local policy |
 | Denial Mode | "log" or "raise" | "raise" (Fail Closed) |
 | Constraints | Loose (Wildcards) | Strict (Specific Patterns) |
-| Hook Scope | Global (`register()`) | Crew-scoped (`as_hook()`) or Global |
+| Hook Scope | Global. `register()` and `as_hook()` both apply process-wide | Global. `as_hook()` does not isolate a crew |
 
 ### Monitoring & Operations
 - [ ] **Audit Logging:** `audit_callback` configured and shipping logs to SIEM/storage.

@@ -36,7 +36,8 @@ uv pip install tenuo
 **Answer these questions:**
 
 1. **Do you need application-owned local policy checks?**
-   - Tier 1 provides tool allowlists and argument constraints in trusted application code.
+   - Yes -> Tier 1. Trusted application code enforces tool allowlists and argument constraints, including in production.
+   - A separate verifier must check issuer, holder, or delegation -> Tier 2 (question 2).
 
 2. **Do you need independently verifiable issuer authority, holder proof, or delegation?**
    - Use Tier 2, whether the workflow is single-process or distributed.
