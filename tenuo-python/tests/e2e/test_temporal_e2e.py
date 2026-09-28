@@ -15,6 +15,7 @@ Covers:
   - Audit event emission
 """
 
+from contextlib import contextmanager
 import asyncio
 import base64
 import time
@@ -466,6 +467,19 @@ class TestInstallWarrant:
         info.workflow_id = run_key
         return info
 
+    @contextmanager
+    def _in_workflow(self, run_key: str, *, replaying: bool = False):
+        with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)), \
+                patch("temporalio.workflow.unsafe.is_replaying", return_value=replaying):
+            yield
+
+    def _cfg(self, run_key: str, holder_key, root_key):
+        resolver = MagicMock()
+        resolver.resolve_sync.return_value = holder_key
+        cfg = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[root_key.public_key])
+        with _store_lock:
+            _workflow_config_store[run_key] = cfg
+
     def _cleanup(self, run_key: str):
         with _store_lock:
             _workflow_config_store.pop(run_key, None)
@@ -483,7 +497,7 @@ class TestInstallWarrant:
         with _store_lock:
             _workflow_config_store[run_key] = cfg
         try:
-            with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)):
+            with self._in_workflow(run_key):
                 tenuo_install_warrant(warrant, "agent1")
             with _store_lock:
                 raw = dict(_workflow_headers_store.get(run_key, {}))
@@ -506,7 +520,7 @@ class TestInstallWarrant:
         with _store_lock:
             _workflow_config_store[run_key] = cfg
         try:
-            with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)):
+            with self._in_workflow(run_key):
                 with pytest.raises(TenuoContextError):
                     tenuo_install_warrant(warrant, "agent1")
             with _store_lock:
@@ -525,7 +539,7 @@ class TestInstallWarrant:
         with _store_lock:
             _workflow_config_store[run_key] = cfg
         try:
-            with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)):
+            with self._in_workflow(run_key):
                 with pytest.raises(TenuoContextError):
                     tenuo_install_warrant(warrant, "agent1")
             with _store_lock:
@@ -538,11 +552,80 @@ class TestInstallWarrant:
 
         run_key = "wf-install-no-config"
         # No entry in _workflow_config_store for this run_key at all.
-        with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)):
+        with self._in_workflow(run_key):
             with pytest.raises(TenuoContextError, match="TenuoWorkerInterceptor"):
                 tenuo_install_warrant(warrant, "agent1")
         with _store_lock:
             assert run_key not in _workflow_headers_store
+
+    def test_reinstalling_the_same_warrant_is_a_no_op(self, warrant, agent_key, control_key):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-idempotent"
+        self._cfg(run_key, agent_key, control_key)
+        try:
+            with self._in_workflow(run_key):
+                tenuo_install_warrant(warrant, "agent1")
+                tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                installed = _extract_warrant_from_headers(dict(_workflow_headers_store[run_key]))
+            assert installed.id == warrant.id
+        finally:
+            self._cleanup(run_key)
+
+    def test_refuses_to_replace_an_installed_warrant(self, warrant, agent_key, control_key):
+        """A second, different warrant for the same holder must not replace the
+        first: whoever can send the update could otherwise swap in a broader one."""
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        other = (
+            Warrant.mint_builder()
+            .capability("list_directory", path=Subpath("/tmp"))
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(control_key)
+        )
+        run_key = "wf-install-no-replace"
+        self._cfg(run_key, agent_key, control_key)
+        try:
+            with self._in_workflow(run_key):
+                tenuo_install_warrant(warrant, "agent1")
+                with pytest.raises(TenuoContextError, match="already has a warrant"):
+                    tenuo_install_warrant(other, "agent1")
+            with _store_lock:
+                installed = _extract_warrant_from_headers(dict(_workflow_headers_store[run_key]))
+            assert installed.id == warrant.id
+        finally:
+            self._cleanup(run_key)
+
+    def test_replay_skips_the_wall_clock_chain_check(self, warrant, agent_key):
+        """On replay the update already succeeded in history; re-running the
+        expiry-sensitive chain check could fail where the original did not.
+        The deterministic holder check still runs."""
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-replay"
+        # A root the warrant does not chain to: fails live, skipped on replay.
+        self._cfg(run_key, agent_key, SigningKey.generate())
+        try:
+            with self._in_workflow(run_key, replaying=True):
+                tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                assert run_key in _workflow_headers_store
+        finally:
+            self._cleanup(run_key)
+
+    def test_replay_still_checks_the_holder_key(self, warrant, control_key):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-replay-holder"
+        self._cfg(run_key, SigningKey.generate(), control_key)
+        try:
+            with self._in_workflow(run_key, replaying=True):
+                with pytest.raises(TenuoContextError):
+                    tenuo_install_warrant(warrant, "agent1")
+        finally:
+            self._cleanup(run_key)
 
 
 # -- Activity interceptor (Authorizer path) ----------------------------------

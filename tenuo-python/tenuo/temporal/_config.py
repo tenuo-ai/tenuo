@@ -268,8 +268,12 @@ class TenuoPluginConfig:
     attaches anything.
 
     Return a dict of ``tenuo_execute_child_workflow()``-style keyword
-    arguments to mint a warrant for the child — any of ``tools`` (list),
-    ``constraints`` (dict), ``ttl_seconds`` (int), ``child_key_id`` (str).
+    arguments to mint a warrant for the child: ``tools`` (a non-empty list,
+    **required**), and optionally ``constraints`` (dict), ``ttl_seconds``
+    (int), ``child_key_id`` (str). Unlike ``tenuo_execute_child_workflow()``,
+    omitting ``tools`` is an error rather than "all of the parent's tools",
+    and unknown keys are rejected, so a policy returning ``{}`` or a typo
+    fails the workflow instead of handing the child the parent's authority.
     Minting reuses ``tenuo_execute_child_workflow()``'s own attenuation
     path: the child can only **narrow** the parent (requesting a tool
     outside the parent's, introducing a constraint key the parent capability

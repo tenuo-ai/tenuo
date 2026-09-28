@@ -41,9 +41,7 @@ strings. ``temporal_agent_harness`` types are only imported inside
 Everything here targets the harness's OpenAI Agents SDK integration
 (``temporal_agent_harness.ai_sdks.openai_agents``), the path the harness's
 own examples and the Tenuo refund-agent example use; the exact internal
-activity names come from that integration's source, not from guessing (see
-``HARNESS_SUPPORT.md`` in the Tenuo monorepo for the investigation this
-module implements).
+activity names come from that integration's source, not from guessing.
 """
 
 from __future__ import annotations
