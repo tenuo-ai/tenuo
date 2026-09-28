@@ -305,15 +305,65 @@ activity body starts. A call that reaches the worker by another route (a
 pre-approved tool, a human approval, a bug in an evaluator) is still held
 to the same bounds.
 
+## Delivering a warrant that didn't arrive as a header
+
+A workflow started through the harness's own entry points (its session
+manager, web app, or chat server) receives no Tenuo headers today — nothing
+in the harness forwards them yet (see the gap below). Until it does, a
+common pattern is a custom `@workflow.update` that hands the agent its
+warrant as an ordinary argument (e.g. a base64 string), the way the refund
+example's `open_ticket` does:
+
+```python
+@workflow.update
+def open_ticket(self, warrant_b64: str) -> str:
+    self.ticket_warrant = Warrant.from_base64(warrant_b64)
+    tenuo_install_warrant(self.ticket_warrant, HOLDER_KEY_ID)
+    return self.ticket_warrant.id
+```
+
+`tenuo_install_warrant(warrant, key_id)` installs it into the same ambient,
+per-run context a header-carried warrant would have populated at workflow
+start — so every later `workflow.execute_activity()` call, including a
+harness tool's own dispatcher, is transparently signed against it. It is a
+security boundary, not a passthrough: it validates the warrant's chain
+against this worker's `trusted_roots` and confirms `key_id` actually
+resolves to the warrant's own holder key before installing anything,
+failing closed (`TenuoContextError`) otherwise.
+
 ## What's still a harness gap, not a Tenuo one
 
 Some parts of the harness integration need a small hook from the harness
-side before Tenuo can close them without a workaround — getting a warrant
-into an agent that the harness's own session manager/web app/chat server
-started (no Tenuo headers today), narrower per-subagent warrants at
-`subagent_toolset` spawn, and carrying a cryptographic approval through the
-harness's own `approve_tool` update. See `HARNESS_SUPPORT.md` in the Tenuo
-monorepo for the full investigation and status.
+side before Tenuo can close them without a workaround. Confirmed by reading
+the actual call sites, not inferred:
+
+- **Warrant delivery through the session manager / web app / chat server.**
+  `SessionManagerWorkflow.create_session` starts the child agent workflow
+  with a plain `workflow.start_child_workflow(...)` — no header
+  passthrough — and `AgentConfig` has no metadata/headers field for a
+  caller to populate one. The web app's HTTP handlers call `create_session`
+  through the *web app's own* Temporal client, not the original caller's,
+  so there is no channel today for an HTTP caller to attach a warrant at
+  all. The concrete ask: a generic passthrough field on `AgentConfig` that
+  `create_session` forwards, unchanged, into the child workflow start's own
+  headers. A caller with direct Temporal client access (this doc's own
+  examples, and the refund example) already has no such gap — see above.
+- **Narrower per-subagent warrants at spawn.** `TenuoPluginConfig.
+  child_warrant_policy` (this SDK) mints a narrower warrant for a *plain*
+  `workflow.start_child_workflow()` call, which is exactly what
+  `AgentWorkflowRunner.start_subagent()` uses — no harness hook needed for
+  the mechanism itself. What's not done is wiring it into an actual
+  `subagent_toolset`-based demo.
+- **Carrying a cryptographic approval through the harness's own gate
+  resolution.** `TenuoClientInterceptor.set_approvals_for_update()` (this
+  SDK) already lets a signed approval ride on the *update* that resolves a
+  harness gate (e.g. `approve_tool`) — no harness hook needed for that
+  either. A tighter integration (`ToolApprovalDecision` gaining an optional
+  opaque `attestation` field) is a further harness-side option, not a
+  requirement.
+
+See `HARNESS_SUPPORT.md` in the Tenuo monorepo for the full investigation
+and status.
 
 ## See also
 
