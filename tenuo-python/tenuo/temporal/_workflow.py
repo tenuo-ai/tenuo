@@ -194,16 +194,31 @@ def tenuo_install_warrant(
             headers (default ``True``, matching ``tenuo_headers()``).
     """
     try:
-        from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
+        from temporalio import workflow  # type: ignore[import-not-found]
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
     run_key = _current_run_key()
     with _store_lock:
         config = _workflow_config_store.get(run_key)
+        existing_headers = dict(_workflow_headers_store.get(run_key, {}))
     if config is None:
         raise TenuoContextError(
             "tenuo_install_warrant requires TenuoWorkerInterceptor on this worker."
+        )
+
+    # Install once per run. Replacing a warrant mid-run would let anyone who can
+    # send this update swap in a different (possibly broader) warrant for the
+    # same holder, e.g. one issued for another task. Re-installing the same
+    # warrant is a no-op, which also keeps replay of the update idempotent.
+    if existing_headers:
+        existing = _extract_warrant_from_headers(existing_headers)
+        if existing is not None and existing.id == warrant.id:
+            return
+        raise TenuoContextError(
+            "tenuo_install_warrant: this workflow run already has a warrant; "
+            "refusing to replace it. Start a new run, or delegate a narrower "
+            "warrant to a child workflow instead."
         )
 
     chain = list(warrant_chain) if warrant_chain is not None else [warrant]
@@ -220,8 +235,14 @@ def tenuo_install_warrant(
     authorizer = _build_authorizer(
         Authorizer, config.trusted_roots, config, revocation_list=revocation_list,
     )
+    # verify_chain checks expiry against the wall clock. On replay the update
+    # already succeeded in history, so re-checking could raise where the
+    # original run did not (a non-determinism error). The holder and chain
+    # structure checks above are deterministic and still run; the activity
+    # worker verifies the warrant again on every dispatch regardless.
     try:
-        authorizer.verify_chain(chain)
+        if not workflow.unsafe.is_replaying():
+            authorizer.verify_chain(chain)
     except Exception as exc:
         raise TenuoContextError(
             f"tenuo_install_warrant: chain verification failed: {exc}"

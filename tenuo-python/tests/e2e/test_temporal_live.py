@@ -750,6 +750,29 @@ class TestLiveChildWarrantPolicy:
                 )
 
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "decision",
+        [{}, {"ttl_seconds": 60}, {"tools": []}, {"tools": ["read_file"], "constraint": {}}],
+        ids=["empty", "no-tools", "empty-tools", "unknown-key"],
+    )
+    async def test_policy_must_name_tools_explicitly(self, keys, warrant, demo_dir, decision):
+        """Omitting tools= must not hand the child every tool the parent has,
+        and a typo'd key must not be silently ignored."""
+
+        def policy(parent_warrant, child_workflow_type, child_id, child_input):
+            return decision
+
+        async with await WorkflowEnvironment.start_local() as env:
+            with pytest.raises(WorkflowFailureError):
+                await _run_workflow(
+                    env, keys, warrant, PlainChildStarterWorkflow,
+                    str(demo_dir / "a.txt"),
+                    workflows=[PlainChildStarterWorkflow, PolicyChildWorkflow],
+                    activities=[echo, read_file, list_directory, _tenuo_internal_mint_activity],
+                    plugin_config={"child_warrant_policy": policy},
+                )
+
 # ---------------------------------------------------------------------------
 # User interceptor composition
 # ---------------------------------------------------------------------------

@@ -329,7 +329,12 @@ harness tool's own dispatcher, is transparently signed against it. It is a
 security boundary, not a passthrough: it validates the warrant's chain
 against this worker's `trusted_roots` and confirms `key_id` actually
 resolves to the warrant's own holder key before installing anything,
-failing closed (`TenuoContextError`) otherwise.
+failing closed (`TenuoContextError`) otherwise. A run takes one warrant:
+installing the same warrant again is a no-op (so replaying the update is
+safe), and installing a different one raises rather than replacing it, so
+whoever can send the update can't swap in a broader warrant later. To give
+part of the work less authority, delegate a narrower warrant to a child
+workflow instead.
 
 ## What's still a harness gap, not a Tenuo one
 
@@ -362,8 +367,6 @@ the actual call sites, not inferred:
   opaque `attestation` field) is a further harness-side option, not a
   requirement.
 
-See `HARNESS_SUPPORT.md` in the Tenuo monorepo for the full investigation
-and status.
 
 ## See also
 

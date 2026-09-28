@@ -189,6 +189,9 @@ def _replace_field(obj: Any, field: str, value: Any) -> Any:
     return obj
 
 
+_CHILD_POLICY_KEYS = frozenset({"tools", "constraints", "ttl_seconds", "child_key_id"})
+
+
 def _workflow_type_name(workflow_ref: Any) -> str:
     """Resolve a child-workflow reference to its registered Temporal workflow
     type name.
@@ -469,11 +472,30 @@ class _TenuoWorkflowOutboundInterceptor:
                 "constraints=, ttl_seconds=, child_key_id=); got "
                 f"{type(decision).__name__}."
             )
+        # Unlike tenuo_execute_child_workflow(), omitting tools= here must not
+        # mean "all of the parent's tools": a policy returning {} (or a typo'd
+        # key) would otherwise hand the child the parent's full authority.
+        from tenuo.temporal._workflow import _fail_workflow_non_retryable
+
+        unknown = set(decision) - _CHILD_POLICY_KEYS
+        if unknown:
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy returned unknown keys {sorted(unknown)} for "
+                f"child workflow {child_workflow_type!r}; allowed: "
+                f"{sorted(_CHILD_POLICY_KEYS)}."
+            ))
+        tools = decision.get("tools")
+        if not isinstance(tools, (list, tuple)) or not tools:
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy must name the child's tools explicitly "
+                f"(non-empty tools=[...]) for child workflow {child_workflow_type!r}; "
+                "return None to start the child with no warrant."
+            ))
 
         from tenuo.temporal._workflow import _attenuated_headers
 
         return await _attenuated_headers(
-            tools=decision.get("tools"),
+            tools=list(tools),
             constraints=decision.get("constraints"),
             ttl_seconds=decision.get("ttl_seconds"),
             child_key_id=decision.get("child_key_id"),

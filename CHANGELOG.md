@@ -71,8 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   child-workflow warrant for a *plain* `workflow.start_child_workflow()`
   call — no `tenuo_execute_child_workflow()` needed — reusing that
   function's own attenuation path, so a policy can only narrow the parent,
-  never widen it, and an unmatched child gets no warrant, never the
-  parent's verbatim.
+  never widen it. The policy must name the child's tools; an unmatched
+  child gets no warrant, never the parent's verbatim.
   `TenuoClientInterceptor.set_approvals_for_update()` stages a signed
   approval as an `x-tenuo-approvals` header on one workflow-update call; the
   worker's inbound interceptor stashes it into the same one-shot,
@@ -82,7 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument, not a transport header) — validating its chain and that the
   key id resolves to its holder before installing anything — so every
   later activity dispatch, including a framework's own tool dispatcher, is
-  transparently signed against it.
+  transparently signed against it. A run takes one warrant; a different
+  second warrant is refused rather than replacing the first.
 
 - **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
   `ServerMiddleware` for `MCPServer` / low-level `Server` that runs
