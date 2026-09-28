@@ -24,6 +24,11 @@
 //! 3. Verifies the warrant chain from the `X-Tenuo-Warrant` header
 //! 4. Authorizes the action using the extracted constraints
 //!
+//! Health and status endpoints (`/health`, `/healthz`, `/ready`, `/status`)
+//! are served on a separate listener (`--health-port`, default 9091), never on
+//! the authorization port: Envoy/Istio HTTP ext_authz forwards the client's
+//! path, so a 200 from a health route there would be read as ALLOW.
+//!
 //! # Kubernetes Sidecar Deployment
 //!
 //! ```yaml
@@ -45,6 +50,13 @@
 //!               key: trusted_keys
 //!         ports:
 //!         - containerPort: 9090
+//!           name: http
+//!         - containerPort: 9091
+//!           name: health
+//!         readinessProbe:
+//!           httpGet:
+//!             path: /ready
+//!             port: health
 //!         resources:
 //!           limits:
 //!             memory: "32Mi"
@@ -196,6 +208,39 @@ enum Commands {
         #[cfg(unix)]
         #[arg(long)]
         socket_group: Option<String>,
+
+        /// Port for the health listener (`/health`, `/healthz`, `/ready`, `/status`).
+        ///
+        /// These endpoints are served on a separate listener, never on the
+        /// authorization port: Envoy/Istio HTTP ext_authz forwards the client's
+        /// original path, so a 200 from a health route on the authorization
+        /// port would be read as ALLOW. Use 0 to disable the health listener.
+        ///
+        /// Defaults to 9091 in TCP mode. In Unix-socket mode no health listener
+        /// is started unless this flag (or TENUO_HEALTH_PORT) is set.
+        #[arg(long, env = "TENUO_HEALTH_PORT")]
+        health_port: Option<u16>,
+
+        /// Bind address for the health listener.
+        ///
+        /// Defaults to --bind in TCP mode and to 127.0.0.1 in Unix-socket mode.
+        #[arg(long, env = "TENUO_HEALTH_BIND")]
+        health_bind: Option<String>,
+
+        /// UNSAFE, migration only: also serve `/health`, `/healthz`, `/ready`
+        /// and `/status` on the authorization listener, as releases before
+        /// this change did.
+        ///
+        /// Behind Envoy/Istio HTTP ext_authz without a `path_prefix`, this lets
+        /// any client reach those paths on the backend without a warrant.
+        /// Point probes at --health-port instead and leave this off.
+        #[arg(
+            long,
+            env = "TENUO_LEGACY_HEALTH_ON_MAIN_PORT",
+            action = clap::ArgAction::SetTrue,
+            value_parser = clap::builder::BoolishValueParser::new()
+        )]
+        legacy_health_on_main_port: bool,
     },
 
     /// Verify and authorize a single warrant (for scripting)
@@ -256,8 +301,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             socket: Some(socket_path),
             socket_mode,
             socket_group,
+            health_port,
+            health_bind,
+            legacy_health_on_main_port,
             ..
         } => {
+            let health = HealthOptions::resolve_unix(
+                *health_port,
+                health_bind.as_deref(),
+                *legacy_health_on_main_port,
+            )?;
             serve_unix(
                 authorizer,
                 initial_srl_version,
@@ -265,14 +318,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 socket_path,
                 socket_mode,
                 socket_group.as_deref(),
+                &health,
                 &cli,
             )
             .await?;
         }
         Commands::Serve {
-            port, config, bind, ..
+            port,
+            config,
+            bind,
+            health_port,
+            health_bind,
+            legacy_health_on_main_port,
+            ..
         } => {
-            serve_http(authorizer, initial_srl_version, config, bind, *port, &cli).await?;
+            let health = HealthOptions::resolve_tcp(
+                bind,
+                *port,
+                *health_port,
+                health_bind.as_deref(),
+                *legacy_health_on_main_port,
+            )?;
+            serve_http(
+                authorizer,
+                initial_srl_version,
+                config,
+                bind,
+                *port,
+                &health,
+                &cli,
+            )
+            .await?;
         }
 
         Commands::Verify {
@@ -883,15 +959,183 @@ async fn prepare_serve(
     })
 }
 
-/// Build the axum router from shared state.
-fn build_router(state: Arc<AppState>) -> Router {
-    Router::new()
+/// Default port for the health listener in TCP mode.
+const DEFAULT_HEALTH_PORT: u16 = 9091;
+
+/// Where (and whether) the health endpoints are served.
+///
+/// `/health`, `/healthz`, `/ready` and `/status` answer 200 without a warrant.
+/// Envoy/Istio HTTP ext_authz forwards the client's original request path to
+/// the authorizer and treats a 200 as ALLOW, so those routes must never be
+/// reachable on the authorization listener: a client request for `/health`
+/// would otherwise be forwarded to the backend with no warrant. They live on a
+/// separate listener instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HealthOptions {
+    /// Separate health listener address. `None` disables it.
+    addr: Option<SocketAddr>,
+    /// Also serve the health routes on the authorization listener (unsafe,
+    /// migration only).
+    legacy_on_main: bool,
+}
+
+impl HealthOptions {
+    /// TCP mode: the health listener defaults to `--bind`:9091. `--health-port 0`
+    /// disables it. Reusing the authorization port is refused, because that is
+    /// exactly the configuration this separation exists to prevent.
+    fn resolve_tcp(
+        bind: &str,
+        port: u16,
+        health_port: Option<u16>,
+        health_bind: Option<&str>,
+        legacy_on_main: bool,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let health_port = health_port.unwrap_or(DEFAULT_HEALTH_PORT);
+        if health_port != 0 && health_port == port {
+            return Err(format!(
+                "--health-port {health_port} is the same as --port: health endpoints must not \
+                 share the authorization listener (Envoy/Istio ext_authz would treat their \
+                 200 as ALLOW). Choose another --health-port, or 0 to disable it."
+            )
+            .into());
+        }
+        Ok(Self {
+            addr: Self::addr(health_bind.unwrap_or(bind), health_port)?,
+            legacy_on_main,
+        })
+    }
+
+    /// Unix-socket mode: no TCP listener is opened unless asked for, so the
+    /// health listener is off by default. Setting `--health-port` starts it on
+    /// `--health-bind` (default 127.0.0.1).
+    #[cfg(unix)]
+    fn resolve_unix(
+        health_port: Option<u16>,
+        health_bind: Option<&str>,
+        legacy_on_main: bool,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            addr: Self::addr(health_bind.unwrap_or("127.0.0.1"), health_port.unwrap_or(0))?,
+            legacy_on_main,
+        })
+    }
+
+    fn addr(bind: &str, port: u16) -> Result<Option<SocketAddr>, Box<dyn std::error::Error>> {
+        if port == 0 {
+            return Ok(None);
+        }
+        let addr: SocketAddr = format!("{}:{}", bind, port)
+            .parse()
+            .map_err(|e| format!("invalid health listener address {bind}:{port}: {e}"))?;
+        Ok(Some(addr))
+    }
+
+    fn banner_line(&self) -> String {
+        match self.addr {
+            Some(addr) => format!("health=http://{addr} (/health /healthz /ready /status)"),
+            None => "health=disabled".to_string(),
+        }
+    }
+}
+
+/// Add the unauthenticated health and status routes to a router.
+fn with_health_routes(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
+    router
         .route("/health", axum::routing::get(health_check))
         .route("/healthz", axum::routing::get(health_check))
         .route("/ready", axum::routing::get(health_check))
         .route("/status", axum::routing::get(status_handler))
-        .fallback(handle_request)
-        .with_state(state)
+}
+
+/// Build the authorization router.
+///
+/// Every path, including `/health`, `/ready` and `/status`, goes through
+/// [`handle_request`] and needs a warrant. Only `legacy_health` (the
+/// `--legacy-health-on-main-port` escape hatch) restores the old
+/// unauthenticated routes here.
+fn build_router(state: Arc<AppState>, legacy_health: bool) -> Router {
+    let router = Router::new();
+    let router = if legacy_health {
+        with_health_routes(router)
+    } else {
+        router
+    };
+    router.fallback(handle_request).with_state(state)
+}
+
+/// Build the health listener's router. Anything other than the health routes
+/// is a 404; this listener never authorizes requests.
+fn build_health_router(state: Arc<AppState>) -> Router {
+    with_health_routes(Router::new()).with_state(state)
+}
+
+/// Running health listener, stopped after the authorization listener exits.
+struct HealthServer {
+    handle: tokio::task::JoinHandle<()>,
+    stop: tokio::sync::oneshot::Sender<()>,
+    /// Bound address (differs from the requested one when port 0 is used in tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    local_addr: SocketAddr,
+}
+
+/// Bind and start the health listener, if enabled. Binding happens here (not
+/// in the spawned task) so a port conflict fails startup instead of leaving
+/// the pod without probes.
+async fn start_health_listener(
+    health: &HealthOptions,
+    state: Arc<AppState>,
+) -> Result<Option<HealthServer>, Box<dyn std::error::Error>> {
+    let Some(addr) = health.addr else {
+        return Ok(None);
+    };
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("failed to bind health listener on {addr}: {e}"))?;
+    let local_addr = listener.local_addr()?;
+    info!(addr = %local_addr, "Health listener ready");
+    let app = build_health_router(state);
+    let (stop, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let handle = tokio::spawn(async move {
+        let result = axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = stop_rx.await;
+            })
+            .await;
+        if let Err(e) = result {
+            error!(error = %e, "health listener failed");
+        }
+    });
+    Ok(Some(HealthServer {
+        handle,
+        stop,
+        local_addr,
+    }))
+}
+
+async fn stop_health_listener(server: Option<HealthServer>) {
+    if let Some(server) = server {
+        let _ = server.stop.send(());
+        let _ = server.handle.await;
+    }
+}
+
+/// Log a prominent warning when the legacy escape hatch is on.
+fn warn_legacy_health(legacy_on_main: bool) {
+    if !legacy_on_main {
+        return;
+    }
+    eprintln!("!!! --legacy-health-on-main-port is set (UNSAFE, migration only)");
+    eprintln!("!!! /health, /healthz, /ready and /status answer 200 WITHOUT a warrant on the");
+    eprintln!("!!! authorization port. Behind Envoy/Istio HTTP ext_authz a 200 means ALLOW, so");
+    eprintln!("!!! unless the proxy sets path_prefix (e.g. /ext_authz) any client can reach");
+    eprintln!("!!! those paths on the backend with no warrant. Move probes to --health-port");
+    eprintln!("!!! and remove this flag.");
+    eprintln!();
+    warn!(
+        "legacy_health_on_main_port is enabled: health and status routes answer 200 without a \
+         warrant on the authorization listener; behind ext_authz without path_prefix this is an \
+         authorization bypass for /health, /healthz, /ready and /status"
+    );
 }
 
 /// Tracker freshness must outlast one heartbeat plus slack so a long
@@ -921,6 +1165,7 @@ fn srl_freshness_allows(
 /// Print the shared portion of the startup banner.
 fn print_banner_shared(
     transport_line: &str,
+    health: &HealthOptions,
     config_path: &std::path::Path,
     debug_mode: bool,
     initial_srl_version: Option<u64>,
@@ -931,6 +1176,10 @@ fn print_banner_shared(
     eprintln!("│ Tenuo Authorizer Server v{}", authorizer_version());
     eprintln!("├─────────────────────────────────────────────────────────");
     eprintln!("│ {}", transport_line);
+    eprintln!("│ {}", health.banner_line());
+    if health.legacy_on_main {
+        eprintln!("│ ⚠️  Health routes on the authorization port: ENABLED (unsafe, see below)");
+    }
     eprintln!("│ Config: {}", config_path.display());
     if debug_mode {
         eprintln!("│ ⚠️  Debug mode: ENABLED (not for production!)");
@@ -946,6 +1195,7 @@ fn print_banner_shared(
     }
     eprintln!("└─────────────────────────────────────────────────────────");
     eprintln!();
+    warn_legacy_health(health.legacy_on_main);
 }
 
 /// Start the HTTP authorization server over TCP.
@@ -955,12 +1205,14 @@ async fn serve_http(
     config_path: &PathBuf,
     bind: &str,
     port: u16,
+    health: &HealthOptions,
     cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ready = prepare_serve(authorizer, initial_srl_version, config_path, cli).await?;
 
     print_banner_shared(
         &format!("transport=tcp  listen={}:{}", bind, port),
+        health,
         config_path,
         ready.debug_mode,
         ready.srl_version,
@@ -968,14 +1220,19 @@ async fn serve_http(
         cli.heartbeat_interval,
     );
 
-    let app = build_router(ready.state.clone());
+    let app = build_router(ready.state.clone(), health.legacy_on_main);
     let addr: SocketAddr = format!("{}:{}", bind, port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
+    // Start health only once the authorization listener is bound, so readiness
+    // never reports ready before the authorizer can accept checks.
+    let health_server = start_health_listener(health, ready.state.clone()).await?;
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
 
+    stop_health_listener(health_server).await;
     finish_heartbeat(ready.state, ready.heartbeat).await;
+    served?;
     Ok(())
 }
 
@@ -1075,9 +1332,10 @@ fn prepare_unix_socket(path: &std::path::Path) -> Result<(), Box<dyn std::error:
 
 /// Start the HTTP authorization server over a Unix domain socket.
 ///
-/// Serves the exact same HTTP API as TCP mode — `/health`, `/status`,
-/// `/verify/{tool}`, etc. — but over `AF_UNIX` instead of `AF_INET`.
-/// No TCP listener is created.
+/// Serves the same authorization API as TCP mode, but over `AF_UNIX` instead
+/// of `AF_INET`. Health endpoints are not on the socket (unless
+/// `--legacy-health-on-main-port`); a TCP health listener is opened only when
+/// `--health-port` is set.
 #[cfg(unix)]
 #[allow(clippy::too_many_arguments)]
 async fn serve_unix(
@@ -1087,6 +1345,7 @@ async fn serve_unix(
     socket_path: &PathBuf,
     socket_mode: &str,
     socket_group: Option<&str>,
+    health: &HealthOptions,
     cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1103,6 +1362,7 @@ async fn serve_unix(
 
     print_banner_shared(
         &format!("transport=unix socket={}", socket_path.display()),
+        health,
         config_path,
         ready.debug_mode,
         ready.srl_version,
@@ -1146,12 +1406,15 @@ async fn serve_unix(
         "Unix socket ready"
     );
 
-    let app = build_router(ready.state.clone());
-    axum::serve(listener, app)
+    let app = build_router(ready.state.clone(), health.legacy_on_main);
+    let health_server = start_health_listener(health, ready.state.clone()).await?;
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
 
+    stop_health_listener(health_server).await;
     finish_heartbeat(ready.state, ready.heartbeat).await;
+    served?;
     Ok(())
 }
 
@@ -2164,10 +2427,7 @@ routes:
             revocation_tracker: None,
             srl_warmup: Duration::from_secs(60),
         });
-        Router::new()
-            .route("/health", axum::routing::get(health_check))
-            .fallback(handle_request)
-            .with_state(state)
+        build_router(state, false)
     }
 
     /// Create a warrant with an approval gate requiring 1-of-1 approvals.
@@ -2725,10 +2985,7 @@ routes:
             revocation_tracker: Some(tracker),
             srl_warmup: warmup,
         });
-        Router::new()
-            .route("/health", axum::routing::get(health_check))
-            .fallback(handle_request)
-            .with_state(state)
+        build_router(state, false)
     }
 
     async fn deploy_request(root_key: &SigningKey, app: Router) -> (StatusCode, Value) {
@@ -2823,6 +3080,239 @@ routes:
         let (status, body) = deploy_request(&root_key, app).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(body["error"], "revocation_unavailable");
+    }
+
+    // ----------------------------------------------------------------
+    // Health endpoints live on a separate listener (ext_authz bypass fix)
+    // ----------------------------------------------------------------
+
+    const HEALTH_PATHS: [&str; 4] = ["/health", "/healthz", "/ready", "/status"];
+
+    fn test_state(yaml: &str) -> Arc<AppState> {
+        let config = GatewayConfig::from_yaml(yaml).unwrap();
+        let compiled = CompiledGatewayConfig::compile(config).unwrap();
+        let root_key = SigningKey::generate();
+        Arc::new(AppState {
+            authorizer: Arc::new(tokio::sync::RwLock::new(
+                Authorizer::new().with_trusted_root(root_key.public_key()),
+            )),
+            config: compiled,
+            debug_mode: true,
+            audit_tx: None,
+            authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
+            metrics: None,
+            started_at: std::time::Instant::now(),
+            revocation_tracker: None,
+            srl_warmup: Duration::from_secs(60),
+        })
+    }
+
+    async fn get(app: Router, path: &str) -> (StatusCode, Value) {
+        let resp = app
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        (status, parse_body(resp).await)
+    }
+
+    /// The bypass: Envoy HTTP ext_authz forwards the client path, and a 200 is
+    /// ALLOW. The authorization router must not answer health paths itself.
+    #[tokio::test]
+    async fn main_router_denies_health_paths_without_warrant() {
+        let state = test_state(GATEWAY_YAML);
+        for path in HEALTH_PATHS {
+            let (status, body) = get(build_router(state.clone(), false), path).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+            assert_eq!(body["error"], "no_route", "{path}: {body}");
+        }
+    }
+
+    /// With a route that matches the health paths, they are authorized like
+    /// any other request: no warrant means 401, never 200.
+    #[tokio::test]
+    async fn main_router_authorizes_health_paths_through_routes() {
+        let yaml = r#"
+version: "1"
+settings:
+  debug_mode: true
+tools:
+  read_page:
+    description: "Read a page"
+    constraints:
+      page:
+        from: path
+        path: "page"
+        required: true
+routes:
+  - pattern: "/{page}"
+    method: ["GET"]
+    tool: "read_page"
+"#;
+        let state = test_state(yaml);
+        for path in HEALTH_PATHS {
+            let (status, body) = get(build_router(state.clone(), false), path).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {body}");
+            assert_eq!(body["error"], "missing_warrant", "{path}: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn health_router_answers_health_and_status() {
+        let state = test_state(GATEWAY_YAML);
+        for path in ["/health", "/healthz", "/ready"] {
+            let (status, body) = get(build_health_router(state.clone()), path).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+            assert_eq!(body["status"], "healthy", "{path}");
+        }
+        let (status, body) = get(build_health_router(state.clone()), "/status").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["cp"]["status"], "disabled", "{body}");
+    }
+
+    /// The health listener never authorizes: gateway routes are 404 there, so
+    /// pointing ext_authz at it by mistake fails closed.
+    #[tokio::test]
+    async fn health_router_does_not_authorize_requests() {
+        let state = test_state(GATEWAY_YAML);
+        let resp = build_health_router(state)
+            .oneshot(Request::post("/deploy/api").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn legacy_flag_restores_health_routes_on_main_router() {
+        let state = test_state(GATEWAY_YAML);
+        for path in HEALTH_PATHS {
+            let (status, _) = get(build_router(state.clone(), true), path).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+        }
+        // Everything else is still authorized.
+        let (status, body) = get(build_router(state, true), "/deploy/api").await;
+        assert_ne!(status, StatusCode::OK, "{body}");
+        // The startup warning path runs without panicking.
+        warn_legacy_health(true);
+        warn_legacy_health(false);
+    }
+
+    #[tokio::test]
+    async fn health_listener_serves_over_tcp() {
+        let state = test_state(GATEWAY_YAML);
+        let health = HealthOptions {
+            addr: Some("127.0.0.1:0".parse().unwrap()),
+            legacy_on_main: false,
+        };
+        let server = start_health_listener(&health, state)
+            .await
+            .unwrap()
+            .expect("health listener enabled");
+        let addr = server.local_addr;
+
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET /ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.contains("200 OK"), "{response}");
+        assert!(response.contains("healthy"), "{response}");
+
+        stop_health_listener(Some(server)).await;
+        assert!(
+            tokio::net::TcpStream::connect(addr).await.is_err(),
+            "health listener should be closed after stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn disabled_health_listener_starts_nothing() {
+        let health = HealthOptions {
+            addr: None,
+            legacy_on_main: false,
+        };
+        let server = start_health_listener(&health, test_state(GATEWAY_YAML))
+            .await
+            .unwrap();
+        assert!(server.is_none());
+    }
+
+    #[test]
+    fn health_options_tcp_defaults_to_bind_and_9091() {
+        let h = HealthOptions::resolve_tcp("0.0.0.0", 9090, None, None, false).unwrap();
+        assert_eq!(h.addr, Some("0.0.0.0:9091".parse().unwrap()));
+        assert!(!h.legacy_on_main);
+
+        let h = HealthOptions::resolve_tcp("0.0.0.0", 9090, Some(8081), Some("127.0.0.1"), true)
+            .unwrap();
+        assert_eq!(h.addr, Some("127.0.0.1:8081".parse().unwrap()));
+        assert!(h.legacy_on_main);
+    }
+
+    #[test]
+    fn health_options_tcp_port_zero_disables() {
+        let h = HealthOptions::resolve_tcp("0.0.0.0", 9090, Some(0), None, false).unwrap();
+        assert_eq!(h.addr, None);
+    }
+
+    #[test]
+    fn health_options_tcp_refuses_the_authorization_port() {
+        let err = HealthOptions::resolve_tcp("0.0.0.0", 9090, Some(9090), None, false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("same as --port"), "{err}");
+        // Moving the main port off 9091 must not collide with the default.
+        assert!(HealthOptions::resolve_tcp("0.0.0.0", 9091, None, None, false).is_err());
+    }
+
+    #[test]
+    fn health_options_rejects_bad_bind() {
+        assert!(
+            HealthOptions::resolve_tcp("0.0.0.0", 9090, None, Some("not an ip"), false).is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn health_options_unix_is_off_unless_asked() {
+        let h = HealthOptions::resolve_unix(None, None, false).unwrap();
+        assert_eq!(h.addr, None);
+        let h = HealthOptions::resolve_unix(Some(9091), None, false).unwrap();
+        assert_eq!(h.addr, Some("127.0.0.1:9091".parse().unwrap()));
+        let h = HealthOptions::resolve_unix(Some(9091), Some("0.0.0.0"), false).unwrap();
+        assert_eq!(h.addr, Some("0.0.0.0:9091".parse().unwrap()));
+    }
+
+    #[test]
+    fn serve_cli_parses_health_flags() {
+        let cli = Cli::try_parse_from([
+            "tenuo-authorizer",
+            "serve",
+            "--config",
+            "g.yaml",
+            "--health-port",
+            "8081",
+            "--health-bind",
+            "127.0.0.1",
+            "--legacy-health-on-main-port",
+        ])
+        .unwrap();
+        let Commands::Serve {
+            health_port,
+            health_bind,
+            legacy_health_on_main_port,
+            ..
+        } = cli.command
+        else {
+            panic!("expected serve");
+        };
+        assert_eq!(health_port, Some(8081));
+        assert_eq!(health_bind.as_deref(), Some("127.0.0.1"));
+        assert!(legacy_health_on_main_port);
     }
 }
 
@@ -3070,7 +3560,7 @@ routes:
             revocation_tracker: None,
             srl_warmup: Duration::from_secs(60),
         });
-        let app = build_router(state);
+        let app = build_router(state, false);
 
         // Bind the Unix socket.
         let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
@@ -3083,28 +3573,28 @@ routes:
         // Give the server a moment to start accepting.
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-        // Connect via the socket and issue a raw HTTP/1.1 GET /health request.
+        // Health routes are not on the authorization socket: /health goes
+        // through route matching like any other path (404 no_route here).
+        let response_str = raw_unix_get(&socket_path, "/health").await;
+        assert!(
+            response_str.contains("404 Not Found") && response_str.contains("no_route"),
+            "expected /health to be unrouted on the authorization socket, got:\n{response_str}"
+        );
+
+        // A configured route is authorized normally: no warrant, no entry.
         let mut stream = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
         stream
-            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .write_all(
+                b"POST /deploy/api HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
             .await
             .unwrap();
-
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await.unwrap();
         let response_str = String::from_utf8(response).unwrap();
-
         assert!(
-            response_str.contains("200 OK"),
-            "expected 200 OK from /health over Unix socket, got:\n{response_str}"
-        );
-        assert!(
-            response_str.contains("healthy"),
-            "expected 'healthy' in body over Unix socket, got:\n{response_str}"
-        );
-        assert!(
-            response_str.contains("tenuo-authorizer"),
-            "expected service name in body, got:\n{response_str}"
+            response_str.contains("401 Unauthorized") && response_str.contains("missing_warrant"),
+            "expected missing_warrant over Unix socket, got:\n{response_str}"
         );
 
         // Verify no TCP port was bound (connect to a random port should fail).
@@ -3119,5 +3609,19 @@ routes:
         );
 
         serve_handle.abort();
+    }
+
+    async fn raw_unix_get(socket_path: &std::path::Path, path: &str) -> String {
+        let mut stream = tokio::net::UnixStream::connect(socket_path).await.unwrap();
+        stream
+            .write_all(
+                format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        String::from_utf8(response).unwrap()
     }
 }
