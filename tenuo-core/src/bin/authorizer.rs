@@ -1273,6 +1273,26 @@ async fn status_handler(State(state): State<Arc<AppState>>) -> impl axum::respon
     )
 }
 
+/// Build an early-exit denial (no route, missing or undecodable warrant, bad
+/// headers). In debug mode, mirror the body's `error` code into
+/// `x-tenuo-deny-reason` so proxies that only surface headers (for example
+/// Envoy ext_authz with `allowed_client_headers`) still show the reason.
+fn deny_response(debug_mode: bool, status: StatusCode, body: Value) -> Response {
+    let reason = body
+        .get("error")
+        .and_then(Value::as_str)
+        .and_then(|r| HeaderValue::from_str(r).ok());
+    let mut response = (status, Json(body)).into_response();
+    if debug_mode {
+        if let Some(value) = reason {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static("x-tenuo-deny-reason"), value);
+        }
+    }
+    response
+}
+
 /// Handle an incoming HTTP request
 async fn handle_request(
     State(state): State<Arc<AppState>>,
@@ -1290,15 +1310,15 @@ async fn handle_request(
     let route_match = match state.config.match_route(method.as_str(), &path) {
         Some(m) => m,
         None => {
-            return (
+            return deny_response(
+                state.debug_mode,
                 StatusCode::NOT_FOUND,
-                Json(json!({
+                json!({
                     "error": "no_route",
                     "message": format!("No route matches {} {}", method, path),
                     "request_id": request_id
-                })),
-            )
-                .into_response();
+                }),
+            );
         }
     };
 
@@ -1308,15 +1328,15 @@ async fn handle_request(
         Some(v) => match v.to_str() {
             Ok(s) => s.to_string(),
             Err(_) => {
-                return (
+                return deny_response(
+                    state.debug_mode,
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
+                    json!({
                         "error": "invalid_header",
                         "message": format!("Invalid {} header encoding", warrant_header),
                         "request_id": request_id
-                    })),
-                )
-                    .into_response();
+                    }),
+                );
             }
         },
         None => {
@@ -1361,15 +1381,15 @@ async fn handle_request(
                     .await;
             }
 
-            return (
+            return deny_response(
+                state.debug_mode,
                 StatusCode::UNAUTHORIZED,
-                Json(json!({
+                json!({
                     "error": "missing_warrant",
                     "message": format!("Missing {} header", warrant_header),
                     "request_id": request_id
-                })),
-            )
-                .into_response();
+                }),
+            );
         }
     };
 
@@ -1420,15 +1440,15 @@ async fn handle_request(
                     .await;
             }
 
-            return (
+            return deny_response(
+                state.debug_mode,
                 StatusCode::BAD_REQUEST,
-                Json(json!({
+                json!({
                     "error": "invalid_warrant",
                     "message": format!("Failed to decode warrant: {}", e),
                     "request_id": request_id
-                })),
-            )
-                .into_response();
+                }),
+            );
         }
     };
 
@@ -1494,15 +1514,15 @@ async fn handle_request(
                 error = %e,
                 "Failed to extract constraints from request"
             );
-            return (
+            return deny_response(
+                state.debug_mode,
                 StatusCode::BAD_REQUEST,
-                Json(json!({
+                json!({
                     "error": "extraction_failed",
                     "message": format!("Failed to extract constraints: {}", e),
                     "request_id": request_id
-                })),
-            )
-                .into_response();
+                }),
+            );
         }
     };
 
@@ -1548,14 +1568,15 @@ async fn handle_request(
                 Ok(b) => b,
                 Err(_) => {
                     warn!(request_id = %request_id, "Invalid base64 in {} header", approval_header);
-                    return (
+                    return deny_response(
+                        state.debug_mode,
                         StatusCode::BAD_REQUEST,
-                        Json(json!({
+                        json!({
                             "error": "invalid_approvals_header",
                             "message": format!("Could not base64-decode {} header", approval_header),
                             "request_id": request_id
-                        })),
-                    ).into_response();
+                        }),
+                    );
                 }
             };
 
@@ -1566,14 +1587,15 @@ async fn handle_request(
                     size = bytes.len(),
                     "Approvals header exceeds size limit"
                 );
-                return (
+                return deny_response(
+                    state.debug_mode,
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
+                    json!({
                         "error": "invalid_approvals_header",
                         "message": format!("{} header too large ({} bytes, max {})", approval_header, bytes.len(), MAX_APPROVAL_HEADER_BYTES),
                         "request_id": request_id
-                    })),
-                ).into_response();
+                    }),
+                );
             }
 
             // Try array first, then single approval
@@ -1583,14 +1605,15 @@ async fn handle_request(
                 vec![single]
             } else {
                 warn!(request_id = %request_id, "Failed to deserialize CBOR from {} header", approval_header);
-                return (
+                return deny_response(
+                    state.debug_mode,
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
+                    json!({
                         "error": "invalid_approvals_header",
                         "message": format!("Could not deserialize CBOR from {} header", approval_header),
                         "request_id": request_id
-                    })),
-                ).into_response();
+                    }),
+                );
             }
         }
         None => Vec::new(),
@@ -1617,15 +1640,15 @@ async fn handle_request(
                 error = %e,
                 "Signed revocation list is missing or stale"
             );
-            return (
+            return deny_response(
+                state.debug_mode,
                 StatusCode::FORBIDDEN,
-                Json(json!({
+                json!({
                     "error": "revocation_unavailable",
                     "message": "signed revocation list is missing or stale",
                     "request_id": request_id
-                })),
-            )
-                .into_response();
+                }),
+            );
         }
     }
 
@@ -2611,6 +2634,63 @@ routes:
 
         let body = parse_body(resp).await;
         assert_eq!(body["authorized"], true);
+    }
+
+    // Envoy HTTP ext_authz returns only allow-listed authorizer headers to the
+    // client, so early denials must carry x-tenuo-deny-reason in debug mode.
+    #[tokio::test]
+    async fn early_denials_carry_deny_reason_header_in_debug_mode() {
+        let root_key = SigningKey::generate();
+        let app = build_test_app(Authorizer::new().with_trusted_root(root_key.public_key()));
+
+        let cases = [
+            (
+                "POST",
+                "/deploy/api",
+                None,
+                StatusCode::UNAUTHORIZED,
+                "missing_warrant",
+            ),
+            (
+                "POST",
+                "/deploy/api",
+                Some("not-a-warrant"),
+                StatusCode::BAD_REQUEST,
+                "invalid_warrant",
+            ),
+            ("DELETE", "/nope", None, StatusCode::NOT_FOUND, "no_route"),
+        ];
+        for (method, uri, warrant, status, reason) in cases {
+            let mut req = Request::builder().method(method).uri(uri);
+            if let Some(w) = warrant {
+                req = req.header("X-Tenuo-Warrant", w);
+            }
+            let resp = app
+                .clone()
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), status, "{method} {uri}");
+            assert_eq!(
+                resp.headers()
+                    .get("x-tenuo-deny-reason")
+                    .and_then(|v| v.to_str().ok()),
+                Some(reason),
+                "{method} {uri}"
+            );
+            assert_eq!(parse_body(resp).await["error"], reason);
+        }
+    }
+
+    #[tokio::test]
+    async fn early_denials_omit_deny_reason_header_without_debug_mode() {
+        let resp = deny_response(
+            false,
+            StatusCode::UNAUTHORIZED,
+            json!({ "error": "missing_warrant" }),
+        );
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(resp.headers().get("x-tenuo-deny-reason").is_none());
     }
 
     fn empty_tracker(
