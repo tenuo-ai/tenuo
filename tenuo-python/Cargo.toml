@@ -7,7 +7,7 @@ description = "Python bindings for Tenuo, task-scoped authorization for AI agent
 license = "Apache-2.0"
 license-file = "LICENSE"
 repository = "https://github.com/tenuo-ai/tenuo"
-keywords = ["authorization", "capabilities", "agents", "security", "warrants", "mcp"]
+keywords = ["authorization", "capabilities", "agents", "warrants", "mcp"]
 categories = ["authentication", "cryptography", "api-bindings", "security"]
 
 [lib]
