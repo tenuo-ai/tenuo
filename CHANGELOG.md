@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Envoy HTTP ext_authz without `path_prefix` let `/health`, `/healthz`,
+  `/ready` and `/status` bypass authorization.** The authorizer serves those
+  paths itself and answers 200, and Envoy's HTTP ext_authz forwards the
+  client's original path to the authorizer by default. With the
+  `http_service` example previously in `docs/enforcement.md` (no
+  `path_prefix`), a client request to one of those four paths was treated as
+  authorized and forwarded to the backend without a warrant. Other paths were
+  not affected, and the gRPC-based quickstarts never reached the authorizer at
+  all. If you deployed from that example, set `path_prefix: /ext_authz` on the
+  ext_authz `http_service` (Istio: `pathPrefix`) and prefix your gateway route
+  patterns with `/ext_authz/`, as the updated docs now do.
+
 ### Added
 
 - **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
