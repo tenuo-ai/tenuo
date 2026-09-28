@@ -55,6 +55,7 @@ from tenuo.temporal import (  # noqa: E402
     TenuoClientInterceptor,
     TenuoWorkerInterceptor,
     TenuoPluginConfig,
+    current_warrant,
     tenuo_execute_activity,
     tenuo_execute_child_workflow,
     tenuo_headers,
@@ -214,6 +215,56 @@ class ParentDelegationWorkflow:
             tools=["read_file"],
             ttl_seconds=120,
             task_queue=workflow.info().task_queue,
+        )
+
+
+@workflow.defn
+class PolicyChildWorkflow:
+    """Reports its own warrant's tools and which of two activities it can
+    actually use — for child_warrant_policy tests, which need to observe
+    whether the child got a warrant at all and, if so, how narrow it is."""
+
+    @workflow.run
+    async def run(self, path: str) -> dict:
+        from tenuo.temporal.exceptions import TenuoContextError
+
+        try:
+            warrant_tools = sorted(current_warrant().tools or [])
+        except TenuoContextError:
+            warrant_tools = None
+
+        async def _can(activity_fn, arg):
+            try:
+                await tenuo_execute_activity(
+                    activity_fn,
+                    args=[arg],
+                    start_to_close_timeout=timedelta(seconds=10),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+                return True
+            except Exception:
+                return False
+
+        can_read = await _can(read_file, path)
+        can_list = await _can(list_directory, str(Path(path).parent))
+        return {"warrant_tools": warrant_tools, "can_read": can_read, "can_list": can_list}
+
+
+@workflow.defn
+class PlainChildStarterWorkflow:
+    """Starts a child via PLAIN workflow.execute_child_workflow — no
+    tenuo_execute_child_workflow() call — so any child warrant can only come
+    from TenuoPluginConfig.child_warrant_policy, exactly like the Temporal
+    Agent Harness's AgentWorkflowRunner.start_subagent."""
+
+    @workflow.run
+    async def run(self, path: str) -> dict:
+        return await workflow.execute_child_workflow(
+            PolicyChildWorkflow.run,
+            path,
+            id=f"policy-child-{workflow.info().workflow_id}",
+            task_queue=workflow.info().task_queue,
+            execution_timeout=timedelta(seconds=60),
         )
 
 
@@ -619,6 +670,84 @@ class TestLiveUpdateInFirstActivation:
         with _store_lock:
             assert run_ids[0] not in _workflow_config_store
             assert run_ids[0] not in _workflow_headers_store
+
+class TestLiveChildWarrantPolicy:
+    """child_warrant_policy: narrower warrants for a PLAIN start_child_workflow()
+    call, exactly the shape the Temporal Agent Harness's
+    AgentWorkflowRunner.start_subagent uses (no tenuo_execute_child_workflow())."""
+
+    @pytest.mark.asyncio
+    async def test_policy_narrows_child_to_requested_tool_only(self, keys, warrant, demo_dir):
+        def policy(parent_warrant, child_workflow_type, child_id, child_input):
+            assert child_workflow_type == "PolicyChildWorkflow"
+            return {"tools": ["read_file"], "ttl_seconds": 120}
+
+        async with await WorkflowEnvironment.start_local() as env:
+            result, _events = await _run_workflow(
+                env, keys, warrant, PlainChildStarterWorkflow,
+                str(demo_dir / "a.txt"),
+                workflows=[PlainChildStarterWorkflow, PolicyChildWorkflow],
+                activities=[echo, read_file, list_directory, _tenuo_internal_mint_activity],
+                plugin_config={"child_warrant_policy": policy},
+            )
+        assert result["warrant_tools"] == ["read_file"]
+        assert result["can_read"] is True
+        assert result["can_list"] is False, (
+            "policy granted only read_file; the child must NOT also have "
+            "list_directory just because the parent did"
+        )
+
+    @pytest.mark.asyncio
+    async def test_policy_returning_none_means_child_gets_no_warrant(
+        self, keys, warrant, demo_dir
+    ):
+        def policy(parent_warrant, child_workflow_type, child_id, child_input):
+            return None  # explicit "not this child" -> no warrant, not the parent's
+
+        async with await WorkflowEnvironment.start_local() as env:
+            result, _events = await _run_workflow(
+                env, keys, warrant, PlainChildStarterWorkflow,
+                str(demo_dir / "a.txt"),
+                workflows=[PlainChildStarterWorkflow, PolicyChildWorkflow],
+                activities=[echo, read_file, list_directory, _tenuo_internal_mint_activity],
+                plugin_config={"child_warrant_policy": policy},
+            )
+        assert result["warrant_tools"] is None
+        assert result["can_read"] is False
+        assert result["can_list"] is False
+
+    @pytest.mark.asyncio
+    async def test_no_policy_configured_child_gets_no_warrant(self, keys, warrant, demo_dir):
+        """Default (unset) behavior: identical to before child_warrant_policy existed."""
+        async with await WorkflowEnvironment.start_local() as env:
+            result, _events = await _run_workflow(
+                env, keys, warrant, PlainChildStarterWorkflow,
+                str(demo_dir / "a.txt"),
+                workflows=[PlainChildStarterWorkflow, PolicyChildWorkflow],
+                activities=[echo, read_file, list_directory, _tenuo_internal_mint_activity],
+            )
+        assert result["warrant_tools"] is None
+        assert result["can_read"] is False
+        assert result["can_list"] is False
+
+    @pytest.mark.asyncio
+    async def test_policy_cannot_grant_a_tool_outside_the_parent(
+        self, keys, warrant, demo_dir
+    ):
+        """The policy is a trigger, not a second authority: it can only narrow."""
+
+        def policy(parent_warrant, child_workflow_type, child_id, child_input):
+            return {"tools": ["read_file", "delete_everything"]}  # not in parent's warrant
+
+        async with await WorkflowEnvironment.start_local() as env:
+            with pytest.raises(WorkflowFailureError):
+                await _run_workflow(
+                    env, keys, warrant, PlainChildStarterWorkflow,
+                    str(demo_dir / "a.txt"),
+                    workflows=[PlainChildStarterWorkflow, PolicyChildWorkflow],
+                    activities=[echo, read_file, list_directory, _tenuo_internal_mint_activity],
+                    plugin_config={"child_warrant_policy": policy},
+                )
 
 
 # ---------------------------------------------------------------------------

@@ -239,6 +239,49 @@ class TenuoPluginConfig:
     from configs that never set this field.
     """
 
+    child_warrant_policy: Optional[
+        Callable[[Any, str, str, Any], Optional[Dict[str, Any]]]
+    ] = None
+    """
+    Optional policy that mints a narrower child-workflow warrant for a
+    **plain** ``workflow.start_child_workflow()`` / ``execute_child_workflow()``
+    call — one that did not go through ``tenuo_execute_child_workflow()`` and
+    so would otherwise start the child with no warrant at all.
+
+    Called (only when the *parent* workflow itself carries a warrant) with
+    ``(parent_warrant, child_workflow_type, child_workflow_id, child_input)``
+    — ``child_workflow_type`` is the child's registered Temporal workflow
+    type name (resolved from a string or a ``@workflow.defn`` class/run
+    method, whichever the caller passed), ``child_input`` is the child's
+    positional start args. Must be a **pure, replay-deterministic** function
+    of those four arguments — same rules as any other workflow-code
+    decision: no I/O, no randomness, no wall-clock reads. (The actual
+    minting *does* cross an activity boundary — the same
+    ``_tenuo_internal_mint_activity`` local activity
+    ``tenuo_execute_child_workflow()`` uses — so its result, not the policy
+    function, is what gets recorded in workflow history and replayed.)
+
+    Return ``None`` to start the child with **no warrant at all** — this is
+    the explicit "not this child" / deny case, and is also what happens for
+    every child when this field is unset. **The child never silently
+    inherits the parent's warrant verbatim**; only an explicit policy match
+    attaches anything.
+
+    Return a dict of ``tenuo_execute_child_workflow()``-style keyword
+    arguments to mint a warrant for the child — any of ``tools`` (list),
+    ``constraints`` (dict), ``ttl_seconds`` (int), ``child_key_id`` (str).
+    Minting reuses ``tenuo_execute_child_workflow()``'s own attenuation
+    path: the child can only **narrow** the parent (requesting a tool
+    outside the parent's, introducing a constraint key the parent capability
+    doesn't already have, or widening a ``Subpath`` all raise
+    ``TemporalConstraintViolation``, non-retryable) — this policy is a
+    *trigger*, not a second authority.
+
+    See ``tenuo.temporal.harness.subagent_policy`` for a ready-made
+    dict-keyed-by-workflow-type policy for the Temporal Agent Harness's
+    ``AgentWorkflowRunner.start_subagent``.
+    """
+
     audit_callback: Optional[Callable[[TemporalAuditEvent], None]] = None
     """Optional callback for authorization audit events."""
 
