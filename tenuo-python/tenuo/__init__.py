@@ -1,5 +1,5 @@
 """
-Tenuo Python SDK - Capability tokens for AI agents
+Tenuo Python SDK: task-scoped authorization for AI agents
 
 80% API - The essentials for most users:
 
