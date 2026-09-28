@@ -7,12 +7,15 @@
 #   TENUO_AUTHORIZER_IMAGE=tenuo-authorizer:e2e docs/quickstart/envoy/e2e-test.sh
 #
 # Needs docker compose, curl, and either uv or a python3 with `tenuo` installed
-# (set DEMO_PY="python3" in that case).
+# (set DEMO_PY="python3" in that case). Host ports, all on 127.0.0.1:
+# ENVOY_PORT (18080), NOPREFIX_PORT (18081), HEALTH_PORT (19091).
 #
-# tenuo/authorizer:0.3.1 sets x-tenuo-deny-reason only on 403 denials. Later
-# builds also set it on the early 401/400/404 denials, and the test checks it
-# there when the authorizer is built locally or TENUO_AUTHORIZER_IMAGE is set.
-# Override with EARLY_DENY_REASON=0|1.
+# tenuo/authorizer:0.3.1 predates two behaviors this test checks: the
+# x-tenuo-deny-reason header on early 401/400/404 denials, and health routes
+# on a separate port (0.3.1 answers /health etc. with 200 on the ext_authz
+# port, so the no-path_prefix Envoy would let them through). Those checks run
+# when the authorizer is built locally or TENUO_AUTHORIZER_IMAGE is set.
+# Override with NEW_AUTHORIZER=0|1.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,22 +23,53 @@ cd "$HERE"
 
 export ENVOY_PORT="${ENVOY_PORT:-18080}"
 BASE="http://127.0.0.1:${ENVOY_PORT}"
+# A second Envoy with path_prefix removed proves the authorizer itself never
+# answers its health routes on the ext_authz port.
+NOPREFIX_PORT="${NOPREFIX_PORT:-18081}"
+NOPREFIX="http://127.0.0.1:${NOPREFIX_PORT}"
+# The authorizer's health listener, published to the host for a direct check.
+HEALTH_PORT="${HEALTH_PORT:-19091}"
+HEALTH="http://127.0.0.1:${HEALTH_PORT}"
 DEMO_PY="${DEMO_PY:-uv run -q}"
 export TENUO_DEMO_DIR
 TENUO_DEMO_DIR="$(mktemp -d)"
 WORK="$(mktemp -d)"
+# Generated compose override and Envoy config live next to this script, not in
+# $TMPDIR: Docker Desktop and Colima only share the home directory by default.
+GEN="$(mktemp -d "$HERE/.e2e-gen.XXXXXX")"
+
+# envoy.yaml without path_prefix: the check request path is the raw client path.
+grep -v 'path_prefix:' envoy.yaml >"$GEN/envoy-noprefix.yaml"
+ENVOY_IMAGE="$(awk '/image: envoyproxy\/envoy:/ {print $2; exit}' docker-compose.yaml)"
+cat >"$GEN/docker-compose.e2e.yaml" <<YAML
+services:
+  tenuo-authorizer:
+    ports:
+      - "127.0.0.1:${HEALTH_PORT}:9091"
+  envoy-noprefix:
+    image: ${ENVOY_IMAGE}
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+    volumes:
+      - ${GEN}/envoy-noprefix.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "127.0.0.1:${NOPREFIX_PORT}:8080"
+    depends_on:
+      - tenuo-authorizer
+      - httpbin
+YAML
 
 COMPOSE=(docker compose -p tenuo-envoy-e2e -f docker-compose.yaml)
-if [[ -z "${EARLY_DENY_REASON:-}" ]]; then
+if [[ -z "${NEW_AUTHORIZER:-}" ]]; then
   if [[ "${E2E_BUILD:-0}" == "1" || -n "${TENUO_AUTHORIZER_IMAGE:-}" ]]; then
-    EARLY_DENY_REASON=1
+    NEW_AUTHORIZER=1
   else
-    EARLY_DENY_REASON=0
+    NEW_AUTHORIZER=0
   fi
 fi
 if [[ "${E2E_BUILD:-0}" == "1" ]]; then
   COMPOSE+=(-f docker-compose.build.yaml)
 fi
+COMPOSE+=(-f "$GEN/docker-compose.e2e.yaml")
 
 demo() { $DEMO_PY "$HERE/demo_warrant.py" "$@"; }
 
@@ -43,13 +77,18 @@ cleanup() {
   status=$?
   if [[ $status -ne 0 ]]; then
     echo "--- authorizer logs ---"; "${COMPOSE[@]}" logs --no-color --tail=60 tenuo-authorizer || true
-    echo "--- envoy logs ---"; "${COMPOSE[@]}" logs --no-color --tail=40 envoy || true
+    echo "--- envoy logs ---"; "${COMPOSE[@]}" logs --no-color --tail=40 envoy envoy-noprefix || true
   fi
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-  rm -rf "$TENUO_DEMO_DIR" "$WORK"
+  rm -rf "$TENUO_DEMO_DIR" "$WORK" "$GEN"
   exit $status
 }
 trap cleanup EXIT
+
+if ! grep -q 'path_prefix: /ext_authz' envoy.yaml || grep -q 'path_prefix' "$GEN/envoy-noprefix.yaml"; then
+  echo "expected envoy.yaml to set path_prefix and the generated copy to drop it" >&2
+  exit 1
+fi
 
 TENUO_TRUSTED_KEYS="$(demo init)"
 export TENUO_TRUSTED_KEYS
@@ -59,33 +98,39 @@ UP_ARGS=(-d)
 "${COMPOSE[@]}" up "${UP_ARGS[@]}"
 "${COMPOSE[@]}" images tenuo-authorizer
 
-# Wait until a request without a warrant gets the authorizer's 401. Envoy
+# Wait until each Envoy gets the authorizer's answer for a request without a
+# warrant: 401 missing_warrant through the prefixed Envoy, 404 no_route through
+# the unprefixed one (gateway.yaml routes all start with /ext_authz). Envoy
 # answers 403 while the authorizer is still unreachable, so any other status
 # means "not ready yet".
-ready=0
-for _ in $(seq 1 60); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/get" || true)"
-  if [[ "$code" == "401" ]]; then ready=1; break; fi
-  sleep 1
-done
-if [[ $ready -ne 1 ]]; then
-  echo "FAIL  Envoy + authorizer not ready after 60s (last status: $code)"
+wait_for() {
+  local url="$1" want="$2" code=""
+  for _ in $(seq 1 60); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)"
+    [[ "$code" == "$want" ]] && return 0
+    sleep 1
+  done
+  echo "FAIL  $url not ready after 60s (want $want, last status: $code)"
   exit 1
-fi
+}
+wait_for "$BASE/get" 401
+wait_for "$NOPREFIX/get" 404
 
 PASS=0
 FAIL=0
 
 # Expected x-tenuo-deny-reason for an early (non-403) denial: the reason when
 # the authorizer sets it, otherwise "-" (not checked).
-early() { if [[ "$EARLY_DENY_REASON" == "1" ]]; then echo "$1"; else echo -; fi; }
+early() { if [[ "$NEW_AUTHORIZER" == "1" ]]; then echo "$1"; else echo -; fi; }
 
 # check NAME EXPECTED_STATUS EXPECTED_DENY_REASON_SUBSTRING|- curl-args...
 check() {
   local name="$1" want_status="$2" want_reason="$3"
   shift 3
   local hdrs="$WORK/h" body="$WORK/b" status reason
-  status="$(curl -s -D "$hdrs" -o "$body" -w '%{http_code}' "$@")"
+  : >"$hdrs"; : >"$body"
+  # A connection failure is a FAIL (status 000), not an abort.
+  status="$(curl -s -D "$hdrs" -o "$body" -w '%{http_code}' "$@" || true)"
   reason="$(grep -i '^x-tenuo-deny-reason:' "$hdrs" | head -n1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//' || true)"
   local ok=1
   [[ "$status" == "$want_status" ]] || ok=0
@@ -138,6 +183,26 @@ check "garbage warrant -> 400 invalid_warrant" 400 "$(early invalid_warrant)" \
 for p in /health /healthz /ready /status; do
   check "authorizer $p is not reachable through Envoy -> 401" 401 "$(early missing_warrant)" "$BASE$p"
 done
+
+if [[ "$NEW_AUTHORIZER" == "1" ]]; then
+  # Without path_prefix the authorizer sees the raw client path. It does not
+  # serve health routes on the ext_authz port, so these go through route matching
+  # (gateway.yaml has no such route) and are denied: never a 200, never ALLOW.
+  for p in /health /healthz /ready /status; do
+    check "no path_prefix: $p through Envoy -> 404 no_route" 404 no_route "$NOPREFIX$p"
+  done
+  check "no path_prefix: valid warrant, unprefixed route -> 404 no_route" 404 no_route \
+    -H "X-Tenuo-Warrant: $WARRANT" -H "X-Tenuo-PoP: $(pop "$WARRANT" httpbin_read endpoint=get)" "$NOPREFIX/get"
+
+  # The health listener answers directly, outside Envoy.
+  for p in /health /healthz /ready /status; do
+    check "health port $p -> 200" 200 - "$HEALTH$p"
+  done
+  grep -q '"cp"' "$WORK/b" || { echo "FAIL  /status body is not the authorizer status"; FAIL=$((FAIL + 1)); }
+  check "health port does not authorize: GET /ext_authz/get -> 404" 404 - "$HEALTH/ext_authz/get"
+else
+  echo "SKIP  no-path_prefix and health-port checks (published image predates the separate health port; use E2E_BUILD=1)"
+fi
 
 # Fail closed when the authorizer is unavailable.
 "${COMPOSE[@]}" stop tenuo-authorizer >/dev/null 2>&1

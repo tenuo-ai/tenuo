@@ -89,7 +89,11 @@ spec:
   containers:
     - name: tenuo-authorizer
       image: tenuo/authorizer:0.3.1
-      ports: [{ containerPort: 9090 }]
+      ports:
+        - { name: http, containerPort: 9090 }     # authorization API
+        - { name: health, containerPort: 9091 }   # /health, /ready, /status
+      readinessProbe:
+        httpGet: { path: /ready, port: health }
     - name: tool-api
       image: your-tool:latest
       # Only accepts traffic from localhost (sidecar)
@@ -113,11 +117,13 @@ tenuo-authorizer serve \
 - `--socket PATH` — serve over `AF_UNIX` at `PATH`. Mutually exclusive with `--port` / `--bind` (the CLI rejects combining them).
 - `--socket-mode` — octal bits controlling who may *connect* (default `0660` = owner + group). Use `0600` for owner-only or `0666` for any local user.
 - `--socket-group` — group name or numeric gid the socket is `chgrp`'d to after bind. With the default `0660`, this lets a **non-root client** (e.g. an app user in a shared `tenuo` group) reach an authorizer running as root.
+- `--health-port`: health endpoints (`/health`, `/healthz`, `/ready`, `/status`) are not served on the socket. In socket mode no TCP listener is opened unless you set `--health-port`, which serves them on `--health-bind` (default `127.0.0.1`).
 
 Clients connect with any HTTP-over-UDS client, e.g.:
 
 ```bash
-curl --unix-socket /var/run/tenuo/authorizer.sock http://localhost/health
+curl --unix-socket /var/run/tenuo/authorizer.sock -X POST http://localhost/api/v1/clusters/staging/deploy \
+  -H "X-Tenuo-Warrant: $WARRANT" -H "X-Tenuo-PoP: $POP"
 ```
 
 **Security:** the socket's trust rests on its *parent directory*. The authorizer
@@ -374,10 +380,15 @@ routes:
     tool: manage_infrastructure
 ```
 
-**Always set a `path_prefix`.** The authorizer also serves `/health`,
-`/healthz`, `/ready` and `/status`, which return 200 without a warrant. If the
-check request path is the raw client path, a client request for one of those
-paths is allowed by Envoy and reaches the backend unauthenticated.
+**Always set a `path_prefix`.** The authorizer serves its health and status
+endpoints (`/health`, `/healthz`, `/ready`, `/status`) only on the separate
+health port (`--health-port`, default 9091), so on the ext_authz port those
+paths go through route matching like any other request and are denied without
+a warrant. Older authorizers (and `--legacy-health-on-main-port`) answered them
+with 200 on the ext_authz port; with a raw client path, Envoy treated that 200
+as ALLOW and forwarded the request to the backend unauthenticated. The prefix
+keeps you safe against that and keeps authorization routes distinct from
+backend paths.
 
 Response codes from the authorizer: 200 allow; 401 `missing_warrant`; 400
 `invalid_warrant` (undecodable, or the warrant signature does not verify) and
@@ -500,6 +511,7 @@ services:
   tenuo-authorizer:
     image: tenuo/authorizer:0.3.1
     command: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
+    # Health and status: http://tenuo-authorizer:9091/health (--health-port)
     environment:
       TENUO_TRUSTED_KEYS: ${TENUO_TRUSTED_KEYS}   # hex public key(s) of trusted issuers, comma separated
     volumes:

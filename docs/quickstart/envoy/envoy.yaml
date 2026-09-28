@@ -55,7 +55,8 @@ static_resources:
                   cluster: tenuo-authorizer
                   timeout: 1s
                 # Check request path = /ext_authz + original path. Matches the
-                # route patterns in gateway.yaml.
+                # route patterns in gateway.yaml. Also defense in depth: the
+                # authorizer's health routes live on its separate health port.
                 path_prefix: /ext_authz
                 authorization_response:
                   # Authorizer response headers returned to the client on deny.

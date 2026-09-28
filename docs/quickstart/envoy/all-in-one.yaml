@@ -37,10 +37,10 @@ data:
     #
     # Envoy's ext_authz filter is configured with `path_prefix: /ext_authz`, so the
     # authorizer sees every original request path as `/ext_authz/<original path>`.
-    # Route patterns below therefore start with /ext_authz. The prefix also keeps
-    # client requests away from the authorizer's own /health, /healthz, /ready and
-    # /status endpoints, which answer 200 without a warrant and would otherwise
-    # let those paths through Envoy unauthenticated.
+    # Route patterns below therefore start with /ext_authz. The authorizer serves
+    # its own /health, /healthz, /ready and /status only on its separate health
+    # port (9091), never on this ext_authz port; the prefix is defense in depth
+    # for older authorizers, which answered them here with 200 (read as ALLOW).
     #
     # Trusted roots come from TENUO_TRUSTED_KEYS (see README), so no key is
     # hardcoded here.
@@ -101,7 +101,10 @@ spec:
         image: tenuo/authorizer:0.3.1
         args: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
         ports:
-        - containerPort: 9090
+        - name: http            # ext_authz check requests
+          containerPort: 9090
+        - name: health          # /health, /healthz, /ready, /status (--health-port)
+          containerPort: 9091
         env:
         - name: RUST_LOG
           value: "info"
@@ -111,14 +114,16 @@ spec:
             configMapKeyRef:
               name: tenuo-demo-root
               key: TENUO_TRUSTED_KEYS
+        # Probes use the health port. Health routes are never served on the
+        # ext_authz port, where a 200 would mean ALLOW.
         readinessProbe:
           httpGet:
             path: /ready
-            port: 9090
+            port: health
         livenessProbe:
           httpGet:
             path: /health
-            port: 9090
+            port: health
         volumeMounts:
         - name: config
           mountPath: /etc/tenuo
@@ -215,7 +220,8 @@ data:
                       cluster: tenuo-authorizer
                       timeout: 1s
                     # Check request path = /ext_authz + original path. Matches the
-                    # route patterns in gateway.yaml.
+                    # route patterns in gateway.yaml. Also defense in depth: the
+                    # authorizer's health routes live on its separate health port.
                     path_prefix: /ext_authz
                     authorization_response:
                       # Authorizer response headers returned to the client on deny.

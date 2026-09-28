@@ -12,6 +12,8 @@ services:
   tenuo-authorizer:
     image: ${TENUO_AUTHORIZER_IMAGE:-tenuo/authorizer:0.3.1}
     command: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
+    # 9090: ext_authz checks from Envoy. 9091: /health, /healthz, /ready and
+    # /status (--health-port), kept off 9090 so Envoy never sees their 200.
     environment:
       RUST_LOG: info
       TENUO_TRUSTED_KEYS: ${TENUO_TRUSTED_KEYS:?set TENUO_TRUSTED_KEYS to the demo root public key (hex)}

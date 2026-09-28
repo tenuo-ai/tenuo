@@ -57,9 +57,12 @@ extensionProviders:
     headersToDownstreamOnDeny: [x-tenuo-deny-reason, content-type]
 ```
 
-`pathPrefix` matters: the authorizer's own `/health`, `/ready` and `/status`
-endpoints answer 200 without a warrant, so without a prefix those request paths
-would be allowed through to your workload.
+Keep `pathPrefix`. The authorizer's own `/health`, `/ready` and `/status`
+endpoints answer 200 without a warrant, but only on its separate health port
+(9091, used by the pod probes), never on the ext_authz port 9090. Older
+authorizers, or one started with `--legacy-health-on-main-port`, also answer
+them on 9090, and without a prefix those request paths would be allowed
+through to your workload. The prefix is defense in depth against that.
 
 ### 3. Deploy the Tenuo authorizer
 

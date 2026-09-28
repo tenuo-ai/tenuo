@@ -9,6 +9,8 @@
   gateway.yaml in istio/tenuo.yaml) are byte-identical to the standalone files
   next to this script, so the docker compose e2e test covers the k8s config
 - nothing configures gRPC ext_authz, which the authorizer does not serve
+- the authorizer Deployments probe the separate health port, never the
+  ext_authz port (a 200 there would read as ALLOW)
 - optionally (--envoy-validate) runs `envoy --mode validate` on the embedded
   envoy.yaml inside the pinned Envoy image
 
@@ -59,6 +61,24 @@ def configmap_data(docs: list, name: str) -> dict:
     return {}
 
 
+def check_authorizer_probes(docs: list, where: str) -> None:
+    """Probes must target the health port (9091), not the ext_authz port."""
+    for d in docs:
+        if d.get("kind") != "Deployment" or d["metadata"]["name"] != "tenuo-authorizer":
+            continue
+        for c in d["spec"]["template"]["spec"]["containers"]:
+            ports = {p.get("name"): p["containerPort"] for p in c.get("ports", [])}
+            if ports.get("health") != 9091:
+                fail(f"{where}: authorizer container has no `health` port 9091")
+            for probe in ("readinessProbe", "livenessProbe"):
+                port = c.get(probe, {}).get("httpGet", {}).get("port")
+                if port not in ("health", 9091):
+                    fail(f"{where}: authorizer {probe} targets {port!r}, want the health port")
+        print(f"ok   {where}: authorizer probes target the health port")
+        return
+    fail(f"{where}: tenuo-authorizer Deployment not found")
+
+
 def envoy_image(docs: list) -> str:
     for d in docs:
         if d.get("kind") == "Deployment" and d["metadata"]["name"] == "envoy":
@@ -88,6 +108,9 @@ def main() -> None:
     if istio_gw != (HERE / "gateway.yaml").read_text():
         fail("istio/tenuo.yaml embedded gateway.yaml differs from envoy/gateway.yaml")
     print("ok   istio/tenuo.yaml embedded gateway.yaml matches envoy/gateway.yaml")
+
+    check_authorizer_probes(aio, "envoy/all-in-one.yaml")
+    check_authorizer_probes(parsed[QUICKSTART / "istio" / "tenuo.yaml"], "istio/tenuo.yaml")
 
     for path in FILES:
         text = path.read_text()

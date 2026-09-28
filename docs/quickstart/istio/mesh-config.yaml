@@ -23,8 +23,9 @@ spec:
         # Fail closed if the authorizer is unreachable.
         failOpen: false
         # The authorizer sees /ext_authz/<original path>; the routes in
-        # tenuo.yaml's gateway.yaml include this prefix. It also keeps client
-        # paths away from the authorizer's /health, /ready and /status.
+        # tenuo.yaml's gateway.yaml include this prefix. Defense in depth: the
+        # authorizer serves /health, /ready and /status only on its health
+        # port (9091), not on this port.
         pathPrefix: /ext_authz
         includeRequestHeadersInCheck:
         - x-tenuo-warrant

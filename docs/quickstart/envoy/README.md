@@ -40,10 +40,14 @@ The demo routes:
 | `POST /post` with JSON `{"message": ...}` | `httpbin_write` | `message=<message>` |
 | anything else | none | 404 `no_route`, denied |
 
-The `/ext_authz` prefix is not cosmetic: the authorizer also serves `/health`,
-`/healthz`, `/ready` and `/status`, which return 200 without a warrant. Without
-a `path_prefix`, a client request for one of those paths would be "allowed" by
-Envoy and reach your backend unauthenticated.
+Keep the `/ext_authz` prefix. The authorizer serves its own `/health`,
+`/healthz`, `/ready` and `/status` (200 without a warrant) only on a separate
+health port, 9091, so on the ext_authz port 9090 those paths are authorized
+like any other request. Older authorizers, or one started with
+`--legacy-health-on-main-port`, answer them on 9090 too; without a
+`path_prefix`, Envoy would treat that 200 as ALLOW and pass the request to
+your backend unauthenticated. The prefix is defense in depth against that.
+Kubernetes probes and health checks go to port 9091.
 
 ## Prerequisites
 
@@ -229,6 +233,13 @@ above and asserts the status codes and deny reasons:
 docs/quickstart/envoy/e2e-test.sh              # published tenuo/authorizer:0.3.1
 E2E_BUILD=1 docs/quickstart/envoy/e2e-test.sh  # authorizer built from this checkout
 ```
+
+The test also starts a second Envoy with `path_prefix` removed and checks that
+`/health`, `/healthz`, `/ready` and `/status` are still denied through it, and
+that the health port (published on `127.0.0.1:${HEALTH_PORT:-19091}`) answers
+200. Those checks need an authorizer with the separate health port, so they
+run only with `E2E_BUILD=1` or a custom `TENUO_AUTHORIZER_IMAGE` (override with
+`NEW_AUTHORIZER=0|1`); against the published 0.3.1 image they are skipped.
 
 ## Multi-hop delegation chains
 
