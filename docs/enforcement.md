@@ -128,7 +128,7 @@ example `/var/run/tenuo`).
 
 ### Gateway: Centralized Enforcement for Multiple Services
 
-One Tenuo instance protects many backend services. Plugs into existing service mesh infrastructure via Envoy's `ext_authz` gRPC protocol. No new proxy to deploy if you already run Envoy or Istio.
+One Tenuo instance protects many backend services. Plugs into existing service mesh infrastructure via Envoy's HTTP `ext_authz` protocol (gRPC `ext_authz` is not supported yet). No new proxy to deploy if you already run Envoy or Istio.
 
 ```
                                     ┌─────────────────────────┐
@@ -265,36 +265,42 @@ Copy-paste-ready configurations for integrating Tenuo authorization at the netwo
 
 ### Envoy External Authorization
 
-Tenuo integrates with Envoy as an external authorization service via `ext_authz`.
+Tenuo integrates with Envoy as an HTTP external authorization service
+(`ext_authz` with `http_service`). For each client request Envoy sends a check
+request with the same method, the original path (prefixed with `path_prefix`),
+the allow-listed headers and, optionally, the body. The authorizer answers 200
+to allow; any other status is a deny and is returned to the client.
+
+> [!NOTE]
+> The authorizer speaks **HTTP** ext_authz only. gRPC ext_authz
+> (`grpc_service`, Istio `envoyExtAuthzGrpc`) is not supported yet; configured
+> that way, every request fails at the authorization call.
 
 ```
-+---------+     +---------+     +-------------+     +---------+
-| Client  |---->|  Envoy  |---->| Tenuo Authz |     | Backend |
-|         |     |         |     |   (9090)    |     |         |
-+---------+     |         |<----|  200 or 403 |     |         |
-                |         |     +-------------+     |         |
-                |         |------------------------>|         |
-                |         |  (only if 200)          |         |
-                +---------+                         +---------+
++---------+     +---------+  check: /ext_authz/<path>  +-------------+     +---------+
+| Client  |---->|  Envoy  |--------------------------->| Tenuo Authz |     | Backend |
+|         |     |         |<---------------------------|   (9090)    |     |         |
++---------+     |         |   200, or 401/403/404      +-------------+     |         |
+                |         |--------------------------------------------->|         |
+                |         |  (only if 200)                                |         |
+                +---------+                                               +---------+
 ```
-
-#### gRPC Mode
 
 ```yaml
-# envoy.yaml
+# envoy.yaml (complete, tested file: docs/quickstart/envoy/envoy.yaml)
 static_resources:
   listeners:
   - name: main
     address:
-      socket_address:
-        address: 0.0.0.0
-        port_value: 8080
+      socket_address: { address: 0.0.0.0, port_value: 8080 }
     filter_chains:
     - filters:
       - name: envoy.filters.network.http_connection_manager
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
           stat_prefix: ingress
+          normalize_path: true
+          merge_slashes: true
           route_config:
             name: local_route
             virtual_hosts:
@@ -307,11 +313,28 @@ static_resources:
           - name: envoy.filters.http.ext_authz
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
-              grpc_service:
-                envoy_grpc:
-                  cluster_name: tenuo-authorizer
-                timeout: 0.25s
-              include_peer_certificate: true
+              transport_api_version: V3
+              failure_mode_allow: false        # fail closed
+              with_request_body:               # only needed for `from: body` extraction
+                max_request_bytes: 65536
+                allow_partial_message: false
+              allowed_headers:                 # copied into the check request
+                patterns:
+                - exact: x-tenuo-warrant
+                - exact: x-tenuo-pop
+                - exact: x-tenuo-approvals
+                - exact: content-type
+              http_service:
+                server_uri:
+                  uri: http://tenuo-authorizer:9090
+                  cluster: tenuo-authorizer
+                  timeout: 0.25s
+                path_prefix: /ext_authz        # gateway.yaml route patterns start with this
+                authorization_response:
+                  allowed_client_headers:      # returned to the client on deny
+                    patterns:
+                    - exact: x-tenuo-deny-reason
+                    - exact: content-type
           - name: envoy.filters.http.router
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -321,16 +344,13 @@ static_resources:
     connect_timeout: 0.25s
     type: STRICT_DNS
     lb_policy: ROUND_ROBIN
-    http2_protocol_options: {}
     load_assignment:
       cluster_name: tenuo-authorizer
       endpoints:
       - lb_endpoints:
         - endpoint:
             address:
-              socket_address:
-                address: tenuo-authorizer
-                port_value: 9090
+              socket_address: { address: tenuo-authorizer, port_value: 9090 }
 
   - name: backend
     connect_timeout: 0.5s
@@ -342,37 +362,37 @@ static_resources:
       - lb_endpoints:
         - endpoint:
             address:
-              socket_address:
-                address: backend
-                port_value: 8080
+              socket_address: { address: backend, port_value: 8080 }
 ```
 
-#### HTTP Mode (Alternative)
+Matching `gateway.yaml` routes include the prefix:
 
 ```yaml
-- name: envoy.filters.http.ext_authz
-  typed_config:
-    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
-    http_service:
-      server_uri:
-        uri: http://tenuo-authorizer:9090
-        cluster: tenuo-authorizer
-        timeout: 0.25s
-      authorization_request:
-        allowed_headers:
-          patterns:
-          - exact: x-tenuo-warrant
-          - exact: x-tenuo-pop
-          - exact: content-type
-      authorization_response:
-        allowed_upstream_headers:
-          patterns:
-          - exact: x-tenuo-warrant-id
+routes:
+  - pattern: "/ext_authz/api/v1/clusters/{cluster}/{action}"
+    method: ["POST"]
+    tool: manage_infrastructure
 ```
+
+**Always set a `path_prefix`.** The authorizer also serves `/health`,
+`/healthz`, `/ready` and `/status`, which return 200 without a warrant. If the
+check request path is the raw client path, a client request for one of those
+paths is allowed by Envoy and reaches the backend unauthenticated.
+
+Response codes from the authorizer: 200 allow; 401 `missing_warrant`; 400
+`invalid_warrant` (undecodable, or the warrant signature does not verify) and
+`extraction_failed`; 404 `no_route` (no route for this method and path); 403
+for every authorization failure (`untrusted_root`, `missing_pop`,
+`signature_invalid`, `tool_not_allowed`, `constraint_violation`, expiry,
+revocation). With `debug_mode: true` the reason is also in
+`x-tenuo-deny-reason`.
+
+A runnable Docker Compose version with an end-to-end test lives in
+[`docs/quickstart/envoy`](./quickstart/envoy/).
 
 ### Istio Integration
 
-Add Tenuo as an external authorization provider in Istio's mesh config:
+Register Tenuo as an **HTTP** ext_authz extension provider in the mesh config:
 
 ```yaml
 apiVersion: install.istio.io/v1alpha1
@@ -381,15 +401,23 @@ spec:
   meshConfig:
     extensionProviders:
     - name: tenuo-ext-authz
-      envoyExtAuthzGrpc:
+      envoyExtAuthzHttp:
         service: tenuo-authorizer.tenuo-system.svc.cluster.local
         port: 9090
+        timeout: 1s
+        failOpen: false
+        pathPrefix: /ext_authz
+        includeRequestHeadersInCheck: [x-tenuo-warrant, x-tenuo-pop, x-tenuo-approvals, content-type]
+        includeRequestBodyInCheck:
+          maxRequestBytes: 65536
+          allowPartialMessage: false
+        headersToDownstreamOnDeny: [x-tenuo-deny-reason, content-type]
 ```
 
 Then apply an AuthorizationPolicy:
 
 ```yaml
-apiVersion: security.istio.io/v1beta1
+apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
   name: tenuo-authz
@@ -397,7 +425,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app: my-agent
+      app: my-tool-api
   action: CUSTOM
   provider:
     name: tenuo-ext-authz
@@ -406,6 +434,10 @@ spec:
     - operation:
         paths: ["/api/*"]
 ```
+
+The workload must have an Istio sidecar (or a waypoint in ambient mode).
+Requests that skip the proxy, such as `kubectl port-forward`, skip the policy
+too. See the [Istio quickstart](./quickstart/istio/).
 
 ### nginx Integration
 
@@ -423,11 +455,14 @@ server {
 
     location = /_tenuo_auth {
         internal;
-        proxy_pass http://tenuo/authorize;
-        proxy_pass_request_body on;
+        # The authorizer matches routes on the method and path it receives,
+        # so forward both. Routes in gateway.yaml start with /ext_authz.
+        proxy_pass http://tenuo/ext_authz$request_uri;
+        proxy_method $request_method;
+        # auth_request cannot forward the body: `from: body` extraction is
+        # not available behind nginx.
+        proxy_pass_request_body off;
         proxy_set_header Content-Length "";
-        proxy_set_header X-Original-URI $request_uri;
-        proxy_set_header X-Original-Method $request_method;
         proxy_set_header X-Tenuo-Warrant $http_x_tenuo_warrant;
         proxy_set_header X-Tenuo-PoP $http_x_tenuo_pop;
     }
@@ -449,34 +484,26 @@ server {
 }
 ```
 
+The `proxy_method $request_method` line matters: without it nginx sends the
+auth subrequest as `GET`, so a `DELETE` or `POST` would be authorized as a
+`GET` and then proxied with its real method. nginx turns any auth status other
+than 2xx, 401 and 403 (for example the authorizer's 404 `no_route`) into a 500,
+which still blocks the request.
+
 ### Docker Compose (Local Development)
 
+[`docs/quickstart/envoy/docker-compose.yaml`](./quickstart/envoy/docker-compose.yaml)
+runs Envoy, the authorizer and httpbin together. The authorizer part:
+
 ```yaml
-version: '3.8'
-
 services:
-  agent:
-    build: .
-    environment:
-      - TENUO_KEYPAIR_PEM=${TENUO_KEYPAIR_PEM}
-    depends_on:
-      - tenuo-authorizer
-
   tenuo-authorizer:
     image: tenuo/authorizer:0.3.1
-    ports:
-      - "9090:9090"
+    command: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
     environment:
-      - TRUSTED_ISSUERS=${CONTROL_PLANE_PUBLIC_KEY}
+      TENUO_TRUSTED_KEYS: ${TENUO_TRUSTED_KEYS}   # hex public key(s) of trusted issuers, comma separated
     volumes:
       - ./gateway.yaml:/etc/tenuo/gateway.yaml:ro
-
-  control-plane:
-    image: tenuo/demo-control-plane:0.1
-    ports:
-      - "8080:8080"
-    environment:
-      - SIGNING_KEY=${CONTROL_PLANE_PRIVATE_KEY}
 ```
 
 ---

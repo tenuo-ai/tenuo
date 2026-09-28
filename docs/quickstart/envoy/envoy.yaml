@@ -1,0 +1,95 @@
+# Envoy config for the Tenuo quickstart: HTTP ext_authz in front of httpbin.
+#
+# The Tenuo authorizer speaks Envoy's HTTP ext_authz protocol (a plain HTTP
+# check request per client request). gRPC ext_authz is not supported yet, so
+# do not use `grpc_service` here.
+static_resources:
+  listeners:
+  - name: main
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 8080
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          # Authorize the same path the backend will see.
+          normalize_path: true
+          merge_slashes: true
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/"
+                route:
+                  cluster: httpbin
+          http_filters:
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              # Fail closed: if the authorizer is down or times out, deny.
+              failure_mode_allow: false
+              # Forward the JSON body so `from: body` extraction works.
+              with_request_body:
+                max_request_bytes: 65536
+                allow_partial_message: false
+              # Request headers copied into the check request (method, path,
+              # host and content-length are always sent).
+              allowed_headers:
+                patterns:
+                - exact: x-tenuo-warrant
+                - exact: x-tenuo-pop
+                - exact: x-tenuo-approvals
+                - exact: content-type
+              http_service:
+                server_uri:
+                  uri: http://tenuo-authorizer:9090
+                  cluster: tenuo-authorizer
+                  timeout: 1s
+                # Check request path = /ext_authz + original path. Matches the
+                # route patterns in gateway.yaml.
+                path_prefix: /ext_authz
+                authorization_response:
+                  # Authorizer response headers returned to the client on deny.
+                  allowed_client_headers:
+                    patterns:
+                    - exact: x-tenuo-deny-reason
+                    - exact: content-type
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+  - name: tenuo-authorizer
+    connect_timeout: 0.5s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: tenuo-authorizer
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: tenuo-authorizer
+                port_value: 9090
+  - name: httpbin
+    connect_timeout: 0.5s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: httpbin
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: httpbin
+                port_value: 8080

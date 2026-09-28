@@ -28,6 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Envoy and Istio quickstarts now work end to end.** The Envoy all-in-one
+  manifest had invalid YAML, both quickstarts configured gRPC ext_authz (the
+  authorizer only serves HTTP ext_authz), their `gateway.yaml` used a schema the
+  authorizer rejects, and the "demo warrant" was a truncated placeholder. The
+  configs now use HTTP ext_authz with a `path_prefix` (so the authorizer's own
+  `/health`, `/ready` and `/status` cannot be reached through the proxy and
+  answer 200 for a client request), pin image versions, and ship a
+  `demo_warrant.py` helper plus a Docker Compose e2e test that runs in CI. The
+  Istio quickstart also no longer overwrites the mesh config, enables sidecar
+  injection, and tests from inside the mesh instead of through port-forward.
+  The nginx example now forwards the original method and path.
+
+- **Authorizer: early denials carry `x-tenuo-deny-reason` in debug mode.**
+  `missing_warrant` (401), `invalid_warrant` (400), `no_route` (404) and the
+  other pre-authorization errors now set the header like 403 denials do, so it
+  reaches clients through Envoy's `allowed_client_headers`.
+
 - **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**
   That signature fails at registration on the official SDK; the docs now point
   at the two middlewares and the raw-handler form.

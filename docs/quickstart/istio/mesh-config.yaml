@@ -1,27 +1,39 @@
-# Istio Mesh Config Patch for Tenuo
+# Istio mesh config overlay: register Tenuo as an HTTP ext_authz provider.
 #
-# Apply with:
-#   kubectl patch configmap istio -n istio-system --type merge --patch-file mesh-config.yaml
+# The Tenuo authorizer speaks Envoy's HTTP ext_authz protocol, so this uses
+# envoyExtAuthzHttp. gRPC ext_authz (envoyExtAuthzGrpc) is not supported yet.
 #
-# Then restart istiod:
-#   kubectl rollout restart deployment/istiod -n istio-system
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: istio
-  namespace: istio-system
-data:
-  mesh: |
+# Apply on a demo cluster with istioctl (merges into the installed mesh config
+# for the chosen profile):
+#   istioctl install -y -f mesh-config.yaml
+#
+# Helm users: put the same `extensionProviders` entry under `meshConfig:` in
+# your istiod values. Existing clusters: add the entry to your existing
+# extensionProviders list rather than replacing it.
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  meshConfig:
     extensionProviders:
     - name: tenuo-ext-authz
-      envoyExtAuthzGrpc:
+      envoyExtAuthzHttp:
         service: tenuo-authorizer.tenuo-system.svc.cluster.local
         port: 9090
-        includeRequestBodyInCheck:
-          maxRequestBytes: 8192
-          allowPartialMessage: true
-        includeHeadersInCheck:
-        - "x-tenuo-warrant"
-        - "x-tenuo-pop"
         timeout: 1s
+        # Fail closed if the authorizer is unreachable.
+        failOpen: false
+        # The authorizer sees /ext_authz/<original path>; the routes in
+        # tenuo.yaml's gateway.yaml include this prefix. It also keeps client
+        # paths away from the authorizer's /health, /ready and /status.
+        pathPrefix: /ext_authz
+        includeRequestHeadersInCheck:
+        - x-tenuo-warrant
+        - x-tenuo-pop
+        - x-tenuo-approvals
+        - content-type
+        includeRequestBodyInCheck:
+          maxRequestBytes: 65536
+          allowPartialMessage: false
+        headersToDownstreamOnDeny:
+        - x-tenuo-deny-reason
+        - content-type

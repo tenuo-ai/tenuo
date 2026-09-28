@@ -207,9 +207,14 @@ helm install tenuo-authorizer ./charts/tenuo-authorizer \
   --set config.trustedRoots[0]="YOUR_KEY_HERE"
 ```
 
-2. Configure Istio ExtensionProvider (see [Istio Quickstart](../../docs/quickstart/istio/))
+2. Configure an Istio extension provider of type `envoyExtAuthzHttp` (see
+   [Istio Quickstart](../../docs/quickstart/istio/)). The authorizer speaks
+   Envoy's HTTP ext_authz protocol; `envoyExtAuthzGrpc` is not supported yet.
+   Set `pathPrefix` (for example `/ext_authz`) on the provider and start every
+   `gateway.routes[].pattern` with the same prefix, so client requests can
+   never hit the authorizer's own `/health`, `/ready` or `/status` endpoints.
 
-3. Apply AuthorizationPolicy to your services
+3. Apply a `CUSTOM` AuthorizationPolicy to your services
 
 ## Upgrading
 

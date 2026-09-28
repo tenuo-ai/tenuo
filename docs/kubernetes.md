@@ -394,7 +394,11 @@ settings:
   debug_mode: true   # Non-production only!
 ```
 
-Denied responses include `X-Tenuo-Deny-Reason`:
+Authorization failures (403) include `X-Tenuo-Deny-Reason`; releases after
+0.3.1 also add it to the 401 `missing_warrant`, 400 `invalid_warrant` and 404
+`no_route` responses. Behind Envoy or Istio, allow the header through
+(`allowed_client_headers` / `headersToDownstreamOnDeny`) or the client will not
+see it:
 
 ```http
 HTTP/1.1 403 Forbidden

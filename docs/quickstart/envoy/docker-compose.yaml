@@ -1,0 +1,33 @@
+# Tenuo + Envoy (HTTP ext_authz) + httpbin, for local runs and the e2e test.
+#
+#   export TENUO_TRUSTED_KEYS=$(uv run demo_warrant.py init)
+#   docker compose up -d
+#   curl -i http://localhost:8080/get      # 401, missing_warrant
+#
+# To test a locally built authorizer instead of the published image:
+#   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
+name: tenuo-envoy-quickstart
+
+services:
+  tenuo-authorizer:
+    image: ${TENUO_AUTHORIZER_IMAGE:-tenuo/authorizer:0.3.1}
+    command: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
+    environment:
+      RUST_LOG: info
+      TENUO_TRUSTED_KEYS: ${TENUO_TRUSTED_KEYS:?set TENUO_TRUSTED_KEYS to the demo root public key (hex)}
+    volumes:
+      - ./gateway.yaml:/etc/tenuo/gateway.yaml:ro
+
+  envoy:
+    image: envoyproxy/envoy:v1.39.1
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "${ENVOY_PORT:-8080}:8080"
+    depends_on:
+      - tenuo-authorizer
+      - httpbin
+
+  httpbin:
+    image: mccutchen/go-httpbin:2.25.0
