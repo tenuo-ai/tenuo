@@ -49,7 +49,12 @@ from tenuo.temporal._constants import (  # noqa: E402
 from tenuo.temporal._dedup import _pop_dedup_cache  # noqa: E402
 from tenuo.temporal._headers import _extract_warrant_from_headers  # noqa: E402
 from tenuo.temporal._interceptors import _TenuoWorkflowInboundInterceptor  # noqa: E402
-from tenuo.temporal._state import _store_lock, _workflow_headers_store  # noqa: E402
+from tenuo.temporal._state import (  # noqa: E402
+    _store_lock,
+    _workflow_config_store,
+    _workflow_headers_store,
+)
+from tenuo.temporal.exceptions import TenuoContextError  # noqa: E402
 from tenuo.temporal._workflow import execute_workflow_authorized  # noqa: E402
 
 # -- Fixtures ----------------------------------------------------------------
@@ -444,6 +449,100 @@ class TestPopRoundTrip:
         auth = Authorizer(trusted_roots=[control_key.public_key])
         with pytest.raises(Exception):
             auth.authorize(warrant, "list_directory", {"path": "/tmp/demo"}, signature=pop)
+
+
+# -- tenuo_install_warrant() -- mid-run ambient warrant installation ---------
+
+class TestInstallWarrant:
+    """``tenuo_install_warrant`` installs a warrant into a *running* workflow's
+    ambient context (e.g. from an update handler that received the warrant as
+    a plain argument, not a transport header) — this is a security boundary,
+    so every failure mode below must fail closed (TenuoContextError), never
+    silently install."""
+
+    def _fake_info(self, run_key: str):
+        info = MagicMock()
+        info.run_id = run_key
+        info.workflow_id = run_key
+        return info
+
+    def _cleanup(self, run_key: str):
+        with _store_lock:
+            _workflow_config_store.pop(run_key, None)
+            _workflow_headers_store.pop(run_key, None)
+
+    def test_installs_valid_warrant_into_ambient_context(
+        self, warrant, agent_key, control_key
+    ):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-ok"
+        resolver = MagicMock()
+        resolver.resolve_sync.return_value = agent_key
+        cfg = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[control_key.public_key])
+        with _store_lock:
+            _workflow_config_store[run_key] = cfg
+        try:
+            with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)):
+                tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                raw = dict(_workflow_headers_store.get(run_key, {}))
+            installed = _extract_warrant_from_headers(raw)
+            assert installed is not None
+            assert installed.id == warrant.id
+        finally:
+            self._cleanup(run_key)
+
+    def test_rejects_key_id_that_does_not_resolve_to_the_holder(
+        self, warrant, control_key
+    ):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-wrong-holder"
+        wrong_key = SigningKey.generate()  # not the warrant's holder key
+        resolver = MagicMock()
+        resolver.resolve_sync.return_value = wrong_key
+        cfg = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[control_key.public_key])
+        with _store_lock:
+            _workflow_config_store[run_key] = cfg
+        try:
+            with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)):
+                with pytest.raises(TenuoContextError):
+                    tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                assert run_key not in _workflow_headers_store
+        finally:
+            self._cleanup(run_key)
+
+    def test_rejects_warrant_not_chained_to_trusted_roots(self, warrant, agent_key):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-untrusted-root"
+        untrusted_root = SigningKey.generate()  # NOT control_key -- warrant won't verify
+        resolver = MagicMock()
+        resolver.resolve_sync.return_value = agent_key
+        cfg = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[untrusted_root.public_key])
+        with _store_lock:
+            _workflow_config_store[run_key] = cfg
+        try:
+            with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)):
+                with pytest.raises(TenuoContextError):
+                    tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                assert run_key not in _workflow_headers_store
+        finally:
+            self._cleanup(run_key)
+
+    def test_requires_tenuo_worker_interceptor_configured(self, warrant):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-no-config"
+        # No entry in _workflow_config_store for this run_key at all.
+        with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)):
+            with pytest.raises(TenuoContextError, match="TenuoWorkerInterceptor"):
+                tenuo_install_warrant(warrant, "agent1")
+        with _store_lock:
+            assert run_key not in _workflow_headers_store
 
 
 # -- Activity interceptor (Authorizer path) ----------------------------------

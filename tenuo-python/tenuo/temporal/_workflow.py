@@ -147,6 +147,96 @@ def current_key_id() -> str:
     return key_id
 
 
+def tenuo_install_warrant(
+    warrant: Any,
+    key_id: str,
+    *,
+    warrant_chain: Optional[List[Any]] = None,
+    compress: bool = True,
+) -> None:
+    """Install a warrant into the current workflow's ambient Tenuo context, mid-run.
+
+    Ordinarily a workflow's warrant is set once, at start, from headers a
+    ``TenuoClientInterceptor`` attached to the ``start_workflow`` call — that is
+    what populates ``current_warrant()``/``current_key_id()`` and what the
+    outbound interceptor signs every subsequently-scheduled activity against.
+    Some workflows only learn their warrant later: a caller that starts the
+    workflow through a framework's own entry point (no Tenuo headers reach it),
+    then delivers the warrant on a custom ``@workflow.update`` as an ordinary
+    argument (a base64 string, say) rather than as a transport-level header.
+    Call this from that update's handler to install it into the SAME ambient
+    context a header-carried warrant would have populated — durably, for the
+    rest of this run: every later ``workflow.execute_activity()`` call
+    (including a framework's own tool dispatcher, not just direct
+    ``tenuo_execute_activity()`` calls) is transparently signed against it,
+    with no per-call ``warrant=`` override needed.
+
+    **This is a security boundary, not a passthrough.** A warrant reaching a
+    workflow this way arrived over an update argument, not a header this
+    worker's Nexus/Temporal interceptors already authenticated — so before
+    installing it, this function validates it exactly as strictly as
+    ``TenuoWorkerInterceptor`` would validate one presented on an activity:
+    the chain must verify against this worker's ``trusted_roots`` (unknown
+    issuer, expired, or revoked all raise), and ``key_id`` must resolve, via
+    the worker's ``key_resolver``, to the warrant's own holder key — an
+    update carrying a warrant minted for a *different* holder is rejected,
+    not silently installed for this worker's key. Raises
+    ``TenuoContextError`` (fail closed) on any of these, and if no
+    ``TenuoWorkerInterceptor`` is configured on this worker at all.
+
+    Args:
+        warrant: The warrant to install (already parsed, e.g. via
+            ``Warrant.from_base64()`` on the update's argument).
+        key_id: Key id that must resolve to ``warrant``'s holder key.
+        warrant_chain: Parent warrants (root-first, excluding ``warrant``)
+            for a delegated warrant. Defaults to ``[warrant]`` (no parents).
+        compress: Whether to gzip-compress the warrant in the installed
+            headers (default ``True``, matching ``tenuo_headers()``).
+    """
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
+    except ImportError:
+        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+
+    run_key = _current_run_key()
+    with _store_lock:
+        config = _workflow_config_store.get(run_key)
+    if config is None:
+        raise TenuoContextError(
+            "tenuo_install_warrant requires TenuoWorkerInterceptor on this worker."
+        )
+
+    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
+    _validate_chain_ends_with_warrant(chain, warrant, operation="tenuo_install_warrant")
+
+    from tenuo.temporal._nexus import _validate_envelope_key_holder
+
+    _validate_envelope_key_holder(config, key_id, warrant)
+
+    from tenuo.temporal._interceptors import _build_authorizer
+    from tenuo_core import Authorizer
+
+    revocation_list = config._last_good_revocation_list or config.revocation_list
+    authorizer = _build_authorizer(
+        Authorizer, config.trusted_roots, config, revocation_list=revocation_list,
+    )
+    try:
+        authorizer.verify_chain(chain)
+    except Exception as exc:
+        raise TenuoContextError(
+            f"tenuo_install_warrant: chain verification failed: {exc}"
+        ) from exc
+
+    raw_headers = tenuo_headers(warrant, key_id, compress=compress)
+    if len(chain) > 1:
+        from tenuo_core import encode_warrant_stack
+
+        raw_headers[TENUO_CHAIN_HEADER] = encode_warrant_stack(chain).encode("utf-8")
+
+    with _store_lock:
+        _workflow_headers_store[run_key] = raw_headers
+
+
 # ── AuthorizedWorkflow ───────────────────────────────────────────────────
 
 class AuthorizedWorkflow:
