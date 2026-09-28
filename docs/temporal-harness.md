@@ -299,7 +299,7 @@ evaluator = warrant_evaluator(
    — is this refund a *good* idea, not just an *allowed* one.
 
 This is the *early* check, for the model's sake — the binding check still
-runs on the effects worker, where the Tenuo plugin verifies the warrant and
+runs on the worker that runs the activity, where the Tenuo plugin verifies the warrant and
 a Proof-of-Possession signature over the exact arguments before the
 activity body starts. A call that reaches the worker by another route (a
 pre-approved tool, a human approval, a bug in an evaluator) is still held

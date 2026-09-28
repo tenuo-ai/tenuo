@@ -226,7 +226,7 @@ def warrant_evaluator(
 
     This is the *early* check, for the model's sake: a precise refusal it
     can act on, before anyone is asked to approve something that could
-    never run anyway. The binding check still runs on the effects worker,
+    never run anyway. The binding check still runs on the worker that runs the activity,
     where the Tenuo plugin verifies the warrant and a Proof-of-Possession
     signature over the exact arguments before the activity body starts — a
     call that reaches the worker by another route (a pre-approved tool, a
