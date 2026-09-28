@@ -1,3 +1,9 @@
+---
+title: "Tenuo Specification Documents"
+description: "Index of the Tenuo protocol specification: warrant semantics, wire format and test vectors."
+permalink: /spec/
+---
+
 # Tenuo Specification Documents
 
 This directory contains the normative technical specifications for the Tenuo protocol.

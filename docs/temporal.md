@@ -1,6 +1,12 @@
 ---
-title: Temporal Integration
-description: Warrant-based authorization for Temporal AI agent workflows
+title: "Temporal workflow authorization for AI agents"
+description: "Carry task-scoped authority through Temporal workflows and Activities, checked before each Activity runs. Open-source authorization for durable AI agents."
+og_image: /images/og/guide-temporal.png
+og_image_alt: "Tenuo for Temporal"
+guide_name: "Temporal"
+guide_logo: temporal
+guide_install: 'uv pip install "tenuo[temporal]"'
+
 ---
 
 # Temporal Integration
@@ -335,7 +341,7 @@ ownership, trusted-root distribution, revocation rollout, approvals, key
 rotation, and audit search across the fleet. Tenuo can be self-hosted for those
 pieces; teams that want that control plane operated centrally can use a managed
 Tenuo deployment. See [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md#enterprise-scale-control-across-teams),
-or [schedule a demo](https://tenuo.ai/early-access.html) to map this onto your
+or [schedule a demo](https://tenuo.ai/#talk) to map this onto your
 Temporal topology.
 
 ## Security

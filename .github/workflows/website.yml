@@ -1,0 +1,44 @@
+name: Rebuild tenuo.ai
+
+# docs/ is published at https://tenuo.ai by the tenuo-ai/website repository,
+# which overlays this directory onto the site and also builds the Rust API
+# reference and the Explorer from this repository. This workflow asks the
+# website to rebuild when any of those sources change on main.
+#
+# Needs the WEBSITE_DISPATCH_TOKEN secret: a fine-grained token with
+# Contents: read and write on tenuo-ai/website (required to send a
+# repository_dispatch event). Without it the job only warns; the website
+# also rebuilds on a daily schedule.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'docs/**'
+      - 'tenuo-core/src/**'
+      - 'tenuo-wasm/**'
+      - '.github/workflows/website.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask tenuo-ai/website to rebuild
+        env:
+          TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::WEBSITE_DISPATCH_TOKEN is not set, so tenuo.ai will pick this up on its daily rebuild."
+            exit 0
+          fi
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/tenuo-ai/website/dispatches \
+            -d "{\"event_type\":\"tenuo-docs-updated\",\"client_payload\":{\"sha\":\"$SHA\"}}"
+          echo "Requested a rebuild of tenuo.ai for tenuo-ai/tenuo@$SHA"

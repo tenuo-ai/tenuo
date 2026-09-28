@@ -1,6 +1,17 @@
+---
+title: "Google ADK agent authorization and tool security"
+description: "Warrant-based authorization for Google ADK agents: filter tools and check every call against task-scoped constraints. Open-source AI agent authorization."
+og_image: /images/og/guide-google-adk.png
+og_image_alt: "Tenuo for Google ADK"
+guide_name: "Google ADK"
+guide_logo: google-adk
+guide_install: 'uv pip install "tenuo[google_adk]"'
+
+---
+
 # Google ADK Integration
 
-Tenuo provides first-class support for [Google's Agent Development Kit (ADK)](https://github.com/google/adk-toolkit), enabling warrant-based authorization and constraint validation for ADK agents.
+Tenuo provides first-class support for [Google's Agent Development Kit (ADK)](https://github.com/google/adk-python), enabling warrant-based authorization and constraint validation for ADK agents.
 
 ---
 

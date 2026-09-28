@@ -1,3 +1,9 @@
+---
+title: Envoy Quickstart
+description: Deploy Tenuo with Envoy and get your first denied request in under five minutes.
+permalink: /quickstart/envoy/
+---
+
 # Envoy Quickstart
 
 Get your first 403 in under 5 minutes.

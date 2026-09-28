@@ -1,3 +1,9 @@
+---
+title: Istio Quickstart
+description: Deploy Tenuo with Istio and get your first denied request in under five minutes.
+permalink: /quickstart/istio/
+---
+
 # Istio Quickstart
 
 Get your first 403 in under 5 minutes with Istio service mesh.

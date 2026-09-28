@@ -1,6 +1,12 @@
 ---
-title: Kubernetes Integration
-description: Deployment patterns and operations for Kubernetes
+title: "Kubernetes authorization for AI agents: the Tenuo authorizer"
+description: "Deploy the Tenuo authorizer as a sidecar or gateway on Kubernetes to verify agent warrants offline, next to the workloads they protect."
+og_image: /images/og/guide-kubernetes.png
+og_image_alt: "Tenuo for Kubernetes"
+guide_name: "Kubernetes"
+guide_logo: kubernetes
+guide_install: 'docker pull tenuo/authorizer:0.3.1'
+
 ---
 
 # Kubernetes Integration

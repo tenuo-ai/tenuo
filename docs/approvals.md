@@ -1,3 +1,8 @@
+---
+title: "Human Approvals"
+description: "Cryptographically verified human-in-the-loop for tool calls."
+---
+
 # Human Approvals
 
 > **Cryptographically verified human-in-the-loop authorization for AI agent tool calls.**
@@ -338,7 +343,7 @@ def slack_approval(request):
 
 Async handlers are supported.
 
-> **Tenuo Cloud** provides managed approval routing (approvals delivered to Slack and mobile, with SSO-backed approver identity) so you don't have to build and operate custom handlers. Cloud customers: see the [Cloud approvals API reference](https://docs.tenuo.ai/api-reference/approvals) (sign-in required). Not a customer yet? [Request early access](https://tenuo.ai/early-access.html).
+> **Tenuo Cloud** provides managed approval routing (approvals delivered to Slack and mobile, with SSO-backed approver identity) so you don't have to build and operate custom handlers. Cloud customers: see the [Cloud approvals API reference](https://docs.tenuo.ai/api-reference/approvals) (sign-in required). Not a customer yet? [Try Tenuo Cloud](https://cloud.tenuo.ai) or [book a demo](/#talk).
 
 ---
 

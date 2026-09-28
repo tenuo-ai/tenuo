@@ -1,6 +1,12 @@
 ---
-title: LangGraph Integration
-description: Secure LangGraph workflows with Tenuo
+title: "LangGraph agent authorization and multi-agent security"
+description: "Secure LangGraph workflows and node-to-node delegation with task-scoped warrants that narrow at every hop. Open-source AI agent authorization."
+og_image: /images/og/guide-langgraph.png
+og_image_alt: "Tenuo for LangGraph"
+guide_name: "LangGraph"
+guide_logo: langgraph
+guide_install: 'uv pip install "tenuo[langgraph]"'
+
 ---
 
 # Tenuo LangGraph Integration

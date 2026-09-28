@@ -1,6 +1,12 @@
 ---
-title: FastAPI Integration
-description: Zero-boilerplate API protection for FastAPI
+title: "FastAPI authorization for AI agent tool calls"
+description: "Protect FastAPI endpoints that agents call: a warrant and proof-of-possession checked before the handler runs. Open-source AI agent authorization."
+og_image: /images/og/guide-fastapi.png
+og_image_alt: "Tenuo for FastAPI"
+guide_name: "FastAPI"
+guide_logo: fastapi
+guide_install: 'uv pip install "tenuo[fastapi]"'
+
 ---
 
 # Tenuo FastAPI Integration
@@ -523,8 +529,7 @@ stack_b64 = encode_warrant_stack([root, child])
 
 ## See Also
 
-- [Quickstart](./quickstart)  -- Get running in 5 minutes
+- [Quickstart](/quickstart/)  -- Get running in 5 minutes
 - [Security](./security)  -- Threat model, best practices
 - [API Reference](./api-reference)  -- Full Python API documentation
 - [LangChain](./langchain)  -- Tool protection for LangChain
-
