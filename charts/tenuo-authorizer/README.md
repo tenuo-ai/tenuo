@@ -69,6 +69,23 @@ helm uninstall tenuo-authorizer
 | `service.port` | Service port | `9090` |
 | `service.annotations` | Service annotations | `{}` |
 
+### Health Configuration
+
+The authorizer serves `/health`, `/healthz`, `/ready` and `/status` on a
+separate health port, never on `service.port`. Behind Envoy or Istio HTTP
+ext_authz the client's request path is forwarded to the authorizer and a 200
+means ALLOW, so health routes on the authorization port would let any client
+reach those paths on the backend without a warrant. The liveness and readiness
+probes target the named `health` container port. The health port is not added
+to the Service.
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `health.port` | Health listener port (`--health-port`). `0` disables it; then also disable or replace the probes | `9091` |
+| `health.legacyOnMainPort` | UNSAFE, migration only: also serve the health routes on `service.port` (`--legacy-health-on-main-port`). Logs a startup warning | `false` |
+| `livenessProbe` | Liveness probe (`GET /health` on port `health`) | see `values.yaml` |
+| `readinessProbe` | Readiness probe (`GET /ready` on port `health`) | see `values.yaml` |
+
 ### Resource Configuration
 
 | Parameter | Description | Default |
@@ -211,8 +228,10 @@ helm install tenuo-authorizer ./charts/tenuo-authorizer \
    [Istio Quickstart](../../docs/quickstart/istio/)). The authorizer speaks
    Envoy's HTTP ext_authz protocol; `envoyExtAuthzGrpc` is not supported yet.
    Set `pathPrefix` (for example `/ext_authz`) on the provider and start every
-   `gateway.routes[].pattern` with the same prefix, so client requests can
-   never hit the authorizer's own `/health`, `/ready` or `/status` endpoints.
+   `gateway.routes[].pattern` with the same prefix. The authorizer's own
+   `/health`, `/ready` and `/status` endpoints live on the separate health
+   port, so they are never reachable through ext_authz; the prefix keeps the
+   authorization routes unambiguous and is defense in depth.
 
 3. Apply a `CUSTOM` AuthorizationPolicy to your services
 
@@ -225,6 +244,15 @@ helm upgrade tenuo-authorizer ./charts/tenuo-authorizer -f new-values.yaml
 # Upgrade to a new chart version
 helm upgrade tenuo-authorizer ./charts/tenuo-authorizer --version 0.3.1
 ```
+
+### Health endpoints moved to a separate port
+
+Health and status endpoints moved from `service.port` (9090) to `health.port`
+(9091). The chart's default probes already target the named `health` port. If
+you override `livenessProbe` or `readinessProbe`, or scrape `/health` or
+`/status` on port 9090 from outside the pod, point them at port `health`
+(9091). `health.legacyOnMainPort=true` restores the old routes on 9090 for a
+migration window; it is unsafe behind ext_authz without a path prefix.
 
 ## Troubleshooting
 
@@ -240,8 +268,9 @@ kubectl logs -l app.kubernetes.io/name=tenuo-authorizer --tail=50
 
 ### Test the service
 ```bash
-kubectl port-forward svc/tenuo-authorizer 9090:9090
-curl http://localhost:9090/health
+kubectl port-forward deploy/tenuo-authorizer 9091:9091
+curl http://localhost:9091/health
+curl http://localhost:9091/status
 ```
 
 ### Verify configuration

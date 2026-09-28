@@ -27,10 +27,17 @@
    kubectl get pods -l app.kubernetes.io/name=tenuo-authorizer -n {{ .Release.Namespace }}
    kubectl logs -l app.kubernetes.io/name=tenuo-authorizer -n {{ .Release.Namespace }} --tail=20
 
-🩺 Health check:
+🩺 Health check (separate health port, not exposed on the Service):
 
-   kubectl port-forward svc/{{ $name }} {{ .Values.service.port }}:{{ .Values.service.port }} -n {{ .Release.Namespace }}
-   curl http://localhost:{{ .Values.service.port }}/health
+   kubectl port-forward deploy/{{ $name }} {{ .Values.health.port }}:{{ .Values.health.port }} -n {{ .Release.Namespace }}
+   curl http://localhost:{{ .Values.health.port }}/health
+{{- if .Values.health.legacyOnMainPort }}
+
+⚠️  health.legacyOnMainPort is enabled: /health, /healthz, /ready and /status
+   also answer 200 WITHOUT a warrant on port {{ .Values.service.port }}. Behind Envoy/Istio
+   ext_authz without a path_prefix, clients can reach those paths on your
+   backend with no warrant. Move probes to the health port and disable it.
+{{- end }}
 
 📚 Documentation: https://tenuo.ai/kubernetes
 

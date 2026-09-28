@@ -47,6 +47,11 @@ spec:
           - "/etc/tenuo/gateway.yaml"
           - "--bind"
           - "0.0.0.0"
+          - "--health-port"
+          - "{{ .Values.health.port }}"
+          {{- if .Values.health.legacyOnMainPort }}
+          - "--legacy-health-on-main-port"
+          {{- end }}
         env:
           - name: RUST_LOG
             value: "info"
@@ -70,6 +75,11 @@ spec:
           - name: http
             containerPort: {{ .Values.service.port }}
             protocol: TCP
+          {{- if ne (int .Values.health.port) 0 }}
+          - name: health
+            containerPort: {{ .Values.health.port }}
+            protocol: TCP
+          {{- end }}
         livenessProbe:
           {{- toYaml .Values.livenessProbe | nindent 12 }}
         readinessProbe:

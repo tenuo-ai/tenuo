@@ -93,11 +93,25 @@ resources:
     cpu: 50m
     memory: 64Mi
 
-# Liveness and readiness probes (HTTP - authorizer exposes /health, /healthz, /ready)
+# Health listener. /health, /healthz, /ready and /status are served on this
+# separate port, never on service.port: behind Envoy/Istio HTTP ext_authz the
+# client's path is forwarded to the authorizer and a 200 means ALLOW, so health
+# routes on the authorization port would let clients reach those paths on the
+# backend without a warrant. The port is not added to the Service.
+health:
+  # 0 disables the health listener; then also disable or replace the probes
+  # below, which target the named `health` port.
+  port: 9091
+  # UNSAFE, migration only: also answer the health routes on service.port, as
+  # earlier releases did. Logs a startup warning. Only safe if every proxy
+  # in front of the authorizer sets an ext_authz path_prefix.
+  legacyOnMainPort: false
+
+# Liveness and readiness probes (HTTP, on the named `health` container port)
 livenessProbe:
   httpGet:
     path: /health
-    port: 9090
+    port: health
   initialDelaySeconds: 5
   periodSeconds: 10
   timeoutSeconds: 3
@@ -106,7 +120,7 @@ livenessProbe:
 readinessProbe:
   httpGet:
     path: /ready
-    port: 9090
+    port: health
   initialDelaySeconds: 3
   periodSeconds: 5
   timeoutSeconds: 2
