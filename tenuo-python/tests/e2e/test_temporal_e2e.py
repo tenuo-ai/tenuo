@@ -20,6 +20,7 @@ import base64
 import time
 import warnings
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,6 +40,7 @@ from tenuo.temporal import (  # noqa: E402
     tenuo_headers,
 )
 from tenuo.temporal._constants import (  # noqa: E402
+    TENUO_APPROVALS_HEADER,
     TENUO_COMPRESSED_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
@@ -286,6 +288,115 @@ class TestTenuoClientInterceptor:
         # The helper should schedule deterministic headers for the target ID.
         with ci._lock:  # type: ignore[attr-defined]
             assert "wf-helper" in ci._headers_by_workflow_id  # type: ignore[attr-defined]
+
+
+# -- set_approvals_for_update() (client outbound half) -----------------------
+
+class TestSetApprovalsForUpdate:
+    """Client-side half of signed approvals over update headers: staging and
+    attaching. The worker-side stash (``handle_update_handler``) is covered in
+    ``tests/adapters/test_temporal.py::TestUpdateHeaderApprovalsStash``."""
+
+    def test_attaches_header_for_matching_update_id(self):
+        from tenuo.temporal._headers import decode_signed_approvals
+
+        ci = TenuoClientInterceptor()
+        approval = _fake_signed_approval()
+        ci.set_approvals_for_update("upd-1", [approval])
+
+        nxt = MagicMock()
+        nxt.start_workflow_update = AsyncMock(return_value="ok")
+        out = ci.intercept_client(nxt)
+
+        inp = SimpleNamespace(update_id="upd-1", headers={})
+        result = _run(out.start_workflow_update(inp))
+
+        assert result == "ok"
+        raw = _raw_from_payload_headers(inp.headers)
+        assert TENUO_APPROVALS_HEADER in raw
+        decoded = decode_signed_approvals(raw[TENUO_APPROVALS_HEADER])
+        assert len(decoded) == 1
+        assert decoded[0].to_bytes() == approval.to_bytes()
+
+    def test_does_not_attach_to_a_different_update_id(self):
+        ci = TenuoClientInterceptor()
+        ci.set_approvals_for_update("upd-1", [_fake_signed_approval()])
+
+        nxt = MagicMock()
+        nxt.start_workflow_update = AsyncMock(return_value="ok")
+        out = ci.intercept_client(nxt)
+
+        inp = SimpleNamespace(update_id="upd-OTHER", headers={})
+        _run(out.start_workflow_update(inp))
+
+        assert not _raw_from_payload_headers(inp.headers)
+        # The staged entry for upd-1 must still be there — untouched by an
+        # unrelated update_id, not silently consumed/dropped.
+        with ci._lock:  # type: ignore[attr-defined]
+            assert "upd-1" in ci._approvals_by_update_id  # type: ignore[attr-defined]
+
+    def test_one_shot_consumed_once(self):
+        ci = TenuoClientInterceptor()
+        ci.set_approvals_for_update("upd-1", [_fake_signed_approval()])
+
+        nxt = MagicMock()
+        nxt.start_workflow_update = AsyncMock(return_value="ok")
+        out = ci.intercept_client(nxt)
+
+        first = SimpleNamespace(update_id="upd-1", headers={})
+        second = SimpleNamespace(update_id="upd-1", headers={})
+        _run(out.start_workflow_update(first))
+        _run(out.start_workflow_update(second))
+
+        assert _raw_from_payload_headers(first.headers)
+        assert not _raw_from_payload_headers(second.headers)
+
+    def test_plain_update_with_nothing_staged_is_unaffected(self):
+        ci = TenuoClientInterceptor()
+        nxt = MagicMock()
+        nxt.start_workflow_update = AsyncMock(return_value="ok")
+        out = ci.intercept_client(nxt)
+
+        inp = SimpleNamespace(update_id="upd-none", headers={})
+        _run(out.start_workflow_update(inp))
+        assert not inp.headers
+
+    def test_empty_update_id_rejected(self):
+        ci = TenuoClientInterceptor()
+        with pytest.raises(ValueError):
+            ci.set_approvals_for_update("", [_fake_signed_approval()])
+
+
+def _fake_signed_approval():
+    """A real, cryptographically valid SignedApproval for header round-trip tests."""
+    import time as _time
+
+    import tenuo_core
+    from tenuo import SigningKey, Warrant
+
+    control = SigningKey.generate()
+    agent = SigningKey.generate()
+    approver = SigningKey.generate()
+    w = (
+        Warrant.mint_builder()
+        .holder(agent.public_key)
+        .capability("deploy")
+        .required_approvers([approver.public_key])
+        .min_approvals(1)
+        .approval_gates({"deploy": None})
+        .ttl(3600)
+        .mint(control)
+    )
+    now = int(_time.time())
+    request_hash = tenuo_core.py_compute_request_hash(w.id, "deploy", {}, w.holder_key)
+    payload = tenuo_core.ApprovalPayload(
+        request_hash=request_hash,
+        nonce=bytes(range(16)),
+        external_id="approver@test.com",
+        approved_at=now,
+        expires_at=now + 300,
+    )
+    return tenuo_core.SignedApproval.create(payload, approver)
 
 
 # -- tenuo_headers() with real objects ---------------------------------------
