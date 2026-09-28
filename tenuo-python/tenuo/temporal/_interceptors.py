@@ -208,8 +208,8 @@ def _workflow_type_name(workflow_ref: Any) -> str:
         from temporalio import workflow as _workflow
 
         defn = _workflow._Definition.from_class(workflow_ref)  # type: ignore[attr-defined]
-        if defn is not None and getattr(defn, "name", None):
-            return defn.name
+        if defn is not None and defn.name:
+            return str(defn.name)
     except Exception:
         pass
     return getattr(workflow_ref, "__name__", str(workflow_ref))
