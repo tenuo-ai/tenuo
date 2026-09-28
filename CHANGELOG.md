@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Authorizer health and status endpoints moved to a separate port.**
+  `tenuo-authorizer serve` now answers `/health`, `/healthz`, `/ready` and
+  `/status` only on a dedicated health listener, `--health-port` (env
+  `TENUO_HEALTH_PORT`, default 9091, bound to `--health-bind` / `TENUO_HEALTH_BIND`,
+  default the `--bind` address; `0` disables it). On the authorization port
+  (9090) those paths are now ordinary requests: they need a matching route and
+  a warrant like any other path. In Unix-socket mode the socket no longer
+  serves them either, and a TCP health listener starts only if
+  `--health-port` is set (on `127.0.0.1` unless `--health-bind` says
+  otherwise). To migrate:
+  - Point liveness/readiness probes and any health or `/status` checks at port
+    9091 (the Helm chart and the Envoy/Istio quickstart manifests now use a
+    named `health` container port; if you override the chart's
+    `livenessProbe` / `readinessProbe`, use `port: health`).
+  - Expose or allow 9091 wherever you ran probes against 9090 from outside
+    the pod (Docker `-p 9091:9091`, network policies, load balancer checks).
+  - Only as a stopgap, `--legacy-health-on-main-port` (env
+    `TENUO_LEGACY_HEALTH_ON_MAIN_PORT`, Helm `health.legacyOnMainPort`) also
+    serves the old routes on the authorization port and logs a startup
+    warning. It is unsafe behind Envoy/Istio HTTP ext_authz without a
+    `path_prefix`; see Security below. **Deprecated: the flag, its env var
+    and the Helm value are removed in 0.4.0.**
+
 ### Security
 
 - **Envoy HTTP ext_authz without `path_prefix` let `/health`, `/healthz`,
@@ -19,7 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not affected, and the gRPC-based quickstarts never reached the authorizer at
   all. If you deployed from that example, set `path_prefix: /ext_authz` on the
   ext_authz `http_service` (Istio: `pathPrefix`) and prefix your gateway route
-  patterns with `/ext_authz/`, as the updated docs now do.
+  patterns with `/ext_authz/`, as the updated docs now do. The authorizer
+  itself no longer answers those paths on the ext_authz port: they are served
+  only on the separate health port (see Breaking above), so a missing
+  `path_prefix` no longer turns them into an unauthenticated ALLOW. Keep the
+  prefix as defense in depth, and do not combine
+  `--legacy-health-on-main-port` with an unprefixed ext_authz config.
 
 ### Added
 
@@ -137,6 +167,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the run for those handlers. Early registration is scoped and cleaned up on
   rejection, handler failure, or cancellation if the workflow body never starts;
   overlapping handlers retain their context until the last handler exits.
+- **Helm chart: authorizer pods start.** The chart ran
+  `command: ["tenuo-authorizer", ...]`, but the distroless image's binary is
+  `/tenuo-authorizer` (the ENTRYPOINT) and is not on `PATH`, so pods failed
+  with "executable file not found". The chart now passes `args`.
 
 - **Envoy and Istio quickstarts now work end to end.** The Envoy all-in-one
   manifest had invalid YAML, both quickstarts configured gRPC ext_authz (the
