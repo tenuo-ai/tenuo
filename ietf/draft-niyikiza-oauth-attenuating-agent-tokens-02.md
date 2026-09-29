@@ -253,8 +253,8 @@ fill this gap.
 AATs apply the capability model {{DENNIS66}} to OAuth-based agent
 systems. Authority travels in unforgeable tokens scoped to specific
 operations; a holder can attenuate a token before passing it on but
-cannot amplify it {{SALTZER75}}. Enforcement points verify the leaf
-token and the delegation path that produced it offline, so the
+cannot amplify it {{SALTZER75}} {{MILLER06}}. Enforcement points verify
+the leaf token and the delegation path that produced it offline, so the
 authorization server is not a participant in each hop. That matters for
 agentic workflows that invoke tools in rapid succession, cross trust
 boundaries, or run with intermittent connectivity. AATs add this
@@ -392,19 +392,16 @@ after identity and consent have been established.
 Macaroons {{MACAROONS}} introduced the concept of attenuating tokens
 with contextual caveats. Macaroons use HMAC chaining, which provides
 attenuation but not proof of possession, and express caveats as
-free-form predicates evaluated at the target service at runtime.
-HMAC chaining also requires the verifier to hold, or to reach a
-service that holds, the root secret. AATs target enforcement points
-that are not the root issuer and that may sit in another trust
-domain, so verification must succeed against the root issuer's
-public key alone, with no shared secret and no call back to the
-issuer. This specification therefore uses asymmetric signatures
-throughout, adds asymmetric proof of possession, structured
-tool-level capability claims, and a typed constraint vocabulary.
-It defines a normative subsumption relation, enabling any party
-holding the chain to verify monotonicity structurally, without
-predicate evaluation at a central service. The trade-off relative to
-HMAC chaining is discussed in Section 9.4.
+free-form predicates evaluated at the target service at runtime. HMAC
+chaining also requires the verifier to hold, or to reach a service that
+holds, the root secret. AATs target enforcement points that are not the
+root issuer and that may sit in another trust domain, so verification
+must succeed against the root issuer's public key alone, with no shared
+secret and no call back to the issuer. AATs therefore use asymmetric
+signatures and proof of possession, and replace free-form caveats with
+typed constraints whose attenuation any party can check structurally
+(Section 4.5). Section 9.4 discusses what is lost relative to HMAC
+chaining.
 
 SPKI/SDSI {{RFC2693}} defines public keys as principals, delegation
 certificates whose effective authority is the intersection of the
@@ -432,22 +429,11 @@ define token-local, holder-derivable attenuation of concrete
 tool-and-argument authority within a delegation chain, with offline
 verification by the enforcement point.
 
-The capability-based security model underlying AATs draws on
-{{DENNIS66}}, which introduced capabilities as unforgeable tokens of
-authority, and {{MILLER06}}, which formalized the principle of least
-authority (POLA) and the attenuation property in object-capability
-systems. AATs apply these principles at the protocol layer: each token
-is a capability scoped to specific tools and arguments, and derivation
-can only attenuate, never amplify, the authority it carries.
-
-{{DEEPMIND26}} argues that safe multi-agent delegation requires explicit
-transfer of authority, responsibility, and trust at each delegation
-step, with bounded operational scope. {{CAMEL25}} shows that
-capability-based controls enforced at the tool boundary can provide
-provable security properties in an agentic framework. These results
-motivate a protocol-layer mechanism that encodes delegation scope in
-verifiable credential artifacts enforced independently of model
-behavior. AATs realize one protocol-layer approach to that goal.
+Recent work argues that safe agent delegation needs an explicit,
+bounded transfer of authority at each step {{DEEPMIND26}}, and that
+capability controls enforced at the tool boundary give provable
+guarantees against prompt injection {{CAMEL25}}; AATs provide such
+controls at the protocol layer.
 
 Appendix A relates the proof-of-possession mechanism to DPoP
 {{RFC9449}}. Changes from the previous revision are listed in Appendix G.
@@ -969,10 +955,8 @@ enforcement points MUST reject any chain that violates any invariant.
 
 ## Capability Lattice Model (Non-Normative)
 
-The attenuation invariants in this section are instances of a single
-abstract structure: a capability lattice. This subsection states that
-structure informally to give readers a mental model for interpreting the
-normative rules that follow.
+This subsection gives an informal model, a capability lattice, for
+reading the normative invariants that follow.
 
 For a token `T`, define its capability set `C(T)` as the set of `(tool,
 args)` pairs that `T` authorizes (that is, the pairs for which `T` would
@@ -988,17 +972,10 @@ parent authorized. It cannot add tools, loosen argument constraints, or
 extend the chain's authority in any dimension this specification
 defines (Sections 3.3 and 4).
 
-The `⊆` relation is not defined by enumerating `(tool, args)` pairs
-(argument spaces are typically infinite) but by the structural
-subsumption rules in Section 4.5, which alone decide validity. Those
-rules are conservative: some attenuations that are valid in the
-semantic sense below, such as an `exact` under a parent `any`, are
-rejected. At the tool level, the derived token's tool set must be a
-subset of the parent's. At the argument level, a derived token may
-narrow constraints, make optional arguments required, forbid an
-optional argument by omitting it (when the derived map has no `*`), and
-stop permitting unnamed arguments; it may name a new argument only where the parent permits
-unnamed ones (Section 4.5).
+Argument spaces are typically infinite, so Section 4.5 defines `⊆`
+structurally, and those rules alone decide validity. They are
+conservative: some attenuations that are valid in the semantic sense
+below, such as an `exact` under a parent `any`, are rejected.
 
 When a parent constraint exists, a parent constraint `c_parent` subsumes
 a derived constraint `c_child` (written `c_child ⊑ c_parent`) if every
