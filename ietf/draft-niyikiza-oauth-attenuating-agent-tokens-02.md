@@ -8,7 +8,7 @@ submissiontype: IETF
 ipr: trust200902
 area: Security
 workgroup: Web Authorization Protocol (OAuth)
-date: 2026-09-13
+date: 2026-09-29
 
 author:
   - fullname: Niki Aimable Niyikiza
@@ -53,6 +53,7 @@ informative:
       - name: John Bradley
       - name: Michael B. Jones
       - name: Breno de Medeiros
+        ins: B. de Medeiros
       - name: Chuck Mortimore
     date: 2023
     target: https://openid.net/specs/openid-connect-core-1_0.html
@@ -669,9 +670,12 @@ other argument:
 ~~~json
 {
   "read_text_file": {
-    "path": { "constraint_type": "exact", "value": "/srv/api/README.md" },
-    "head": { "constraint_type": "range", "max": 200, "optional": true },
-    "tail": { "constraint_type": "range", "max": 200, "optional": true },
+    "path": { "constraint_type": "exact",
+              "value": "/srv/api/README.md" },
+    "head": { "constraint_type": "range", "max": 200,
+              "optional": true },
+    "tail": { "constraint_type": "range", "max": 200,
+              "optional": true },
     "*": { "constraint_type": "wildcard" }
   }
 }
@@ -1656,7 +1660,10 @@ these members:
 
 ~~~json
 {
-  "aat_chain": ["eyJhbGciOiJFZDI1NTE5Ii...", "eyJhbGciOiJFZDI1NTE5Ii..."],
+  "aat_chain": [
+    "eyJhbGciOiJFZDI1NTE5Ii...",
+    "eyJhbGciOiJFZDI1NTE5Ii..."
+  ],
   "aat_pop": "eyJhbGciOiJFZDI1NTE5Ii..."
 }
 ~~~
@@ -1722,10 +1729,10 @@ Algorithm:
    b. Verify the root token signature against the public key
       of a trust anchor. After signature verification succeeds,
       parse the root token's claims, rejecting any JSON object
-      with duplicate member names ({{RFC8259}} Section 4), and
-      verify root.iat and root.exp are present and are
-      NumericDate values (Section 3.2). If not, DENY. All subsequent root
-      checks (3c through 3n) operate on parsed claims.
+      with duplicate member names, and verify root.iat and
+      root.exp are present and are NumericDate values (Section
+      3.2). If not, DENY. All subsequent root checks (3c through
+      3n) operate on parsed claims.
    c. Verify root.del_depth is an integer (Section 3.2) equal to
       0.
    d. Verify root.par_hash is absent.
@@ -1739,7 +1746,7 @@ Algorithm:
       If absent or not a string, DENY.
    k. Verify root.iss is present, is a URI, and equals the
       issuer of the trust anchor whose key verified the
-      signature in step 3b ({{RFC8725}} Section 3.8). If
+      signature in step 3b (RFC 8725, Section 3.8). If
       absent, not a URI-formatted string, or not equal, DENY.
    l. Verify root.cnf is present, contains a `jwk` member, and
       that the `jwk` encodes a public key (MUST NOT contain a
@@ -1939,7 +1946,9 @@ attacks on maliciously crafted payloads. The sole exception is step 2c:
 extracting only the `jti` string field for cycle detection prior to
 signature verification is permitted, provided the implementation treats
 the extracted value as untrusted until the corresponding signature is
-verified.
+verified. Steps 3b, 4b, and 7b reject duplicate JSON member names when
+claims are parsed, because parsers differ in which duplicate they keep
+({{RFC8259}}, Section 4).
 
 
 # Security Considerations
@@ -2864,19 +2873,21 @@ permits reordering, so test harnesses compare verdicts.
 
 ## Parameters
 
-Ed25519 keys are derived from fixed 32-byte seeds. Verification time
+Each role's Ed25519 key is derived from a 32-byte seed of one repeated
+byte: 0x01 for control_plane, 0x02 for orchestrator, 0x03 for worker,
+and 0x04 for worker2. Verification time
 is 1704067500 (2024-01-01T00:05:00Z). MAX_IAT_SKEW is 30 seconds. The
 enforcement point audience is `https://tools.example.com`. The only
 trust anchor is the root issuer's key (`control_plane` in the suite),
 bound to the issuer
 `https://auth.example.com`.
 
-| Role | Seed (hex) | JWK `x` |
-|---|---|---|
-| control_plane | `0101010101010101010101010101010101010101010101010101010101010101` | `iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w` |
-| orchestrator | `0202020202020202020202020202020202020202020202020202020202020202` | `gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q` |
-| worker | `0303030303030303030303030303030303030303030303030303030303030303` | `7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E` |
-| worker2 | `0404040404040404040404040404040404040404040404040404040404040404` | `ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw` |
+| Role | JWK `x` |
+|---|---|
+| control_plane | `iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w` |
+| orchestrator | `gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q` |
+| worker | `7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E` |
+| worker2 | `ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw` |
 
 RFC 7638 thumbprint of the Orchestrator key, computed over the JCS form
 `{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}`:
@@ -2952,13 +2963,14 @@ Root (root issuer to Orchestrator, `del_max_depth` 3), L1
 (Orchestrator to Worker, `del_max_depth` 2), L2 (Worker to Worker2,
 terminal). Expected: PERMIT. The linkage values below are sufficient to
 check Section 4.6 against an independent implementation; the full
-tokens are in the published suite.
+tokens are in the published suite. The `jti` values of root, L1, and L2
+are `019471f8-0000-7000-8000-000000000010`, `...011`, and `...012`.
 
-| Token | `jti` | SHA-256 of JWS Signing Input (base64url) |
-|---|---|---|
-| root | `019471f8-0000-7000-8000-000000000010` | `BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g` |
-| L1 | `019471f8-0000-7000-8000-000000000011` | `3kFpxq53WreeYGKbIxNqnCqjRSmVjwNoHjjZKIuqRw0` |
-| L2 | `019471f8-0000-7000-8000-000000000012` | `6JQpH_zCOFYgK-F4EjOrO9yssdlA24Ygm3JRH6stIdk` |
+| Token | SHA-256 of JWS Signing Input (base64url) |
+|---|---|
+| root | `BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g` |
+| L1 | `3kFpxq53WreeYGKbIxNqnCqjRSmVjwNoHjjZKIuqRw0` |
+| L2 | `6JQpH_zCOFYgK-F4EjOrO9yssdlA24Ygm3JRH6stIdk` |
 
 L1 carries `par_hash` equal to the root row above, and L2 carries
 `par_hash` equal to the L1 row. L1's `iss` is
