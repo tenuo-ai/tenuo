@@ -265,6 +265,8 @@ def _aat_entry(claims: dict, step: str, exactly_one: bool):
         raise Deny(step, "more than one attenuating_agent_token entry")
     if ents and not isinstance(ents[0].get("tools"), dict):
         raise Deny(step, "attenuating_agent_token entry has no tools object")
+    if ents and not all(isinstance(m, dict) for m in ents[0]["tools"].values()):
+        raise Deny(step, "a tools value is not a constraint-map object")
     return ents[0] if ents else {"type": "attenuating_agent_token", "tools": {}}
 
 
@@ -355,6 +357,8 @@ def _cdepth(c, d=1):
         raise Deny("3n/4o", f"unrecognized constraint_type {c.get('constraint_type')!r} (fail-closed)")
     if not _well_formed(c):
         raise Deny("3n/4o", "constraint not well-formed")
+    if c.get("constraint_type") in ("all", "any") and not isinstance(c.get("constraints"), list):
+        raise Deny("3n/4o", "all/any constraints is not an array")
     if c.get("constraint_type") in ("all", "any") and not c.get("constraints"):
         raise Deny("3n/4o", "empty all/any")
     for sub in c.get("constraints", []) if c.get("constraint_type") in ("all", "any") else []:
@@ -407,8 +411,8 @@ def check(c: dict, v) -> bool:
 def subsumes(child: dict, parent: dict) -> bool:
     """True iff child ⊑ parent under §4.5 for the types the vectors use.
 
-    `all` uses the agreed -02 rule (Tenuo's): every parent clause must be
-    subsumed by at least one derived clause; a derived clause MAY cover
+    `all` uses the agreed -02 rule (Tenuo's): every parent clause must
+    subsume at least one derived clause; a derived clause MAY cover
     several parent clauses; extra derived clauses are permitted. This drops
     draft-01's one-to-one requirement (Warden NOTES entry 12).
     """
@@ -1352,6 +1356,17 @@ add("J.21.8", "AAT entry without a tools member", None,
     "The root's attenuating_agent_token entry has no tools member (step 3m).",
     [no_tools], pop_sign(pop_claims(uuid7ish(0xE8F), no_tools, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3m")
+bad_map = jws_sign(root_claims(uuid7ish(0xE7D), {"read_file": ["path"]}, ORCH), CP)
+add("J.21.10", "A tools value that is not a constraint-map object", None,
+    "read_file maps to an array instead of a constraint map (step 3m).",
+    [bad_map], pop_sign(pop_claims(uuid7ish(0xE8D), bad_map, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3m")
+bad_all = jws_sign(root_claims(uuid7ish(0xE7C), {"read_file": {"path": {"constraint_type": "all",
+                                                                         "constraints": WILD}}}, ORCH), CP)
+add("J.21.11", "all whose constraints member is not an array", None,
+    "The constraints member of all is an object, not an array; the constraint is not well-formed (step 3n).",
+    [bad_all], pop_sign(pop_claims(uuid7ish(0xE8C), bad_all, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3n/4o")
 bool_depth = jws_sign(root_claims(uuid7ish(0xE7E), {"read_file": {"path": WILD}}, ORCH, del_depth=False), CP)
 add("J.21.9", "Root del_depth is false rather than the integer 0", None,
     "del_depth must be an integer (Section 3.2); false is not 0 (step 3c).",
@@ -1522,7 +1537,7 @@ md.append("- **Audience and nonce.** `aat_aud` is OPTIONAL in the PoP; when pres
           "PoP JWTs MAY carry an enforcement-point `nonce` (step 7h). Each vector states which of these its "
           "enforcement point requires under **Policy**. Draft-01 leaves audience to deployment policy without "
           "defining the value.")
-md.append("- **`all` subsumption.** Every parent clause must be subsumed by at least one derived clause; "
+md.append("- **`all` subsumption.** Every parent clause must subsume at least one derived clause; "
           "a derived clause MAY cover several parent clauses; extra derived clauses are permitted. Draft-01's one-to-one "
           "assignment is dropped (it adds backtracking without adding soundness).")
 md.append("- AAT payloads are JCS-canonical (RFC 8785). The draft requires JCS only for the PoP payload (§7.2). "
@@ -1599,7 +1614,7 @@ json_out = {
         "aat_aud": "optional; when present it must identify the enforcement point (7d)",
         "chain_aud": "every chain token that carries aud must identify the enforcement point (6c)",
         "pop_nonce": "checked when the vector policy names the nonce the enforcement point issued (7h)",
-        "all_subsumption": "every parent clause subsumed by at least one derived clause; reuse permitted",
+        "all_subsumption": "every parent clause subsumes at least one derived clause; reuse permitted",
         "par_hash": "base64url-nopad(SHA-256(parent JWS Signing Input))",
     },
     "params": {"now": NOW, "max_iat_skew": MAX_IAT_SKEW, "max_token_lifetime": MAX_TOKEN_LIFETIME,

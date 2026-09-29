@@ -149,6 +149,16 @@ informative:
     author:
       - org: A2A Project
     target: https://a2a-protocol.org/latest/specification/
+  AAT-VECTORS:
+    title: "AAT JWS test vector suite (JSON)"
+    author:
+      - org: Tenuo
+    target: https://github.com/tenuo-ai/tenuo/blob/main/tests/vectors/aat-jws-vectors.json
+  AAT-VECTOR-GEN:
+    title: "AAT JWS test vectors: readable companion and generator"
+    author:
+      - org: Tenuo
+    target: https://github.com/tenuo-ai/tenuo/tree/main/ietf/vectors
   WIMSE-ARCH:
     title: "Workload Identity in a Multi System Environment (WIMSE) Architecture"
     author:
@@ -215,8 +225,8 @@ encodes the tools an agent may invoke and the argument constraints that
 apply to those invocations. A token holder authorized to delegate can
 derive a token offline with equal or narrower authority, subject to the
 parent token's depth and lifetime limits. The resulting delegation chain
-is verifiable offline by any enforcement point that has the root issuer's
-trust anchor key.
+is verifiable offline by any enforcement point that has the root
+issuer's trust anchor key.
 
 This specification profiles the OAuth Rich Authorization Requests format
 (RFC 9396) for tool-level capability claims, adds delegation-chain
@@ -326,12 +336,14 @@ Enforcement Point
 At each derivation step, authority can stay the same or narrow, but
 never widen. This document defines the token format, derivation, proof
 of possession, the presentation an enforcement point receives (Section
-7.4), and verification. It leaves three things to deployments or
+7.4), and verification. It leaves four things to deployments or
 companion specifications: token revocation, which would reintroduce the
 online dependency that offline verification avoids (Section 9.8); a CBOR
 encoding (Appendix D); and where a presentation is carried, since agent
 frameworks carry tool calls over different protocols, for example MCP
-{{MCP}}, A2A {{A2A}}, or plain HTTP, and each needs its own binding.
+{{MCP}}, A2A {{A2A}}, or plain HTTP, and each needs its own binding;
+and how a user's authority, obtained for example through an
+authorization code grant with consent, is reflected in a root token.
 
 ## Limitations of Existing OAuth Mechanisms for Agentic Delegation
 
@@ -383,9 +395,9 @@ after identity and consent have been established.
    signed chain.
 
 5. **JWT/JWS interoperability.** The primary encoding specified in this
-   document represents AATs as signed JWTs {{RFC7519}} using JWS {{RFC7515}},
-   allowing deployments to verify chains using existing JSON Object
-   Signing and Encryption (JOSE) infrastructure without new
+   document represents AATs as signed JWTs {{RFC7519}} using JWS
+   {{RFC7515}}, allowing deployments to verify chains using existing
+   JSON Object Signing and Encryption (JOSE) infrastructure without new
    cryptographic dependencies.
 
 ## Relationship to Prior Work
@@ -432,12 +444,13 @@ verification by the enforcement point.
 
 Recent work argues that safe agent delegation needs an explicit,
 bounded transfer of authority at each step {{DEEPMIND26}}, and that
-capability controls enforced at the tool boundary give provable
-guarantees against prompt injection {{CAMEL25}}; AATs provide such
-controls at the protocol layer.
+capability controls enforced at the tool boundary can defend against
+prompt injection {{CAMEL25}}; AATs provide such controls at the
+protocol layer.
 
 Appendix A relates the proof-of-possession mechanism to DPoP
-{{RFC9449}}. Changes from the previous revision are listed in Appendix G.
+{{RFC9449}}. Changes from the previous revision are listed in Appendix
+G.
 
 
 # Terminology
@@ -508,7 +521,8 @@ signed by the private key corresponding to the leaf token's `cnf.jwk`.
 
 **Enforcement Point:** The component that receives a tool
 invocation request, verifies the presented token chain, evaluates
-argument constraints, and permits or denies execution.
+argument constraints, and permits or denies execution. In OAuth terms,
+it plays the role of a resource server for the tools it guards.
 
 **Trust Anchor:** A public key, bound to the issuer identifier of the
 root issuer that holds the corresponding private key, that enforcement
@@ -535,12 +549,12 @@ record attenuations made by holders along the delegation path. The leaf
 token is the token whose holder presents a PoP JWT and whose capability
 claims are evaluated against the requested tool invocation.
 
-A holder of any AAT MAY derive a child token when `del_depth` is strictly
-less than `del_max_depth`. The derived token MUST carry authority equal
-to or narrower than the parent token, as enforced by the capability
-monotonicity invariant (I4, Section 4.5). A token MUST NOT be accepted
-for a tool invocation except as the leaf of a successfully verified
-chain.
+A holder of any AAT MAY derive a child token when `del_depth` is
+strictly less than `del_max_depth`. The derived token MUST carry
+authority equal to or narrower than the parent token, as enforced by the
+capability monotonicity invariant (I4, Section 4.5). A token MUST NOT be
+accepted for a tool invocation except as the leaf of a successfully
+verified chain.
 
 ## Common Claims
 
@@ -568,7 +582,8 @@ Implementations MAY support additional asymmetric algorithms
 
 In AATs and PoP JWTs, NumericDate values and the integer claims
 `del_depth` and `del_max_depth` are JSON numbers with no fraction or
-exponent part. An `aud` or `aat_aud` value identifies an enforcement
+exponent part. An `aud` value, or a PoP JWT's `aat_aud` (Section 7.2),
+identifies an enforcement
 point when it is identical, by exact string comparison, to an audience
 identifier configured at that enforcement point.
 
@@ -630,14 +645,15 @@ that the tool is authorized without argument restrictions.
 
 Enforcement points check every invocation against its tool's constraint
 map in closed-world mode (Section 8, step 6b): an argument the map does
-not name MUST be rejected unless the map carries the `*` entry described
-below, and a named argument absent from the invocation MUST be rejected
-unless its constraint is optional. An empty map is shorthand for `*`, so
-it admits any argument. The presence of a constraint asserts that the
-issuer has reasoned about that argument; an invocation that omits a
-required one has not been validated against that reasoning. To authorize
-an argument without restricting its value while keeping the map closed,
-the issuer names it with a `wildcard` constraint (Section 3.4).
+not name MUST be rejected unless the map carries the `"*"` entry
+described below, and a named argument absent from the invocation MUST be
+rejected unless its constraint is optional. An empty map is shorthand
+for `"*"`, so it admits any argument. The presence of a constraint
+asserts that the issuer has reasoned about that argument; an invocation
+that omits a required one has not been validated against that reasoning.
+To authorize an argument without restricting its value while keeping the
+map closed, the issuer names it with a `wildcard` constraint (Section
+3.4).
 
 **Optional arguments.** A top-level entry in a constraint map MAY carry
 the member `optional` with the boolean value `true`. The argument may
@@ -650,18 +666,17 @@ An omitted argument takes the tool's own default, which the enforcement
 point cannot see, so issuers mark an argument optional only when that
 default is acceptable (Section 9.13).
 
-**Unnamed arguments.** The reserved key `*` in a constraint map gives the
-constraint for every argument the map does not name. In this
+**Unnamed arguments.** The reserved key `"*"` in a constraint map gives
+the constraint for every argument the map does not name. In this
 specification its value MUST be a `wildcard` constraint without an
-`optional` member, so `*` permits arguments the issuer did not name,
-with any value. An empty constraint
-map is equivalent to `{"*": {"constraint_type": "wildcard"}}`, and
-enforcement points treat it that way (Section 8, steps 4p and 6b). The
-key `*` does not name a tool argument; a tool argument literally named
-`*` is treated as unnamed. Because `*` admits any argument
-the tool accepts, including arguments added in later versions of the
-tool, issuers SHOULD NOT use it for tools with side effects (Section
-9.13).
+`optional` member, so `"*"` permits arguments the issuer did not name,
+with any value. An empty constraint map is equivalent to `{"*":
+{"constraint_type": "wildcard"}}`, and enforcement points treat it that
+way (Section 8, steps 4p and 6b). The key `"*"` does not name a tool
+argument; a tool argument literally named `"*"` is treated as unnamed.
+Because `"*"` admits any argument the tool accepts, including arguments
+added in later versions of the tool, issuers SHOULD NOT use it for tools
+with side effects (Section 9.13).
 
 For example, the following entry pins `path`, bounds the optional
 `head` and `tail` line counts without requiring them, and permits any
@@ -669,7 +684,7 @@ other argument:
 
 ~~~json
 {
-  "read_text_file": {
+  "https://tools.example.com/fs/read_text_file": {
     "path": { "constraint_type": "exact",
               "value": "/srv/api/README.md" },
     "head": { "constraint_type": "range", "max": 200,
@@ -712,19 +727,20 @@ token. An `authorization_details` entry containing duplicate tool
 identifier keys is malformed and MUST be rejected.
 
 Tool identifiers are compared as exact strings. Enforcement points MUST
-NOT apply Unicode normalization, URI normalization, case folding, percent
-decoding, or alias resolution when matching tool identifiers in the
-token, the PoP JWT, and the requested invocation. This rule applies only
-to tool identifier matching. Argument values are evaluated according to
-the semantics of their constraint type; a registered constraint type MAY
-define normalization as part of its `check` or `subsumes` procedure.
+NOT apply Unicode normalization, URI normalization, case folding,
+percent decoding, or alias resolution when matching tool identifiers in
+the token, the PoP JWT, and the requested invocation. This rule applies
+only to tool identifier matching. Argument values are evaluated
+according to the semantics of their constraint type; a registered
+constraint type MAY define normalization as part of its `check` or
+`subsumes` procedure.
 
 Tool identifiers SHOULD be URIs ({{RFC3986}}). URI-format identifiers
 provide namespace isolation across agents and reduce semantic collision
-when multiple agents expose tools with identical local names. Deployments
-spanning multiple agents or trust domains SHOULD use URI-format
-identifiers; single-agent deployments MAY use local identifiers where
-collision is not a concern.
+when multiple agents expose tools with identical local names.
+Deployments spanning multiple agents or trust domains SHOULD use
+URI-format identifiers; single-agent deployments MAY use local
+identifiers where collision is not a concern.
 
 A tool identifier carries no inherent authorization semantics beyond
 naming a capability. The root issuer is responsible for verifying that
@@ -761,9 +777,10 @@ a decidable, sound, and deterministic `subsumes` procedure.
 | `all` | `constraints` (array) | Logical AND of nested constraints. See Section 4.5 for subsumption rules. |
 | `any` | `constraints` (array) | Logical OR of nested constraints. See Section 4.5 for subsumption rules. |
 
-Constraint values and arguments are compared by their JCS
-serializations ({{RFC8785}}), the canonical form step 7f uses for
-`hta`; `contains` and `subset` treat their arrays as sets.
+Constraint values and arguments are compared by their JCS serializations
+({{RFC8785}}), the same canonical form used to compare a PoP JWT's
+arguments with the invocation (Section 8, step 7f); `contains` and
+`subset` treat their arrays as sets.
 
 JCS serializes a number through its IEEE 754 double-precision value
 ({{RFC8785}} Section 3.2.2.3), so distinct JSON numbers can share a
@@ -781,7 +798,8 @@ strings.
 
 A constraint is well-formed when:
 
-- `exact.value` is a string, number, boolean, or null;
+- `exact.value` is a string, number, boolean, or null, and the
+  `constraints` member of `all` and `any` is an array;
 - `one_of.values` is a non-empty array, and `excluded`, `required`, and
   `allowed` are arrays;
 - in a `range`, `min` and `max` are numbers, `min` is not greater than
@@ -789,7 +807,7 @@ A constraint is well-formed when:
   only with the corresponding bound;
 - every number in it is admissible (above); and
 - `optional`, where present, is a boolean on a top-level constraint-map
-  entry, and a `*` entry is a `wildcard` constraint with no `optional`
+  entry, and a `"*"` entry is a `wildcard` constraint with no `optional`
   member (Section 3.3).
 
 Enforcement points MUST reject a token containing a constraint that is
@@ -1046,8 +1064,8 @@ limits resource exhaustion and bounds the number of offline trust
 extensions that can occur under one root grant. Issuers use this value
 to express the maximum delegation depth they are willing to authorize
 for the grant. Intermediate token holders can only lower
-`del_max_depth`, never raise it (I2), so the root issuer's depth bound is
-enforced by chain verification across the entire chain.
+`del_max_depth`, never raise it (I2), so the root issuer's depth bound
+is enforced by chain verification across the entire chain.
 
 Issuers SHOULD set `del_max_depth` to accommodate the expected
 delegation topology (Appendix B.4). Once a chain reaches it, no
@@ -1120,26 +1138,26 @@ with both constraint maps normalized so that an empty map is
 `{"*": {"constraint_type": "wildcard"}}` (Section 3.3):
 
 - Each argument key the derived map names MUST also be named by the
-  parent's map, unless the parent's map contains `*`. A key named only
-  under the parent's `*` is an argument the parent already permitted
+  parent's map, unless the parent's map contains `"*"`. A key named only
+  under the parent's `"*"` is an argument the parent already permitted
   with any value, so constraining it narrows.
 - An argument the parent requires MUST remain required in the derived
   map. Making an optional argument required narrows; the reverse would
   admit invocations that omit an argument the parent requires.
 - The derived map MAY omit a key the parent names only if the parent
-  marks it optional and the derived map does not contain `*`. The
+  marks it optional and the derived map does not contain `"*"`. The
   omitted argument then becomes forbidden, which narrows; if the parent
   requires it, every derived invocation would lack it.
-- The derived map MAY contain `*` only if the parent's map does.
-  Dropping `*` narrows; adding it would admit arguments the parent
+- The derived map MAY contain `"*"` only if the parent's map does.
+  Dropping `"*"` narrows; adding it would admit arguments the parent
   forbids.
 
 For each argument key named in both maps, the derived constraint MUST be
 at least as restrictive as the parent's constraint.
 
 These rules do not let a derived token forbid one argument while keeping
-`*`: the argument would return under `*`. A deriver that needs this
-drops `*` and names the arguments it keeps.
+`"*"`: the argument would return under `"*"`. A deriver that needs this
+drops `"*"` and names the arguments it keeps.
 
 Constraint subsumption is defined per constraint type. The following
 table lists every valid (parent, derived) pair of core types; each row
@@ -1239,14 +1257,14 @@ derived.par_hash ==
 ~~~
 
 Token signatures and `par_hash` serve distinct security roles. Signature
-verification authenticates each token under the verification key selected
-for that token: a trust anchor for a root token, or the parent token's
-`cnf.jwk` for a derived token. Delegation authority (I1) then checks
-that the child issuer corresponds to the parent holder key. However,
-these checks do not by themselves bind the child to a unique parent
-token instance when the same holder key has multiple compatible parent
-tokens. The `par_hash` claim provides that token-instance binding by
-committing the child to exactly one parent token's signing input.
+verification authenticates each token under the verification key
+selected for that token: a trust anchor for a root token, or the parent
+token's `cnf.jwk` for a derived token. Delegation authority (I1) then
+checks that the child issuer corresponds to the parent holder key.
+However, these checks do not by themselves bind the child to a unique
+parent token instance when the same holder key has multiple compatible
+parent tokens. The `par_hash` claim provides that token-instance binding
+by committing the child to exactly one parent token's signing input.
 
 Each derived token is cryptographically bound to its parent by including
 the SHA-256 digest of the parent token's signing input in the
@@ -1379,10 +1397,10 @@ All other cross-type pairs involving `path_containment` are invalid.
 
 ## Root Issuer Support and Root Token Issuance
 
-The token endpoint is used only for root AAT issuance. Derived tokens are
-created locally by token holders as described in Section 6.2 and do not
-require token endpoint interaction. Enforcement points verify presented
-chains offline as described in Section 8.
+The token endpoint is used only for root AAT issuance. Derived tokens
+are created locally by token holders as described in Section 6.2 and do
+not require token endpoint interaction. Enforcement points verify
+presented chains offline as described in Section 8.
 
 ### Root Issuer Discovery
 
@@ -1503,7 +1521,7 @@ A holder of any AAT whose `del_depth` is strictly less than
 4. For each tool, construct a constraint map whose keys satisfy
    the key rules of Section 4.5 relative to the parent's map, with
    each constraint at least as restrictive as the parent's
-   corresponding constraint (or the parent's `*` constraint, for a
+   corresponding constraint (or the parent's `"*"` constraint, for a
    key the parent does not name).
 
 5. Set `del_depth` to `parent.del_depth + 1`.
@@ -1546,11 +1564,10 @@ A derivation in which none of the authority dimensions is strictly
 narrowed (the tool set is identical, all constraints are unchanged,
 `del_max_depth` is unchanged, and `exp` is unchanged) is technically
 valid by the invariants. Such a child has the same capability and
-lifetime authority as its parent while consuming one delegation depth. It
-does not improve least privilege, but deployments may use it for
-holder-key handoff.
-Enforcement points MAY log same-scope derivations as anomalous according
-to deployment policy.
+lifetime authority as its parent while consuming one delegation depth.
+It does not improve least privilege, but deployments may use it for
+holder-key handoff. Enforcement points MAY log same-scope derivations as
+anomalous according to deployment policy.
 
 
 # Proof of Possession
@@ -1564,7 +1581,7 @@ channels, all of which are observable by other components. PoP
 binds a specific invocation to the private key of the leaf
 token's holder.
 
-## PoP Token Structure
+## PoP JWT Structure
 
 The holder of the leaf token produces a PoP JWT for each tool
 invocation. The PoP JWT is a compact serialization signed with the
@@ -1755,7 +1772,8 @@ Algorithm:
    m. Verify root.authorization_details is present and is a
       non-empty array containing exactly one entry with type
       "attenuating_agent_token", and that the entry's `tools`
-      member is present and is a JSON object. If not, DENY.
+      member is present and is a JSON object whose values are
+      JSON objects. If not, DENY.
    n. For each constraint in each constraint map in the root
       token's attenuating_agent_token entry, verify the
       constraint tree depth does not exceed MAX_CONSTRAINT_DEPTH,
@@ -1806,7 +1824,8 @@ Algorithm:
    n. Verify child.authorization_details contains at most
       one entry with type "attenuating_agent_token", and that
       such an entry's `tools` member is present and is a JSON
-      object. If not, DENY. For the remaining checks in this
+      object whose values are JSON objects. If not, DENY. For the
+      remaining checks in this
       step, define child_aat and parent_aat as the child's and
       the parent's "attenuating_agent_token" entry, or, where a
       token has none, an entry with an empty `tools` object (the
@@ -1826,16 +1845,16 @@ Algorithm:
           child_aat.tools, normalize both constraint maps (Section
           3.3) and verify the key rules of Section 4.5: every key
           the child names is named by the parent unless the parent
-          contains `*`; every key the parent names and the child
+          contains `"*"`; every key the parent names and the child
           omits is optional in the parent, and the child then does
-          not contain `*`; and the child contains `*` only if the
+          not contain `"*"`; and the child contains `"*"` only if the
           parent does. If any rule fails, DENY.
       p3. For each argument key named in both maps, verify that
           the child's constraint is required if the parent's is.
           If not, DENY.
       p4. For each argument key named in the child's map, verify
           that the parent's constraint for that key, or the
-          parent's `*` constraint if the parent does not name it,
+          parent's `"*"` constraint if the parent does not name it,
           subsumes the child's per the per-type rules in Section
           4.5, ignoring `optional`. If any child constraint does
           not attenuate its parent constraint, DENY.
@@ -1860,8 +1879,8 @@ Algorithm:
       (Section 3.4). Let M be the tool's constraint map,
       normalized (Section 3.3). For each argument in args: if M
       names it, verify its value satisfies that constraint;
-      otherwise, if M contains `*`, verify the value satisfies
-      M's `*` constraint; otherwise DENY (closed-world mode). For
+      otherwise, if M contains `"*"`, verify the value satisfies
+      M's `"*"` constraint; otherwise DENY (closed-world mode). For
       each argument M names that is required, if it is absent from
       args, DENY. If any constraint check fails, DENY.
    c. For each token in chain that carries an `aud` claim, verify
@@ -1918,15 +1937,20 @@ Algorithm:
 Notes on the algorithm:
 
 - For a single-token chain (root = leaf), step 4 does not run; steps 3,
-  5, 6, and 7 carry the checks, and steps 3b and 3j-3m ensure required
-  claims are present before later steps use them.
+  5, 6, and 7 carry the checks, and steps 3b, 3c, and 3i-3m ensure
+  required claims are present before later steps use them.
 - Two requirements hold by induction and need no step of their own:
   every `del_max_depth` is at most MAX_DELEGATION_DEPTH (steps 3i and
   4g), and every `exp` is at most its token's `iat` plus
-  MAX_TOKEN_LIFETIME (steps 3h, 4h, and 4j). Implementations MAY check them explicitly.
+  MAX_TOKEN_LIFETIME (steps 3h, 4h, and 4j). Implementations MAY check
+  them explicitly.
 - A non-leaf token with no "attenuating_agent_token" entry is the empty
   capability set; step 4p accepts it as an attenuation, and step 6a
   rejects it as a leaf. A root always has an entry (step 3m).
+- Two requirements bind producers only and have no step: the JCS form
+  of the PoP payload (Section 7.2), which step 7f does not rely on
+  because it canonicalizes `hta` itself, and the lowercase form of
+  UUID `jti` values (Section 3.2).
 - Step 2c detects a token instance presented twice. The same holder key
   or actor may still appear more than once, through distinct tokens.
 
@@ -2054,7 +2078,8 @@ and behavioral monitoring are complementary controls for this threat.
 The constraint vocabulary cannot express them, because constraints apply
 to argument values, not to sequences of invocations; a profile that
 defines invocation-level controls needs its own attenuation rules and
-enforcement state, as approval gates do (Section 9.9).
+enforcement state, as a profile defining approval gates would (Section
+9.9).
 
 **Compromised holder key.** Tokens bound to a stolen holder key are
 usable at their full scope until they expire or are revoked; short
@@ -2226,15 +2251,16 @@ remaining within the invariants. The depth limit bounds the number of
 such trust extensions that a single root grant can produce. Enforcement
 points MUST check both `del_max_depth`, which is the root issuer's
 policy for the chain, and their own MAX_DELEGATION_DEPTH, which protects
-the enforcement point (Section 8, steps 3i, 4e-4g, and 4m); enforcing only
-one ignores the other.
+the enforcement point (Section 8, steps 3i, 4e-4g, and 4m); enforcing
+only one ignores the other.
 
 ## Token Revocation
 
 Revocation of individual AATs, including derived tokens, is outside the
 scope of this specification. The offline delegation model trades
 per-token revocation granularity for verifiability without authorization
-server availability. This tradeoff is inherent in the verification model.
+server availability. This tradeoff is inherent in the verification
+model.
 
 Deployments SHOULD use short token lifetimes to bound exposure after key
 compromise, token theft, or scope misconfiguration. A short-lived leaf
@@ -2270,11 +2296,11 @@ verification algorithm and SHOULD be configured separately.
 PoP JWT timestamp verification requires synchronized clocks. The
 RECOMMENDED window is ±30 seconds, which accommodates typical
 NTP-synchronized deployments; deployments with well-synchronized clocks
-can use ±5 to ±10 seconds, or less. Implementations MUST enforce a finite window.
-Values beyond ±60 seconds add little clock-skew tolerance while widening
-the replay window and are NOT RECOMMENDED; values near ±60 seconds suit
-only heterogeneous environments such as embedded systems or degraded
-connectivity.
+can use ±5 to ±10 seconds, or less. Implementations MUST enforce a
+finite window. Values beyond ±60 seconds add little clock-skew tolerance
+while widening the replay window and are NOT RECOMMENDED; values near
+±60 seconds suit only heterogeneous environments such as embedded
+systems or degraded connectivity.
 
 ## Role-Based Key Separation
 
@@ -2288,8 +2314,9 @@ that decide what work should be done and components that invoke tools.
 Role-based key separation is deployment guidance, not a base protocol
 invariant. Enforcement points implementing this specification verify the
 holder-key chain, attenuation invariants, parent-token linkage, and leaf
-PoP proof; they do not infer agent runtime roles from token claims unless
-a deployment-specific profile defines such claims and verification rules.
+PoP proof; they do not infer agent runtime roles from token claims
+unless a deployment-specific profile defines such claims and
+verification rules.
 
 ## Algorithm Confusion
 
@@ -2327,10 +2354,10 @@ real tools, and each has a cost the enforcement point cannot see. When
 an optional argument is omitted, the tool applies its own default: an
 optional `head` on a file-reading tool lets a caller read the whole
 file. Issuers SHOULD mark an argument optional only when the tool's
-default for it is acceptable for the token's purpose. The `*` entry
+default for it is acceptable for the token's purpose. The `"*"` entry
 admits any argument the tool accepts, including arguments that later
 versions of the tool add, which a token issued earlier then authorizes
-without anyone having reviewed them. Issuers SHOULD NOT use `*` for
+without anyone having reviewed them. Issuers SHOULD NOT use `"*"` for
 tools with side effects, and enforcement points MAY reject arguments
 absent from the tool's published input schema.
 
@@ -2366,9 +2393,9 @@ JSON Web Token Claims Registry {{RFC7519}}.
 The `tools` map is not a top-level JWT claim; it is a member nested
 inside the `authorization_details` array entry with `type:
 "attenuating_agent_token"`, as defined in Section 3.3. Its structure and
-semantics are governed by the AAT Constraint Type Registry (Section 11.3)
-and the RAR profile defined in this document, not by the JWT Claims
-Registry.
+semantics are governed by the AAT Constraint Type Registry (Section
+11.3) and the RAR profile defined in this document, not by the JWT
+Claims Registry.
 
 **PoP JWT claims:**
 
@@ -2418,7 +2445,9 @@ satisfies all of the following criteria before approving it:
    including its polynomial time bound. If full containment for the
    constraint language is more expensive than that, the
    registration prescribes a conservative syntactic strategy that
-   meets the bound and formally justifies its soundness.
+   meets the bound and formally justifies its soundness. The
+   registration states its worst-case cost and defines no member
+   named `optional`.
 
 4. The cross-type subsumption rules enumerate every (parent
    type, child type) pair involving the new type and a core
@@ -2676,13 +2705,14 @@ chain model, the invariants, and the constraint registry of this
 specification address questions outside its scope.
 
 At the proof level, DPoP binds to an HTTP method (`htm`) and URI
-(`htu`). AAT PoP JWTs bind to a tool identifier (`aat_tool`) and a structured
+(`htu`). AAT PoP JWTs bind to a tool identifier (`aat_tool`) and a
+structured
 argument map (`hta`). Tool invocations are function calls, not HTTP
 requests, and a URI alone carries insufficient information for
-argument-level constraint evaluation. This is why `aat_tool` and `hta`
-differ structurally from `htm` and `htu`: (1) `hta` carries the full
-argument map required for constraint evaluation at the enforcement
-point; (2) `aat_id` names the leaf token being presented. As DPoP's
+argument-level constraint evaluation, so `aat_tool` names the tool and
+`hta` carries the full argument map the enforcement point evaluates, in
+place of `htm` and `htu`; `aat_id` names the leaf token being presented.
+As DPoP's
 `ath` binds a proof to one access token, `aat_hash` binds an AAT PoP
 JWT to the exact leaf token, so a token re-derived with the same `jti`
 cannot reuse a captured proof.
@@ -2740,9 +2770,9 @@ significantly deeper chains.
 Regardless of the implementation ceiling, issuers should set
 `del_max_depth` to the depth required by the expected workflow, with
 margin for subprocess delegation, operational handoffs, and holder-key
-handoff. Lower values reduce the number of offline delegation steps under
-a grant, but overly tight values can suppress attenuation and encourage
-broader token reuse.
+handoff. Lower values reduce the number of offline delegation steps
+under a grant, but overly tight values can suppress attenuation and
+encourage broader token reuse.
 
 ## Implementation Size Limits
 
@@ -2777,13 +2807,13 @@ Appendix D notes considerations for a future CBOR/CWT profile.
 
 Implementations may include additional JWT claims in AATs beyond those
 defined in Section 3, using collision-resistant names for passthrough
-metadata such as request trace identifiers or tenant context. Such claims
-are integrity-protected within each token, but the base chain
+metadata such as request trace identifiers or tenant context. Such
+claims are integrity-protected within each token, but the base chain
 verification algorithm does not preserve or interpret them across
 derivation steps, and they carry no authority in derived tokens (Section
-3.3). Deployments that require chain-wide preservation of
-passthrough metadata must define their own derivation and verification
-rules, either through deployment-specific policy or a companion profile.
+3.3). Deployments that require chain-wide preservation of passthrough
+metadata must define their own derivation and verification rules, either
+through deployment-specific policy or a companion profile.
 
 ## TTL Guidance
 
@@ -2813,18 +2843,19 @@ constraint types with deterministic subsumption rules. Implementers that
 need richer expressiveness can define extension constraint types backed
 by analyzable authorization policy languages, such as Cedar {{CEDAR}}.
 Such an extension must define the runtime `check` predicate, the token
-encoding of the policy, and a sound, deterministic subsumption procedure.
-The fact that a policy language can decide whether an invocation is
-authorized is not, by itself, sufficient for AAT attenuation; the
-extension must also define how an enforcement point determines that a
-derived policy is no less restrictive than its parent. Where full
-containment analysis for such a language exceeds the polynomial bound in
-Section 5.1, as solver-based analysis can, the registration defines a
-conservative syntactic check for enforcement points; derivers remain
-free to use the full analysis offline when choosing what to derive.
-This document does not recommend a specific policy language. The normative requirement is
-that every extension registration satisfy the decidable, sound, and
-deterministic properties defined in Section 5.1.
+encoding of the policy, and a sound, deterministic subsumption
+procedure. The fact that a policy language can decide whether an
+invocation is authorized is not, by itself, sufficient for AAT
+attenuation; the extension must also define how an enforcement point
+determines that a derived policy is no less restrictive than its parent.
+Where full containment analysis for such a language exceeds the
+polynomial bound in Section 5.1, as solver-based analysis can, the
+registration defines a conservative syntactic check for enforcement
+points; derivers remain free to use the full analysis offline when
+choosing what to derive. This document does not recommend a specific
+policy language. The normative requirement is that every extension
+registration satisfy the decidable, sound, and deterministic properties
+defined in Section 5.1.
 
 # CBOR/CWT Considerations (Non-Normative)
 
@@ -2833,34 +2864,32 @@ rules, and chain verification algorithm defined in this document are
 format-agnostic. They describe a protocol, not an encoding. JWT/JWS is
 the only fully specified token encoding in this document.
 
-A future CWT/COSE profile could represent the same semantic content using
-CBOR Web Tokens {{RFC8392}} and COSE message signing {{RFC9052}}. Such a
-profile would need to define CWT claim-key assignments, COSE algorithm
-requirements, deterministic CBOR serialization rules per {{RFC8949}},
-the CWT parent token signing input used for `par_hash`, and the
-deterministic encoding of PoP `hta` values. This appendix does not define
-a CWT serialization, CWT claim-key mapping, COSE algorithm profile, or
-CWT `par_hash` signing input. Those details are deferred to a companion
-document.
+A future CWT/COSE profile could represent the same semantic content
+using CBOR Web Tokens {{RFC8392}} and COSE message signing {{RFC9052}}.
+Such a profile would need to define CWT claim-key assignments, COSE
+algorithm requirements, deterministic CBOR serialization rules per
+{{RFC8949}}, the CWT parent token signing input used for `par_hash`, and
+the deterministic encoding of PoP `hta` values. This appendix does not
+define a CWT serialization, CWT claim-key mapping, COSE algorithm
+profile, or CWT `par_hash` signing input. Those details are deferred to
+a companion document.
 
 # Test Vectors (Non-Normative)
-Byte-exact JWS test vectors for the Section 8 algorithm are published
-in the reference implementation's repository: the machine-readable suite
-at <https://github.com/tenuo-ai/tenuo/blob/main/tests/vectors/aat-jws-vectors.json>
-and a readable companion with its generator at
-<https://github.com/tenuo-ai/tenuo/tree/main/ietf/vectors>. Expected
-verdicts are computed, not hand-written: the generator runs every vector
-through its own implementation of Section 8, which shares no code with
-Tenuo. The suite covers the
-happy-path chains, each attenuation invariant (I1 through I6),
-closed-world leaf checks, explicit typing, required PoP audience,
-composite `all` / `any` subsumption including clause reuse, optional
-and unnamed arguments and their attenuation, the
-remaining core constraint types (`not_one_of`, `contains`, `subset`,
-range inclusivity), and the structural root checks in Section 8 steps
-3c, 3d, 3f, 3h, 3k, 3l, 3m, and 3n. Implementers targeting the -01 text should not
-treat that suite as a -01 conformance pack; the cases that encode the
-changes in Appendix G are marked.
+Byte-exact JWS test vectors for the Section 8 algorithm are published in
+the reference implementation's repository: a machine-readable suite
+{{AAT-VECTORS}} and a readable companion with its generator
+{{AAT-VECTOR-GEN}}. Expected verdicts are computed, not hand-written:
+the generator runs every vector through its own implementation of the
+Section 8 checks the vectors exercise, which shares no code with Tenuo.
+The suite covers the happy-path chains, each attenuation invariant (I1
+through I6), closed-world leaf checks, explicit typing, required PoP
+audience, composite `all` / `any` subsumption including clause reuse,
+optional and unnamed arguments and their attenuation, the remaining core
+constraint types (`not_one_of`, `contains`, `subset`, range
+inclusivity), and the structural root checks in Section 8 steps 3c, 3d,
+3f, 3h, 3k, 3l, 3m, and 3n. Implementers targeting the -01 text should
+not treat that suite as a -01 conformance pack: it encodes the -02
+changes listed in Appendix G.
 
 This appendix reproduces a minimal subset so that the encoding rules of
 Section 3.5, Section 4.6, and Section 7.2 can be checked without
@@ -2889,9 +2918,16 @@ bound to the issuer
 | worker | `7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E` |
 | worker2 | `ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw` |
 
-RFC 7638 thumbprint of the Orchestrator key, computed over the JCS form
-`{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}`:
-`aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU`.
+The RFC 7638 thumbprint of the Orchestrator key, computed over its JCS
+form (first line), is the second line:
+
+~~~
+========== NOTE: '\' line wrapping per RFC 8792 ==========
+
+{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiX\
+fYPW4_Js5Q"}
+aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU
+~~~
 
 ## Single-Token Chain (Vector J.1)
 
@@ -2973,15 +3009,22 @@ are `019471f8-0000-7000-8000-000000000010`, `...011`, and `...012`.
 | L2 | `6JQpH_zCOFYgK-F4EjOrO9yssdlA24Ygm3JRH6stIdk` |
 
 L1 carries `par_hash` equal to the root row above, and L2 carries
-`par_hash` equal to the L1 row. L1's `iss` is
-`urn:ietf:params:oauth:jwk-thumbprint:sha-256:aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU`.
+`par_hash` equal to the L1 row. L1's `iss` is:
+
+~~~
+urn:ietf:params:oauth:jwk-thumbprint:sha-256:
+  aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU
+~~~
+
+(one string, shown on two lines).
 
 ## Chain Splice (Vector J.12)
 
 The same root and holders as J.3, with an L1 that has its own `jti`
 and a `par_hash` of `qz05CjO1S-iTk93CGKmiB8y7bRUdUAe67kXzUwyMzUU`, the
-digest of a different root token held by the same key. Signature verification and I1 both
-pass; the chain MUST be denied at Section 8 step 4q.
+digest of a different root token held by the same key. Signature
+verification and I1 both pass; the chain is denied at Section 8 step
+4q.
 
 # Implementation Status (Non-Normative)
 
@@ -2996,8 +3039,8 @@ verification algorithm (Section 8) and token derivation procedure
 implementation-specific CBOR/COSE wire representation, with Ed25519
 signatures carried in COSE_Sign1 structures. That implementation
 experience supports the format independence of the core protocol model,
-but does not define a fully interoperable CWT profile; the CWT profile is
-deferred as described in Appendix D.
+but does not define a fully interoperable CWT profile; the CWT profile
+is deferred as described in Appendix D.
 
 The reference implementation's test suite covers monotonicity of the
 attenuation invariants under arbitrary sequences, normalization
@@ -3051,7 +3094,7 @@ Normative changes:
   SHOULD also get replay protection (Sections 7.2, 7.3, and 9.5; steps
   6c, 7d, 7h, and 7i).
 - Optional and unnamed arguments: the `optional` member and the
-  reserved `*` entry, with their attenuation rules (Sections 3.3, 4.5,
+  reserved `"*"` entry, with their attenuation rules (Sections 3.3, 4.5,
   and 9.13; steps 4p and 6b).
 - One derived `all` clause may satisfy several parent clauses (Section
   4.5).
@@ -3096,6 +3139,9 @@ Structure and editorial changes, with no change to verifier behavior:
   stated once, and verification checks are listed only in Section 8.
   Section 4.5 gives its pairs as a table and uses one subsumption
   direction. The comparison appendix covers only DPoP.
+- -01 required chain verification through step 6 before the PoP JWT
+  was evaluated; -02 requires steps 1-5 and recommends checking the PoP
+  signature before step 6b (Sections 7.3 and 8). Verdicts are unchanged.
 - -01's list of PoP checks disagreed with its algorithm on `aat_tool`,
   which must equal the invoked tool, and on `hta`, which is compared
   after JCS canonicalization; -02 follows the algorithm (steps 7e and
