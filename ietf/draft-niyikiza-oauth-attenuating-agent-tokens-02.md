@@ -2694,21 +2694,9 @@ this specification.
 
 ## Algorithm Recommendations
 
-- **Signing algorithm:** Ed25519 {{RFC8032}}. The normative requirement
-  is in Section 3.2. Ed25519 provides compact 64-byte signatures suitable
-  for constrained agent environments. The JWS `alg` header value for
-  Ed25519 is `"Ed25519"` {{RFC9864}}.
-- **Key representation:** JWK {{RFC7517}} with `"kty": "OKP"` and
-  `"crv": "Ed25519"`.
-- **Token identifier:** UUIDv7 is recommended for `jti` values,
-  providing time-ordered identifiers without central coordination.
-
-The algorithm allowlist requirement is normatively defined in Section 8
-(steps 3a, 4a, and 7a) and discussed in Section 9.12.
-
-The `cnf.jwk` key type is not hardcoded to Ed25519. Implementations
-should be designed to support algorithm migration without requiring
-changes to token structure.
+The `cnf.jwk` key type is not fixed to Ed25519 (Section 9.12), so
+implementations should be designed to support algorithm migration
+without changes to token structure.
 
 ## Recognizing Derived Token `iss` Values in Middleware
 
@@ -2729,58 +2717,39 @@ The WIMSE architecture {{WIMSE-ARCH}} and service-to-service protocol
 that hold and present AATs. A WIMSE workload credential identifies an
 agent and can authenticate it to the token endpoint at root issuance
 (Section 6.1.2). The AAT itself binds the agent by its holder key in
-`cnf.jwk`; `iss` identifies the root issuer. The two specifications are
-complementary: WIMSE establishes workload identity and authentication;
-this specification defines a holder-derivable, invocation-scoped
-delegation and attenuation mechanism that WIMSE does not standardize.
+`cnf.jwk`; `iss` identifies the root issuer.
 
 ## Delegation Depth Guidance
 
-The normative requirement is only that implementations enforce a finite
-MAX_DELEGATION_DEPTH of at least 8 (Section 4.3). This appendix provides non-normative guidance for
-selecting an appropriate value.
-
+Section 4.3 requires a finite MAX_DELEGATION_DEPTH of at least 8.
 The appropriate MAX_DELEGATION_DEPTH depends on the deployment topology.
 Linear orchestration chains (root issuer, one or two planning layers,
 leaf executor) require few hops. Swarm architectures with dynamic
 fan-out, sub-task delegation, or hierarchical agent groups may require
-significantly deeper chains. The implementation ceiling should reflect
-the maximum depth the deployment actually needs, not an arbitrary
-conservative default.
+significantly deeper chains.
 
 Regardless of the implementation ceiling, issuers should set
 `del_max_depth` to the depth required by the expected workflow, with
 margin for subprocess delegation, operational handoffs, and holder-key
 handoff. Lower values reduce the number of offline delegation steps under
 a grant, but overly tight values can suppress attenuation and encourage
-broader token reuse. The security value comes from deliberate per-chain
-policy, not from an arbitrarily low ceiling.
+broader token reuse.
 
 ## Implementation Size Limits
 
-The normative requirement is only that implementations enforce finite
-limits on token size, chain size, delegation depth, and constraint
-nesting depth (Sections 3.4, 4.3) to prevent resource exhaustion. This appendix provides
-non-normative recommended defaults for implementations with no specific
-deployment constraints:
+Sections 3.4 and 4.3 set the normative limits and their recommended
+values. Implementations with no specific deployment constraints can
+also use these defaults:
 
-| Parameter | Recommended Default |
+| Parameter | Suggested Default |
 |---|---|
-| Maximum token size | 64 KiB |
-| Maximum chain size | 256 KiB |
 | Maximum tools per token | 256 |
 | Maximum constraints per tool | 64 |
-| Maximum constraint nesting depth | 32 |
-| Maximum tool name length | 256 bytes |
+| Maximum tool identifier length | 256 bytes |
 | Maximum constraint value length | 4 KiB |
 
-Deployments should document their enforced limits. Interoperating
-parties should verify that their respective limits are compatible before
-deployment.
-
-Implementations should prefer core structural constraints where the
-policy permits, as these types produce compact tokens and simple
-subsumption checks.
+Deployments should document their enforced limits, and interoperating
+parties should check that their limits are compatible.
 
 Implementations concerned about parser exposure on unverified
 payloads in step 2c of the chain verification algorithm (Section 8)
@@ -2802,23 +2771,17 @@ defined in Section 3, using collision-resistant names for passthrough
 metadata such as request trace identifiers or tenant context. Such claims
 are integrity-protected within each token, but the base chain
 verification algorithm does not preserve or interpret them across
-derivation steps. Deployments that require chain-wide preservation of
+derivation steps, and they carry no authority in derived tokens (Section
+3.3). Deployments that require chain-wide preservation of
 passthrough metadata must define their own derivation and verification
 rules, either through deployment-specific policy or a companion profile.
 
 ## TTL Guidance
 
-The normative requirement is only that derived tokens cannot outlive
-their parents and that token lifetime does not exceed MAX_TOKEN_LIFETIME
-(Section 4.4). This appendix provides non-normative guidance for
-selecting appropriate TTL values.
-
-Expiration is the base specification's built-in limit on token lifetime.
-A token that has expired cannot be used regardless of whether a
-revocation mechanism is deployed. Short lifetimes reduce the window of
-exposure from key compromise, token theft, or scope misconfiguration.
-The operational cost of short TTLs is re-issuance frequency; this cost
-is low when the root issuer is available and derivation is offline.
+Expiration is the base specification's built-in limit on authority
+(Section 4.4), and short lifetimes bound exposure (Section 9.8). Their
+cost is re-issuance frequency, which is low when the root issuer is
+available and derivation is offline.
 
 The appropriate TTL depends on the token's position in the chain and the
 deployment context. Root tokens should be long enough to cover the full
