@@ -1251,13 +1251,9 @@ the JWS Signing Input: the ASCII string
 `BASE64URL(JWS Protected Header) || '.' || BASE64URL(JWS Payload)` as
 defined in {{RFC7515}} Section 5.1.
 
-This binding prevents grant-context substitution: a child token signed
-by a key that holds multiple compatible parent tokens cannot be
-re-associated with a different parent. Without it, a presenter could
-pair a child derived under one parent with another parent the same key
-holds, discarding restrictions only the first parent carries, such as
-its `aud`, and attributing the child to a grant it was not derived
-under.
+This binding prevents grant-context substitution: pairing a child with
+a different parent held by the same key, which would discard
+restrictions only the real parent carries (Section 9.1.1).
 
 ## I6: Proof of Possession
 
@@ -1982,13 +1978,10 @@ task's resource, designation and authority travel together, and the
 agent cannot be steered outside the authority carried by the token. A
 token authorizing more than one resource can still be steered within its
 scope, so the holder deriving a leaf token SHOULD scope it as narrowly
-as the task permits. The delegation chain verifies provenance and
-attenuation, and the enforcement point checks the presented invocation
-against the leaf token's constraints. How a constraint value maps to the
-resource the tool ultimately acts upon is defined by the tool contract
-and implemented by the tool: the protocol authorizes the presented
-invocation, and the tool remains responsible for resolving that
-invocation to the correct resource.
+as the task permits. How a constraint value maps to the resource the
+tool acts on is defined by the tool contract: the protocol authorizes
+the presented invocation, and the tool remains responsible for resolving
+it to the correct resource.
 
 **Privilege escalation and compromised sub-agents.** Authority can only
 narrow at each delegation step (I4). A compromised or misbehaving
@@ -2006,9 +1999,7 @@ sub-agent that obtains the bytes of its parent's token, or of the
 root token, therefore cannot invoke with that token's authority and
 cannot present it as the leaf of a chain: doing either requires the
 parent holder's private key, which the protocol assumes is never
-shared across a delegation boundary (Section 9.4). Possession of a
-token without the corresponding holder key is not sufficient for
-authorization.
+shared across a delegation boundary (Section 9.4).
 
 **Grant-context substitution.** The `par_hash` claim (I5) binds each
 derived token to the specific bytes of its parent token. Suppose a
@@ -2163,16 +2154,14 @@ borrowed from an existing mechanism, and requires deployments to use
 at least one where the exposure exists:
 
 - **Chain audience.** A holder that knows where a token will be
-  presented sets `aud` when deriving it (Section 3.2). This is the
-  contextual-caveat pattern of Macaroons {{MACAROONS}} and the
-  resource-indicator pattern of {{RFC8707}}: the restriction is added
-  by the party that knows the target, and every enforcement point
-  checks every `aud` in the chain against itself (Section 8, step
-  6c). A holder further down the chain need not know the target.
+  presented sets `aud` when deriving it (Section 3.2), as with Macaroon
+  caveats {{MACAROONS}} and resource indicators {{RFC8707}}. Every
+  enforcement point checks every `aud` in the chain against itself
+  (Section 8, step 6c), so holders further down the chain need not know
+  the target.
 - **Presentation audience.** `aat_aud` names the party the holder
-  hands the PoP JWT to, with the semantics of the JWT `aud` claim
-  {{RFC7519}} and the target binding of DPoP `htu` {{RFC9449}}. It
-  is the next hop, never a resource behind it. The holder always
+  hands the PoP JWT to, like DPoP `htu` {{RFC9449}}: the next hop,
+  never a resource behind it. The holder always
   knows its next hop, so it can set the claim whenever that hop is
   the enforcement point. It is OPTIONAL because when an intermediary
   forwards the presentation unchanged, the next hop is not the
@@ -2197,8 +2186,7 @@ A deployment in which more than one enforcement point, resource
 server, or tenant can accept the same chain MUST ensure that each of
 them does at least one of the following: require chain audience,
 require `aat_aud`, require a nonce, or share `jti` tracking state with
-the others. Which one is a deployment choice; this
-specification does not prefer among them.
+the others.
 
 This specification does not define the storage backend, consistency
 model, or distribution protocol for `jti` state; the required
@@ -2245,26 +2233,18 @@ token provides a bounded damage window even when no revocation mechanism
 is deployed. Root tokens SHOULD be issued with the shortest lifetime
 that covers the delegated task (Appendix B.7).
 
-A companion document may define lineage-scoped cascading revocation. In
-such a model, revocation is enforced by the enforcement point that
-accepts the affected chain, not by requiring the root AS to track derived
-tokens. Revoking a token invalidates that token and its descendants in
-the same lineage, but does not invalidate unrelated tokens or
-independent delegations held by the same agent, subject, or holder key.
-Revocation transport, storage, distribution, consistency, token-status,
-and introspection mechanisms are deployment and control-plane concerns
-outside the scope of this document.
+A companion document may define revocation enforced by the enforcement
+point that accepts a chain, invalidating a token and its descendants,
+but not unrelated tokens held by the same key, without requiring the
+root issuer to track derived tokens.
 
 ## Approval Gates
 
 Deployments may require signed approvals before accepting particular
-tool invocations. Such approvals are outside the base chain verification
-algorithm unless defined by a profile or extension. A profile that
-defines approval gates should specify how approval requirements are
-encoded, how they are preserved or attenuated during derivation, what
-request data an approval signs, how approval freshness is checked, and
-which approval identities or keys are trusted, including any threshold
-or quorum requirements.
+tool invocations. Approvals are outside the base algorithm; a profile
+that defines them should specify how approval requirements are encoded
+and attenuated, what request data an approval signs, how freshness is
+checked, and which approvers and thresholds are trusted.
 
 ## Clock Skew
 
