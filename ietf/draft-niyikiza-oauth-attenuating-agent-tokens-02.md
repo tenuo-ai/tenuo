@@ -1734,19 +1734,8 @@ Algorithm:
       If a string-valued `jti` field cannot be extracted, DENY.
       Collect all extracted `jti` values; if any value appears
       more than once in the presented chain, DENY (token-instance
-      cycle detection). This check
-      does not forbid the same actor, holder key, or organizational
-      component from appearing more than once in a delegation graph,
-      provided each occurrence is represented by a distinct token and
-      every adjacent link in the presented chain satisfies this
-      algorithm. This limited extraction
-      prior to signature verification is permitted and required
-      for this structural check; it does not constitute the
-      application-layer claim deserialization prohibited by the
-      post-algorithm note. The extracted `jti` values MUST be
-      treated as untrusted until each token's signature is
-      verified. Full claim parsing MUST still be deferred until
-      after signature verification succeeds for each token.
+      cycle detection). The extracted `jti` values MUST be treated
+      as untrusted until each token's signature is verified.
 
 3. Verify root token:
    a. Verify the root token's JWS alg header is on the
@@ -1787,15 +1776,6 @@ Algorithm:
       non-empty array containing exactly one entry with type
       "attenuating_agent_token", and that the entry's `tools`
       member is present and is a JSON object. If not, DENY.
-      Note: for a single-token chain (root = leaf), step 4 has
-      no adjacent parent-child pair to evaluate. Validation is
-      therefore performed by step 3 (root checks), step 5
-      (chain-length consistency), step 6 (leaf
-      capability/constraint checks), and step 7 (PoP), before
-      permit in step 8.
-      Steps 3b and 3j through 3m ensure that required claims
-      are present before later steps depend on them, closing the
-      bypass window that exists when step 4 does not run.
    n. For each constraint in each constraint map in the root
       token's attenuating_agent_token entry, verify the
       constraint tree depth does not exceed MAX_CONSTRAINT_DEPTH,
@@ -1837,47 +1817,20 @@ Algorithm:
    e. Verify child.del_depth <= parent.del_max_depth.    (I2)
    f. Verify child.del_depth <= MAX_DELEGATION_DEPTH.    (I2)
    g. Verify child.del_max_depth <= parent.del_max_depth.(I2)
-      Note: the requirement that every token's
-      del_max_depth <= MAX_DELEGATION_DEPTH is transitively
-      satisfied: step 3i verifies this for the root, and
-      step 4g at each link ensures the value can only
-      decrease. Implementations MAY add this check
-      explicitly as defense in depth.
    h. Verify child.exp <= parent.exp.                    (I3)
    i. Verify child.exp > now.                            (I3)
    j. Verify child.iat >= parent.iat.                    (I3)
    k. Verify child.iat <= now + MAX_IAT_SKEW.            (I3)
    l. Verify child.exp > child.iat.                      (I3)
-      Note: the requirement child.exp <= child.iat +
-      MAX_TOKEN_LIFETIME is transitively satisfied: by
-      induction, child.exp <= root.exp (step 4h at each
-      link), root.exp <= root.iat + MAX_TOKEN_LIFETIME
-      (step 3h), and child.iat >= root.iat (step 4j at
-      each link), therefore child.exp <= root.iat +
-      MAX_TOKEN_LIFETIME <= child.iat + MAX_TOKEN_LIFETIME.
-      Implementations MAY add this check explicitly as
-      defense in depth.
    m. Verify child.del_depth <= child.del_max_depth.     (I2)
    n. Verify child.authorization_details contains at most
       one entry with type "attenuating_agent_token", and that
       such an entry's `tools` member is present and is a JSON
-      object. If not, DENY. Note: zero
-      entries of this type are permitted at this step and
-      represent an empty capability set. Step 4p will verify
-      this is a valid attenuation of the parent (an empty tool
-      set is always a subset). If the child is the leaf token,
-      step 6a will reject zero entries.
-      For the remaining checks in this adjacent-pair step, define
-      child_aat as the child entry with type
-      "attenuating_agent_token" if present, or as an empty capability
-      entry with an empty `tools` map if absent. Define parent_aat
-      the same way for the parent token: the parent entry with type
-      "attenuating_agent_token" if present, or an empty capability
-      entry with an empty `tools` map if absent. Root validation
-      (step 3m) ensures the root parent has such an entry; non-root
-      parents with zero entries represent the empty capability set.
-      Entries of other types in `authorization_details` are ignored
-      by this algorithm.
+      object. If not, DENY. For the remaining checks in this
+      step, define child_aat and parent_aat as the child's and
+      the parent's "attenuating_agent_token" entry, or, where a
+      token has none, an entry with an empty `tools` object (the
+      empty capability set). Entries of other types are ignored.
    o. For each constraint in each constraint map in child_aat.tools,
       verify the constraint tree depth does not exceed
       MAX_CONSTRAINT_DEPTH, that every constraint in it is of a
@@ -1981,6 +1934,21 @@ Algorithm:
 
 8. PERMIT.
 ~~~
+
+Notes on the algorithm:
+
+- For a single-token chain (root = leaf), step 4 does not run; steps 3,
+  5, 6, and 7 carry the checks, and steps 3b and 3j-3m ensure required
+  claims are present before later steps use them.
+- Two requirements hold by induction and need no step of their own:
+  every `del_max_depth` is at most MAX_DELEGATION_DEPTH (steps 3i and
+  4g), and every `exp` is at most its token's `iat` plus
+  MAX_TOKEN_LIFETIME (steps 3h, 4h, and 4j). Implementations MAY check them explicitly.
+- A non-leaf token with no "attenuating_agent_token" entry is the empty
+  capability set; step 4p accepts it as an attenuation, and step 6a
+  rejects it as a leaf. A root always has an entry (step 3m).
+- Step 2c detects a token instance presented twice. The same holder key
+  or actor may still appear more than once, through distinct tokens.
 
 Every step denies on failure, so the verdict does not depend on the
 order of steps 6 and 7. Enforcement points SHOULD verify the PoP
