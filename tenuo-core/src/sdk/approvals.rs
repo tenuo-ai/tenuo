@@ -85,8 +85,8 @@ pub fn approve_request(
         return Err(ApprovalError::RequestMismatch);
     }
     let now = Utc::now();
-    let requested = now
-        + chrono::Duration::from_std(ttl).map_err(|_| ApprovalError::Unavailable)?;
+    let requested =
+        now + chrono::Duration::from_std(ttl).map_err(|_| ApprovalError::Unavailable)?;
     let warrant_expiry = DateTime::<Utc>::from_timestamp(request.warrant_expires_at as i64, 0)
         .ok_or(ApprovalError::Unavailable)?;
     let expires_at = requested.min(warrant_expiry);
@@ -193,22 +193,39 @@ mod tests {
         .unwrap();
         let payload = signed.verify().unwrap();
         assert_eq!(payload.request_hash, hash);
-        assert!(payload.expires_at <= expires, "expiry is capped at the warrant's");
+        assert!(
+            payload.expires_at <= expires,
+            "expiry is capped at the warrant's"
+        );
 
         let stranger = SigningKey::generate();
         assert_eq!(
-            approve_request(&request, Some(&holder), &stranger, "x", std::time::Duration::from_secs(60))
-                .err(),
+            approve_request(
+                &request,
+                Some(&holder),
+                &stranger,
+                "x",
+                std::time::Duration::from_secs(60)
+            )
+            .err(),
             Some(ApprovalError::Unauthorized)
         );
         let other_holder = SigningKey::generate().public_key();
         assert_eq!(
-            approve_request(&request, Some(&other_holder), &approver, "x", std::time::Duration::from_secs(60))
-                .err(),
+            approve_request(
+                &request,
+                Some(&other_holder),
+                &approver,
+                "x",
+                std::time::Duration::from_secs(60)
+            )
+            .err(),
             Some(ApprovalError::RequestMismatch)
         );
         let mut tampered = request.clone();
-        tampered.args.insert("replicas".to_string(), ConstraintValue::Integer(30));
+        tampered
+            .args
+            .insert("replicas".to_string(), ConstraintValue::Integer(30));
         assert!(!tampered.matches(Some(&holder)));
 
         let json = serde_json::to_string(&request).unwrap();

@@ -689,7 +689,10 @@ impl Receipt {
 /// A valid chain shows that no receipt inside the run was changed, removed,
 /// or inserted. It does not show that newer receipts were not cut from the end;
 /// export or anchor the latest digest elsewhere for that.
-pub fn verify_chain(receipts: &[Receipt], signer: Option<&PublicKey>) -> Result<Vec<ReceiptPayload>> {
+pub fn verify_chain(
+    receipts: &[Receipt],
+    signer: Option<&PublicKey>,
+) -> Result<Vec<ReceiptPayload>> {
     let mut payloads = Vec::with_capacity(receipts.len());
     let mut previous: Option<[u8; 32]> = None;
     let expected = signer.or_else(|| receipts.first().map(|receipt| &receipt.signer_key));
@@ -736,7 +739,10 @@ mod tests {
         let payloads = verify_chain(&receipts, Some(&key.public_key())).unwrap();
         assert_eq!(payloads.len(), 4);
         assert_eq!(payloads[3].request_id, "req-3");
-        assert!(verify_chain(&receipts[1..], None).is_ok(), "a run may start mid-chain");
+        assert!(
+            verify_chain(&receipts[1..], None).is_ok(),
+            "a run may start mid-chain"
+        );
 
         let mut gap = receipts.clone();
         gap.remove(2);

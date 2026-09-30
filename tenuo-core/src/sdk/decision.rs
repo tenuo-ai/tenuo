@@ -31,15 +31,20 @@ pub struct DecisionMetadata {
 }
 
 /// How a denial is reported. Changes log level only, never execution.
+///
+/// The default is [`DenialReporting::Debug`], which writes nothing: the
+/// caller receives every [`Denial`] and decides what to log. `Error` and
+/// `Warn` write the full denial message to stderr, and messages can quote
+/// argument values; enable them only where process logs may hold arguments.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DenialReporting {
-    #[default]
-    /// Log denials at error level.
+    /// Log denials at error level, including the denial message.
     Error,
-    /// Log denials at warn level.
+    /// Log denials at warn level, including the denial message.
     Warn,
     /// Log denials at debug level. Still denies; only the log level changes.
+    #[default]
     Debug,
 }
 
@@ -262,5 +267,25 @@ impl<E: fmt::Debug + fmt::Display> std::error::Error for GuardError<E> {
             Self::Denied(denial) => Some(denial),
             Self::Operation(_) => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guards_do_not_log_denials_unless_asked() {
+        assert_eq!(DenialReporting::default(), DenialReporting::Debug);
+        let mut authorizer = crate::Authorizer::new();
+        authorizer.add_trusted_root(crate::SigningKey::generate().public_key());
+        let guard = crate::sdk::Guard::builder()
+            .authorizer(authorizer)
+            .revocation(crate::sdk::RevocationMode::TtlOnly {
+                max_lifetime: std::time::Duration::from_secs(60),
+            })
+            .build()
+            .unwrap();
+        assert_eq!(guard.denial_reporting(), DenialReporting::Debug);
     }
 }
