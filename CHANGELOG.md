@@ -62,13 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ApplicationError`s from sync or async handlers propagate unchanged for pending
   approvals or transient service failures. Pending attempts do not execute the
   activity; returned approvals still require full authorization on retry.
-- **Calls the warrant does not grant are denied before any approval is
+- **Calls outside the warrant's capabilities are denied before any approval is
   requested.** When an approval gate matched a call that also broke the
   warrant's constraints (wrong payee, amount over the limit, tool not granted),
   the approval handler ran first and the call was denied only afterwards. The
   shared enforcement path and the Temporal interceptor now run the
   `approval_requirement` preflight first and deny with the constraint reason,
-  so an approver is only asked about calls the warrant would allow.
+  so an approver is not asked to override a capability constraint. This preflight
+  is deny-only; issuer trust, expiry, revocation, PoP, and collected approvals
+  still require full authorization before execution.
 - **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**
   That signature fails at registration on the official SDK; the docs now point
   at the two middlewares and the raw-handler form.

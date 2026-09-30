@@ -655,6 +655,9 @@ def _denial_before_approval(
     forbids (wrong payee, amount over the limit, tool not granted) is denied
     without being put in front of an approver. Deny-only: ``None`` does not
     allow anything; the authorizer still decides.
+
+    This checks capability scope, not issuer trust, expiry, revocation, or PoP.
+    Passing preflight is not proof that a request is otherwise authorized.
     """
     req = warrant.approval_requirement(tool_name, constraint_args)
     if req.status != "denied":
