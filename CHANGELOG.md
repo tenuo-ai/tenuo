@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linux aarch64 Python wheel.** Releases publish a `manylinux_2_28_aarch64`
+  wheel next to the existing Linux x86_64, macOS arm64, and Windows wheels, so
+  `pip install tenuo` on ARM Linux no longer builds from source. Linux wheels
+  are built for glibc 2.28 and imported on Debian bookworm before publishing,
+  and the release checks each platform tag (#743).
+
 - **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
   `ServerMiddleware` for `MCPServer` / low-level `Server` that runs
   `MCPVerifier` on every `tools/call` before params validation, accepting the

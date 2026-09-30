@@ -330,7 +330,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 | **Python** | 3.9 - 3.14 |
 | **Node.js** | **Beta**. Node 20+ (`npm i @tenuo/core@beta`) |
 | **OS** | Linux, macOS, Windows |
-| **Python installation** | Prebuilt wheels; no Rust toolchain required |
+| **Python installation** | Prebuilt wheels for Linux (x86_64 and aarch64), macOS (arm64), and Windows (x64). Other platforms build from source and need Rust |
 
 ### Optional Dependencies
 
