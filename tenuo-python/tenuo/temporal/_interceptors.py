@@ -161,8 +161,8 @@ def _raise_non_retryable(violation: BaseException) -> None:
         raise violation
 
 
-class _ApprovalPending(Exception):
-    """An ``approval_handler`` asked Temporal to retry: approvals are not in yet."""
+class _ApprovalHandlerRetry(Exception):
+    """An approval handler raised a retryable Temporal application error."""
 
     def __init__(self, error: BaseException) -> None:
         super().__init__(str(error))
@@ -1231,10 +1231,11 @@ class TenuoActivityInboundInterceptor:
             if self._config.on_denial == "raise" and not self._config.dry_run:
                 raise self._wrap_as_non_retryable(auth_exc) from auth_exc
             return await _deny_or_continue(tool=tool_name, reason=str(auth_exc))
-        except _ApprovalPending as pending:
-            # Not a decision yet: re-raise the handler's retryable error unchanged.
-            logger.info("Activity '%s' is waiting for approvals: %s", tool_name, pending.error)
-            raise pending.error from None
+        except _ApprovalHandlerRetry as retry:
+            # No authorization decision or activity dispatch: preserve the
+            # handler's retry policy for pending approval or transient failure.
+            logger.info("Activity '%s' approval handler requested retry: %s", tool_name, retry.error)
+            raise retry.error from None
         except Exception as e:
             try:
                 from tenuo.exceptions import TenuoError as _TenuoError
@@ -1387,12 +1388,12 @@ class TenuoActivityInboundInterceptor:
                 if _inspect.isawaitable(result):
                     result = await result
             except ApplicationError as exc:
-                # A retryable error means the approvals are not in yet (for example
-                # tenuo_cloud's TemporalCloudApprovalHandler). Let Temporal retry
-                # the activity instead of failing it as an authorization error.
+                # Pending approvals and transient approval-service failures can
+                # request a retry. Only errors from the handler get this treatment;
+                # authorization failures below remain non-retryable.
                 if exc.non_retryable:
                     raise
-                raise _ApprovalPending(exc) from exc
+                raise _ApprovalHandlerRetry(exc) from exc
 
             collected = result if isinstance(result, list) else [result]
 

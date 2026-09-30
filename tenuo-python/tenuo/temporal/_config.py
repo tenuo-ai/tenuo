@@ -331,6 +331,14 @@ class TenuoPluginConfig:
     ``ApprovalRequest`` and must return a ``SignedApproval`` (or list).
     Raise ``ApprovalDenied`` to reject.
 
+    Sync and async handlers may raise a retryable Temporal ``ApplicationError``
+    when approvals are pending or the approval service is temporarily unavailable.
+    It is propagated unchanged (including retry metadata); the activity is not
+    dispatched. Temporal's activity retry policy controls subsequent attempts.
+    Once approvals are returned, the call must still pass full authorization,
+    including warrant expiry, revocation, and PoP. Waiting does not extend them.
+    Other handler failures continue to fail closed and non-retryable.
+
     When ``None`` (default), approval-gate-triggered calls with no pre-supplied
     approvals are denied with ``ApprovalGateTriggered``.
     """
