@@ -639,6 +639,22 @@ impl ApprovalRequest {
         }
     }
 
+    /// Whether `request_hash` is the hash of this request's warrant, tool,
+    /// arguments, and the given holder.
+    ///
+    /// The request does not carry the holder; pass the leaf warrant's
+    /// authorized holder. Check this before showing a request to an approver:
+    /// a request whose hash does not match its own fields would have the
+    /// approver sign something other than what they reviewed.
+    pub fn matches(&self, holder: Option<&PublicKey>) -> bool {
+        let args: std::collections::HashMap<String, crate::constraints::ConstraintValue> = self
+            .args
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        compute_request_hash(&self.warrant_id, &self.tool, &args, holder) == self.request_hash
+    }
+
     /// Overlay the resolved display message from the firing gate (if any).
     pub fn with_resolved_message(mut self, gate_message: Option<&str>) -> Self {
         self.message =
