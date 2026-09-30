@@ -32,6 +32,28 @@ pub fn encode_meta(
     Ok(Value::Object(object))
 }
 
+/// Build `_meta.tenuo` for a call: the holder signs a proof of possession
+/// now, with the default proof window, and attaches `approvals`.
+///
+/// Use this on the calling side when no local policy check is wanted, for
+/// example in a proxy whose verifier is elsewhere. It does not check the call
+/// against the warrant; [`crate::sdk::Guard`] and [`encode_meta_from_authorized`]
+/// do both.
+pub fn sign_meta(
+    authority: &crate::sdk::PresentedAuthority,
+    call: &crate::sdk::Call<'_>,
+    approvals: &[SignedApproval],
+) -> Result<Value, TransportError> {
+    let signature = authority
+        .prove(
+            call,
+            chrono::Utc::now().timestamp(),
+            crate::planes::DEFAULT_POP_WINDOW_SECS,
+        )
+        .map_err(|_| TransportError::ProofFailed)?;
+    encode_meta(authority.chain(), &signature, approvals)
+}
+
 /// Build the `_meta.tenuo` object from an authorized call, reusing its existing proof
 /// of possession. Never signs again.
 pub fn encode_meta_from_authorized(call: &AuthorizedCall<'_>) -> Result<Value, TransportError> {
@@ -82,5 +104,50 @@ pub fn decode_meta(meta: &Value) -> Result<TenuoMeta, TransportError> {
 pub fn strip_tenuo(meta: &mut Value) {
     if let Some(object) = meta.as_object_mut() {
         object.remove("tenuo");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signed_meta_verifies_at_a_guard() {
+        use crate::sdk::{Call, Guard, LocalSigner, PresentedAuthority, RevocationMode};
+        use crate::{ConstraintSet, SigningKey};
+        use std::sync::Arc;
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("read", ConstraintSet::new())
+            .holder(holder.public_key())
+            .ttl(std::time::Duration::from_secs(60))
+            .build(&issuer)
+            .unwrap();
+        let authority =
+            PresentedAuthority::new(vec![warrant], Arc::new(LocalSigner::new(holder))).unwrap();
+        let arguments = serde_json::json!({"path": "/a"});
+        let call = Call::try_from_json("read", &arguments).unwrap();
+        let meta = sign_meta(&authority, &call, &[]).unwrap();
+
+        let mut authorizer = crate::Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: std::time::Duration::from_secs(3600),
+            })
+            .build()
+            .unwrap();
+        let received = decode_meta(&meta).unwrap();
+        assert!(guard
+            .check_received(&received.as_received().unwrap(), &call)
+            .is_ok());
+
+        let other = serde_json::json!({"path": "/b"});
+        let other = Call::try_from_json("read", &other).unwrap();
+        assert!(guard
+            .check_received(&received.as_received().unwrap(), &other)
+            .is_err());
     }
 }

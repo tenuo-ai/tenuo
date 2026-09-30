@@ -70,6 +70,36 @@ impl PresentedAuthority {
         CapabilityView { names }
     }
 
+    /// Sign a proof of possession for `call` at `timestamp` (Unix seconds).
+    ///
+    /// This is the holder side of a call. It does not check the call against
+    /// the warrant; the verifier does that. `window_secs` must match the
+    /// verifier's proof window ([`crate::planes::DEFAULT_POP_WINDOW_SECS`]
+    /// unless it was configured otherwise).
+    pub fn prove(
+        &self,
+        call: &super::Call<'_>,
+        timestamp: i64,
+        window_secs: i64,
+    ) -> crate::error::Result<Signature> {
+        if !self.signer_matches_leaf() {
+            return Err(crate::error::Error::Validation(
+                "holder signer does not match the leaf warrant".to_string(),
+            ));
+        }
+        let leaf = self.leaf();
+        let preimage =
+            leaf.pop_preimage(call.capability(), call.pop_args(), timestamp, window_secs)?;
+        let request = super::signer::PopSigningRequest::new(
+            preimage,
+            call.capability(),
+            leaf.id().to_string(),
+        );
+        self.signer()
+            .sign_pop(&request)
+            .map_err(|error| crate::error::Error::Validation(format!("holder signer: {error}")))
+    }
+
     pub(crate) fn signer(&self) -> &dyn HolderSigner {
         self.signer.as_ref()
     }
