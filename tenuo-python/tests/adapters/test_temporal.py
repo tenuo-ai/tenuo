@@ -3642,7 +3642,7 @@ class TestApprovalGates:
         return tenuo_core.SignedApproval.create(payload, approver_key)
 
     @staticmethod
-    def _build_activity_inputs(warrant, pop_bytes, approvals_header=None):
+    def _build_activity_inputs(warrant, pop_bytes, approvals_header=None, args=None):
         from tenuo.temporal._constants import (
             TENUO_APPROVALS_HEADER,
             TENUO_ARG_KEYS_HEADER,
@@ -3657,7 +3657,8 @@ class TestApprovalGates:
             if k.startswith("x-tenuo-"):
                 act_headers[k] = raw_v
         act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop_bytes))
-        act_headers[TENUO_ARG_KEYS_HEADER] = b""
+        args = args or {}
+        act_headers[TENUO_ARG_KEYS_HEADER] = ",".join(args).encode("utf-8")
         if approvals_header is not None:
             act_headers[TENUO_APPROVALS_HEADER] = approvals_header
 
@@ -3677,7 +3678,7 @@ class TestApprovalGates:
 
         inp = MagicMock()
         inp.fn = lambda: None
-        inp.args = ()
+        inp.args = tuple(args.values())
         inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
         return info, inp
 
@@ -3798,6 +3799,89 @@ class TestApprovalGates:
         msg = str(exc_info.value)
         assert "approval" in msg.lower() or "gate" in msg.lower() or \
             isinstance(exc_info.value, ApprovalGateTriggered)
+
+    def test_retryable_handler_error_is_retried_not_denied(self):
+        """A handler that raises a retryable ``ApplicationError`` (approvals not in
+        yet, as ``tenuo_cloud``'s Temporal handler does) must reach Temporal as
+        retryable, not as a non-retryable authorization denial.
+        """
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import SigningKey
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = self._mint_gated_warrant(
+            control_key, agent_key, approver_key=approver_key,
+        )
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+
+        def handler(request):
+            raise ApplicationError("waiting for approvals", non_retryable=False)
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            approval_handler=handler,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop)
+
+        with pytest.raises(ApplicationError) as exc_info:
+            self._run(plugin, info, inp)
+        assert str(exc_info.value) == "waiting for approvals"
+        assert not exc_info.value.non_retryable
+
+    def test_call_outside_capability_is_denied_without_asking_approvers(self):
+        """A gated tool called with arguments the warrant does not grant is denied
+        by authorization; the approval handler is never invoked.
+        """
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import Range, SigningKey, Warrant
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("deploy", replicas=Range(1, 10))
+            .required_approvers([approver_key.public_key])
+            .min_approvals(1)
+            .approval_gates({"deploy": None})
+            .ttl(3600)
+            .mint(control_key)
+        )
+        args = {"replicas": 50}
+        pop = warrant.sign(agent_key, "deploy", args, int(_time.time()))
+
+        calls: list = []
+
+        def handler(request):
+            calls.append(request)
+            return self._sign_approval(warrant, approver_key, "deploy", args)
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            approval_handler=handler,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop, args=args)
+
+        with pytest.raises(ApplicationError) as exc_info:
+            self._run(plugin, info, inp)
+        assert exc_info.value.non_retryable
+        assert "replicas" in str(exc_info.value)
+        assert calls == []
 
     def test_malformed_approvals_header_raises_invalid_approval(self):
         """Malformed x-tenuo-approvals must raise InvalidApproval, not be ignored."""

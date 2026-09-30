@@ -161,6 +161,14 @@ def _raise_non_retryable(violation: BaseException) -> None:
         raise violation
 
 
+class _ApprovalPending(Exception):
+    """An ``approval_handler`` asked Temporal to retry: approvals are not in yet."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
 def _replace_field(obj: Any, field: str, value: Any) -> Any:
     """Create a copy of a dataclass with one field replaced.
 
@@ -1223,6 +1231,10 @@ class TenuoActivityInboundInterceptor:
             if self._config.on_denial == "raise" and not self._config.dry_run:
                 raise self._wrap_as_non_retryable(auth_exc) from auth_exc
             return await _deny_or_continue(tool=tool_name, reason=str(auth_exc))
+        except _ApprovalPending as pending:
+            # Not a decision yet: re-raise the handler's retryable error unchanged.
+            logger.info("Activity '%s' is waiting for approvals: %s", tool_name, pending.error)
+            raise pending.error from None
         except Exception as e:
             try:
                 from tenuo.exceptions import TenuoError as _TenuoError
@@ -1368,9 +1380,19 @@ class TenuoActivityInboundInterceptor:
 
         handler = self._config.approval_handler if self._config else None
         if handler is not None:
-            result = handler(request)
-            if _inspect.isawaitable(result):
-                result = await result
+            from temporalio.exceptions import ApplicationError
+
+            try:
+                result = handler(request)
+                if _inspect.isawaitable(result):
+                    result = await result
+            except ApplicationError as exc:
+                # A retryable error means the approvals are not in yet (for example
+                # tenuo_cloud's TemporalCloudApprovalHandler). Let Temporal retry
+                # the activity instead of failing it as an authorization error.
+                if exc.non_retryable:
+                    raise
+                raise _ApprovalPending(exc) from exc
 
             collected = result if isinstance(result, list) else [result]
 
