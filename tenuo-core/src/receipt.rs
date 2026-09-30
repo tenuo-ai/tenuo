@@ -685,6 +685,7 @@ impl Receipt {
 /// `signer` when given), and that each receipt's `prev_receipt_hash` is the
 /// digest of the receipt before it. The first receipt may link to one outside
 /// the run. Returns the payloads in order.
+/// Empty input is rejected because it provides no signed evidence.
 ///
 /// A valid chain shows that no receipt inside the run was changed, removed,
 /// or inserted. It does not show that newer receipts were not cut from the end;
@@ -693,6 +694,9 @@ pub fn verify_chain(
     receipts: &[Receipt],
     signer: Option<&PublicKey>,
 ) -> Result<Vec<ReceiptPayload>> {
+    if receipts.is_empty() {
+        return Err(Error::InvalidReceipt("receipt chain is empty".to_string()));
+    }
     let mut payloads = Vec::with_capacity(receipts.len());
     let mut previous: Option<[u8; 32]> = None;
     let expected = signer.or_else(|| receipts.first().map(|receipt| &receipt.signer_key));
@@ -730,6 +734,17 @@ mod tests {
             receipts.push(Receipt::create(&next, key).unwrap());
         }
         receipts
+    }
+
+    #[test]
+    fn verify_chain_rejects_empty_input() {
+        let key = SigningKey::generate().public_key();
+        for signer in [None, Some(&key)] {
+            assert!(matches!(
+                verify_chain(&[], signer),
+                Err(Error::InvalidReceipt(reason)) if reason == "receipt chain is empty"
+            ));
+        }
     }
 
     #[test]

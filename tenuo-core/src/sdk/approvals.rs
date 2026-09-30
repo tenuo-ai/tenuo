@@ -1,7 +1,8 @@
 //! Approval provider: invoked between attempts with a core-produced request.
 
 use crate::approval::{ApprovalPayload, ApprovalRequest, SignedApproval};
-use crate::crypto::{PublicKey, SigningKey};
+use crate::crypto::SigningKey;
+use crate::warrant::Warrant;
 use chrono::{DateTime, Utc};
 use std::fmt;
 
@@ -62,31 +63,39 @@ impl ApprovalProvider for LocalApprovalSigner {
 /// Sign an approval for `request` after an approver has reviewed it.
 ///
 /// For approval services and CLIs that present a request outside the process
-/// that produced it. `approvers` is the warrant's approver list, loaded by
-/// the reviewer: `required_approvers` on the request is not covered by
-/// `request_hash`, so this function does not consult it. An empty list is
-/// refused. Also refuses a key that is not in `approvers`, and a request
-/// whose hash does not match its warrant, tool, arguments, and `holder`
-/// (the leaf's authorized holder). The nonce is random; expiry is `ttl`
-/// from now, capped at the warrant's expiry.
+/// that produced it. The reviewer must verify `warrant`'s chain to a trusted
+/// root, then call [`ApprovalRequest::matches_warrant`] before displaying the
+/// request's message, approvers, threshold, or expiry. Show the tool and arguments
+/// as well, and pass that same reviewed request here after consent.
+///
+/// Rechecks the request hash and review metadata against `warrant`, and refuses
+/// an empty approver list or a signing key the warrant does not authorize.
+/// The nonce is random; expiry is `ttl` from now, capped at the trusted warrant's
+/// expiry. `request_id` and `created_at` are untrusted correlation metadata.
 pub fn approve_request(
     request: &ApprovalRequest,
-    holder: Option<&PublicKey>,
-    approvers: &[PublicKey],
+    warrant: &Warrant,
     approver: &SigningKey,
     external_id: impl Into<String>,
     ttl: std::time::Duration,
 ) -> Result<SignedApproval, ApprovalError> {
+    let approvers = warrant
+        .required_approvers()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     if approvers.is_empty() || !approvers.iter().any(|key| key == &approver.public_key()) {
         return Err(ApprovalError::Unauthorized);
     }
-    if !request.matches(holder) {
+    if !request
+        .matches_warrant(warrant)
+        .map_err(|_| ApprovalError::RequestMismatch)?
+    {
         return Err(ApprovalError::RequestMismatch);
     }
     let now = Utc::now();
     let requested =
         now + chrono::Duration::from_std(ttl).map_err(|_| ApprovalError::Unavailable)?;
-    let warrant_expiry = DateTime::<Utc>::from_timestamp(request.warrant_expires_at as i64, 0)
+    let warrant_expiry = DateTime::<Utc>::from_timestamp(warrant.payload.expires_at as i64, 0)
         .ok_or(ApprovalError::Unavailable)?;
     let expires_at = requested.min(warrant_expiry);
     if expires_at <= now {
@@ -112,7 +121,7 @@ pub enum ApprovalError {
     Unavailable,
     /// The provider declined to approve this request.
     Unauthorized,
-    /// The request's hash does not match its warrant, tool, arguments, and holder.
+    /// The request's hash or review metadata does not match the trusted warrant.
     RequestMismatch,
 }
 
@@ -122,7 +131,9 @@ impl fmt::Display for ApprovalError {
             Self::NoProvider => write!(f, "no approval provider is configured"),
             Self::Unavailable => write!(f, "approval provider is unavailable"),
             Self::Unauthorized => write!(f, "approver is not authorized for this request"),
-            Self::RequestMismatch => write!(f, "approval request hash does not match its contents"),
+            Self::RequestMismatch => {
+                write!(f, "approval request does not match its contents or warrant")
+            }
         }
     }
 }
@@ -164,29 +175,49 @@ mod tests {
 
     #[test]
     fn approve_request_signs_only_what_matches_the_request() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
         use crate::constraints::ConstraintValue;
+        let issuer = SigningKey::generate();
         let approver = SigningKey::generate();
         let holder = SigningKey::generate().public_key();
+        let mut gates = ApprovalGateMap::new();
+        gates.insert(
+            "restart".into(),
+            ToolApprovalGate::whole_tool().with_message("Restart production replicas"),
+        );
+        let warrant = Warrant::builder()
+            .capability("restart", crate::ConstraintSet::new())
+            .holder(holder.clone())
+            .required_approvers(vec![approver.public_key()])
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .ttl(std::time::Duration::from_secs(60))
+            .build(&issuer)
+            .unwrap();
         let mut args = HashMap::new();
         args.insert("replicas".to_string(), ConstraintValue::Integer(3));
-        let hash = crate::approval::compute_request_hash("wrt_1", "restart", &args, Some(&holder));
-        let expires = (Utc::now().timestamp() as u64) + 60;
+        let warrant_id = warrant.id().to_string();
+        let hash =
+            crate::approval::compute_request_hash(&warrant_id, "restart", &args, Some(&holder));
+        let expires = warrant.payload.expires_at;
         let request = ApprovalRequest::new(
-            "wrt_1",
+            &warrant_id,
             "restart",
             &args,
             hash,
             vec![approver.public_key()],
             1,
             expires,
-        );
+        )
+        .with_resolved_message(Some("Restart production replicas"));
         assert!(request.matches(Some(&holder)));
-        let allow = vec![approver.public_key()];
+        assert!(request.matches_warrant(&warrant).unwrap());
 
         let signed = approve_request(
             &request,
-            Some(&holder),
-            &allow,
+            &warrant,
             &approver,
             "ops@example",
             std::time::Duration::from_secs(3600),
@@ -203,8 +234,7 @@ mod tests {
         assert_eq!(
             approve_request(
                 &request,
-                Some(&holder),
-                &allow,
+                &warrant,
                 &stranger,
                 "x",
                 std::time::Duration::from_secs(60)
@@ -212,50 +242,135 @@ mod tests {
             .err(),
             Some(ApprovalError::Unauthorized)
         );
-        assert_eq!(
-            approve_request(
-                &request,
-                Some(&holder),
-                &[],
-                &approver,
-                "x",
-                std::time::Duration::from_secs(60)
-            )
-            .err(),
-            Some(ApprovalError::Unauthorized)
-        );
-        let mut stripped = request.clone();
-        stripped.required_approvers.clear();
-        assert!(approve_request(
-            &stripped,
-            Some(&holder),
-            &allow,
-            &approver,
-            "ops@example",
-            std::time::Duration::from_secs(60),
-        )
-        .is_ok());
         let other_holder = SigningKey::generate().public_key();
-        assert_eq!(
-            approve_request(
-                &request,
-                Some(&other_holder),
-                &allow,
-                &approver,
-                "x",
-                std::time::Duration::from_secs(60)
-            )
-            .err(),
-            Some(ApprovalError::RequestMismatch)
-        );
+        assert!(!request.matches(Some(&other_holder)));
+
+        // Every review field must be checked separately: none is in request_hash.
+        for field in ["message", "approvers", "threshold", "expiry"] {
+            let mut tampered = request.clone();
+            match field {
+                "message" => tampered.message = "Read a harmless status page".into(),
+                "approvers" => tampered.required_approvers.clear(),
+                "threshold" => tampered.min_approvals = 0,
+                "expiry" => tampered.warrant_expires_at += 3600,
+                _ => unreachable!(),
+            }
+            assert!(
+                tampered.matches(Some(&holder)),
+                "hash does not cover {field}"
+            );
+            assert!(!tampered.matches_warrant(&warrant).unwrap(), "{field}");
+            assert_eq!(
+                approve_request(
+                    &tampered,
+                    &warrant,
+                    &approver,
+                    "ops@example",
+                    std::time::Duration::from_secs(60),
+                )
+                .err(),
+                Some(ApprovalError::RequestMismatch),
+                "{field}",
+            );
+        }
         let mut tampered = request.clone();
         tampered
             .args
             .insert("replicas".to_string(), ConstraintValue::Integer(30));
         assert!(!tampered.matches(Some(&holder)));
+        assert_eq!(
+            approve_request(
+                &tampered,
+                &warrant,
+                &approver,
+                "ops@example",
+                std::time::Duration::from_secs(60),
+            )
+            .err(),
+            Some(ApprovalError::RequestMismatch),
+        );
+
+        // Even a self-consistent hash must refer to this exact trusted warrant.
+        tampered = request.clone();
+        tampered.warrant_id = "another-warrant".into();
+        tampered.request_hash = crate::approval::compute_request_hash(
+            &tampered.warrant_id,
+            "restart",
+            &args,
+            Some(&holder),
+        );
+        assert!(tampered.matches(Some(&holder)));
+        assert!(!tampered.matches_warrant(&warrant).unwrap());
+
+        // Gate messages fall back to the standard text when no custom text exists.
+        gates.insert("restart".into(), ToolApprovalGate::whole_tool());
+        let mut default_warrant = Warrant::builder()
+            .capability("restart", crate::ConstraintSet::new())
+            .holder(holder.clone())
+            .required_approvers(vec![approver.public_key()])
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+        let mut default_request = request.clone().with_resolved_message(None);
+        default_request.warrant_id = default_warrant.id().to_string();
+        default_request.warrant_expires_at = default_warrant.payload.expires_at;
+        default_request.request_hash = crate::approval::compute_request_hash(
+            &default_request.warrant_id,
+            "restart",
+            &args,
+            Some(&holder),
+        );
+        assert!(default_request.matches_warrant(&default_warrant).unwrap());
+
+        // Invalid gate bytes must never silently fall back to a default message.
+        default_warrant
+            .payload
+            .extensions
+            .insert("tenuo.approval_gates".into(), vec![0xff]);
+        assert!(default_request.matches_warrant(&default_warrant).is_err());
+        assert_eq!(
+            approve_request(
+                &default_request,
+                &default_warrant,
+                &approver,
+                "ops@example",
+                std::time::Duration::from_secs(60),
+            )
+            .err(),
+            Some(ApprovalError::RequestMismatch),
+        );
+
+        let no_approvers = Warrant::builder()
+            .capability("restart", crate::ConstraintSet::new())
+            .holder(holder.clone())
+            .build(&issuer)
+            .unwrap();
+        assert_eq!(
+            approve_request(
+                &request,
+                &no_approvers,
+                &approver,
+                "ops@example",
+                std::time::Duration::from_secs(60),
+            )
+            .err(),
+            Some(ApprovalError::Unauthorized),
+        );
 
         let json = serde_json::to_string(&request).unwrap();
         let round_trip: ApprovalRequest = serde_json::from_str(&json).unwrap();
         assert!(round_trip.matches(Some(&holder)));
+        assert!(round_trip.matches_warrant(&warrant).unwrap());
+        assert!(approve_request(
+            &round_trip,
+            &warrant,
+            &approver,
+            "ops@example",
+            std::time::Duration::from_secs(60),
+        )
+        .is_ok());
     }
 }

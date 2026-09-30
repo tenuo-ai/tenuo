@@ -643,9 +643,11 @@ impl ApprovalRequest {
     /// arguments, and the given holder.
     ///
     /// The request does not carry the holder; pass the leaf warrant's
-    /// authorized holder. Check this before showing a request to an approver:
-    /// a request whose hash does not match its own fields would have the
-    /// approver sign something other than what they reviewed.
+    /// authorized holder. This checks hash consistency only, not the source
+    /// of the request or its display metadata. In particular, `message`,
+    /// approvers, threshold, and expiry are not covered by the hash. External
+    /// review flows must use [`Self::matches_warrant`] before displaying those
+    /// fields, and show the tool and arguments alongside the message.
     pub fn matches(&self, holder: Option<&PublicKey>) -> bool {
         let args: std::collections::HashMap<String, crate::constraints::ConstraintValue> = self
             .args
@@ -653,6 +655,39 @@ impl ApprovalRequest {
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         compute_request_hash(&self.warrant_id, &self.tool, &args, holder) == self.request_hash
+    }
+
+    /// Check an external request's hash and review metadata against its warrant.
+    ///
+    /// The caller must first verify the warrant's chain to a trusted root.
+    /// Returns false for a different warrant, holder/hash mismatch, or changed
+    /// message, approvers, threshold, or expiry. Malformed gate data is an error.
+    /// Call this before displaying an external request; do not display its
+    /// metadata when the check fails. Always show the tool and arguments too.
+    ///
+    /// `request_id` and `created_at` remain untrusted correlation metadata.
+    /// This does not authorize the call or establish the request sender's identity.
+    pub fn matches_warrant(&self, warrant: &crate::warrant::Warrant) -> Result<bool> {
+        if self.warrant_id != warrant.id().to_string()
+            || !self.matches(Some(warrant.authorized_holder()))
+        {
+            return Ok(false);
+        }
+        let gates = warrant.approval_gate_map()?;
+        let gate_message = gates
+            .as_ref()
+            .and_then(|map| map.get(&self.tool))
+            .and_then(|gate| gate.message.as_deref());
+        let message =
+            crate::approval_gate::resolve_approval_required_message(&self.tool, gate_message);
+        Ok(self.message == message
+            && self.required_approvers.as_slice()
+                == warrant
+                    .required_approvers()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+            && self.min_approvals == warrant.approval_threshold()
+            && self.warrant_expires_at == warrant.payload.expires_at)
     }
 
     /// Overlay the resolved display message from the firing gate (if any).

@@ -15,13 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the proof path, so a caller can build `_meta.tenuo` without a local
     `Guard`. `sign_meta` takes the enforcement point's proof timestamp and
     window. `TransportError::ProofFailed` is new.
-  - `ApprovalRequest::matches` and `sdk::approve_request`: recompute a
-    request's hash from its warrant, tool, arguments, and holder, and sign a
-    reviewed request. The approver allowlist is an argument, loaded from the
-    warrant; an empty list is refused. The nonce is random and expiry is
+  - `ApprovalRequest::matches` checks request-hash consistency;
+    `matches_warrant` also checks display metadata against a trusted warrant
+    before human review. `sdk::approve_request` takes that warrant and rechecks
+    the reviewed request, including its message, approvers, threshold, and expiry.
+    An empty approver list is refused. The nonce is random and expiry is
     capped at the warrant's. `ApprovalError::RequestMismatch` is new.
   - `receipt::verify_chain`: verify signatures, a single signer, and
-    `prev_receipt_hash` links across a run of receipts.
+    `prev_receipt_hash` links across a non-empty run of receipts.
 
 - **Linux aarch64 Python wheel.** Releases publish a `manylinux_2_28_aarch64`
   wheel next to the existing Linux x86_64, macOS arm64, and Windows wheels, so
