@@ -5106,6 +5106,113 @@ class TestSignalAndUpdateRuntimeDenial:
         assert "wipe" in str(excinfo.value)
         nxt.handle_update_validator.assert_not_called()
 
+    def _unregistered_inbound(
+        self,
+        *,
+        authorized_signals=None,
+        authorized_updates=None,
+        run_id="run-early",
+    ):
+        """Inbound interceptor whose run config has not been stored yet.
+
+        Update-with-start delivers the handler before ``execute_workflow``
+        writes ``_workflow_config_store``. The worker still has ``_config``
+        on the interceptor.
+        """
+        from tenuo.temporal._interceptors import _TenuoWorkflowInboundInterceptor
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            authorized_signals=authorized_signals,
+            authorized_updates=authorized_updates,
+        )
+        next_interceptor = MagicMock()
+        next_interceptor.handle_signal = AsyncMock(return_value=None)
+        next_interceptor.handle_update_validator = MagicMock(return_value=None)
+        next_interceptor.handle_update_handler = AsyncMock(return_value="pong")
+        next_interceptor.execute_workflow = AsyncMock(return_value="done")
+        inbound = _TenuoWorkflowInboundInterceptor(next_interceptor=next_interceptor)
+        inbound._config = cfg
+        return inbound, next_interceptor, run_id
+
+    def _early_info(self, run_id):
+        info = self._fake_wf_info(run_id)
+        info.headers = {}
+        return info
+
+    def _cleanup_run(self, run_id):
+        from tenuo.temporal._state import (
+            _store_lock,
+            _workflow_config_store,
+            _workflow_headers_store,
+        )
+
+        with _store_lock:
+            _workflow_config_store.pop(run_id, None)
+            _workflow_headers_store.pop(run_id, None)
+
+    def test_update_handler_allowlist_applies_before_run_registration(self):
+        """A handler with no validator still denies when the run is unregistered."""
+        inbound, nxt, run_id = self._unregistered_inbound(authorized_updates=["install"])
+        upd_input = MagicMock(update="ping", headers={})
+        try:
+            with patch("temporalio.workflow.info", return_value=self._early_info(run_id)):
+                loop = asyncio.new_event_loop()
+                try:
+                    with pytest.raises(TemporalConstraintViolation) as excinfo:
+                        loop.run_until_complete(inbound.handle_update_handler(upd_input))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup_run(run_id)
+        assert "ping" in str(excinfo.value)
+        nxt.handle_update_handler.assert_not_called()
+
+    def test_signal_allowlist_applies_before_run_registration(self):
+        inbound, nxt, run_id = self._unregistered_inbound(authorized_signals=["add"])
+        sig_input = MagicMock(signal="drop_tables", headers={})
+        try:
+            with patch("temporalio.workflow.info", return_value=self._early_info(run_id)):
+                loop = asyncio.new_event_loop()
+                try:
+                    with pytest.raises(TemporalConstraintViolation):
+                        loop.run_until_complete(inbound.handle_signal(sig_input))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup_run(run_id)
+        nxt.handle_signal.assert_not_called()
+
+    def test_start_headers_replace_empty_early_registration(self):
+        """The workflow body still records start headers after an early handler."""
+        from tenuo.temporal._state import _store_lock, _workflow_headers_store
+
+        inbound, nxt, run_id = self._unregistered_inbound(authorized_updates=["ping"])
+        upd_input = MagicMock(update="ping", headers={})
+        seen = {}
+
+        async def _capture(_input):
+            with _store_lock:
+                seen["headers"] = dict(_workflow_headers_store.get(run_id, {}))
+            return "done"
+
+        nxt.execute_workflow = AsyncMock(side_effect=_capture)
+        start = MagicMock()
+        start.headers = {"x-tenuo-warrant": MagicMock(data=b"warrant-bytes")}
+        try:
+            with patch("temporalio.workflow.info", return_value=self._early_info(run_id)):
+                inbound.handle_update_validator(upd_input)
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(inbound.execute_workflow(start))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup_run(run_id)
+        assert seen["headers"]["x-tenuo-warrant"] == b"warrant-bytes"
+        nxt.handle_update_validator.assert_called_once_with(upd_input)
+
 
 class TestSetActivityApprovalsOverwriteWarning:
     """Two back-to-back ``set_activity_approvals`` calls without an intervening

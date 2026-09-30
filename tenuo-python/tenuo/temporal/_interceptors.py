@@ -421,6 +421,40 @@ class _TenuoWorkflowInboundInterceptor:
                 _workflow_headers_store.pop(run_key, None)
                 _workflow_config_store.pop(run_key, None)
 
+    def _ensure_run_registered(self) -> None:
+        """Register this run's config before a first-activation signal or update.
+
+        Temporal can deliver a signal or update in the same activation as
+        workflow start, and it runs that handler before ``execute_workflow``.
+        ``authorized_signals`` / ``authorized_updates`` live on the run
+        config. If the handler runs first, the check used to see no config
+        and allow the call.
+        """
+        run_key = _current_run_key()
+        with _store_lock:
+            if run_key in _workflow_config_store:
+                return
+            if self._config is not None:
+                _workflow_config_store[run_key] = self._config
+        try:
+            from tenuo.temporal._headers import _current_workflow_headers
+
+            incoming = {
+                key: value
+                for key, value in _current_workflow_headers().items()
+                if key.startswith("x-tenuo-")
+            }
+        except Exception:
+            logger.debug(
+                "Could not copy workflow start headers before the workflow body",
+                exc_info=True,
+            )
+            return
+        if not incoming:
+            return
+        with _store_lock:
+            _workflow_headers_store.setdefault(run_key, incoming)
+
     def _resolve_config(self) -> Optional["TenuoPluginConfig"]:
         run_key = _current_run_key()
         with _store_lock:
@@ -450,6 +484,7 @@ class _TenuoWorkflowInboundInterceptor:
         return getattr(warrant, "id", "") or "<no-warrant>"
 
     async def handle_signal(self, input: Any) -> None:
+        self._ensure_run_registered()
         config = self._resolve_config()
         if config and config.authorized_signals is not None:
             signal_name = getattr(input, "signal", None)
@@ -472,6 +507,7 @@ class _TenuoWorkflowInboundInterceptor:
         return await self.next.handle_query(input)
 
     def handle_update_validator(self, input: Any) -> None:
+        self._ensure_run_registered()
         config = self._resolve_config()
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)
@@ -492,6 +528,7 @@ class _TenuoWorkflowInboundInterceptor:
         return self.next.handle_update_validator(input)
 
     async def handle_update_handler(self, input: Any) -> Any:
+        self._ensure_run_registered()
         config = self._resolve_config()
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)

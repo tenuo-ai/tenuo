@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so an approver is not asked to override a capability constraint. This preflight
   is deny-only; issuer trust, expiry, revocation, PoP, and collected approvals
   still require full authorization before execution.
+- **Temporal `authorized_signals` / `authorized_updates` apply to a signal or
+  update delivered in the workflow's first activation.** Update-with-start,
+  and an update sent immediately after start, run the handler before
+  `execute_workflow` registered the run config, so the allowlist saw no
+  config and let the call through. The inbound interceptor now registers
+  the run before those handlers.
+
 - **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**
   That signature fails at registration on the official SDK; the docs now point
   at the two middlewares and the raw-handler form.
