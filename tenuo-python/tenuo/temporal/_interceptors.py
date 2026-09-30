@@ -1330,6 +1330,13 @@ class TenuoActivityInboundInterceptor:
         if not _evaluate_approval_gates(warrant, tool_name, args):
             return None
 
+        # A call the warrant does not grant is never sent for approval. Returning
+        # no approvals lets the authorization step below deny it with the reason.
+        from tenuo._enforcement import _denial_before_approval
+
+        if _denial_before_approval(warrant, tool_name, args) is not None:
+            return None
+
         from tenuo_core import SignedApproval as CoreSignedApproval
 
         raw_approvals_header = headers.get(TENUO_APPROVALS_HEADER)
