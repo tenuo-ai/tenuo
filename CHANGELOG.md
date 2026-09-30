@@ -13,11 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#751):
   - `PresentedAuthority::prove` and `mcp_meta::sign_meta`: the holder side of
     the proof path, so a caller can build `_meta.tenuo` without a local
-    `Guard`. `TransportError::ProofFailed` is new.
+    `Guard`. `sign_meta` takes the enforcement point's proof timestamp and
+    window. `TransportError::ProofFailed` is new.
   - `ApprovalRequest::matches` and `sdk::approve_request`: recompute a
     request's hash from its warrant, tool, arguments, and holder, and sign a
-    reviewed request with an approver check, a random nonce, and expiry capped
-    at the warrant's. `ApprovalError::RequestMismatch` is new.
+    reviewed request. The approver allowlist is an argument, loaded from the
+    warrant; an empty list is refused. The nonce is random and expiry is
+    capped at the warrant's. `ApprovalError::RequestMismatch` is new.
   - `receipt::verify_chain`: verify signatures, a single signer, and
     `prev_receipt_hash` links across a run of receipts.
 
@@ -48,9 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Guards no longer log denials by default** (#751). `DenialReporting` now
   defaults to `Debug`, which writes nothing; the caller receives every
-  `Denial`. The previous default, `Error`, printed each denial message to
-  stderr, and messages can quote argument values. Set
-  `.denial_reporting(DenialReporting::Error)` to restore it.
+  `Denial`. `Guard::builder`, `Runtime::builder`, `Tenuo::local`, and
+  `Tenuo::enforcement` use that default. The previous default, `Error`,
+  printed each denial message to stderr, and messages can quote argument
+  values. Set `.denial_reporting(DenialReporting::Error)` to restore it.
 
 ### Fixed
 

@@ -1,7 +1,7 @@
 //! Approval provider: invoked between attempts with a core-produced request.
 
 use crate::approval::{ApprovalPayload, ApprovalRequest, SignedApproval};
-use crate::crypto::SigningKey;
+use crate::crypto::{PublicKey, SigningKey};
 use chrono::{DateTime, Utc};
 use std::fmt;
 
@@ -62,23 +62,22 @@ impl ApprovalProvider for LocalApprovalSigner {
 /// Sign an approval for `request` after an approver has reviewed it.
 ///
 /// For approval services and CLIs that present a request outside the process
-/// that produced it. Refuses a key the request does not list as an approver
-/// and a request whose hash does not match its own warrant, tool, arguments,
-/// and `holder` (the leaf's authorized holder). The nonce is random; expiry is
-/// `ttl` from now, capped at the warrant's expiry.
+/// that produced it. `approvers` is the warrant's approver list, loaded by
+/// the reviewer: `required_approvers` on the request is not covered by
+/// `request_hash`, so this function does not consult it. An empty list is
+/// refused. Also refuses a key that is not in `approvers`, and a request
+/// whose hash does not match its warrant, tool, arguments, and `holder`
+/// (the leaf's authorized holder). The nonce is random; expiry is `ttl`
+/// from now, capped at the warrant's expiry.
 pub fn approve_request(
     request: &ApprovalRequest,
-    holder: Option<&crate::crypto::PublicKey>,
+    holder: Option<&PublicKey>,
+    approvers: &[PublicKey],
     approver: &SigningKey,
     external_id: impl Into<String>,
     ttl: std::time::Duration,
 ) -> Result<SignedApproval, ApprovalError> {
-    if !request.required_approvers.is_empty()
-        && !request
-            .required_approvers
-            .iter()
-            .any(|key| key == &approver.public_key())
-    {
+    if approvers.is_empty() || !approvers.iter().any(|key| key == &approver.public_key()) {
         return Err(ApprovalError::Unauthorized);
     }
     if !request.matches(holder) {
@@ -182,10 +181,12 @@ mod tests {
             expires,
         );
         assert!(request.matches(Some(&holder)));
+        let allow = vec![approver.public_key()];
 
         let signed = approve_request(
             &request,
             Some(&holder),
+            &allow,
             &approver,
             "ops@example",
             std::time::Duration::from_secs(3600),
@@ -203,6 +204,7 @@ mod tests {
             approve_request(
                 &request,
                 Some(&holder),
+                &allow,
                 &stranger,
                 "x",
                 std::time::Duration::from_secs(60)
@@ -210,11 +212,35 @@ mod tests {
             .err(),
             Some(ApprovalError::Unauthorized)
         );
+        assert_eq!(
+            approve_request(
+                &request,
+                Some(&holder),
+                &[],
+                &approver,
+                "x",
+                std::time::Duration::from_secs(60)
+            )
+            .err(),
+            Some(ApprovalError::Unauthorized)
+        );
+        let mut stripped = request.clone();
+        stripped.required_approvers.clear();
+        assert!(approve_request(
+            &stripped,
+            Some(&holder),
+            &allow,
+            &approver,
+            "ops@example",
+            std::time::Duration::from_secs(60),
+        )
+        .is_ok());
         let other_holder = SigningKey::generate().public_key();
         assert_eq!(
             approve_request(
                 &request,
                 Some(&other_holder),
+                &allow,
                 &approver,
                 "x",
                 std::time::Duration::from_secs(60)

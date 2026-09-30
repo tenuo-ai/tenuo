@@ -33,23 +33,23 @@ pub fn encode_meta(
 }
 
 /// Build `_meta.tenuo` for a call: the holder signs a proof of possession
-/// now, with the default proof window, and attaches `approvals`.
+/// at `timestamp` with `window_secs`, and attaches `approvals`.
 ///
-/// Use this on the calling side when no local policy check is wanted, for
-/// example in a proxy whose verifier is elsewhere. It does not check the call
-/// against the warrant; [`crate::sdk::Guard`] and [`encode_meta_from_authorized`]
+/// `window_secs` must be the enforcement point's proof window. A proof
+/// signed with a different window does not verify there. Use this on the
+/// calling side when no local policy check is wanted, for example in a
+/// proxy whose verifier is elsewhere. It does not check the call against
+/// the warrant; [`crate::sdk::Guard`] and [`encode_meta_from_authorized`]
 /// do both.
 pub fn sign_meta(
     authority: &crate::sdk::PresentedAuthority,
     call: &crate::sdk::Call<'_>,
     approvals: &[SignedApproval],
+    timestamp: i64,
+    window_secs: i64,
 ) -> Result<Value, TransportError> {
     let signature = authority
-        .prove(
-            call,
-            chrono::Utc::now().timestamp(),
-            crate::planes::DEFAULT_POP_WINDOW_SECS,
-        )
+        .prove(call, timestamp, window_secs)
         .map_err(|_| TransportError::ProofFailed)?;
     encode_meta(authority.chain(), &signature, approvals)
 }
@@ -128,7 +128,14 @@ mod tests {
             PresentedAuthority::new(vec![warrant], Arc::new(LocalSigner::new(holder))).unwrap();
         let arguments = serde_json::json!({"path": "/a"});
         let call = Call::try_from_json("read", &arguments).unwrap();
-        let meta = sign_meta(&authority, &call, &[]).unwrap();
+        let meta = sign_meta(
+            &authority,
+            &call,
+            &[],
+            chrono::Utc::now().timestamp(),
+            crate::planes::DEFAULT_POP_WINDOW_SECS,
+        )
+        .unwrap();
 
         let mut authorizer = crate::Authorizer::new();
         authorizer.add_trusted_root(issuer.public_key());
