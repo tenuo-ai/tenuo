@@ -161,6 +161,14 @@ def _raise_non_retryable(violation: BaseException) -> None:
         raise violation
 
 
+class _ApprovalHandlerRetry(Exception):
+    """An approval handler raised a retryable Temporal application error."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
 def _replace_field(obj: Any, field: str, value: Any) -> Any:
     """Create a copy of a dataclass with one field replaced.
 
@@ -1223,6 +1231,11 @@ class TenuoActivityInboundInterceptor:
             if self._config.on_denial == "raise" and not self._config.dry_run:
                 raise self._wrap_as_non_retryable(auth_exc) from auth_exc
             return await _deny_or_continue(tool=tool_name, reason=str(auth_exc))
+        except _ApprovalHandlerRetry as retry:
+            # No authorization decision or activity dispatch: preserve the
+            # handler's retry policy for pending approval or transient failure.
+            logger.info("Activity '%s' approval handler requested retry: %s", tool_name, retry.error)
+            raise retry.error from None
         except Exception as e:
             try:
                 from tenuo.exceptions import TenuoError as _TenuoError
@@ -1368,9 +1381,19 @@ class TenuoActivityInboundInterceptor:
 
         handler = self._config.approval_handler if self._config else None
         if handler is not None:
-            result = handler(request)
-            if _inspect.isawaitable(result):
-                result = await result
+            from temporalio.exceptions import ApplicationError
+
+            try:
+                result = handler(request)
+                if _inspect.isawaitable(result):
+                    result = await result
+            except ApplicationError as exc:
+                # Pending approvals and transient approval-service failures can
+                # request a retry. Only errors from the handler get this treatment;
+                # authorization failures below remain non-retryable.
+                if exc.non_retryable:
+                    raise
+                raise _ApprovalHandlerRetry(exc) from exc
 
             collected = result if isinstance(result, list) else [result]
 

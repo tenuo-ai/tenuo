@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Temporal approval handlers can request retries.** Retryable
+  `ApplicationError`s from sync or async handlers propagate unchanged for pending
+  approvals or transient service failures. Pending attempts do not execute the
+  activity; returned approvals still require full authorization on retry.
 - **Calls the warrant does not grant are denied before any approval is
   requested.** When an approval gate matched a call that also broke the
   warrant's constraints (wrong payee, amount over the limit, tool not granted),

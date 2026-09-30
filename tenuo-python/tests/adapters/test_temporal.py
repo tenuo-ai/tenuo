@@ -3608,7 +3608,7 @@ class TestApprovalGates:
     """
 
     @staticmethod
-    def _mint_gated_warrant(control_key, holder_key, *, approver_key):
+    def _mint_gated_warrant(control_key, holder_key, *, approver_key, ttl=3600):
         from tenuo import Warrant
 
         return (
@@ -3618,7 +3618,7 @@ class TestApprovalGates:
             .required_approvers([approver_key.public_key])
             .min_approvals(1)
             .approval_gates({"deploy": None})
-            .ttl(3600)
+            .ttl(ttl)
             .mint(control_key)
         )
 
@@ -3642,7 +3642,7 @@ class TestApprovalGates:
         return tenuo_core.SignedApproval.create(payload, approver_key)
 
     @staticmethod
-    def _build_activity_inputs(warrant, pop_bytes, approvals_header=None):
+    def _build_activity_inputs(warrant, pop_bytes, approvals_header=None, args=None):
         from tenuo.temporal._constants import (
             TENUO_APPROVALS_HEADER,
             TENUO_ARG_KEYS_HEADER,
@@ -3657,7 +3657,8 @@ class TestApprovalGates:
             if k.startswith("x-tenuo-"):
                 act_headers[k] = raw_v
         act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop_bytes))
-        act_headers[TENUO_ARG_KEYS_HEADER] = b""
+        args = args or {}
+        act_headers[TENUO_ARG_KEYS_HEADER] = ",".join(args).encode("utf-8")
         if approvals_header is not None:
             act_headers[TENUO_APPROVALS_HEADER] = approvals_header
 
@@ -3677,7 +3678,7 @@ class TestApprovalGates:
 
         inp = MagicMock()
         inp.fn = lambda: None
-        inp.args = ()
+        inp.args = tuple(args.values())
         inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
         return info, inp
 
@@ -3798,6 +3799,176 @@ class TestApprovalGates:
         msg = str(exc_info.value)
         assert "approval" in msg.lower() or "gate" in msg.lower() or \
             isinstance(exc_info.value, ApprovalGateTriggered)
+
+    @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("outcome", ["allowed", "revoked", "expired", "invalid_pop"])
+    def test_approval_retry_lifecycle(self, async_handler, outcome):
+        """Pending never dispatches; a later approval cannot bypass authorization."""
+        import time as _time
+        from datetime import timedelta
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import SigningKey
+        from tenuo_core import SignedRevocationList
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = self._mint_gated_warrant(
+            control_key, agent_key, approver_key=approver_key,
+            ttl=1 if outcome == "expired" else 3600,
+        )
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+        if outcome == "invalid_pop":
+            pop = bytes(64)
+        signed = self._sign_approval(warrant, approver_key, "deploy", {})
+        retry_error = ApplicationError(
+            "approval service temporarily unavailable", {"request": "deploy"},
+            type="ApprovalServiceUnavailable", non_retryable=False,
+            next_retry_delay=timedelta(seconds=7),
+        )
+        requests = []
+
+        def handler(request):
+            requests.append(request)
+            if len(requests) == 1:
+                raise retry_error
+            return signed
+
+        async def async_handler_fn(request):
+            await asyncio.sleep(0)
+            return handler(request)
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            approval_handler=async_handler_fn if async_handler else handler,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop)
+        next_activity = MagicMock(execute_activity=AsyncMock(return_value="ok"), init=MagicMock())
+        inbound = plugin.intercept_activity(next_activity)
+
+        with patch("temporalio.activity.info", return_value=info):
+            with patch.object(inbound, "_emit_denial_event") as deny_event:
+                with patch.object(inbound, "_emit_allow_event") as allow_event:
+                    with pytest.raises(ApplicationError) as exc_info:
+                        asyncio.run(inbound.execute_activity(inp))
+                    assert exc_info.value is retry_error
+                    assert exc_info.value.next_retry_delay == timedelta(seconds=7)
+                    deny_event.assert_not_called()
+                    allow_event.assert_not_called()
+            next_activity.execute_activity.assert_not_awaited()
+
+            if outcome == "revoked":
+                builder = SignedRevocationList.builder()
+                builder.revoke(warrant.id)
+                revocations = builder.build(control_key)
+                for authorizer in (inbound._authorizer, inbound._retry_authorizer):
+                    authorizer.set_revocation_list(revocations)
+            elif outcome == "expired":
+                # The native verifier reads the real clock. Expire the same
+                # signed warrant, rather than mocking away authorization.
+                _time.sleep(1.1)
+
+            # Temporal retries retain the original headers, including PoP.
+            info.attempt = 2
+            if outcome == "allowed":
+                assert asyncio.run(inbound.execute_activity(inp)) == "ok"
+                next_activity.execute_activity.assert_awaited_once_with(inp)
+            else:
+                with pytest.raises(ApplicationError) as denied:
+                    asyncio.run(inbound.execute_activity(inp))
+                assert denied.value.non_retryable
+                expected = "proof-of-possession" if outcome == "invalid_pop" else outcome
+                assert expected in str(denied.value).lower()
+                next_activity.execute_activity.assert_not_awaited()
+        assert len(requests) == 2
+        assert requests[0].request_hash == requests[1].request_hash
+
+    @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("application_error", [False, True], ids=["unexpected", "non_retryable"])
+    def test_non_retryable_handler_failure_never_dispatches(self, async_handler, application_error):
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import SigningKey
+
+        control_key, agent_key, approver_key = (SigningKey.generate() for _ in range(3))
+        warrant = self._mint_gated_warrant(control_key, agent_key, approver_key=approver_key)
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+        error = (ApplicationError("approval rejected", non_retryable=True)
+                 if application_error else RuntimeError("broken handler"))
+
+        def handler(request):
+            raise error
+
+        async def async_handler_fn(request):
+            await asyncio.sleep(0)
+            return handler(request)
+
+        plugin = TenuoWorkerInterceptor(TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(), trusted_roots=[control_key.public_key],
+            approval_handler=async_handler_fn if async_handler else handler,
+        ))
+        info, inp = self._build_activity_inputs(warrant, pop)
+        next_activity = MagicMock(execute_activity=AsyncMock(), init=MagicMock())
+        inbound = plugin.intercept_activity(next_activity)
+        with patch("temporalio.activity.info", return_value=info):
+            with pytest.raises(ApplicationError) as exc_info:
+                asyncio.run(inbound.execute_activity(inp))
+        assert exc_info.value.non_retryable
+        next_activity.execute_activity.assert_not_awaited()
+
+    def test_call_outside_capability_is_denied_without_asking_approvers(self):
+        """A gated tool called with arguments the warrant does not grant is denied
+        by authorization; the approval handler is never invoked.
+        """
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import Range, SigningKey, Warrant
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("deploy", replicas=Range(1, 10))
+            .required_approvers([approver_key.public_key])
+            .min_approvals(1)
+            .approval_gates({"deploy": None})
+            .ttl(3600)
+            .mint(control_key)
+        )
+        args = {"replicas": 50}
+        pop = warrant.sign(agent_key, "deploy", args, int(_time.time()))
+
+        calls: list = []
+
+        def handler(request):
+            calls.append(request)
+            return self._sign_approval(warrant, approver_key, "deploy", args)
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            approval_handler=handler,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop, args=args)
+
+        with pytest.raises(ApplicationError) as exc_info:
+            self._run(plugin, info, inp)
+        assert exc_info.value.non_retryable
+        assert "replicas" in str(exc_info.value)
+        assert calls == []
 
     def test_malformed_approvals_header_raises_invalid_approval(self):
         """Malformed x-tenuo-approvals must raise InvalidApproval, not be ignored."""
