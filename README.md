@@ -22,7 +22,7 @@ A **warrant** is a signed grant of which tools an agent can call, under what con
 
 > **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](./CHANGELOG.md).
 >
-> **Tenuo Cloud: Early Access.** Managed control plane with revocation, observability, and multi-tenant warrant issuance. [Request access →](https://tenuo.ai/early-access.html)
+> **Tenuo Cloud: Open Beta.** Managed control plane with revocation, observability, and multi-tenant warrant issuance. [Sign Up](https://cloud.tenuo.ai/)
 
 ## Install
 
