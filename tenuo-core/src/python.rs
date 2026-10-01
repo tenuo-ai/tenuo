@@ -33,6 +33,7 @@ use crate::warrant::{
     Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant as RustWarrant, WarrantType,
 };
 use crate::wire;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
@@ -5088,6 +5089,27 @@ fn py_verify_approval_context_attestation(
     .map_err(to_py_err)
 }
 
+/// Parse JSON text and reject a repeated key in any object.
+///
+/// A dict a host has already parsed cannot be checked: the duplicate is gone.
+/// Call this while the text is still available. Nested objects are checked too.
+///
+/// Args:
+///     text: JSON text, such as a tool-argument string.
+///
+/// Returns:
+///     The parsed value. Raises ``ValueError`` on malformed JSON or a repeated key.
+#[pyfunction]
+#[pyo3(name = "parse_strict_json")]
+fn py_parse_strict_json(py: Python<'_>, text: &str) -> PyResult<Py<PyAny>> {
+    let value =
+        crate::parse_json_strict(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let encoded =
+        serde_json::to_string(&value).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let json = py.import("json")?;
+    Ok(json.call_method1("loads", (encoded,))?.unbind())
+}
+
 /// Compute the request hash that binds an approval to a specific tool call.
 ///
 /// The hash covers (warrant_id, tool, sorted args, holder), ensuring an approval
@@ -6862,6 +6884,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_encode_warrant_stack, m)?)?;
     m.add_function(wrap_pyfunction!(py_build_approval_context_attestation, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approval_context_attestation, m)?)?;
+    m.add_function(wrap_pyfunction!(py_parse_strict_json, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_receipt, m)?)?;
     m.add_function(wrap_pyfunction!(py_srl_commitment_digest, m)?)?;

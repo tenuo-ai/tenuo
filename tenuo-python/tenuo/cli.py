@@ -1287,8 +1287,10 @@ def main():
 
     elif args.command == "validate":
         try:
-            tool_args = json.loads(args.args)
-        except json.JSONDecodeError as e:
+            from tenuo.arguments import parse_strict_json
+
+            tool_args = parse_strict_json(args.args)
+        except ValueError as e:
             print(f"❌ Invalid JSON for --args: {e}")
             sys.exit(1)
         success = verify_warrant(args.warrant, args.tool, tool_args)
@@ -1299,8 +1301,10 @@ def main():
             call_args = None
             if args.args is not None:
                 try:
-                    call_args = json.loads(args.args)
-                except json.JSONDecodeError as exc:
+                    from tenuo.arguments import parse_strict_json
+
+                    call_args = parse_strict_json(args.args)
+                except ValueError as exc:
                     print(f"❌ Invalid JSON for --args: {exc}")
                     sys.exit(1)
             srl_bytes = _load_srl_arg(args.srl) if args.srl is not None else None

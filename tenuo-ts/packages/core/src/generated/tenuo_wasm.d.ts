@@ -297,6 +297,15 @@ export function inspect_approval_gate(warrant_b64: string, tool: string): any;
 export function parse_connect_token(token: string): any;
 
 /**
+ * Parse JSON text and reject a repeated key in any object.
+ *
+ * A tools/call the host has already turned into an object cannot be checked:
+ * the duplicate key is gone. Call this while the text is still available.
+ * Nested objects are checked too.
+ */
+export function parse_strict_json(json_text: string): any;
+
+/**
  * Decode and check an approval envelope. Not authorization.
  */
 export function sdkInspectApproval(envelope: string): any;

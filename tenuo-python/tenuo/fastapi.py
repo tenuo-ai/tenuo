@@ -331,7 +331,10 @@ class TenuoGuard:
 
     Args:
         tool: Tool name to authorize
-        extract_args: Optional custom arg extraction function
+        extract_args: Optional custom arg extraction function. It receives
+            the request after the framework has parsed it, so a repeated JSON
+            key is not visible. When the handler still has the raw body, parse
+            it with :func:`tenuo.parse_strict_json` first.
     """
 
     def __init__(

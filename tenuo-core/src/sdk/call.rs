@@ -1,4 +1,5 @@
 use crate::constraints::ConstraintValue;
+use crate::strict_json::StrictJsonError;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
@@ -88,6 +89,9 @@ impl Call<'static> {
     }
 
     /// Convert a JSON object into an owned call. Pure conversion; no policy.
+    ///
+    /// `value` is already parsed, so a repeated key is not visible. Parse text
+    /// with [`Self::try_from_json_str`].
     pub fn try_from_json(
         capability: impl Into<String>,
         value: &serde_json::Value,
@@ -101,6 +105,18 @@ impl Call<'static> {
             args.insert(key.clone(), json_to_constraint(raw, 0)?);
         }
         Self::owned(capability, args)
+    }
+
+    /// Parse argument JSON text, rejecting a repeated key, then build a call.
+    pub fn try_from_json_str(
+        capability: impl Into<String>,
+        json: &str,
+    ) -> Result<Self, ArgumentError> {
+        let value = crate::parse_json_strict(json).map_err(|err| match err {
+            StrictJsonError::DuplicateKey => ArgumentError::DuplicateKey,
+            StrictJsonError::Malformed(message) => ArgumentError::MalformedJson(message),
+        })?;
+        Self::try_from_json(capability, &value)
     }
 }
 
@@ -222,6 +238,10 @@ pub enum ArgumentError {
     IntegerOutOfRange,
     /// A JSON construct has no `ConstraintValue` representation.
     UnsupportedJson,
+    /// An object repeated a key. The last value must not win.
+    DuplicateKey,
+    /// The text was not a single JSON value.
+    MalformedJson(String),
 }
 
 impl fmt::Display for ArgumentError {
@@ -234,8 +254,28 @@ impl fmt::Display for ArgumentError {
             Self::ValueTooLarge => write!(f, "JSON argument value is too large"),
             Self::IntegerOutOfRange => write!(f, "JSON integer does not fit in i64"),
             Self::UnsupportedJson => write!(f, "JSON argument value is not supported"),
+            Self::DuplicateKey => write!(f, "{DUPLICATE_JSON_KEY}"),
+            Self::MalformedJson(message) => write!(f, "malformed JSON: {message}"),
         }
     }
 }
 
 impl std::error::Error for ArgumentError {}
+
+const DUPLICATE_JSON_KEY: &str = "duplicate JSON key";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DUPLICATE_ARGUMENT_KEY: &str =
+        include_str!("../../../tests/vectors/duplicate-argument-keys.json");
+
+    #[test]
+    fn try_from_json_str_rejects_the_shared_duplicate_key_vector() {
+        assert!(matches!(
+            Call::try_from_json_str("read_file", DUPLICATE_ARGUMENT_KEY),
+            Err(ArgumentError::DuplicateKey)
+        ));
+    }
+}

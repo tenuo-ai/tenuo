@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `receipt::verify_chain`: verify signatures, a single signer, and
     `prev_receipt_hash` links across a non-empty run of receipts.
 
+- **Strict JSON parsing for tool-argument text** (#755).
+  `parse_json_strict` and `Call::try_from_json_str` walk every object,
+  including nested values, and reject a repeated key. Python
+  (`parse_strict_json`) and the WASM build (`parseStrictJson`) expose the
+  same parser. OpenAI, AutoGen, and the CLIs use it where the argument
+  string is still available. `MCPVerifier.verify` and `mcp.verify` still
+  take an object the host already parsed; a duplicate key is not visible
+  there.
+
 - **Linux aarch64 Python wheel.** Releases publish a `manylinux_2_28_aarch64`
   wheel next to the existing Linux x86_64, macOS arm64, and Windows wheels, so
   `pip install tenuo` on ARM Linux no longer builds from source. Linux wheels

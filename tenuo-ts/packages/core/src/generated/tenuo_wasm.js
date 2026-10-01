@@ -878,6 +878,26 @@ function parse_connect_token(token) {
 exports.parse_connect_token = parse_connect_token;
 
 /**
+ * Parse JSON text and reject a repeated key in any object.
+ *
+ * A tools/call the host has already turned into an object cannot be checked:
+ * the duplicate key is gone. Call this while the text is still available.
+ * Nested objects are checked too.
+ * @param {string} json_text
+ * @returns {any}
+ */
+function parse_strict_json(json_text) {
+    const ptr0 = passStringToWasm0(json_text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_strict_json(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.parse_strict_json = parse_strict_json;
+
+/**
  * Decode and check an approval envelope. Not authorization.
  * @param {string} envelope
  * @returns {any}

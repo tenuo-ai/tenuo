@@ -559,8 +559,12 @@ class MCPVerifier:
         Args:
             tool_name: The MCP tool name being called.
             arguments: Tool arguments dict.  ``None`` is treated as an empty
-                dict. The reserved ``_tenuo`` carrier is removed before PoP
-                verification, constraint extraction, and ``clean_arguments``.
+                dict. A repeated key in the original JSON is not visible here:
+                the host has already parsed the object. Parse the raw message
+                with :func:`tenuo.parse_strict_json` before calling ``verify``
+                when that text is still available. The reserved ``_tenuo``
+                carrier is removed before PoP verification, constraint
+                extraction, and ``clean_arguments``.
             meta: The request's ``_meta``, as either a dict or the SDK's parsed
                 model — 1.x supplies a model and 2.x a dict. It may carry a
                 ``tenuo`` key with the warrant and PoP signature; when absent,

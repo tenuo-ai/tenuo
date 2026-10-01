@@ -323,12 +323,13 @@ class _Guard:
             # Validate complete args for each buffered tool call
             invalid_ids: set[str] = set()
             final_args: Dict[str, Dict[str, Any]] = {}
+            from tenuo.arguments import parse_strict_json
 
             for cid, pieces in arg_buffers.items():
                 complete = "".join(pieces)
                 name = tool_names.get(cid, "")
                 try:
-                    args_dict = json.loads(complete) if complete else {}
+                    args_dict = parse_strict_json(complete) if complete else {}
                 except Exception as e:
                     if self._on_denial == "skip":
                         invalid_ids.add(cid)
