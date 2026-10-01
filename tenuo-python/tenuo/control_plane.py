@@ -291,7 +291,8 @@ class ControlPlaneClient:
             _receipts.collect_enforcement_receipt(result, chain_result)
         except Exception:  # noqa: BLE001 - collection must not fail the caller
             logger.warning("runtime receipt collection failed", exc_info=True)
-        allowed = getattr(result, "allowed", False)
+        # An audit-mode pass-through is still a denial on the record.
+        allowed = getattr(result, "allowed", False) and not getattr(result, "audit_denied", False)
         tool = getattr(result, "tool", "") or ""
 
         # Resolve arguments — EnforcementResult uses .arguments,

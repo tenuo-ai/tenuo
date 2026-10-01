@@ -218,7 +218,8 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         if not result.allowed:
             result.raise_if_denied()
 
-        log_authorization_success(bound_warrant, self.name, tool_input)
+        if not result.audit_denied:  # audit mode already logged the denial
+            log_authorization_success(bound_warrant, self.name, tool_input)
 
     def _check_authorization(self, tool_input: Dict[str, Any]) -> None:
         """Synchronous authorization check before tool execution."""

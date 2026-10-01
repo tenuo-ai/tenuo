@@ -4286,6 +4286,88 @@ class TestMetricsWiring:
         assert stats["latency_count"] >= 1
 
 
+class TestAuditMode:
+    """configure(mode="audit") records a scope denial and runs the activity."""
+
+    def _run_out_of_scope_activity(self, audit_callback):
+        import time as _time
+
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Subpath
+        from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("read_file", path=Subpath("/tmp/safe"))
+            .ttl(3600)
+            .mint(control_key)
+        )
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            audit_callback=audit_callback,
+        )
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.init = MagicMock()
+        ai = TenuoWorkerInterceptor(cfg).intercept_activity(nxt)
+
+        pop = warrant.sign(agent_key, "read_file", {"path": "/etc/passwd"}, int(_time.time()))
+        act_headers = {
+            k: (v if isinstance(v, bytes) else str(v).encode("utf-8"))
+            for k, v in tenuo_headers(warrant, "agent1").items()
+            if k.startswith("x-tenuo-")
+        }
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        act_headers[TENUO_ARG_KEYS_HEADER] = b"path"
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        info = MagicMock()
+        info.activity_type = "read_file"
+        info.activity_id = "1"
+        info.workflow_id = "wf-audit"
+        info.workflow_run_id = "run-1"
+        info.workflow_type = "AuditWF"
+        info.task_queue = "test-q"
+        info.attempt = 1
+        info.is_local = False
+
+        inp = MagicMock()
+        inp.fn = None
+        inp.args = ("/etc/passwd",)
+        inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=info):
+                result = loop.run_until_complete(ai.execute_activity(inp))
+        finally:
+            loop.close()
+        return result, nxt
+
+    def test_out_of_scope_activity_runs_and_is_recorded_as_a_denial(self):
+        from tenuo.config import configure, reset_config
+
+        events: list = []
+        reset_config()
+        configure(issuer_key=_TenCfgSigningKey.generate(), mode="audit", dev_mode=True)
+        try:
+            result, nxt = self._run_out_of_scope_activity(events.append)
+        finally:
+            reset_config()
+
+        assert result == "ok"
+        nxt.execute_activity.assert_awaited_once()
+        assert [e.decision for e in events] == ["DENY"]
+        assert "audit mode" in (events[0].denial_reason or "")
+
+
 # =============================================================================
 # error_code on exception classes
 # =============================================================================

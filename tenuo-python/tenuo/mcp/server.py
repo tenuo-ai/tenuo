@@ -264,6 +264,13 @@ class MCPVerificationResult:
     error_type: Optional[str] = field(default=None)
     """PEP ``error_type`` (``invalid_pop``, ``constraint_violation``, …)."""
 
+    audit_denied: bool = field(default=False)
+    """``True`` when the warrant denied the call but audit mode let it run.
+
+    ``allowed`` is then ``True``; receipts and control-plane events still
+    record a denial, with ``denial_reason`` and ``error_type`` set.
+    """
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -969,6 +976,10 @@ class MCPVerifier:
                 constraints=constraints,
                 warrant_id=warrant_id,
             )
+            if enforcement.audit_denied:
+                result.audit_denied = True
+                result.denial_reason = enforcement.denial_reason
+                result.error_type = enforcement.error_type
         except ApprovalGateTriggered as gate_exc:
             logger.info(
                 "Approval required for '%s' (warrant=%s) — approvals required",

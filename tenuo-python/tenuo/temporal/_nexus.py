@@ -1336,6 +1336,9 @@ def _verify_nexus_operation(
             enforcement.raise_if_denied()
         chain_result = enforcement.chain_result
         _check_nexus_pop_replay(config, ctx, pop_bytes, tool_name)
+        # In audit mode a denied operation still runs; record it as the denial it was.
+        from tenuo._enforcement import audit_denial_exception
+
         _emit_nexus_control_plane_event(
             config,
             ctx,
@@ -1345,6 +1348,7 @@ def _verify_nexus_operation(
             args,
             start_ns=start_ns,
             chain_result=chain_result,
+            exc=audit_denial_exception(enforcement),
             authorizer=authorizer,
             verified_pop=pop_bytes,
         )

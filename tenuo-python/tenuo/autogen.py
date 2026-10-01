@@ -30,7 +30,7 @@ from typing import (
 )
 
 from ._builder import BaseGuardBuilder
-from ._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async, handle_denial
+from ._enforcement import EnforcementResult, audit_mode_allows, enforce_tool_call, enforce_tool_call_async, handle_denial
 from .config import resolve_trusted_roots
 from .exceptions import (
     AuthorizationDenied,
@@ -155,6 +155,20 @@ def _check_constraints(
             raise
         except Exception as e:  # pragma: no cover - defensive
             raise ConstraintViolation(field=key, reason=str(e), value=value)
+
+
+def _check_constraints_or_audit(
+    tool_name: str,
+    constraints: Optional[Dict[str, Any]],
+    auth_args: Dict[str, Any],
+) -> None:
+    """Run Tier 1 checks; in audit or permissive mode, log a denial instead of raising."""
+    try:
+        _check_constraints(tool_name, constraints, auth_args)
+    except (ToolNotAuthorized, ConstraintViolation) as exc:
+        error_type = "tool_not_allowed" if isinstance(exc, ToolNotAuthorized) else "constraint_violation"
+        if not audit_mode_allows(error_type, tool_name, str(exc)):
+            raise
 
 
 @dataclass
@@ -468,7 +482,7 @@ class _Guard:
 
         # Tier 1: Constraint-only enforcement (no warrant)
         constraints = self._constraints.get(tool_name)
-        _check_constraints(tool_name, constraints, auth_args)
+        _check_constraints_or_audit(tool_name, constraints, auth_args)
 
     async def _authorize_async(self, tool_name: str, auth_args: Dict[str, Any]) -> None:
         """Async variant of _authorize — uses enforce_tool_call_async for Tier 2."""
@@ -528,7 +542,7 @@ class _Guard:
             return
 
         constraints = self._constraints.get(tool_name)
-        _check_constraints(tool_name, constraints, auth_args)
+        _check_constraints_or_audit(tool_name, constraints, auth_args)
 
     def _handle_denial(
         self,

@@ -66,7 +66,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
-from tenuo._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async
+from tenuo._enforcement import EnforcementResult, audit_mode_allows, enforce_tool_call, enforce_tool_call_async
 from tenuo.config import resolve_trusted_roots
 from tenuo.exceptions import InsufficientApprovals
 
@@ -446,8 +446,11 @@ class TenuoGuard:
                         _cp_already_emitted=True,
                     )
 
-                # PoP authorized - tool call is allowed
-                self._audit("tool_allowed", tool.name, args, warrant)
+                # PoP authorized, or let through by audit mode
+                if result.audit_denied:
+                    self._audit("tool_audit_denied", tool.name, args, warrant, reason=result.denial_reason)
+                else:
+                    self._audit("tool_allowed", tool.name, args, warrant)
                 return None
 
             except AttributeError as e:
@@ -470,19 +473,19 @@ class TenuoGuard:
             # Direct constraints from builder (no warrant)
             if skill_name not in self._constraints and skill_name not in self._allow_tools:
                 return self._deny(f"Tool '{tool.name}' not in allowlist", tool.name, args,
-                                  start_ns=start_ns)
+                                  start_ns=start_ns, error_type="tool_not_allowed")
             constraints = self._constraints.get(skill_name, {})
         else:
             # Warrant-based Tier 1
             # Check expiry
             is_expired = self._check_expiry(warrant)
             if is_expired:
-                return self._deny("Warrant expired", tool.name, args, start_ns=start_ns)
+                return self._deny("Warrant expired", tool.name, args, start_ns=start_ns, error_type="expired")
 
             # Check skill is granted
             if not self._skill_granted(warrant, skill_name):
                 return self._deny(f"Tool '{tool.name}' not authorized", tool.name, args,
-                                  start_ns=start_ns)
+                                  start_ns=start_ns, error_type="tool_not_allowed")
 
             # Get constraints for this skill
             constraints = self._get_skill_constraints(warrant, skill_name)
@@ -512,6 +515,7 @@ class TenuoGuard:
                                 constraint_param=arg_name,
                                 constraint=constraint,
                                 start_ns=start_ns,
+                                error_type="constraint_violation",
                             )
                     elif not has_wildcard and not allows_unknown:
                         # Zero-trust: unknown argument rejected
@@ -520,6 +524,7 @@ class TenuoGuard:
                             tool.name,
                             args,
                             start_ns=start_ns,
+                            error_type="constraint_violation",
                         )
                 except Exception as e:
                     logger.warning(f"Constraint implementation bug causing denial for '{arg_name}': {e}")
@@ -643,7 +648,10 @@ class TenuoGuard:
                         _cp_already_emitted=True,
                     )
 
-                self._audit("tool_allowed", tool.name, args, warrant)
+                if result.audit_denied:
+                    self._audit("tool_audit_denied", tool.name, args, warrant, reason=result.denial_reason)
+                else:
+                    self._audit("tool_allowed", tool.name, args, warrant)
                 return None
 
             except AttributeError as e:
@@ -837,15 +845,22 @@ class TenuoGuard:
         constraint: Optional[Any] = None,
         start_ns: Optional[int] = None,
         _cp_already_emitted: bool = False,
+        error_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Handle denial based on on_denial setting."""
+        """Handle denial based on on_denial setting.
+
+        ``error_type`` marks a policy denial that audit or permissive mode may
+        let through. Denials without one always block (outside dry run).
+        """
         # Dry run mode: log but don't block
         if self._dry_run:
             logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
             self._audit("tool_dry_run_denied", tool_name, args, reason=reason)
             return None  # Allow through in dry run
 
-        self._audit("tool_denied", tool_name, args, reason=reason)
+        audited = error_type is not None and audit_mode_allows(error_type, tool_name, reason)
+
+        self._audit("tool_audit_denied" if audited else "tool_denied", tool_name, args, reason=reason)
 
         if self._control_plane is not None and not _cp_already_emitted:
             import time
@@ -867,6 +882,9 @@ class TenuoGuard:
                 self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
             except Exception:
                 logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+
+        if audited:
+            return None  # Audit mode: the denial is recorded above; let the call run
 
         if self._on_denial == "raise":
             raise ToolAuthorizationError(reason, tool_name, args)

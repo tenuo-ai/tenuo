@@ -14,8 +14,18 @@ Tenuo supports three modes for gradual adoption:
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `enforce` | Block unauthorized requests | Production (default) |
-| `audit` | Log violations but allow execution | Discovery, gradual adoption |
-| `permissive` | Log + warn header, allow execution | Development, testing |
+| `audit` | Record scope violations as denials, but allow execution | Discovery, gradual adoption |
+| `permissive` | Same as `audit` | Development, testing |
+
+Audit mode lets a call run when a valid warrant doesn't cover it: the tool isn't
+granted, an argument breaks a constraint, or the warrant has expired. The same
+applies to code-level allowlists and constraints in the CrewAI, OpenAI, AutoGen,
+and Google ADK adapters. Receipts, control-plane events, and audit callbacks
+still record these calls as denials.
+
+Audit mode does not accept authority that fails verification. An untrusted
+issuer, a bad proof-of-possession signature, a revoked or malformed warrant, a
+replayed request, or an unmet approval gate still blocks the call.
 
 ```python
 from tenuo import configure, SigningKey
@@ -38,7 +48,7 @@ if is_audit_mode():
 
 ## Gradual Rollout
 
-**Step 1: Deploy in audit mode.** All tool calls are logged but never blocked. Analyze logs to see what would be denied.
+**Step 1: Deploy in audit mode.** Calls a warrant doesn't cover are recorded as denials but not blocked. Analyze logs to see what would be denied.
 
 ```python
 configure(issuer_key=SigningKey.generate(), mode="audit", dev_mode=True)
