@@ -87,10 +87,13 @@ export async function verifyPresented(
       `${label} needs { warrant, signature } from tenuo.present() or tenuo.mcp.attach()`,
     );
   }
+  // Capture once: replay admission and receipt callbacks may yield or mutate
+  // the caller's object. Execution must use the exact snapshot verified here.
+  const argsJson = argumentJson(args);
   const decision = context.authorizePresented(
     envelope.warrant,
     name,
-    argumentJson(args),
+    argsJson,
     envelope.signature,
     envelope.approvals,
     options?.allow,
@@ -105,7 +108,7 @@ export async function verifyPresented(
   decide(decision, name);
   // Run the host parse of the JSON text the proof covers. The raw host
   // object can contain values that JSON drops.
-  return plainArgs(JSON.parse(argumentJson(args)) as Record<string, unknown>);
+  return plainArgs(JSON.parse(argsJson) as Record<string, unknown>);
 }
 
 export function createMcp(context: WasmContext, decide: Decide, host?: object): TenuoMcp {

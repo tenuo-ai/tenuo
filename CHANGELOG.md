@@ -18,9 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approval tokens are standard base64, which a previous server already
   decodes. `decode_meta` still accepts an envelope already issued as unpadded
   URL-safe base64. An integral number is the same proof whether the text says
-  `1` or `1.0`. A signature that was made after removing null still verifies
-  when that null is on the wire; a signature that covers the null does not
-  match the map with the null removed. The shared vector is
+  `1` or `1.0`. Adding or removing null invalidates the proof, including
+  null list elements. The shared vector is
   `tests/vectors/tenuo-meta.json`.
 
 ### Changed
@@ -28,8 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`_meta.tenuo` is one envelope.** New clients write standard base64, so a
   server from the previous release can read the warrant stack and the
   signature. `decode_meta` still accepts unpadded URL-safe text, including
-  line-wrapped text. The proof covers JSON null. A previous client that
-  removed null before signing still verifies when that null is on the wire.
+  line-wrapped text. The proof covers JSON null. Clients that previously
+  removed null before signing must upgrade and re-sign the actual arguments;
+  verifiers do not retry against a null-stripped map. Float parsing preserves
+  the host's IEEE-754 value, and TypeScript executes the argument snapshot
+  verified before asynchronous replay admission.
 
 - **Holder signing, approval hashes, and receipt chains in the Rust SDK**
   (#751):

@@ -363,7 +363,9 @@ fn number_value(n: &serde_json::Number) -> std::result::Result<ConstraintValue, 
     };
     // `1.0` and `1` are the same proof. Python's default dump and
     // `JSON.stringify` spell an integral value differently.
-    if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+    // i64::MAX rounds up to 2^63 as f64. An inclusive upper bound would
+    // saturate that distinct value to i64::MAX and give both the same proof.
+    if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f < -(i64::MIN as f64) {
         return Ok(ConstraintValue::Integer(f as i64));
     }
     if !f.is_finite() {
@@ -473,6 +475,89 @@ mod tests {
     }
 
     #[test]
+    fn decimal_floats_round_trip_without_collapsing_adjacent_values() {
+        let values = [
+            0.9384646938271072_f64,
+            0.9384646938271073_f64,
+            0.5862090086938249_f64,
+        ];
+        for value in values {
+            let text = format!(r#"{{"n":{value}}}"#);
+            assert_eq!(
+                args_from_json(&text).unwrap()["n"],
+                ConstraintValue::Float(value)
+            );
+        }
+        let (holder, warrant) = sample_warrant();
+        let signed = sign_meta(
+            &[warrant],
+            &holder,
+            "read_file",
+            r#"{"n":0.9384646938271072}"#,
+            1_700_000_000,
+            &[],
+        )
+        .unwrap();
+        assert!(!verify_meta(
+            &signed.warrant,
+            &signed.signature,
+            "read_file",
+            r#"{"n":0.9384646938271073}"#,
+            1_700_000_000
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn integral_float_at_i64_upper_bound_does_not_saturate() {
+        let max = args_from_json(r#"{"n":9223372036854775807}"#).unwrap();
+        let above = args_from_json(r#"{"n":9223372036854775808.0}"#).unwrap();
+        assert_eq!(max["n"], ConstraintValue::Integer(i64::MAX));
+        assert_eq!(above["n"], ConstraintValue::Float(9223372036854775808.0));
+        assert_ne!(max, above);
+    }
+
+    #[test]
+    fn proof_rejects_null_insertions_at_every_list_depth() {
+        let (holder, warrant) = sample_warrant();
+        for (original, changed) in [
+            (r#"{}"#, r#"{"target":null}"#),
+            (r#"{"items":[1,2]}"#, r#"{"items":[null,1,2]}"#),
+            (r#"{"items":[[1,2]]}"#, r#"{"items":[[1,null,2]]}"#),
+            (r#"{"object":{}}"#, r#"{"object":{"target":null}}"#),
+        ] {
+            let signed = sign_meta(
+                std::slice::from_ref(&warrant),
+                &holder,
+                "read_file",
+                original,
+                1_700_000_000,
+                &[],
+            )
+            .unwrap();
+            assert!(verify_meta(
+                &signed.warrant,
+                &signed.signature,
+                "read_file",
+                original,
+                1_700_000_000
+            )
+            .unwrap());
+            assert!(
+                !verify_meta(
+                    &signed.warrant,
+                    &signed.signature,
+                    "read_file",
+                    changed,
+                    1_700_000_000
+                )
+                .unwrap(),
+                "{original} must not authorize {changed}"
+            );
+        }
+    }
+
+    #[test]
     fn older_url_safe_alphabet_still_decodes() {
         let (holder, warrant) = sample_warrant();
         let args_json = r#"{"path":"/data"}"#;
@@ -507,12 +592,12 @@ mod tests {
     }
 
     #[test]
-    fn older_client_null_still_verifies_and_a_new_signature_covers_null() {
+    fn proof_rejects_inserting_or_removing_null() {
         let (holder, warrant) = sample_warrant();
         let with_null = r#"{"note":null,"path":"/data"}"#;
         let stripped = r#"{"path":"/data"}"#;
         let old = sign_meta(
-            &[warrant.clone()],
+            std::slice::from_ref(&warrant),
             &holder,
             "read_file",
             stripped,
@@ -520,7 +605,7 @@ mod tests {
             &[],
         )
         .unwrap();
-        assert!(verify_meta(
+        assert!(!verify_meta(
             &old.warrant,
             &old.signature,
             "read_file",
