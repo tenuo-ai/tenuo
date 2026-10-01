@@ -14,8 +14,9 @@ import inspect as _inspect
 import json
 import logging
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
 
 from tenuo.exceptions import (
     ApprovalGateTriggered,
@@ -392,12 +393,19 @@ class _TenuoWorkflowInboundInterceptor:
 
     def __init__(self, next_interceptor: Any) -> None:
         self.next = next_interceptor
+        self._workflow_started = False
+        self._early_handlers = 0
+        self._early_owned_config = False
+        self._early_owned_headers = False
 
     def init(self, outbound: Any) -> None:
         self.next.init(_TenuoWorkflowOutboundInterceptor(outbound, self._config))
 
     async def execute_workflow(self, input: Any) -> Any:
         run_key = _current_run_key()
+        # The body now owns registration and its existing finally owns cleanup,
+        # even if an early async handler is still suspended.
+        self._workflow_started = True
 
         incoming: Dict[str, bytes] = {}
         for key, payload in (getattr(input, "headers", None) or {}).items():
@@ -420,6 +428,37 @@ class _TenuoWorkflowInboundInterceptor:
             with _store_lock:
                 _workflow_headers_store.pop(run_key, None)
                 _workflow_config_store.pop(run_key, None)
+
+    @contextmanager
+    def _registered_handler_run(self) -> Iterator[None]:
+        """Scope early registration to handlers until the workflow body starts.
+
+        A denied first activation may never enter execute_workflow's finally.
+        Keep registration available to overlapping early handlers (including
+        their outbound calls), but release entries we created when the last
+        handler exits unless the body has taken ownership.
+        """
+        if self._workflow_started:
+            yield
+            return
+
+        run_key = _current_run_key()
+        if self._early_handlers == 0:
+            with _store_lock:
+                self._early_owned_config = run_key not in _workflow_config_store
+                self._early_owned_headers = run_key not in _workflow_headers_store
+        self._early_handlers += 1
+        try:
+            self._ensure_run_registered()
+            yield
+        finally:
+            self._early_handlers -= 1
+            if self._early_handlers == 0 and not self._workflow_started:
+                with _store_lock:
+                    if self._early_owned_config:
+                        _workflow_config_store.pop(run_key, None)
+                    if self._early_owned_headers:
+                        _workflow_headers_store.pop(run_key, None)
 
     def _ensure_run_registered(self) -> None:
         """Register this run's config before a first-activation signal or update.
@@ -484,7 +523,10 @@ class _TenuoWorkflowInboundInterceptor:
         return getattr(warrant, "id", "") or "<no-warrant>"
 
     async def handle_signal(self, input: Any) -> None:
-        self._ensure_run_registered()
+        with self._registered_handler_run():
+            return await self._handle_signal(input)
+
+    async def _handle_signal(self, input: Any) -> None:
         config = self._resolve_config()
         if config and config.authorized_signals is not None:
             signal_name = getattr(input, "signal", None)
@@ -507,7 +549,10 @@ class _TenuoWorkflowInboundInterceptor:
         return await self.next.handle_query(input)
 
     def handle_update_validator(self, input: Any) -> None:
-        self._ensure_run_registered()
+        with self._registered_handler_run():
+            return self._handle_update_validator(input)
+
+    def _handle_update_validator(self, input: Any) -> None:
         config = self._resolve_config()
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)
@@ -528,7 +573,10 @@ class _TenuoWorkflowInboundInterceptor:
         return self.next.handle_update_validator(input)
 
     async def handle_update_handler(self, input: Any) -> Any:
-        self._ensure_run_registered()
+        with self._registered_handler_run():
+            return await self._handle_update_handler(input)
+
+    async def _handle_update_handler(self, input: Any) -> Any:
         config = self._resolve_config()
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)

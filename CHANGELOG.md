@@ -76,7 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and an update sent immediately after start, run the handler before
   `execute_workflow` registered the run config, so the allowlist saw no
   config and let the call through. The inbound interceptor now registers
-  the run before those handlers.
+  the run for those handlers. Early registration is scoped and cleaned up on
+  rejection, handler failure, or cancellation if the workflow body never starts;
+  overlapping handlers retain their context until the last handler exits.
 
 - **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**
   That signature fails at registration on the official SDK; the docs now point

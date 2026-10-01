@@ -5213,6 +5213,117 @@ class TestSignalAndUpdateRuntimeDenial:
         assert seen["headers"]["x-tenuo-warrant"] == b"warrant-bytes"
         nxt.handle_update_validator.assert_called_once_with(upd_input)
 
+    @pytest.mark.parametrize("entrypoint", ["signal", "validator", "handler"])
+    @pytest.mark.parametrize("failure", ["denied", "raised", "cancelled"])
+    def test_early_handler_failure_releases_registration(self, entrypoint, failure):
+        """No workflow body/finally is needed to release early run state."""
+        from tenuo.temporal._state import _store_lock, _workflow_config_store, _workflow_headers_store
+
+        inbound, nxt, run_id = self._unregistered_inbound(
+            authorized_signals=["allowed"], authorized_updates=["allowed"],
+        )
+        info = self._early_info(run_id)
+        info.headers = {"x-tenuo-key-id": MagicMock(data=b"agent1")}
+        name = "blocked" if failure == "denied" else "allowed"
+        inp = MagicMock(signal=name, update=name, headers={})
+        error_type = {
+            "denied": TemporalConstraintViolation,
+            "raised": RuntimeError,
+            "cancelled": asyncio.CancelledError,
+        }[failure]
+        method = {
+            "signal": "handle_signal",
+            "validator": "handle_update_validator",
+            "handler": "handle_update_handler",
+        }[entrypoint]
+
+        def fail(_input):
+            with _store_lock:
+                assert _workflow_config_store[run_id] is inbound._config
+                assert _workflow_headers_store[run_id]["x-tenuo-key-id"] == b"agent1"
+            raise error_type("handler failed")
+
+        getattr(nxt, method).side_effect = fail
+        try:
+            with patch("temporalio.workflow.info", return_value=info):
+                with pytest.raises(error_type):
+                    result = getattr(inbound, method)(inp)
+                    if entrypoint != "validator":
+                        asyncio.run(result)
+            with _store_lock:
+                assert run_id not in _workflow_config_store
+                assert run_id not in _workflow_headers_store
+            if failure == "denied":
+                getattr(nxt, method).assert_not_called()
+            nxt.execute_workflow.assert_not_called()
+        finally:
+            self._cleanup_run(run_id)
+
+    @pytest.mark.parametrize("start_body", [False, True], ids=["handlers_only", "body_takes_ownership"])
+    def test_overlapping_early_handlers_keep_registration_until_owner_exits(self, start_body):
+        from tenuo.temporal._state import _store_lock, _workflow_config_store, _workflow_headers_store
+
+        inbound, nxt, run_id = self._unregistered_inbound(authorized_updates=["ping"])
+        info = self._early_info(run_id)
+        info.headers = {"x-tenuo-key-id": MagicMock(data=b"agent1")}
+
+        def assert_registered():
+            with _store_lock:
+                assert _workflow_config_store[run_id] is inbound._config
+                assert _workflow_headers_store[run_id]["x-tenuo-key-id"] == b"agent1"
+
+        async def run():
+            entered = [asyncio.Event(), asyncio.Event()]
+            release = [asyncio.Event(), asyncio.Event()]
+            body_entered, body_release = asyncio.Event(), asyncio.Event()
+
+            async def handler(inp):
+                assert_registered()
+                entered[inp.id].set()
+                await release[inp.id].wait()
+                assert_registered()
+                return "pong"
+
+            async def body(_input):
+                body_entered.set()
+                await body_release.wait()
+                return "done"
+
+            nxt.handle_update_handler = AsyncMock(side_effect=handler)
+            nxt.execute_workflow = AsyncMock(side_effect=body)
+            tasks = []
+            try:
+                for index in range(2):
+                    tasks.append(asyncio.create_task(inbound.handle_update_handler(
+                        MagicMock(update="ping", id=index, headers={}),
+                    )))
+                    await entered[index].wait()
+                if start_body:
+                    tasks.append(asyncio.create_task(inbound.execute_workflow(MagicMock(headers=info.headers))))
+                    await body_entered.wait()
+                release[0].set()
+                assert await tasks[0] == "pong"
+                assert_registered()
+                release[1].set()
+                assert await tasks[1] == "pong"
+                if start_body:
+                    assert_registered()
+                    body_release.set()
+                    assert await tasks[2] == "done"
+                with _store_lock:
+                    assert run_id not in _workflow_config_store
+                    assert run_id not in _workflow_headers_store
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            with patch("temporalio.workflow.info", return_value=info):
+                asyncio.run(asyncio.wait_for(run(), timeout=5))
+        finally:
+            self._cleanup_run(run_id)
+
 
 class TestSetActivityApprovalsOverwriteWarning:
     """Two back-to-back ``set_activity_approvals`` calls without an intervening

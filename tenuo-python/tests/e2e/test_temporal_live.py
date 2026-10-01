@@ -385,7 +385,7 @@ class UpdateFirstWorkflow:
         return "pong"
 
 
-async def _update_with_start(env, keys, update, *, plugin_config=None):
+async def _update_with_start(env, keys, update, *, plugin_config=None, observed_run_ids=None):
     """Start UpdateFirstWorkflow and deliver *update* in the same activation."""
     control, agent = keys
     task_queue = f"test-{uuid.uuid4().hex[:8]}"
@@ -421,6 +421,8 @@ async def _update_with_start(env, keys, update, *, plugin_config=None):
             )
         finally:
             handle = await start.workflow_handle()
+            if observed_run_ids is not None:
+                observed_run_ids.append((await handle.describe()).run_id)
             try:
                 await handle.terminate()
             except Exception:
@@ -581,14 +583,42 @@ class TestLiveUpdateInFirstActivation:
 
     @pytest.mark.asyncio
     async def test_authorized_updates_applies_to_an_update_delivered_with_start(self, keys):
+        from tenuo.temporal._state import _store_lock, _workflow_config_store, _workflow_headers_store
+
+        run_ids = []
         async with await WorkflowEnvironment.start_local() as env:
-            with pytest.raises((WorkflowUpdateFailedError, RPCError)):
+            with pytest.raises((WorkflowUpdateFailedError, RPCError)) as denied:
                 await _update_with_start(
                     env,
                     keys,
                     UpdateFirstWorkflow.ping,
                     plugin_config={"authorized_updates": ["install"]},
+                    observed_run_ids=run_ids,
                 )
+            if isinstance(denied.value, RPCError):
+                assert "Workflow Task in failed state" in str(denied.value)
+            else:
+                assert "Update not authorized: ping" in str(denied.value.cause)
+        assert len(run_ids) == 1
+        with _store_lock:
+            assert run_ids[0] not in _workflow_config_store
+            assert run_ids[0] not in _workflow_headers_store
+
+    @pytest.mark.asyncio
+    async def test_allowed_update_with_start_succeeds_and_cleans_up(self, keys):
+        from tenuo.temporal._state import _store_lock, _workflow_config_store, _workflow_headers_store
+
+        run_ids = []
+        async with await WorkflowEnvironment.start_local() as env:
+            assert await _update_with_start(
+                env, keys, UpdateFirstWorkflow.ping,
+                plugin_config={"authorized_updates": ["ping"]},
+                observed_run_ids=run_ids,
+            ) == "pong"
+        assert len(run_ids) == 1
+        with _store_lock:
+            assert run_ids[0] not in _workflow_config_store
+            assert run_ids[0] not in _workflow_headers_store
 
 
 # ---------------------------------------------------------------------------
