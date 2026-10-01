@@ -51,13 +51,13 @@ Usage pattern
 
 ``CompiledMcpConfig`` and PoP signatures
 -----------------------------------------
-The PoP signature is **always** computed over the raw MCP ``arguments``
-dict (with :func:`tenuo._pop_canonicalize.strip_none_values` applied).
-``CompiledMcpConfig`` extraction — field renaming, coercion, defaults — runs
-separately and feeds only the constraint-matching path. This means a server
-can enforce constraint mappings independently of whether the client has the
-same config loaded: PoP parity depends only on the wire args, not on the
-extraction schema. ``SecureMCPClient`` signs the raw wire args automatically.
+The PoP signature is computed by the core from the argument JSON text.
+``None`` is JSON null and stays in that text. ``CompiledMcpConfig``
+extraction — field renaming, coercion, defaults — runs separately and feeds
+only the constraint-matching path. PoP parity depends on both sides calling
+the core with the same argument text, not on the extraction schema.
+``SecureMCPClient`` builds that text from the wire arguments and asks the
+core to sign it.
 
 Warrant transport
 -----------------
@@ -129,13 +129,13 @@ JSON-RPC error codes
 
 from __future__ import annotations
 
-import base64
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .._pop_canonicalize import strip_none_values
+from ..meta import signed_arguments
 from ..approval import ApprovalRequired
 from ..exceptions import (
     ApprovalExpired,
@@ -191,15 +191,15 @@ def _access_denial_reason(exc: BaseException) -> str:
     base = f"Access denied: {exc}"
     if isinstance(exc, SignatureInvalid):
         return (
-            f"{base} PoP covers the raw tool arguments (with None values stripped). "
+            f"{base} PoP covers the core's reading of the argument JSON, including null. "
             "Check that the client signs with the same key bound in the warrant and "
             "that the timestamp has not drifted beyond the PoP window."
         )
     if isinstance(exc, SignatureMismatch):
         return (
             f"{base} PoP was verified structurally but does not match this warrant/holder "
-            "or the raw wire-args view. Confirm the client and server agree on argument "
-            "canonicalization (both apply tenuo._pop_canonicalize.strip_none_values)."
+            "or the argument JSON the core signed. The client and server must both "
+            "call the core envelope with that text."
         )
     if isinstance(exc, MissingSignature):
         return (
@@ -400,8 +400,8 @@ def _mcp_result_from_enforcement(
     reason = getattr(enforcement, "denial_reason", None) or "Authorization denied"
     if error_type == "invalid_pop":
         reason = (
-            f"Access denied: {reason} PoP covers the raw tool arguments "
-            "(with None values stripped). Check that the client signs with "
+            f"Access denied: {reason} PoP covers the core's reading of the "
+            "argument JSON, including null. Check that the client signs with "
             "the same key bound in the warrant and that the timestamp has "
             "not drifted beyond the PoP window."
         )
@@ -578,11 +578,8 @@ class MCPVerifier:
         args: Dict[str, Any] = dict(arguments or {})
         missing_argument_envelope = object()
         argument_envelope: Any = args.pop("_tenuo", missing_argument_envelope)
-        # PoP bytes cover the wire-args view. Both client and server apply
-        # strip_none_values to that view so optional arguments with None
-        # defaults don't crash the Rust canonicalizer and don't silently
-        # diverge the signed-bytes shape between sides.
-        pop_args: Dict[str, Any] = strip_none_values(args)
+        # Proof covers the core's reading of the argument JSON, including null.
+        pop_args: Dict[str, Any] = signed_arguments(args)
 
         presented: List[Any] = []
 
@@ -803,43 +800,20 @@ class MCPVerifier:
                 ))
 
         # ------------------------------------------------------------------
-        # Step 3: decode warrant (single warrant or WarrantStack)
+        # Step 3–5: core reads the envelope. The older alphabet still decodes.
         # ------------------------------------------------------------------
         _chain_parents: Optional[List[Any]] = None
         try:
-            from tenuo_core import Warrant
+            from tenuo_core import decode_meta_chain
 
-            # Try WarrantStack (CBOR array) first, then single warrant.
-            # Only fall back to single-warrant decode when the bytes genuinely
-            # are not a CBOR array — not when the stack is corrupted.
-            stack_decoded = False
-            try:
-                from tenuo_core import decode_warrant_stack_base64
-                stack_warrants = decode_warrant_stack_base64(warrant_b64)
-                stack_decoded = True
-                if len(stack_warrants) > 1:
-                    warrant = stack_warrants[-1]
-                    _chain_parents = stack_warrants[:-1]
-                elif len(stack_warrants) == 1:
-                    warrant = stack_warrants[0]
-                else:
-                    raise ValueError("Empty warrant stack")
-            except ImportError:
-                # decode_warrant_stack_base64 not available in this build
-                warrant = Warrant.from_base64(warrant_b64)
-            except Exception as stack_exc:
-                if stack_decoded:
-                    # Stack decoded structurally but contents are invalid
-                    # (empty, corrupt warrant inside array) — don't silently
-                    # fall back to single-warrant; propagate the real error.
-                    raise
-                # Not a CBOR array — try single warrant
-                try:
-                    warrant = Warrant.from_base64(warrant_b64)
-                except Exception:
-                    # Neither format worked; report the stack error since it
-                    # was tried first and is the preferred format.
-                    raise stack_exc from None
+            stack_warrants = decode_meta_chain(warrant_b64)
+            if len(stack_warrants) > 1:
+                warrant = stack_warrants[-1]
+                _chain_parents = stack_warrants[:-1]
+            elif len(stack_warrants) == 1:
+                warrant = stack_warrants[0]
+            else:
+                raise ValueError("Empty warrant stack")
         except Exception as exc:
             return _emit_and_return(MCPVerificationResult(
                 allowed=False,
@@ -853,13 +827,12 @@ class MCPVerifier:
         warrant_id: Optional[str] = getattr(warrant, "id", None)
         presented[:] = list(_chain_parents or []) + [warrant]
 
-        # ------------------------------------------------------------------
-        # Step 4: decode PoP signature
-        # ------------------------------------------------------------------
         pop_sig: Optional[bytes] = None
         if signature_b64:
             try:
-                pop_sig = base64.b64decode(signature_b64)
+                from tenuo_core import decode_meta_signature
+
+                pop_sig = decode_meta_signature(signature_b64)
             except Exception as exc:
                 return _emit_and_return(MCPVerificationResult(
                     allowed=False,
@@ -871,15 +844,12 @@ class MCPVerifier:
                     jsonrpc_error_code=-32001,
                 ))
 
-        # ------------------------------------------------------------------
-        # Step 5: decode approvals
-        # ------------------------------------------------------------------
         approvals: List[Any] = []
         for a_b64 in approvals_b64:
             try:
-                from tenuo_core import SignedApproval
+                from tenuo_core import decode_meta_approval
 
-                approvals.append(SignedApproval.from_bytes(base64.b64decode(a_b64)))
+                approvals.append(decode_meta_approval(a_b64))
             except Exception as exc:
                 return _emit_and_return(MCPVerificationResult(
                     allowed=False,

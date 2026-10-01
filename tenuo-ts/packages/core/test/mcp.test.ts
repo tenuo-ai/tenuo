@@ -460,17 +460,17 @@ describe("tenuo.mcp", () => {
     );
   });
 
-  it("drops optional null args so attach and verify stay aligned", async () => {
+  it("keeps null arguments in the signed call and still authorizes", async () => {
     const { issuer, session, server } = issuerAndServer();
     const call = issuer.mcp.attach(session, "read_file", {
       path: "/data/q3.pdf",
       max_size: null,
     });
-    expect(call.arguments).toEqual({ path: "/data/q3.pdf" });
+    expect(call.arguments).toEqual({ path: "/data/q3.pdf", max_size: null });
     const readFile = server.mcp.handler("read_file", async (args: { path: string }) => args);
     await expect(
       readFile({ path: "/data/q3.pdf", max_size: null } as { path: string }, { _meta: call._meta }),
-    ).resolves.toMatchObject({ path: "/data/q3.pdf" });
+    ).resolves.toEqual({ path: "/data/q3.pdf", max_size: null });
   });
 });
 

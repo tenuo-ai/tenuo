@@ -296,6 +296,28 @@ class SdkContext {
         return this;
     }
     /**
+     * `_meta.tenuo` for argument JSON text at `timestamp` (unix seconds).
+     *
+     * The proof covers the core's parse of `args_json`, including JSON null.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {string} args_json
+     * @param {number} timestamp
+     * @returns {any}
+     */
+    signMeta(session, tool, args_json, timestamp) {
+        _assertClass(session, SdkSession);
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_signMeta(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, ptr1, len1, timestamp);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
      * @param {SdkSession} session
      * @param {string} tool
@@ -370,6 +392,30 @@ class SdkContext {
         } finally {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
         }
+    }
+    /**
+     * Check a `_meta.tenuo` proof against argument JSON text at `timestamp`.
+     * @param {string} warrant
+     * @param {string} signature
+     * @param {string} tool
+     * @param {string} args_json
+     * @param {number} timestamp
+     * @returns {boolean}
+     */
+    verifyMeta(warrant, signature, tool, args_json, timestamp) {
+        const ptr0 = passStringToWasm0(warrant, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_verifyMeta(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, timestamp);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] !== 0;
     }
     /**
      * Sign verifier receipts with this 32-byte holder secret instead of an
@@ -519,7 +565,7 @@ class SdkSession {
         return SdkSession.__wrap(ret[0]);
     }
     /**
-     * CBOR warrant stack as standard base64. Matches Python `encode_warrant_stack`.
+     * CBOR warrant stack as unpadded URL-safe base64. Same bytes as `_meta.tenuo.warrant`.
      * @returns {string}
      */
     toStackWire() {

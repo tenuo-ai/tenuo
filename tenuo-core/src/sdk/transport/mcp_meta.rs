@@ -1,10 +1,10 @@
-use super::{decode_owned, encode_approval_standard, encode_parts, DecodeLimits, TransportError};
+use super::{decode_owned, DecodeLimits, TransportError};
 use crate::approval::SignedApproval;
 use crate::crypto::Signature;
 use crate::sdk::authority::OwnedReceivedAuthorization;
 use crate::sdk::AuthorizedCall;
 use crate::warrant::Warrant;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// Decoded `params._meta.tenuo` payload. Owns the artifacts.
 pub type TenuoMeta = OwnedReceivedAuthorization;
@@ -15,21 +15,14 @@ pub fn encode_meta(
     signature: &Signature,
     approvals: &[SignedApproval],
 ) -> Result<Value, TransportError> {
-    let (warrant, pop, _) = encode_parts(chain, signature, approvals)?;
-    let mut object = Map::new();
-    object.insert("warrant".into(), Value::String(warrant));
-    object.insert("signature".into(), Value::String(pop));
-    if !approvals.is_empty() {
-        let encoded = approvals
-            .iter()
-            .map(encode_approval_standard)
-            .collect::<Result<Vec<_>, _>>()?;
-        object.insert(
-            "approvals".into(),
-            Value::Array(encoded.into_iter().map(Value::String).collect()),
-        );
-    }
-    Ok(Value::Object(object))
+    crate::meta_envelope::encode_meta(chain, &signature.to_bytes(), approvals)
+        .map(|meta| meta.to_json())
+        .map_err(|err| match err {
+            crate::meta_envelope::MetaError::TooManyApprovals => TransportError::TooManyApprovals,
+            crate::meta_envelope::MetaError::InvalidSignature => TransportError::InvalidSignature,
+            crate::meta_envelope::MetaError::PayloadTooLarge => TransportError::PayloadTooLarge,
+            _ => TransportError::InvalidEncoding,
+        })
 }
 
 /// Build `_meta.tenuo` for a call: the holder signs a proof of possession

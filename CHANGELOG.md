@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One `_meta.tenuo` envelope in the core.** `sign_meta` and `decode_meta` are
+  the producer and consumer of that object. The proof covers the core's parse
+  of the argument JSON text, and JSON null stays in that map. Python and
+  TypeScript translate a host value into that text and call the core; they do
+  not pick a base64 alphabet or omit null from the proof. Warrant matching
+  still ignores a null field. The canonical warrant stack and
+  signature are unpadded URL-safe base64. `decode_meta` still accepts an
+  envelope that was issued with the older standard alphabet. The shared vector
+  is `tests/vectors/tenuo-meta.json`.
+
 - **Holder signing, approval hashes, and receipt chains in the Rust SDK**
   (#751):
   - `PresentedAuthority::prove` and `mcp_meta::sign_meta`: the holder side of

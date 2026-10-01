@@ -107,14 +107,6 @@ pub(crate) fn encode_parts(
     Ok((warrant, pop, Some(url_no_pad().encode(approval_bytes))))
 }
 
-pub(crate) fn encode_approval_standard(
-    approval: &SignedApproval,
-) -> Result<String, TransportError> {
-    approval
-        .to_cbor_b64()
-        .map_err(|_| TransportError::InvalidEncoding)
-}
-
 pub(crate) fn decode_owned(
     warrant: &str,
     signature: &str,

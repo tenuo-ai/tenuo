@@ -5,7 +5,6 @@ Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
 
 import asyncio
-import base64
 import logging
 import random
 import re
@@ -16,6 +15,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union, cast
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
+from ..meta import argument_json, signed_arguments
 from ..approval import ApprovalHandler
 from ..config import is_configured
 from ..decorators import key_scope, warrant_scope
@@ -584,7 +584,7 @@ class SecureMCPClient:
                 suggestions=["Ensure the active key matches the warrant holder"],
             )
 
-        pop_args = strip_none_values(arguments)
+        pop_args = signed_arguments(arguments)
         constraint_args = pop_args
         if self.compiled_config:
             try:
@@ -715,38 +715,21 @@ class SecureMCPClient:
                 keypair = key_scope()
 
                 if warrant is not None and keypair is not None:
-                    # Encode as WarrantStack when the parent chain is
-                    # available via chain_scope(), otherwise single warrant.
+                    # The core writes the envelope. Argument JSON is the
+                    # translation of this dict; nulls stay in that text.
                     from ..decorators import chain_scope as _chain_scope
-                    _parents = _chain_scope()
-                    if _parents:
-                        try:
-                            from tenuo_core import encode_warrant_stack
-                            warrant_base64 = encode_warrant_stack(
-                                list(_parents) + [warrant]
-                            )
-                        except Exception:
-                            warrant_base64 = warrant.to_base64()
-                    else:
-                        warrant_base64 = warrant.to_base64()
-                    # PoP covers the raw wire args. The server canonicalizes the
-                    # same wire args for verification (split-view authorize) and
-                    # runs constraint extraction separately for policy matching.
-                    # See tenuo._pop_canonicalize.strip_none_values for the exact
-                    # canonicalization both sides apply.
-                    sign_args = strip_none_values(args)
-                    pop_sig = warrant.sign(keypair, tool_name, sign_args, int(time.time()))
-                    signature_base64 = base64.b64encode(bytes(pop_sig)).decode("utf-8")
+                    from tenuo_core import sign_meta
 
-                    tenuo_meta: Dict[str, Any] = {
-                        "warrant": warrant_base64,
-                        "signature": signature_base64,
-                    }
-                    if approvals:
-                        tenuo_meta["approvals"] = [
-                            base64.b64encode(a.to_bytes()).decode("utf-8")
-                            for a in approvals
-                        ]
+                    _parents = _chain_scope()
+                    chain = list(_parents) + [warrant] if _parents else [warrant]
+                    tenuo_meta = sign_meta(
+                        chain,
+                        keypair,
+                        tool_name,
+                        argument_json(args),
+                        int(time.time()),
+                        approvals or None,
+                    )
                     if injection_mode == "argument":
                         call_args["_tenuo"] = tenuo_meta
                     else:
@@ -822,7 +805,7 @@ class SecureMCPClient:
                     "Use `with warrant_scope(w), key_scope(k):` or set warrant_context=False."
                 )
             bw = BoundWarrant(w, k)
-            pop_args = strip_none_values(arguments)
+            pop_args = signed_arguments(arguments)
             constraint_args = pop_args
             if self.compiled_config:
                 try:
@@ -909,9 +892,9 @@ class SecureMCPClient:
             _approvals = kwargs.pop("_approvals", None)
 
             constraint_args = _extract_constraint_args(**kwargs)
-            pop_args = {
-                k: v for k, v in kwargs.items() if k != "_approvals"
-            }
+            pop_args = signed_arguments(
+                {k: v for k, v in kwargs.items() if k != "_approvals"}
+            )
 
             w = warrant_scope()
             k = key_scope()
