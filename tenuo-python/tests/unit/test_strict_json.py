@@ -1,5 +1,6 @@
 """The same duplicate-key bytes are rejected in every SDK that still has the text."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,13 @@ def test_duplicate_argument_key_vector_is_rejected():
 
 def test_unique_keys_parse():
     assert parse_strict_json('{"path":"/data/ok","n":1}') == {"path": "/data/ok", "n": 1}
+
+
+def test_numbers_match_the_host_parser():
+    text = '{"n":0.58620900869382481}'
+    host = json.loads(text)["n"]
+    assert parse_strict_json(text)["n"] == host
+    assert host != json.loads("0.5862090086938248")
 
 
 def test_nested_duplicate_key_is_rejected():

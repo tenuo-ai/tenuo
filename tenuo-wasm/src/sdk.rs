@@ -2647,19 +2647,18 @@ fn to_js(dto: &DecisionDto) -> JsValue {
     to_js_value(dto)
 }
 
-/// Parse JSON text and reject a repeated key in any object.
+/// Reject a repeated key in any object.
 ///
 /// A tools/call the host has already turned into an object cannot be checked:
 /// the duplicate key is gone. Call this while the text is still available.
-/// Nested objects are checked too.
+/// Nested objects are checked too. On success the caller parses `json_text`
+/// with the host parser. This function does not build a JavaScript object:
+/// that conversion turns `__proto__` into a prototype change and `null` into
+/// `undefined`.
 #[wasm_bindgen]
-pub fn parse_strict_json(json_text: &str) -> Result<JsValue, JsError> {
-    let value =
-        tenuo::parse_json_strict(json_text).map_err(|err| JsError::new(&err.to_string()))?;
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-    value
-        .serialize(&serializer)
-        .map_err(|err| JsError::new(&err.to_string()))
+pub fn parse_strict_json(json_text: &str) -> Result<(), JsError> {
+    tenuo::parse_json_strict(json_text).map_err(|err| JsError::new(&err.to_string()))?;
+    Ok(())
 }
 
 pub(crate) fn to_js_value<T: Serialize>(dto: &T) -> JsValue {

@@ -10,7 +10,8 @@ def parse_strict_json(text: str) -> Any:
 
     A dict that a framework has already parsed cannot be checked: the
     duplicate is gone. Call this while the text is still available.
-    Nested objects are checked too.
+    Nested objects are checked too. After that check, the original text is
+    parsed with :func:`json.loads`, so numbers match the host parser.
 
     Raises:
         ValueError: The text is not a single JSON value, or an object repeats a key.

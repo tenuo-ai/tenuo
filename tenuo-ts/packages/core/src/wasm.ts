@@ -322,7 +322,7 @@ type Generated = {
     tool: string,
     args: unknown,
   ): { approval_required: boolean; tool: string; error?: string };
-  parse_strict_json(jsonText: string): unknown;
+  parse_strict_json(jsonText: string): void;
 };
 
 let loaded: Generated | undefined;
@@ -466,10 +466,13 @@ function throwIfGateError(error: string | undefined): void {
  * Parse JSON text and reject a repeated key in any object.
  *
  * `verify()` receives an object the host already parsed. A duplicate key is
- * gone by then. Call this while the text is still available.
+ * gone by then. Call this while the text is still available. After the check,
+ * the value is `JSON.parse` of the original text, so each key is an own data
+ * property and `null` stays `null`.
  */
 export function parseStrictJson(text: string): unknown {
-  return loadWasm().parse_strict_json(text);
+  loadWasm().parse_strict_json(text);
+  return JSON.parse(text);
 }
 
 /**

@@ -21,4 +21,19 @@ describe("parseStrictJson", () => {
   it("rejects a nested duplicate key", () => {
     expect(() => parseStrictJson('{"meta":{"a":1,"a":2}}')).toThrow(/duplicate JSON key/);
   });
+
+  it("keeps __proto__ as an own data property", () => {
+    const value = parseStrictJson('{"__proto__":{"admin":true}}') as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(value, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+    expect("admin" in value).toBe(false);
+    expect(JSON.stringify(value)).toBe('{"__proto__":{"admin":true}}');
+    expect("admin" in Object.prototype).toBe(false);
+  });
+
+  it("preserves null", () => {
+    const value = parseStrictJson('{"a":null}') as { a: unknown };
+    expect(value.a).toBeNull();
+    expect(JSON.stringify(value)).toBe('{"a":null}');
+  });
 });

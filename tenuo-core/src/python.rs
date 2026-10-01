@@ -5089,10 +5089,12 @@ fn py_verify_approval_context_attestation(
     .map_err(to_py_err)
 }
 
-/// Parse JSON text and reject a repeated key in any object.
+/// Reject a repeated key, then parse the original text with Python's ``json.loads``.
 ///
 /// A dict a host has already parsed cannot be checked: the duplicate is gone.
 /// Call this while the text is still available. Nested objects are checked too.
+/// The returned value is Python's reading of ``text``. A Rust JSON round trip
+/// would change some numbers, so the tool and the check would see different values.
 ///
 /// Args:
 ///     text: JSON text, such as a tool-argument string.
@@ -5102,12 +5104,9 @@ fn py_verify_approval_context_attestation(
 #[pyfunction]
 #[pyo3(name = "parse_strict_json")]
 fn py_parse_strict_json(py: Python<'_>, text: &str) -> PyResult<Py<PyAny>> {
-    let value =
-        crate::parse_json_strict(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let encoded =
-        serde_json::to_string(&value).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    crate::parse_json_strict(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
     let json = py.import("json")?;
-    Ok(json.call_method1("loads", (encoded,))?.unbind())
+    Ok(json.call_method1("loads", (text,))?.unbind())
 }
 
 /// Compute the request hash that binds an approval to a specific tool call.

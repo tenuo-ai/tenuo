@@ -3,7 +3,7 @@
 export const memory: WebAssembly.Memory;
 export const __wbg_sdkcontext_free: (a: number, b: number) => void;
 export const __wbg_sdksession_free: (a: number, b: number) => void;
-export const parse_strict_json: (a: number, b: number) => [number, number, number];
+export const parse_strict_json: (a: number, b: number) => [number, number];
 export const sdkInspectParts: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const sdkInspectWarrant: (a: number, b: number) => [number, number, number];
 export const sdkProtocolLimits: () => [number, number, number];
