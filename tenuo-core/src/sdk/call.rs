@@ -114,6 +114,7 @@ impl Call<'static> {
     ) -> Result<Self, ArgumentError> {
         let value = crate::parse_json_strict(json).map_err(|err| match err {
             StrictJsonError::DuplicateKey => ArgumentError::DuplicateKey,
+            StrictJsonError::LimitExceeded => ArgumentError::ValueTooLarge,
             StrictJsonError::Malformed(message) => ArgumentError::MalformedJson(message),
         })?;
         Self::try_from_json(capability, &value)

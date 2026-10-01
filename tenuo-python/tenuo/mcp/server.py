@@ -135,7 +135,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .._pop_canonicalize import strip_none_values
-from ..meta import signed_arguments
+from ..meta import _capture_arguments
 from ..approval import ApprovalRequired
 from ..exceptions import (
     ApprovalExpired,
@@ -575,12 +575,6 @@ class MCPVerifier:
             or ``allowed=False`` with ``denial_reason`` and
             ``jsonrpc_error_code`` on failure.
         """
-        args: Dict[str, Any] = dict(arguments or {})
-        missing_argument_envelope = object()
-        argument_envelope: Any = args.pop("_tenuo", missing_argument_envelope)
-        # Proof covers the core's reading of the argument JSON, including null.
-        pop_args: Dict[str, Any] = signed_arguments(args)
-
         presented: List[Any] = []
 
         def _emit_and_return(
@@ -610,6 +604,25 @@ class MCPVerifier:
                 except Exception:
                     logger.warning("Control plane emission failed for '%s'; audit event lost", result.tool, exc_info=True)
             return result
+
+        # Parsing failures are denials too, including audit emission. Do not
+        # echo raw arguments or parser exception strings into logs/results.
+        try:
+            if arguments is not None and not isinstance(arguments, Mapping):
+                raise ValueError("arguments must be an object")
+            args = dict(arguments) if arguments is not None else {}
+            missing_argument_envelope = object()
+            argument_envelope = args.pop("_tenuo", missing_argument_envelope)
+            snapshot = _capture_arguments(args)
+            args = snapshot.execution_args
+            pop_args = snapshot.pop_args
+        except Exception as exc:
+            error_type = "payload_too_large" if getattr(exc, "code", None) == "payload_too_large" else "invalid_arguments"
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name, clean_arguments={}, constraints={},
+                denial_reason="Argument payload exceeds limits" if error_type == "payload_too_large" else "Invalid tool arguments",
+                jsonrpc_error_code=-32602, error_type=error_type,
+            ))
 
         # ------------------------------------------------------------------
         # Step 1: resolve the Tenuo envelope from _meta or arguments._tenuo.
@@ -688,7 +701,31 @@ class MCPVerifier:
         signature_b64: Optional[str]
         approvals_b64: List[str]
 
-        approvals_b64 = list(tenuo_envelope.get("approvals") or [])
+        raw_approvals = tenuo_envelope.get("approvals")
+        if isinstance(raw_approvals, list) and len(raw_approvals) > MAX_APPROVALS_COUNT:
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name, clean_arguments={}, constraints={},
+                denial_reason=f"Too many approvals ({len(raw_approvals)}, limit {MAX_APPROVALS_COUNT})",
+                jsonrpc_error_code=-32602, error_type="payload_too_large",
+            ))
+        if raw_approvals is not None and (
+            not isinstance(raw_approvals, list) or any(not isinstance(item, str) for item in raw_approvals)
+        ):
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name, clean_arguments={}, constraints={},
+                denial_reason="Malformed Tenuo envelope", jsonrpc_error_code=-32602,
+                error_type="malformed_envelope",
+            ))
+        for field_name in ("warrant", "signature"):
+            field_value = tenuo_envelope.get(field_name)
+            if field_value is not None and not isinstance(field_value, str):
+                return _emit_and_return(MCPVerificationResult(
+                    allowed=False, tool=tool_name, clean_arguments={}, constraints={},
+                    denial_reason="Malformed Tenuo envelope", jsonrpc_error_code=-32602,
+                    error_type="malformed_envelope",
+                ))
+        # Retain the bounded wire list; do not copy before the count check.
+        approvals_b64 = raw_approvals if raw_approvals is not None else []
 
         if self._config is not None:
             try:
@@ -766,6 +803,7 @@ class MCPVerifier:
                     f"limit {MAX_WARRANT_B64_BYTES})"
                 ),
                 jsonrpc_error_code=-32602,
+                error_type="payload_too_large",
             ))
         if signature_b64 and len(signature_b64) > MAX_SIGNATURE_B64_BYTES:
             return _emit_and_return(MCPVerificationResult(
@@ -776,6 +814,7 @@ class MCPVerifier:
                     f"limit {MAX_SIGNATURE_B64_BYTES})"
                 ),
                 jsonrpc_error_code=-32602,
+                error_type="payload_too_large",
             ))
         if len(approvals_b64) > MAX_APPROVALS_COUNT:
             return _emit_and_return(MCPVerificationResult(
@@ -786,6 +825,7 @@ class MCPVerifier:
                     f"limit {MAX_APPROVALS_COUNT})"
                 ),
                 jsonrpc_error_code=-32602,
+                error_type="payload_too_large",
             ))
         for _ab64 in approvals_b64:
             if isinstance(_ab64, str) and len(_ab64) > MAX_APPROVAL_B64_BYTES:
@@ -797,6 +837,7 @@ class MCPVerifier:
                         f"({len(_ab64)} bytes, limit {MAX_APPROVAL_B64_BYTES})"
                     ),
                     jsonrpc_error_code=-32602,
+                    error_type="payload_too_large",
                 ))
 
         # ------------------------------------------------------------------
@@ -822,6 +863,7 @@ class MCPVerifier:
                 constraints=constraints,
                 denial_reason=f"Malformed warrant: {exc}",
                 jsonrpc_error_code=-32001,
+                error_type="malformed_envelope",
             ))
 
         warrant_id: Optional[str] = getattr(warrant, "id", None)
@@ -842,6 +884,7 @@ class MCPVerifier:
                     warrant_id=warrant_id,
                     denial_reason=f"Malformed signature: {exc}",
                     jsonrpc_error_code=-32001,
+                    error_type="invalid_pop",
                 ))
 
         approvals: List[Any] = []
@@ -859,6 +902,7 @@ class MCPVerifier:
                     warrant_id=warrant_id,
                     denial_reason=f"Malformed approval: {exc}",
                     jsonrpc_error_code=-32001,
+                    error_type="malformed_envelope",
                 ))
 
         # ------------------------------------------------------------------

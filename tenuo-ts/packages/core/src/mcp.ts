@@ -35,21 +35,21 @@ export function presentCall(
     assertKnownKeys(options, ATTACH_OPTION_KEYS, `${label} options`);
   }
   const native = nativeSession(session as Session);
-  const argsJson = argumentJson(args);
+  const snapshot = captureArguments(args);
   const local = context.authorize(
     native,
     name,
-    argsJson,
+    snapshot.json,
     options?.approvals,
     undefined,
     options?.requestId,
   );
   emitReceipt(options?.onReceipt, local.receipt, session, host);
-  decide(local, name, native, args);
+  decide(local, name, native, snapshot.executionArgs());
   const envelope = context.signMeta(
     native,
     name,
-    argsJson,
+    snapshot.json,
     Math.floor(Date.now() / 1000),
     options?.approvals ?? null,
   );
@@ -60,7 +60,7 @@ export function presentCall(
       ? { approvals: envelope.approvals }
       : {}),
   };
-  return { presented, wireArgs: JSON.parse(argsJson) as Record<string, unknown> };
+  return { presented, wireArgs: snapshot.executionArgs() };
 }
 
 /**
@@ -89,11 +89,11 @@ export async function verifyPresented(
   }
   // Capture once: replay admission and receipt callbacks may yield or mutate
   // the caller's object. Execution must use the exact snapshot verified here.
-  const argsJson = argumentJson(args);
+  const snapshot = captureArguments(args);
   const decision = context.authorizePresented(
     envelope.warrant,
     name,
-    argsJson,
+    snapshot.json,
     envelope.signature,
     envelope.approvals,
     options?.allow,
@@ -108,7 +108,7 @@ export async function verifyPresented(
   decide(decision, name);
   // Run the host parse of the JSON text the proof covers. The raw host
   // object can contain values that JSON drops.
-  return plainArgs(JSON.parse(argsJson) as Record<string, unknown>);
+  return snapshot.executionArgs();
 }
 
 export function createMcp(context: WasmContext, decide: Decide, host?: object): TenuoMcp {
@@ -161,12 +161,19 @@ export function createMcp(context: WasmContext, decide: Decide, host?: object): 
   return mcp;
 }
 
-function argumentJson(args: Readonly<Record<string, unknown>>): string {
+/** A private immutable input snapshot, not an authorization token. */
+function captureArguments(args: Readonly<Record<string, unknown>>): {
+  readonly json: string;
+  executionArgs(): Record<string, unknown>;
+} {
   const text = JSON.stringify(args);
   if (typeof text !== "string") {
     throw new TenuoConfigurationError("arguments must be JSON");
   }
-  return text;
+  return Object.freeze({
+    json: text,
+    executionArgs: () => plainArgs(JSON.parse(text)),
+  });
 }
 
 function presentedEnvelope(
@@ -182,9 +189,11 @@ function presentedEnvelope(
   if (typeof tenuo.signature !== "string" || tenuo.signature.length === 0) {
     return undefined;
   }
-  const approvals = Array.isArray(tenuo.approvals)
-    ? tenuo.approvals.filter((item): item is string => typeof item === "string")
-    : undefined;
+  if (tenuo.approvals != null &&
+      (!Array.isArray(tenuo.approvals) || tenuo.approvals.some((item) => typeof item !== "string"))) {
+    return undefined;
+  }
+  const approvals = tenuo.approvals ?? undefined;
   return {
     warrant: tenuo.warrant,
     signature: tenuo.signature,

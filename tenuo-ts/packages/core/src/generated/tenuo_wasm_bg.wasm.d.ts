@@ -26,6 +26,7 @@ export const sdkcontext_signMeta: (a: number, b: number, c: number, d: number, e
 export const sdkcontext_signPop: (a: number, b: number, c: number, d: number, e: any) => [number, number, number, number];
 export const sdkcontext_signRevocationList: (a: number, b: any) => [number, number, number, number];
 export const sdkcontext_verifyMeta: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number];
+export const sdkcontext_verifyMetaPop: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number];
 export const sdkcontext_withReceiptSigner: (a: number, b: number, c: number) => [number, number, number];
 export const sdksession_dedupKey: (a: number, b: number, c: number, d: any) => [number, number, number, number];
 export const sdksession_describe: (a: number) => [number, number, number];

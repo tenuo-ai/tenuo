@@ -395,7 +395,7 @@ class SdkContext {
         }
     }
     /**
-     * Check a `_meta.tenuo` proof against argument JSON text at `timestamp`.
+     * Compatibility alias for verifyMetaPop. NOT an authorization check.
      * @param {string} warrant
      * @param {string} signature
      * @param {string} tool
@@ -413,6 +413,30 @@ class SdkContext {
         const ptr3 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len3 = WASM_VECTOR_LEN;
         const ret = wasm.sdkcontext_verifyMeta(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, timestamp);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] !== 0;
+    }
+    /**
+     * Check ONLY the holder proof, not trust, expiry, constraints, approvals or replay.
+     * @param {string} warrant
+     * @param {string} signature
+     * @param {string} tool
+     * @param {string} args_json
+     * @param {number} timestamp
+     * @returns {boolean}
+     */
+    verifyMetaPop(warrant, signature, tool, args_json, timestamp) {
+        const ptr0 = passStringToWasm0(warrant, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_verifyMetaPop(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, timestamp);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }

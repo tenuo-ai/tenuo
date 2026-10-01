@@ -23,17 +23,28 @@ use crate::approval::SignedApproval;
 use crate::constraints::ConstraintValue;
 use crate::crypto::{Signature, SigningKey};
 use crate::error::Error;
-use crate::strict_json::{parse_json_strict, StrictJsonError};
+use crate::strict_json::{parse_json_bounded, JsonLimits, StrictJsonError};
 use crate::warrant::{Warrant, POP_TIMESTAMP_WINDOW_SECS};
 use crate::wire::{self, MAX_STACK_SIZE};
 
-const WARRANT_STRING_MAX: usize = 64 * 1024;
-const SIGNATURE_STRING_MAX: usize = 4 * 1024;
-const APPROVAL_STRING_MAX: usize = 8 * 1024;
-const MAX_APPROVALS: usize = 64;
-const MAX_JSON_DEPTH: usize = 8;
-const MAX_JSON_STRING: usize = 8 * 1024;
-const MAX_JSON_ITEMS: usize = 256;
+/// Maximum encoded warrant-chain bytes.
+pub const WARRANT_STRING_MAX: usize = 64 * 1024;
+/// Maximum encoded proof bytes.
+pub const SIGNATURE_STRING_MAX: usize = 4 * 1024;
+/// Maximum encoded bytes in one approval.
+pub const APPROVAL_STRING_MAX: usize = 8 * 1024;
+/// Maximum approval tokens per envelope.
+pub const MAX_APPROVALS: usize = 64;
+/// Maximum argument JSON bytes, checked before parsing.
+pub const MAX_ARGUMENT_BYTES: usize = 256 * 1024;
+const ARGUMENT_LIMITS: JsonLimits = JsonLimits {
+    bytes: MAX_ARGUMENT_BYTES,
+    depth: 9,
+    nodes: 4096,
+    string_bytes: 64 * 1024,
+    string: 8 * 1024,
+    items: 256,
+};
 
 /// `_meta.tenuo` as the three wire fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +87,8 @@ pub struct DecodedMeta {
 /// Why an envelope could not be signed or read.
 #[derive(Debug)]
 pub enum MetaError {
+    /// A required wire field is absent.
+    MissingField(&'static str),
     /// The chain had no warrant to sign.
     EmptyChain,
     /// Argument JSON was not an object this module can sign.
@@ -95,6 +108,7 @@ pub enum MetaError {
 impl fmt::Display for MetaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingField(name) => write!(f, "missing _meta.tenuo field: {name}"),
             Self::EmptyChain => write!(f, "warrant chain is empty"),
             Self::InvalidArguments(msg) => write!(f, "argument JSON: {msg}"),
             Self::InvalidEncoding => write!(f, "_meta.tenuo encoding is invalid"),
@@ -111,6 +125,20 @@ impl std::error::Error for MetaError {
         match self {
             Self::Proof(err) => Some(err),
             _ => None,
+        }
+    }
+}
+
+impl MetaError {
+    /// Stable transport category. Does not include argument values.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidArguments(_) => "invalid_arguments",
+            Self::PayloadTooLarge | Self::TooManyApprovals => "payload_too_large",
+            Self::InvalidSignature | Self::Proof(_) => "invalid_pop",
+            Self::MissingField(_) | Self::EmptyChain | Self::InvalidEncoding => {
+                "malformed_envelope"
+            }
         }
     }
 }
@@ -178,25 +206,28 @@ pub fn decode_meta(value: &Value) -> std::result::Result<DecodedMeta, MetaError>
     let object = value.as_object().ok_or(MetaError::InvalidEncoding)?;
     let warrant = object
         .get("warrant")
-        .and_then(Value::as_str)
+        .ok_or(MetaError::MissingField("warrant"))?
+        .as_str()
         .ok_or(MetaError::InvalidEncoding)?;
     let signature = object
         .get("signature")
-        .and_then(Value::as_str)
+        .ok_or(MetaError::MissingField("signature"))?
+        .as_str()
         .ok_or(MetaError::InvalidEncoding)?;
     let approvals = match object.get("approvals") {
         None | Some(Value::Null) => Vec::new(),
-        Some(Value::Array(items)) => items
-            .iter()
-            .map(|item| {
-                item.as_str()
-                    .map(str::to_string)
-                    .ok_or(MetaError::InvalidEncoding)
-            })
-            .collect::<std::result::Result<Vec<_>, _>>()?,
+        Some(Value::Array(items)) => {
+            if items.len() > MAX_APPROVALS {
+                return Err(MetaError::TooManyApprovals);
+            }
+            items
+                .iter()
+                .map(|item| item.as_str().ok_or(MetaError::InvalidEncoding))
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        }
         Some(_) => return Err(MetaError::InvalidEncoding),
     };
-    decode_meta_parts(warrant, signature, &approvals)
+    decode_parts(warrant, signature, &approvals)
 }
 
 /// Read the three wire fields. `approvals` may be empty.
@@ -205,14 +236,31 @@ pub fn decode_meta_parts(
     signature: &str,
     approvals: &[String],
 ) -> std::result::Result<DecodedMeta, MetaError> {
-    let warrants = decode_warrant_chain(warrant)?;
-    let signature = decode_signature(signature)?;
+    decode_parts(warrant, signature, approvals)
+}
+
+fn decode_parts<T: AsRef<str>>(
+    warrant: &str,
+    signature: &str,
+    approvals: &[T],
+) -> std::result::Result<DecodedMeta, MetaError> {
+    // Validate every encoded bound before base64/CBOR work on any field.
     if approvals.len() > MAX_APPROVALS {
         return Err(MetaError::TooManyApprovals);
     }
+    if warrant.len() > WARRANT_STRING_MAX
+        || signature.len() > SIGNATURE_STRING_MAX
+        || approvals
+            .iter()
+            .any(|token| token.as_ref().len() > APPROVAL_STRING_MAX)
+    {
+        return Err(MetaError::PayloadTooLarge);
+    }
+    let warrants = decode_warrant_chain(warrant)?;
+    let signature = decode_signature(signature)?;
     let mut decoded_approvals = Vec::with_capacity(approvals.len());
     for token in approvals {
-        decoded_approvals.push(decode_approval(token)?);
+        decoded_approvals.push(decode_approval(token.as_ref())?);
     }
     Ok(DecodedMeta {
         warrants,
@@ -225,7 +273,9 @@ pub fn decode_meta_parts(
 ///
 /// Returns `Ok(false)` when the proof does not match. Malformed envelopes
 /// are errors.
-pub fn verify_meta(
+/// This does NOT check trusted roots, chain validity, expiration, constraints,
+/// approvals or replay. Use an Authorizer or SDK Guard before execution.
+pub fn verify_meta_pop(
     warrant: &str,
     signature: &str,
     tool: &str,
@@ -249,11 +299,24 @@ pub fn verify_meta(
     }
 }
 
+/// Compatibility alias for [`verify_meta_pop`]. Checks only holder possession,
+/// NOT trusted roots, chain validity, expiry, constraints, approvals, or replay.
+pub fn verify_meta(
+    warrant: &str,
+    signature: &str,
+    tool: &str,
+    args_json: &str,
+    timestamp: i64,
+) -> std::result::Result<bool, MetaError> {
+    verify_meta_pop(warrant, signature, tool, args_json, timestamp)
+}
+
 /// Argument map this module signs. JSON null is [`ConstraintValue::Null`].
 pub fn args_from_json(
     text: &str,
 ) -> std::result::Result<HashMap<String, ConstraintValue>, MetaError> {
-    let value = parse_json_strict(text).map_err(|err| match err {
+    let value = parse_json_bounded(text, ARGUMENT_LIMITS).map_err(|err| match err {
+        StrictJsonError::LimitExceeded => MetaError::PayloadTooLarge,
         StrictJsonError::DuplicateKey => {
             MetaError::InvalidArguments("duplicate JSON key".to_string())
         }
@@ -262,17 +325,9 @@ pub fn args_from_json(
     let object = value
         .as_object()
         .ok_or_else(|| MetaError::InvalidArguments("arguments must be a JSON object".into()))?;
-    if object.len() > MAX_JSON_ITEMS {
-        return Err(MetaError::InvalidArguments("too many arguments".into()));
-    }
     let mut args = HashMap::with_capacity(object.len());
     for (key, raw) in object {
-        if key.len() > MAX_JSON_STRING {
-            return Err(MetaError::InvalidArguments(
-                "argument name is too long".into(),
-            ));
-        }
-        args.insert(key.clone(), json_to_constraint(raw, 0)?);
+        args.insert(key.clone(), json_to_constraint(raw)?);
     }
     Ok(args)
 }
@@ -294,11 +349,15 @@ pub fn encode_approval(approval: &SignedApproval) -> std::result::Result<String,
     if buf.len() > MAX_STACK_SIZE {
         return Err(MetaError::PayloadTooLarge);
     }
-    Ok(encode_token(&buf))
+    let token = encode_token(&buf);
+    if token.len() > APPROVAL_STRING_MAX {
+        return Err(MetaError::PayloadTooLarge);
+    }
+    Ok(token)
 }
 
-/// Decode a warrant chain from the canonical alphabet, the older standard
-/// alphabet, PEM, or a single warrant.
+/// Decode a warrant chain from standard or URL-safe base64, PEM, or a
+/// single warrant.
 pub fn decode_warrant_chain(input: &str) -> std::result::Result<Vec<Warrant>, MetaError> {
     if input.len() > WARRANT_STRING_MAX {
         return Err(MetaError::PayloadTooLarge);
@@ -391,47 +450,24 @@ fn decode_token(input: &str) -> std::result::Result<Vec<u8>, MetaError> {
         .map_err(|_| MetaError::InvalidEncoding)
 }
 
-fn json_to_constraint(
-    value: &Value,
-    depth: usize,
-) -> std::result::Result<ConstraintValue, MetaError> {
-    if depth > MAX_JSON_DEPTH {
-        return Err(MetaError::InvalidArguments(
-            "argument nesting is too deep".into(),
-        ));
-    }
+// Structural bounds were already enforced during the bounded parse.
+fn json_to_constraint(value: &Value) -> std::result::Result<ConstraintValue, MetaError> {
     match value {
         Value::Null => Ok(ConstraintValue::Null),
         Value::Bool(b) => Ok(ConstraintValue::Boolean(*b)),
         Value::Number(n) => number_value(n),
-        Value::String(s) => {
-            if s.len() > MAX_JSON_STRING {
-                return Err(MetaError::InvalidArguments("string is too long".into()));
-            }
-            Ok(ConstraintValue::String(s.clone()))
-        }
+        Value::String(s) => Ok(ConstraintValue::String(s.clone())),
         Value::Array(items) => {
-            if items.len() > MAX_JSON_ITEMS {
-                return Err(MetaError::InvalidArguments("list is too long".into()));
-            }
             let converted = items
                 .iter()
-                .map(|item| json_to_constraint(item, depth + 1))
+                .map(json_to_constraint)
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(ConstraintValue::List(converted))
         }
         Value::Object(map) => {
-            if map.len() > MAX_JSON_ITEMS {
-                return Err(MetaError::InvalidArguments(
-                    "object has too many keys".into(),
-                ));
-            }
             let mut object = BTreeMap::new();
             for (key, raw) in map {
-                if key.len() > MAX_JSON_STRING {
-                    return Err(MetaError::InvalidArguments("object key is too long".into()));
-                }
-                object.insert(key.clone(), json_to_constraint(raw, depth + 1)?);
+                object.insert(key.clone(), json_to_constraint(raw)?);
             }
             Ok(ConstraintValue::Object(object))
         }
@@ -444,6 +480,111 @@ mod tests {
     use crate::constraints::ConstraintSet;
     use serde_json::Value;
     use std::time::Duration;
+
+    #[test]
+    fn shared_conformance_suite() {
+        let suite: Value = serde_json::from_str(include_str!(
+            "../../tests/vectors/tenuo-meta-conformance.json"
+        ))
+        .unwrap();
+        let vector = &suite["delegated"];
+        let decoded = decode_meta(vector).unwrap();
+        assert_eq!(decoded.warrants.len(), 2);
+        assert_eq!(decoded.approvals.len(), 1);
+        decoded.approvals[0].verify().unwrap();
+        let holder = SigningKey::from_bytes(&[0x33; 32]);
+        let tool = vector["tool"].as_str().unwrap();
+        let timestamp = vector["timestamp"].as_i64().unwrap();
+        let signed = sign_meta(
+            &decoded.warrants,
+            &holder,
+            tool,
+            vector["args_json"].as_str().unwrap(),
+            timestamp,
+            &decoded.approvals,
+        )
+        .unwrap();
+        assert_eq!(signed.warrant, vector["warrant"].as_str().unwrap());
+        assert_eq!(signed.signature, vector["signature"].as_str().unwrap());
+        assert_eq!(
+            signed.approvals[0],
+            vector["approvals"][0].as_str().unwrap()
+        );
+        for case in suite["valid"].as_array().unwrap() {
+            let signed = sign_meta(
+                &decoded.warrants,
+                &holder,
+                tool,
+                case["args"].as_str().unwrap(),
+                timestamp,
+                &[],
+            )
+            .unwrap();
+            assert!(verify_meta_pop(
+                &signed.warrant,
+                &signed.signature,
+                tool,
+                case["equivalent"].as_str().unwrap(),
+                timestamp
+            )
+            .unwrap());
+            assert!(!verify_meta_pop(
+                &signed.warrant,
+                &signed.signature,
+                tool,
+                case["tampered"].as_str().unwrap(),
+                timestamp
+            )
+            .unwrap());
+        }
+        for input in suite["invalid_arguments"].as_array().unwrap() {
+            assert_eq!(
+                args_from_json(input.as_str().unwrap()).unwrap_err().code(),
+                "invalid_arguments"
+            );
+        }
+        for case in suite["invalid_envelopes"].as_array().unwrap() {
+            let mut envelope = vector.clone();
+            for (key, value) in case.as_object().unwrap() {
+                if key != "error" {
+                    envelope[key] = value.clone();
+                }
+            }
+            assert_eq!(
+                decode_meta(&envelope).unwrap_err().code(),
+                case["error"].as_str().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_precede_parsing_and_decoding() {
+        // Invalid trailing bytes must never be parsed after the byte cap.
+        assert_eq!(
+            args_from_json(&"!".repeat(MAX_ARGUMENT_BYTES + 1))
+                .unwrap_err()
+                .code(),
+            "payload_too_large"
+        );
+        let nodes = serde_json::json!({"rows": vec![vec![0; 256]; 17]}).to_string();
+        let strings = serde_json::json!({"rows": vec!["x".repeat(8192); 9]}).to_string();
+        let deep = format!(r#"{{"x":{}0{}}}"#, "[".repeat(10), "]".repeat(10));
+        for text in [nodes, strings, deep] {
+            assert_eq!(
+                args_from_json(&text).unwrap_err().code(),
+                "payload_too_large"
+            );
+        }
+        // Size failures win over invalid base64: no decoding has happened yet.
+        assert!(matches!(
+            decode_meta_parts("!", "!", &vec![String::new(); MAX_APPROVALS + 1]),
+            Err(MetaError::TooManyApprovals)
+        ));
+        assert!(matches!(
+            decode_meta_parts("!", "!", &["!".repeat(APPROVAL_STRING_MAX + 1)]),
+            Err(MetaError::PayloadTooLarge)
+        ));
+    }
 
     fn sample_warrant() -> (SigningKey, Warrant) {
         let issuer = SigningKey::from_bytes(&[0x11; 32]);

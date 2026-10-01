@@ -1,4 +1,4 @@
-use super::{decode_owned, DecodeLimits, TransportError};
+use super::TransportError;
 use crate::approval::SignedApproval;
 use crate::crypto::Signature;
 use crate::sdk::authority::OwnedReceivedAuthorization;
@@ -17,12 +17,17 @@ pub fn encode_meta(
 ) -> Result<Value, TransportError> {
     crate::meta_envelope::encode_meta(chain, &signature.to_bytes(), approvals)
         .map(|meta| meta.to_json())
-        .map_err(|err| match err {
-            crate::meta_envelope::MetaError::TooManyApprovals => TransportError::TooManyApprovals,
-            crate::meta_envelope::MetaError::InvalidSignature => TransportError::InvalidSignature,
-            crate::meta_envelope::MetaError::PayloadTooLarge => TransportError::PayloadTooLarge,
-            _ => TransportError::InvalidEncoding,
-        })
+        .map_err(meta_error)
+}
+
+fn meta_error(err: crate::meta_envelope::MetaError) -> TransportError {
+    match err {
+        crate::meta_envelope::MetaError::MissingField(name) => TransportError::MissingField(name),
+        crate::meta_envelope::MetaError::TooManyApprovals => TransportError::TooManyApprovals,
+        crate::meta_envelope::MetaError::InvalidSignature => TransportError::InvalidSignature,
+        crate::meta_envelope::MetaError::PayloadTooLarge => TransportError::PayloadTooLarge,
+        _ => TransportError::InvalidEncoding,
+    }
 }
 
 /// Build `_meta.tenuo` for a call: the holder signs a proof of possession
@@ -57,37 +62,9 @@ pub fn encode_meta_from_authorized(call: &AuthorizedCall<'_>) -> Result<Value, T
 ///
 /// Size bounds are enforced before any decoding work.
 pub fn decode_meta(meta: &Value) -> Result<TenuoMeta, TransportError> {
-    let object = meta.as_object().ok_or(TransportError::InvalidEncoding)?;
-    let warrant = object
-        .get("warrant")
-        .and_then(Value::as_str)
-        .ok_or(TransportError::MissingField("warrant"))?;
-    let signature = object
-        .get("signature")
-        .and_then(Value::as_str)
-        .ok_or(TransportError::MissingField("signature"))?;
-    let approvals = match object.get("approvals") {
-        None => None,
-        Some(Value::Array(items)) => {
-            if items.len() > super::MAX_APPROVALS {
-                return Err(TransportError::TooManyApprovals);
-            }
-            for item in items {
-                let s = item.as_str().ok_or(TransportError::InvalidEncoding)?;
-                if s.len() > super::MCP_APPROVAL_STRING_MAX {
-                    return Err(TransportError::PayloadTooLarge);
-                }
-            }
-            Some(serde_json::to_string(items).map_err(|_| TransportError::InvalidEncoding)?)
-        }
-        Some(_) => return Err(TransportError::InvalidEncoding),
-    };
-    decode_owned(
-        warrant,
-        signature,
-        approvals.as_deref(),
-        DecodeLimits::mcp(),
-    )
+    let decoded = crate::meta_envelope::decode_meta(meta).map_err(meta_error)?;
+    OwnedReceivedAuthorization::new(decoded.warrants, decoded.signature, decoded.approvals)
+        .map_err(Into::into)
 }
 
 /// Remove `tenuo` from a `_meta` object.
@@ -103,6 +80,39 @@ pub fn strip_tenuo(meta: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoder_matches_core_conformance() {
+        let suite: Value = serde_json::from_str(include_str!(
+            "../../../../tests/vectors/tenuo-meta-conformance.json"
+        ))
+        .unwrap();
+        let mut valid = suite["delegated"].clone();
+        for approvals in [
+            Value::Null,
+            serde_json::json!([]),
+            valid["approvals"].clone(),
+        ] {
+            valid["approvals"] = approvals;
+            assert!(decode_meta(&valid).is_ok());
+            assert!(crate::meta_envelope::decode_meta(&valid).is_ok());
+        }
+        for case in suite["invalid_envelopes"].as_array().unwrap() {
+            let mut invalid = suite["delegated"].clone();
+            for (key, value) in case.as_object().unwrap() {
+                if key != "error" {
+                    invalid[key] = value.clone();
+                }
+            }
+            assert!(decode_meta(&invalid).is_err());
+            assert!(crate::meta_envelope::decode_meta(&invalid).is_err());
+        }
+        valid.as_object_mut().unwrap().remove("signature");
+        assert_eq!(
+            decode_meta(&valid).err(),
+            Some(TransportError::MissingField("signature"))
+        );
+    }
 
     #[test]
     fn signed_meta_verifies_at_a_guard() {

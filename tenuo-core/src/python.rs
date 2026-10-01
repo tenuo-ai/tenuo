@@ -5195,15 +5195,16 @@ fn py_decode_meta(
 /// Check a `_meta.tenuo` proof against argument JSON text at `timestamp`.
 ///
 /// Returns false when the proof does not match. A malformed envelope raises.
-#[pyfunction(name = "verify_meta")]
-fn py_verify_meta(
+/// This is NOT authorization: it does not check trust, expiry or constraints.
+#[pyfunction(name = "verify_meta_pop")]
+fn py_verify_meta_pop(
     warrant: &str,
     signature: &str,
     tool: &str,
     args_json: &str,
     timestamp: i64,
 ) -> PyResult<bool> {
-    crate::meta_envelope::verify_meta(warrant, signature, tool, args_json, timestamp)
+    crate::meta_envelope::verify_meta_pop(warrant, signature, tool, args_json, timestamp)
         .map_err(|err| to_py_err(err.into()))
 }
 
@@ -5239,8 +5240,11 @@ fn py_decode_meta_approval(token: &str) -> PyResult<PySignedApproval> {
 /// JSON null becomes ``None``. This is the map ``sign_meta`` signs.
 #[pyfunction(name = "args_from_json")]
 fn py_args_from_json(py: Python<'_>, args_json: &str) -> PyResult<Py<PyAny>> {
-    let args =
-        crate::meta_envelope::args_from_json(args_json).map_err(|err| to_py_err(err.into()))?;
+    let args = crate::meta_envelope::args_from_json(args_json).map_err(|err| {
+        let error = PyValueError::new_err(err.code());
+        let _ = error.value(py).setattr("code", err.code());
+        error
+    })?;
     let dict = PyDict::new(py);
     for (key, value) in args {
         dict.set_item(key, constraint_value_to_py(py, &value)?)?;
@@ -7025,7 +7029,9 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_parse_strict_json, m)?)?;
     m.add_function(wrap_pyfunction!(py_sign_meta, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_meta, m)?)?;
-    m.add_function(wrap_pyfunction!(py_verify_meta, m)?)?;
+    m.add_function(wrap_pyfunction!(py_verify_meta_pop, m)?)?;
+    // Backward-compatible proof-only alias; never an authorization verdict.
+    m.add("verify_meta", m.getattr("verify_meta_pop")?)?;
     m.add_function(wrap_pyfunction!(py_args_from_json, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_meta_chain, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_meta_signature, m)?)?;

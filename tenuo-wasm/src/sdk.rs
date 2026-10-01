@@ -667,9 +667,9 @@ impl SdkContext {
         }))
     }
 
-    /// Check a `_meta.tenuo` proof against argument JSON text at `timestamp`.
-    #[wasm_bindgen(js_name = verifyMeta)]
-    pub fn verify_meta(
+    /// Check ONLY the holder proof, not trust, expiry, constraints, approvals or replay.
+    #[wasm_bindgen(js_name = verifyMetaPop)]
+    pub fn verify_meta_pop(
         &self,
         warrant: &str,
         signature: &str,
@@ -680,8 +680,21 @@ impl SdkContext {
         init_panic_hook();
         let _ = self;
         let timestamp = unix_seconds(timestamp)?;
-        tenuo::meta_envelope::verify_meta(warrant, signature, tool, args_json, timestamp)
+        tenuo::meta_envelope::verify_meta_pop(warrant, signature, tool, args_json, timestamp)
             .map_err(|err| JsError::new(&err.to_string()))
+    }
+
+    /// Compatibility alias for verifyMetaPop. NOT an authorization check.
+    #[wasm_bindgen(js_name = verifyMeta)]
+    pub fn verify_meta(
+        &self,
+        warrant: &str,
+        signature: &str,
+        tool: &str,
+        args_json: &str,
+        timestamp: f64,
+    ) -> Result<bool, JsError> {
+        self.verify_meta_pop(warrant, signature, tool, args_json, timestamp)
     }
 
     /// Authorize a warrant + PoP presented on the wire. No holder secret.
@@ -1663,6 +1676,9 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
         return Err("approvals must be an array of SignedApproval envelopes".into());
     }
     let arr = js_sys::Array::from(value);
+    if arr.length() as usize > tenuo::meta_envelope::MAX_APPROVALS {
+        return Err("too many approvals".into());
+    }
     let mut out = Vec::with_capacity(arr.length() as usize);
     for i in 0..arr.length() {
         out.push(parse_one_approval(&arr.get(i))?);
@@ -1672,10 +1688,16 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
 
 fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
     if let Some(text) = value.as_string() {
+        if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+            return Err("approval exceeds size limit".into());
+        }
         return signed_approval_from_text(&text);
     }
     if js_sys::Uint8Array::instanceof(value) {
         let bytes = js_sys::Uint8Array::new(value);
+        if bytes.length() as usize > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+            return Err("approval exceeds size limit".into());
+        }
         let mut buf = vec![0u8; bytes.length() as usize];
         bytes.copy_to(&mut buf);
         return signed_approval_from_bytes(&buf);
@@ -1684,19 +1706,19 @@ fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
 }
 
 pub(crate) fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
+    if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+        return Err("approval exceeds size limit".into());
+    }
+    // The MCP alphabets, whitespace policy, size limits and CBOR decoding
+    // live in the core. Hex remains an SDK import convenience only.
+    if let Ok(approval) = tenuo::meta_envelope::decode_approval(text) {
+        return Ok(approval);
+    }
     let trimmed = text.trim();
     if let Ok(bytes) = parse_hex(trimmed) {
         if let Ok(approval) = signed_approval_from_bytes(&bytes) {
             return Ok(approval);
         }
-    }
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(trimmed.as_bytes()) {
-        if let Ok(approval) = signed_approval_from_bytes(&bytes) {
-            return Ok(approval);
-        }
-    }
-    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(trimmed.as_bytes()) {
-        return signed_approval_from_bytes(&bytes);
     }
     Err("approval is not valid hex or base64 SignedApproval CBOR".into())
 }

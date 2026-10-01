@@ -125,9 +125,13 @@ export class SdkContext {
      */
     signRevocationListVersioned(ids: any, version?: number | null): string;
     /**
-     * Check a `_meta.tenuo` proof against argument JSON text at `timestamp`.
+     * Compatibility alias for verifyMetaPop. NOT an authorization check.
      */
     verifyMeta(warrant: string, signature: string, tool: string, args_json: string, timestamp: number): boolean;
+    /**
+     * Check ONLY the holder proof, not trust, expiry, constraints, approvals or replay.
+     */
+    verifyMetaPop(warrant: string, signature: string, tool: string, args_json: string, timestamp: number): boolean;
     /**
      * Sign verifier receipts with this 32-byte holder secret instead of an
      * ephemeral key. Used by the TypeScript `Runtime`.

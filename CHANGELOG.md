@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **MCP boundary hardening:** one Rust MCP decoder, bounded argument parsing
+  (bytes, depth, nodes and decoded strings), captured argument snapshots, and
+  structured/audited Python parsing denials. `verify_meta_pop` / `verifyMetaPop`
+  name the proof-only check explicitly; old names remain aliases. Shared
+  conformance cases now include delegated chains, approvals and malformed
+  input. See the MCP guide for numeric and compatibility rules.
+
 - **`_meta.tenuo` is one envelope.** New clients write standard base64, so a
   server from the previous release can read the warrant stack and the
   signature. `decode_meta` still accepts unpadded URL-safe text, including

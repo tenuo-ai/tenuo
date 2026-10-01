@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Dict
 
 from tenuo_core import args_from_json
@@ -21,14 +22,20 @@ from tenuo_core import args_from_json
 
 def _json_ready(value: Any) -> Any:
     """Match ``JSON.stringify`` for numbers and keep ``None`` as null."""
-    if isinstance(value, bool) or value is None or isinstance(value, (str, int)):
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return value
+    if isinstance(value, int):
+        if not -(2**63) <= value < 2**63:
+            raise ValueError("integer arguments must fit in i64")
         return value
     if isinstance(value, float):
         if value.is_integer() and abs(value) <= 2**53:
             return int(value)
         return value
     if isinstance(value, Mapping):
-        return {str(key): _json_ready(item) for key, item in value.items()}
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("argument keys must be strings")
+        return {key: _json_ready(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_ready(item) for item in value]
     return value
@@ -57,6 +64,22 @@ def signed_arguments(args: Mapping[str, Any]) -> Dict[str, Any]:
     second pass that drops ``None``.
     """
     return args_from_json(argument_json(args))
+
+
+@dataclass(frozen=True)
+class _ArgumentSnapshot:
+    """One captured input; security and execution views never re-read the caller."""
+
+    json: str
+    pop_args: Dict[str, Any]
+    execution_args: Dict[str, Any]
+
+
+def _capture_arguments(args: Mapping[str, Any]) -> _ArgumentSnapshot:
+    text = argument_json(args)
+    # Validate in the core before creating the host's execution copy.
+    pop_args = args_from_json(text)
+    return _ArgumentSnapshot(text, pop_args, json.loads(text))
 
 
 __all__ = ["argument_json", "signed_arguments"]
