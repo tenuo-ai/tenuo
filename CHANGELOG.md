@@ -14,19 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the argument JSON text, and JSON null stays in that map. Python and
   TypeScript translate a host value into that text and call the core; they do
   not pick a base64 alphabet or omit null from the proof. Warrant matching
-  still ignores a null field. The canonical warrant stack and
-  signature are unpadded URL-safe base64. `decode_meta` still accepts an
-  envelope that was issued with the older standard alphabet. The shared vector
-  is `tests/vectors/tenuo-meta.json`.
+  still ignores a null field. The canonical warrant stack, signature, and
+  approval tokens are standard base64, which a previous server already
+  decodes. `decode_meta` still accepts an envelope already issued as unpadded
+  URL-safe base64. An integral number is the same proof whether the text says
+  `1` or `1.0`. A signature that was made after removing null still verifies
+  when that null is on the wire; a signature that covers the null does not
+  match the map with the null removed. The shared vector is
+  `tests/vectors/tenuo-meta.json`.
 
 ### Changed
 
-- **`_meta.tenuo` is one envelope.** New clients write unpadded URL-safe base64.
-  A server from the previous release decodes the warrant stack and signature
-  with the standard alphabet only, so it rejects that envelope. `decode_meta`
-  still accepts an envelope already issued with the standard alphabet, including
-  line-wrapped text. The proof covers JSON null. A client that removed null
-  before signing, and still sent that null, does not verify.
+- **`_meta.tenuo` is one envelope.** New clients write standard base64, so a
+  server from the previous release can read the warrant stack and the
+  signature. `decode_meta` still accepts unpadded URL-safe text, including
+  line-wrapped text. The proof covers JSON null. A previous client that
+  removed null before signing still verifies when that null is on the wire.
 
 - **Holder signing, approval hashes, and receipt chains in the Rust SDK**
   (#751):

@@ -9,10 +9,10 @@
 //! stays a null. The tool may still execute the host's own parse of the same
 //! text.
 //!
-//! The canonical alphabet is unpadded URL-safe base64. [`decode_meta`] still
-//! accepts the older standard-base64 envelopes so a message already issued
-//! can be checked. That fallback is not a second representation, and the
-//! shared vector file does not use it.
+//! The canonical alphabet is standard base64, which a previous server already
+//! decodes. [`decode_meta`] still accepts unpadded URL-safe text so an
+//! envelope already issued in that alphabet can be checked. That fallback is
+//! not a second representation, and the shared vector file does not use it.
 
 use base64::Engine;
 use serde_json::{Map, Value};
@@ -38,11 +38,11 @@ const MAX_JSON_ITEMS: usize = 256;
 /// `_meta.tenuo` as the three wire fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenuoMeta {
-    /// Unpadded URL-safe base64 of the CBOR warrant stack.
+    /// Standard base64 of the CBOR warrant stack.
     pub warrant: String,
-    /// Unpadded URL-safe base64 of the 64-byte proof.
+    /// Standard base64 of the 64-byte proof.
     pub signature: String,
-    /// Unpadded URL-safe base64 of each approval. Empty omits the field.
+    /// Standard base64 of each approval. Empty omits the field.
     pub approvals: Vec<String>,
 }
 
@@ -172,8 +172,8 @@ pub fn encode_meta(
     })
 }
 
-/// Read `_meta.tenuo`. Accepts the canonical alphabet and the older standard
-/// alphabet. A PEM chain in `warrant` is accepted as well.
+/// Read `_meta.tenuo`. Accepts standard base64 and unpadded URL-safe base64.
+/// A PEM chain in `warrant` is accepted as well.
 pub fn decode_meta(value: &Value) -> std::result::Result<DecodedMeta, MetaError> {
     let object = value.as_object().ok_or(MetaError::InvalidEncoding)?;
     let warrant = object
@@ -277,7 +277,7 @@ pub fn args_from_json(
     Ok(args)
 }
 
-/// Unpadded URL-safe base64 of a warrant stack.
+/// Standard base64 of a warrant stack.
 pub fn encode_warrant_chain(warrants: &[Warrant]) -> std::result::Result<String, MetaError> {
     if warrants.is_empty() {
         return Err(MetaError::EmptyChain);
@@ -287,7 +287,7 @@ pub fn encode_warrant_chain(warrants: &[Warrant]) -> std::result::Result<String,
     Ok(encode_token(&bytes))
 }
 
-/// Unpadded URL-safe base64 of one approval.
+/// Standard base64 of one approval.
 pub fn encode_approval(approval: &SignedApproval) -> std::result::Result<String, MetaError> {
     let mut buf = Vec::new();
     ciborium::into_writer(approval, &mut buf).map_err(|_| MetaError::InvalidEncoding)?;
@@ -349,8 +349,31 @@ pub fn decode_approval(input: &str) -> std::result::Result<SignedApproval, MetaE
     ciborium::from_reader(bytes.as_slice()).map_err(|_| MetaError::InvalidEncoding)
 }
 
+fn number_value(n: &serde_json::Number) -> std::result::Result<ConstraintValue, MetaError> {
+    if let Some(i) = n.as_i64() {
+        return Ok(ConstraintValue::Integer(i));
+    }
+    if n.as_u64().is_some() {
+        return Err(MetaError::InvalidArguments(
+            "integer does not fit in i64".into(),
+        ));
+    }
+    let Some(f) = n.as_f64() else {
+        return Err(MetaError::InvalidArguments("unsupported number".into()));
+    };
+    // `1.0` and `1` are the same proof. Python's default dump and
+    // `JSON.stringify` spell an integral value differently.
+    if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+        return Ok(ConstraintValue::Integer(f as i64));
+    }
+    if !f.is_finite() {
+        return Err(MetaError::InvalidArguments("non-finite number".into()));
+    }
+    Ok(ConstraintValue::Float(f))
+}
+
 fn encode_token(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn decode_token(input: &str) -> std::result::Result<Vec<u8>, MetaError> {
@@ -378,19 +401,7 @@ fn json_to_constraint(
     match value {
         Value::Null => Ok(ConstraintValue::Null),
         Value::Bool(b) => Ok(ConstraintValue::Boolean(*b)),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(ConstraintValue::Integer(i))
-            } else if n.as_u64().is_some() {
-                Err(MetaError::InvalidArguments(
-                    "integer does not fit in i64".into(),
-                ))
-            } else if let Some(f) = n.as_f64() {
-                Ok(ConstraintValue::Float(f))
-            } else {
-                Err(MetaError::InvalidArguments("unsupported number".into()))
-            }
-        }
+        Value::Number(n) => number_value(n),
         Value::String(s) => {
             if s.len() > MAX_JSON_STRING {
                 return Err(MetaError::InvalidArguments("string is too long".into()));
@@ -452,7 +463,17 @@ mod tests {
     }
 
     #[test]
-    fn older_standard_alphabet_still_decodes() {
+    fn integral_float_matches_integer() {
+        let one = args_from_json(r#"{"n":1}"#).unwrap();
+        let one_point = args_from_json(r#"{"n":1.0}"#).unwrap();
+        assert_eq!(one, one_point);
+        assert_eq!(one.get("n"), Some(&ConstraintValue::Integer(1)));
+        let fraction = args_from_json(r#"{"n":1.5}"#).unwrap();
+        assert_eq!(fraction.get("n"), Some(&ConstraintValue::Float(1.5)));
+    }
+
+    #[test]
+    fn older_url_safe_alphabet_still_decodes() {
         let (holder, warrant) = sample_warrant();
         let args_json = r#"{"path":"/data"}"#;
         let meta = sign_meta(
@@ -465,10 +486,11 @@ mod tests {
         )
         .unwrap();
         let signature = decode_signature(&meta.signature).unwrap();
-        let standard = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+        let url_safe =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature.to_bytes());
         assert!(verify_meta(
             &meta.warrant,
-            &standard,
+            &url_safe,
             "read_file",
             args_json,
             1_700_000_000
@@ -479,6 +501,47 @@ mod tests {
             &meta.signature,
             "read_file",
             r#"{"path":"/etc/passwd"}"#,
+            1_700_000_000
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn older_client_null_still_verifies_and_a_new_signature_covers_null() {
+        let (holder, warrant) = sample_warrant();
+        let with_null = r#"{"note":null,"path":"/data"}"#;
+        let stripped = r#"{"path":"/data"}"#;
+        let old = sign_meta(
+            &[warrant.clone()],
+            &holder,
+            "read_file",
+            stripped,
+            1_700_000_000,
+            &[],
+        )
+        .unwrap();
+        assert!(verify_meta(
+            &old.warrant,
+            &old.signature,
+            "read_file",
+            with_null,
+            1_700_000_000
+        )
+        .unwrap());
+        let current = sign_meta(
+            &[warrant],
+            &holder,
+            "read_file",
+            with_null,
+            1_700_000_000,
+            &[],
+        )
+        .unwrap();
+        assert!(!verify_meta(
+            &current.warrant,
+            &current.signature,
+            "read_file",
+            stripped,
             1_700_000_000
         )
         .unwrap());
@@ -523,6 +586,13 @@ mod tests {
         let signed = sign_meta(&chain, &holder, tool, args_json, timestamp, &[]).unwrap();
         assert_eq!(signed.warrant, warrant);
         assert_eq!(signed.signature, signature);
+        let float_args = vector["float_args_json"].as_str().unwrap();
+        let float_signature = vector["float_signature"].as_str().unwrap();
+        let float_signed = sign_meta(&chain, &holder, tool, float_args, timestamp, &[]).unwrap();
+        assert_eq!(float_signed.signature, float_signature);
+        assert!(verify_meta(warrant, float_signature, tool, float_args, timestamp).unwrap());
+        let spelled = float_args.replace("1.5", "1.50");
+        assert!(verify_meta(warrant, float_signature, tool, &spelled, timestamp).unwrap());
         assert!(verify_meta(warrant, signature, tool, args_json, timestamp).unwrap());
         assert!(!verify_meta(warrant, signature, tool, rejected, timestamp).unwrap());
         assert_eq!(
@@ -543,6 +613,7 @@ mod tests {
             .build(&issuer)
             .unwrap();
         let args_json = r#"{"limit":1,"note":null,"path":"/data/ok"}"#;
+        let float_args_json = r#"{"limit":1.5,"note":null,"path":"/data/ok"}"#;
         let meta = sign_meta(
             std::slice::from_ref(&warrant),
             &holder,
@@ -552,14 +623,25 @@ mod tests {
             &[],
         )
         .unwrap();
+        let float_meta = sign_meta(
+            std::slice::from_ref(&warrant),
+            &holder,
+            "read_file",
+            float_args_json,
+            1_700_000_000,
+            &[],
+        )
+        .unwrap();
         let vector = serde_json::json!({
             "holder_seed_hex": hex::encode([0x22u8; 32]),
             "tool": "read_file",
             "args_json": args_json,
+            "float_args_json": float_args_json,
             "rejected_args_json": r#"{"limit":1,"note":null,"path":"/etc/passwd"}"#,
             "timestamp": 1_700_000_000,
             "warrant": meta.warrant,
             "signature": meta.signature,
+            "float_signature": float_meta.signature,
         });
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

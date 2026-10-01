@@ -303,15 +303,16 @@ class SdkContext {
      * @param {string} tool
      * @param {string} args_json
      * @param {number} timestamp
+     * @param {any} approvals
      * @returns {any}
      */
-    signMeta(session, tool, args_json, timestamp) {
+    signMeta(session, tool, args_json, timestamp, approvals) {
         _assertClass(session, SdkSession);
         const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.sdkcontext_signMeta(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, ptr1, len1, timestamp);
+        const ret = wasm.sdkcontext_signMeta(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, ptr1, len1, timestamp, approvals);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }

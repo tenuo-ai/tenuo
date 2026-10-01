@@ -110,7 +110,7 @@ export class SdkContext {
      *
      * The proof covers the core's parse of `args_json`, including JSON null.
      */
-    signMeta(session: SdkSession, tool: string, args_json: string, timestamp: number): any;
+    signMeta(session: SdkSession, tool: string, args_json: string, timestamp: number, approvals: any): any;
     /**
      * Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
      */

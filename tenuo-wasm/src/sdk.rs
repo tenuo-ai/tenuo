@@ -641,6 +641,7 @@ impl SdkContext {
         tool: &str,
         args_json: &str,
         timestamp: f64,
+        approvals: JsValue,
     ) -> Result<JsValue, JsError> {
         init_panic_hook();
         let _ = self;
@@ -649,18 +650,20 @@ impl SdkContext {
             .holder
             .as_ref()
             .ok_or_else(|| JsError::new(NO_HOLDER_SECRET))?;
+        let approvals = parse_approvals(&approvals).map_err(|err| JsError::new(&err))?;
         let meta = tenuo::meta_envelope::sign_meta(
             &session.chain,
             holder,
             tool,
             args_json,
             timestamp,
-            &[],
+            &approvals,
         )
         .map_err(|err| JsError::new(&err.to_string()))?;
         Ok(to_js_value(&MetaEnvelopeJs {
             warrant: meta.warrant,
             signature: meta.signature,
+            approvals: meta.approvals,
         }))
     }
 
@@ -2506,7 +2509,7 @@ fn clean_nulls(items: &[ConstraintValue]) -> Vec<ConstraintValue> {
 }
 
 fn canonical_token(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn unix_seconds(timestamp: f64) -> Result<i64, JsError> {
@@ -2526,6 +2529,8 @@ fn unix_seconds(timestamp: f64) -> Result<i64, JsError> {
 struct MetaEnvelopeJs {
     warrant: String,
     signature: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    approvals: Vec<String>,
 }
 
 fn parse_presented_chain(warrants: &JsValue) -> Result<Vec<Warrant>, JsError> {

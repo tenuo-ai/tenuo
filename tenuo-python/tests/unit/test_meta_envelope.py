@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tenuo.meta import argument_json
 from tenuo_core import SigningKey, args_from_json, decode_meta, sign_meta, verify_meta
 
 _VECTOR = json.loads(
@@ -42,3 +43,16 @@ def test_python_matches_core_meta_vector():
     signed_args = args_from_json(_VECTOR["args_json"])
     assert "note" in signed_args
     assert signed_args["note"] is None
+
+    float_signed = sign_meta(
+        decoded["warrants"],
+        holder,
+        _VECTOR["tool"],
+        _VECTOR["float_args_json"],
+        _VECTOR["timestamp"],
+    )
+    assert float_signed["signature"] == _VECTOR["float_signature"]
+    assert argument_json({"limit": 1.0, "note": None, "path": "/data/ok"}) == (
+        '{"limit":1,"note":null,"path":"/data/ok"}'
+    )
+    assert args_from_json('{"n":1.0}') == args_from_json('{"n":1}')

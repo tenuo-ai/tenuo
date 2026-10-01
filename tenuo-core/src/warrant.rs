@@ -1464,6 +1464,18 @@ impl Warrant {
         }
 
         if !verified {
+            // An older client removed null before signing and still sent it.
+            // A signature that covers the null does not match this stripped map.
+            if let Some(stripped) = Self::without_signed_nulls(args) {
+                return self.verify_pop_as_of(
+                    tool,
+                    &stripped,
+                    Some(signature),
+                    window_secs,
+                    max_windows,
+                    as_of,
+                );
+            }
             return Err(Error::SignatureInvalid(
                 "Proof-of-Possession verification failed".to_string(),
             ));
@@ -1472,6 +1484,49 @@ impl Warrant {
         Ok(())
     }
 
+    /// Drop JSON null the way an older client did before it signed.
+    ///
+    /// Returns `None` when the map has no null, so a retry cannot loop.
+    fn without_signed_nulls(
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Option<HashMap<String, ConstraintValue>> {
+        let mut changed = false;
+        let mut out = HashMap::with_capacity(args.len());
+        for (key, value) in args {
+            match value {
+                ConstraintValue::Null => changed = true,
+                ConstraintValue::List(items) => {
+                    out.insert(
+                        key.clone(),
+                        ConstraintValue::List(without_null_items(items, &mut changed)),
+                    );
+                }
+                other => {
+                    out.insert(key.clone(), other.clone());
+                }
+            }
+        }
+        changed.then_some(out)
+    }
+}
+
+fn without_null_items(items: &[ConstraintValue], changed: &mut bool) -> Vec<ConstraintValue> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            ConstraintValue::Null => {
+                *changed = true;
+                None
+            }
+            ConstraintValue::List(nested) => {
+                Some(ConstraintValue::List(without_null_items(nested, changed)))
+            }
+            other => Some(other.clone()),
+        })
+        .collect()
+}
+
+impl Warrant {
     /// Sign an action for this warrant (creates Proof-of-Possession).
     pub fn sign(
         &self,

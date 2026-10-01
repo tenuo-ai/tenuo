@@ -46,12 +46,18 @@ export function presentCall(
   );
   emitReceipt(options?.onReceipt, local.receipt, session, host);
   decide(local, name, native, args);
-  const envelope = context.signMeta(native, name, argsJson, Math.floor(Date.now() / 1000));
+  const envelope = context.signMeta(
+    native,
+    name,
+    argsJson,
+    Math.floor(Date.now() / 1000),
+    options?.approvals ?? null,
+  );
   const presented = {
     warrant: envelope.warrant,
     signature: envelope.signature,
-    ...(options?.approvals !== undefined && options.approvals.length > 0
-      ? { approvals: options.approvals.map(approvalWire) }
+    ...(envelope.approvals !== undefined && envelope.approvals.length > 0
+      ? { approvals: envelope.approvals }
       : {}),
   };
   return { presented, wireArgs: JSON.parse(argsJson) as Record<string, unknown> };
@@ -158,13 +164,6 @@ function argumentJson(args: Readonly<Record<string, unknown>>): string {
     throw new TenuoConfigurationError("arguments must be JSON");
   }
   return text;
-}
-
-function approvalWire(value: string | Uint8Array): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  return Buffer.from(value).toString("base64");
 }
 
 function presentedEnvelope(

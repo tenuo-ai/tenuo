@@ -265,7 +265,8 @@ export type WasmContext = {
     tool: string,
     argsJson: string,
     timestamp: number,
-  ): { warrant: string; signature: string };
+    approvals?: unknown,
+  ): { warrant: string; signature: string; approvals?: string[] };
   verifyMeta(
     warrant: string,
     signature: string,

@@ -18,6 +18,8 @@ const vector = JSON.parse(
   timestamp: number;
   warrant: string;
   signature: string;
+  float_args_json: string;
+  float_signature: string;
 };
 
 describe("meta envelope vector", () => {
@@ -26,10 +28,21 @@ describe("meta envelope vector", () => {
     const seed = Uint8Array.from(Buffer.from(vector.holder_seed_hex, "hex"));
     const session = wasm.SdkSession.fromWire(vector.warrant, seed);
     const ctx = new wasm.SdkContext();
-    const signed = ctx.signMeta(session, vector.tool, vector.args_json, vector.timestamp);
+    const signed = ctx.signMeta(session, vector.tool, vector.args_json, vector.timestamp, null);
+    const floatSigned = ctx.signMeta(
+      session,
+      vector.tool,
+      vector.float_args_json,
+      vector.timestamp,
+      null,
+    );
 
     expect(signed.warrant).toBe(vector.warrant);
     expect(signed.signature).toBe(vector.signature);
+    expect(floatSigned.signature).toBe(vector.float_signature);
+    expect(JSON.stringify({ limit: 1.0, note: null, path: "/data/ok" })).toBe(
+      '{"limit":1,"note":null,"path":"/data/ok"}',
+    );
     expect(
       ctx.verifyMeta(vector.warrant, vector.signature, vector.tool, vector.args_json, vector.timestamp),
     ).toBe(true);
