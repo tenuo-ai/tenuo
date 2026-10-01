@@ -97,9 +97,9 @@ export async function verifyPresented(
     await admitPop(options?.nonceStore, envelope.signature, options?.onNonceStoreError);
   }
   decide(decision, name);
-  // The tool runs the host's arguments. Rebuilding them from the core map
-  // turns JSON null into undefined.
-  return plainArgs(args);
+  // Run the host parse of the JSON text the proof covers. The raw host
+  // object can contain values that JSON drops.
+  return plainArgs(JSON.parse(argumentJson(args)) as Record<string, unknown>);
 }
 
 export function createMcp(context: WasmContext, decide: Decide, host?: object): TenuoMcp {

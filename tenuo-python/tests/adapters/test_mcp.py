@@ -943,7 +943,7 @@ class TestValidateToolSplitView:
         kwargs = mock_enforce.call_args.kwargs
         assert kwargs["tool_name"] == "read_file"
         assert kwargs["tool_args"] == {"path": "/tmp/x.txt", "maxSize": None}
-        assert kwargs["pop_args"] == {"path": "/tmp/x.txt"}
+        assert kwargs["pop_args"] == {"path": "/tmp/x.txt", "maxSize": None}
         assert kwargs["constraint_args"] == {
             "path": "/tmp/x.txt",
             "max_size": 1024,

@@ -33,6 +33,17 @@ from ..validation import ValidationResult
 
 logger = logging.getLogger(__name__)
 
+
+def _constraint_view(
+    pop_args: Dict[str, Any], extracted: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Warrant matching ignores null. The proof map still contains it."""
+    view = strip_none_values(pop_args)
+    if extracted is not None:
+        view.update(strip_none_values(extracted))
+    return view
+
+
 # Optional MCP import (requires Python 3.10+)
 try:
     from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
@@ -585,13 +596,11 @@ class SecureMCPClient:
             )
 
         pop_args = signed_arguments(arguments)
-        constraint_args = pop_args
+        constraint_args = _constraint_view(pop_args)
         if self.compiled_config:
             try:
                 result = self.compiled_config.extract_constraints(tool_name, arguments)
-                combined = dict(pop_args)
-                combined.update(strip_none_values(dict(result.constraints)))
-                constraint_args = combined
+                constraint_args = _constraint_view(pop_args, dict(result.constraints))
             except Exception:
                 logger.warning(
                     "Constraint extraction failed for '%s'; falling back to raw arguments",
@@ -806,15 +815,13 @@ class SecureMCPClient:
                 )
             bw = BoundWarrant(w, k)
             pop_args = signed_arguments(arguments)
-            constraint_args = pop_args
+            constraint_args = _constraint_view(pop_args)
             if self.compiled_config:
                 try:
                     extracted = self.compiled_config.extract_constraints(
                         tool_name, arguments
                     )
-                    combined = dict(pop_args)
-                    combined.update(strip_none_values(dict(extracted.constraints)))
-                    constraint_args = combined
+                    constraint_args = _constraint_view(pop_args, dict(extracted.constraints))
                 except Exception:
                     logger.warning(
                         "Constraint extraction failed for '%s'; falling back to raw arguments",
@@ -879,10 +886,8 @@ class SecureMCPClient:
                 # We do NOT suppress exceptions here (Fail Closed).
                 # If extraction fails, it means the request doesn't match the required configuration.
                 result = self.compiled_config.extract_constraints(tool_name, tool_kwargs)
-                combined = tool_kwargs.copy()
-                combined.update(dict(result.constraints))
-                return combined
-            return tool_kwargs
+                return _constraint_view(tool_kwargs, dict(result.constraints))
+            return _constraint_view(tool_kwargs)
 
         async def protected_tool(**kwargs):
             """Protected MCP tool wrapper."""

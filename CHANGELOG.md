@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   envelope that was issued with the older standard alphabet. The shared vector
   is `tests/vectors/tenuo-meta.json`.
 
+### Changed
+
+- **`_meta.tenuo` is one envelope.** New clients write unpadded URL-safe base64.
+  A server from the previous release decodes the warrant stack and signature
+  with the standard alphabet only, so it rejects that envelope. `decode_meta`
+  still accepts an envelope already issued with the standard alphabet, including
+  line-wrapped text. The proof covers JSON null. A client that removed null
+  before signing, and still sent that null, does not verify.
+
 - **Holder signing, approval hashes, and receipt chains in the Rust SDK**
   (#751):
   - `PresentedAuthority::prove` and `mcp_meta::sign_meta`: the holder side of

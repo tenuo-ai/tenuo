@@ -354,14 +354,15 @@ fn encode_token(bytes: &[u8]) -> String {
 }
 
 fn decode_token(input: &str) -> std::result::Result<Vec<u8>, MetaError> {
-    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(input) {
+    let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(compact.as_bytes()) {
         return Ok(bytes);
     }
-    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE.decode(input) {
+    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE.decode(compact.as_bytes()) {
         return Ok(bytes);
     }
     base64::engine::general_purpose::STANDARD
-        .decode(input)
+        .decode(compact.as_bytes())
         .map_err(|_| MetaError::InvalidEncoding)
 }
 
@@ -481,6 +482,27 @@ mod tests {
             1_700_000_000
         )
         .unwrap());
+    }
+
+    #[test]
+    fn line_wrapped_standard_chain_still_decodes() {
+        let (_holder, warrant) = sample_warrant();
+        let token = encode_warrant_chain(&[warrant]).unwrap();
+        let standard =
+            base64::engine::general_purpose::STANDARD.encode(decode_token(&token).unwrap());
+        let wrapped: String = standard
+            .chars()
+            .enumerate()
+            .flat_map(|(index, ch)| {
+                if index > 0 && index % 64 == 0 {
+                    vec!['\n', ch]
+                } else {
+                    vec![ch]
+                }
+            })
+            .collect();
+        let decoded = decode_warrant_chain(&wrapped).unwrap();
+        assert_eq!(decoded.len(), 1);
     }
 
     #[test]
