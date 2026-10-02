@@ -82,7 +82,7 @@ to the Service.
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `health.port` | Health listener port (`--health-port`). `0` disables it; then also disable or replace the probes | `9091` |
-| `health.legacyOnMainPort` | UNSAFE, migration only: also serve the health routes on `service.port` (`--legacy-health-on-main-port`). Logs a startup warning | `false` |
+| `health.legacyOnMainPort` | UNSAFE, migration only: also serve the health routes on `service.port` (`--legacy-health-on-main-port`). Logs a startup warning. Deprecated, removed in 0.4.0 | `false` |
 | `livenessProbe` | Liveness probe (`GET /health` on port `health`) | see `values.yaml` |
 | `readinessProbe` | Readiness probe (`GET /ready` on port `health`) | see `values.yaml` |
 

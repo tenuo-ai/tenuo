@@ -104,7 +104,8 @@ health:
   port: 9091
   # UNSAFE, migration only: also answer the health routes on service.port, as
   # earlier releases did. Logs a startup warning. Only safe if every proxy
-  # in front of the authorizer sets an ext_authz path_prefix.
+  # in front of the authorizer sets an ext_authz path_prefix. Deprecated:
+  # removed in 0.4.0.
   legacyOnMainPort: false
 
 # Liveness and readiness probes (HTTP, on the named `health` container port)

@@ -234,6 +234,8 @@ enum Commands {
         /// Behind Envoy/Istio HTTP ext_authz without a `path_prefix`, this lets
         /// any client reach those paths on the backend without a warrant.
         /// Point probes at --health-port instead and leave this off.
+        ///
+        /// Deprecated: removed in 0.4.0.
         #[arg(
             long,
             env = "TENUO_LEGACY_HEALTH_ON_MAIN_PORT",
@@ -1129,12 +1131,13 @@ fn warn_legacy_health(legacy_on_main: bool) {
     eprintln!("!!! authorization port. Behind Envoy/Istio HTTP ext_authz a 200 means ALLOW, so");
     eprintln!("!!! unless the proxy sets path_prefix (e.g. /ext_authz) any client can reach");
     eprintln!("!!! those paths on the backend with no warrant. Move probes to --health-port");
-    eprintln!("!!! and remove this flag.");
+    eprintln!("!!! and remove this flag. It is deprecated and will be removed in 0.4.0.");
     eprintln!();
     warn!(
         "legacy_health_on_main_port is enabled: health and status routes answer 200 without a \
          warrant on the authorization listener; behind ext_authz without path_prefix this is an \
-         authorization bypass for /health, /healthz, /ready and /status"
+         authorization bypass for /health, /healthz, /ready and /status; the flag is deprecated \
+         and will be removed in 0.4.0"
     );
 }
 
