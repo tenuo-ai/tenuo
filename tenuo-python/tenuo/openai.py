@@ -4,11 +4,11 @@ Tenuo OpenAI Adapter - Multi-Tier Authorization
 Provides constraint enforcement for OpenAI API calls with two tiers:
 
 **Tier 1 (Guardrails)**: Runtime constraint checking without cryptography.
-    Good for single-process scenarios. Catches hallucinated tool calls,
+    Rejects out-of-policy tool calls in trusted application code. Catches hallucinated tool calls,
     argument constraint violations, and streaming TOCTOU attacks.
 
 **Tier 2 (Warrant + PoP)**: Cryptographic authorization with Proof-of-Possession.
-    Required for distributed/multi-agent scenarios. Each tool call is signed
+    Use it when a verifier must check signed, holder-bound authority. Each tool call is signed
     with the agent's private key, proving the caller holds the warrant.
 
 Security Philosophy (Fail Closed):
@@ -471,6 +471,13 @@ def _constraint_expected_type(constraint: Constraint) -> str:
         return "compatible type"
 
 
+def _loads_tool_arguments(raw: str) -> Any:
+    """Parse a tool-argument JSON string, rejecting a repeated key."""
+    from tenuo.arguments import parse_strict_json
+
+    return parse_strict_json(raw)
+
+
 class MalformedToolCall(TenuoOpenAIError):
     """Raised when a tool call has invalid JSON arguments."""
 
@@ -512,12 +519,12 @@ def verify_tool_call(
 
     Tier 1 (guardrails): Uses allow_tools, deny_tools, constraints
         - Runtime checks only, no cryptography
-        - Good for single-process scenarios
+        - Local policy enforced in trusted application code
 
     Tier 2 (warrant + signing_key): Cryptographic authorization
         - Signs Proof-of-Possession (PoP) with holder's key
         - Verifies warrant constraints AND PoP signature
-        - Required for distributed/multi-agent scenarios
+        - Use when a verifier must check signed, holder-bound authority
 
     Defense in depth when both tiers are configured:
         - Tier 1 allow/deny lists ALWAYS apply (even with warrant)
@@ -768,8 +775,8 @@ class ToolCallBuffer:
         if not self.arguments_buffer:
             return {}
         try:
-            return json.loads(self.arguments_buffer)
-        except json.JSONDecodeError as e:
+            return _loads_tool_arguments(self.arguments_buffer)
+        except ValueError as e:
             raise MalformedToolCall(self.name, str(e))
 
     def size(self) -> int:
@@ -882,8 +889,8 @@ class GuardedCompletions:
         # Parse arguments
         args_str = func.arguments if hasattr(func, "arguments") else "{}"
         try:
-            arguments = json.loads(args_str) if args_str else {}
-        except json.JSONDecodeError as e:
+            arguments = _loads_tool_arguments(args_str) if args_str else {}
+        except ValueError as e:
             raise MalformedToolCall(tool_name, str(e))
 
         try:
@@ -1309,8 +1316,8 @@ class GuardedResponses:
         args_str = getattr(item, "arguments", "{}") or "{}"
 
         try:
-            arguments = json.loads(args_str) if args_str else {}
-        except json.JSONDecodeError as e:
+            arguments = _loads_tool_arguments(args_str) if args_str else {}
+        except ValueError as e:
             raise MalformedToolCall(tool_name, str(e))
 
         try:
@@ -2041,7 +2048,7 @@ def guard(
 
     **Tier 1 (Guardrails)**: Runtime constraint checking without cryptography.
     Uses allow_tools, deny_tools, and constraints parameters.
-    Good for single-process scenarios where you trust the executor.
+    Enforces local policy in trusted application code.
 
     **Tier 2 (Warrant + PoP)**: Cryptographic authorization with Proof-of-Possession.
     Requires both a warrant AND a signing_key. For each tool call:
@@ -2470,8 +2477,10 @@ class TenuoToolGuardrail:
             if not name:
                 return None
             try:
-                arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError as e:
+                arguments = (
+                    _loads_tool_arguments(args_str) if isinstance(args_str, str) else args_str
+                )
+            except ValueError as e:
                 # SECURITY: Fail closed on malformed JSON
                 raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
 
@@ -2485,8 +2494,10 @@ class TenuoToolGuardrail:
             if not name:
                 return None
             try:
-                arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError as e:
+                arguments = (
+                    _loads_tool_arguments(args_str) if isinstance(args_str, str) else args_str
+                )
+            except ValueError as e:
                 raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
             return (name, arguments)
 
@@ -2496,8 +2507,10 @@ class TenuoToolGuardrail:
             if not name:
                 return None
             try:
-                arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError as e:
+                arguments = (
+                    _loads_tool_arguments(args_str) if isinstance(args_str, str) else args_str
+                )
+            except ValueError as e:
                 raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
             return (name, arguments)
 
@@ -2515,7 +2528,7 @@ def create_tier1_guardrail(
     """Create a Tier 1 guardrail for OpenAI Agents SDK.
 
     This guardrail validates tool calls against constraints without
-    cryptographic verification. Good for single-process scenarios.
+    cryptographic verification. Use it when trusted application code owns the policy.
 
     Args:
         allow_tools: Allowlist of permitted tool names

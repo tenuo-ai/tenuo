@@ -38,14 +38,15 @@ jobs:
         working-directory: tenuo-core
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  # Build wheels for each platform (abi3 = one wheel per OS)
+  # abi3: one wheel per OS/arch. Linux aarch64 uses the same manylinux_2_28
+  # container as x86_64, on the native ubuntu-24.04-arm runner.
   build:
     name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -77,11 +78,63 @@ jobs:
           args: --release --locked --compatibility pypi
           maturin-version: v1.15.0
           manylinux: 2_28
+          # Empty on ubuntu-latest, which keeps the host x86_64 image. On the
+          # ARM runner this selects manylinux_2_28_aarch64 instead of a cross image.
+          target: ${{ matrix.os == 'ubuntu-24.04-arm' && 'aarch64' || '' }}
 
       - name: Build wheel
         if: runner.os != 'Linux'
         working-directory: tenuo-python
         run: maturin build --release
+
+      - name: Check wheel tag
+        working-directory: tenuo-python
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          case "${{ matrix.os }}" in
+            ubuntu-latest) tag="manylinux_2_28_x86_64" ;;
+            ubuntu-24.04-arm) tag="manylinux_2_28_aarch64" ;;
+            macos-latest) tag="macosx_*_arm64" ;;
+            windows-latest) tag="win_amd64" ;;
+            *) echo "no wheel tag configured for ${{ matrix.os }}"; exit 1 ;;
+          esac
+          wheels=(target/wheels/*${tag}*.whl)
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "expected exactly one ${tag} wheel, found ${#wheels[@]}"
+            ls -la target/wheels || true
+            exit 1
+          fi
+          echo "wheel tag ok: ${wheels[0]}"
+
+      - name: Smoke test wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(tenuo-python/target/wheels/*.whl)
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "expected exactly one wheel, found ${#wheels[@]}"
+            exit 1
+          fi
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            # glibc 2.36, same check as the portability CI job. The runner's
+            # own glibc is newer and would not catch a too-new symbol.
+            docker run --rm \
+              -e EXPECT_ARCH="${{ matrix.os == 'ubuntu-24.04-arm' && 'aarch64' || 'x86_64' }}" \
+              -v "$PWD/tenuo-python/target/wheels:/wheels:ro" \
+              python:3.12-slim-bookworm bash -ec '
+              set -euo pipefail
+              test "$(uname -m)" = "$EXPECT_ARCH"
+              ldd --version | head -1
+              pip install --quiet /wheels/*.whl
+              python -c "import tenuo, tenuo_core; from tenuo import SigningKey, Warrant; k = SigningKey.generate(); w = Warrant.mint_builder().tool(\"ping\").holder(k.public_key).ttl(60).mint(k); print(\"tenuo\", tenuo.__version__, \"ok\", w.id[:12])"
+            '
+          else
+            uv pip install --system "${wheels[0]}"
+            python -c 'import tenuo, tenuo_core; print(tenuo.__version__, tenuo.__file__); print(tenuo_core.__file__)'
+          fi
 
       - name: Upload wheel
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
@@ -129,10 +182,16 @@ jobs:
     needs: [build, sdist]
     runs-on: ubuntu-latest
     steps:
-      - name: Download Linux wheel
+      - name: Download Linux x86_64 wheel
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: wheel-ubuntu-latest
+          path: dist/
+
+      - name: Download Linux aarch64 wheel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheel-ubuntu-24.04-arm
           path: dist/
 
       - name: Download macOS wheel
@@ -153,8 +212,37 @@ jobs:
           name: sdist
           path: dist/
 
-      - name: List artifacts
-        run: ls -la dist/
+      - name: Require expected artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd dist
+          ls -la
+          require() {
+            local label="$1"
+            local pattern="$2"
+            local -a matches=()
+            while IFS= read -r -d '' file; do
+              matches+=("$file")
+            done < <(find . -maxdepth 1 -type f -name "$pattern" -print0)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "expected exactly one ${label} (${pattern}), found ${#matches[@]}"
+              exit 1
+            fi
+            echo "ok ${label}: ${matches[0]}"
+          }
+          require "linux x86_64 wheel" "*manylinux_2_28_x86_64*.whl"
+          require "linux aarch64 wheel" "*manylinux_2_28_aarch64*.whl"
+          require "macos arm64 wheel" "*macosx_*_arm64.whl"
+          require "windows wheel" "*win_amd64.whl"
+          require "sdist" "*.tar.gz"
+          wheels=( *.whl )
+          sdists=( *.tar.gz )
+          if [ "${#wheels[@]}" -ne 4 ] || [ "${#sdists[@]}" -ne 1 ]; then
+            echo "expected 4 wheels and 1 sdist, found ${#wheels[@]} wheels and ${#sdists[@]} sdists"
+            exit 1
+          fi
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

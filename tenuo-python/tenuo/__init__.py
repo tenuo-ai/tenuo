@@ -1,5 +1,5 @@
 """
-Tenuo Python SDK - Capability tokens for AI agents
+Tenuo Python SDK: task-scoped authorization for AI agents
 
 80% API - The essentials for most users:
 
@@ -118,6 +118,8 @@ from tenuo_core import (
     decode_warrant_stack_base64,
     encode_warrant_stack,
 )
+
+from .arguments import parse_strict_json
 
 # Wildcard: allow any value for a field in a closed-world constraint set.
 # `Any` used to alias Wildcard and collided with the OR combinator (`AnyOf`).
@@ -389,6 +391,7 @@ __all__ = [
     "info",
     # Result types
     "ValidationResult",
+    "parse_strict_json",
     # Key management
     "KeyRegistry",
     "Keyring",

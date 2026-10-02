@@ -15,11 +15,11 @@ Version History:
 Provides constraint enforcement for CrewAI tool calls with two tiers:
 
 **Tier 1 (Guardrails)**: Runtime constraint checking without cryptography.
-    Good for single-process crews. Catches hallucinated tool calls,
+    Rejects out-of-policy tool calls in trusted application code. Catches hallucinated tool calls,
     argument constraint violations, and cross-agent tool confusion.
 
 **Tier 2 (Warrant + PoP)**: Cryptographic authorization with Proof-of-Possession.
-    Required for distributed crews and delegation chains. Each tool call is
+    Use it when a crew must verify signed, holder-bound authority. Each tool call is
     signed with the agent's private key, proving the caller holds the warrant.
 
 Security Philosophy (Fail Closed):

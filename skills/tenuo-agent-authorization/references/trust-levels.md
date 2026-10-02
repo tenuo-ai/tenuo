@@ -4,6 +4,14 @@ Use these labels when reporting an integration. They describe the guarantee actu
 
 Choose a label only when its conditions are evidenced. A missing or unverified production requirement rules out "production boundary"; use "development loop" only if its complete allow/deny flow is demonstrated, "observation only" when no authorization is enforced, and "incomplete integration" otherwise.
 
+## SDK tiers are distinct from deployment trust
+
+Tier 1 rejects out-of-policy tool and argument calls in trusted application code, including calls a manipulated prompt induces. Issuer, holder, and delegation signatures are Tier 2. Describe an enforcing local policy as enforcement. It is a production control when trusted code is the boundary.
+
+Tier 2 keeps those policy checks and adds cryptographically verifiable, holder-bound authority and delegation that can only narrow scope. An independently configured verifier checks that authority locally. Warrants may come from an application-owned issuer or a control plane. Signed receipts, when signing and collection are configured, are proof of the presented authority and the verifier's decision, including denials.
+
+Report both what is checked and where it runs. When the agent can skip the guard, enforce that same tier in the component that performs the effect, outside the agent's control. In ADK, `require_pop=False` is Tier 1 even when a warrant supplies the constraints; `require_pop=True` is what checks issuer, holder, and delegation. For a user-requested local-policy integration, report those checks directly. The issuer-to-effect labels below describe warrant-based integrations. An in-process guardrail can accompany either mode.
+
 ## Incomplete integration
 
 Some enforcement or issuance exists, but a complete, usable issuer-to-effect path has not been demonstrated. For example, a fail-closed verifier with no known legitimate warrant source is incomplete, not observation-only and not a production boundary.

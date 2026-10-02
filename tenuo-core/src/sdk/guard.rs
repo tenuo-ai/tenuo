@@ -1201,6 +1201,9 @@ impl GuardBuilder {
     }
 
     /// Log level for denials. Never changes whether the operation runs.
+    ///
+    /// Defaults to [`DenialReporting::Debug`]. `Error` and `Warn` write the
+    /// denial message, which can quote argument values, to stderr.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
         self

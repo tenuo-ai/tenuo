@@ -41,6 +41,8 @@ pub enum TransportError {
     InvalidSignature,
     /// More approvals than [`MAX_APPROVALS`].
     TooManyApprovals,
+    /// The holder could not sign a proof of possession.
+    ProofFailed,
     /// The decoded artifacts did not form a usable authorization.
     Authority(AuthorityError),
 }
@@ -52,6 +54,7 @@ impl fmt::Display for TransportError {
             Self::PayloadTooLarge => write!(f, "transport payload exceeds size limit"),
             Self::InvalidEncoding => write!(f, "transport payload is not valid encoding"),
             Self::InvalidSignature => write!(f, "transport signature is not 64 bytes"),
+            Self::ProofFailed => write!(f, "holder could not sign the proof of possession"),
             Self::TooManyApprovals => write!(f, "too many approvals"),
             Self::Authority(err) => write!(f, "{err}"),
         }
@@ -66,7 +69,8 @@ impl std::error::Error for TransportError {
             | Self::PayloadTooLarge
             | Self::InvalidEncoding
             | Self::InvalidSignature
-            | Self::TooManyApprovals => None,
+            | Self::TooManyApprovals
+            | Self::ProofFailed => None,
         }
     }
 }

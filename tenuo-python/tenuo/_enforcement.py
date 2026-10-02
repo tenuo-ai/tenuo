@@ -645,6 +645,30 @@ def _holder_for_request_hash(bound_warrant: Any) -> Any:
     return getattr(bound_warrant, "holder_key", None)
 
 
+def _denial_before_approval(
+    warrant: Any, tool_name: str, constraint_args: Dict[str, Any],
+) -> Optional[Tuple[str, str, Optional[str]]]:
+    """Return ``(error_type, reason, argument)`` when the warrant does not grant
+    this call, else ``None``.
+
+    Runs before an approval gate collects approvals, so a call the warrant
+    forbids (wrong payee, amount over the limit, tool not granted) is denied
+    without being put in front of an approver. Deny-only: ``None`` does not
+    allow anything; the authorizer still decides.
+
+    This checks capability scope, not issuer trust, expiry, revocation, or PoP.
+    Passing preflight is not proof that a request is otherwise authorized.
+    """
+    req = warrant.approval_requirement(tool_name, constraint_args)
+    if req.status != "denied":
+        return None
+    reason = str(req.reason or req.message or f"warrant does not grant '{tool_name}'")
+    error_type = "tool_not_allowed" if req.code == "tool-not-authorized" else "constraint_violation"
+    # The core reports "<argument>: <why>" and may leave .argument unset.
+    argument = req.argument or (reason.split(":", 1)[0] if error_type == "constraint_violation" and ": " in reason else None)
+    return error_type, reason, argument
+
+
 def _collect_approvals_for_approval_gate(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -1069,6 +1093,23 @@ def _enforce_tool_call_impl(
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
+            # Deny calls the warrant does not grant before asking anyone.
+            _not_granted = _denial_before_approval(_warrant_obj, tool_name, _constraint_auth_args)
+            if _not_granted is not None:
+                _err, _reason, _arg = _not_granted
+                return EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=_reason,
+                    constraint_violated=_arg,
+                    error_type=_err,
+                    warrant_id=warrant_id,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=authorizer if authorizer is not None else _auth,
+                )
+
             _gate_approvers = _warrant_obj.required_approvers()
             _gate_threshold = _warrant_obj.approval_threshold()
 
@@ -1530,6 +1571,19 @@ async def _enforce_tool_call_async_impl(
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
+            # Deny calls the warrant does not grant before asking anyone.
+            _not_granted = _denial_before_approval(_warrant_obj, tool_name, _constraint_auth_args)
+            if _not_granted is not None:
+                _err, _reason, _arg = _not_granted
+                return EnforcementResult(
+                    allowed=False, tool=tool_name, arguments=tool_args,
+                    denial_reason=_reason, constraint_violated=_arg,
+                    error_type=_err, warrant_id=warrant_id,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=authorizer if authorizer is not None else _auth,
+                )
+
             _gate_approvers = _warrant_obj.required_approvers()
             _gate_threshold = _warrant_obj.approval_threshold()
 

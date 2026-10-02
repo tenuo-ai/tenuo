@@ -1,7 +1,7 @@
 {
   "name": "@tenuo/core",
   "version": "0.3.1-beta.0",
-  "description": "Tenuo TypeScript SDK — authorization decisions run in the Rust core (WASM).",
+  "description": "Task-scoped authorization for AI agents in TypeScript: signed warrants limit which tools an agent can call and with which arguments, verified by the Tenuo Rust core compiled to WASM (beta).",
   "license": "Apache-2.0",
   "author": "Tenuo Contributors",
   "homepage": "https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts/packages/core",
@@ -16,10 +16,17 @@
   "keywords": [
     "tenuo",
     "authorization",
-    "agents",
+    "ai-agents",
+    "agent-security",
+    "llm-security",
+    "access-control",
+    "capabilities",
+    "warrants",
+    "delegation",
+    "prompt-injection",
     "mcp",
-    "wasm",
-    "capabilities"
+    "model-context-protocol",
+    "wasm"
   ],
   "publishConfig": {
     "access": "public"

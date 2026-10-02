@@ -1,7 +1,7 @@
 {
   "name": "@tenuo/mcp",
   "version": "0.3.1-beta.0",
-  "description": "Optional adapter: guard @modelcontextprotocol/server v2 tools with @tenuo/core.",
+  "description": "Per-call, argument-level authorization for Model Context Protocol (MCP) servers: guard @modelcontextprotocol/server v2 tools with Tenuo warrants (beta).",
   "license": "Apache-2.0",
   "author": "Tenuo Contributors",
   "homepage": "https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts/packages/mcp",
@@ -16,8 +16,14 @@
   "keywords": [
     "tenuo",
     "mcp",
-    "modelcontextprotocol",
-    "authorization"
+    "model-context-protocol",
+    "mcp-server",
+    "authorization",
+    "ai-agents",
+    "agent-security",
+    "access-control",
+    "warrants",
+    "prompt-injection"
   ],
   "publishConfig": {
     "access": "public"

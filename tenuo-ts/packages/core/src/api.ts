@@ -718,7 +718,12 @@ export interface Tenuo {
     args: Readonly<Record<string, unknown>>,
     options?: McpAttachOptions,
   ): PresentedCall;
-  /** Verify a presented call at any boundary. Resolves with the authorized arguments; the tool must not run otherwise. */
+  /**
+   * Verify a presented call at any boundary. Resolves with the authorized
+   * arguments; the tool must not run otherwise. `args` is the object already
+   * given to this function. A repeated key in the original JSON is not
+   * visible. Parse that text with `parseStrictJson` while it is still available.
+   */
   verify(
     presented: PresentedCall,
     tool: string,
@@ -818,8 +823,10 @@ export interface TenuoMcp {
     options?: McpAttachOptions,
   ): McpCallParams;
   /**
-   * Server path. Verifies a presented warrant + PoP. Tool handler must not
-   * run unless this returns.
+   * Server path. Verifies a presented warrant + PoP against the object it was
+   * given. A repeated key in the original JSON is not visible: the host has
+   * already parsed `args`. Parse that text with `parseStrictJson` while it is
+   * still available. The tool handler must not run unless this returns.
    */
   verify(
     name: string,

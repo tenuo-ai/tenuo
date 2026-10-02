@@ -29,8 +29,14 @@ import pytest
 pytest.importorskip("temporalio")
 
 from temporalio import activity, workflow  # noqa: E402
-from temporalio.client import Client, WorkflowFailureError  # noqa: E402
-from temporalio.common import RetryPolicy  # noqa: E402
+from temporalio.client import (  # noqa: E402
+    Client,
+    WithStartWorkflowOperation,
+    WorkflowFailureError,
+    WorkflowUpdateFailedError,
+)
+from temporalio.common import RetryPolicy, WorkflowIDConflictPolicy  # noqa: E402
+from temporalio.service import RPCError  # noqa: E402
 from temporalio.testing import WorkflowEnvironment  # noqa: E402
 from temporalio.worker import (  # noqa: E402
     ActivityInboundInterceptor,
@@ -361,6 +367,68 @@ async def _run_workflow(
     return result, events
 
 
+@workflow.defn
+class UpdateFirstWorkflow:
+    """Started with update-with-start, so the update handler runs before ``run``."""
+
+    def __init__(self) -> None:
+        self._done = False
+
+    @workflow.run
+    async def run(self) -> str:
+        await workflow.wait_condition(lambda: self._done)
+        return "done"
+
+    @workflow.update
+    def ping(self) -> str:
+        self._done = True
+        return "pong"
+
+
+async def _update_with_start(env, keys, update, *, plugin_config=None, observed_run_ids=None):
+    """Start UpdateFirstWorkflow and deliver *update* in the same activation."""
+    control, agent = keys
+    task_queue = f"test-{uuid.uuid4().hex[:8]}"
+    cfg_kwargs: dict[str, Any] = {
+        "key_resolver": DictKeyResolver({"agent1": agent}),
+        "on_denial": "raise",
+        "trusted_roots": [control.public_key],
+    }
+    cfg_kwargs.update(plugin_config or {})
+    interceptor = TenuoWorkerInterceptor(TenuoPluginConfig(**cfg_kwargs), task_queue=task_queue)
+    sandbox_runner = SandboxedWorkflowRunner(
+        restrictions=SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")
+    )
+    client = env.client
+    async with Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[UpdateFirstWorkflow],
+        activities=[echo],
+        interceptors=[interceptor],  # type: ignore[list-item]
+        workflow_runner=sandbox_runner,
+    ):
+        start = WithStartWorkflowOperation(
+            UpdateFirstWorkflow.run,
+            id=f"update-first-{uuid.uuid4().hex[:8]}",
+            task_queue=task_queue,
+            id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
+            execution_timeout=timedelta(seconds=60),
+        )
+        try:
+            return await client.execute_update_with_start_workflow(
+                update, start_workflow_operation=start
+            )
+        finally:
+            handle = await start.workflow_handle()
+            if observed_run_ids is not None:
+                observed_run_ids.append((await handle.describe()).run_id)
+            try:
+                await handle.terminate()
+            except Exception:
+                pass
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -502,6 +570,55 @@ class TestLiveDelegationAndContinuation:
         assert result == "echo:hello:1"
         allow_events = [e for e in events if e.decision == "ALLOW"]
         assert len(allow_events) >= 2
+
+
+@pytest.mark.temporal_live
+class TestLiveUpdateInFirstActivation:
+    """An update sent with update-with-start runs before the workflow body.
+
+    ``ping`` has no validator, so the allowlist denial is raised in the
+    update handler. That fails the workflow task, and update-with-start
+    reports the aborted operation as an RPC error.
+    """
+
+    @pytest.mark.asyncio
+    async def test_authorized_updates_applies_to_an_update_delivered_with_start(self, keys):
+        from tenuo.temporal._state import _store_lock, _workflow_config_store, _workflow_headers_store
+
+        run_ids = []
+        async with await WorkflowEnvironment.start_local() as env:
+            with pytest.raises((WorkflowUpdateFailedError, RPCError)) as denied:
+                await _update_with_start(
+                    env,
+                    keys,
+                    UpdateFirstWorkflow.ping,
+                    plugin_config={"authorized_updates": ["install"]},
+                    observed_run_ids=run_ids,
+                )
+            if isinstance(denied.value, RPCError):
+                assert "Workflow Task in failed state" in str(denied.value)
+            else:
+                assert "Update not authorized: ping" in str(denied.value.cause)
+        assert len(run_ids) == 1
+        with _store_lock:
+            assert run_ids[0] not in _workflow_config_store
+            assert run_ids[0] not in _workflow_headers_store
+
+    @pytest.mark.asyncio
+    async def test_allowed_update_with_start_succeeds_and_cleans_up(self, keys):
+        from tenuo.temporal._state import _store_lock, _workflow_config_store, _workflow_headers_store
+
+        run_ids = []
+        async with await WorkflowEnvironment.start_local() as env:
+            assert await _update_with_start(
+                env, keys, UpdateFirstWorkflow.ping,
+                plugin_config={"authorized_updates": ["ping"]},
+                observed_run_ids=run_ids,
+            ) == "pong"
+        assert len(run_ids) == 1
+        with _store_lock:
+            assert run_ids[0] not in _workflow_config_store
+            assert run_ids[0] not in _workflow_headers_store
 
 
 # ---------------------------------------------------------------------------
