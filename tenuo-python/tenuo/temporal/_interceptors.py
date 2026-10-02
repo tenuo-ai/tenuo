@@ -400,7 +400,8 @@ class _TenuoWorkflowOutboundInterceptor:
            ``workflow.start_child_workflow()`` / ``execute_child_workflow()``
            call (no explicit Tenuo call queued anything), when the parent
            workflow itself carries a warrant and a policy is configured, ask
-           the policy whether/how to narrow it for this child. See
+           the policy how to narrow it for this child. If the policy mints
+           no narrower warrant, the child is not started. See
            :attr:`TenuoPluginConfig.child_warrant_policy`.
 
         Declared ``async`` (unlike ``start_activity``) because path 2 must
@@ -443,11 +444,19 @@ class _TenuoWorkflowOutboundInterceptor:
             # child simply starts unwarranted, same as without this feature.
             return None
 
-        parent_warrant = _extract_warrant_from_headers(parent_raw_headers)
-        if parent_warrant is None:
-            return None
+        from tenuo.temporal._workflow import _fail_workflow_non_retryable
 
         child_workflow_type = _workflow_type_name(getattr(input, "workflow", None))
+        parent_warrant = _extract_warrant_from_headers(parent_raw_headers)
+        if parent_warrant is None:
+            # The parent carries Tenuo headers but no usable warrant. Starting
+            # the child unwarranted would let it escape the parent's authority.
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy could not read the parent's warrant, so "
+                f"child workflow {child_workflow_type!r} (id={input.id!r}) was "
+                "not started."
+            ))
+
         try:
             decision = policy(
                 parent_warrant,
@@ -462,9 +471,14 @@ class _TenuoWorkflowOutboundInterceptor:
             ) from exc
 
         if decision is None:
-            # Explicit "no policy match" -> the child gets NO warrant. Never
-            # silently inherit the parent's warrant verbatim.
-            return None
+            # A configured policy that mints no narrower warrant means the
+            # child does not start: never unwarranted, never the parent's
+            # warrant verbatim.
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy returned None for child workflow "
+                f"{child_workflow_type!r} (id={input.id!r}), so it was not "
+                "started. Return tools=[...] to start it with a narrower warrant."
+            ))
         if not isinstance(decision, dict):
             raise TenuoContextError(
                 "child_warrant_policy must return None or a dict of "
@@ -475,8 +489,6 @@ class _TenuoWorkflowOutboundInterceptor:
         # Unlike tenuo_execute_child_workflow(), omitting tools= here must not
         # mean "all of the parent's tools": a policy returning {} (or a typo'd
         # key) would otherwise hand the child the parent's full authority.
-        from tenuo.temporal._workflow import _fail_workflow_non_retryable
-
         unknown = set(decision) - _CHILD_POLICY_KEYS
         if unknown:
             raise _fail_workflow_non_retryable(TenuoContextError(
@@ -488,8 +500,7 @@ class _TenuoWorkflowOutboundInterceptor:
         if not isinstance(tools, (list, tuple)) or not tools:
             raise _fail_workflow_non_retryable(TenuoContextError(
                 f"child_warrant_policy must name the child's tools explicitly "
-                f"(non-empty tools=[...]) for child workflow {child_workflow_type!r}; "
-                "return None to start the child with no warrant."
+                f"(non-empty tools=[...]) for child workflow {child_workflow_type!r}."
             ))
 
         from tenuo.temporal._workflow import _attenuated_headers

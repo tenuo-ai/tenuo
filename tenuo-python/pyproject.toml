@@ -93,7 +93,8 @@ temporal = [
 temporal-harness = [
     "temporalio>=1.23.0; python_version >= '3.10'",
     # Pre-Alpha upstream (APIs will change) — see docs/temporal-harness.md.
-    "temporal-agent-harness>=0.4.0; python_version >= '3.10'",
+    # Pinned: tenuo.temporal.harness lists this release's exact activity names.
+    "temporal-agent-harness==0.5.0; python_version >= '3.10'",
 ]
 fastapi = [
     "fastapi>=0.100.0",

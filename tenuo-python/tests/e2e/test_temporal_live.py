@@ -698,23 +698,31 @@ class TestLiveChildWarrantPolicy:
         )
 
     @pytest.mark.asyncio
-    async def test_policy_returning_none_means_child_gets_no_warrant(
+    async def test_policy_returning_none_does_not_start_the_child(
         self, keys, warrant, demo_dir
     ):
+        """A configured policy that mints no narrower warrant must not start
+        the child unwarranted: the parent fails and the child never exists."""
+
         def policy(parent_warrant, child_workflow_type, child_id, child_input):
-            return None  # explicit "not this child" -> no warrant, not the parent's
+            return None
 
         async with await WorkflowEnvironment.start_local() as env:
-            result, _events = await _run_workflow(
-                env, keys, warrant, PlainChildStarterWorkflow,
-                str(demo_dir / "a.txt"),
-                workflows=[PlainChildStarterWorkflow, PolicyChildWorkflow],
-                activities=[echo, read_file, list_directory, _tenuo_internal_mint_activity],
-                plugin_config={"child_warrant_policy": policy},
-            )
-        assert result["warrant_tools"] is None
-        assert result["can_read"] is False
-        assert result["can_list"] is False
+            with pytest.raises(WorkflowFailureError) as failed:
+                await _run_workflow(
+                    env, keys, warrant, PlainChildStarterWorkflow,
+                    str(demo_dir / "a.txt"),
+                    workflows=[PlainChildStarterWorkflow, PolicyChildWorkflow],
+                    activities=[echo, read_file, list_directory, _tenuo_internal_mint_activity],
+                    plugin_config={"child_warrant_policy": policy},
+                )
+            assert "was not started" in str(failed.value.cause)
+            children = [
+                wf async for wf in env.client.list_workflows(
+                    "WorkflowType = 'PolicyChildWorkflow'"
+                )
+            ]
+            assert children == []
 
     @pytest.mark.asyncio
     async def test_no_policy_configured_child_gets_no_warrant(self, keys, warrant, demo_dir):

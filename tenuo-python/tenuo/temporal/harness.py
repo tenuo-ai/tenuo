@@ -41,7 +41,8 @@ strings. ``temporal_agent_harness`` types are only imported inside
 Everything here targets the harness's OpenAI Agents SDK integration
 (``temporal_agent_harness.ai_sdks.openai_agents``), the path the harness's
 own examples and the Tenuo refund-agent example use; the exact internal
-activity names come from that integration's source, not from guessing.
+activity names come from that integration's source at :data:`HARNESS_VERSION`,
+not from guessing, and the presets contain no glob patterns.
 """
 
 from __future__ import annotations
@@ -73,49 +74,116 @@ constrain — only which turn/tool-call id to publish lifecycle events
 against — and cannot be normalized for PoP (it's a pydantic model, not a
 primitive/dataclass/dict/list)."""
 
+HARNESS_VERSION = "0.5.0"
+"""``temporal-agent-harness`` release the names below are taken from.
+
+The ``tenuo[temporal-harness]`` extra pins this exact version. The presets are
+exact activity names, never globs: an activity a later harness release adds
+is not exempted by accident, it needs a warrant until it is reviewed and
+listed here against a new pinned version."""
+
 HARNESS_INTERNAL_ACTIVITIES: Tuple[str, ...] = (
     # Model invocation (temporal_agent_harness.ai_sdks.openai_agents._invoke_model_activity)
     "invoke_model_activity",
     "invoke_model_activity_streaming",
-    # Google GenAI SDK integration's model/file activities
-    # (temporal_agent_harness.ai_sdks.google_genai_plugin) all share this prefix.
-    "gemini_*",
+    # Google GenAI SDK integration (temporal_agent_harness.ai_sdks.google_genai_plugin):
+    # model requests and the Gemini Files / File Search uploads the model reads.
+    "gemini_api_client_async_request",
+    "gemini_api_client_async_request_streamed",
+    "gemini_interactions_create_streamed",
+    "gemini_files_upload",
+    "gemini_files_download",
+    "gemini_files_register",
+    "gemini_file_search_stores_upload",
     # Jev auto-mode tool-approval activity
     # (temporal_agent_harness.harness.jev_approvals.models.JEV_TOOL_APPROVAL_ACTIVITY)
     "jev_tool_approval",
-    # Code Mode batch activities
+    # Code Mode batch and type-check activities
     # (temporal_agent_harness.harness.code_mode.batch_models)
     "code_start_batch",
     "code_resume_batch",
+    "code_type_check",
     # Subagent turn activity
     # (temporal_agent_harness.harness.agent_protocol.subagent_interface.RUN_SUBAGENT_TURN_ACTIVITY)
     "run_subagent_turn",
-    # MCP server plumbing — list/session/prompt activities, NOT the
-    # call-tool-v2 effect activity (that stays protected; see
-    # HARNESS_MCP_CALL_TOOL_ACTIVITIES). Exact suffixes from
-    # temporal_agent_harness.ai_sdks.openai_agents._mcp
-    # (StatelessMCPServerProvider / StatefulMCPServerProvider).
-    "*-list-tools",
-    "*-list-prompts",
-    "*-get-prompt",
-    "*-get-prompt-v2",
-    "*-server-session",
-    # Code Mode sandbox lifecycle
-    # (temporal_agent_harness.ai_sdks.openai_agents.sandbox._sandbox_client_provider)
-    "*-sandbox_*",
 )
-"""``unwarranted_activities`` preset: the harness's own internal plumbing.
+"""``unwarranted_activities`` preset: the harness's fixed-name internal plumbing.
 
-None of these touch a customer system. Deliberately excludes the harness's
-deprecated, non-wrapped ``<server>-call-tool`` activity (two loose
-``tool_name``/``arguments`` parameters, no ``meta``) as well as
-``<server>-call-tool-v2`` — both are real MCP tool-call effects and must
-stay protected; the latter is unwrapped, not exempted, via
-:data:`HARNESS_MCP_CALL_TOOL_ACTIVITIES`. Construction-time validation in
-``TenuoPluginConfig.__post_init__`` additionally rejects any pattern here
-that would match an MCP call-tool-v2-shaped name, so this list (or an
-extension of it) can never silently swallow tool-call effects.
+None of these touch a customer system. Activities whose names include a
+server or sandbox name you choose are not here, because the preset cannot
+know that name; build their exact names with
+:func:`harness_mcp_server_activities` and :func:`harness_sandbox_activities`,
+or pass ``mcp_servers=`` / ``sandboxes=`` to :func:`harness_plugin_config`.
+
+Real tool-call effects are never exempt: MCP ``<server>-call-tool-v2`` (unwrapped
+and authorized via :data:`HARNESS_MCP_CALL_TOOL_ACTIVITIES`), the deprecated
+``<server>-call-tool``, and sandbox command execution and file access
+(``sandbox_session_exec``, ``_read``, ``_write``, ``_pty_exec_start``,
+``_pty_write_stdin``) all need a warrant naming them.
 """
+
+HARNESS_MCP_SERVER_ACTIVITY_SUFFIXES: Tuple[str, ...] = (
+    "-list-tools",
+    "-list-prompts",
+    "-get-prompt",
+    "-get-prompt-v2",
+    "-server-session",
+)
+"""Per-server MCP plumbing suffixes (``temporal_agent_harness.ai_sdks.openai_agents._mcp``,
+``StatelessMCPServerProvider`` / ``StatefulMCPServerProvider``). Never includes
+``-call-tool`` or ``-call-tool-v2``."""
+
+HARNESS_SANDBOX_LIFECYCLE_SUFFIXES: Tuple[str, ...] = (
+    "-sandbox_client_create",
+    "-sandbox_client_resume",
+    "-sandbox_client_delete",
+    "-sandbox_session_start",
+    "-sandbox_session_stop",
+    "-sandbox_session_shutdown",
+    "-sandbox_session_running",
+    "-sandbox_session_persist_workspace",
+    "-sandbox_session_hydrate_workspace",
+)
+"""Per-sandbox lifecycle suffixes
+(``temporal_agent_harness.ai_sdks.openai_agents.sandbox._sandbox_client_provider``).
+Command execution and file access inside the sandbox (``-sandbox_session_exec``,
+``_read``, ``_write``, ``_pty_exec_start``, ``_pty_write_stdin``) are effects
+and are deliberately not lifecycle."""
+
+
+def _exact_names(names: Sequence[str], suffixes: Tuple[str, ...], what: str) -> Tuple[str, ...]:
+    if isinstance(names, str):
+        raise TypeError(f"{what} must be a sequence of names, not a single string")
+    out: list[str] = []
+    for name in names:
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"{what} entries must be non-empty strings; got {name!r}")
+        if any(ch in name for ch in "*?[]"):
+            raise ValueError(f"{what} entries are exact names, not patterns; got {name!r}")
+        out.extend(name + suffix for suffix in suffixes)
+    return tuple(out)
+
+
+def harness_mcp_server_activities(server_names: Sequence[str]) -> Tuple[str, ...]:
+    """Exact MCP plumbing activity names for the named harness MCP servers.
+
+    ``harness_mcp_server_activities(["github"])`` returns ``github-list-tools``,
+    ``github-list-prompts``, ``github-get-prompt``, ``github-get-prompt-v2``
+    and ``github-server-session``. The call-tool activities are never
+    included.
+    """
+    return _exact_names(server_names, HARNESS_MCP_SERVER_ACTIVITY_SUFFIXES, "server_names")
+
+
+def harness_sandbox_activities(sandbox_names: Sequence[str]) -> Tuple[str, ...]:
+    """Exact sandbox lifecycle activity names for the named harness sandboxes.
+
+    Only create/resume/delete and session start/stop/shutdown/running and
+    workspace persist/hydrate. Command execution and file access inside the
+    sandbox still need a warrant.
+    """
+    return _exact_names(sandbox_names, HARNESS_SANDBOX_LIFECYCLE_SUFFIXES, "sandbox_names")
+
 
 HARNESS_MCP_CALL_TOOL_ACTIVITIES: Tuple[str, ...] = ("*-call-tool-v2",)
 """``mcp_call_tool_activities`` preset: the harness's one-activity-per-server
@@ -129,6 +197,8 @@ authorizes the inner ``tool_name``/``arguments``, not the wrapper."""
 
 def harness_plugin_config(
     *,
+    mcp_servers: Sequence[str] = (),
+    sandboxes: Sequence[str] = (),
     unwarranted_activities: Sequence[str] = (),
     pop_exclude_args: Sequence[str] = (),
     mcp_call_tool_activities: Sequence[str] = (),
@@ -144,6 +214,11 @@ def harness_plugin_config(
             mcp_call_tool_activities=HARNESS_MCP_CALL_TOOL_ACTIVITIES,
             ...,
         )
+
+    ``mcp_servers=`` and ``sandboxes=`` name the harness MCP servers and
+    sandboxes this worker runs; their exact plumbing / lifecycle activity
+    names are added to ``unwarranted_activities`` (see
+    :func:`harness_mcp_server_activities` and :func:`harness_sandbox_activities`).
 
     Any ``unwarranted_activities=``, ``pop_exclude_args=``, or
     ``mcp_call_tool_activities=`` you pass here are ADDED to the preset, not
@@ -162,7 +237,14 @@ def harness_plugin_config(
     from tenuo.temporal._config import TenuoPluginConfig as _TenuoPluginConfig
 
     merged_unwarranted = tuple(
-        dict.fromkeys((*HARNESS_INTERNAL_ACTIVITIES, *unwarranted_activities))
+        dict.fromkeys(
+            (
+                *HARNESS_INTERNAL_ACTIVITIES,
+                *harness_mcp_server_activities(mcp_servers),
+                *harness_sandbox_activities(sandboxes),
+                *unwarranted_activities,
+            )
+        )
     )
     merged_exclude = frozenset(HARNESS_TOOL_CTX_EXCLUDE_ARGS) | frozenset(pop_exclude_args)
     merged_mcp = tuple(
@@ -304,9 +386,14 @@ def warrant_evaluator(
 
 
 __all__ = [
+    "HARNESS_VERSION",
     "HARNESS_TOOL_CTX_EXCLUDE_ARGS",
     "HARNESS_INTERNAL_ACTIVITIES",
+    "HARNESS_MCP_SERVER_ACTIVITY_SUFFIXES",
+    "HARNESS_SANDBOX_LIFECYCLE_SUFFIXES",
     "HARNESS_MCP_CALL_TOOL_ACTIVITIES",
+    "harness_mcp_server_activities",
+    "harness_sandbox_activities",
     "harness_plugin_config",
     "warrant_evaluator",
 ]

@@ -261,11 +261,15 @@ class TenuoPluginConfig:
     ``tenuo_execute_child_workflow()`` uses — so its result, not the policy
     function, is what gets recorded in workflow history and replayed.)
 
-    Return ``None`` to start the child with **no warrant at all** — this is
-    the explicit "not this child" / deny case, and is also what happens for
-    every child when this field is unset. **The child never silently
-    inherits the parent's warrant verbatim**; only an explicit policy match
-    attaches anything.
+    Once a policy is configured and the parent carries a warrant, every
+    plain child start must mint a narrower warrant or the child **does not
+    start**: returning ``None`` fails the workflow (non-retryable) rather
+    than starting the child unwarranted, and so does a parent whose Tenuo
+    headers carry no readable warrant. **The child never runs unwarranted
+    and never inherits the parent's warrant verbatim.** A parent with no
+    Tenuo headers at all has no authority to narrow; its children start as
+    they would without this field. When this field is unset, plain child
+    starts carry no warrant, as before.
 
     Return a dict of ``tenuo_execute_child_workflow()``-style keyword
     arguments to mint a warrant for the child: ``tools`` (a non-empty list,
@@ -280,10 +284,6 @@ class TenuoPluginConfig:
     doesn't already have, or widening a ``Subpath`` all raise
     ``TemporalConstraintViolation``, non-retryable) — this policy is a
     *trigger*, not a second authority.
-
-    See ``tenuo.temporal.harness.subagent_policy`` for a ready-made
-    dict-keyed-by-workflow-type policy for the Temporal Agent Harness's
-    ``AgentWorkflowRunner.start_subagent``.
     """
 
     audit_callback: Optional[Callable[[TemporalAuditEvent], None]] = None
