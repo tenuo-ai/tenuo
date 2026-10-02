@@ -8,6 +8,11 @@
 #
 # Needs docker compose, curl, and either uv or a python3 with `tenuo` installed
 # (set DEMO_PY="python3" in that case).
+#
+# tenuo/authorizer:0.3.1 sets x-tenuo-deny-reason only on 403 denials. Later
+# builds also set it on the early 401/400/404 denials, and the test checks it
+# there when the authorizer is built locally or TENUO_AUTHORIZER_IMAGE is set.
+# Override with EARLY_DENY_REASON=0|1.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,6 +26,13 @@ TENUO_DEMO_DIR="$(mktemp -d)"
 WORK="$(mktemp -d)"
 
 COMPOSE=(docker compose -p tenuo-envoy-e2e -f docker-compose.yaml)
+if [[ -z "${EARLY_DENY_REASON:-}" ]]; then
+  if [[ "${E2E_BUILD:-0}" == "1" || -n "${TENUO_AUTHORIZER_IMAGE:-}" ]]; then
+    EARLY_DENY_REASON=1
+  else
+    EARLY_DENY_REASON=0
+  fi
+fi
 if [[ "${E2E_BUILD:-0}" == "1" ]]; then
   COMPOSE+=(-f docker-compose.build.yaml)
 fi
@@ -47,15 +59,26 @@ UP_ARGS=(-d)
 "${COMPOSE[@]}" up "${UP_ARGS[@]}"
 "${COMPOSE[@]}" images tenuo-authorizer
 
-# Wait until Envoy answers (any HTTP status means listener + authorizer are up).
+# Wait until a request without a warrant gets the authorizer's 401. Envoy
+# answers 403 while the authorizer is still unreachable, so any other status
+# means "not ready yet".
+ready=0
 for _ in $(seq 1 60); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/get" || true)"
-  [[ "$code" != "000" && "$code" != "503" ]] && break
+  if [[ "$code" == "401" ]]; then ready=1; break; fi
   sleep 1
 done
+if [[ $ready -ne 1 ]]; then
+  echo "FAIL  Envoy + authorizer not ready after 60s (last status: $code)"
+  exit 1
+fi
 
 PASS=0
 FAIL=0
+
+# Expected x-tenuo-deny-reason for an early (non-403) denial: the reason when
+# the authorizer sets it, otherwise "-" (not checked).
+early() { if [[ "$EARLY_DENY_REASON" == "1" ]]; then echo "$1"; else echo -; fi; }
 
 # check NAME EXPECTED_STATUS EXPECTED_DENY_REASON_SUBSTRING|- curl-args...
 check() {
@@ -83,7 +106,7 @@ UNTRUSTED="$(demo mint --untrusted)"
 TAMPERED="$(demo tamper "$WARRANT")"
 pop() { demo pop --warrant "$1" "${@:2}"; }
 
-check "no warrant -> 401 missing_warrant" 401 missing_warrant \
+check "no warrant -> 401 missing_warrant" 401 "$(early missing_warrant)" \
   "$BASE/get"
 check "valid warrant + PoP, GET /get -> 200 from httpbin" 200 - \
   -H "X-Tenuo-Warrant: $WARRANT" -H "X-Tenuo-PoP: $(pop "$WARRANT" httpbin_read endpoint=get)" "$BASE/get"
@@ -94,7 +117,7 @@ check "PoP signed for other args -> 403" 403 - \
   -H "X-Tenuo-Warrant: $WARRANT" -H "X-Tenuo-PoP: $(pop "$WARRANT" httpbin_read endpoint=headers)" "$BASE/get"
 check "out-of-scope path GET /headers -> 403 constraint" 403 constraint \
   -H "X-Tenuo-Warrant: $WARRANT" -H "X-Tenuo-PoP: $(pop "$WARRANT" httpbin_read endpoint=headers)" "$BASE/headers"
-check "unrouted method DELETE /get -> 404 no_route" 404 no_route \
+check "unrouted method DELETE /get -> 404 no_route" 404 "$(early no_route)" \
   -X DELETE -H "X-Tenuo-Warrant: $WARRANT" "$BASE/get"
 check "POST /post body in scope -> 200" 200 - \
   -X POST -H 'content-type: application/json' -d '{"message":"hello world"}' \
@@ -108,12 +131,12 @@ check "read-only warrant, POST /post -> 403 tool" 403 tool \
 check "untrusted root warrant -> 403" 403 - \
   -H "X-Tenuo-Warrant: $UNTRUSTED" -H "X-Tenuo-PoP: $(pop "$UNTRUSTED" httpbin_read endpoint=get)" "$BASE/get"
 # Warrant signatures are verified while decoding, so tampering is a 400.
-check "tampered warrant signature -> 400 invalid_warrant" 400 invalid_warrant \
+check "tampered warrant signature -> 400 invalid_warrant" 400 "$(early invalid_warrant)" \
   -H "X-Tenuo-Warrant: $TAMPERED" -H "X-Tenuo-PoP: $(pop "$WARRANT" httpbin_read endpoint=get)" "$BASE/get"
-check "garbage warrant -> 400 invalid_warrant" 400 invalid_warrant \
+check "garbage warrant -> 400 invalid_warrant" 400 "$(early invalid_warrant)" \
   -H "X-Tenuo-Warrant: not-a-warrant" "$BASE/get"
 for p in /health /healthz /ready /status; do
-  check "authorizer $p is not reachable through Envoy -> 401" 401 missing_warrant "$BASE$p"
+  check "authorizer $p is not reachable through Envoy -> 401" 401 "$(early missing_warrant)" "$BASE$p"
 done
 
 # Fail closed when the authorizer is unavailable.
