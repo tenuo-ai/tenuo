@@ -8,8 +8,8 @@ This module provides guardrails for AutoGen AgentChat tools:
 
 AutoGen is optional; importing this module does not require the dependency.
 """
-
 from __future__ import annotations
+
 
 import functools
 import importlib.util

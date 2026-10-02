@@ -19,6 +19,8 @@ Usage:
         # ctx.args contains extracted arguments
         return {"results": [...]}
 """
+from .optional_deps import missing_optional_dependency
+
 
 import base64
 import logging
@@ -303,10 +305,10 @@ else:
     # These stubs have different signatures because they only raise ImportError.
     # This is the standard pattern for optional dependencies.
     def get_warrant_header(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
-        raise ImportError("FastAPI is not installed. Install with: uv pip install fastapi")
+        raise ImportError(missing_optional_dependency("FastAPI", "fastapi"))
 
     def require_warrant(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
-        raise ImportError("FastAPI is not installed. Install with: uv pip install fastapi")
+        raise ImportError(missing_optional_dependency("FastAPI", "fastapi"))
 
 
 # =============================================================================
@@ -698,7 +700,7 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
 
     def __init__(self, *args: Any, tool_prefix: Optional[str] = None, require_pop: bool = True, **kwargs: Any) -> None:
         if not FASTAPI_AVAILABLE:
-            raise ImportError("FastAPI is required for SecureAPIRouter")
+            raise ImportError(missing_optional_dependency("FastAPI", "fastapi"))
 
         super().__init__(*args, **kwargs)
         self.tool_prefix = tool_prefix
