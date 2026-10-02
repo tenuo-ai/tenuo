@@ -5325,6 +5325,170 @@ class TestSignalAndUpdateRuntimeDenial:
             self._cleanup_run(run_id)
 
 
+class TestUpdateHeaderApprovalsStash:
+    """``handle_update_handler`` stashes an ``x-tenuo-approvals`` update header
+    into the exact same ``_pending_activity_approvals`` store
+    ``set_activity_approvals()`` writes to — so a signed approval attached to
+    an update (e.g. a human approver's client resolving a harness-style
+    ``approve_tool`` update) satisfies the next gated activity dispatch, with
+    no workflow code aware the update carried anything. The one-shot,
+    next-dispatch consumption itself is unchanged/already covered elsewhere
+    (``TestSetActivityApprovalsOverwriteWarning`` and the outbound
+    ``start_activity`` approval-header tests) — this class covers only the
+    new *staging* path.
+    """
+
+    def _stub_inbound(self):
+        from tenuo.temporal._interceptors import _TenuoWorkflowInboundInterceptor
+        from tenuo.temporal._state import _store_lock, _workflow_config_store
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+        )
+        next_interceptor = MagicMock()
+        next_interceptor.handle_update_handler = AsyncMock(return_value="handled")
+        inbound = _TenuoWorkflowInboundInterceptor(next_interceptor=next_interceptor)
+        wf_id = "wf-update-approval"
+        with _store_lock:
+            _workflow_config_store[wf_id] = cfg
+        return inbound, next_interceptor, wf_id
+
+    def _fake_wf_info(self, wf_id):
+        info = MagicMock()
+        info.workflow_id = wf_id
+        info.run_id = wf_id
+        return info
+
+    @staticmethod
+    def _cleanup(wf_id):
+        from tenuo.temporal._state import (
+            _pending_activity_approvals,
+            _store_lock,
+            _workflow_config_store,
+        )
+
+        with _store_lock:
+            _workflow_config_store.pop(wf_id, None)
+            _pending_activity_approvals.pop(wf_id, None)
+
+    @staticmethod
+    def _build_signed_approval():
+        import time as _time
+
+        import tenuo_core
+        from tenuo import SigningKey, Warrant
+
+        control = SigningKey.generate()
+        agent = SigningKey.generate()
+        approver = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent.public_key)
+            .capability("deploy")
+            .required_approvers([approver.public_key])
+            .min_approvals(1)
+            .approval_gates({"deploy": None})
+            .ttl(3600)
+            .mint(control)
+        )
+        now = int(_time.time())
+        request_hash = tenuo_core.py_compute_request_hash(
+            warrant.id, "deploy", {}, warrant.holder_key,
+        )
+        payload = tenuo_core.ApprovalPayload(
+            request_hash=request_hash,
+            nonce=bytes(range(16)),
+            external_id="approver@test.com",
+            approved_at=now,
+            expires_at=now + 300,
+        )
+        return tenuo_core.SignedApproval.create(payload, approver)
+
+    def test_valid_approval_header_stashed_for_next_dispatch(self):
+        from tenuo.temporal._constants import TENUO_APPROVALS_HEADER
+        from tenuo.temporal._headers import encode_signed_approvals
+        from tenuo.temporal._state import _pending_activity_approvals, _store_lock
+
+        approval = self._build_signed_approval()
+        encoded = encode_signed_approvals([approval])
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        inbound, nxt, wf_id = self._stub_inbound()
+        upd_input = MagicMock(
+            update="approve_tool",
+            headers={TENUO_APPROVALS_HEADER: FakePayload(encoded)},
+        )
+        try:
+            with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)):
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(inbound.handle_update_handler(upd_input))
+                finally:
+                    loop.close()
+            with _store_lock:
+                stashed = _pending_activity_approvals.get(wf_id)
+            assert stashed is not None
+            assert len(stashed) == 1
+            assert stashed[0].to_bytes() == approval.to_bytes()
+        finally:
+            self._cleanup(wf_id)
+        nxt.handle_update_handler.assert_called_once_with(upd_input)
+
+    def test_malformed_approval_header_is_ignored_not_fatal(self, caplog):
+        import logging
+
+        from tenuo.temporal._constants import TENUO_APPROVALS_HEADER
+        from tenuo.temporal._state import _pending_activity_approvals, _store_lock
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        inbound, nxt, wf_id = self._stub_inbound()
+        upd_input = MagicMock(
+            update="approve_tool",
+            headers={TENUO_APPROVALS_HEADER: FakePayload(b"not-valid-json")},
+        )
+        try:
+            with caplog.at_level(logging.WARNING, logger="tenuo.temporal"):
+                with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)):
+                    loop = asyncio.new_event_loop()
+                    try:
+                        result = loop.run_until_complete(inbound.handle_update_handler(upd_input))
+                    finally:
+                        loop.close()
+            assert result == "handled", "a malformed approval header must not fail the update itself"
+            with _store_lock:
+                assert wf_id not in _pending_activity_approvals
+            assert any(
+                "Malformed x-tenuo-approvals" in r.message for r in caplog.records
+            )
+        finally:
+            self._cleanup(wf_id)
+
+    def test_no_approvals_header_leaves_store_untouched(self):
+        from tenuo.temporal._state import _pending_activity_approvals, _store_lock
+
+        inbound, nxt, wf_id = self._stub_inbound()
+        upd_input = MagicMock(update="approve_tool", headers={})
+        try:
+            with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)):
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(inbound.handle_update_handler(upd_input))
+                finally:
+                    loop.close()
+            with _store_lock:
+                assert wf_id not in _pending_activity_approvals
+        finally:
+            self._cleanup(wf_id)
+        nxt.handle_update_handler.assert_called_once_with(upd_input)
+
+
 class TestSetActivityApprovalsOverwriteWarning:
     """Two back-to-back ``set_activity_approvals`` calls without an intervening
     dispatch log a warning so users notice the one-shot contract was

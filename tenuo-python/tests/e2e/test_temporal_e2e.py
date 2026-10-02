@@ -15,11 +15,13 @@ Covers:
   - Audit event emission
 """
 
+from contextlib import contextmanager
 import asyncio
 import base64
 import time
 import warnings
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,6 +41,7 @@ from tenuo.temporal import (  # noqa: E402
     tenuo_headers,
 )
 from tenuo.temporal._constants import (  # noqa: E402
+    TENUO_APPROVALS_HEADER,
     TENUO_COMPRESSED_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
@@ -47,7 +50,12 @@ from tenuo.temporal._constants import (  # noqa: E402
 from tenuo.temporal._dedup import _pop_dedup_cache  # noqa: E402
 from tenuo.temporal._headers import _extract_warrant_from_headers  # noqa: E402
 from tenuo.temporal._interceptors import _TenuoWorkflowInboundInterceptor  # noqa: E402
-from tenuo.temporal._state import _store_lock, _workflow_headers_store  # noqa: E402
+from tenuo.temporal._state import (  # noqa: E402
+    _store_lock,
+    _workflow_config_store,
+    _workflow_headers_store,
+)
+from tenuo.temporal.exceptions import TenuoContextError  # noqa: E402
 from tenuo.temporal._workflow import execute_workflow_authorized  # noqa: E402
 
 # -- Fixtures ----------------------------------------------------------------
@@ -288,6 +296,115 @@ class TestTenuoClientInterceptor:
             assert "wf-helper" in ci._headers_by_workflow_id  # type: ignore[attr-defined]
 
 
+# -- set_approvals_for_update() (client outbound half) -----------------------
+
+class TestSetApprovalsForUpdate:
+    """Client-side half of signed approvals over update headers: staging and
+    attaching. The worker-side stash (``handle_update_handler``) is covered in
+    ``tests/adapters/test_temporal.py::TestUpdateHeaderApprovalsStash``."""
+
+    def test_attaches_header_for_matching_update_id(self):
+        from tenuo.temporal._headers import decode_signed_approvals
+
+        ci = TenuoClientInterceptor()
+        approval = _fake_signed_approval()
+        ci.set_approvals_for_update("upd-1", [approval])
+
+        nxt = MagicMock()
+        nxt.start_workflow_update = AsyncMock(return_value="ok")
+        out = ci.intercept_client(nxt)
+
+        inp = SimpleNamespace(update_id="upd-1", headers={})
+        result = _run(out.start_workflow_update(inp))
+
+        assert result == "ok"
+        raw = _raw_from_payload_headers(inp.headers)
+        assert TENUO_APPROVALS_HEADER in raw
+        decoded = decode_signed_approvals(raw[TENUO_APPROVALS_HEADER])
+        assert len(decoded) == 1
+        assert decoded[0].to_bytes() == approval.to_bytes()
+
+    def test_does_not_attach_to_a_different_update_id(self):
+        ci = TenuoClientInterceptor()
+        ci.set_approvals_for_update("upd-1", [_fake_signed_approval()])
+
+        nxt = MagicMock()
+        nxt.start_workflow_update = AsyncMock(return_value="ok")
+        out = ci.intercept_client(nxt)
+
+        inp = SimpleNamespace(update_id="upd-OTHER", headers={})
+        _run(out.start_workflow_update(inp))
+
+        assert not _raw_from_payload_headers(inp.headers)
+        # The staged entry for upd-1 must still be there — untouched by an
+        # unrelated update_id, not silently consumed/dropped.
+        with ci._lock:  # type: ignore[attr-defined]
+            assert "upd-1" in ci._approvals_by_update_id  # type: ignore[attr-defined]
+
+    def test_one_shot_consumed_once(self):
+        ci = TenuoClientInterceptor()
+        ci.set_approvals_for_update("upd-1", [_fake_signed_approval()])
+
+        nxt = MagicMock()
+        nxt.start_workflow_update = AsyncMock(return_value="ok")
+        out = ci.intercept_client(nxt)
+
+        first = SimpleNamespace(update_id="upd-1", headers={})
+        second = SimpleNamespace(update_id="upd-1", headers={})
+        _run(out.start_workflow_update(first))
+        _run(out.start_workflow_update(second))
+
+        assert _raw_from_payload_headers(first.headers)
+        assert not _raw_from_payload_headers(second.headers)
+
+    def test_plain_update_with_nothing_staged_is_unaffected(self):
+        ci = TenuoClientInterceptor()
+        nxt = MagicMock()
+        nxt.start_workflow_update = AsyncMock(return_value="ok")
+        out = ci.intercept_client(nxt)
+
+        inp = SimpleNamespace(update_id="upd-none", headers={})
+        _run(out.start_workflow_update(inp))
+        assert not inp.headers
+
+    def test_empty_update_id_rejected(self):
+        ci = TenuoClientInterceptor()
+        with pytest.raises(ValueError):
+            ci.set_approvals_for_update("", [_fake_signed_approval()])
+
+
+def _fake_signed_approval():
+    """A real, cryptographically valid SignedApproval for header round-trip tests."""
+    import time as _time
+
+    import tenuo_core
+    from tenuo import SigningKey, Warrant
+
+    control = SigningKey.generate()
+    agent = SigningKey.generate()
+    approver = SigningKey.generate()
+    w = (
+        Warrant.mint_builder()
+        .holder(agent.public_key)
+        .capability("deploy")
+        .required_approvers([approver.public_key])
+        .min_approvals(1)
+        .approval_gates({"deploy": None})
+        .ttl(3600)
+        .mint(control)
+    )
+    now = int(_time.time())
+    request_hash = tenuo_core.py_compute_request_hash(w.id, "deploy", {}, w.holder_key)
+    payload = tenuo_core.ApprovalPayload(
+        request_hash=request_hash,
+        nonce=bytes(range(16)),
+        external_id="approver@test.com",
+        approved_at=now,
+        expires_at=now + 300,
+    )
+    return tenuo_core.SignedApproval.create(payload, approver)
+
+
 # -- tenuo_headers() with real objects ---------------------------------------
 
 class TestTenuoHeadersReal:
@@ -333,6 +450,182 @@ class TestPopRoundTrip:
         auth = Authorizer(trusted_roots=[control_key.public_key])
         with pytest.raises(Exception):
             auth.authorize(warrant, "list_directory", {"path": "/tmp/demo"}, signature=pop)
+
+
+# -- tenuo_install_warrant() -- mid-run ambient warrant installation ---------
+
+class TestInstallWarrant:
+    """``tenuo_install_warrant`` installs a warrant into a *running* workflow's
+    ambient context (e.g. from an update handler that received the warrant as
+    a plain argument, not a transport header) — this is a security boundary,
+    so every failure mode below must fail closed (TenuoContextError), never
+    silently install."""
+
+    def _fake_info(self, run_key: str):
+        info = MagicMock()
+        info.run_id = run_key
+        info.workflow_id = run_key
+        return info
+
+    @contextmanager
+    def _in_workflow(self, run_key: str, *, replaying: bool = False):
+        with patch("temporalio.workflow.info", return_value=self._fake_info(run_key)), \
+                patch("temporalio.workflow.unsafe.is_replaying", return_value=replaying):
+            yield
+
+    def _cfg(self, run_key: str, holder_key, root_key):
+        resolver = MagicMock()
+        resolver.resolve_sync.return_value = holder_key
+        cfg = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[root_key.public_key])
+        with _store_lock:
+            _workflow_config_store[run_key] = cfg
+
+    def _cleanup(self, run_key: str):
+        with _store_lock:
+            _workflow_config_store.pop(run_key, None)
+            _workflow_headers_store.pop(run_key, None)
+
+    def test_installs_valid_warrant_into_ambient_context(
+        self, warrant, agent_key, control_key
+    ):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-ok"
+        resolver = MagicMock()
+        resolver.resolve_sync.return_value = agent_key
+        cfg = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[control_key.public_key])
+        with _store_lock:
+            _workflow_config_store[run_key] = cfg
+        try:
+            with self._in_workflow(run_key):
+                tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                raw = dict(_workflow_headers_store.get(run_key, {}))
+            installed = _extract_warrant_from_headers(raw)
+            assert installed is not None
+            assert installed.id == warrant.id
+        finally:
+            self._cleanup(run_key)
+
+    def test_rejects_key_id_that_does_not_resolve_to_the_holder(
+        self, warrant, control_key
+    ):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-wrong-holder"
+        wrong_key = SigningKey.generate()  # not the warrant's holder key
+        resolver = MagicMock()
+        resolver.resolve_sync.return_value = wrong_key
+        cfg = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[control_key.public_key])
+        with _store_lock:
+            _workflow_config_store[run_key] = cfg
+        try:
+            with self._in_workflow(run_key):
+                with pytest.raises(TenuoContextError):
+                    tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                assert run_key not in _workflow_headers_store
+        finally:
+            self._cleanup(run_key)
+
+    def test_rejects_warrant_not_chained_to_trusted_roots(self, warrant, agent_key):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-untrusted-root"
+        untrusted_root = SigningKey.generate()  # NOT control_key -- warrant won't verify
+        resolver = MagicMock()
+        resolver.resolve_sync.return_value = agent_key
+        cfg = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[untrusted_root.public_key])
+        with _store_lock:
+            _workflow_config_store[run_key] = cfg
+        try:
+            with self._in_workflow(run_key):
+                with pytest.raises(TenuoContextError):
+                    tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                assert run_key not in _workflow_headers_store
+        finally:
+            self._cleanup(run_key)
+
+    def test_requires_tenuo_worker_interceptor_configured(self, warrant):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-no-config"
+        # No entry in _workflow_config_store for this run_key at all.
+        with self._in_workflow(run_key):
+            with pytest.raises(TenuoContextError, match="TenuoWorkerInterceptor"):
+                tenuo_install_warrant(warrant, "agent1")
+        with _store_lock:
+            assert run_key not in _workflow_headers_store
+
+    def test_reinstalling_the_same_warrant_is_a_no_op(self, warrant, agent_key, control_key):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-idempotent"
+        self._cfg(run_key, agent_key, control_key)
+        try:
+            with self._in_workflow(run_key):
+                tenuo_install_warrant(warrant, "agent1")
+                tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                installed = _extract_warrant_from_headers(dict(_workflow_headers_store[run_key]))
+            assert installed.id == warrant.id
+        finally:
+            self._cleanup(run_key)
+
+    def test_refuses_to_replace_an_installed_warrant(self, warrant, agent_key, control_key):
+        """A second, different warrant for the same holder must not replace the
+        first: whoever can send the update could otherwise swap in a broader one."""
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        other = (
+            Warrant.mint_builder()
+            .capability("list_directory", path=Subpath("/tmp"))
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(control_key)
+        )
+        run_key = "wf-install-no-replace"
+        self._cfg(run_key, agent_key, control_key)
+        try:
+            with self._in_workflow(run_key):
+                tenuo_install_warrant(warrant, "agent1")
+                with pytest.raises(TenuoContextError, match="already has a warrant"):
+                    tenuo_install_warrant(other, "agent1")
+            with _store_lock:
+                installed = _extract_warrant_from_headers(dict(_workflow_headers_store[run_key]))
+            assert installed.id == warrant.id
+        finally:
+            self._cleanup(run_key)
+
+    def test_replay_skips_the_wall_clock_chain_check(self, warrant, agent_key):
+        """On replay the update already succeeded in history; re-running the
+        expiry-sensitive chain check could fail where the original did not.
+        The deterministic holder check still runs."""
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-replay"
+        # A root the warrant does not chain to: fails live, skipped on replay.
+        self._cfg(run_key, agent_key, SigningKey.generate())
+        try:
+            with self._in_workflow(run_key, replaying=True):
+                tenuo_install_warrant(warrant, "agent1")
+            with _store_lock:
+                assert run_key in _workflow_headers_store
+        finally:
+            self._cleanup(run_key)
+
+    def test_replay_still_checks_the_holder_key(self, warrant, control_key):
+        from tenuo.temporal._workflow import tenuo_install_warrant
+
+        run_key = "wf-install-replay-holder"
+        self._cfg(run_key, SigningKey.generate(), control_key)
+        try:
+            with self._in_workflow(run_key, replaying=True):
+                with pytest.raises(TenuoContextError):
+                    tenuo_install_warrant(warrant, "agent1")
+        finally:
+            self._cleanup(run_key)
 
 
 # -- Activity interceptor (Authorizer path) ----------------------------------
@@ -1433,7 +1726,7 @@ class TestChildWorkflowDelegation:
 
         captured = {}
         class FakeNext:
-            def start_child_workflow(self, input):
+            async def start_child_workflow(self, input):
                 captured["headers"] = dict(input.headers or {})
                 return MagicMock()
 
@@ -1444,7 +1737,7 @@ class TestChildWorkflowDelegation:
             id: str = child_id
             headers: Optional[Dict[str, Any]] = None
 
-        outbound.start_child_workflow(FakeChildInput())
+        _run(outbound.start_child_workflow(FakeChildInput()))
 
         assert TENUO_WARRANT_HEADER in captured["headers"]
         assert TENUO_KEY_ID_HEADER in captured["headers"]
@@ -1459,7 +1752,7 @@ class TestChildWorkflowDelegation:
 
         captured = {}
         class FakeNext:
-            def start_child_workflow(self, input):
+            async def start_child_workflow(self, input):
                 captured["headers"] = input.headers
                 return MagicMock()
 
@@ -1470,14 +1763,18 @@ class TestChildWorkflowDelegation:
             id: str = "wf-unknown-child"
             headers: Optional[Dict[str, Any]] = None
 
-        outbound.start_child_workflow(FakeChildInput())
+        _run(outbound.start_child_workflow(FakeChildInput()))
         assert captured["headers"] is None
 
     def test_child_workflow_does_not_inherit_parent_headers(
         self, warrant, agent_key, control_key, headers_dict
     ):
         """Even if the parent has stored headers, a plain child workflow call
-        must NOT inherit them — fail-closed requires explicit attenuation."""
+        must NOT inherit them — fail-closed requires explicit attenuation.
+
+        Also covers the ``child_warrant_policy`` path's default-off behavior:
+        this interceptor has no config at all (``config=None``), matching
+        every caller that never sets ``child_warrant_policy``."""
         from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
         from tenuo.temporal._state import _workflow_headers_store
 
@@ -1494,7 +1791,7 @@ class TestChildWorkflowDelegation:
         try:
             captured: Dict[str, Any] = {}
             class FakeNext:
-                def start_child_workflow(self, input):
+                async def start_child_workflow(self, input):
                     captured["headers"] = input.headers
                     return MagicMock()
 
@@ -1505,7 +1802,7 @@ class TestChildWorkflowDelegation:
                 id: str = "wf-child-no-attenuation"
                 headers: Optional[Dict[str, Any]] = None
 
-            outbound.start_child_workflow(FakeChildInput())
+            _run(outbound.start_child_workflow(FakeChildInput()))
             assert captured["headers"] is None, (
                 "Child must not inherit parent headers; use tenuo_execute_child_workflow()"
             )

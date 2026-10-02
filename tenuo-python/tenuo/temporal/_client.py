@@ -12,6 +12,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
+from tenuo.temporal._constants import TENUO_APPROVALS_HEADER
 from tenuo.temporal._headers import tenuo_headers
 from tenuo.temporal._state import _active_tenuo_warrant
 from tenuo.temporal.exceptions import TenuoContextError
@@ -84,6 +85,13 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
             pending_headers_ttl_secs
             if pending_headers_ttl_secs is not None
             else self.DEFAULT_PENDING_HEADERS_TTL_SECS
+        )
+        # Signed approvals staged for a specific, caller-chosen update_id (see
+        # set_approvals_for_update()). Same size/TTL bounds as the header map
+        # above, kept in a separate dict since the two are consumed by
+        # different outbound RPCs (start_workflow vs. start_workflow_update).
+        self._approvals_by_update_id: "OrderedDict[str, Tuple[List[Any], float]]" = (
+            OrderedDict()
         )
 
     def _evict_expired_locked(self) -> None:
@@ -221,6 +229,65 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         with self._lock:
             self._next_headers = {}
             self._headers_by_workflow_id.clear()
+
+    def _evict_expired_approvals_locked(self) -> None:
+        """Drop expired pending-approval entries. Caller must hold ``self._lock``."""
+        ttl = self._pending_headers_ttl_secs
+        if ttl is None or not self._approvals_by_update_id:
+            return
+        now = time.monotonic()
+        expired: List[str] = []
+        for update_id, (_approvals, inserted_at) in self._approvals_by_update_id.items():
+            if (now - inserted_at) < ttl:
+                break
+            expired.append(update_id)
+        for update_id in expired:
+            self._approvals_by_update_id.pop(update_id, None)
+
+    def set_approvals_for_update(self, update_id: str, approvals: List[Any]) -> None:
+        """Attach signed approvals as ``x-tenuo-approvals`` headers to one update.
+
+        Supply an explicit, caller-chosen ``update_id`` and pass the **same**
+        value as ``handle.execute_update(..., id=update_id, ...)`` — Tenuo
+        cannot correlate an update whose id the SDK auto-generates, since
+        that happens after this call. Consumed once by the matching
+        ``start_workflow_update`` outbound call, then cleared.
+
+        On the worker, ``_TenuoWorkflowInboundInterceptor`` extracts the
+        header and stashes the approvals the same way
+        :func:`tenuo.temporal.set_activity_approvals` does — for the
+        **next** activity this workflow run dispatches, then clears them.
+        That one-shot, next-dispatch behavior is unchanged by *how* the
+        approvals got there: an update whose handler dispatches more than
+        one gated activity, or that races another concurrently-dispatching
+        update, needs the same care ``set_activity_approvals()`` already
+        documents (interleave, don't batch).
+
+        If the workflow update is never sent (e.g. the caller aborts before
+        calling ``execute_update``), the entry is retained for up to the
+        same TTL/size bounds as :meth:`set_headers_for_workflow`.
+        """
+        if not update_id:
+            raise ValueError("update_id must be a non-empty string")
+        with self._lock:
+            self._evict_expired_approvals_locked()
+            self._approvals_by_update_id.pop(update_id, None)
+            self._approvals_by_update_id[update_id] = (list(approvals), time.monotonic())
+            max_size = self._pending_headers_max_size
+            if max_size > 0:
+                while len(self._approvals_by_update_id) > max_size:
+                    evicted_id, _ = self._approvals_by_update_id.popitem(last=False)
+                    logger.warning(
+                        "TenuoClientInterceptor pending-approvals map exceeded "
+                        "%d entries; evicting oldest update_id=%s.",
+                        max_size,
+                        evicted_id,
+                    )
+
+    def discard_approvals_for_update(self, update_id: str) -> bool:
+        """Drop any pending approvals bound to *update_id*. Returns True if removed."""
+        with self._lock:
+            return self._approvals_by_update_id.pop(update_id, None) is not None
 
     async def execute_workflow_authorized(
         self,
@@ -390,3 +457,35 @@ class _TenuoClientOutbound:
             # the same workflow id.
 
         return await self._next.start_workflow(input)
+
+    async def start_workflow_update(self, input: Any) -> Any:
+        """Attach signed approvals staged by ``set_approvals_for_update()``.
+
+        Every other update goes through unmodified — this is opt-in per
+        update, keyed by the caller-chosen ``update_id`` (see
+        ``TenuoPluginConfig`` docs for ``x-tenuo-approvals``); a plain
+        ``execute_update()`` call with no staged approvals is unaffected.
+        """
+        update_id: str = getattr(input, "update_id", None) or ""
+        approvals = None
+        if update_id:
+            with self._parent._lock:
+                entry = self._parent._approvals_by_update_id.pop(update_id, None)
+            if entry is not None:
+                approvals = entry[0]
+
+        if approvals:
+            try:
+                from temporalio.api.common.v1 import Payload  # type: ignore
+            except ImportError:
+                raise TenuoContextError("temporalio not installed")
+
+            from tenuo.temporal._headers import encode_signed_approvals
+
+            encoded = encode_signed_approvals(approvals)
+            input.headers = {
+                **(input.headers or {}),
+                TENUO_APPROVALS_HEADER: Payload(data=encoded),
+            }
+
+        return await self._next.start_workflow_update(input)

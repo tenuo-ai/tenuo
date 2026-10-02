@@ -41,6 +41,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are built for glibc 2.28 and imported on Debian bookworm before publishing,
   and the release checks each platform tag (#743).
 
+- **Native support for the Temporal Agent Harness.** Three opt-in
+  `TenuoPluginConfig` fields close the gaps found running the harness's
+  refund-agent example against Tenuo: `pop_exclude_args` drops named,
+  non-authority activity arguments (e.g. the harness's
+  `tool_ctx: AgentToolContext`) from PoP signing and verification, applied
+  symmetrically outbound and inbound and failing closed on any mismatch
+  between the two sides; `unwarranted_activities` exempts a framework's own
+  internal-plumbing activities (model calls, approval routing, sandbox
+  lifecycle) from warrant requirements under `require_warrant=True`, without
+  weakening verification for an activity that *does* present a warrant, and
+  is validated at construction time against MCP call-tool-v2-shaped names so
+  a careless pattern can never exempt a real tool-call effect;
+  `mcp_call_tool_activities` unwraps an MCP client's one-activity-per-server
+  `<server>-call-tool-v2` wrapper so a warrant authorizes the inner MCP tool
+  and its arguments, not the wrapper activity, failing closed on a malformed
+  wrapper and never treating its `meta` field as authority. `tenuo.temporal.
+  harness` ships the harness's own preset values (`HARNESS_INTERNAL_
+  ACTIVITIES`, `HARNESS_TOOL_CTX_EXCLUDE_ARGS`, `HARNESS_MCP_CALL_TOOL_
+  ACTIVITIES`), a `harness_plugin_config()` convenience that applies all
+  three, and `warrant_evaluator()`, an auto-mode evaluator that checks the
+  task warrant before any other approval logic runs. The internal-activity
+  preset is exact activity names from `temporal-agent-harness` 0.5.0, never
+  glob patterns; names that include an MCP server or sandbox name come from
+  `harness_mcp_server_activities()` / `harness_sandbox_activities()` (or
+  `harness_plugin_config(mcp_servers=, sandboxes=)`), and sandbox command
+  execution and file access always need a warrant. See
+  [`docs/temporal-harness.md`](docs/temporal-harness.md). The `tenuo[temporal-
+  harness]` extra installs `temporalio` and `temporal-agent-harness==0.5.0` together;
+  importing `tenuo.temporal.harness` itself never requires the harness
+  package.
+- **Three more Temporal primitives usable by any framework, not just the
+  harness.** `TenuoPluginConfig.child_warrant_policy` mints a narrower
+  child-workflow warrant for a *plain* `workflow.start_child_workflow()`
+  call — no `tenuo_execute_child_workflow()` needed — reusing that
+  function's own attenuation path, so a policy can only narrow the parent,
+  never widen it. The policy must name the child's tools. If it mints no
+  narrower warrant (returns `None`, or the parent's warrant can't be read),
+  the child is not started: never unwarranted, never the parent's warrant
+  verbatim.
+  `TenuoClientInterceptor.set_approvals_for_update()` stages a signed
+  approval as an `x-tenuo-approvals` header on one workflow-update call; the
+  worker's inbound interceptor stashes it into the same one-shot,
+  next-dispatch store `set_activity_approvals()` already uses.
+  `tenuo_install_warrant()` installs a warrant into a *running* workflow's
+  ambient context (e.g. from an update handler that received it as a plain
+  argument, not a transport header) — validating its chain and that the
+  key id resolves to its holder before installing anything — so every
+  later activity dispatch, including a framework's own tool dispatcher, is
+  transparently signed against it. A run takes one warrant; a different
+  second warrant is refused rather than replacing the first.
+
 - **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
   `ServerMiddleware` for `MCPServer` / low-level `Server` that runs
   `MCPVerifier` on every `tools/call` before params validation, accepting the

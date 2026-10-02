@@ -26,6 +26,7 @@ For direct imports (preferred in library / internal code)::
     tenuo.temporal._workflow      execute_workflow_authorized, start_workflow_authorized,
                                   tenuo_execute_activity, tenuo_execute_child_workflow,
                                   AuthorizedWorkflow, current_warrant, current_key_id,
+                                  tenuo_install_warrant,
                                   workflow_grant, workflow_issue_execution,
                                   set_activity_approvals, tenuo_continue_as_new, …
     tenuo.temporal._client        TenuoClientInterceptor, TenuoWarrantContextPropagator,
@@ -41,6 +42,17 @@ For direct imports (preferred in library / internal code)::
     tenuo.temporal._constants     TENUO_WARRANT_HEADER, TENUO_KEY_ID_HEADER, …
     tenuo.temporal.exceptions     TenuoContextError, PopVerificationError, …
     tenuo.temporal_plugin         TenuoTemporalPlugin
+    tenuo.temporal.harness        Temporal Agent Harness presets:
+                                  harness_plugin_config, warrant_evaluator,
+                                  harness_mcp_server_activities,
+                                  harness_sandbox_activities,
+                                  HARNESS_INTERNAL_ACTIVITIES,
+                                  HARNESS_TOOL_CTX_EXCLUDE_ARGS,
+                                  HARNESS_MCP_CALL_TOOL_ACTIVITIES. Not
+                                  imported by this package (no hard
+                                  dependency on temporal-agent-harness);
+                                  import it explicitly. See
+                                  docs/temporal-harness.md.
 """
 
 from __future__ import annotations
@@ -71,6 +83,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "AuthorizedWorkflow": ("tenuo.temporal._workflow", "AuthorizedWorkflow"),
     "current_warrant": ("tenuo.temporal._workflow", "current_warrant"),
     "current_key_id": ("tenuo.temporal._workflow", "current_key_id"),
+    "tenuo_install_warrant": ("tenuo.temporal._workflow", "tenuo_install_warrant"),
     "workflow_grant": ("tenuo.temporal._workflow", "workflow_grant"),
     "workflow_issue_execution": ("tenuo.temporal._workflow", "workflow_issue_execution"),
     "set_activity_approvals": ("tenuo.temporal._workflow", "set_activity_approvals"),

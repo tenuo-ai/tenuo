@@ -16,7 +16,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 from tenuo.exceptions import (
     ApprovalGateTriggered,
@@ -35,9 +35,14 @@ from tenuo.temporal._constants import (
     TENUO_POP_HEADER,
     TENUO_TEMPORAL_PLUGIN_ID,
 )
+from tenuo.temporal._activity_patterns import (
+    is_mcp_call_tool_activity,
+    unwrap_mcp_call_tool,
+)
 from tenuo.temporal._decorators import (
     _warrant_tool_name_for_activity_type,
     is_unprotected,
+    is_unwarranted_activity,
 )
 from tenuo.temporal._headers import (
     _extract_warrant_from_headers,
@@ -47,6 +52,7 @@ from tenuo.temporal._observability import TemporalAuditEvent
 from tenuo.temporal._pop import (
     _args_dict_uses_only_positional_fallback_keys,
     _args_to_dict_by_fn,
+    _apply_pop_exclusions,
     _normalize_args_for_pop,
     _positional_pop_mismatch_message,
     _prevalidate_args_against_warrant,
@@ -183,6 +189,35 @@ def _replace_field(obj: Any, field: str, value: Any) -> Any:
     return obj
 
 
+_CHILD_POLICY_KEYS = frozenset({"tools", "constraints", "ttl_seconds", "child_key_id"})
+
+
+def _workflow_type_name(workflow_ref: Any) -> str:
+    """Resolve a child-workflow reference to its registered Temporal workflow
+    type name.
+
+    In practice ``StartChildWorkflowInput.workflow`` (what interceptors see)
+    is already a plain string by the time it reaches any interceptor — the
+    Temporal SDK itself resolves a ``@workflow.defn`` class / run-method
+    reference to its registered name before building that input (see
+    ``_WorkflowInstanceImpl.workflow_start_child_workflow``). The non-string
+    branch below is a defensive fallback for direct/manual interceptor use
+    (e.g. tests), not a path real ``workflow.start_child_workflow()`` calls
+    exercise.
+    """
+    if isinstance(workflow_ref, str):
+        return workflow_ref
+    try:
+        from temporalio import workflow as _workflow
+
+        defn = _workflow._Definition.from_class(workflow_ref)  # type: ignore[attr-defined]
+        if defn is not None and defn.name:
+            return str(defn.name)
+    except Exception:
+        pass
+    return getattr(workflow_ref, "__name__", str(workflow_ref))
+
+
 # ── Outbound Workflow Interceptor ────────────────────────────────────────
 
 class _TenuoWorkflowOutboundInterceptor:
@@ -217,6 +252,14 @@ class _TenuoWorkflowOutboundInterceptor:
         try:
             run_key = _current_run_key()
             activity_type = input.activity
+
+            # unwarranted_activities: dispatch exactly as if no Tenuo headers
+            # were configured for this workflow at all — no warrant/PoP
+            # headers attached. Checked first and unconditionally so it can
+            # never be short-circuited by other outbound state (pending
+            # approvals, overrides, ...).
+            if is_unwarranted_activity(activity_type, self._config):
+                return self._next.start_activity(input)
 
             with _store_lock:
                 pending_approvals = _pending_activity_approvals.pop(run_key, None)
@@ -259,6 +302,26 @@ class _TenuoWorkflowOutboundInterceptor:
                     pop_tool_name = _warrant_tool_name_for_activity_type(
                         self._config, activity_type, activity_fn
                     )
+
+                    # mcp_call_tool_activities: unwrap the wrapper's single
+                    # argument into the inner MCP tool name/arguments before
+                    # pop_exclude_args / normalization, so the mapped tool's
+                    # own args go through the same pipeline as any other
+                    # activity's.
+                    if self._config and is_mcp_call_tool_activity(
+                        activity_type, self._config.mcp_call_tool_activities
+                    ):
+                        pop_tool_name, args_dict = unwrap_mcp_call_tool(
+                            activity_type, args_dict
+                        )
+
+                    if self._config and self._config.pop_exclude_args:
+                        args_dict = _apply_pop_exclusions(
+                            args_dict,
+                            self._config.pop_exclude_args,
+                            activity_fn_resolved=activity_fn is not None,
+                            tool_name=pop_tool_name,
+                        )
 
                     if raw_args and _args_dict_uses_only_positional_fallback_keys(
                         args_dict
@@ -324,16 +387,40 @@ class _TenuoWorkflowOutboundInterceptor:
 
         return self._next.start_activity(input)
 
-    def start_child_workflow(self, input: Any) -> Any:
-        """Inject Tenuo headers into child workflow starts."""
+    async def start_child_workflow(self, input: Any) -> Any:
+        """Inject Tenuo headers into child workflow starts.
+
+        Two independent paths attach a child warrant, checked in order:
+
+        1. **Pre-queued** via ``tenuo_execute_child_workflow()`` —
+           ``_pending_child_headers`` already holds headers for this
+           ``child_id``; attach them verbatim (unchanged from before
+           ``child_warrant_policy`` existed).
+        2. **``child_warrant_policy``** — for a *plain*
+           ``workflow.start_child_workflow()`` / ``execute_child_workflow()``
+           call (no explicit Tenuo call queued anything), when the parent
+           workflow itself carries a warrant and a policy is configured, ask
+           the policy how to narrow it for this child. If the policy mints
+           no narrower warrant, the child is not started. See
+           :attr:`TenuoPluginConfig.child_warrant_policy`.
+
+        Declared ``async`` (unlike ``start_activity``) because path 2 must
+        ``await`` a local activity to mint the child warrant —
+        ``WorkflowOutboundInterceptor.start_child_workflow`` is itself an
+        async method on the Temporal SDK, so overriding it as a coroutine
+        function is well within contract.
+        """
         try:
             from temporalio.api.common.v1 import Payload  # type: ignore
         except ImportError:
-            return self._next.start_child_workflow(input)
+            return await self._next.start_child_workflow(input)
 
         child_id = input.id
         with _store_lock:
             raw_headers = _pending_child_headers.pop(child_id, None)
+
+        if raw_headers is None:
+            raw_headers = await self._maybe_policy_child_headers(input)
 
         if raw_headers:
             child_headers = dict(input.headers or {})
@@ -341,7 +428,89 @@ class _TenuoWorkflowOutboundInterceptor:
                 child_headers[k] = Payload(data=v)
             input = _replace_field(input, "headers", child_headers)
 
-        return self._next.start_child_workflow(input)
+        return await self._next.start_child_workflow(input)
+
+    async def _maybe_policy_child_headers(self, input: Any) -> Optional[Dict[str, bytes]]:
+        """Apply ``child_warrant_policy`` to a plain child-workflow start, if configured."""
+        policy = getattr(self._config, "child_warrant_policy", None) if self._config else None
+        if policy is None:
+            return None
+
+        run_key = _current_run_key()
+        with _store_lock:
+            parent_raw_headers = dict(_workflow_headers_store.get(run_key, {}))
+        if not parent_raw_headers:
+            # No warrant on the parent at all -> nothing to narrow from. The
+            # child simply starts unwarranted, same as without this feature.
+            return None
+
+        from tenuo.temporal._workflow import _fail_workflow_non_retryable
+
+        child_workflow_type = _workflow_type_name(getattr(input, "workflow", None))
+        parent_warrant = _extract_warrant_from_headers(parent_raw_headers)
+        if parent_warrant is None:
+            # The parent carries Tenuo headers but no usable warrant. Starting
+            # the child unwarranted would let it escape the parent's authority.
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy could not read the parent's warrant, so "
+                f"child workflow {child_workflow_type!r} (id={input.id!r}) was "
+                "not started."
+            ))
+
+        try:
+            decision = policy(
+                parent_warrant,
+                child_workflow_type,
+                input.id,
+                getattr(input, "args", ()),
+            )
+        except Exception as exc:
+            raise TenuoContextError(
+                f"child_warrant_policy raised for child workflow "
+                f"{child_workflow_type!r} (id={input.id!r}): {exc}"
+            ) from exc
+
+        if decision is None:
+            # A configured policy that mints no narrower warrant means the
+            # child does not start: never unwarranted, never the parent's
+            # warrant verbatim.
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy returned None for child workflow "
+                f"{child_workflow_type!r} (id={input.id!r}), so it was not "
+                "started. Return tools=[...] to start it with a narrower warrant."
+            ))
+        if not isinstance(decision, dict):
+            raise TenuoContextError(
+                "child_warrant_policy must return None or a dict of "
+                "tenuo_execute_child_workflow()-style kwargs (tools=, "
+                "constraints=, ttl_seconds=, child_key_id=); got "
+                f"{type(decision).__name__}."
+            )
+        # Unlike tenuo_execute_child_workflow(), omitting tools= here must not
+        # mean "all of the parent's tools": a policy returning {} (or a typo'd
+        # key) would otherwise hand the child the parent's full authority.
+        unknown = set(decision) - _CHILD_POLICY_KEYS
+        if unknown:
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy returned unknown keys {sorted(unknown)} for "
+                f"child workflow {child_workflow_type!r}; allowed: "
+                f"{sorted(_CHILD_POLICY_KEYS)}."
+            ))
+        tools = decision.get("tools")
+        if not isinstance(tools, (list, tuple)) or not tools:
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy must name the child's tools explicitly "
+                f"(non-empty tools=[...]) for child workflow {child_workflow_type!r}."
+            ))
+
+        from tenuo.temporal._workflow import _attenuated_headers
+
+        return await _attenuated_headers(
+            tools=list(tools),
+            constraints=decision.get("constraints"),
+            ttl_seconds=decision.get("ttl_seconds"),
+            child_key_id=decision.get("child_key_id"),
+        )
 
     def continue_as_new(self, input: Any) -> None:
         """Re-inject Tenuo headers so the next run keeps its warrant."""
@@ -587,7 +756,63 @@ class _TenuoWorkflowInboundInterceptor:
                     constraint=f"Update not authorized: {update_name}",
                     warrant_id=self._resolve_warrant_id(),
                 )
+        self._maybe_stash_update_approvals(input)
         return await self.next.handle_update_handler(input)
+
+    def _maybe_stash_update_approvals(self, input: Any) -> None:
+        """Stage a signed approval carried on an ``x-tenuo-approvals`` update
+        header for the next activity this workflow run dispatches.
+
+        Populates the exact same store ``set_activity_approvals()`` writes
+        to (``_pending_activity_approvals``), so it has the exact same
+        one-shot, next-dispatch consumption the outbound interceptor already
+        implements and tests cover — this only adds a second way to *stage*
+        an approval (via update headers, for a caller that cannot run
+        workflow code, e.g. a human approver's client), not a new way to
+        *consume* one. A malformed header is logged and otherwise ignored —
+        it never fails the update itself, since the update's own
+        authorization (``authorized_updates``, above) is a separate concern
+        from whether it happens to carry a usable approval; a missing or
+        unusable approval simply means the later gated dispatch denies with
+        ``ApprovalGateTriggered``, same as if none had been supplied at all.
+        """
+        headers = getattr(input, "headers", None) or {}
+        raw: Optional[bytes] = None
+        for k, v in headers.items():
+            if k == TENUO_APPROVALS_HEADER:
+                data = getattr(v, "data", None)
+                if isinstance(data, bytes):
+                    raw = data
+                break
+        if raw is None:
+            return
+
+        from tenuo.temporal._headers import decode_signed_approvals
+
+        try:
+            approvals = decode_signed_approvals(raw)
+        except Exception as exc:
+            logger.warning(
+                "Malformed x-tenuo-approvals header on update %r; ignoring: %s",
+                getattr(input, "update", None),
+                exc,
+            )
+            return
+
+        from tenuo.temporal._state import _pending_activity_approvals
+
+        run_key = _current_run_key()
+        with _store_lock:
+            if run_key in _pending_activity_approvals:
+                logger.warning(
+                    "Update %r's approvals overwrite %d pending approvals for "
+                    "run_id=%s that were never consumed by an activity "
+                    "dispatch.",
+                    getattr(input, "update", None),
+                    len(_pending_activity_approvals[run_key]),
+                    run_key,
+                )
+            _pending_activity_approvals[run_key] = approvals
 
 
 # ── TenuoWorkerInterceptor (worker interceptor) ─────────────────────────
@@ -1082,6 +1307,18 @@ class TenuoActivityInboundInterceptor:
         # -- 4. Unauthenticated Execution Handling --
         if warrant is None:
             if self._config.require_warrant:
+                if is_unwarranted_activity(info.activity_type, self._config):
+                    # unwarranted_activities allowlist: internal plumbing
+                    # this worker chose to run without a warrant. Only
+                    # reached with warrant is None — an activity in this
+                    # list that DOES present a warrant falls through to
+                    # normal verification below, unaffected.
+                    logger.debug(
+                        "Activity %s allowed without a warrant "
+                        "(unwarranted_activities allowlist)",
+                        info.activity_type,
+                    )
+                    return await self._next.execute_activity(input)
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
                 if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise self._wrap_as_non_retryable(TemporalConstraintViolation(
@@ -1104,11 +1341,23 @@ class TenuoActivityInboundInterceptor:
                 return await self._next.execute_activity(input)
 
         # -- 5. Tool Resolution & Argument Extraction --
-        tool_name = _warrant_tool_name_for_activity_type(
+        default_tool_name = _warrant_tool_name_for_activity_type(
             self._config, info.activity_type, activity_fn
         )
-
-        args = self._extract_arguments(input, headers)
+        try:
+            tool_name, args = self._resolve_tool_and_args(
+                input, headers, info.activity_type, activity_fn, default_tool_name,
+            )
+        except TenuoContextError as extract_exc:
+            # pop_exclude_args / mcp_call_tool_activities fail-closed cases
+            # (unresolvable activity function, malformed wrapper payload)
+            # surface here, before PoP/chain verification even starts.
+            self._emit_malformed_warrant_denial_event(
+                info=info,
+                reason=str(extract_exc),
+                start_ns=start_ns,
+            )
+            raise self._wrap_as_non_retryable(extract_exc) from extract_exc
 
         # -- 6. Delegation Depth Limit --
         chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
@@ -1497,6 +1746,66 @@ class TenuoActivityInboundInterceptor:
                 "TenuoPluginConfig or supply x-tenuo-approvals header"
             ),
         )
+
+    def _resolve_tool_and_args(
+        self,
+        input: Any,
+        headers: Optional[Dict[str, bytes]],
+        activity_type: str,
+        activity_fn: Any,
+        default_tool_name: str,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Resolve the warrant tool name and args dict for inbound authorization.
+
+        With neither ``pop_exclude_args`` nor ``mcp_call_tool_activities``
+        configured, this is exactly ``(default_tool_name,
+        self._extract_arguments(input, headers))`` — unchanged default
+        behavior.
+
+        With either configured, extraction switches to resolving the args
+        dict from the activity function's own parameter names
+        (``_args_to_dict_by_fn``) instead of the ``TENUO_ARG_KEYS_HEADER``
+        positional shortcut: that header reflects whatever the *outbound*
+        side already excluded/unwrapped before computing it, so it cannot be
+        trusted to reconstruct the pre-exclusion, pre-unwrap dict this side
+        needs to independently exclude/unwrap from. Both interceptors then
+        apply the exact same routine (``unwrap_mcp_call_tool`` /
+        ``_apply_pop_exclusions``) the outbound interceptor applies before
+        signing, so the two sides agree on ``(tool_name, args)`` whenever
+        their configs agree — and fail closed (PoP mismatch, or an explicit
+        ``TenuoContextError``/``TenuoActivityMappingError`` here) when they
+        don't.
+        """
+        exclude_args = self._config.pop_exclude_args if self._config else frozenset()
+        mcp_patterns = (
+            self._config.mcp_call_tool_activities if self._config else ()
+        )
+
+        if mcp_patterns or exclude_args:
+            if activity_fn is None:
+                raise TenuoContextError(
+                    "TenuoPluginConfig.pop_exclude_args/mcp_call_tool_activities "
+                    f"is configured but the activity function for "
+                    f"{activity_type!r} could not be resolved (input.fn is "
+                    "None), so inbound argument extraction can't safely match "
+                    "parameter names."
+                )
+            args = _args_to_dict_by_fn(getattr(input, "args", ()) or (), activity_fn)
+        else:
+            args = self._extract_arguments(input, headers)
+
+        tool_name = default_tool_name
+        if mcp_patterns and is_mcp_call_tool_activity(activity_type, mcp_patterns):
+            tool_name, args = unwrap_mcp_call_tool(activity_type, args)
+
+        if exclude_args:
+            args = _apply_pop_exclusions(
+                args,
+                exclude_args,
+                activity_fn_resolved=activity_fn is not None,
+                tool_name=tool_name,
+            )
+        return tool_name, args
 
     def _extract_arguments(
         self, input: Any, headers: Optional[Dict[str, bytes]] = None,
