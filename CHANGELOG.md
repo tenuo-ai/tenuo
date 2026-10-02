@@ -258,9 +258,14 @@ these before upgrading:
   ACTIVITIES`, `HARNESS_TOOL_CTX_EXCLUDE_ARGS`, `HARNESS_MCP_CALL_TOOL_
   ACTIVITIES`), a `harness_plugin_config()` convenience that applies all
   three, and `warrant_evaluator()`, an auto-mode evaluator that checks the
-  task warrant before any other approval logic runs. See
+  task warrant before any other approval logic runs. The internal-activity
+  preset is exact activity names from `temporal-agent-harness` 0.5.0, never
+  glob patterns; names that include an MCP server or sandbox name come from
+  `harness_mcp_server_activities()` / `harness_sandbox_activities()` (or
+  `harness_plugin_config(mcp_servers=, sandboxes=)`), and sandbox command
+  execution and file access always need a warrant. See
   [`docs/temporal-harness.md`](docs/temporal-harness.md). The `tenuo[temporal-
-  harness]` extra installs `temporalio` and `temporal-agent-harness` together;
+  harness]` extra installs `temporalio` and `temporal-agent-harness==0.5.0` together;
   importing `tenuo.temporal.harness` itself never requires the harness
   package.
 - **Three more Temporal primitives usable by any framework, not just the
@@ -268,8 +273,10 @@ these before upgrading:
   child-workflow warrant for a *plain* `workflow.start_child_workflow()`
   call — no `tenuo_execute_child_workflow()` needed — reusing that
   function's own attenuation path, so a policy can only narrow the parent,
-  never widen it. The policy must name the child's tools; an unmatched
-  child gets no warrant, never the parent's verbatim.
+  never widen it. The policy must name the child's tools. If it mints no
+  narrower warrant (returns `None`, or the parent's warrant can't be read),
+  the child is not started: never unwarranted, never the parent's warrant
+  verbatim.
   `TenuoClientInterceptor.set_approvals_for_update()` stages a signed
   approval as an `x-tenuo-approvals` header on one workflow-update call; the
   worker's inbound interceptor stashes it into the same one-shot,

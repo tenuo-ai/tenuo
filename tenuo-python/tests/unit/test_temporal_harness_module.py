@@ -25,7 +25,10 @@ from tenuo.temporal.harness import (  # noqa: E402
     HARNESS_INTERNAL_ACTIVITIES,
     HARNESS_MCP_CALL_TOOL_ACTIVITIES,
     HARNESS_TOOL_CTX_EXCLUDE_ARGS,
+    HARNESS_VERSION,
+    harness_mcp_server_activities,
     harness_plugin_config,
+    harness_sandbox_activities,
     warrant_evaluator,
 )
 
@@ -79,6 +82,76 @@ class TestHarnessPresets:
 
     def test_tool_ctx_is_excluded(self):
         assert HARNESS_TOOL_CTX_EXCLUDE_ARGS == frozenset({"tool_ctx"})
+
+
+class TestHarnessExactNames:
+    """The shipped presets are exact names pinned to one harness release."""
+
+    def test_internal_preset_has_no_patterns(self):
+        for name in HARNESS_INTERNAL_ACTIVITIES:
+            assert not any(ch in name for ch in "*?[]"), f"{name!r} is a pattern"
+
+    def test_extra_pins_the_preset_harness_version(self):
+        import pathlib
+
+        pyproject = pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
+        text = pyproject.read_text()
+        assert f'"temporal-agent-harness=={HARNESS_VERSION};' in text
+
+    def test_new_activities_under_old_glob_shapes_need_a_warrant(self):
+        from tenuo.temporal._activity_patterns import activity_name_matches_any
+
+        cfg = harness_plugin_config(
+            key_resolver=EnvKeyResolver(), trusted_roots=_trust_roots(),
+            mcp_servers=["github"], sandboxes=["code"],
+        )
+        for probe in (
+            "gemini_files_delete",            # was covered by gemini_*
+            "github-list-resources",          # was a plausible *-list-* addition
+            "other-list-tools",               # a server this worker did not name
+            "code-sandbox_session_exec",      # was covered by *-sandbox_*
+            "code-sandbox_session_write",
+            "code-sandbox_session_read",
+            "code-sandbox_session_pty_exec_start",
+            "code-sandbox_session_pty_write_stdin",
+        ):
+            assert not activity_name_matches_any(probe, cfg.unwarranted_activities), probe
+
+    def test_named_server_and_sandbox_plumbing_is_exempt(self):
+        from tenuo.temporal._activity_patterns import activity_name_matches_any
+
+        cfg = harness_plugin_config(
+            key_resolver=EnvKeyResolver(), trusted_roots=_trust_roots(),
+            mcp_servers=["github"], sandboxes=["code"],
+        )
+        for probe in (
+            "github-list-tools",
+            "github-server-session",
+            "code-sandbox_client_create",
+            "code-sandbox_session_shutdown",
+        ):
+            assert activity_name_matches_any(probe, cfg.unwarranted_activities), probe
+
+    def test_mcp_server_helper_never_includes_call_tool(self):
+        names = harness_mcp_server_activities(["github", "linear"])
+        assert "github-list-tools" in names and "linear-get-prompt-v2" in names
+        assert not any("call-tool" in n for n in names)
+
+    def test_sandbox_helper_is_lifecycle_only(self):
+        names = harness_sandbox_activities(["code"])
+        assert "code-sandbox_session_start" in names
+        assert not any(
+            n.endswith(s)
+            for n in names
+            for s in ("_exec", "_read", "_write", "_pty_exec_start", "_pty_write_stdin")
+        )
+
+    @pytest.mark.parametrize("bad", ["github", ["git*"], ["?"], [""], [3]])
+    def test_helpers_reject_patterns_and_bad_input(self, bad):
+        with pytest.raises((TypeError, ValueError)):
+            harness_mcp_server_activities(bad)
+        with pytest.raises((TypeError, ValueError)):
+            harness_sandbox_activities(bad)
 
 
 class TestHarnessPluginConfig:

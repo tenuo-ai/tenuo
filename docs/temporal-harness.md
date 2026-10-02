@@ -146,31 +146,54 @@ production pattern for some deployments, but it should be a choice, not a
 requirement.
 
 ```python
-from tenuo.temporal.harness import HARNESS_INTERNAL_ACTIVITIES
+from tenuo.temporal.harness import harness_plugin_config
 
-config = TenuoPluginConfig(
+config = harness_plugin_config(
     ...,
-    unwarranted_activities=HARNESS_INTERNAL_ACTIVITIES,
-    require_warrant=True,  # your own tools stay strictly enforced
+    mcp_servers=["github"],   # your harness MCP server names
+    sandboxes=["code"],       # your harness sandbox names, if you use Code Mode
+    require_warrant=True,     # your own tools stay strictly enforced
 )
 ```
 
-`HARNESS_INTERNAL_ACTIVITIES` is a tuple of exact names and anchored glob
-patterns (`*` matches any run of characters; there is no substring
-matching) taken from the harness's own source, not guessed:
+The preset is **exact activity names only, no glob patterns**, taken from
+the source of `temporal-agent-harness` 0.5.0 (`HARNESS_VERSION`), which the
+`tenuo[temporal-harness]` extra pins. A pattern such as `gemini_*` or
+`*-sandbox_*` would also cover whatever the pre-alpha harness adds under
+that shape next, and the worker would run it with no warrant. With exact
+names, an activity a later release adds needs a warrant until it is reviewed
+and listed against a new pinned version.
+
+`HARNESS_INTERNAL_ACTIVITIES` holds the fixed names:
 
 ```python
 (
     "invoke_model_activity", "invoke_model_activity_streaming",
-    "gemini_*",                      # Google GenAI SDK integration
+    "gemini_api_client_async_request", "gemini_api_client_async_request_streamed",
+    "gemini_interactions_create_streamed", "gemini_files_upload",
+    "gemini_files_download", "gemini_files_register",
+    "gemini_file_search_stores_upload",
     "jev_tool_approval",
-    "code_start_batch", "code_resume_batch",
+    "code_start_batch", "code_resume_batch", "code_type_check",
     "run_subagent_turn",
-    "*-list-tools", "*-list-prompts", "*-get-prompt", "*-get-prompt-v2",
-    "*-server-session",
-    "*-sandbox_*",
 )
 ```
+
+Activities named after an MCP server or sandbox you choose can't be listed
+in advance, so build their exact names from those names:
+
+- `harness_mcp_server_activities(["github"])`: `github-list-tools`,
+  `github-list-prompts`, `github-get-prompt`, `github-get-prompt-v2`,
+  `github-server-session`. Never the call-tool activities.
+- `harness_sandbox_activities(["code"])`: sandbox lifecycle only
+  (`code-sandbox_client_create` / `_resume` / `_delete`,
+  `code-sandbox_session_start` / `_stop` / `_shutdown` / `_running` /
+  `_persist_workspace` / `_hydrate_workspace`). Command execution and file
+  access inside the sandbox (`_session_exec`, `_read`, `_write`,
+  `_pty_exec_start`, `_pty_write_stdin`) are effects and still need a warrant
+  that names them.
+
+`harness_plugin_config(mcp_servers=..., sandboxes=...)` adds both for you.
 
 Two things this does **not** do:
 
