@@ -113,9 +113,12 @@ pub mod revocation_tracker;
 #[deny(missing_docs)]
 #[cfg_attr(docsrs, doc(cfg(feature = "sdk")))]
 pub mod sdk;
+pub mod strict_json;
 pub mod verification;
 pub mod warrant;
 pub mod wire;
+
+pub use strict_json::{parse_json_strict, StrictJsonError};
 
 // Re-export extraction types
 pub use extraction::{

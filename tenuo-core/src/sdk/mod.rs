@@ -39,7 +39,7 @@ mod telemetry;
 #[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
 pub mod transport;
 
-pub use approvals::{ApprovalError, ApprovalProvider, LocalApprovalSigner};
+pub use approvals::{approve_request, ApprovalError, ApprovalProvider, LocalApprovalSigner};
 pub use authority::{
     AuthorityError, CapabilityView, OwnedReceivedAuthorization, PresentedAuthority,
     ReceivedAuthorization,

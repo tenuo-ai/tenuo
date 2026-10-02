@@ -1505,8 +1505,7 @@ fn handle_sign(
         payload
     };
 
-    let payload_json: serde_json::Value = serde_json::from_str(&payload_str)
-        .map_err(|e| format!("Payload must be valid JSON: {}", e))?;
+    let payload_json = parse_tool_payload(&payload_str)?;
 
     // Convert JSON to HashMap<String, ConstraintValue>
     let mut args = HashMap::new();
@@ -1541,6 +1540,12 @@ fn handle_sign(
     }
 
     Ok(())
+}
+
+fn parse_tool_payload(payload: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    tenuo::parse_json_strict(payload).map_err(|err| -> Box<dyn std::error::Error> {
+        format!("Payload must be valid JSON: {err}").into()
+    })
 }
 
 /// Convert JSON value to ConstraintValue
@@ -1615,8 +1620,7 @@ fn handle_verify(
         payload
     };
 
-    let payload_json: serde_json::Value = serde_json::from_str(&payload_str)
-        .map_err(|e| format!("Payload must be valid JSON: {}", e))?;
+    let payload_json = parse_tool_payload(&payload_str)?;
 
     let mut args = HashMap::new();
     if let Some(obj) = payload_json.as_object() {

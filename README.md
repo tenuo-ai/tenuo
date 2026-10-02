@@ -22,7 +22,7 @@ A **warrant** is a signed grant of which tools an agent can call, under what con
 
 > **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](./CHANGELOG.md).
 >
-> **Tenuo Cloud: Early Access.** Managed control plane with revocation, observability, and multi-tenant warrant issuance. [Request access →](https://tenuo.ai/early-access.html)
+> **Tenuo Cloud: Open Beta.** Managed control plane with revocation, observability, and multi-tenant warrant issuance. [Sign Up](https://cloud.tenuo.ai/)
 
 ## Install
 
@@ -330,7 +330,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 | **Python** | 3.9 - 3.14 |
 | **Node.js** | **Beta**. Node 20+ (`npm i @tenuo/core@beta`) |
 | **OS** | Linux, macOS, Windows |
-| **Python installation** | Prebuilt wheels; no Rust toolchain required |
+| **Python installation** | Prebuilt wheels for Linux (x86_64 and aarch64), macOS (arm64), and Windows (x64). Other platforms build from source and need Rust |
 
 ### Optional Dependencies
 
