@@ -234,7 +234,25 @@ version-check:
 		echo "  @tenuo/mcp: $$TS_MCP (expected prefix $$CORE_CARGO)"; \
 		exit 1; \
 	fi; \
-	echo "✓ All versions in sync: $$PYPROJECT ($$TS_CORE, $$TS_MCP)"
+	EXAMPLE_DRIFT=$$(node -e "\
+		const fs = require('fs'), path = require('path');\
+		const want = { '@tenuo/core': '$$TS_CORE', '@tenuo/mcp': '$$TS_MCP' };\
+		const dir = 'tenuo-ts/examples';\
+		for (const name of fs.readdirSync(dir)) {\
+			const file = path.join(dir, name, 'package.json');\
+			if (!fs.existsSync(file)) continue;\
+			const pkgJson = JSON.parse(fs.readFileSync(file, 'utf8'));\
+			const deps = Object.assign({}, pkgJson.devDependencies, pkgJson.peerDependencies, pkgJson.optionalDependencies, pkgJson.dependencies);\
+			for (const [pkg, version] of Object.entries(want)) {\
+				if (deps[pkg] && deps[pkg] !== version) console.log('  ' + file + ': ' + pkg + ' ' + deps[pkg] + ' (expected ' + version + ')');\
+			}\
+		}") || { echo "❌ Could not read the example package.json files"; exit 1; }; \
+	if [ -n "$$EXAMPLE_DRIFT" ]; then \
+		echo "❌ Example dependency mismatch (examples must pin the current package version):"; \
+		echo "$$EXAMPLE_DRIFT"; \
+		exit 1; \
+	fi; \
+	echo "✓ All versions in sync: $$PYPROJECT ($$TS_CORE, $$TS_MCP, examples)"
 
 # ============================================================================
 # EXPLORER SYNC CHECK

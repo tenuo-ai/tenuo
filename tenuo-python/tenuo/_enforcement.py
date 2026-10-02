@@ -1087,9 +1087,10 @@ def _enforce_tool_call_impl(
         _raw_constraint_args = (
             constraint_args if constraint_args is not None else tool_args
         )
-        # Keep original tool_args for diagnostics/audit payloads, but canonicalize
-        # each auth view independently before crossing the Rust FFI boundary.
-        _pop_auth_args = _strip_none_values(_raw_pop_args)
+        # The proof covers the argument map the caller passed, including None.
+        # Constraint matching still drops None so an omitted optional field and
+        # an extracted constraint view stay the same shape.
+        _pop_auth_args = _raw_pop_args
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
@@ -1567,7 +1568,9 @@ async def _enforce_tool_call_async_impl(
         _raw_constraint_args = (
             constraint_args if constraint_args is not None else tool_args
         )
-        _pop_auth_args = _strip_none_values(_raw_pop_args)
+        # The proof covers the argument map the caller passed, including None.
+        # Constraint matching still drops None.
+        _pop_auth_args = _raw_pop_args
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):

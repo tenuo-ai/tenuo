@@ -7,7 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Authorizer health and status endpoints moved to a separate port.**
+  `tenuo-authorizer serve` now answers `/health`, `/healthz`, `/ready` and
+  `/status` only on a dedicated health listener, `--health-port` (env
+  `TENUO_HEALTH_PORT`, default 9091, bound to `--health-bind` / `TENUO_HEALTH_BIND`,
+  default the `--bind` address; `0` disables it). On the authorization port
+  (9090) those paths are now ordinary requests: they need a matching route and
+  a warrant like any other path. In Unix-socket mode the socket no longer
+  serves them either, and a TCP health listener starts only if
+  `--health-port` is set (on `127.0.0.1` unless `--health-bind` says
+  otherwise). To migrate:
+  - Point liveness/readiness probes and any health or `/status` checks at port
+    9091 (the Helm chart and the Envoy/Istio quickstart manifests now use a
+    named `health` container port; if you override the chart's
+    `livenessProbe` / `readinessProbe`, use `port: health`).
+  - Expose or allow 9091 wherever you ran probes against 9090 from outside
+    the pod (Docker `-p 9091:9091`, network policies, load balancer checks).
+  - Only as a stopgap, `--legacy-health-on-main-port` (env
+    `TENUO_LEGACY_HEALTH_ON_MAIN_PORT`, Helm `health.legacyOnMainPort`) also
+    serves the old routes on the authorization port and logs a startup
+    warning. It is unsafe behind Envoy/Istio HTTP ext_authz without a
+    `path_prefix`; see Security below. **Deprecated: the flag, its env var
+    and the Helm value are removed in 0.4.0.**
+
+### Security
+
+- **Envoy HTTP ext_authz without `path_prefix` let `/health`, `/healthz`,
+  `/ready` and `/status` bypass authorization.** The authorizer serves those
+  paths itself and answers 200, and Envoy's HTTP ext_authz forwards the
+  client's original path to the authorizer by default. With the
+  `http_service` example previously in `docs/enforcement.md` (no
+  `path_prefix`), a client request to one of those four paths was treated as
+  authorized and forwarded to the backend without a warrant. Other paths were
+  not affected, and the gRPC-based quickstarts never reached the authorizer at
+  all. If you deployed from that example, set `path_prefix: /ext_authz` on the
+  ext_authz `http_service` (Istio: `pathPrefix`) and prefix your gateway route
+  patterns with `/ext_authz/`, as the updated docs now do. The authorizer
+  itself no longer answers those paths on the ext_authz port: they are served
+  only on the separate health port (see Breaking above), so a missing
+  `path_prefix` no longer turns them into an unauthenticated ALLOW. Keep the
+  prefix as defense in depth, and do not combine
+  `--legacy-health-on-main-port` with an unprefixed ext_authz config.
+
 ### Added
+
+- **One `_meta.tenuo` envelope in the core.** `sign_meta` and `decode_meta` are
+  the producer and consumer of that object. The proof covers the core's parse
+  of the argument JSON text, and JSON null stays in that map. Python and
+  TypeScript translate a host value into that text and call the core; they do
+  not pick a base64 alphabet or omit null from the proof. Warrant matching
+  still ignores a null field. The canonical warrant stack, signature, and
+  approval tokens are standard base64, which a previous server already
+  decodes. `decode_meta` still accepts an envelope already issued as unpadded
+  URL-safe base64. An integral number is the same proof whether the text says
+  `1` or `1.0`, in every SDK including the Rust SDK's `Call`. Adding or
+  removing null invalidates the proof, including
+  null list elements. The shared vector is
+  `tests/vectors/tenuo-meta.json`.
 
 - **Holder signing, approval hashes, and receipt chains in the Rust SDK**
   (#751):
@@ -76,6 +134,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **MCP boundary hardening:** one Rust MCP decoder, bounded argument parsing
+  (bytes, depth, nodes and decoded strings), captured argument snapshots, and
+  structured/audited Python parsing denials. `verify_meta_pop` / `verifyMetaPop`
+  name the proof-only check explicitly; old names remain aliases. Shared
+  conformance cases now include delegated chains, approvals and malformed
+  input. See the MCP guide for numeric and compatibility rules.
+
+- **`_meta.tenuo` is one envelope.** New clients write standard base64, so a
+  server from the previous release can decode the warrant stack and the
+  signature. That server still rejects the proof when the arguments contain
+  null or an integral float such as `1.0`, and a new server rejects those
+  calls from an old client, so client and server must both be on this release
+  for such calls. `decode_meta` still accepts unpadded URL-safe text, including
+  line-wrapped text. The proof covers JSON null. Clients that previously
+  removed null before signing must upgrade and re-sign the actual arguments;
+  verifiers do not retry against a null-stripped map. Float parsing preserves
+  the host's IEEE-754 value, and TypeScript executes the argument snapshot
+  verified before asynchronous replay admission.
+
 - **Guards no longer log denials by default** (#751). `DenialReporting` now
   defaults to `Debug`, which writes nothing; the caller receives every
   `Denial`. `Guard::builder`, `Runtime::builder`, `Tenuo::local`, and
@@ -106,6 +183,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the run for those handlers. Early registration is scoped and cleaned up on
   rejection, handler failure, or cancellation if the workflow body never starts;
   overlapping handlers retain their context until the last handler exits.
+- **Helm chart: authorizer pods start.** The chart ran
+  `command: ["tenuo-authorizer", ...]`, but the distroless image's binary is
+  `/tenuo-authorizer` (the ENTRYPOINT) and is not on `PATH`, so pods failed
+  with "executable file not found". The chart now passes `args`.
+
+- **Envoy and Istio quickstarts now work end to end.** The Envoy all-in-one
+  manifest had invalid YAML, both quickstarts configured gRPC ext_authz (the
+  authorizer only serves HTTP ext_authz), their `gateway.yaml` used a schema the
+  authorizer rejects, and the "demo warrant" was a truncated placeholder. The
+  configs now use HTTP ext_authz with a `path_prefix` (so the authorizer's own
+  `/health`, `/ready` and `/status` cannot be reached through the proxy and
+  answer 200 for a client request), pin image versions, and ship a
+  `demo_warrant.py` helper plus a Docker Compose e2e test that runs in CI. The
+  Istio quickstart also no longer overwrites the mesh config, enables sidecar
+  injection, and tests from inside the mesh instead of through port-forward.
+  The nginx example now forwards the original method and path.
+
+- **Authorizer: early denials carry `x-tenuo-deny-reason` in debug mode.**
+  `missing_warrant` (401), `invalid_warrant` (400), `no_route` (404) and the
+  other pre-authorization errors now set the header like 403 denials do, so it
+  reaches clients through Envoy's `allowed_client_headers`.
 
 - **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**
   That signature fails at registration on the official SDK; the docs now point

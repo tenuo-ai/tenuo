@@ -260,6 +260,29 @@ export type WasmContext = {
   loadRevocationList(srl: string): void;
   signRevocationList(ids: string[]): string;
   signPop(session: WasmSession, tool: string, args: unknown): string;
+  signMeta(
+    session: WasmSession,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+    approvals?: unknown,
+  ): { warrant: string; signature: string; approvals?: string[] };
+  /** Holder proof only; does not authorize execution. */
+  verifyMetaPop(
+    warrant: string,
+    signature: string,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+  ): boolean;
+  /** Compatibility alias for verifyMetaPop. */
+  verifyMeta(
+    warrant: string,
+    signature: string,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+  ): boolean;
   authorizePresented(
     warrants: unknown,
     tool: string,
