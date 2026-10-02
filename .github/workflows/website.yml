@@ -16,7 +16,10 @@ on:
     paths:
       - 'docs/**'
       - 'tenuo-core/src/**'
+      - 'tenuo-core/Cargo.toml'
+      - 'tenuo-core/Cargo.lock'
       - 'tenuo-wasm/**'
+      - 'tenuo-explorer/**'
       - '.github/workflows/website.yml'
   workflow_dispatch:
 
