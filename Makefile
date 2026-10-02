@@ -241,11 +241,12 @@ version-check:
 		for (const name of fs.readdirSync(dir)) {\
 			const file = path.join(dir, name, 'package.json');\
 			if (!fs.existsSync(file)) continue;\
-			const deps = JSON.parse(fs.readFileSync(file, 'utf8')).dependencies || {};\
+			const pkgJson = JSON.parse(fs.readFileSync(file, 'utf8'));\
+			const deps = Object.assign({}, pkgJson.devDependencies, pkgJson.peerDependencies, pkgJson.optionalDependencies, pkgJson.dependencies);\
 			for (const [pkg, version] of Object.entries(want)) {\
 				if (deps[pkg] && deps[pkg] !== version) console.log('  ' + file + ': ' + pkg + ' ' + deps[pkg] + ' (expected ' + version + ')');\
 			}\
-		}"); \
+		}") || { echo "❌ Could not read the example package.json files"; exit 1; }; \
 	if [ -n "$$EXAMPLE_DRIFT" ]; then \
 		echo "❌ Example dependency mismatch (examples must pin the current package version):"; \
 		echo "$$EXAMPLE_DRIFT"; \
