@@ -14,8 +14,9 @@ import inspect as _inspect
 import json
 import logging
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
 
 from tenuo.exceptions import (
     ApprovalGateTriggered,
@@ -159,6 +160,14 @@ def _raise_non_retryable(violation: BaseException) -> None:
         raise _build_non_retryable_application_error(violation) from violation
     except ImportError:  # temporalio not installed — re-raise raw
         raise violation
+
+
+class _ApprovalHandlerRetry(Exception):
+    """An approval handler raised a retryable Temporal application error."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.error = error
 
 
 def _replace_field(obj: Any, field: str, value: Any) -> Any:
@@ -384,12 +393,19 @@ class _TenuoWorkflowInboundInterceptor:
 
     def __init__(self, next_interceptor: Any) -> None:
         self.next = next_interceptor
+        self._workflow_started = False
+        self._early_handlers = 0
+        self._early_owned_config = False
+        self._early_owned_headers = False
 
     def init(self, outbound: Any) -> None:
         self.next.init(_TenuoWorkflowOutboundInterceptor(outbound, self._config))
 
     async def execute_workflow(self, input: Any) -> Any:
         run_key = _current_run_key()
+        # The body now owns registration and its existing finally owns cleanup,
+        # even if an early async handler is still suspended.
+        self._workflow_started = True
 
         incoming: Dict[str, bytes] = {}
         for key, payload in (getattr(input, "headers", None) or {}).items():
@@ -412,6 +428,71 @@ class _TenuoWorkflowInboundInterceptor:
             with _store_lock:
                 _workflow_headers_store.pop(run_key, None)
                 _workflow_config_store.pop(run_key, None)
+
+    @contextmanager
+    def _registered_handler_run(self) -> Iterator[None]:
+        """Scope early registration to handlers until the workflow body starts.
+
+        A denied first activation may never enter execute_workflow's finally.
+        Keep registration available to overlapping early handlers (including
+        their outbound calls), but release entries we created when the last
+        handler exits unless the body has taken ownership.
+        """
+        if self._workflow_started:
+            yield
+            return
+
+        run_key = _current_run_key()
+        if self._early_handlers == 0:
+            with _store_lock:
+                self._early_owned_config = run_key not in _workflow_config_store
+                self._early_owned_headers = run_key not in _workflow_headers_store
+        self._early_handlers += 1
+        try:
+            self._ensure_run_registered()
+            yield
+        finally:
+            self._early_handlers -= 1
+            if self._early_handlers == 0 and not self._workflow_started:
+                with _store_lock:
+                    if self._early_owned_config:
+                        _workflow_config_store.pop(run_key, None)
+                    if self._early_owned_headers:
+                        _workflow_headers_store.pop(run_key, None)
+
+    def _ensure_run_registered(self) -> None:
+        """Register this run's config before a first-activation signal or update.
+
+        Temporal can deliver a signal or update in the same activation as
+        workflow start, and it runs that handler before ``execute_workflow``.
+        ``authorized_signals`` / ``authorized_updates`` live on the run
+        config. If the handler runs first, the check used to see no config
+        and allow the call.
+        """
+        run_key = _current_run_key()
+        with _store_lock:
+            if run_key in _workflow_config_store:
+                return
+            if self._config is not None:
+                _workflow_config_store[run_key] = self._config
+        try:
+            from tenuo.temporal._headers import _current_workflow_headers
+
+            incoming = {
+                key: value
+                for key, value in _current_workflow_headers().items()
+                if key.startswith("x-tenuo-")
+            }
+        except Exception:
+            logger.debug(
+                "Could not copy workflow start headers before the workflow body",
+                exc_info=True,
+            )
+            return
+        if not incoming:
+            return
+        with _store_lock:
+            _workflow_headers_store.setdefault(run_key, incoming)
 
     def _resolve_config(self) -> Optional["TenuoPluginConfig"]:
         run_key = _current_run_key()
@@ -442,6 +523,10 @@ class _TenuoWorkflowInboundInterceptor:
         return getattr(warrant, "id", "") or "<no-warrant>"
 
     async def handle_signal(self, input: Any) -> None:
+        with self._registered_handler_run():
+            return await self._handle_signal(input)
+
+    async def _handle_signal(self, input: Any) -> None:
         config = self._resolve_config()
         if config and config.authorized_signals is not None:
             signal_name = getattr(input, "signal", None)
@@ -464,6 +549,10 @@ class _TenuoWorkflowInboundInterceptor:
         return await self.next.handle_query(input)
 
     def handle_update_validator(self, input: Any) -> None:
+        with self._registered_handler_run():
+            return self._handle_update_validator(input)
+
+    def _handle_update_validator(self, input: Any) -> None:
         config = self._resolve_config()
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)
@@ -484,6 +573,10 @@ class _TenuoWorkflowInboundInterceptor:
         return self.next.handle_update_validator(input)
 
     async def handle_update_handler(self, input: Any) -> Any:
+        with self._registered_handler_run():
+            return await self._handle_update_handler(input)
+
+    async def _handle_update_handler(self, input: Any) -> Any:
         config = self._resolve_config()
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)
@@ -1223,6 +1316,11 @@ class TenuoActivityInboundInterceptor:
             if self._config.on_denial == "raise" and not self._config.dry_run:
                 raise self._wrap_as_non_retryable(auth_exc) from auth_exc
             return await _deny_or_continue(tool=tool_name, reason=str(auth_exc))
+        except _ApprovalHandlerRetry as retry:
+            # No authorization decision or activity dispatch: preserve the
+            # handler's retry policy for pending approval or transient failure.
+            logger.info("Activity '%s' approval handler requested retry: %s", tool_name, retry.error)
+            raise retry.error from None
         except Exception as e:
             try:
                 from tenuo.exceptions import TenuoError as _TenuoError
@@ -1330,6 +1428,13 @@ class TenuoActivityInboundInterceptor:
         if not _evaluate_approval_gates(warrant, tool_name, args):
             return None
 
+        # A call the warrant does not grant is never sent for approval. Returning
+        # no approvals lets the authorization step below deny it with the reason.
+        from tenuo._enforcement import _denial_before_approval
+
+        if _denial_before_approval(warrant, tool_name, args) is not None:
+            return None
+
         from tenuo_core import SignedApproval as CoreSignedApproval
 
         raw_approvals_header = headers.get(TENUO_APPROVALS_HEADER)
@@ -1361,9 +1466,19 @@ class TenuoActivityInboundInterceptor:
 
         handler = self._config.approval_handler if self._config else None
         if handler is not None:
-            result = handler(request)
-            if _inspect.isawaitable(result):
-                result = await result
+            from temporalio.exceptions import ApplicationError
+
+            try:
+                result = handler(request)
+                if _inspect.isawaitable(result):
+                    result = await result
+            except ApplicationError as exc:
+                # Pending approvals and transient approval-service failures can
+                # request a retry. Only errors from the handler get this treatment;
+                # authorization failures below remain non-retryable.
+                if exc.non_retryable:
+                    raise
+                raise _ApprovalHandlerRetry(exc) from exc
 
             collected = result if isinstance(result, list) else [result]
 

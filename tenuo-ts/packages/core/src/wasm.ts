@@ -260,6 +260,29 @@ export type WasmContext = {
   loadRevocationList(srl: string): void;
   signRevocationList(ids: string[]): string;
   signPop(session: WasmSession, tool: string, args: unknown): string;
+  signMeta(
+    session: WasmSession,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+    approvals?: unknown,
+  ): { warrant: string; signature: string; approvals?: string[] };
+  /** Holder proof only; does not authorize execution. */
+  verifyMetaPop(
+    warrant: string,
+    signature: string,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+  ): boolean;
+  /** Compatibility alias for verifyMetaPop. */
+  verifyMeta(
+    warrant: string,
+    signature: string,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+  ): boolean;
   authorizePresented(
     warrants: unknown,
     tool: string,
@@ -322,6 +345,7 @@ type Generated = {
     tool: string,
     args: unknown,
   ): { approval_required: boolean; tool: string; error?: string };
+  parse_strict_json(jsonText: string): void;
 };
 
 let loaded: Generated | undefined;
@@ -459,6 +483,19 @@ function throwIfGateError(error: string | undefined): void {
   if (error) {
     throw new TenuoConfigurationError(error);
   }
+}
+
+/**
+ * Parse JSON text and reject a repeated key in any object.
+ *
+ * `verify()` receives an object the host already parsed. A duplicate key is
+ * gone by then. Call this while the text is still available. After the check,
+ * the value is `JSON.parse` of the original text, so each key is an own data
+ * property and `null` stays `null`.
+ */
+export function parseStrictJson(text: string): unknown {
+  loadWasm().parse_strict_json(text);
+  return JSON.parse(text);
 }
 
 /**

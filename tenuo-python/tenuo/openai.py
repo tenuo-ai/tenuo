@@ -464,6 +464,13 @@ def _constraint_expected_type(constraint: Constraint) -> str:
         return "compatible type"
 
 
+def _loads_tool_arguments(raw: str) -> Any:
+    """Parse a tool-argument JSON string, rejecting a repeated key."""
+    from tenuo.arguments import parse_strict_json
+
+    return parse_strict_json(raw)
+
+
 class MalformedToolCall(TenuoOpenAIError):
     """Raised when a tool call has invalid JSON arguments."""
 
@@ -748,8 +755,8 @@ class ToolCallBuffer:
         if not self.arguments_buffer:
             return {}
         try:
-            return json.loads(self.arguments_buffer)
-        except json.JSONDecodeError as e:
+            return _loads_tool_arguments(self.arguments_buffer)
+        except ValueError as e:
             raise MalformedToolCall(self.name, str(e))
 
     def size(self) -> int:
@@ -859,8 +866,8 @@ class GuardedCompletions:
         # Parse arguments
         args_str = func.arguments if hasattr(func, "arguments") else "{}"
         try:
-            arguments = json.loads(args_str) if args_str else {}
-        except json.JSONDecodeError as e:
+            arguments = _loads_tool_arguments(args_str) if args_str else {}
+        except ValueError as e:
             raise MalformedToolCall(tool_name, str(e))
 
         try:
@@ -1280,8 +1287,8 @@ class GuardedResponses:
         args_str = getattr(item, "arguments", "{}") or "{}"
 
         try:
-            arguments = json.loads(args_str) if args_str else {}
-        except json.JSONDecodeError as e:
+            arguments = _loads_tool_arguments(args_str) if args_str else {}
+        except ValueError as e:
             raise MalformedToolCall(tool_name, str(e))
 
         try:
@@ -2401,8 +2408,10 @@ class TenuoToolGuardrail:
             if not name:
                 return None
             try:
-                arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError as e:
+                arguments = (
+                    _loads_tool_arguments(args_str) if isinstance(args_str, str) else args_str
+                )
+            except ValueError as e:
                 # SECURITY: Fail closed on malformed JSON
                 raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
 
@@ -2416,8 +2425,10 @@ class TenuoToolGuardrail:
             if not name:
                 return None
             try:
-                arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError as e:
+                arguments = (
+                    _loads_tool_arguments(args_str) if isinstance(args_str, str) else args_str
+                )
+            except ValueError as e:
                 raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
             return (name, arguments)
 
@@ -2427,8 +2438,10 @@ class TenuoToolGuardrail:
             if not name:
                 return None
             try:
-                arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError as e:
+                arguments = (
+                    _loads_tool_arguments(args_str) if isinstance(args_str, str) else args_str
+                )
+            except ValueError as e:
                 raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
             return (name, arguments)
 

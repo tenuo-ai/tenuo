@@ -30,14 +30,13 @@ invariant the PR is committing to.
 
 from __future__ import annotations
 
-import base64
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from tenuo_core import Authorizer, CompiledMcpConfig, SigningKey, Warrant
+from tenuo_core import Authorizer, CompiledMcpConfig, SigningKey, Warrant, sign_meta
 
-from tenuo._pop_canonicalize import strip_none_values
+from tenuo.meta import argument_json
 from tenuo.mcp.server import MCPVerificationResult, MCPVerifier
 
 
@@ -59,20 +58,22 @@ class ClientSide:
     config: Optional[CompiledMcpConfig] = None
 
     def sign_pop(self, tool: str, wire_args: Dict[str, Any]) -> str:
-        """Sign PoP over the (None-stripped) wire args the way
-        ``SecureMCPClient`` does in production."""
-        canonical = strip_none_values(wire_args)
-        sig = self.warrant.sign(self.agent_key, tool, canonical, int(time.time()))
-        return base64.b64encode(bytes(sig)).decode()
+        """Sign PoP the way ``SecureMCPClient`` does: core reads the argument JSON."""
+        return self.build_envelope(tool, wire_args)["signature"]
+
+    def build_envelope(self, tool: str, wire_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Canonical ``_meta.tenuo`` object for these wire args."""
+        return sign_meta(
+            [self.warrant],
+            self.agent_key,
+            tool,
+            argument_json(wire_args),
+            int(time.time()),
+        )
 
     def build_meta(self, tool: str, wire_args: Dict[str, Any]) -> Dict[str, Any]:
         """Return a ``params._meta``-shaped envelope for the given wire args."""
-        return {
-            "tenuo": {
-                "warrant": self.warrant.to_base64(),
-                "signature": self.sign_pop(tool, wire_args),
-            }
-        }
+        return {"tenuo": self.build_envelope(tool, wire_args)}
 
 
 @dataclass

@@ -535,6 +535,10 @@ class ConstraintViolation(ScopeViolation):
     rust_variant = "ConstraintNotSatisfied"
 
     def __init__(self, field: str, reason: str, value: Optional[Any] = None, hint: Optional[str] = None):
+        # Denial reasons from the core already carry this prefix; don't repeat it.
+        prefix = f"Constraint '{field}' not satisfied: "
+        if reason.startswith(prefix):
+            reason = reason[len(prefix):]
         details: dict[str, Any] = {"field": field, "reason": reason}
         if value is not None:
             details["value"] = str(value)

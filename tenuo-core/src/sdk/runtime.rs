@@ -92,7 +92,7 @@ impl Runtime {
             srl_max_age: DEFAULT_SRL_MAX_AGE,
             srl_clock_tolerance: DEFAULT_SRL_CLOCK_TOLERANCE,
             floor_path: None,
-            denial_reporting: DenialReporting::Error,
+            denial_reporting: DenialReporting::default(),
             #[cfg(feature = "receipts")]
             evidence: EvidencePolicy::Disabled,
             #[cfg(feature = "receipts")]
@@ -361,6 +361,8 @@ impl RuntimeBuilder {
     }
 
     /// Log level for denials. Never changes whether the operation runs.
+    ///
+    /// Defaults to [`DenialReporting::Debug`], which writes nothing.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
         self

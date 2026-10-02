@@ -771,7 +771,7 @@ python examples/mcp/mcp_client_demo.py
 |-----------|-----------|
 | **Python** | 3.9 - 3.14 (some extras require ≥3.10, see Installation) |
 | **OS** | Linux, macOS, Windows |
-| **Rust** | Not required (binary wheels for macOS, Linux, Windows) |
+| **Rust** | Not required for Linux (x86_64, aarch64), macOS (arm64), or Windows (x64) wheels. Other platforms build from source |
 
 ## Documentation
 

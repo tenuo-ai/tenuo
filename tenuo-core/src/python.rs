@@ -33,10 +33,11 @@ use crate::warrant::{
     Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant as RustWarrant, WarrantType,
 };
 use crate::wire;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -2409,6 +2410,21 @@ pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<Constra
     // cross-language drift caught by the PoP fixture regression test
     // (see ``tenuo-core/tests/pop_canonical_fixture.rs``). Keep ``bool``
     // ahead of ``i64`` so actual booleans stay booleans.
+    // ``None`` is JSON null. A dict is a nested object. Both are part of
+    // the argument map ``sign_meta`` signs.
+    if obj.is_none() {
+        return Ok(ConstraintValue::Null);
+    }
+    if let Ok(dict) = obj.cast::<PyDict>() {
+        let mut map = BTreeMap::new();
+        for (key, value) in dict.iter() {
+            let k: String = key
+                .extract()
+                .map_err(|_| py_validation_err("argument keys must be strings"))?;
+            map.insert(k, py_to_constraint_value(&value)?);
+        }
+        return Ok(ConstraintValue::Object(map));
+    }
     if let Ok(s) = obj.extract::<String>() {
         Ok(ConstraintValue::String(s))
     } else if let Ok(b) = obj.extract::<bool>() {
@@ -2427,7 +2443,7 @@ pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<Constra
         Ok(ConstraintValue::List(values))
     } else {
         Err(py_validation_err(
-            "value must be str, int, float, bool, or list",
+            "value must be str, int, float, bool, list, dict, or None",
         ))
     }
 }
@@ -5088,6 +5104,154 @@ fn py_verify_approval_context_attestation(
     .map_err(to_py_err)
 }
 
+/// Reject a repeated key, then parse the original text with Python's ``json.loads``.
+///
+/// A dict a host has already parsed cannot be checked: the duplicate is gone.
+/// Call this while the text is still available. Nested objects are checked too.
+/// The returned value is Python's reading of ``text``. A Rust JSON round trip
+/// would change some numbers, so the tool and the check would see different values.
+///
+/// Args:
+///     text: JSON text, such as a tool-argument string.
+///
+/// Returns:
+///     The parsed value. Raises ``ValueError`` on malformed JSON or a repeated key.
+#[pyfunction]
+#[pyo3(name = "parse_strict_json")]
+fn py_parse_strict_json(py: Python<'_>, text: &str) -> PyResult<Py<PyAny>> {
+    crate::parse_json_strict(text).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let json = py.import("json")?;
+    Ok(json.call_method1("loads", (text,))?.unbind())
+}
+
+/// Sign `_meta.tenuo` from argument JSON text.
+///
+/// The proof covers this core's parse of `args_json`, including JSON null.
+/// `warrant` and `signature` are the canonical envelope strings.
+#[pyfunction(name = "sign_meta")]
+#[pyo3(signature = (warrants, signing_key, tool, args_json, timestamp, approvals=None))]
+fn py_sign_meta(
+    py: Python<'_>,
+    warrants: Vec<PyRef<'_, PyWarrant>>,
+    signing_key: &PySigningKey,
+    tool: &str,
+    args_json: &str,
+    timestamp: i64,
+    approvals: Option<Vec<PyRef<'_, PySignedApproval>>>,
+) -> PyResult<Py<PyAny>> {
+    let chain: Vec<crate::warrant::Warrant> = warrants.iter().map(|w| w.inner.clone()).collect();
+    let approval_list: Vec<RustSignedApproval> = approvals
+        .unwrap_or_default()
+        .iter()
+        .map(|approval| approval.inner.clone())
+        .collect();
+    let meta = crate::meta_envelope::sign_meta(
+        &chain,
+        &signing_key.inner,
+        tool,
+        args_json,
+        timestamp,
+        &approval_list,
+    )
+    .map_err(|err| to_py_err(err.into()))?;
+    let dict = PyDict::new(py);
+    dict.set_item("warrant", &meta.warrant)?;
+    dict.set_item("signature", &meta.signature)?;
+    if !meta.approvals.is_empty() {
+        dict.set_item("approvals", &meta.approvals)?;
+    }
+    Ok(dict.into_any().unbind())
+}
+
+/// Read a canonical or previously issued `_meta.tenuo` envelope.
+#[pyfunction(name = "decode_meta")]
+#[pyo3(signature = (warrant, signature, approvals=None))]
+fn py_decode_meta(
+    py: Python<'_>,
+    warrant: &str,
+    signature: &str,
+    approvals: Option<Vec<String>>,
+) -> PyResult<Py<PyAny>> {
+    let approval_tokens = approvals.unwrap_or_default();
+    let decoded = crate::meta_envelope::decode_meta_parts(warrant, signature, &approval_tokens)
+        .map_err(|err| to_py_err(err.into()))?;
+    let warrants: Vec<PyWarrant> = decoded
+        .warrants
+        .into_iter()
+        .map(|warrant| PyWarrant { inner: warrant })
+        .collect();
+    let approvals: Vec<PySignedApproval> = decoded
+        .approvals
+        .into_iter()
+        .map(|approval| PySignedApproval { inner: approval })
+        .collect();
+    let dict = PyDict::new(py);
+    dict.set_item("warrants", warrants)?;
+    dict.set_item("signature", decoded.signature.to_bytes().to_vec())?;
+    dict.set_item("approvals", approvals)?;
+    Ok(dict.into_any().unbind())
+}
+
+/// Check a `_meta.tenuo` proof against argument JSON text at `timestamp`.
+///
+/// Returns false when the proof does not match. A malformed envelope raises.
+/// This is NOT authorization: it does not check trust, expiry or constraints.
+#[pyfunction(name = "verify_meta_pop")]
+fn py_verify_meta_pop(
+    warrant: &str,
+    signature: &str,
+    tool: &str,
+    args_json: &str,
+    timestamp: i64,
+) -> PyResult<bool> {
+    crate::meta_envelope::verify_meta_pop(warrant, signature, tool, args_json, timestamp)
+        .map_err(|err| to_py_err(err.into()))
+}
+
+/// Decode the warrant field of `_meta.tenuo` into a chain, root first.
+#[pyfunction(name = "decode_meta_chain")]
+fn py_decode_meta_chain(warrant: &str) -> PyResult<Vec<PyWarrant>> {
+    let chain =
+        crate::meta_envelope::decode_warrant_chain(warrant).map_err(|err| to_py_err(err.into()))?;
+    Ok(chain
+        .into_iter()
+        .map(|warrant| PyWarrant { inner: warrant })
+        .collect())
+}
+
+/// Decode the signature field of `_meta.tenuo` into 64 bytes.
+#[pyfunction(name = "decode_meta_signature")]
+fn py_decode_meta_signature(signature: &str) -> PyResult<Vec<u8>> {
+    let decoded =
+        crate::meta_envelope::decode_signature(signature).map_err(|err| to_py_err(err.into()))?;
+    Ok(decoded.to_bytes().to_vec())
+}
+
+/// Decode one approval field of `_meta.tenuo`.
+#[pyfunction(name = "decode_meta_approval")]
+fn py_decode_meta_approval(token: &str) -> PyResult<PySignedApproval> {
+    let approval =
+        crate::meta_envelope::decode_approval(token).map_err(|err| to_py_err(err.into()))?;
+    Ok(PySignedApproval { inner: approval })
+}
+
+/// Core's argument map for `args_json`, returned as a dict.
+///
+/// JSON null becomes ``None``. This is the map ``sign_meta`` signs.
+#[pyfunction(name = "args_from_json")]
+fn py_args_from_json(py: Python<'_>, args_json: &str) -> PyResult<Py<PyAny>> {
+    let args = crate::meta_envelope::args_from_json(args_json).map_err(|err| {
+        let error = PyValueError::new_err(err.code());
+        let _ = error.value(py).setattr("code", err.code());
+        error
+    })?;
+    let dict = PyDict::new(py);
+    for (key, value) in args {
+        dict.set_item(key, constraint_value_to_py(py, &value)?)?;
+    }
+    Ok(dict.into_any().unbind())
+}
+
 /// Compute the request hash that binds an approval to a specific tool call.
 ///
 /// The hash covers (warrant_id, tool, sorted args, holder), ensuring an approval
@@ -6862,6 +7026,16 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_encode_warrant_stack, m)?)?;
     m.add_function(wrap_pyfunction!(py_build_approval_context_attestation, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approval_context_attestation, m)?)?;
+    m.add_function(wrap_pyfunction!(py_parse_strict_json, m)?)?;
+    m.add_function(wrap_pyfunction!(py_sign_meta, m)?)?;
+    m.add_function(wrap_pyfunction!(py_decode_meta, m)?)?;
+    m.add_function(wrap_pyfunction!(py_verify_meta_pop, m)?)?;
+    // Backward-compatible proof-only alias; never an authorization verdict.
+    m.add("verify_meta", m.getattr("verify_meta_pop")?)?;
+    m.add_function(wrap_pyfunction!(py_args_from_json, m)?)?;
+    m.add_function(wrap_pyfunction!(py_decode_meta_chain, m)?)?;
+    m.add_function(wrap_pyfunction!(py_decode_meta_signature, m)?)?;
+    m.add_function(wrap_pyfunction!(py_decode_meta_approval, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_receipt, m)?)?;
     m.add_function(wrap_pyfunction!(py_srl_commitment_digest, m)?)?;

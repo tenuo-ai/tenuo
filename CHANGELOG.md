@@ -23,6 +23,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One `_meta.tenuo` envelope in the core.** `sign_meta` and `decode_meta` are
+  the producer and consumer of that object. The proof covers the core's parse
+  of the argument JSON text, and JSON null stays in that map. Python and
+  TypeScript translate a host value into that text and call the core; they do
+  not pick a base64 alphabet or omit null from the proof. Warrant matching
+  still ignores a null field. The canonical warrant stack, signature, and
+  approval tokens are standard base64, which a previous server already
+  decodes. `decode_meta` still accepts an envelope already issued as unpadded
+  URL-safe base64. An integral number is the same proof whether the text says
+  `1` or `1.0`, in every SDK including the Rust SDK's `Call`. Adding or
+  removing null invalidates the proof, including
+  null list elements. The shared vector is
+  `tests/vectors/tenuo-meta.json`.
+
+- **Holder signing, approval hashes, and receipt chains in the Rust SDK**
+  (#751):
+  - `PresentedAuthority::prove` and `mcp_meta::sign_meta`: the holder side of
+    the proof path, so a caller can build `_meta.tenuo` without a local
+    `Guard`. `sign_meta` takes the enforcement point's proof timestamp and
+    window. `TransportError::ProofFailed` is new.
+  - `ApprovalRequest::matches` checks request-hash consistency;
+    `matches_warrant` also checks display metadata against a trusted warrant
+    before human review. `sdk::approve_request` takes that warrant and rechecks
+    the reviewed request, including its message, approvers, threshold, and expiry.
+    An empty approver list is refused. The nonce is random and expiry is
+    capped at the warrant's. `ApprovalError::RequestMismatch` is new.
+  - `receipt::verify_chain`: verify signatures, a single signer, and
+    `prev_receipt_hash` links across a non-empty run of receipts.
+
+- **Strict JSON parsing for tool-argument text** (#755).
+  `parse_json_strict` and `Call::try_from_json_str` walk every object,
+  including nested values, and reject a repeated key. Python
+  (`parse_strict_json`) and the WASM build (`parseStrictJson`) expose the
+  same check. Python then parses that text with `json.loads`, and
+  TypeScript with `JSON.parse`, so numbers, `null`, and keys match the
+  value the tool executes. OpenAI, AutoGen, and the CLIs use it where the
+  argument string is still available. `MCPVerifier.verify` and `mcp.verify`
+  still take an object the host already parsed; a duplicate key is not
+  visible there.
+
+- **Linux aarch64 Python wheel.** Releases publish a `manylinux_2_28_aarch64`
+  wheel next to the existing Linux x86_64, macOS arm64, and Windows wheels, so
+  `pip install tenuo` on ARM Linux no longer builds from source. Linux wheels
+  are built for glibc 2.28 and imported on Debian bookworm before publishing,
+  and the release checks each platform tag (#743).
+
 - **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
   `ServerMiddleware` for `MCPServer` / low-level `Server` that runs
   `MCPVerifier` on every `tools/call` before params validation, accepting the
@@ -40,7 +86,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
 
+### Changed
+
+- **MCP boundary hardening:** one Rust MCP decoder, bounded argument parsing
+  (bytes, depth, nodes and decoded strings), captured argument snapshots, and
+  structured/audited Python parsing denials. `verify_meta_pop` / `verifyMetaPop`
+  name the proof-only check explicitly; old names remain aliases. Shared
+  conformance cases now include delegated chains, approvals and malformed
+  input. See the MCP guide for numeric and compatibility rules.
+
+- **`_meta.tenuo` is one envelope.** New clients write standard base64, so a
+  server from the previous release can decode the warrant stack and the
+  signature. That server still rejects the proof when the arguments contain
+  null or an integral float such as `1.0`, and a new server rejects those
+  calls from an old client, so client and server must both be on this release
+  for such calls. `decode_meta` still accepts unpadded URL-safe text, including
+  line-wrapped text. The proof covers JSON null. Clients that previously
+  removed null before signing must upgrade and re-sign the actual arguments;
+  verifiers do not retry against a null-stripped map. Float parsing preserves
+  the host's IEEE-754 value, and TypeScript executes the argument snapshot
+  verified before asynchronous replay admission.
+
+- **Guards no longer log denials by default** (#751). `DenialReporting` now
+  defaults to `Debug`, which writes nothing; the caller receives every
+  `Denial`. `Guard::builder`, `Runtime::builder`, `Tenuo::local`, and
+  `Tenuo::enforcement` use that default. The previous default, `Error`,
+  printed each denial message to stderr, and messages can quote argument
+  values. Set `.denial_reporting(DenialReporting::Error)` to restore it.
+
 ### Fixed
+
+- **Temporal approval handlers can request retries.** Retryable
+  `ApplicationError`s from sync or async handlers propagate unchanged for pending
+  approvals or transient service failures. Pending attempts do not execute the
+  activity; returned approvals still require full authorization on retry.
+- **Calls outside the warrant's capabilities are denied before any approval is
+  requested.** When an approval gate matched a call that also broke the
+  warrant's constraints (wrong payee, amount over the limit, tool not granted),
+  the approval handler ran first and the call was denied only afterwards. The
+  shared enforcement path and the Temporal interceptor now run the
+  `approval_requirement` preflight first and deny with the constraint reason,
+  so an approver is not asked to override a capability constraint. This preflight
+  is deny-only; issuer trust, expiry, revocation, PoP, and collected approvals
+  still require full authorization before execution.
+- **Temporal `authorized_signals` / `authorized_updates` apply to a signal or
+  update delivered in the workflow's first activation.** Update-with-start,
+  and an update sent immediately after start, run the handler before
+  `execute_workflow` registered the run config, so the allowlist saw no
+  config and let the call through. The inbound interceptor now registers
+  the run for those handlers. Early registration is scoped and cleaned up on
+  rejection, handler failure, or cancellation if the workflow body never starts;
+  overlapping handlers retain their context until the last handler exits.
 
 - **Envoy and Istio quickstarts now work end to end.** The Envoy all-in-one
   manifest had invalid YAML, both quickstarts configured gRPC ext_authz (the
