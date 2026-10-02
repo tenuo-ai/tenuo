@@ -11,7 +11,7 @@
     "verify:packed": "node scripts/verify-packed.mjs"
   },
   "dependencies": {
-    "@tenuo/core": "0.2.5-beta.0",
+    "@tenuo/core": "0.3.1-beta.0",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
