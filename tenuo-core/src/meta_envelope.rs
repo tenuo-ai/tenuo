@@ -408,6 +408,19 @@ pub fn decode_approval(input: &str) -> std::result::Result<SignedApproval, MetaE
     ciborium::from_reader(bytes.as_slice()).map_err(|_| MetaError::InvalidEncoding)
 }
 
+/// The `i64` an integral JSON number denotes, if it has one.
+///
+/// `1.0` and `1` are the same proof. Python's default dump and
+/// `JSON.stringify` spell an integral value differently. Every path that turns
+/// JSON into a signed argument map, including the Rust SDK's `Call`, uses this
+/// rule so their proofs agree.
+pub(crate) fn integral_i64(f: f64) -> Option<i64> {
+    // i64::MAX rounds up to 2^63 as f64. An inclusive upper bound would
+    // saturate that distinct value to i64::MAX and give both the same proof.
+    (f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f < -(i64::MIN as f64))
+        .then_some(f as i64)
+}
+
 fn number_value(n: &serde_json::Number) -> std::result::Result<ConstraintValue, MetaError> {
     if let Some(i) = n.as_i64() {
         return Ok(ConstraintValue::Integer(i));
@@ -420,12 +433,8 @@ fn number_value(n: &serde_json::Number) -> std::result::Result<ConstraintValue, 
     let Some(f) = n.as_f64() else {
         return Err(MetaError::InvalidArguments("unsupported number".into()));
     };
-    // `1.0` and `1` are the same proof. Python's default dump and
-    // `JSON.stringify` spell an integral value differently.
-    // i64::MAX rounds up to 2^63 as f64. An inclusive upper bound would
-    // saturate that distinct value to i64::MAX and give both the same proof.
-    if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f < -(i64::MIN as f64) {
-        return Ok(ConstraintValue::Integer(f as i64));
+    if let Some(i) = integral_i64(f) {
+        return Ok(ConstraintValue::Integer(i));
     }
     if !f.is_finite() {
         return Err(MetaError::InvalidArguments("non-finite number".into()));

@@ -160,4 +160,78 @@ mod tests {
             .check_received(&received.as_received().unwrap(), &other)
             .is_err());
     }
+
+    /// A Rust SDK client and a Python/TS client (core `sign_meta` /
+    /// `verify_meta_pop`) must agree on the proof for an integral float.
+    #[test]
+    fn integral_float_proofs_agree_across_sdk_and_core() {
+        use crate::sdk::{Call, Guard, LocalSigner, PresentedAuthority, RevocationMode};
+        use crate::{ConstraintSet, SigningKey};
+        use std::sync::Arc;
+
+        for (value, text) in [
+            (serde_json::json!({"n": 1.0}), r#"{"n":1.0}"#),
+            (serde_json::json!({"n": 1}), r#"{"n":1.0}"#),
+            (serde_json::json!({"n": 1.0}), r#"{"n":1}"#),
+            (serde_json::json!({"n": 1.5}), r#"{"n":1.5}"#),
+        ] {
+            let issuer = SigningKey::generate();
+            let holder = SigningKey::generate();
+            let warrant = Warrant::builder()
+                .capability("calc", ConstraintSet::new())
+                .holder(holder.public_key())
+                .ttl(std::time::Duration::from_secs(60))
+                .build(&issuer)
+                .unwrap();
+            let ts = chrono::Utc::now().timestamp();
+            let call = Call::try_from_json("calc", &value).unwrap();
+
+            // Rust SDK signs, the core verifies.
+            let authority = PresentedAuthority::new(
+                vec![warrant.clone()],
+                Arc::new(LocalSigner::new(holder.clone())),
+            )
+            .unwrap();
+            let meta = sign_meta(
+                &authority,
+                &call,
+                &[],
+                ts,
+                crate::planes::DEFAULT_POP_WINDOW_SECS,
+            )
+            .unwrap();
+            assert!(
+                crate::meta_envelope::verify_meta_pop(
+                    meta["warrant"].as_str().unwrap(),
+                    meta["signature"].as_str().unwrap(),
+                    "calc",
+                    text,
+                    ts,
+                )
+                .unwrap(),
+                "core rejected a Rust SDK proof for {value} / {text}"
+            );
+
+            // The core signs, a Rust SDK Guard verifies.
+            let core = crate::meta_envelope::sign_meta(&[warrant], &holder, "calc", text, ts, &[])
+                .unwrap()
+                .to_json();
+            let mut authorizer = crate::Authorizer::new();
+            authorizer.add_trusted_root(issuer.public_key());
+            let guard = Guard::builder()
+                .authorizer(authorizer)
+                .revocation(RevocationMode::TtlOnly {
+                    max_lifetime: std::time::Duration::from_secs(3600),
+                })
+                .build()
+                .unwrap();
+            let received = decode_meta(&core).unwrap();
+            assert!(
+                guard
+                    .check_received(&received.as_received().unwrap(), &call)
+                    .is_ok(),
+                "Rust Guard rejected a core proof for {text} / {value}"
+            );
+        }
+    }
 }

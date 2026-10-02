@@ -141,7 +141,9 @@ fn json_to_constraint(
             } else if n.as_u64().is_some() {
                 Err(ArgumentError::IntegerOutOfRange)
             } else if let Some(f) = n.as_f64() {
-                Ok(ConstraintValue::Float(f))
+                // Same number rule as `_meta.tenuo`, so `1.0` signs like `1`.
+                Ok(crate::meta_envelope::integral_i64(f)
+                    .map_or(ConstraintValue::Float(f), ConstraintValue::Integer))
             } else {
                 Err(ArgumentError::UnsupportedJson)
             }
@@ -278,5 +280,24 @@ mod tests {
             Call::try_from_json_str("read_file", DUPLICATE_ARGUMENT_KEY),
             Err(ArgumentError::DuplicateKey)
         ));
+    }
+
+    #[test]
+    fn integral_float_is_the_same_argument_as_an_integer() {
+        let whole = serde_json::json!({"n": 1.0});
+        let call = Call::try_from_json("calc", &whole).unwrap();
+        assert_eq!(call.args()["n"], ConstraintValue::Integer(1));
+
+        let fraction = serde_json::json!({"n": 1.5});
+        let call = Call::try_from_json("calc", &fraction).unwrap();
+        assert_eq!(call.args()["n"], ConstraintValue::Float(1.5));
+
+        // 2^63 has no i64; it stays a float, as in the envelope.
+        let above = serde_json::json!({"n": 9223372036854775808.0});
+        let call = Call::try_from_json("calc", &above).unwrap();
+        assert_eq!(
+            call.args()["n"],
+            ConstraintValue::Float(9223372036854775808.0)
+        );
     }
 }

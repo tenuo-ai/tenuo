@@ -18,27 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approval tokens are standard base64, which a previous server already
   decodes. `decode_meta` still accepts an envelope already issued as unpadded
   URL-safe base64. An integral number is the same proof whether the text says
-  `1` or `1.0`. Adding or removing null invalidates the proof, including
+  `1` or `1.0`, in every SDK including the Rust SDK's `Call`. Adding or
+  removing null invalidates the proof, including
   null list elements. The shared vector is
   `tests/vectors/tenuo-meta.json`.
-
-### Changed
-
-- **MCP boundary hardening:** one Rust MCP decoder, bounded argument parsing
-  (bytes, depth, nodes and decoded strings), captured argument snapshots, and
-  structured/audited Python parsing denials. `verify_meta_pop` / `verifyMetaPop`
-  name the proof-only check explicitly; old names remain aliases. Shared
-  conformance cases now include delegated chains, approvals and malformed
-  input. See the MCP guide for numeric and compatibility rules.
-
-- **`_meta.tenuo` is one envelope.** New clients write standard base64, so a
-  server from the previous release can read the warrant stack and the
-  signature. `decode_meta` still accepts unpadded URL-safe text, including
-  line-wrapped text. The proof covers JSON null. Clients that previously
-  removed null before signing must upgrade and re-sign the actual arguments;
-  verifiers do not retry against a null-stripped map. Float parsing preserves
-  the host's IEEE-754 value, and TypeScript executes the argument snapshot
-  verified before asynchronous replay admission.
 
 - **Holder signing, approval hashes, and receipt chains in the Rust SDK**
   (#751):
@@ -90,6 +73,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
 
 ### Changed
+
+- **MCP boundary hardening:** one Rust MCP decoder, bounded argument parsing
+  (bytes, depth, nodes and decoded strings), captured argument snapshots, and
+  structured/audited Python parsing denials. `verify_meta_pop` / `verifyMetaPop`
+  name the proof-only check explicitly; old names remain aliases. Shared
+  conformance cases now include delegated chains, approvals and malformed
+  input. See the MCP guide for numeric and compatibility rules.
+
+- **`_meta.tenuo` is one envelope.** New clients write standard base64, so a
+  server from the previous release can decode the warrant stack and the
+  signature. That server still rejects the proof when the arguments contain
+  null or an integral float such as `1.0`, and a new server rejects those
+  calls from an old client, so client and server must both be on this release
+  for such calls. `decode_meta` still accepts unpadded URL-safe text, including
+  line-wrapped text. The proof covers JSON null. Clients that previously
+  removed null before signing must upgrade and re-sign the actual arguments;
+  verifiers do not retry against a null-stripped map. Float parsing preserves
+  the host's IEEE-754 value, and TypeScript executes the argument snapshot
+  verified before asynchronous replay admission.
 
 - **Guards no longer log denials by default** (#751). `DenialReporting` now
   defaults to `Debug`, which writes nothing; the caller receives every
