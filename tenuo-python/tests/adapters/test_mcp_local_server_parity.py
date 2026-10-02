@@ -15,24 +15,24 @@ against that class of split-brain behavior.
 
 from __future__ import annotations
 
-import base64
 import time
 
 from tenuo import Pattern
 from tenuo._enforcement import enforce_tool_call
-from tenuo._pop_canonicalize import strip_none_values
 from tenuo.mcp.server import MCPVerifier
-from tenuo_core import Authorizer, SigningKey, Warrant
+from tenuo.meta import argument_json
+from tenuo_core import Authorizer, SigningKey, Warrant, sign_meta
 
 
 def _build_meta(warrant: Warrant, holder_key: SigningKey, tool_name: str, wire_args: dict) -> dict:
-    canonical = strip_none_values(wire_args)
-    pop = warrant.sign(holder_key, tool_name, canonical, int(time.time()))
     return {
-        "tenuo": {
-            "warrant": warrant.to_base64(),
-            "signature": base64.b64encode(bytes(pop)).decode(),
-        }
+        "tenuo": sign_meta(
+            [warrant],
+            holder_key,
+            tool_name,
+            argument_json(wire_args),
+            int(time.time()),
+        )
     }
 
 

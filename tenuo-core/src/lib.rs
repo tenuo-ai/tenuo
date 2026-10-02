@@ -103,6 +103,7 @@ pub mod error;
 pub mod extraction;
 pub mod gateway_config;
 pub mod mcp;
+pub mod meta_envelope;
 pub mod payload;
 pub mod planes;
 pub mod receipt;

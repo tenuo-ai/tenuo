@@ -115,3 +115,9 @@ docs/plans/
 
 # Local git worktrees
 .worktrees/
+
+# Tenuo quickstart demo keys (demo_warrant.py)
+.tenuo-demo/
+
+# Envoy quickstart e2e generated files
+docs/quickstart/envoy/.e2e-gen.*/
