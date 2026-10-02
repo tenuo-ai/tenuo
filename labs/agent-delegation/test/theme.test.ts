@@ -39,18 +39,29 @@ describe("public-site theme", () => {
     expect(chain).toContain("Flight Agent narrows it to reservation UA214 for Check-in Agent");
   });
 
-  it("keeps the lab and explorer on the main website palette and background", () => {
-    const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
-    const lab = readFileSync(join(REPO, "docs", "_layouts", "lab.html"), "utf8");
+  // The public site's own layouts (docs/index.html, _layouts/*) and its deploy
+  // workflow live in tenuo-ai/website, which checks them. The lab content and
+  // the explorer live here, so they are checked against the site's palette.
+  const SITE_PALETTE: Record<string, string> = {
+    bg: "#040a0f",
+    surface: "#0a1018",
+    "surface-2": "#0e1620",
+    text: "#c8d8e4",
+    "text-bright": "#e8e8e8",
+    accent: "#38bdf8",
+    accent2: "#a855f7",
+    green: "#00ff88",
+    red: "#ff4466",
+    gold: "#c8a96e",
+  };
+
+  it("keeps the explorer on the public-site palette and background", () => {
     const explorer = readFileSync(join(REPO, "tenuo-explorer", "src", "index.css"), "utf8");
 
-    for (const name of ["bg", "surface", "surface-2", "text", "text-bright", "accent", "accent2", "green", "red", "gold"]) {
-      expect(token(lab, name), `lab --${name}`).toBe(token(main, name));
-      expect(token(explorer, name), `explorer --${name}`).toBe(token(main, name));
+    for (const [name, value] of Object.entries(SITE_PALETTE)) {
+      expect(token(explorer, name), `explorer --${name}`).toBe(value);
     }
 
-    expect(lab).toContain("background-size: 48px 48px");
-    expect(lab).toContain("radial-gradient(ellipse, rgba(56, 189, 248, 0.07)");
     expect(explorer).toContain("background-size: 48px 48px");
     expect(explorer).toContain(".app-shell");
     expect(explorer).not.toContain("radial-gradient(");
@@ -58,43 +69,18 @@ describe("public-site theme", () => {
     expect(explorer).not.toContain(".orb-1");
   });
 
-  it("keeps the documentation, lab, and explorer footer aligned with the main website", () => {
-    const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
-    const docs = readFileSync(join(REPO, "docs", "_layouts", "default.html"), "utf8");
+  it("keeps the explorer footer aligned with the public site", () => {
     const explorer = readFileSync(join(REPO, "tenuo-explorer", "src", "App.tsx"), "utf8");
     const explorerCss = readFileSync(join(REPO, "tenuo-explorer", "src", "index.css"), "utf8");
 
-    for (const surface of [main, docs, explorer]) {
-      expect(surface).toContain("© 2026 Tenuo");
-      expect(surface).toContain(">Docs<");
-      expect(surface).toContain(">GitHub<");
-      expect(surface).toContain(">Early Access<");
-    }
+    expect(explorer).toContain("© 2026 Tenuo");
+    expect(explorer).toContain(">Docs<");
+    expect(explorer).toContain(">GitHub<");
+    expect(explorer).toContain(">Early Access<");
 
-    for (const surface of [main, docs, explorerCss]) {
-      expect(surface).toContain("padding: 48px");
-      expect(surface).toContain("font-family: 'JetBrains Mono', monospace");
-      expect(surface).toContain("font-size: 0.75rem");
-      expect(surface).toContain("letter-spacing: 0.04em");
-    }
-  });
-
-  it("keeps the documentation and challenge header as focused as the main website", () => {
-    const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
-    const docs = readFileSync(join(REPO, "docs", "_layouts", "default.html"), "utf8");
-    const mainNav = /<nav>([\s\S]*?)<\/nav>/.exec(main)?.[1];
-    const docsNav = /<nav class="top-nav">([\s\S]*?)<\/nav>/.exec(docs)?.[1];
-
-    expect(mainNav).toBeDefined();
-    expect(docsNav).toBeDefined();
-    expect(docsNav?.match(/<a /g)).toHaveLength(6); // brand plus the five main-site links
-    for (const label of ["Docs", "Explorer", "Blog", "GitHub", "Tenuo Cloud"]) {
-      expect(mainNav).toContain(`>${label}<`);
-      expect(docsNav).toContain(`>${label}<`);
-    }
-    for (const label of ["OpenAI", "CrewAI", "LangChain", "Temporal", "Google ADK"]) {
-      expect(docsNav).not.toContain(`>${label}<`);
-    }
-    expect(docs).toContain("@media (max-width: 480px)");
+    expect(explorerCss).toContain("padding: 48px");
+    expect(explorerCss).toContain("font-family: 'JetBrains Mono', monospace");
+    expect(explorerCss).toContain("font-size: 0.75rem");
+    expect(explorerCss).toContain("letter-spacing: 0.04em");
   });
 });

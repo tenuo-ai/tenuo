@@ -210,17 +210,12 @@ describe("generated lab guide", () => {
     expect(page).toContain("5 stages · about 90 min · 2 optional bosses");
     expect(page).toContain("Retries are free, speed is not scored");
     expect(page.match(/npm run reset/g)).toHaveLength(1);
-    const deployWorkflow = readFileSync(join(ROOT, "..", "..", ".github", "workflows", "docs.yml"), "utf8");
-    expect(deployWorkflow).toContain("A ninety-minute security challenge");
-    expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|lab)/);
   });
 
   it("keeps the first action focused on setup and offers the optional star in both terminals", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
-    const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "lab.html"), "utf8");
     expect(page).not.toContain("Run the breach");
     expect(page).not.toContain("data-lab-browser-run");
-    expect(layout).not.toContain("lab-browser-run");
     expect(page.match(/npm run star/g)).toHaveLength(2);
     expect(page).toMatch(/git clone[\s\S]*npm install[\s\S]*npm run star[\s\S]*npm run lab/);
     expect(page).toMatch(/At the Codespaces terminal:[\s\S]*npm run star[\s\S]*npm run lab/);
@@ -228,7 +223,6 @@ describe("generated lab guide", () => {
 
   it("uses the challenge artwork on the homepage and its social card", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
-    const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "default.html"), "utf8");
     const artwork = readFileSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.svg"), "utf8");
     expect(page).toContain('og_title: "Security Challenge: Stop a Rogue AI Agent From Ruining Your Trip"');
     expect(page).toContain('description: "Give each agent only the authority its part of the trip needs. A free, hands-on lab in AI agent delegation security."');
@@ -243,8 +237,6 @@ describe("generated lab guide", () => {
     expect(artwork).toContain("#38bdf8");
     expect(artwork).not.toContain("#137a76");
     expect(artwork).toContain('width="620" height="310"');
-    expect(layout).toContain('<meta property="og:title" content="{{ social_title }}">');
-    expect(layout).toContain('<meta name="twitter:title" content="{{ social_title }}">');
   });
 
   it("links the IETF draft and repeats star and share at the end of the lab", () => {
