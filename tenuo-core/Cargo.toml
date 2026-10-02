@@ -108,7 +108,9 @@ zeroize = "1.7"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
-serde_json = "1.0"
+# Authorization must read the same IEEE-754 value as Python/JavaScript, not
+# an adjacent float produced by serde_json's default approximate parser.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 ciborium = "0.2"
 base64 = "0.23"
@@ -218,4 +220,3 @@ opt-level = 3       # Maximum optimization
 # This makes 'cargo test' and 'maturin develop' much faster after the initial build
 [profile.dev.package."*"]
 opt-level = 3
-

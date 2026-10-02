@@ -628,7 +628,73 @@ impl SdkContext {
         let signature = leaf
             .sign(holder, tool, &args)
             .map_err(|e| JsError::new(&format!("failed to sign proof-of-possession: {e}")))?;
-        Ok(base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()))
+        Ok(canonical_token(&signature.to_bytes()))
+    }
+
+    /// `_meta.tenuo` for argument JSON text at `timestamp` (unix seconds).
+    ///
+    /// The proof covers the core's parse of `args_json`, including JSON null.
+    #[wasm_bindgen(js_name = signMeta)]
+    pub fn sign_meta(
+        &self,
+        session: &SdkSession,
+        tool: &str,
+        args_json: &str,
+        timestamp: f64,
+        approvals: JsValue,
+    ) -> Result<JsValue, JsError> {
+        init_panic_hook();
+        let _ = self;
+        let timestamp = unix_seconds(timestamp)?;
+        let holder = session
+            .holder
+            .as_ref()
+            .ok_or_else(|| JsError::new(NO_HOLDER_SECRET))?;
+        let approvals = parse_approvals(&approvals).map_err(|err| JsError::new(&err))?;
+        let meta = tenuo::meta_envelope::sign_meta(
+            &session.chain,
+            holder,
+            tool,
+            args_json,
+            timestamp,
+            &approvals,
+        )
+        .map_err(|err| JsError::new(&err.to_string()))?;
+        Ok(to_js_value(&MetaEnvelopeJs {
+            warrant: meta.warrant,
+            signature: meta.signature,
+            approvals: meta.approvals,
+        }))
+    }
+
+    /// Check ONLY the holder proof, not trust, expiry, constraints, approvals or replay.
+    #[wasm_bindgen(js_name = verifyMetaPop)]
+    pub fn verify_meta_pop(
+        &self,
+        warrant: &str,
+        signature: &str,
+        tool: &str,
+        args_json: &str,
+        timestamp: f64,
+    ) -> Result<bool, JsError> {
+        init_panic_hook();
+        let _ = self;
+        let timestamp = unix_seconds(timestamp)?;
+        tenuo::meta_envelope::verify_meta_pop(warrant, signature, tool, args_json, timestamp)
+            .map_err(|err| JsError::new(&err.to_string()))
+    }
+
+    /// Compatibility alias for verifyMetaPop. NOT an authorization check.
+    #[wasm_bindgen(js_name = verifyMeta)]
+    pub fn verify_meta(
+        &self,
+        warrant: &str,
+        signature: &str,
+        tool: &str,
+        args_json: &str,
+        timestamp: f64,
+    ) -> Result<bool, JsError> {
+        self.verify_meta_pop(warrant, signature, tool, args_json, timestamp)
     }
 
     /// Authorize a warrant + PoP presented on the wire. No holder secret.
@@ -690,13 +756,12 @@ impl SdkSession {
         Ok(to_js_value(&ids))
     }
 
-    /// CBOR warrant stack as standard base64. Matches Python `encode_warrant_stack`.
+    /// CBOR warrant stack as unpadded URL-safe base64. Same bytes as `_meta.tenuo.warrant`.
     #[wasm_bindgen(js_name = toStackWire)]
     pub fn to_stack_wire(&self) -> Result<String, JsError> {
         init_panic_hook();
-        let bytes = wire::encode_stack(&WarrantStack(self.chain.clone()))
-            .map_err(|e| JsError::new(&format!("failed to encode warrant stack: {e}")))?;
-        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+        tenuo::meta_envelope::encode_warrant_chain(&self.chain)
+            .map_err(|err| JsError::new(&err.to_string()))
     }
 
     /// Application idempotency key: SHA-256 of `(warrant_id, tool, canonical args)`.
@@ -1047,7 +1112,7 @@ impl SdkContext {
         // commit to arguments it never parsed.
         let mut request_hash: Option<[u8; 32]> = None;
 
-        let args = match js_to_args(&args_json) {
+        let args = match canonical_args(&args_json) {
             Ok(a) => a,
             Err(e) => {
                 return self.finish_decision(
@@ -1188,12 +1253,13 @@ impl SdkContext {
             }
         };
 
+        let constraints = constraint_view(&args);
         let result = match as_of {
             Some(t) => self.authorizer.check_chain_with_pop_args_as_of(
                 &session.chain,
                 tool,
                 &args,
-                &args,
+                &constraints,
                 Some(&signature),
                 &approvals,
                 t,
@@ -1202,7 +1268,7 @@ impl SdkContext {
                 &session.chain,
                 tool,
                 &args,
-                &args,
+                &constraints,
                 Some(&signature),
                 &approvals,
             ),
@@ -1210,7 +1276,7 @@ impl SdkContext {
 
         match result {
             Ok(_) => {
-                if let Err(e) = apply_tool_ceiling(&tool_allow, &args) {
+                if let Err(e) = apply_tool_ceiling(&tool_allow, &constraints) {
                     return self.finish_decision(
                         &session.chain,
                         tool,
@@ -1343,7 +1409,7 @@ impl SdkContext {
             }
         };
 
-        let args = match js_to_args(&args_json) {
+        let args = match canonical_args(&args_json) {
             Ok(a) => a,
             Err(e) => {
                 return self.finish_decision(
@@ -1438,12 +1504,13 @@ impl SdkContext {
             }
         };
 
+        let constraints = constraint_view(&args);
         let result = match as_of {
             Some(t) => self.authorizer.check_chain_with_pop_args_as_of(
                 &chain,
                 tool,
                 &args,
-                &args,
+                &constraints,
                 Some(&signature),
                 &approvals,
                 t,
@@ -1452,7 +1519,7 @@ impl SdkContext {
                 &chain,
                 tool,
                 &args,
-                &args,
+                &constraints,
                 Some(&signature),
                 &approvals,
             ),
@@ -1460,7 +1527,7 @@ impl SdkContext {
 
         match result {
             Ok(_) => {
-                if let Err(e) = apply_tool_ceiling(&tool_allow, &args) {
+                if let Err(e) = apply_tool_ceiling(&tool_allow, &constraints) {
                     return self.finish_decision(
                         &chain,
                         tool,
@@ -1609,6 +1676,9 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
         return Err("approvals must be an array of SignedApproval envelopes".into());
     }
     let arr = js_sys::Array::from(value);
+    if arr.length() as usize > tenuo::meta_envelope::MAX_APPROVALS {
+        return Err("too many approvals".into());
+    }
     let mut out = Vec::with_capacity(arr.length() as usize);
     for i in 0..arr.length() {
         out.push(parse_one_approval(&arr.get(i))?);
@@ -1618,10 +1688,16 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
 
 fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
     if let Some(text) = value.as_string() {
+        if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+            return Err("approval exceeds size limit".into());
+        }
         return signed_approval_from_text(&text);
     }
     if js_sys::Uint8Array::instanceof(value) {
         let bytes = js_sys::Uint8Array::new(value);
+        if bytes.length() as usize > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+            return Err("approval exceeds size limit".into());
+        }
         let mut buf = vec![0u8; bytes.length() as usize];
         bytes.copy_to(&mut buf);
         return signed_approval_from_bytes(&buf);
@@ -1630,19 +1706,19 @@ fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
 }
 
 pub(crate) fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
+    if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+        return Err("approval exceeds size limit".into());
+    }
+    // The MCP alphabets, whitespace policy, size limits and CBOR decoding
+    // live in the core. Hex remains an SDK import convenience only.
+    if let Ok(approval) = tenuo::meta_envelope::decode_approval(text) {
+        return Ok(approval);
+    }
     let trimmed = text.trim();
     if let Ok(bytes) = parse_hex(trimmed) {
         if let Ok(approval) = signed_approval_from_bytes(&bytes) {
             return Ok(approval);
         }
-    }
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(trimmed.as_bytes()) {
-        if let Ok(approval) = signed_approval_from_bytes(&bytes) {
-            return Ok(approval);
-        }
-    }
-    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(trimmed.as_bytes()) {
-        return signed_approval_from_bytes(&bytes);
     }
     Err("approval is not valid hex or base64 SignedApproval CBOR".into())
 }
@@ -2405,9 +2481,9 @@ pub(crate) fn session_from_chain(
 pub(crate) fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
     reject_encoded_budget(input, MAX_ENCODED_CHAIN_CHARS, "encoded warrant chain")?;
     let trimmed = input.trim();
-    if let Ok(stack) = wire::decode_pem_chain(trimmed) {
-        if !stack.0.is_empty() {
-            return Ok(stack.0);
+    if let Ok(chain) = tenuo::meta_envelope::decode_warrant_chain(trimmed) {
+        if !chain.is_empty() {
+            return Ok(chain);
         }
     }
     if let Ok(warrant) = parse_warrant(trimmed) {
@@ -2418,17 +2494,65 @@ pub(crate) fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
             return Ok(stack.0);
         }
     }
-    let compact: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(compact.as_bytes()) {
-        if let Ok(stack) = wire::decode_stack(&bytes) {
-            if !stack.0.is_empty() {
-                return Ok(stack.0);
-            }
-        }
-    }
     Err(JsError::new(
         "TENUO_CHAIN_INVALID: invalid warrant or warrant chain",
     ))
+}
+
+fn canonical_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, String> {
+    if let Some(text) = value.as_string() {
+        return tenuo::meta_envelope::args_from_json(&text).map_err(|err| err.to_string());
+    }
+    js_to_args(value)
+}
+
+/// Constraint matching ignores JSON null. The proof still covers it.
+fn constraint_view(args: &HashMap<String, ConstraintValue>) -> HashMap<String, ConstraintValue> {
+    args.iter()
+        .filter_map(|(key, value)| match value {
+            ConstraintValue::Null => None,
+            ConstraintValue::List(items) => {
+                Some((key.clone(), ConstraintValue::List(clean_nulls(items))))
+            }
+            other => Some((key.clone(), other.clone())),
+        })
+        .collect()
+}
+
+fn clean_nulls(items: &[ConstraintValue]) -> Vec<ConstraintValue> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            ConstraintValue::Null => None,
+            ConstraintValue::List(nested) => Some(ConstraintValue::List(clean_nulls(nested))),
+            other => Some(other.clone()),
+        })
+        .collect()
+}
+
+fn canonical_token(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn unix_seconds(timestamp: f64) -> Result<i64, JsError> {
+    if !timestamp.is_finite()
+        || timestamp.fract() != 0.0
+        || timestamp < i64::MIN as f64
+        || timestamp > i64::MAX as f64
+    {
+        return Err(JsError::new(
+            "timestamp must be an integer number of unix seconds",
+        ));
+    }
+    Ok(timestamp as i64)
+}
+
+#[derive(Serialize)]
+struct MetaEnvelopeJs {
+    warrant: String,
+    signature: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    approvals: Vec<String>,
 }
 
 fn parse_presented_chain(warrants: &JsValue) -> Result<Vec<Warrant>, JsError> {

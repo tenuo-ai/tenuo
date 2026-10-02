@@ -1,24 +1,29 @@
-# httpbin + AuthorizationPolicy for Istio Quickstart
+# httpbin + curl client + AuthorizationPolicy for the Istio quickstart.
 # Apply with: kubectl apply -f httpbin.yaml
+#
+# Everything lives in the tenuo-demo namespace, which has sidecar injection
+# enabled. Test from the curl pod: `kubectl port-forward` to httpbin goes
+# straight to the pod and skips the sidecar, so it would bypass ext_authz.
 
 ---
 apiVersion: v1
-kind: ServiceAccount
+kind: Namespace
 metadata:
-  name: httpbin
-  namespace: default
+  name: tenuo-demo
+  labels:
+    istio-injection: enabled
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: httpbin
-  namespace: default
+  namespace: tenuo-demo
 spec:
   ports:
   - name: http
-    port: 8000
-    targetPort: 80
+    port: 8080
+    targetPort: 8080
   selector:
     app: httpbin
 
@@ -27,7 +32,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: httpbin
-  namespace: default
+  namespace: tenuo-demo
 spec:
   replicas: 1
   selector:
@@ -38,20 +43,41 @@ spec:
       labels:
         app: httpbin
     spec:
-      serviceAccountName: httpbin
       containers:
       - name: httpbin
-        image: docker.io/kennethreitz/httpbin
+        image: mccutchen/go-httpbin:2.25.0
         ports:
-        - containerPort: 80
+        - containerPort: 8080
 
 ---
-# AuthorizationPolicy: require Tenuo auth for /api/* paths
+# In-mesh client used to send test requests through httpbin's sidecar.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: curl
+  namespace: tenuo-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: curl
+  template:
+    metadata:
+      labels:
+        app: curl
+    spec:
+      containers:
+      - name: curl
+        image: curlimages/curl:8.22.0
+        command: ["sleep", "infinity"]
+
+---
+# Send every request to httpbin through Tenuo.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
   name: tenuo-authz
-  namespace: default
+  namespace: tenuo-demo
 spec:
   selector:
     matchLabels:
@@ -62,4 +88,4 @@ spec:
   rules:
   - to:
     - operation:
-        paths: ["/api/*", "/get", "/post", "/put", "/delete"]
+        paths: ["/*"]

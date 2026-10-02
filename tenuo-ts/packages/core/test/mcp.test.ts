@@ -4,6 +4,7 @@ import {
   AuthorizationDeniedError,
   createTenuo,
   memoryNonceStore,
+  range,
   TenuoConfigurationError,
   TenuoError,
   under,
@@ -37,6 +38,63 @@ function flipWire(value: string): string {
 }
 
 describe("tenuo.mcp", () => {
+  it.each([false, true])("executes the verified snapshot across replay admission (store=%s)", async (withStore) => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/ok" });
+    const args = { path: "/data/ok" };
+    let release!: (accepted: boolean) => void;
+    const nonceStore = { checkAndRecord: () => new Promise<boolean>((resolve) => { release = resolve; }) };
+    const handler = server.mcp.handler(
+      "read_file",
+      withStore ? { nonceStore } : {},
+      async (received: { path: string }) => received.path,
+    );
+    const pending = handler(args, { _meta: call._meta });
+    args.path = "/etc/passwd";
+    if (withStore) release(true);
+    await expect(pending).resolves.toBe("/data/ok");
+  });
+
+  it("serializes arguments only once even when toJSON changes its result", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/ok" });
+    let reads = 0;
+    const args = { toJSON: () => ({ path: ++reads === 1 ? "/data/ok" : "/etc/passwd" }) };
+    await expect(server.mcp.verify(call.name, args, call._meta)).resolves.toEqual({ path: "/data/ok" });
+    expect(reads).toBe(1);
+  });
+
+  it("does not collapse adjacent numbers in the proof or range check", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const limit = 0.9384646938271072;
+    const larger = 0.9384646938271073;
+    const session = issuer.session({ allow: { test: { n: range({ max: limit }) } } });
+    const wire = exportSession(session);
+    const server = createTenuo({ trustedRoots: [createTenuo.publicKeyFromHex(wire.root_hex)] });
+    expect(() => issuer.mcp.attach(session, "test", { n: larger })).toThrow(AuthorizationDeniedError);
+    const call = issuer.mcp.attach(session, "test", { n: limit });
+    let executed = false;
+    const handler = server.mcp.handler("test", async () => { executed = true; });
+    await expect(handler({ n: larger }, { _meta: call._meta })).rejects.toMatchObject({ code: "TENUO_INVALID_POP" });
+    expect(executed).toBe(false);
+    await expect(server.mcp.verify("test", { n: limit }, call._meta)).resolves.toEqual({ n: limit });
+  });
+
+  it.each([
+    [{}, { target: null }],
+    [{ items: [1, 2] }, { items: [null, 1, 2] }],
+    [{ items: [[1, 2]] }, { items: [[1, null, 2]] }],
+    [{ target: null }, {}],
+  ])("rejects null insertion or removal (%j -> %j)", async (original, changed) => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({ allow: { test: {} } });
+    const wire = exportSession(session);
+    const server = createTenuo({ trustedRoots: [createTenuo.publicKeyFromHex(wire.root_hex)] });
+    const call = issuer.mcp.attach(session, "test", original);
+    await expect(server.mcp.verify("test", changed, call._meta)).rejects.toMatchObject({ code: "TENUO_INVALID_POP" });
+    await expect(server.mcp.verify("test", original, call._meta)).resolves.toEqual(original);
+  });
+
   it("attaches a warrant and lets a second process verify before execute", async () => {
     const { issuer, session, server } = issuerAndServer();
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
@@ -460,17 +518,17 @@ describe("tenuo.mcp", () => {
     );
   });
 
-  it("drops optional null args so attach and verify stay aligned", async () => {
+  it("keeps null arguments in the signed call and still authorizes", async () => {
     const { issuer, session, server } = issuerAndServer();
     const call = issuer.mcp.attach(session, "read_file", {
       path: "/data/q3.pdf",
       max_size: null,
     });
-    expect(call.arguments).toEqual({ path: "/data/q3.pdf" });
+    expect(call.arguments).toEqual({ path: "/data/q3.pdf", max_size: null });
     const readFile = server.mcp.handler("read_file", async (args: { path: string }) => args);
     await expect(
       readFile({ path: "/data/q3.pdf", max_size: null } as { path: string }, { _meta: call._meta }),
-    ).resolves.toMatchObject({ path: "/data/q3.pdf" });
+    ).resolves.toEqual({ path: "/data/q3.pdf", max_size: null });
   });
 });
 

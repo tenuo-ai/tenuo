@@ -17,15 +17,15 @@ pub mod http;
 pub mod mcp_meta;
 
 /// Maximum approvals accepted on one message.
-pub const MAX_APPROVALS: usize = 64;
+pub const MAX_APPROVALS: usize = crate::meta_envelope::MAX_APPROVALS;
 /// Maximum decoded size of the approvals block.
 pub const MAX_APPROVALS_DECODED_BYTES: usize = 65_536;
 /// Maximum encoded warrant-chain string on an MCP message.
-pub const MCP_WARRANT_STRING_MAX: usize = 64 * 1024;
+pub const MCP_WARRANT_STRING_MAX: usize = crate::meta_envelope::WARRANT_STRING_MAX;
 /// Maximum encoded proof-of-possession string on an MCP message.
-pub const MCP_SIGNATURE_STRING_MAX: usize = 4 * 1024;
+pub const MCP_SIGNATURE_STRING_MAX: usize = crate::meta_envelope::SIGNATURE_STRING_MAX;
 /// Maximum encoded string for one approval on an MCP message.
-pub const MCP_APPROVAL_STRING_MAX: usize = 8 * 1024;
+pub const MCP_APPROVAL_STRING_MAX: usize = crate::meta_envelope::APPROVAL_STRING_MAX;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Why a message could not be encoded or decoded. Checked before any decoding work.
@@ -107,14 +107,6 @@ pub(crate) fn encode_parts(
     Ok((warrant, pop, Some(url_no_pad().encode(approval_bytes))))
 }
 
-pub(crate) fn encode_approval_standard(
-    approval: &SignedApproval,
-) -> Result<String, TransportError> {
-    approval
-        .to_cbor_b64()
-        .map_err(|_| TransportError::InvalidEncoding)
-}
-
 pub(crate) fn decode_owned(
     warrant: &str,
     signature: &str,
@@ -171,16 +163,6 @@ impl DecodeLimits {
             signature_string_max: 128,
             approvals_string_max: (MAX_APPROVALS_DECODED_BYTES * 4) / 3 + 8,
             approval_string_max: usize::MAX,
-            stack_decoded_max: MAX_STACK_SIZE,
-        }
-    }
-
-    pub(crate) fn mcp() -> Self {
-        Self {
-            warrant_string_max: MCP_WARRANT_STRING_MAX,
-            signature_string_max: MCP_SIGNATURE_STRING_MAX,
-            approvals_string_max: MCP_APPROVAL_STRING_MAX * MAX_APPROVALS,
-            approval_string_max: MCP_APPROVAL_STRING_MAX,
             stack_decoded_max: MAX_STACK_SIZE,
         }
     }
@@ -324,8 +306,12 @@ mod tests {
                 let meta = mcp_meta::encode_meta_from_authorized(authorized).unwrap();
                 let warrant = meta.get("warrant").and_then(|v| v.as_str()).unwrap();
                 let signature = meta.get("signature").and_then(|v| v.as_str()).unwrap();
-                assert!(!warrant.contains('='));
-                assert!(!signature.contains('+') && !signature.contains('/'));
+                let standard = base64::engine::general_purpose::STANDARD;
+                assert_eq!(standard.encode(standard.decode(warrant).unwrap()), warrant);
+                assert_eq!(
+                    standard.encode(standard.decode(signature).unwrap()),
+                    signature
+                );
                 let decoded = mcp_meta::decode_meta(&meta).unwrap();
                 let received = decoded.as_received().unwrap();
                 assert_eq!(received.signature(), authorized.pop_signature());
