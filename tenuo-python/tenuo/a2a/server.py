@@ -641,6 +641,16 @@ class A2AServerBuilder:
         )
 
 
+def _audit_passes(audited: List[str], error_type: str, skill_id: str, reason: str) -> bool:
+    """Record a scope denial and return True when audit or permissive mode lets it through."""
+    from tenuo._enforcement import audit_mode_allows
+
+    if not audit_mode_allows(error_type, skill_id, reason):
+        return False
+    audited.append(reason)
+    return True
+
+
 class A2AServer:
     """
     A2A server with warrant-based authorization.
@@ -1118,6 +1128,9 @@ class A2AServer:
         except Exception as e:
             raise InvalidSignatureError(f"Failed to decode/verify warrant: {e}")
 
+        # Denials that audit mode let through; recorded on the audit event.
+        audited: List[str] = []
+
         # Check expiry (SECURITY: use Rust core method when available)
         # The Rust core's is_expired() method is preferred as it handles
         # edge cases consistently. We fall back to manual check only if needed.
@@ -1130,7 +1143,7 @@ class A2AServer:
                 else:
                     is_expired = is_expired_attr
 
-                if is_expired:
+                if is_expired and not _audit_passes(audited, "expired", skill_id, "Warrant expired"):
                     raise WarrantExpiredError()
             except WarrantExpiredError:
                 raise  # Re-raise expected errors
@@ -1146,7 +1159,8 @@ class A2AServer:
             now = int(time.time())
             exp = self._get_warrant_prop(warrant, "exp", "expires_at")
             if exp is not None and exp + _CLOCK_SKEW < now:
-                raise WarrantExpiredError()
+                if not _audit_passes(audited, "expired", skill_id, "Warrant expired"):
+                    raise WarrantExpiredError()
 
         # Check issuer trust (direct or via chain)
         issuer = self._get_warrant_prop(warrant, "iss", "issuer")
@@ -1224,6 +1238,8 @@ class A2AServer:
                     )
                 if enforcement.allowed:
                     logger.debug(f"PoP verified for skill '{skill_id}'")
+                    if enforcement.audit_denied:
+                        audited.append(enforcement.denial_reason or "Authorization denied")
                 else:
                     _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
             except (
@@ -1288,13 +1304,15 @@ class A2AServer:
                         if _why.deny_code == _DC.TOOL_NOT_FOUND or (
                             _why.deny_code == _DC.CONSTRAINT_MISMATCH and getattr(_why, "field", None) == "tool"
                         ):
-                            raise SkillNotGrantedError(skill_id, [])
-                        raise ConstraintViolationError(
-                            param=getattr(_why, "field", None) or skill_id,
-                            constraint_type="warrant",
-                            value=arguments.get(getattr(_why, "field", skill_id), "<unknown>"),
-                            reason=getattr(_why, "suggestion", None) or str(_why),
-                        )
+                            if not _audit_passes(audited, "tool_not_allowed", skill_id, str(_why)):
+                                raise SkillNotGrantedError(skill_id, [])
+                        elif not _audit_passes(audited, "constraint_violation", skill_id, str(_why)):
+                            raise ConstraintViolationError(
+                                param=getattr(_why, "field", None) or skill_id,
+                                constraint_type="warrant",
+                                value=arguments.get(getattr(_why, "field", skill_id), "<unknown>"),
+                                reason=getattr(_why, "suggestion", None) or str(_why),
+                            )
                     # why_denied returned False → warrant grants the skill, continue
                 else:
                     # why_denied result is not a real WhyDenied (e.g. mock object);
@@ -1309,7 +1327,9 @@ class A2AServer:
                     if tools:
                         grants = [{"skill": t} for t in tools]
                 granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
-                if skill_id not in granted_skills:
+                if skill_id not in granted_skills and not _audit_passes(
+                    audited, "tool_not_allowed", skill_id, f"Skill '{skill_id}' not granted"
+                ):
                     raise SkillNotGrantedError(skill_id, granted_skills)
 
             # Always check server-level constraints (declared on SkillDefinition).
@@ -1320,7 +1340,9 @@ class A2AServer:
                 for param, server_constraint in skill_def.constraints.items():
                     if param in arguments:
                         value = arguments[param]
-                        if not self._check_constraint(server_constraint, value, param):
+                        if not self._check_constraint(server_constraint, value, param) and not _audit_passes(
+                            audited, "constraint_violation", skill_id, f"'{param}' does not satisfy server constraint"
+                        ):
                             raise ConstraintViolationError(
                                 param=param,
                                 constraint_type=type(server_constraint).__name__,
@@ -1339,7 +1361,8 @@ class A2AServer:
                 warrant_jti=jti or "",
                 warrant_iss=issuer_normalized or "",
                 warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
-                outcome="allowed",
+                outcome="audit_denied" if audited else "allowed",
+                reason="; ".join(audited) or None,
                 latency_ms=latency_ms,
             )
         )
@@ -1350,6 +1373,8 @@ class A2AServer:
                 _res = EnforcementResult(
                     allowed=True, tool=skill_id, arguments=arguments,
                     warrant_id=jti or "",
+                    denial_reason="; ".join(audited) or None,
+                    audit_denied=bool(audited),
                 )
                 self._control_plane.emit_for_enforcement(
                     _res, latency_us=latency_ms * 1000,

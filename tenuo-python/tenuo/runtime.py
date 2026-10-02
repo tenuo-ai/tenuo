@@ -325,7 +325,8 @@ class Runtime:
 
         request_id = getattr(result, "request_id", None) or str(uuid.uuid4())
         tool = getattr(result, "tool", "") or ""
-        allowed = bool(getattr(result, "allowed", False))
+        # An audit-mode pass-through is still a denial on the record.
+        allowed = bool(getattr(result, "allowed", False)) and not getattr(result, "audit_denied", False)
         ts = int(time.time())
         try:
             if allowed:

@@ -93,6 +93,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Tuple,
     Union,
 )
 
@@ -125,6 +126,7 @@ from .config import resolve_trusted_roots
 from tenuo._enforcement import (
     DenialResult,
     EnforcementResult,
+    audit_mode_allows,
     enforce_tool_call,
     enforce_tool_call_async,
     handle_denial,
@@ -138,6 +140,14 @@ from tenuo.constraints import Shlex, Subpath, UrlSafe
 
 # Import shared constraint checking logic from framework-agnostic core
 from tenuo.core import check_constraint
+
+# Tier 1 denials that audit mode records instead of blocking, mapped to the
+# shared error types in tenuo._enforcement.
+_AUDITABLE_ERROR_CODES = {
+    "TOOL_DENIED": "tool_not_allowed",
+    "UNLISTED_ARGUMENT": "constraint_violation",
+    "CONSTRAINT_VIOLATION": "constraint_violation",
+}
 
 if TYPE_CHECKING:
     from tenuo.approval import ApprovalHandler
@@ -971,40 +981,10 @@ class CrewAIGuard:
         """
         logger.debug(f"Authorizing {tool_name} with args {list(args.keys())}")
 
-        # Step 1: Resolve tool name with namespace fallback
-        resolved_name = self._resolve_tool_name(tool_name, agent_role)
-
-        if resolved_name is None:
-            error = ToolDenied(
-                tool=tool_name,
-                reason=f"Tool '{tool_name}' not in allowed list",
-                allowed_tools=list(self._allowed.keys()),
-            )
-            return self._handle_denial(error, tool_name, args, agent_role)
-
-        constraints = self._allowed[resolved_name]
-
-        # Step 2: Check all arguments have constraints (closed-world)
-        for arg_name in args:
-            if arg_name not in constraints:
-                error = UnlistedArgument(  # type: ignore[assignment]
-                    tool=tool_name,
-                    argument=arg_name,
-                    allowed_args=list(constraints.keys()),
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
-
-        # Step 3: Check each argument satisfies its constraint
-        for arg_name, arg_value in args.items():
-            constraint = constraints[arg_name]
-            if not check_constraint(constraint, arg_value):
-                error = CrewAIConstraintViolation(  # type: ignore[assignment]
-                    tool=tool_name,
-                    argument=arg_name,
-                    value=arg_value,
-                    constraint=constraint,
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
+        # Steps 1-3: Tier 1 allowlist and constraint checks
+        blocked, denial, audited = self._check_tier1(tool_name, args, agent_role)
+        if blocked:
+            return denial
 
         # Step 4: Tier 2 - Warrant authorization with PoP (Unified Enforcement)
         if self._warrant and self._signing_key:
@@ -1029,6 +1009,11 @@ class CrewAIGuard:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
+            if enforcement.audit_denied:
+                audited = True
+                self._emit_audit(
+                    tool_name, args, "DENY", f"audit mode: {enforcement.denial_reason}", agent_role=agent_role
+                )
 
         elif self._warrant and not self._signing_key:
             raise CrewAIConfigurationError(
@@ -1038,8 +1023,9 @@ class CrewAIGuard:
                 f"or remove the warrant to use Tier 1 only."
             )
 
-        # Authorization granted
-        self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
+        # Authorization granted (or let through by audit mode, already recorded)
+        if not audited:
+            self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized {tool_name}")
         return None
 
@@ -1064,38 +1050,10 @@ class CrewAIGuard:
         """
         logger.debug(f"Authorizing (async) {tool_name} with args {list(args.keys())}")
 
-        # Steps 1-3: Tier 1 checks are CPU-bound, delegate to sync path
-        resolved_name = self._resolve_tool_name(tool_name, agent_role)
-
-        if resolved_name is None:
-            error = ToolDenied(
-                tool=tool_name,
-                reason=f"Tool '{tool_name}' not in allowed list",
-                allowed_tools=list(self._allowed.keys()),
-            )
-            return self._handle_denial(error, tool_name, args, agent_role)
-
-        constraints = self._allowed[resolved_name]
-
-        for arg_name in args:
-            if arg_name not in constraints:
-                error = UnlistedArgument(  # type: ignore[assignment]
-                    tool=tool_name,
-                    argument=arg_name,
-                    allowed_args=list(constraints.keys()),
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
-
-        for arg_name, arg_value in args.items():
-            constraint = constraints[arg_name]
-            if not check_constraint(constraint, arg_value):
-                error = CrewAIConstraintViolation(  # type: ignore[assignment]
-                    tool=tool_name,
-                    argument=arg_name,
-                    value=arg_value,
-                    constraint=constraint,
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
+        # Steps 1-3: Tier 1 checks are CPU-bound, shared with the sync path
+        blocked, denial, audited = self._check_tier1(tool_name, args, agent_role)
+        if blocked:
+            return denial
 
         # Step 4: Tier 2 — async warrant authorization with PoP
         if self._warrant and self._signing_key:
@@ -1120,6 +1078,11 @@ class CrewAIGuard:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
+            if enforcement.audit_denied:
+                audited = True
+                self._emit_audit(
+                    tool_name, args, "DENY", f"audit mode: {enforcement.denial_reason}", agent_role=agent_role
+                )
 
         elif self._warrant and not self._signing_key:
             raise CrewAIConfigurationError(
@@ -1129,10 +1092,88 @@ class CrewAIGuard:
                 f"or remove the warrant to use Tier 1 only."
             )
 
-        # Authorization granted
-        self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
+        # Authorization granted (or let through by audit mode, already recorded)
+        if not audited:
+            self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized (async) {tool_name}")
         return None
+
+    def _check_tier1(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        agent_role: Optional[str],
+    ) -> Tuple[bool, Optional[DenialResult], bool]:
+        """Run the Tier 1 allowlist and constraint checks.
+
+        Returns ``(blocked, denial, audited)``. ``blocked`` means the caller
+        must return ``denial``. ``audited`` means audit mode let at least one
+        denial through; the caller still runs the Tier 2 warrant check.
+        """
+        audited = False
+
+        def deny(error: TenuoCrewAIError) -> Optional[Tuple[bool, Optional[DenialResult], bool]]:
+            nonlocal audited
+            if self._audit_passes(error, tool_name, args, agent_role):
+                audited = True
+                return None
+            return True, self._handle_denial(error, tool_name, args, agent_role), False
+
+        # Step 1: Resolve tool name with namespace fallback
+        resolved_name = self._resolve_tool_name(tool_name, agent_role)
+        if resolved_name is None:
+            outcome = deny(ToolDenied(
+                tool=tool_name,
+                reason=f"Tool '{tool_name}' not in allowed list",
+                allowed_tools=list(self._allowed.keys()),
+            ))
+            return outcome or (False, None, audited)
+
+        constraints = self._allowed[resolved_name]
+
+        # Step 2: Check all arguments have constraints (closed-world)
+        for arg_name in args:
+            if arg_name not in constraints:
+                outcome = deny(UnlistedArgument(
+                    tool=tool_name,
+                    argument=arg_name,
+                    allowed_args=list(constraints.keys()),
+                ))
+                if outcome:
+                    return outcome
+
+        # Step 3: Check each argument satisfies its constraint
+        for arg_name, arg_value in args.items():
+            if arg_name not in constraints:
+                continue  # unlisted; audit mode already recorded it above
+            constraint = constraints[arg_name]
+            if not check_constraint(constraint, arg_value):
+                outcome = deny(CrewAIConstraintViolation(
+                    tool=tool_name,
+                    argument=arg_name,
+                    value=arg_value,
+                    constraint=constraint,
+                ))
+                if outcome:
+                    return outcome
+
+        return False, None, audited
+
+    def _audit_passes(
+        self,
+        error: TenuoCrewAIError,
+        tool_name: str,
+        args: Dict[str, Any],
+        agent_role: Optional[str],
+    ) -> bool:
+        """Record a Tier 1 denial and return True when audit mode lets it through."""
+        error_type = _AUDITABLE_ERROR_CODES.get(error.error_code)
+        if error_type is None or not audit_mode_allows(error_type, tool_name, str(error)):
+            return False
+        self._emit_audit(
+            tool_name, args, "DENY", f"audit mode: {error}", error_code=error.error_code, agent_role=agent_role
+        )
+        return True
 
     def _map_enforcement_error(
         self,

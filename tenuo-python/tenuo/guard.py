@@ -69,7 +69,9 @@ def guard(
         block_private: Block private/internal IPs in UrlSafe
         allowed_bins: Allowed binaries for Shlex (default: ["ls", "cat", "echo"])
         on_denial: What to do on constraint violation ("raise", "skip", "log")
-        audit: If True, log all decisions without blocking
+        audit: If True, log denials and drop the denied tool calls instead of
+            raising (same as ``on_denial="log"``). To let denied calls run
+            while recording them, use ``configure(mode="audit")``.
 
     Returns:
         Guarded client with same interface as input
@@ -84,7 +86,7 @@ def guard(
         # Allow specific domains
         client = guard(OpenAI(), allowed_domains=["api.github.com"])
 
-        # Audit mode (log but don't block)
+        # Log denials instead of raising (denied tool calls are dropped)
         client = guard(OpenAI(), audit=True)
 
     The guard automatically:

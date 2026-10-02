@@ -61,7 +61,7 @@ from .exceptions import (
     ScopeViolation,
     ToolNotAuthorized,
 )
-from ._enforcement import EnforcementResult, enforce_tool_call
+from ._enforcement import EnforcementResult, audit_mode_allows, enforce_tool_call
 from .bound_warrant import BoundWarrant
 
 logger = logging.getLogger("tenuo.decorators")
@@ -882,16 +882,12 @@ def guard(
                     )
                 )
 
-                error_msg = _make_actionable_error(
-                    error_code=error_code,
-                    tool_name=tool_name,
-                    func_name=func_name,
-                    callsite=callsite,
-                    details=f"Warrant expired at {expires_at}.",
-                )
-                raise ExpiredError(
-                    warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else "unknown", expired_at=expires_at
-                )
+                # Audit mode lets the call through; enforce_tool_call records the denial.
+                if not audit_mode_allows("expired", tool_name, f"Warrant expired at {expires_at}"):
+                    raise ExpiredError(
+                        warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else "unknown",
+                        expired_at=expires_at,
+                    )
 
             keypair_to_use = active_keypair or get_signing_key_context()
 
@@ -1064,6 +1060,24 @@ def guard(
                 _map_result_to_guard_error(
                     result, warrant_to_use, tool_name, auth_args, callsite, func_name,
                 )
+
+            if result.audit_denied:
+                audit_logger.log(
+                    AuditEvent(
+                        event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                        warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else None,
+                        tool=tool_name,
+                        action="audit_allowed",
+                        constraints=auth_args,
+                        error_code=result.error_type,
+                        details=f"Audit mode: would deny '{tool_name}': {result.denial_reason}",
+                        metadata={
+                            "callsite": callsite,
+                            "function": func_name,
+                        },
+                    )
+                )
+                return func(*args, **kwargs)
 
             audit_logger.log(
                 AuditEvent(

@@ -1020,6 +1020,8 @@ class TenuoActivityInboundInterceptor:
         import time
         start_ns = time.perf_counter_ns()
         chain_result = None
+        # Set when the warrant denied the call but audit mode lets it run.
+        audit_denial: Optional[Any] = None
         activity_fn = getattr(input, "fn", None)
 
         # -- Helper: shared denial branch (used by phases 4 and 6) --
@@ -1251,6 +1253,8 @@ class TenuoActivityInboundInterceptor:
                 )
             if not enforcement.allowed:
                 enforcement.raise_if_denied()
+            if enforcement.audit_denied:
+                audit_denial = enforcement
             chain_result = enforcement.chain_result
 
             # -- 13. Replay Deduplication --
@@ -1267,7 +1271,7 @@ class TenuoActivityInboundInterceptor:
                 )
 
             if _active_span is not None:
-                _active_span.set_attribute("tenuo.decision", "allow")
+                _active_span.set_attribute("tenuo.decision", "audit_deny" if audit_denial is not None else "allow")
                 _active_span.set_attribute("tenuo.constraint_violated", "")
 
         # -- 14. Fail-Closed Error Mapping & Tracing --
@@ -1399,7 +1403,24 @@ class TenuoActivityInboundInterceptor:
             if _span_ctx is not None:
                 _span_ctx.__exit__(None, None, None)
 
-        # -- 15. Emit Allow + Dispatch Activity --
+        # -- 15. Emit Allow (or the audit-mode denial) + Dispatch Activity --
+        if audit_denial is not None:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=f"audit mode: {audit_denial.denial_reason or 'denied'}",
+                constraint=audit_denial.constraint_violated,
+                start_ns=start_ns,
+                authorizer=authorizer,
+                presented_chain=list(chain) if chain else [warrant],
+                verified_pop=pop_bytes,
+                pop_auth_args=args,
+                error_type=audit_denial.error_type,
+            )
+            return await self._next.execute_activity(input)
+
         self._emit_allow_event(
             info=info,
             warrant=warrant,

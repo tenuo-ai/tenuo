@@ -69,6 +69,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`configure(mode="audit")` no longer blocks calls.** Audit and permissive
+  mode were documented as "log violations but allow execution", but no
+  enforcement path read the setting, so out-of-scope calls were still denied.
+  Every Python integration now lets a scope denial (tool not granted,
+  constraint violated, expired warrant) run in audit mode and records it as a
+  denial: receipts, control-plane events, and audit callbacks say `deny`.
+  Integrity failures (untrusted issuer, bad proof of possession, revoked or
+  malformed warrants, replays) and approval gates still block. Code-level
+  Tier 1 guardrails in the CrewAI, OpenAI, AutoGen, and Google ADK adapters
+  follow the same rule. `EnforcementResult.audit_denied` and
+  `MCPVerificationResult.audit_denied` mark these calls, and OpenAI's
+  `verify_tool_call` now returns the warrant's `EnforcementResult`.
 - **Temporal approval handlers can request retries.** Retryable
   `ApplicationError`s from sync or async handlers propagate unchanged for pending
   approvals or transient service failures. Pending attempts do not execute the

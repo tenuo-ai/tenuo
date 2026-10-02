@@ -140,6 +140,10 @@ class EnforcementResult:
     # receipt fail a later check against the wire payload.
     pop_auth_args: Optional[Dict[str, Any]] = None
     approval_metadata: Optional[Dict[str, Any]] = None
+    # Set when the warrant denied the call but audit or permissive mode let it
+    # run. ``allowed`` is then True so integrations proceed, while receipts
+    # and control-plane events still record the decision as a denial.
+    audit_denied: bool = False
 
     def raise_if_denied(self) -> None:
         """
@@ -283,6 +287,65 @@ class DenialResult:
             error_code=error_code,
             warrant_id=result.warrant_id,
         )
+
+
+# Denials that audit mode records instead of blocking: the call went beyond the
+# warrant's scope. Everything else still blocks in audit mode: a forged,
+# revoked or untrusted warrant, a missing or refused approval, and internal
+# errors. Audit mode is for discovering what scope agents need, not for
+# accepting authority that doesn't verify.
+_AUDITABLE_DENIALS = frozenset({
+    "tool_not_allowed",
+    "constraint_violation",
+    "policy_violation",
+    "expired",
+})
+
+
+def audit_mode_allows(error_type: Optional[str], tool: str, reason: Optional[str]) -> bool:
+    """Return True when audit or permissive mode should let a denied call run.
+
+    For integrations that make their own authorization decision. The caller
+    still records the denial; this only decides whether to block.
+    """
+    from .config import should_block_violation
+
+    if should_block_violation() or error_type not in _AUDITABLE_DENIALS:
+        return False
+    logger.warning(
+        "AUDIT MODE: would deny '%s' (%s); executing anyway. Set mode='enforce' to block.",
+        tool,
+        reason,
+    )
+    return True
+
+
+def audit_denial_exception(result: EnforcementResult) -> Optional[Exception]:
+    """The exception an audit-mode pass-through would have raised, for recording it.
+
+    Returns ``None`` unless ``result.audit_denied`` is set.
+    """
+    if not result.audit_denied:
+        return None
+    from dataclasses import replace
+
+    try:
+        replace(result, allowed=False, audit_denied=False).raise_if_denied()
+    except Exception as exc:  # noqa: BLE001 - raise_if_denied always raises here
+        return exc
+    return None
+
+
+def apply_audit_mode(result: EnforcementResult) -> EnforcementResult:
+    """Let an auditable denial through in audit or permissive mode.
+
+    Call after the denial's receipt has been collected: the result is marked
+    ``audit_denied`` and ``allowed`` so the integration runs the tool.
+    """
+    if not result.allowed and audit_mode_allows(result.error_type, result.tool, result.denial_reason):
+        result.allowed = True
+        result.audit_denied = True
+    return result
 
 
 def handle_denial(
@@ -1949,12 +2012,12 @@ from functools import wraps as _wraps  # noqa: E402
 
 @_wraps(_enforce_tool_call_impl)
 def enforce_tool_call(*args, **kwargs):
-    return _collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs))
+    return apply_audit_mode(_collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs)))
 
 
 @_wraps(_enforce_tool_call_async_impl)
 async def enforce_tool_call_async(*args, **kwargs):
-    return _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+    return apply_audit_mode(_collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs)))
 
 
 def parents_from_presented_chain(
@@ -2001,7 +2064,7 @@ def verify_inbound_call(
     if not callable(bind):
         raise ConfigurationError("verify_inbound_call requires a Warrant with bind()")
     bound = bind(VerificationOnlyKey())
-    return _enforce_tool_call_impl(
+    return apply_audit_mode(_enforce_tool_call_impl(
         tool_name=tool_name,
         tool_args=tool_args,
         bound_warrant=bound,
@@ -2013,7 +2076,7 @@ def verify_inbound_call(
         pop_args=pop_args,
         constraint_args=constraint_args,
         approval_handler=approval_handler,
-    )
+    ))
 
 
 __all__ = [
@@ -2024,6 +2087,9 @@ __all__ = [
     "enforce_tool_call",
     "enforce_tool_call_async",
     "verify_inbound_call",
+    "audit_mode_allows",
+    "apply_audit_mode",
+    "audit_denial_exception",
     "parents_from_presented_chain",
     "filter_tools_by_warrant",
     "handle_denial",

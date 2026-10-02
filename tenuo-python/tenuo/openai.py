@@ -133,7 +133,14 @@ from tenuo.constraints import Subpath, UrlSafe
 check_openai_compat()
 
 # Import shared enforcement logic (after version check)
-from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, enforce_tool_call_async, handle_denial  # noqa: E402
+from tenuo._enforcement import (  # noqa: E402
+    DenialPolicy,
+    EnforcementResult,
+    audit_mode_allows,
+    enforce_tool_call,
+    enforce_tool_call_async,
+    handle_denial,
+)
 from tenuo.config import resolve_trusted_roots  # noqa: E402
 from tenuo.exceptions import InsufficientApprovals  # noqa: E402
 
@@ -494,85 +501,15 @@ class BufferOverflow(TenuoOpenAIError):
 from tenuo.core import check_constraint  # noqa: E402
 
 
-def verify_tool_call(
+def _check_tier1(
     tool_name: str,
     arguments: Dict[str, Any],
     allow_tools: Optional[List[str]],
     deny_tools: Optional[List[str]],
     constraints: Optional[Dict[str, Dict[str, Constraint]]],
-    warrant: Optional[Warrant] = None,
-    signing_key: Optional[SigningKey] = None,
-    trusted_roots: Optional[list] = None,
-    approval_handler: Optional[Any] = None,
-    approvals: Optional[list] = None,
+    warrant: Optional[Warrant],
 ) -> None:
-    """Verify a tool call against guardrails and/or warrant.
-
-    Tier 1 (guardrails): Uses allow_tools, deny_tools, constraints
-        - Runtime checks only, no cryptography
-        - Local policy enforced in trusted application code
-
-    Tier 2 (warrant + signing_key): Cryptographic authorization
-        - Signs Proof-of-Possession (PoP) with holder's key
-        - Verifies warrant constraints AND PoP signature
-        - Use when a verifier must check signed, holder-bound authority
-
-    Defense in depth when both tiers are configured:
-        - Tier 1 allow/deny lists ALWAYS apply (even with warrant)
-        - Tier 2 constraints OVERRIDE Tier 1 constraints (warrant is authoritative)
-
-    This means: warrant.constraints take precedence over the constraints parameter,
-    but a tool in deny_tools will still be blocked even if the warrant allows it.
-
-    Args:
-        tool_name: Name of the tool being called
-        arguments: Tool arguments as dict
-        allow_tools: Tier 1 - Allowlist of tool names (checked even with warrant)
-        deny_tools: Tier 1 - Denylist of tool names (checked even with warrant)
-        constraints: Tier 1 - Per-tool argument constraints (skipped if warrant present)
-        warrant: Tier 2 - Cryptographic warrant (its constraints take precedence)
-        signing_key: Tier 2 - Key for PoP signature (REQUIRED if warrant provided)
-
-    Raises:
-        ToolDenied: If tool is not allowed (Tier 1 allow/deny lists)
-        WarrantDenied: If warrant doesn't authorize the call (Tier 2)
-        OpenAIConstraintViolation: If argument violates constraint (Tier 1, only when no warrant)
-        MissingSigningKey: If warrant provided without signing_key
-    """
-    # ==========================================================================
-    # Tier 2: Warrant-based authorization (cryptographic)
-    # ==========================================================================
-    if warrant is not None:
-        logger.debug(f"Tier 2: Verifying tool '{tool_name}' with warrant")
-
-        if signing_key is None:
-            logger.debug("Tier 2: Missing signing_key for PoP")
-            raise MissingSigningKey()
-
-        # Bind warrant to create BoundWarrant for enforce_tool_call
-        bound_warrant = warrant.bind(signing_key)
-
-        # Use shared enforcement logic
-        result = enforce_tool_call(
-            tool_name=tool_name,
-            tool_args=arguments,
-            bound_warrant=bound_warrant,
-            trusted_roots=resolve_trusted_roots(trusted_roots),
-            approval_handler=approval_handler,
-            approvals=approvals,
-        )
-
-        if not result.allowed:
-            logger.debug(f"Tier 2: Authorization DENIED for '{tool_name}'")
-            _raise_for_enforcement_denial(tool_name, result)
-        else:
-            logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
-
-    # ==========================================================================
-    # Tier 1: Guardrail-based authorization (runtime checks)
-    # ==========================================================================
-    logger.debug(f"Tier 1: Checking guardrails for '{tool_name}'")
-
+    """Tier 1 guardrails: denylist, allowlist, and per-argument constraints."""
     # Check denylist first
     if deny_tools and tool_name in deny_tools:
         raise ToolDenied(tool_name, "Tool is in denylist")
@@ -629,6 +566,119 @@ def verify_tool_call(
                 )
 
 
+
+def _check_tier1_or_audit(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    allow_tools: Optional[List[str]],
+    deny_tools: Optional[List[str]],
+    constraints: Optional[Dict[str, Dict[str, Constraint]]],
+    warrant: Optional[Warrant],
+) -> Optional[str]:
+    """Run Tier 1 guardrails. Return the denial reason when audit mode let it through."""
+    try:
+        _check_tier1(tool_name, arguments, allow_tools, deny_tools, constraints, warrant)
+    except (ToolDenied, OpenAIConstraintViolation) as exc:
+        error_type = "tool_not_allowed" if isinstance(exc, ToolDenied) else "constraint_violation"
+        if not audit_mode_allows(error_type, tool_name, str(exc)):
+            raise
+        return str(exc)
+    return None
+
+
+def verify_tool_call(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    allow_tools: Optional[List[str]],
+    deny_tools: Optional[List[str]],
+    constraints: Optional[Dict[str, Dict[str, Constraint]]],
+    warrant: Optional[Warrant] = None,
+    signing_key: Optional[SigningKey] = None,
+    trusted_roots: Optional[list] = None,
+    approval_handler: Optional[Any] = None,
+    approvals: Optional[list] = None,
+) -> Optional[EnforcementResult]:
+    """Verify a tool call against guardrails and/or warrant.
+
+    Returns the warrant check's ``EnforcementResult`` (``audit_denied`` is set
+    when audit mode let a denial through), or ``None`` without a warrant.
+
+    Tier 1 (guardrails): Uses allow_tools, deny_tools, constraints
+        - Runtime checks only, no cryptography
+        - Local policy enforced in trusted application code
+
+    Tier 2 (warrant + signing_key): Cryptographic authorization
+        - Signs Proof-of-Possession (PoP) with holder's key
+        - Verifies warrant constraints AND PoP signature
+        - Use when a verifier must check signed, holder-bound authority
+
+    Defense in depth when both tiers are configured:
+        - Tier 1 allow/deny lists ALWAYS apply (even with warrant)
+        - Tier 2 constraints OVERRIDE Tier 1 constraints (warrant is authoritative)
+
+    This means: warrant.constraints take precedence over the constraints parameter,
+    but a tool in deny_tools will still be blocked even if the warrant allows it.
+
+    Args:
+        tool_name: Name of the tool being called
+        arguments: Tool arguments as dict
+        allow_tools: Tier 1 - Allowlist of tool names (checked even with warrant)
+        deny_tools: Tier 1 - Denylist of tool names (checked even with warrant)
+        constraints: Tier 1 - Per-tool argument constraints (skipped if warrant present)
+        warrant: Tier 2 - Cryptographic warrant (its constraints take precedence)
+        signing_key: Tier 2 - Key for PoP signature (REQUIRED if warrant provided)
+
+    Raises:
+        ToolDenied: If tool is not allowed (Tier 1 allow/deny lists)
+        WarrantDenied: If warrant doesn't authorize the call (Tier 2)
+        OpenAIConstraintViolation: If argument violates constraint (Tier 1, only when no warrant)
+        MissingSigningKey: If warrant provided without signing_key
+    """
+    # ==========================================================================
+    # Tier 2: Warrant-based authorization (cryptographic)
+    # ==========================================================================
+    result: Optional[EnforcementResult] = None
+    if warrant is not None:
+        logger.debug(f"Tier 2: Verifying tool '{tool_name}' with warrant")
+
+        if signing_key is None:
+            logger.debug("Tier 2: Missing signing_key for PoP")
+            raise MissingSigningKey()
+
+        # Bind warrant to create BoundWarrant for enforce_tool_call
+        bound_warrant = warrant.bind(signing_key)
+
+        # Use shared enforcement logic
+        result = enforce_tool_call(
+            tool_name=tool_name,
+            tool_args=arguments,
+            bound_warrant=bound_warrant,
+            trusted_roots=resolve_trusted_roots(trusted_roots),
+            approval_handler=approval_handler,
+            approvals=approvals,
+        )
+
+        if not result.allowed:
+            logger.debug(f"Tier 2: Authorization DENIED for '{tool_name}'")
+            _raise_for_enforcement_denial(tool_name, result)
+        else:
+            logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
+
+    # ==========================================================================
+    # Tier 1: Guardrail-based authorization (runtime checks)
+    # ==========================================================================
+    logger.debug(f"Tier 1: Checking guardrails for '{tool_name}'")
+
+    tier1_denial = _check_tier1_or_audit(tool_name, arguments, allow_tools, deny_tools, constraints, warrant)
+    if tier1_denial is not None:
+        if result is None:
+            result = EnforcementResult(allowed=True, tool=tool_name, arguments=arguments)
+        result.audit_denied = True
+        result.denial_reason = result.denial_reason or tier1_denial
+
+    return result
+
+
 async def verify_tool_call_async(
     tool_name: str,
     arguments: Dict[str, Any],
@@ -640,12 +690,13 @@ async def verify_tool_call_async(
     trusted_roots: Optional[list] = None,
     approval_handler: Optional[Any] = None,
     approvals: Optional[list] = None,
-) -> None:
+) -> Optional[EnforcementResult]:
     """Async variant of verify_tool_call — uses enforce_tool_call_async for Tier 2.
 
     Required for async streaming paths so approval handlers can be awaited.
     See verify_tool_call for full documentation.
     """
+    result: Optional[EnforcementResult] = None
     if warrant is not None:
         if signing_key is None:
             raise MissingSigningKey()
@@ -664,41 +715,14 @@ async def verify_tool_call_async(
         if not result.allowed:
             _raise_for_enforcement_denial(tool_name, result)
 
-    if deny_tools and tool_name in deny_tools:
-        raise ToolDenied(tool_name, "Tool is in denylist")
+    tier1_denial = _check_tier1_or_audit(tool_name, arguments, allow_tools, deny_tools, constraints, warrant)
+    if tier1_denial is not None:
+        if result is None:
+            result = EnforcementResult(allowed=True, tool=tool_name, arguments=arguments)
+        result.audit_denied = True
+        result.denial_reason = result.denial_reason or tier1_denial
 
-    if allow_tools is not None and tool_name not in allow_tools:
-        raise ToolDenied(tool_name, "Tool not in allowlist")
-
-    if warrant is None and constraints and tool_name in constraints:
-        tool_constraints = constraints[tool_name]
-        allow_unknown = tool_constraints.get("_allow_unknown", False)
-
-        for arg_name, value in arguments.items():
-            try:
-                if arg_name in tool_constraints:
-                    constraint = tool_constraints[arg_name]
-                    if arg_name.startswith("_"):
-                        continue
-                    type_mismatch, reason = _check_type_compatibility(constraint, value)
-                    if type_mismatch:
-                        raise OpenAIConstraintViolation(
-                            tool_name, arg_name, value, constraint, type_mismatch=True, reason=reason
-                        )
-                    if not check_constraint(constraint, value):
-                        raise OpenAIConstraintViolation(tool_name, arg_name, value, constraint)
-                elif not allow_unknown:
-                    raise OpenAIConstraintViolation(
-                        tool_name, arg_name, value,
-                        constraint=Wildcard(),
-                        reason=f"Unknown argument '{arg_name}' - not in constraints",
-                    )
-            except OpenAIConstraintViolation:
-                raise
-            except Exception as e:
-                raise OpenAIConstraintViolation(
-                    tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
-                )
+    return result
 
 
 def _check_type_compatibility(constraint: Constraint, value: Any) -> tuple:
@@ -871,7 +895,7 @@ class GuardedCompletions:
             raise MalformedToolCall(tool_name, str(e))
 
         try:
-            verify_tool_call(
+            res = verify_tool_call(
                 tool_name,
                 arguments,
                 self._allow_tools,
@@ -883,8 +907,13 @@ class GuardedCompletions:
                 self._approval_handler,
                 self._approvals,
             )
-            self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-            self._emit_cp(tool_name, arguments, allowed=True)
+            if res is not None and res.audit_denied:
+                reason = f"audit mode: {res.denial_reason or 'denied'}"
+                self._emit_audit(tool_name, arguments, "DENY", reason, tier="tier2")
+                self._emit_cp(tool_name, arguments, allowed=False, denial_reason=reason)
+            else:
+                self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+                self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
@@ -1292,7 +1321,7 @@ class GuardedResponses:
             raise MalformedToolCall(tool_name, str(e))
 
         try:
-            verify_tool_call(
+            res = verify_tool_call(
                 tool_name,
                 arguments,
                 self._allow_tools,
@@ -1304,8 +1333,13 @@ class GuardedResponses:
                 self._approval_handler,
                 self._approvals,
             )
-            self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-            self._emit_cp(tool_name, arguments, allowed=True)
+            if res is not None and res.audit_denied:
+                reason = f"audit mode: {res.denial_reason or 'denied'}"
+                self._emit_audit(tool_name, arguments, "DENY", reason, tier="tier2")
+                self._emit_cp(tool_name, arguments, allowed=False, denial_reason=reason)
+            else:
+                self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+                self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
@@ -2265,7 +2299,7 @@ class TenuoToolGuardrail:
         violations = []
         for tool_name, arguments in tool_calls:
             try:
-                await verify_tool_call_async(
+                res = await verify_tool_call_async(
                     tool_name,
                     arguments,
                     self.allow_tools,
@@ -2277,8 +2311,13 @@ class TenuoToolGuardrail:
                     self.approval_handler,
                     self.approvals,
                 )
-                self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-                self._emit_cp(tool_name, arguments, allowed=True)
+                if res is not None and res.audit_denied:
+                    reason = f"audit mode: {res.denial_reason or 'denied'}"
+                    self._emit_audit(tool_name, arguments, "DENY", reason, tier="tier2")
+                    self._emit_cp(tool_name, arguments, allowed=False, denial_reason=reason)
+                else:
+                    self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+                    self._emit_cp(tool_name, arguments, allowed=True)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 violations.append(f"{tool_name}: {e}")
                 logger.warning(f"Tenuo guardrail blocked: {tool_name} - {e}")
