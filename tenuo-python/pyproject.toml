@@ -48,8 +48,8 @@ dependencies = [
 # Feature flags for users - we use permissive constraints and warn at runtime
 # See docs/compatibility-matrix.md for recommended versions
 openai = [
-    "openai>=1.0",
-    "openai-agents>=0.1; python_version >= '3.10'",
+    "openai>=3.22.1",
+    "openai-agents>=0.22.3; python_version >= '3.10'",
 ]
 autogen = [
     # AutoGen AgentChat requires Python 3.10+
