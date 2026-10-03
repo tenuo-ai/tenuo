@@ -43,6 +43,8 @@ import asyncio
 import inspect
 import logging
 import re
+import warnings
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, cast
 
@@ -302,21 +304,69 @@ _AUDITABLE_DENIALS = frozenset({
 })
 
 
+# Response header that carries permissive-mode warnings back to HTTP callers.
+X_TENUO_WARNING = "X-Tenuo-Warning"
+
+# Warnings collected for the current request in permissive mode. HTTP
+# integrations start a collection per request and copy it into the
+# X-Tenuo-Warning header; None means nobody is collecting.
+_caller_warnings: ContextVar[Optional[List[str]]] = ContextVar("tenuo_caller_warnings", default=None)
+
+
+class PermissiveModeWarning(UserWarning):
+    """A call ran in permissive mode although its warrant did not cover it."""
+
+
+def start_caller_warnings() -> Any:
+    """Begin collecting permissive-mode warnings for this request. Returns a reset token."""
+    return _caller_warnings.set([])
+
+
+def take_caller_warnings(token: Any) -> List[str]:
+    """Stop collecting and return the warnings gathered since ``start_caller_warnings``."""
+    collected = _caller_warnings.get() or []
+    _caller_warnings.reset(token)
+    return collected
+
+
+def current_caller_warnings() -> List[str]:
+    """Warnings collected so far for this request (empty when not collecting)."""
+    return list(_caller_warnings.get() or [])
+
+
+def caller_warning_header(messages: List[str]) -> str:
+    """Join warnings into a single header-safe value (ASCII, one line, bounded)."""
+    text = "; ".join(messages)
+    text = text.encode("ascii", "replace").decode("ascii")
+    text = " ".join(text.split())
+    return text[:512]
+
+
 def audit_mode_allows(error_type: Optional[str], tool: str, reason: Optional[str]) -> bool:
     """Return True when audit or permissive mode should let a denied call run.
 
-    For integrations that make their own authorization decision. The caller
-    still records the denial; this only decides whether to block.
+    Audit mode only logs. Permissive mode also tells the caller: a
+    ``PermissiveModeWarning`` in-process, and an ``X-Tenuo-Warning`` header on
+    HTTP integrations. The caller still records the denial; this only decides
+    whether to block.
     """
-    from .config import should_block_violation
+    from .config import is_permissive_mode, should_block_violation
 
     if should_block_violation() or error_type not in _AUDITABLE_DENIALS:
         return False
+    permissive = is_permissive_mode()
     logger.warning(
-        "AUDIT MODE: would deny '%s' (%s); executing anyway. Set mode='enforce' to block.",
+        "%s MODE: would deny '%s' (%s); executing anyway. Set mode='enforce' to block.",
+        "PERMISSIVE" if permissive else "AUDIT",
         tool,
         reason,
     )
+    if permissive:
+        message = f"would deny '{tool}': {reason or error_type}"
+        collected = _caller_warnings.get()
+        if collected is not None:
+            collected.append(message)
+        warnings.warn(f"Tenuo permissive mode: {message}", PermissiveModeWarning, stacklevel=2)
     return True
 
 
@@ -2088,6 +2138,12 @@ __all__ = [
     "enforce_tool_call_async",
     "verify_inbound_call",
     "audit_mode_allows",
+    "PermissiveModeWarning",
+    "X_TENUO_WARNING",
+    "start_caller_warnings",
+    "take_caller_warnings",
+    "current_caller_warnings",
+    "caller_warning_header",
     "apply_audit_mode",
     "audit_denial_exception",
     "parents_from_presented_chain",

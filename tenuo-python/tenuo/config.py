@@ -273,10 +273,16 @@ def configure(
     )
 
     if enforcement_mode != EnforcementMode.ENFORCE:
+        caller_note = (
+            " Callers also get an X-Tenuo-Warning header or a Python warning."
+            if enforcement_mode == EnforcementMode.PERMISSIVE
+            else ""
+        )
         logger.warning(
             f"Tenuo configured in {enforcement_mode.value} mode. "
-            "Authorization violations will be logged but NOT blocked. "
-            "Set mode='enforce' for production."
+            "Calls outside a warrant's scope will be logged but NOT blocked; "
+            "invalid, revoked, or replayed warrants and approval gates still block."
+            f"{caller_note} Set mode='enforce' for production."
         )
 
     # Configure audit logging
@@ -356,6 +362,11 @@ def is_enforce_mode() -> bool:
 def should_block_violation() -> bool:
     """Check if authorization violations should be blocked."""
     return get_config().mode == EnforcementMode.ENFORCE
+
+
+def is_permissive_mode() -> bool:
+    """Check if running in permissive mode (log violations, don't block, warn the caller)."""
+    return get_config().mode == EnforcementMode.PERMISSIVE
 
 
 def auto_configure(
@@ -508,6 +519,7 @@ __all__ = [
     "reset_config",
     "is_configured",
     "is_audit_mode",
+    "is_permissive_mode",
     "is_enforce_mode",
     "should_block_violation",
     "allow_passthrough",

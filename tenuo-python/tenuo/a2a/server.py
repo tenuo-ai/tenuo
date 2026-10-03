@@ -59,6 +59,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, List, Optional, Protocol, runtime_checkable
 
+from tenuo._enforcement import start_caller_warnings, take_caller_warnings
+
 from .errors import (
     A2AError,
     A2AErrorCode,
@@ -639,6 +641,14 @@ class A2AServerBuilder:
             registration_handler=self._registration_handler,
             runtime=self._runtime,
         )
+
+
+def _caller_warning_headers() -> Dict[str, str]:
+    """X-Tenuo-Warning for the current request when permissive mode let something through."""
+    from tenuo._enforcement import X_TENUO_WARNING, caller_warning_header, current_caller_warnings
+
+    collected = current_caller_warnings()
+    return {X_TENUO_WARNING: caller_warning_header(collected)} if collected else {}
 
 
 def _audit_passes(audited: List[str], error_type: str, skill_id: str, reason: str) -> bool:
@@ -2050,6 +2060,8 @@ class A2AServer:
             params = body.get("params", {})
             request_id = body.get("id")
 
+            # Permissive mode reports would-be denials in X-Tenuo-Warning.
+            warn_token = start_caller_warnings()
             try:
                 if method == "agent/discover":
                     result = self.get_agent_card_dict()
@@ -2074,7 +2086,8 @@ class A2AServer:
                         "jsonrpc": "2.0",
                         "result": result,
                         "id": request_id,
-                    }
+                    },
+                    headers=_caller_warning_headers(),
                 )
 
             except A2AError as e:
@@ -2106,6 +2119,8 @@ class A2AServer:
                         "id": request_id,
                     }
                 )
+            finally:
+                take_caller_warnings(warn_token)
 
         async def handle_discover(request: Request) -> JSONResponse:
             """Handle agent discovery requests."""
@@ -2533,5 +2548,6 @@ class A2AServer:
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
+                **_caller_warning_headers(),
             },
         )

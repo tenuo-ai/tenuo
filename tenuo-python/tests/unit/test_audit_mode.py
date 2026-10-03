@@ -214,3 +214,119 @@ def test_autogen_tier1_denial_passes_in_audit_mode():
 
     _configure("audit")
     _check_constraints_or_audit("delete_file", None, {})
+
+
+# ---------------------------------------------------------------------------
+# Permissive mode also tells the caller; audit mode stays silent
+# ---------------------------------------------------------------------------
+
+
+def test_permissive_mode_warns_the_caller_in_process():
+    import warnings
+
+    from tenuo._enforcement import PermissiveModeWarning
+
+    _configure("permissive")
+    delete_file = _guarded_delete()
+    with mint_sync(Capability("delete_file", path=Subpath("/tmp"))):
+        with pytest.warns(PermissiveModeWarning, match="would deny 'delete_file'"):
+            assert delete_file("/etc/passwd") == "deleted /etc/passwd"
+
+    _configure("audit")
+    with mint_sync(Capability("delete_file", path=Subpath("/tmp"))):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            delete_file("/etc/passwd")
+    assert not [w for w in caught if issubclass(w.category, PermissiveModeWarning)]
+
+
+def _fastapi_call(mode: str):
+    import base64
+    import time
+
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from tenuo.fastapi import X_TENUO_POP, X_TENUO_WARRANT, SecurityContext, TenuoGuard, configure_tenuo
+
+    _configure(mode)
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("search").holder(holder.public_key).ttl(3600).mint(issuer)
+
+    app = fastapi.FastAPI()
+    configure_tenuo(app, trusted_issuers=[issuer.public_key])
+
+    @app.get("/delete")
+    def do_delete(ctx: SecurityContext = fastapi.Depends(TenuoGuard("delete_file"))):
+        return {"status": "deleted"}
+
+    pop = warrant.sign(holder, "delete_file", {}, int(time.time()))
+    headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: base64.b64encode(bytes(pop)).decode()}
+    return TestClient(app).get("/delete", headers=headers)
+
+
+def test_fastapi_permissive_mode_sets_the_warning_header():
+    from tenuo._enforcement import X_TENUO_WARNING
+
+    resp = _fastapi_call("permissive")
+    assert resp.status_code == 200
+    assert "would deny 'delete_file'" in resp.headers[X_TENUO_WARNING]
+
+
+def test_fastapi_audit_mode_runs_without_telling_the_caller():
+    from tenuo._enforcement import X_TENUO_WARNING
+
+    resp = _fastapi_call("audit")
+    assert resp.status_code == 200
+    assert X_TENUO_WARNING not in resp.headers
+
+
+def test_fastapi_enforce_mode_still_blocks():
+    assert _fastapi_call("enforce").status_code == 403
+
+
+def _a2a_call(mode: str):
+    pytest.importorskip("starlette")
+    from starlette.testclient import TestClient
+
+    from tenuo.a2a import A2AServer
+
+    _configure(mode)
+    root = SigningKey.generate()
+    warrant = Warrant.issue(
+        keypair=root, holder=root.public_key, capabilities={"ping": {}}, ttl_seconds=3600
+    )
+    server = A2AServer(
+        name="Permissive test",
+        url="https://agent.example.com",
+        public_key="server_key",
+        trusted_issuers=[root.public_key.to_bytes().hex()],
+        require_warrant=True,
+        check_replay=False,
+        require_audience=False,
+        require_pop=False,
+        audit_log=None,
+    )
+
+    @server.skill("delete_file")
+    async def delete_file():
+        return "deleted"
+
+    body = {"jsonrpc": "2.0", "id": 1, "method": "task/send", "params": {"task": {"skill": "delete_file", "arguments": {}}}}
+    return TestClient(server.app).post("/a2a", json=body, headers={"X-Tenuo-Warrant": warrant.to_base64()})
+
+
+def test_a2a_permissive_mode_sets_the_warning_header():
+    from tenuo._enforcement import X_TENUO_WARNING
+
+    resp = _a2a_call("permissive")
+    assert resp.json().get("result", {}).get("output") == "deleted"
+    assert "would deny 'delete_file'" in resp.headers.get(X_TENUO_WARNING, "")
+
+
+def test_a2a_audit_mode_runs_without_telling_the_caller():
+    from tenuo._enforcement import X_TENUO_WARNING
+
+    resp = _a2a_call("audit")
+    assert resp.json().get("result", {}).get("output") == "deleted"
+    assert X_TENUO_WARNING not in resp.headers

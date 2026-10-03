@@ -15,7 +15,7 @@ Tenuo supports three modes for gradual adoption:
 |------|----------|----------|
 | `enforce` | Block unauthorized requests | Production (default) |
 | `audit` | Record scope violations as denials, but allow execution | Discovery, gradual adoption |
-| `permissive` | Same as `audit` | Development, testing |
+| `permissive` | Same as `audit`, and also warns the caller | Development, testing |
 
 Audit mode lets a call run when a valid warrant doesn't cover it: the tool isn't
 granted, an argument breaks a constraint, or the warrant has expired. The same
@@ -23,7 +23,13 @@ applies to code-level allowlists and constraints in the CrewAI, OpenAI, AutoGen,
 and Google ADK adapters. Receipts, control-plane events, and audit callbacks
 still record these calls as denials.
 
-Audit mode does not accept authority that fails verification. An untrusted
+Permissive mode does the same and also tells the caller what would have been
+denied. HTTP integrations (FastAPI, A2A) add an `X-Tenuo-Warning` response
+header, and in-process integrations raise a `PermissiveModeWarning`. The warning
+includes the denial reason, so use permissive mode in development and testing,
+not in production.
+
+Neither mode accepts authority that fails verification. An untrusted
 issuer, a bad proof-of-possession signature, a revoked or malformed warrant, a
 replayed request, or an unmet approval gate still blocks the call.
 

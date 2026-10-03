@@ -29,7 +29,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
-from tenuo._enforcement import EnforcementResult
+from tenuo._enforcement import X_TENUO_WARNING, EnforcementResult, caller_warning_header
+from tenuo.config import is_permissive_mode
 from tenuo.approval import ApprovalRequired
 from tenuo.exceptions import (
     ApprovalGateTriggered,
@@ -44,7 +45,7 @@ logger = logging.getLogger("tenuo.fastapi")
 
 # Use string forward refs or try import, FastAPI must be installed
 try:
-    from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, Response, status
     from fastapi.responses import JSONResponse
     from fastapi.security import APIKeyHeader
 
@@ -58,6 +59,7 @@ except ImportError:
     def Depends(dep):  # type: ignore  # noqa: E301
         return None
     Request = Any  # type: ignore
+    Response = Any  # type: ignore
     status = Any  # type: ignore
     JSONResponse = Any  # type: ignore
     APIKeyHeader = Any  # type: ignore
@@ -426,6 +428,7 @@ class TenuoGuard:
         warrant: Optional[Warrant] = Depends(get_warrant_header),
         x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
         x_tenuo_approvals: Optional[str] = Header(None, alias=X_TENUO_APPROVALS),
+        response: Response = None,  # type: ignore[assignment]  # injected by FastAPI
     ) -> SecurityContext:
         """
         Verify authorization and return SecurityContext.
@@ -630,6 +633,12 @@ class TenuoGuard:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=detail,
+            )
+
+        if enforcement.audit_denied and is_permissive_mode() and response is not None:
+            # Permissive mode tells the caller what would have been denied.
+            response.headers[X_TENUO_WARNING] = caller_warning_header(
+                [f"would deny '{self.tool}': {enforcement.denial_reason or enforcement.error_type}"]
             )
 
         return SecurityContext(

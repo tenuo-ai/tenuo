@@ -81,6 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   follow the same rule. `EnforcementResult.audit_denied` and
   `MCPVerificationResult.audit_denied` mark these calls, and OpenAI's
   `verify_tool_call` now returns the warrant's `EnforcementResult`.
+  `mode="permissive"` does the same and also warns the caller: an
+  `X-Tenuo-Warning` response header from FastAPI and A2A, and a
+  `PermissiveModeWarning` in-process.
 - **Temporal approval handlers can request retries.** Retryable
   `ApplicationError`s from sync or async handlers propagate unchanged for pending
   approvals or transient service failures. Pending attempts do not execute the
