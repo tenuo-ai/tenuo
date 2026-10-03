@@ -10,7 +10,7 @@ name: tenuo-envoy-quickstart
 
 services:
   tenuo-authorizer:
-    image: ${TENUO_AUTHORIZER_IMAGE:-tenuo/authorizer:0.3.1}
+    image: ${TENUO_AUTHORIZER_IMAGE:-tenuo/authorizer:0.3.2}
     command: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
     # 9090: ext_authz checks from Envoy. 9091: /health, /healthz, /ready and
     # /status (--health-port), kept off 9090 so Envoy never sees their 200.

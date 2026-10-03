@@ -100,7 +100,7 @@ kubectl -n tenuo-system port-forward svc/envoy 8080:8080 &
 ```
 
 This creates the `tenuo-system` namespace with the Tenuo authorizer
-(`tenuo/authorizer:0.3.1`), Envoy (`envoyproxy/envoy:v1.39.1`) and httpbin.
+(`tenuo/authorizer:0.3.2`), Envoy (`envoyproxy/envoy:v1.39.1`) and httpbin.
 The embedded `gateway.yaml` and `envoy.yaml` are the same files used by Docker
 Compose.
 
@@ -186,8 +186,8 @@ Status codes: 401 when the warrant header is missing, 400 when it cannot be
 decoded or verified, 404 when no route matches, 403 for every authorization
 failure. Envoy treats any non-200 as a deny. The JSON body always carries the
 `error` code. The `x-tenuo-deny-reason` header is only sent with
-`debug_mode: true`; authorizer releases after 0.3.1 also send it on the 401,
-400 and 404 responses.
+`debug_mode: true`; since 0.3.2 the authorizer also sends it on the 401, 400
+and 404 responses.
 
 ## Envoy config essentials
 
@@ -230,16 +230,16 @@ Also set `normalize_path: true` and `merge_slashes: true` on the
 above and asserts the status codes and deny reasons:
 
 ```bash
-docs/quickstart/envoy/e2e-test.sh              # published tenuo/authorizer:0.3.1
+docs/quickstart/envoy/e2e-test.sh              # published tenuo/authorizer:0.3.2
 E2E_BUILD=1 docs/quickstart/envoy/e2e-test.sh  # authorizer built from this checkout
 ```
 
 The test also starts a second Envoy with `path_prefix` removed and checks that
 `/health`, `/healthz`, `/ready` and `/status` are still denied through it, and
 that the health port (published on `127.0.0.1:${HEALTH_PORT:-19091}`) answers
-200. Those checks need an authorizer with the separate health port, so they
-run only with `E2E_BUILD=1` or a custom `TENUO_AUTHORIZER_IMAGE` (override with
-`NEW_AUTHORIZER=0|1`); against the published 0.3.1 image they are skipped.
+200. Those checks need an authorizer with the separate health port (0.3.2 or
+later). To run the test against an older image, set `NEW_AUTHORIZER=0` to skip
+them.
 
 ## Multi-hop delegation chains
 

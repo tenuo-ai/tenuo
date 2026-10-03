@@ -1,6 +1,6 @@
 [package]
 name = "tenuo"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Task-scoped authorization for AI agents: signed warrants that constrain tools and arguments, narrow on delegation, and verify offline. Rust core of Tenuo."

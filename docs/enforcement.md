@@ -88,7 +88,7 @@ Tenuo runs as a separate container in the same Kubernetes pod. All tool traffic 
 spec:
   containers:
     - name: tenuo-authorizer
-      image: tenuo/authorizer:0.3.1
+      image: tenuo/authorizer:0.3.2
       ports:
         - { name: http, containerPort: 9090 }     # authorization API
         - { name: health, containerPort: 9091 }   # /health, /ready, /status
@@ -509,7 +509,7 @@ runs Envoy, the authorizer and httpbin together. The authorizer part:
 ```yaml
 services:
   tenuo-authorizer:
-    image: tenuo/authorizer:0.3.1
+    image: tenuo/authorizer:0.3.2
     command: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
     # Health and status: http://tenuo-authorizer:9091/health (--health-port)
     environment:

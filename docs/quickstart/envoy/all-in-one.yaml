@@ -98,7 +98,7 @@ spec:
     spec:
       containers:
       - name: authorizer
-        image: tenuo/authorizer:0.3.1
+        image: tenuo/authorizer:0.3.2
         args: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
         ports:
         - name: http            # ext_authz check requests

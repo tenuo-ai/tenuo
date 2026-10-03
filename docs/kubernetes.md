@@ -183,7 +183,7 @@ env:
 ```yaml
 containers:
 - name: tenuo-authorizer
-  image: tenuo/authorizer:0.3.1
+  image: tenuo/authorizer:0.3.2
   args: ["serve", "--config", "/etc/tenuo/gateway.yaml"]
   ports:
   - name: http
@@ -398,9 +398,9 @@ settings:
   debug_mode: true   # Non-production only!
 ```
 
-Authorization failures (403) include `X-Tenuo-Deny-Reason`; releases after
-0.3.1 also add it to the 401 `missing_warrant`, 400 `invalid_warrant` and 404
-`no_route` responses. Behind Envoy or Istio, allow the header through
+Authorization failures (403) include `X-Tenuo-Deny-Reason`; since 0.3.2 the
+401 `missing_warrant`, 400 `invalid_warrant` and 404 `no_route` responses carry
+it too. Behind Envoy or Istio, allow the header through
 (`allowed_client_headers` / `headersToDownstreamOnDeny`) or the client will not
 see it:
 
@@ -459,7 +459,7 @@ curl -s localhost:9091/status | jq
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.3.2",
   "uptime_secs": 42,
   "cp": {
     "enabled": true,

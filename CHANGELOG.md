@@ -7,7 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-02
+
+### Upgrade notes
+
+This patch release changes behavior that some deployments depend on. Check
+these before upgrading:
+
+- **Upgrade MCP clients and servers together.** A 0.3.1 peer and a 0.3.2 peer
+  disagree on the proof whenever tool arguments contain `null` (at any depth,
+  including list elements) or an integral float such as `1.0`, in either
+  direction. Such calls are denied with `invalid_pop` until both sides run
+  0.3.2. Calls without nulls or integral floats keep working across versions.
+- **Move authorizer health probes to port 9091.** `/health`, `/healthz`,
+  `/ready` and `/status` no longer answer on the authorization port (9090).
+- **MCP tool arguments are size-limited.** Argument JSON is capped at 256 KiB,
+  64 KiB of decoded string and key bytes in total (one string may use all of
+  it), 4,096 values, 256 entries per object or list, and nesting depth 9.
+  Larger calls are denied with `-32602` `payload_too_large`. 0.3.1 had no
+  such limits in Python or TypeScript.
+- **Google ADK: `TenuoPlugin` callbacks are async and keyword-only.** Code that
+  calls `before_tool_callback` / `after_tool_callback` directly must `await`
+  them and pass `tool_args=` instead of `args`.
+- **Rust: guards no longer print denials to stderr by default.** Set
+  `.denial_reporting(DenialReporting::Error)` to keep the old output.
+
 ### Breaking
+
+- **MCP proofs cover `null` and treat integral floats as integers, so mixed
+  versions disagree.** A 0.3.1 Python or TypeScript client removed `null`
+  values before signing; a 0.3.2 verifier keeps them, so it rejects those
+  calls. A 0.3.2 client signs `null` and signs `1.0` as `1`; a 0.3.1 verifier
+  strips `null` and keeps `1.0` a float, so it rejects those calls. Rust to
+  Rust differs only for integral floats. Upgrade both sides. Envelope
+  encoding itself is compatible in both directions (see Changed).
+
+- **Google ADK `TenuoPlugin` callback signatures changed** to match ADK's
+  `BasePlugin`: `before_tool_callback`, `after_tool_callback` and
+  `before_agent_callback` are `async` and keyword-only, and the tool callbacks
+  take `tool_args=` instead of `args`. Under a real ADK `Runner` the plugin
+  did not work before (see Fixed), so only code that called these callbacks
+  directly is affected.
 
 - **Authorizer health and status endpoints moved to a separate port.**
   `tenuo-authorizer serve` now answers `/health`, `/healthz`, `/ready` and
@@ -134,10 +174,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **MCP boundary hardening:** one Rust MCP decoder, bounded argument parsing
-  (bytes, depth, nodes and decoded strings), captured argument snapshots, and
-  structured/audited Python parsing denials. `verify_meta_pop` / `verifyMetaPop`
-  name the proof-only check explicitly; old names remain aliases. Shared
+- **MCP boundary hardening:** one Rust MCP decoder, bounded argument parsing,
+  captured argument snapshots, and structured, audited Python parsing denials.
+  The bounds are 256 KiB of argument JSON, 64 KiB of decoded string and key
+  bytes in total (a single string or key may use all of it), 4,096 values, 256
+  entries per container, and depth 9; anything larger is denied with `-32602`
+  `payload_too_large`. Python and TypeScript had no argument-size limits in
+  0.3.1. `verify_meta_pop` / `verifyMetaPop` are the proof-only check. Shared
   conformance cases now include delegated chains, approvals and malformed
   input. See the MCP guide for numeric and compatibility rules.
 
@@ -152,6 +195,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verifiers do not retry against a null-stripped map. Float parsing preserves
   the host's IEEE-754 value, and TypeScript executes the argument snapshot
   verified before asynchronous replay admission.
+  - Python `enforce_tool_call` proofs now include `None` arguments instead of
+    stripping them, matching the MCP path.
+  - TypeScript `verify()` returns the JSON form of the caller's arguments:
+    `null` values are kept, `undefined` is dropped, and values JSON cannot
+    represent throw. `wireArgs` keeps `null` too. A non-string entry in
+    `approvals` is rejected instead of being filtered out.
+
+- **The `tenuo` crate enables `serde_json`'s `float_roundtrip` feature.** It
+  makes float parsing exact, so a proof signs the same float on every peer.
+  Cargo unifies features, so this also changes `serde_json` float parsing in
+  any crate that builds alongside `tenuo`.
 
 - **Guards no longer log denials by default** (#751). `DenialReporting` now
   defaults to `Debug`, which writes nothing; the caller receives every

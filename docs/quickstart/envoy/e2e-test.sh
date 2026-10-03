@@ -2,7 +2,7 @@
 # End-to-end test: Envoy HTTP ext_authz -> Tenuo authorizer -> httpbin.
 #
 # Usage (from any directory):
-#   docs/quickstart/envoy/e2e-test.sh              # published image (tenuo/authorizer:0.3.1)
+#   docs/quickstart/envoy/e2e-test.sh              # published image (tenuo/authorizer:0.3.2)
 #   E2E_BUILD=1 docs/quickstart/envoy/e2e-test.sh  # build the authorizer from this checkout
 #   TENUO_AUTHORIZER_IMAGE=tenuo-authorizer:e2e docs/quickstart/envoy/e2e-test.sh
 #
@@ -10,12 +10,11 @@
 # (set DEMO_PY="python3" in that case). Host ports, all on 127.0.0.1:
 # ENVOY_PORT (18080), NOPREFIX_PORT (18081), HEALTH_PORT (19091).
 #
-# tenuo/authorizer:0.3.1 predates two behaviors this test checks: the
+# Images before 0.3.2 predate two behaviors this test checks: the
 # x-tenuo-deny-reason header on early 401/400/404 denials, and health routes
-# on a separate port (0.3.1 answers /health etc. with 200 on the ext_authz
-# port, so the no-path_prefix Envoy would let them through). Those checks run
-# when the authorizer is built locally or TENUO_AUTHORIZER_IMAGE is set.
-# Override with NEW_AUTHORIZER=0|1.
+# on a separate port (older images answer /health etc. with 200 on the
+# ext_authz port, so the no-path_prefix Envoy would let them through). Set
+# NEW_AUTHORIZER=0 to skip those checks against such an image.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,13 +58,7 @@ services:
 YAML
 
 COMPOSE=(docker compose -p tenuo-envoy-e2e -f docker-compose.yaml)
-if [[ -z "${NEW_AUTHORIZER:-}" ]]; then
-  if [[ "${E2E_BUILD:-0}" == "1" || -n "${TENUO_AUTHORIZER_IMAGE:-}" ]]; then
-    NEW_AUTHORIZER=1
-  else
-    NEW_AUTHORIZER=0
-  fi
-fi
+NEW_AUTHORIZER="${NEW_AUTHORIZER:-1}"
 if [[ "${E2E_BUILD:-0}" == "1" ]]; then
   COMPOSE+=(-f docker-compose.build.yaml)
 fi
@@ -201,7 +194,7 @@ if [[ "$NEW_AUTHORIZER" == "1" ]]; then
   grep -q '"cp"' "$WORK/b" || { echo "FAIL  /status body is not the authorizer status"; FAIL=$((FAIL + 1)); }
   check "health port does not authorize: GET /ext_authz/get -> 404" 404 - "$HEALTH/ext_authz/get"
 else
-  echo "SKIP  no-path_prefix and health-port checks (published image predates the separate health port; use E2E_BUILD=1)"
+  echo "SKIP  no-path_prefix and health-port checks (NEW_AUTHORIZER=0)"
 fi
 
 # Fail closed when the authorizer is unavailable.
