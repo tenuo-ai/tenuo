@@ -3,6 +3,12 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release tag to rebuild and publish to PyPI
+        required: true
+        type: string
 
 # Permissions for release workflow
 permissions:
@@ -17,6 +23,7 @@ jobs:
   # Publish Rust crate to crates.io
   publish-crate:
     name: Publish to crates.io
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,6 +56,8 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
@@ -127,7 +136,9 @@ jobs:
               python:3.12-slim-bookworm bash -ec '
               set -euo pipefail
               test "$(uname -m)" = "$EXPECT_ARCH"
-              ldd --version | head -1
+              # Avoid piping to `head`: with pipefail, glibc can receive
+              # SIGPIPE and turn this diagnostic into exit 141.
+              ldd --version
               pip install --quiet /wheels/*.whl
               python -c "import tenuo, tenuo_core; from tenuo import SigningKey, Warrant; k = SigningKey.generate(); w = Warrant.mint_builder().tool(\"ping\").holder(k.public_key).ttl(60).mint(k); print(\"tenuo\", tenuo.__version__, \"ok\", w.id[:12])"
             '
@@ -149,6 +160,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
@@ -254,6 +267,7 @@ jobs:
   # Publish the TypeScript SDK as a beta while the Python/Rust release remains stable.
   publish-npm-beta:
     name: Publish TypeScript beta to npm
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -333,6 +347,7 @@ jobs:
   # Docker: native amd64 + arm64 per platform (no QEMU), then merge manifests.
   docker-authorizer-build:
     name: Docker Authorizer (${{ matrix.platform }})
+    if: github.event_name == 'release'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -433,6 +448,7 @@ jobs:
 
   docker-control-build:
     name: Docker Control (${{ matrix.platform }})
+    if: github.event_name == 'release'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
