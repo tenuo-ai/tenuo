@@ -2159,7 +2159,7 @@ Two implications for policy authors:
 
 ### Comparison to Cedar and OPA
 
-Pure policy-evaluation time for comparable workloads. Cedar numbers are from the [Cedar OOPSLA 2024 paper](https://assets.amazon.science/96/a8/1b427993481cbdf0ef2c8ca6db85/cedar-a-new-language-for-expressive-fast-safe-and-analyzable-authorization.pdf) and the [AWS Security Blog](https://aws.amazon.com/blogs/security/how-we-designed-cedar-to-be-intuitive-to-use-fast-and-safe/). OPA numbers are from the [official OPA Policy Performance docs](https://www.openpolicyagent.org/docs/policy-performance/) and reproducible via `opa bench`.
+Pure policy-evaluation time for comparable workloads. Cedar numbers are from the [Cedar OOPSLA 2024 paper](https://arxiv.org/abs/2403.04651) and the [AWS Security Blog](https://aws.amazon.com/blogs/security/how-we-designed-cedar-to-be-intuitive-to-use-fast-and-safe/). OPA numbers are from the [official OPA Policy Performance docs](https://www.openpolicyagent.org/docs/policy-performance/) and reproducible via `opa bench`.
 
 | Engine | Workload | Policy-only time | Includes crypto verification? |
 |--------|----------|------------------|-------------------------------|

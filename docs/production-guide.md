@@ -5,7 +5,7 @@ description: Enforcement modes, gradual rollout, key management, and production 
 
 # Going to Production
 
-This guide covers moving from `dev_mode=True` to a production deployment. If you haven't used Tenuo yet, start with the [Quick Start](./quickstart).
+This guide covers moving from `dev_mode=True` to a production deployment. If you haven't used Tenuo yet, start with the [Quick Start](/quickstart/).
 
 ## Enforcement Modes
 
@@ -133,7 +133,7 @@ With a managed control plane, you skip the manual key management, rotation,
 approval, revocation, and audit infrastructure described below. The self-hosted
 patterns are for teams that need full control or have on-prem requirements.
 
-> **[Schedule a demo / request access →](https://tenuo.ai/early-access.html)**
+> **[Schedule a demo / request access →](https://tenuo.ai/#talk)**
 
 ## Production Patterns (Self-Hosted)
 

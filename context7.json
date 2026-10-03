@@ -3,7 +3,7 @@
   "projectTitle": "Tenuo",
   "description": "Task-scoped authorization for AI agents: signed warrants that constrain tools and arguments, narrow on delegation, and verify offline.",
   "folders": ["docs", "tenuo-python", "tenuo-ts"],
-  "excludeFolders": ["benchmarks", "labs", "docs/blog", "tests", "tenuo-python/tests", "node_modules"],
+  "excludeFolders": ["benchmarks", "labs", "tests", "tenuo-python/tests", "node_modules"],
   "rules": [
     "Enforce at the effect boundary where the tool runs, not only in the planner.",
     "Use the SDK and framework adapters; do not reimplement warrant signing, attenuation, or verification.",

@@ -1,6 +1,12 @@
 ---
-title: LangChain Integration
-description: Tool protection for LangChain agents
+title: "LangChain agent authorization and tool security"
+description: "Authorize every LangChain tool call with task-scoped warrants: argument constraints, holder binding and delegation that only narrows. Open-source AI agent authorization."
+og_image: /images/og/guide-langchain.png
+og_image_alt: "Tenuo for LangChain"
+guide_name: "LangChain"
+guide_logo: langchain
+guide_install: 'uv pip install "tenuo[langchain]"'
+
 ---
 
 # Tenuo LangChain Integration

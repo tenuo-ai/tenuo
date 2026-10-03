@@ -63,6 +63,7 @@ interface ValidationWarning {
 }
 
 type ExplorerMode = 'decoder' | 'builder' | 'chain' | 'diff' | 'receipt';
+type ThemePreference = 'system' | 'light' | 'dark';
 
 const MODE_META: Record<ExplorerMode, { label: string; description: string }> = {
   decoder: { label: 'Inspect', description: 'Decode a warrant and simulate an authorization decision.' },
@@ -299,7 +300,7 @@ const ExpirationDisplay = ({ issuedAt, expiresAt }: { issuedAt: number; expiresA
         <span style={{
           fontSize: '16px',
           fontWeight: 700,
-          fontFamily: "'JetBrains Mono', monospace",
+          fontFamily: 'var(--font-mono)',
           color: isExpired ? 'var(--red)' : (remaining < 30 ? 'var(--yellow)' : 'var(--green)')
         }}>
           {isExpired ? `${formatTime(expiredAgo)} ago` : formatTime(remaining)}
@@ -2397,6 +2398,34 @@ function App() {
   const [samples, setSamples] = useState<Record<string, SampleDef>>({});
   const [pemDetected, setPemDetected] = useState(false);
   const [chainResult, setChainResult] = useState<ChainDecodeResult | null>(null);
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
+    try {
+      const saved = localStorage.getItem('tenuo-theme');
+      return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
+    } catch {
+      return 'system';
+    }
+  });
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const update = () => setSystemDark(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    const dark = themePreference === 'dark' || (themePreference === 'system' && systemDark);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    document.documentElement.dataset.themePreference = themePreference;
+    try { localStorage.setItem('tenuo-theme', themePreference); } catch { /* storage may be disabled */ }
+  }, [themePreference, systemDark]);
+
+  const cycleTheme = () => {
+    const order: ThemePreference[] = ['system', 'light', 'dark'];
+    setThemePreference(order[(order.indexOf(themePreference) + 1) % order.length]);
+  };
 
   // Initialize WASM and generate fresh samples
   useEffect(() => {
@@ -2461,7 +2490,7 @@ function App() {
           e.preventDefault();
           if (e.shiftKey) handleAuthorize();
           else handleDecode();
-        } else if (e.key === 'k') {
+        } else if (e.key.toLowerCase() === 'k' && e.shiftKey) {
           e.preventDefault();
           handleClear();
         } else if (e.key === 'd') {
@@ -2717,20 +2746,46 @@ function App() {
     <>
       <div className="app-shell">
         {/* Navigation */}
-        <nav className="site-nav" aria-label="Main navigation">
+        <header className={`site-nav ${navOpen ? 'is-open' : ''}`}>
           <div className="nav-inner">
-            <a href="https://tenuo.ai" className="brand" aria-label="Tenuo home">tenuo</a>
-            <button className="nav-toggle" onClick={() => setNavOpen(open => !open)} aria-label="Toggle menu" aria-expanded={navOpen}>
-              <span /><span /><span />
-            </button>
-            <div className={`nav-links ${navOpen ? 'show' : ''}`}>
-              <a href="https://tenuo.ai/quickstart" className="nav-link">Docs</a>
-              <a href="https://tenuo.ai/explorer" className="nav-link active" aria-current="page">Explorer</a>
-              <a href="https://github.com/tenuo-ai/tenuo" className="nav-link">GitHub</a>
-              <a href="https://cloud.tenuo.ai" className="nav-link">Sign in</a>
+            <a href="/" className="brand" aria-label="Tenuo home">
+              <img className="theme-logo-light" src="/images/brand/tenuo-logo.png" alt="Tenuo" />
+              <img className="theme-logo-dark" src="/images/brand/tenuo-logo-light.png" alt="" aria-hidden="true" />
+            </a>
+            <nav className="nav-links" id="site-nav-links" aria-label="Primary">
+              <a href="/#how-it-works" className="nav-link">How it works</a>
+              <a href="/quickstart/" className="nav-link">Docs</a>
+              <details className="nav-resources">
+                <summary className="nav-link">Resources<span className="nav-caret" aria-hidden="true" /></summary>
+                <div className="nav-resources-panel">
+                  <a href="/compatibility-matrix"><b>Integrations</b><span>Frameworks, protocols and runtimes</span></a>
+                  <a href="/lab/"><b>Delegation lab</b><span>Stop a rogue agent, hands-on</span></a>
+                  <a href="/explorer/" aria-current="page"><b>Warrant Explorer</b><span>Decode and check a warrant in your browser</span></a>
+                  <a href="/faq/"><b>FAQ</b><span>Agentic security, explained</span></a>
+                </div>
+              </details>
+              <a href="/blog/" className="nav-link">Blog</a>
+              <a href="/pricing" className="nav-link">Pricing</a>
+              <a href="/#talk" className="nav-link nav-mobile-only">Book a demo</a>
+              <a href="https://github.com/tenuo-ai/tenuo" className="nav-link nav-tiny-only">GitHub</a>
+            </nav>
+            <div className="nav-actions">
+              <a className="nav-github" href="https://github.com/tenuo-ai/tenuo" aria-label="Tenuo on GitHub">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3Z" /></svg>
+                <span>GitHub</span>
+              </a>
+              <a className="nav-talk" href="/#talk">Book a demo</a>
+              <a className="nav-cloud" href="https://cloud.tenuo.ai">Try Tenuo Cloud</a>
+              <button className="nav-toggle" onClick={() => setNavOpen(open => !open)} aria-label="Menu" aria-controls="site-nav-links" aria-expanded={navOpen}>
+                <span /><span /><span />
+              </button>
             </div>
           </div>
-        </nav>
+        </header>
+        <button className="theme-toggle" type="button" onClick={cycleTheme} aria-label={`Theme: ${themePreference.charAt(0).toUpperCase() + themePreference.slice(1)}. Activate to change.`} title={`Theme: ${themePreference.charAt(0).toUpperCase() + themePreference.slice(1)}`}>
+          <span className="theme-toggle-icon" aria-hidden="true">◐</span>
+          <span className="theme-toggle-label">{themePreference.charAt(0).toUpperCase() + themePreference.slice(1)}</span>
+        </button>
 
         {/* Hero */}
         <header className="explorer-hero">
@@ -3099,7 +3154,7 @@ function App() {
 
                       {/* Chain Detected Banner */}
                       {chainResult && chainResult.is_chain && (
-                        <div style={{ marginBottom: '12px', padding: '12px', borderRadius: '10px', border: '1px solid var(--accent)', background: 'rgba(56, 189, 248, 0.08)' }}>
+                        <div style={{ marginBottom: '12px', padding: '12px', borderRadius: '10px', border: '1px solid var(--accent)', background: 'var(--surface-2)' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={{ fontWeight: 600, fontSize: '13px' }}>Warrant Chain Detected</span>
@@ -3117,7 +3172,7 @@ function App() {
                                 <div style={{
                                   padding: '4px 8px',
                                   borderRadius: '6px',
-                                  background: idx === 0 ? 'rgba(34, 197, 94, 0.15)' : idx === chainResult.warrants.length - 1 ? 'rgba(56, 189, 248, 0.1)' : 'var(--surface-2)',
+                                  background: idx === 0 ? 'rgba(34, 197, 94, 0.15)' : 'var(--surface-2)',
                                   border: `1px solid ${idx === 0 ? 'var(--green)' : idx === chainResult.warrants.length - 1 ? 'var(--accent)' : 'var(--border)'}`,
                                   fontSize: '11px'
                                 }}>
@@ -3292,7 +3347,7 @@ function App() {
             </button>
             <div className="shortcut"><kbd>⌘</kbd><kbd>↵</kbd><span>Decode</span></div>
             <div className="shortcut"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>↵</kbd><span>Auth</span></div>
-            <div className="shortcut"><kbd>⌘</kbd><kbd>K</kbd><span>Clear</span></div>
+            <div className="shortcut"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>K</kbd><span>Clear</span></div>
             <div className="shortcut-divider" />
             <div className="shortcut"><kbd>⌘</kbd><kbd>1-5</kbd><span>Modes</span></div>
             <div className="shortcut"><kbd>⌘</kbd><kbd>B</kbd><span>Builder</span></div>
@@ -3302,10 +3357,34 @@ function App() {
 
         {/* Footer */}
         <footer className="site-footer">
-          <p className="local-note">Runs locally in your browser. No uploads or account required.</p>
-          <p>
-            © 2026 Tenuo · <a href="https://tenuo.ai/quickstart">Docs</a> · <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> · <a href="https://tenuo.ai/early-access.html">Early Access</a>
-          </p>
+          <div className="footer-wrap">
+            <div className="footer-grid">
+              <div className="footer-brand">
+                <img className="theme-logo-light" src="/images/brand/tenuo-logo.png" alt="Tenuo" />
+                <img className="theme-logo-dark" src="/images/brand/tenuo-logo-light.png" alt="" aria-hidden="true" />
+                <p className="local-note">Runs locally in your browser.<br />No uploads or account required.</p>
+                <div className="footer-social">
+                  <a href="https://github.com/tenuo-ai" aria-label="GitHub"><svg viewBox="0 0 24 24"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3Z" /></svg></a>
+                  <a href="https://www.linkedin.com/company/tenuo" aria-label="LinkedIn"><svg viewBox="0 0 24 24"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5ZM2.4 21.5h5.2V9.2H2.4v12.3Zm7.6-12.3h5v1.7h.1c.7-1.3 2.4-2.1 4-2.1 4.2 0 5 2.6 5 6.1v6.6h-5.2v-5.9c0-1.4 0-3.2-2-3.2s-2.3 1.5-2.3 3.1v6h-5.2V9.2Z" /></svg></a>
+                </div>
+              </div>
+              <div><h2>Product</h2><ul>
+                <li><a href="https://cloud.tenuo.ai">Tenuo Cloud</a></li><li><a href="/spec/protocol-spec-v1">Protocol</a></li><li><a href="/pricing">Pricing</a></li>
+              </ul></div>
+              <div><h2>Developers</h2><ul>
+                <li><a href="/quickstart/">Documentation</a></li><li><a href="https://github.com/tenuo-ai">GitHub</a></li><li><a href="/compatibility-matrix">Integrations</a></li><li><a href="/explorer/">Warrant Explorer</a></li><li><a href="/lab/">Delegation lab</a></li><li><a href="/api-reference">API Reference</a></li>
+              </ul></div>
+              <div><h2>Resources</h2><ul>
+                <li><a href="/blog/">Blog</a></li><li><a href="/faq/">FAQ</a></li><li><a href="/in-the-wild">Independent perspectives</a></li><li><a href="/aat-ietf-summary">Standards / IETF</a></li><li><a href="/owasp">OWASP Top 10</a></li><li><a href="/eu-act">EU AI Act</a></li>
+              </ul></div>
+              <div><h2>Company</h2><ul><li><a href="/about">About</a></li><li><a href="/#talk">Talk to us</a></li></ul></div>
+              <div><h2>Legal</h2><ul><li><a href="/privacy.html">Privacy</a></li><li><a href="/terms.html">Terms</a></li><li><a href="/security.html">Security Policy</a></li></ul></div>
+            </div>
+            <div className="footer-bottom">
+              <span>© 2026 Tenuo</span>
+              <span className="footer-actions"><a href="https://cloud.tenuo.ai">Try Tenuo Cloud</a><a href="/#talk">Talk to us</a></span>
+            </div>
+          </div>
         </footer>
       </div>
     </>

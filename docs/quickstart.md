@@ -1,6 +1,7 @@
 ---
 title: Quick Start
 description: Get started with Tenuo in 5 minutes
+permalink: /quickstart/
 ---
 
 # Quick Start
@@ -82,19 +83,19 @@ with mint_sync(Capability("read_file", path=Subpath("/data"))):
 
 | Framework | Integration | Getting Started |
 |-----------|-------------|-----------------|
-| **OpenAI SDK** | `from tenuo.openai import guard` | [OpenAI Guide](./openai) |
-| **Temporal** | `from tenuo.temporal import TenuoTemporalPlugin` | [Temporal Guide](./temporal) |
-| **LangChain** | `from tenuo.langchain import auto_protect` | [LangChain Guide](./langchain) |
-| **LangGraph** | `from tenuo.langgraph import guard_node` | [LangGraph Guide](./langgraph) |
-| **CrewAI** | `from tenuo.crewai import ...` | [CrewAI Guide](./crewai) |
-| **Google ADK** | `from tenuo.google_adk import TenuoGuard` | [ADK Guide](./google-adk) |
-| **MCP** | `from tenuo.mcp import SecureMCPClient` | [MCP Guide](./mcp) |
-| **FastAPI** | `from tenuo.fastapi import SecureAPIRouter` | [FastAPI Guide](./fastapi) |
-| **AutoGen** | `from tenuo.autogen import ...` | [AutoGen Guide](./autogen) |
-| **A2A** | `from tenuo.a2a import ...` | [A2A Guide](./a2a) |
-| **Custom** | `from tenuo import Warrant, SigningKey` | [API Reference](./api-reference) |
+| **OpenAI SDK** | `from tenuo.openai import guard` | [OpenAI Guide](/openai) |
+| **Temporal** | `from tenuo.temporal import TenuoTemporalPlugin` | [Temporal Guide](/temporal) |
+| **LangChain** | `from tenuo.langchain import auto_protect` | [LangChain Guide](/langchain) |
+| **LangGraph** | `from tenuo.langgraph import guard_node` | [LangGraph Guide](/langgraph) |
+| **CrewAI** | `from tenuo.crewai import ...` | [CrewAI Guide](/crewai) |
+| **Google ADK** | `from tenuo.google_adk import TenuoGuard` | [ADK Guide](/google-adk) |
+| **MCP** | `from tenuo.mcp import SecureMCPClient` | [MCP Guide](/mcp) |
+| **FastAPI** | `from tenuo.fastapi import SecureAPIRouter` | [FastAPI Guide](/fastapi) |
+| **AutoGen** | `from tenuo.autogen import ...` | [AutoGen Guide](/autogen) |
+| **A2A** | `from tenuo.a2a import ...` | [A2A Guide](/a2a) |
+| **Custom** | `from tenuo import Warrant, SigningKey` | [API Reference](/api-reference) |
 
-**Do you have agents communicating across processes?** Add [A2A](./a2a) alongside your runtime integration.
+**Do you have agents communicating across processes?** Add [A2A](/a2a) alongside your runtime integration.
 
 ### Quick Examples
 
@@ -135,7 +136,7 @@ client = await Client.connect("localhost:7233", plugins=[plugin])
 ```
 
 For a copy-paste local workflow with one allowed Activity and one denied
-Activity, see the [Temporal Quickstart](./temporal-quickstart.md).
+Activity, see the [Temporal Quickstart](/temporal-quickstart).
 
 Each framework guide includes a full working example, production configuration, and troubleshooting.
 
@@ -155,9 +156,9 @@ Or inspect a warrant interactively in the [Explorer Playground](https://tenuo.ai
 
 ## Next Steps
 
-- **[Going to Production](./production-guide)**: enforcement modes, gradual rollout, key management ([Tenuo Cloud](https://cloud.tenuo.ai) or self-hosted)
-- **[AI Agent Patterns](./ai-agents)**: P-LLM/Q-LLM architecture, prompt injection defense
-- **[Concepts](./concepts)**: threat model, core invariants, why warrant-based auth
-- **[Constraint Types](./constraints)**: `Subpath`, `Pattern`, `Range`, `UrlSafe`, `Exact`, and more
-- **[Security Model](./security)**: full threat model, PoP mechanics, delegation chain verification
-- **[API Reference](./api-reference)**: low-level `Warrant`, `SigningKey`, `BoundWarrant` API
+- **[Going to Production](/production-guide)**: enforcement modes, gradual rollout, key management ([Tenuo Cloud](https://cloud.tenuo.ai) or self-hosted)
+- **[AI Agent Patterns](/ai-agents)**: P-LLM/Q-LLM architecture, prompt injection defense
+- **[Concepts](/concepts)**: threat model, core invariants, why warrant-based auth
+- **[Constraint Types](/constraints)**: `Subpath`, `Pattern`, `Range`, `UrlSafe`, `Exact`, and more
+- **[Security Model](/security)**: full threat model, PoP mechanics, delegation chain verification
+- **[API Reference](/api-reference)**: low-level `Warrant`, `SigningKey`, `BoundWarrant` API

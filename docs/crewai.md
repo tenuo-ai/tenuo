@@ -1,6 +1,12 @@
 ---
-title: CrewAI Integration
-description: Tool protection for CrewAI multi-agent workflows
+title: "CrewAI agent authorization and tool security"
+description: "Authorize CrewAI tool calls across multi-agent crews with task-scoped warrants and argument constraints. Open-source AI agent authorization."
+og_image: /images/og/guide-crewai.png
+og_image_alt: "Tenuo for CrewAI"
+guide_name: "CrewAI"
+guide_logo: crewai
+guide_install: 'uv pip install "tenuo[crewai]"'
+
 ---
 
 # Tenuo CrewAI Integration
@@ -789,8 +795,8 @@ A: Ensure you are wrapping a standard CrewAI `Tool`. If using custom classes, th
 
 ## See Also
 
-- [GuardedCrew Example](../tenuo-python/examples/crewai/guarded_crew.py) - Policy-based protection
-- [Flow Example](../tenuo-python/examples/crewai/guarded_flow.py) - Guarded steps in CrewAI Flows
+- [GuardedCrew Example](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/crewai/guarded_crew.py) - Policy-based protection
+- [Flow Example](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/crewai/guarded_flow.py) - Guarded steps in CrewAI Flows
 - [OpenAI Integration](./openai) - Tool protection for OpenAI
 - [LangGraph Integration](./langgraph) - Multi-agent graph security
 - [Constraints Reference](./constraints) - All constraint types

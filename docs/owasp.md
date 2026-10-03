@@ -494,7 +494,7 @@ Per-layer controls target specific failure modes; authorization at tool dispatch
 
 - [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/), the authoritative framework this page maps against.
 - [Tenuo on GitHub](https://github.com/tenuo-ai/tenuo)
-- [Quickstart](https://tenuo.ai/quickstart)
+- [Quickstart](https://tenuo.ai/quickstart/)
 - [Demo notebook (Colab)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
 - [Unprompted 2025 talk on cryptographic authorization for AI agents](https://www.youtube.com/watch?v=bw928cFShK4)
 - [draft-niyikiza-oauth-attenuating-agent-tokens-01](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/01/), delegation and attenuation semantics in the IETF OAuth Working Group.
