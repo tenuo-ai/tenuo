@@ -76,7 +76,7 @@ fastmcp = [
     "fastmcp>=3.2.1; python_version >= '3.10'",
 ]
 cli = [
-    "rich>=10.0.0",
+    "rich>=15.0.0",
 ]
 a2a = [
     "httpx>=0.24",     # Async HTTP client for A2AClient
