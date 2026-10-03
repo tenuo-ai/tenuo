@@ -37,12 +37,16 @@ pub const APPROVAL_STRING_MAX: usize = 8 * 1024;
 pub const MAX_APPROVALS: usize = 64;
 /// Maximum argument JSON bytes, checked before parsing.
 pub const MAX_ARGUMENT_BYTES: usize = 256 * 1024;
+/// Maximum decoded bytes in one argument string or key, and across all of
+/// them. A single string may use the whole budget, so tools that take file
+/// contents or documents up to 64 KiB work.
+pub const MAX_ARGUMENT_STRING_BYTES: usize = 64 * 1024;
 const ARGUMENT_LIMITS: JsonLimits = JsonLimits {
     bytes: MAX_ARGUMENT_BYTES,
     depth: 9,
     nodes: 4096,
-    string_bytes: 64 * 1024,
-    string: 8 * 1024,
+    string_bytes: MAX_ARGUMENT_STRING_BYTES,
+    string: MAX_ARGUMENT_STRING_BYTES,
     items: 256,
 };
 
@@ -584,6 +588,16 @@ mod tests {
                 "payload_too_large"
             );
         }
+        // One string may use the whole string budget; one byte more is too large.
+        let at_cap =
+            serde_json::json!({"content": "x".repeat(MAX_ARGUMENT_STRING_BYTES - "content".len())})
+                .to_string();
+        assert!(args_from_json(&at_cap).is_ok());
+        let over_cap = serde_json::json!({"c": "x".repeat(MAX_ARGUMENT_STRING_BYTES)}).to_string();
+        assert_eq!(
+            args_from_json(&over_cap).unwrap_err().code(),
+            "payload_too_large"
+        );
         // Size failures win over invalid base64: no decoding has happened yet.
         assert!(matches!(
             decode_meta_parts("!", "!", &vec![String::new(); MAX_APPROVALS + 1]),

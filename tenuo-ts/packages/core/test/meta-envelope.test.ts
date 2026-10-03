@@ -65,7 +65,15 @@ describe("meta envelope vector", () => {
     for (const text of ["!".repeat(262145), JSON.stringify({ rows: Array(17).fill(Array(256).fill(0)) }), JSON.stringify({ rows: Array(9).fill("x".repeat(8192)) })]) {
       expect(() => ctx.signMeta(session, vector.tool, text, vector.timestamp, null)).toThrow(/size limit/);
     }
+    expect(() => ctx.signMeta(session, vector.tool, JSON.stringify({ content: "x".repeat(64 * 1024 + 1) }), vector.timestamp, null)).toThrow(/size limit/);
     expect(() => ctx.signMeta(session, vector.tool, "{}", vector.timestamp, Array(65).fill("!"))).toThrow(/too many approvals/);
+  });
+
+  it("accepts one string up to the 64 KiB string budget", () => {
+    const wasm = loadWasm();
+    const ctx = new wasm.SdkContext();
+    const session = wasm.SdkSession.fromWire(vector.warrant, Uint8Array.from(Buffer.from(vector.holder_seed_hex, "hex")));
+    expect(() => ctx.signMeta(session, vector.tool, JSON.stringify({ content: "x".repeat(48 * 1024) }), vector.timestamp, null)).not.toThrow();
   });
 
   it.each(suite.invalid_envelopes)("rejects malformed envelopes without executing: %j", async (fields) => {

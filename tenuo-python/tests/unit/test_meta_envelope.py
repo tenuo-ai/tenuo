@@ -64,6 +64,7 @@ def test_shared_invalid_envelopes(case):
     ({"secret": "x" * 262145}, "payload_too_large"),
     ({"rows": [[0] * 256] * 17}, "payload_too_large"),
     ({"rows": ["x" * 8192] * 9}, "payload_too_large"),
+    ({"content": "x" * (64 * 1024 + 1)}, "payload_too_large"),
 ])
 def test_invalid_arguments_are_audited_denials(args, code):
     from types import SimpleNamespace
@@ -77,6 +78,22 @@ def test_invalid_arguments_are_audited_denials(args, code):
     assert result.clean_arguments == {}
     assert "secret" not in result.denial_reason
     assert emitted == [result]
+
+
+def test_large_single_string_argument_is_accepted():
+    # A file-sized string (well over the old 8 KiB per-string cap) is within
+    # the 64 KiB string budget, so a signed call with it verifies.
+    import time
+    from tenuo_core import sign_meta
+    from tenuo import SigningKey, Warrant
+    from tenuo.mcp.client import argument_json
+    key = SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("write_file").holder(key.public_key).ttl(60).mint(key)
+    args = {"content": "x" * (48 * 1024)}
+    meta = {"tenuo": sign_meta([warrant], key, "write_file", argument_json(args), int(time.time()), None)}
+    verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[key.public_key]))
+    result = verifier.verify("write_file", args, meta=meta)
+    assert result.allowed, result.denial_reason
 
 
 def test_argument_snapshot_does_not_share_nested_caller_data():

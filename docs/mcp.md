@@ -576,7 +576,8 @@ HTTP/stdio gateway too, before the framework constructs a host object.
 
 Argument JSON is capped at 256 KiB before the core parses it. During traversal,
 the core allows at most 4,096 values (including containers), 64 KiB of aggregate
-decoded string/key bytes, 8 KiB per string/key, and 256 entries per container.
+decoded string/key bytes (a single string or key may use all of it), and 256
+entries per container.
 The root object is depth zero; values may reach depth nine. Limits are checked
 while building the tree, not after allocating the complete result.
 
