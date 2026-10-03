@@ -98,7 +98,7 @@ cloud = [
     # Proprietary SDK for connecting to Tenuo Cloud. Published separately;
     # intentionally excluded from the `dev` extra so open-source installs / CI
     # do not require access to the proprietary package.
-    "tenuo-cloud>=0.2,<0.3",
+    "tenuo-cloud>=0.2.3,<0.3",
 ]
 
 # Development dependencies (includes features + tools)
