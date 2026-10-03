@@ -22,8 +22,10 @@ export interface StageDef {
   readonly probes?: readonly ("escalation" | "stolen" | "terminal")[];
   /** The stage is meant to break the trip, so completing it is not scored. */
   readonly breaksTrip?: true;
+  /** The stage is about containing the rogue, so it is complete only once every rogue attempt is blocked. */
+  readonly containment?: true;
   /** The first stage where a Tenuo check ran locally; the CLI mentions the repository once here. */
-  readonly starAsk?: true;
+  readonly repoNote?: true;
   readonly blurb: readonly string[];
 }
 
@@ -94,7 +96,7 @@ export const STAGES: readonly StageDef[] = [
     exercise: "exercises/05-tenuo/chain.ts",
     alsoRun: "two-travelers",
     probes: ["escalation"],
-    starAsk: true,
+    repoNote: true,
     blurb: [
       "Switch to Tenuo and complete the chain in exercises/05-tenuo/chain.ts. Flight → Check-in",
       "is a complete, annotated tutorial. Copy its narrow() shape for the one TODO below it.",
@@ -128,6 +130,7 @@ export const STAGES: readonly StageDef[] = [
     scenario: "incident",
     handoff: "own-identity",
     exercise: "exercises/07-incident/chain.ts",
+    containment: true,
     blurb: [
       "Hotel Agent has been compromised. The travel system has to stay online. Legitimate",
       "bookings have to keep working.",
