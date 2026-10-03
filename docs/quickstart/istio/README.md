@@ -15,7 +15,7 @@ by a waypoint proxy instead; the provider config is the same.
 
 - A Kubernetes cluster and kubectl
 - [istioctl](https://istio.io/latest/docs/setup/getting-started/#download)
-- [uv](https://docs.astral.sh/uv/) (or Python 3.9+ with `pip install tenuo==0.3.1`)
+- [uv](https://docs.astral.sh/uv/) (or Python 3.9+ with `pip install tenuo==0.3.2`)
 
 ## Steps
 

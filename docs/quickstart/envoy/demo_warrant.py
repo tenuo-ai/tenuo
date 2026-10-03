@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.9"
-# dependencies = ["tenuo==0.3.1"]
+# dependencies = ["tenuo==0.3.2"]
 # ///
 """Demo key, warrant, and PoP helper for the Tenuo Envoy/Istio quickstarts.
 
@@ -14,7 +14,7 @@ Run with uv (installs the SDK on the fly):
     uv run demo_warrant.py mint            # mint a warrant for the demo routes
     uv run demo_warrant.py pop httpbin_read endpoint=get
 
-or with pip: `pip install tenuo==0.3.1 && python3 demo_warrant.py ...`.
+or with pip: `pip install tenuo==0.3.2 && python3 demo_warrant.py ...`.
 
 The demo gateway.yaml maps requests to tools like this:
 
