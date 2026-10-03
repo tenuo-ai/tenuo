@@ -83,7 +83,7 @@ a2a = [
     "starlette>=0.27", # ASGI framework for A2AServer
 ]
 google_adk = [
-    "google-adk>=0.1",  # Google Agent Development Kit
+    "google-adk>=2.10.0",  # Google Agent Development Kit
 ]
 temporal = [
     "temporalio>=1.23.0; python_version >= '3.10'",  # SimplePlugin (TenuoTemporalPlugin); workflow orchestration
