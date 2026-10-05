@@ -2040,6 +2040,38 @@ impl PyShlex {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
+    /// The core's decision for `command`.
+    ///
+    /// Returns a dict with `allowed`, `reason`, `tokens`, `operators`,
+    /// `expansion`, `controls`, and `binary_allowed`. A non-string is not
+    /// allowed. Explanations should use this instead of a second parser.
+    fn check<'py>(
+        &self,
+        py: Python<'py>,
+        command: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        let Ok(command) = command.extract::<String>() else {
+            dict.set_item("allowed", false)?;
+            dict.set_item("reason", "value is not a string")?;
+            dict.set_item("tokens", Vec::<String>::new())?;
+            dict.set_item("operators", Vec::<String>::new())?;
+            dict.set_item("expansion", Vec::<String>::new())?;
+            dict.set_item("controls", Vec::<String>::new())?;
+            dict.set_item("binary_allowed", false)?;
+            return Ok(dict);
+        };
+        let report = crate::shell_words::check(&self.inner.allow, &command);
+        dict.set_item("allowed", report.allowed)?;
+        dict.set_item("reason", &report.reason)?;
+        dict.set_item("tokens", report.tokens)?;
+        dict.set_item("operators", report.operators)?;
+        dict.set_item("expansion", report.expansion)?;
+        dict.set_item("controls", report.controls)?;
+        dict.set_item("binary_allowed", report.binary_allowed)?;
+        Ok(dict)
+    }
+
     /// Split a command the way [`matches`](Self::matches) does.
     ///
     /// Raises:

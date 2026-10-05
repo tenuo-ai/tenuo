@@ -1,36 +1,28 @@
 //! POSIX shell tokenization for [`crate::constraints::Shlex`].
 //!
-//! One tokenizer for every SDK. The state machine follows CPython
-//! `shlex.shlex(posix=True, punctuation_chars=True)`: single and double
-//! quotes, backslash escapes, and runs of `();<>|&` as operator tokens.
-//! `#` comments through the end of the line.
+//! Words end at unquoted spaces, tabs, or operators. `#` starts a comment
+//! only when it is the first character of a word. A comma, bracket, or other
+//! non-operator character stays inside the word, so `./ls,evil` is one
+//! command name. Quoted and backslash-escaped operator characters are
+//! literal arguments.
 //!
-//! [`command_allowed`] is the security decision. It rejects control
-//! characters and `$` / backticks in the raw string, including inside
-//! quotes, then rejects unquoted operator tokens.
+//! [`check`] is the only decision. Callers that explain a denial use its
+//! reason instead of a second parser.
 
+use serde::Serialize;
 use std::fmt;
 
-/// Punctuation that `shlex` with `punctuation_chars=True` splits into operator tokens.
-const PUNCTUATION: &str = "();<>|&";
-
-/// Characters CPython adds to `wordchars` in POSIX mode with punctuation enabled.
-/// Latin-1 letters skip U+00D7 and U+00F7, matching `Lib/shlex.py`.
-const WORD_EXTRA: &str = "ßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ\
-ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞ~-./*?=";
-
-/// Operator spellings the Python evaluator rejected by exact token match.
-/// Unquoted runs of [`PUNCTUATION`] are rejected even when the spelling is
-/// not in this list (`<>`, `<&`).
-const DANGEROUS_TOKENS: &[&str] = &[
-    "|", "||", "&", "&&", ";", ">", ">>", "<", "<<", "<<<", "(", ")",
+/// Longest-match POSIX operators. A quoted or escaped character from this
+/// set is an argument, not an operator.
+const OPERATORS: &[&str] = &[
+    "<<-", "&&", "||", ";;", "|&", "<<", ">>", "<&", ">&", "<>", "|", "&", ";", "<", ">", "(", ")",
 ];
 
 const CONTROL_CHARS: &[char] = &[
     '\0', '\n', '\r', '\u{000b}', '\u{000c}', '\u{0007}', '\u{0008}', '\u{007f}',
 ];
 
-/// A token from [`tokenize`]. `operator` is set for an unquoted run of [`PUNCTUATION`].
+/// A token from [`tokenize`]. `operator` is set only for an unquoted operator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub text: String,
@@ -49,30 +41,29 @@ pub enum ShellError {
 impl fmt::Display for ShellError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ShellError::NoClosingQuotation => write!(f, "No closing quotation"),
-            ShellError::NoEscapedCharacter => write!(f, "No escaped character"),
+            ShellError::NoClosingQuotation => write!(f, "unclosed quote"),
+            ShellError::NoEscapedCharacter => write!(f, "trailing backslash"),
         }
     }
 }
 
 impl std::error::Error for ShellError {}
 
-#[derive(Clone, Copy)]
-enum State {
-    Whitespace,
-    Word,
-    Punct,
-    Quote(char),
-    Escape,
-    Done,
+/// The core's decision for one command. `reason` is the explanation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ShlexCheck {
+    pub allowed: bool,
+    pub reason: String,
+    pub tokens: Vec<String>,
+    pub operators: Vec<String>,
+    pub expansion: Vec<String>,
+    pub controls: Vec<String>,
+    pub binary_allowed: bool,
 }
 
 struct Lexer {
     chars: Vec<char>,
     pos: usize,
-    pushback: Vec<char>,
-    state: State,
-    escape_back: State,
 }
 
 impl Lexer {
@@ -80,185 +71,156 @@ impl Lexer {
         Self {
             chars: input.chars().collect(),
             pos: 0,
-            pushback: Vec::new(),
-            state: State::Whitespace,
-            escape_back: State::Word,
         }
     }
 
-    fn next_char(&mut self) -> Option<char> {
-        if let Some(ch) = self.pushback.pop() {
-            return Some(ch);
-        }
-        let ch = self.chars.get(self.pos).copied()?;
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.pos).copied()
+    }
+
+    fn bump(&mut self) -> Option<char> {
+        let ch = self.peek()?;
         self.pos += 1;
         Some(ch)
     }
 
-    fn push_char(&mut self, ch: char) {
-        self.pushback.push(ch);
+    fn rest(&self) -> String {
+        self.chars[self.pos..].iter().collect()
     }
 
-    /// Consume through the next newline, which `shlex` does for `#` comments.
-    fn skip_comment_line(&mut self) {
-        loop {
-            match self.next_char() {
-                None | Some('\n') => break,
-                Some(_) => {}
+    fn starts_operator(&self) -> bool {
+        self.match_operator().is_some()
+    }
+
+    fn match_operator(&self) -> Option<&'static str> {
+        let rest = self.rest();
+        OPERATORS.iter().copied().find(|op| rest.starts_with(op))
+    }
+
+    fn skip_blank(&mut self) {
+        while matches!(self.peek(), Some(' ' | '\t')) {
+            self.bump();
+        }
+    }
+
+    /// `#` comments only at the start of a word. The `#` and the rest of the
+    /// line are discarded. A `#` later in a word is an ordinary character.
+    fn skip_comment(&mut self) {
+        if self.peek() != Some('#') {
+            return;
+        }
+        while let Some(ch) = self.bump() {
+            if ch == '\n' {
+                break;
             }
         }
     }
 
-    fn read_token(&mut self) -> Result<Option<Token>, ShellError> {
-        if matches!(self.state, State::Done) {
-            return Ok(None);
-        }
-
+    fn read_word(&mut self) -> Result<String, ShellError> {
         let mut text = String::new();
-        let mut quoted = false;
-        let mut operator = false;
-
+        let mut quote: Option<char> = None;
         loop {
-            let next = self.next_char();
-            match self.state {
-                State::Done => return Ok(None),
-                State::Whitespace => match next {
-                    None => {
-                        self.state = State::Done;
-                        return Ok(None);
+            let Some(ch) = self.peek() else {
+                if quote.is_some() {
+                    return Err(ShellError::NoClosingQuotation);
+                }
+                return Ok(text);
+            };
+            match quote {
+                None => match ch {
+                    ' ' | '\t' | '\n' | '\r' => return Ok(text),
+                    '\\' => {
+                        self.bump();
+                        let Some(escaped) = self.bump() else {
+                            return Err(ShellError::NoEscapedCharacter);
+                        };
+                        text.push(escaped);
                     }
-                    Some(ch) if is_whitespace(ch) => {}
-                    Some('#') => self.skip_comment_line(),
-                    Some('\\') => {
-                        self.escape_back = State::Word;
-                        self.state = State::Escape;
+                    '\'' | '"' => {
+                        self.bump();
+                        quote = Some(ch);
                     }
-                    Some(ch) if is_word_char(ch) => {
+                    _ if self.starts_operator() => return Ok(text),
+                    _ => {
+                        self.bump();
                         text.push(ch);
-                        self.state = State::Word;
-                    }
-                    Some(ch) if is_punctuation(ch) => {
-                        text.push(ch);
-                        operator = true;
-                        self.state = State::Punct;
-                    }
-                    Some(ch @ ('\'' | '"')) => {
-                        // POSIX mode does not keep the opening quote.
-                        self.state = State::Quote(ch);
-                    }
-                    Some(ch) => {
-                        text.push(ch);
-                        self.state = State::Whitespace;
-                        return Ok(Some(Token {
-                            text,
-                            operator: false,
-                        }));
                     }
                 },
-                State::Quote(quote) => {
-                    quoted = true;
-                    match next {
-                        None => return Err(ShellError::NoClosingQuotation),
-                        Some(ch) if ch == quote => self.state = State::Word,
-                        Some('\\') if quote == '"' => {
-                            self.escape_back = State::Quote(quote);
-                            self.state = State::Escape;
-                        }
-                        Some(ch) => text.push(ch),
+                Some('\'') => {
+                    self.bump();
+                    if ch == '\'' {
+                        quote = None;
+                    } else {
+                        text.push(ch);
                     }
                 }
-                State::Escape => {
-                    let Some(ch) = next else {
-                        return Err(ShellError::NoEscapedCharacter);
-                    };
-                    if let State::Quote(quote) = self.escape_back {
-                        // Inside double quotes, only the quote and the backslash
-                        // itself consume the escape. Anything else keeps the slash.
-                        if ch != '\\' && ch != quote {
+                Some('"') => {
+                    if ch == '"' {
+                        self.bump();
+                        quote = None;
+                    } else if ch == '\\' {
+                        self.bump();
+                        let Some(escaped) = self.bump() else {
+                            return Err(ShellError::NoEscapedCharacter);
+                        };
+                        // POSIX: inside double quotes, backslash is special
+                        // only before $, `, ", \, and newline.
+                        if matches!(escaped, '$' | '`' | '"' | '\\' | '\n') {
+                            text.push(escaped);
+                        } else {
                             text.push('\\');
+                            text.push(escaped);
                         }
+                    } else {
+                        self.bump();
+                        text.push(ch);
                     }
-                    text.push(ch);
-                    self.state = self.escape_back;
                 }
-                State::Word | State::Punct => {
-                    let is_punct_state = matches!(self.state, State::Punct);
-                    match next {
-                        None => {
-                            self.state = State::Done;
-                            if text.is_empty() && !quoted {
-                                return Ok(None);
-                            }
-                            return Ok(Some(Token { text, operator }));
-                        }
-                        Some(ch) if is_whitespace(ch) => {
-                            self.state = State::Whitespace;
-                            if text.is_empty() && !quoted {
-                                continue;
-                            }
-                            return Ok(Some(Token { text, operator }));
-                        }
-                        Some('#') => {
-                            self.skip_comment_line();
-                            self.state = State::Whitespace;
-                            if text.is_empty() && !quoted {
-                                continue;
-                            }
-                            return Ok(Some(Token { text, operator }));
-                        }
-                        Some(ch) if is_punct_state && is_punctuation(ch) => {
-                            text.push(ch);
-                        }
-                        Some(ch) if is_punct_state => {
-                            if !is_whitespace(ch) {
-                                self.push_char(ch);
-                            }
-                            self.state = State::Whitespace;
-                            return Ok(Some(Token {
-                                text,
-                                operator: true,
-                            }));
-                        }
-                        Some(ch @ ('\'' | '"')) => {
-                            self.state = State::Quote(ch);
-                        }
-                        Some('\\') => {
-                            self.escape_back = State::Word;
-                            self.state = State::Escape;
-                        }
-                        Some(ch) if is_word_char(ch) => text.push(ch),
-                        Some(ch) => {
-                            self.push_char(ch);
-                            self.state = State::Whitespace;
-                            if text.is_empty() && !quoted {
-                                continue;
-                            }
-                            return Ok(Some(Token { text, operator }));
-                        }
+                Some(_) => unreachable!("quotes are only ' and \""),
+            }
+        }
+    }
+
+    fn next_token(&mut self) -> Result<Option<Token>, ShellError> {
+        loop {
+            self.skip_blank();
+            match self.peek() {
+                None => return Ok(None),
+                Some('#') => self.skip_comment(),
+                Some('\n' | '\r') => {
+                    let ch = self.bump().expect("peeked");
+                    return Ok(Some(Token {
+                        text: ch.to_string(),
+                        operator: true,
+                    }));
+                }
+                Some(_) if self.starts_operator() => {
+                    let op = self.match_operator().expect("starts_operator");
+                    for _ in op.chars() {
+                        self.bump();
                     }
+                    return Ok(Some(Token {
+                        text: op.to_string(),
+                        operator: true,
+                    }));
+                }
+                Some(_) => {
+                    let text = self.read_word()?;
+                    return Ok(Some(Token {
+                        text,
+                        operator: false,
+                    }));
                 }
             }
         }
     }
 }
 
-fn is_whitespace(ch: char) -> bool {
-    matches!(ch, ' ' | '\t' | '\r' | '\n')
-}
-
-fn is_punctuation(ch: char) -> bool {
-    PUNCTUATION.contains(ch)
-}
-
-fn is_word_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_' || WORD_EXTRA.contains(ch)
-}
-
-/// Split `input` the way CPython `shlex.shlex(posix=True, punctuation_chars=True)` does.
+/// Split `input` the way a POSIX shell splits words, without expansion.
 pub fn tokenize(input: &str) -> Result<Vec<Token>, ShellError> {
     let mut lexer = Lexer::new(input);
     let mut tokens = Vec::new();
-    while let Some(token) = lexer.read_token()? {
+    while let Some(token) = lexer.next_token()? {
         tokens.push(token);
     }
     Ok(tokens)
@@ -309,43 +271,106 @@ fn binary_allowed(allow: &[String], binary: &str) -> bool {
         binary.to_string()
     };
     let base = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    // A bare allow entry matches that word and the final component of a path.
+    // `allow=["ls"]` admits `/tmp/attacker/ls`. It does not admit `./ls,evil`.
     allow
         .iter()
         .any(|entry| entry == &normalized || entry == base)
 }
 
-/// Whether `command` is a single allowlisted binary with no shell operators.
+fn denied(reason: impl Into<String>, extras: ShlexCheck) -> ShlexCheck {
+    ShlexCheck {
+        allowed: false,
+        reason: reason.into(),
+        ..extras
+    }
+}
+
+/// Decide whether `command` is one allowlisted binary and literal arguments.
 ///
 /// `$` and backticks are rejected anywhere in the raw string, including
-/// inside single quotes, double quotes, and backslash escapes. A double-quoted
-/// `$` still expands in a POSIX shell; the raw scan also refuses the
-/// single-quoted and escaped forms rather than widening the warrant.
-pub fn command_allowed(allow: &[String], command: &str) -> bool {
+/// inside single quotes, double quotes, and backslash escapes.
+pub fn check(allow: &[String], command: &str) -> ShlexCheck {
+    let blank = ShlexCheck {
+        allowed: false,
+        reason: String::new(),
+        tokens: Vec::new(),
+        operators: Vec::new(),
+        expansion: Vec::new(),
+        controls: Vec::new(),
+        binary_allowed: false,
+    };
     if command.is_empty() {
-        return false;
+        return denied("empty command", blank);
     }
-    if command.chars().any(|ch| CONTROL_CHARS.contains(&ch)) {
-        return false;
+    let controls: Vec<String> = command
+        .chars()
+        .filter(|ch| CONTROL_CHARS.contains(ch))
+        .map(|ch| ch.to_string())
+        .collect();
+    if !controls.is_empty() {
+        return denied("control character", ShlexCheck { controls, ..blank });
     }
-    if command.contains('$') || command.contains('`') {
-        return false;
+    let mut expansion = Vec::new();
+    if command.contains('$') {
+        expansion.push("$".to_string());
+    }
+    if command.contains('`') {
+        expansion.push("`".to_string());
+    }
+    if !expansion.is_empty() {
+        return denied("shell expansion", ShlexCheck { expansion, ..blank });
     }
     let tokens = match tokenize(command) {
         Ok(tokens) => tokens,
-        Err(_) => return false,
+        Err(err) => return denied(err.to_string(), blank),
     };
     if tokens.is_empty() {
-        return false;
+        return denied("empty command", blank);
     }
-    if !binary_allowed(allow, &tokens[0].text) {
-        return false;
+    let operators: Vec<String> = tokens
+        .iter()
+        .filter(|token| token.operator)
+        .map(|token| token.text.clone())
+        .collect();
+    let words: Vec<String> = tokens.into_iter().map(|token| token.text).collect();
+    let binary_allowed = binary_allowed(allow, &words[0]);
+    if !binary_allowed {
+        return denied(
+            format!("binary '{}' is not allowlisted", words[0]),
+            ShlexCheck {
+                tokens: words,
+                operators,
+                binary_allowed: false,
+                ..blank
+            },
+        );
     }
-    for token in &tokens {
-        if token.operator || DANGEROUS_TOKENS.contains(&token.text.as_str()) {
-            return false;
-        }
+    if let Some(op) = operators.first() {
+        return denied(
+            format!("operator '{op}'"),
+            ShlexCheck {
+                tokens: words,
+                operators,
+                binary_allowed: true,
+                ..blank
+            },
+        );
     }
-    true
+    ShlexCheck {
+        allowed: true,
+        reason: "allowed".to_string(),
+        tokens: words,
+        operators,
+        expansion,
+        controls,
+        binary_allowed: true,
+    }
+}
+
+/// Whether [`check`] allows the command.
+pub fn command_allowed(allow: &[String], command: &str) -> bool {
+    check(allow, command).allowed
 }
 
 #[cfg(test)]
@@ -361,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn tokenize_matches_cpython_shlex() {
+    fn words_follow_the_shell_not_cpython_shlex() {
         let cases = [
             ("ls -la /tmp", vec!["ls", "-la", "/tmp"]),
             ("ls \"foo; bar\"", vec!["ls", "foo; bar"]),
@@ -369,59 +394,64 @@ mod tests {
             ("ls -la; rm -rf /", vec!["ls", "-la", ";", "rm", "-rf", "/"]),
             ("ls;rm", vec!["ls", ";", "rm"]),
             ("ls&&rm", vec!["ls", "&&", "rm"]),
-            ("ls||rm", vec!["ls", "||", "rm"]),
             ("echo \"AT&T\"", vec!["echo", "AT&T"]),
             ("echo AT&T", vec!["echo", "AT", "&", "T"]),
             ("cat <<EOF", vec!["cat", "<<", "EOF"]),
-            ("cat <<<'hello'", vec!["cat", "<<<", "hello"]),
-            (
-                "diff <(ls) <(ls -la)",
-                vec!["diff", "<(", "ls", ")", "<(", "ls", "-la", ")"],
-            ),
             ("ls\t-la", vec!["ls", "-la"]),
             ("\"ls\" -la", vec!["ls", "-la"]),
             ("ls -la \"\"", vec!["ls", "-la", ""]),
-            ("\"\"", vec![""]),
             ("ls foo\\ bar", vec!["ls", "foo bar"]),
-            (
-                "echo {a,b,c}",
-                vec!["echo", "{", "a", ",", "b", ",", "c", "}"],
-            ),
-            ("ls *", vec!["ls", "*"]),
-            ("ls file?.txt", vec!["ls", "file?.txt"]),
-            (
-                "ls file[12].txt",
-                vec!["ls", "file", "[", "12", "]", ".txt"],
-            ),
-            ("ls &#59;", vec!["ls", "&"]),
+            ("echo {a,b,c}", vec!["echo", "{a,b,c}"]),
+            ("ls file[12].txt", vec!["ls", "file[12].txt"]),
+            ("echo hello!", vec!["echo", "hello!"]),
             ("echo hello #world", vec!["echo", "hello"]),
-            ("echo hello!", vec!["echo", "hello", "!"]),
+            ("foo#bar", vec!["foo#bar"]),
+            ("ls foo#; rm", vec!["ls", "foo#", ";", "rm"]),
+            ("./ls,evil -la", vec!["./ls,evil", "-la"]),
             (
                 "find . -exec rm {} \\;",
-                vec!["find", ".", "-exec", "rm", "{", "}", ";"],
+                vec!["find", ".", "-exec", "rm", "{}", ";"],
             ),
-            ("ls foo;bar", vec!["ls", "foo", ";", "bar"]),
-            ("cat <> /etc/passwd", vec!["cat", "<>", "/etc/passwd"]),
-            ("/usr/bin/../bin/ls -la", vec!["/usr/bin/../bin/ls", "-la"]),
-            ("\"my program\" arg1", vec!["my program", "arg1"]),
-            ("echo 'hello \"world\"'", vec!["echo", "hello \"world\""]),
-            ("echo 'a'\"b\"'c'", vec!["echo", "abc"]),
+            ("echo \";\"", vec!["echo", ";"]),
             ("ls #; rm", vec!["ls"]),
-            ("foo#bar", vec!["foo"]),
-            ("echo \"$(date)\"", vec!["echo", "$(date)"]),
-            ("echo '$HOME'", vec!["echo", "$HOME"]),
-            ("ls ~/Documents", vec!["ls", "~/Documents"]),
-            ("npm   install   express", vec!["npm", "install", "express"]),
+            ("echo 'a'\"b\"'c'", vec!["echo", "abc"]),
             ("café --help", vec!["café", "--help"]),
-            ("ls -- -rf;", vec!["ls", "--", "-rf", ";"]),
-            (
-                "git clone --upload-pack=id repo",
-                vec!["git", "clone", "--upload-pack=id", "repo"],
-            ),
         ];
         for (input, expected) in cases {
             assert_eq!(words(input), expected, "{input:?}");
         }
+    }
+
+    #[test]
+    fn hash_inside_a_word_does_not_hide_an_operator() {
+        let allow = vec!["ls".to_string()];
+        let decision = check(&allow, "ls foo#; rm -rf /");
+        assert!(!decision.allowed);
+        assert_eq!(decision.reason, "operator ';'");
+        assert!(decision.binary_allowed);
+    }
+
+    #[test]
+    fn comma_stays_in_the_command_name() {
+        let allow = vec!["ls".to_string()];
+        let decision = check(&allow, "./ls,evil -la");
+        assert!(!decision.allowed);
+        assert_eq!(decision.tokens, vec!["./ls,evil", "-la"]);
+        assert!(!decision.binary_allowed);
+    }
+
+    #[test]
+    fn escaped_and_quoted_operators_are_arguments() {
+        let allow = vec!["echo".to_string(), "find".to_string()];
+        assert!(command_allowed(&allow, "echo \";\""));
+        assert!(command_allowed(&allow, "find . -exec rm {} \\;"));
+        assert!(!command_allowed(&allow, "echo ;"));
+    }
+
+    #[test]
+    fn comment_at_the_start_of_a_word_is_a_comment() {
+        let allow = vec!["ls".to_string()];
+        assert!(command_allowed(&allow, "ls #; rm -rf /"));
     }
 
     #[test]
@@ -466,5 +496,121 @@ mod tests {
         assert!(!command_allowed(&allow, "ls;rm"));
         assert!(!command_allowed(&allow, "ls&&rm"));
         assert!(!command_allowed(&allow, "cat <<EOF"));
+    }
+
+    /// Run `command` under `/bin/sh` with a recording stub on `PATH`.
+    /// Each invocation is `[argv0, arg, ...]`. `set -f` keeps globs literal
+    /// so the comparison is about word splitting, not filename generation.
+    #[cfg(unix)]
+    fn shell_invocations(command: &str) -> Vec<Vec<String>> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("tenuo-shlex-{nanos}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let stub = dir.join("stub");
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\nprintf '%s\\0' \"$0\" >> \"$TENUO_SHLEX_LOG\"\nfor arg in \"$@\"; do printf '%s\\0' \"$arg\" >> \"$TENUO_SHLEX_LOG\"; done\nprintf '\\n' >> \"$TENUO_SHLEX_LOG\"\n",
+        )
+        .expect("stub");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&stub, perms).unwrap();
+        }
+        for name in ["ls", "rm", "echo", "cat", "grep", "find", "npm", "ls,evil"] {
+            let path = dir.join(name);
+            let _ = std::fs::remove_file(&path);
+            std::os::unix::fs::symlink(&stub, &path).expect("symlink");
+        }
+        let log = dir.join("log");
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            // `set -f` stops pathname expansion. `braceexpand` is a bash
+            // extra; POSIX words keep `{a,b,c}` together. Turn it off when
+            // the shell has it so the comparison is word splitting.
+            .arg("set -f; set +o braceexpand 2>/dev/null || true; eval \"$1\"")
+            .arg("sh")
+            .arg(command)
+            .current_dir(&dir)
+            .env("PATH", &dir)
+            .env("TENUO_SHLEX_LOG", &log)
+            .output()
+            .expect("sh");
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            output.status.success() || !text.is_empty(),
+            "sh failed without invocations: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        text.lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                line.split('\0')
+                    .filter(|field| !field.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn accepted_commands_match_one_shell_invocation() {
+        // `echo` is a shell builtin, so the recording stub would never run.
+        // These commands use external names that the stub provides.
+        let samples = [
+            "ls -la /tmp",
+            "ls \"foo; bar\"",
+            "ls 'foo && bar'",
+            "ls \";\"",
+            "ls {a,b,c}",
+            "ls foo\\ bar",
+            "ls #; rm -rf /",
+            "ls hello #world",
+            "find . -exec rm {} \\;",
+            "ls 'a'\"b\"'c'",
+        ];
+        for command in samples {
+            let decision = check(&["ls".into(), "find".into()], command);
+            assert!(decision.allowed, "{command}: {}", decision.reason);
+            let calls = shell_invocations(command);
+            assert_eq!(calls.len(), 1, "{command} invoked {calls:?}");
+            let invoked = calls[0][0].rsplit('/').next().unwrap_or(&calls[0][0]);
+            let expected_name = decision.tokens[0]
+                .rsplit('/')
+                .next()
+                .unwrap_or(&decision.tokens[0]);
+            assert_eq!(invoked, expected_name, "{command}");
+            assert_eq!(calls[0][1..], decision.tokens[1..], "{command}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_runs_the_command_hidden_by_a_midword_hash() {
+        let command = "ls foo#; rm -rf /";
+        assert!(!command_allowed(&["ls".into()], command));
+        let calls = shell_invocations(command);
+        assert!(
+            calls.iter().any(|call| call[0].ends_with("rm")),
+            "shell should run rm, got {calls:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_runs_the_comma_command_not_ls() {
+        let command = "./ls,evil -la";
+        assert!(!command_allowed(&["ls".into()], command));
+        let calls = shell_invocations(command);
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(calls[0][0].ends_with("ls,evil"), "{calls:?}");
+        assert_eq!(calls[0][1..], ["-la"]);
     }
 }

@@ -24,6 +24,19 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
+/// The core's Shlex decision for `command`.
+///
+/// `allow` is a list of binary names or paths. The returned object has
+/// `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
+/// `binary_allowed`.
+#[wasm_bindgen]
+pub fn shlex_inspect(allow: JsValue, command: &str) -> Result<JsValue, JsError> {
+    let allow: Vec<String> = serde_wasm_bindgen::from_value(allow)
+        .map_err(|err| JsError::new(&format!("allow must be a list of strings: {err}")))?;
+    let report = tenuo::shell_words::check(&allow, command);
+    serde_wasm_bindgen::to_value(&report).map_err(|err| JsError::new(&err.to_string()))
+}
+
 /// Convert a Constraint to a human-readable JSON value
 fn constraint_to_readable(constraint: &Constraint) -> JsonValue {
     match constraint {

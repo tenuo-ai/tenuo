@@ -394,6 +394,15 @@ export function sdkVerifyReceipt(wire: string): any;
 export function sdkVerifyReceiptChain(wire: string, roots: any): any;
 
 /**
+ * The core's Shlex decision for `command`.
+ *
+ * `allow` is a list of binary names or paths. The returned object has
+ * `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
+ * `binary_allowed`.
+ */
+export function shlex_inspect(allow: any, command: string): any;
+
+/**
  * Create a Proof-of-Possession signature for a warrant
  */
 export function sign(private_key_hex: string, warrant_b64: string, tool: string, args_json: any): any;

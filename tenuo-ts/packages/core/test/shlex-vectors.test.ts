@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createTenuo, shlex } from "../src/index.ts";
+import { checkShlex, createTenuo, shlex } from "../src/index.ts";
 
 interface ShlexCase {
   name: string;
@@ -36,5 +36,21 @@ describe("shlex shared vectors", () => {
         await expect(call, case_.name).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
       }
     }
+  });
+
+  it("reports the shell decision from the core", () => {
+    const hidden = checkShlex(["ls"], "ls foo#; rm -rf /");
+    expect(hidden.allowed).toBe(false);
+    expect(hidden.reason).toBe("operator ';'");
+    expect(hidden.tokens).toEqual(["ls", "foo#", ";", "rm", "-rf", "/"]);
+
+    const comma = checkShlex(["ls"], "./ls,evil -la");
+    expect(comma.allowed).toBe(false);
+    expect(comma.binary_allowed).toBe(false);
+    expect(comma.tokens).toEqual(["./ls,evil", "-la"]);
+
+    const literal = checkShlex(["echo"], 'echo ";"');
+    expect(literal.allowed).toBe(true);
+    expect(literal.tokens).toEqual(["echo", ";"]);
   });
 });

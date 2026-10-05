@@ -1,5 +1,5 @@
 {
-  "description": "Shlex decisions shared by the Rust core, Python, and TypeScript. Quoted operators are literal arguments. $ and backticks are rejected in the raw command, including inside quotes. An unquoted run of ();<>|& is an operator.",
+  "description": "Normative Shlex decisions shared by the Rust core, Python, and TypeScript. Words follow POSIX shell rules: # comments only at the start of a word, and words break only at spaces, tabs, and operators. Quoted or escaped operator characters are literal arguments. $ and backticks are rejected in the raw command, including inside quotes. allow entries match the command word or the final component of a path.",
   "cases": [
     {"name": "simple command", "allow": ["ls"], "command": "ls -la /tmp", "matches": true},
     {"name": "quoted semicolon", "allow": ["ls"], "command": "ls \"foo; bar\"", "matches": true},
@@ -21,7 +21,12 @@
     {"name": "heredoc", "allow": ["cat"], "command": "cat <<EOF", "matches": false},
     {"name": "basename after normpath", "allow": ["ls"], "command": "/usr/bin/../bin/ls -la", "matches": true},
     {"name": "traversal to a different binary", "allow": ["ls"], "command": "/bin/../bin/rm -rf /", "matches": false},
-    {"name": "comment hides a later operator", "allow": ["ls"], "command": "ls #; rm", "matches": true},
+    {"name": "hash at the start of a word is a comment", "allow": ["ls"], "command": "ls #; rm", "matches": true},
+    {"name": "hash inside a word does not start a comment", "allow": ["ls"], "command": "ls foo#; rm -rf /", "matches": false},
+    {"name": "comma stays in the command name", "allow": ["ls"], "command": "./ls,evil -la", "matches": false},
+    {"name": "quoted operator character", "allow": ["echo"], "command": "echo \";\"", "matches": true},
+    {"name": "escaped operator is an argument", "allow": ["find"], "command": "find . -exec rm {} \\;", "matches": true},
+    {"name": "bare allow entry matches a path's file name", "allow": ["ls"], "command": "/tmp/attacker/ls -la", "matches": true},
     {"name": "empty command", "allow": ["ls"], "command": "", "matches": false},
     {"name": "unbalanced quote", "allow": ["ls"], "command": "ls \"", "matches": false},
     {"name": "unlisted binary", "allow": ["ls"], "command": "cat /etc/passwd", "matches": false},

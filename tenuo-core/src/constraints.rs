@@ -3222,13 +3222,16 @@ impl From<UrlSafe> for Constraint {
 /// Shell command safety constraint.
 ///
 /// Validates that a command string is one allowlisted binary plus literal
-/// arguments. Quoting follows POSIX `shlex` (`punctuation_chars` of
-/// `();<>|&`): an operator inside quotes is a literal argument, and an
-/// unquoted operator run is rejected. `$` and backticks are rejected
-/// anywhere in the raw command, including inside double quotes, because a
-/// POSIX shell still expands them there.
+/// arguments. Words follow POSIX shell rules: they end at unquoted spaces,
+/// tabs, and operators, and `#` starts a comment only at the start of a
+/// word. A quoted or escaped operator character is a literal argument.
+/// `$` and backticks are rejected anywhere in the raw command, including
+/// inside quotes and escapes.
 ///
-/// Every SDK calls this check. There is no second evaluator.
+/// A bare `allow` entry matches that word and the final component of a
+/// path, so `ls` admits `/tmp/attacker/ls` and does not admit `./ls,evil`.
+///
+/// Every SDK calls [`crate::shell_words::check`]. There is no second evaluator.
 ///
 /// # Wire Format
 ///
@@ -6176,6 +6179,9 @@ mod tests {
         assert!(parent.validate_attenuation(&child).is_ok());
         let chained = Constraint::Exact(Exact::new("ls; rm"));
         assert!(parent.validate_attenuation(&chained).is_err());
+        // `#` does not start a comment here, so the shell runs `rm`.
+        let hidden = Constraint::Exact(Exact::new("ls foo#; rm -rf /"));
+        assert!(parent.validate_attenuation(&hidden).is_err());
     }
 
     #[test]

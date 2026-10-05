@@ -53,6 +53,7 @@ export const evaluate_approval_gates: (a: number, b: number, c: number, d: numbe
 export const generate_keypair: () => any;
 export const inspect_approval_gate: (a: number, b: number, c: number, d: number) => any;
 export const parse_connect_token: (a: number, b: number) => any;
+export const shlex_inspect: (a: any, b: number, c: number) => [number, number, number];
 export const sign: (a: number, b: number, c: number, d: number, e: number, f: number, g: any) => any;
 export const sign_receipt: (a: any, b: number, c: number) => any;
 export const verify_approval_set: (a: number, b: number, c: number, d: number, e: any) => any;

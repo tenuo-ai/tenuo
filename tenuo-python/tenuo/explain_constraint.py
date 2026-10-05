@@ -286,36 +286,12 @@ def _explain_urlsafe(constraint: Any, value: Any) -> UrlAnalysis:
     )
 
 
-# Same sets the core rejects before it tokenizes. Kept here so an explanation
-# can name the character; the allow/deny decision is `Shlex.matches`.
-_SHLEX_CONTROL_CHARS = {"\x00", "\n", "\r", "\x0b", "\x0c", "\x07", "\x08", "\x7f"}
-_SHLEX_EXPANSION_CHARS = {"$", "`"}
-_SHLEX_OPERATOR_CHARS = set("();<>|&")
-_SHLEX_DANGEROUS_TOKENS = {
-    "|",
-    "||",
-    "&",
-    "&&",
-    ";",
-    ">",
-    ">>",
-    "<",
-    "<<",
-    "<<<",
-    "(",
-    ")",
-}
-
-
-def _shlex_operator_token(token: str) -> bool:
-    """True for an unquoted operator run, including spellings like ``<>``."""
-    return bool(token) and all(ch in _SHLEX_OPERATOR_CHARS for ch in token)
-
-
 def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
-    """Explain Shlex constraint check."""
-    from tenuo_core import Shlex
+    """Explain a Shlex check from the core's own decision.
 
+    The character sets and the operator list live in the core. Copying them
+    here would let the explanation drift from the warrant.
+    """
     if not isinstance(value, str):
         return CommandAnalysis(
             input=str(value),
@@ -329,99 +305,18 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
             reason=f"Value must be a string, got {type(value).__name__}",
         )
 
-    # Check for control characters
-    control_chars_found = [c for c in _SHLEX_CONTROL_CHARS if c in value]
-    if control_chars_found:
-        return CommandAnalysis(
-            input=value,
-            tokens=[],
-            binary="",
-            binary_allowed=False,
-            dangerous_tokens=[],
-            expansion_chars=[],
-            control_chars=control_chars_found,
-            safe=False,
-            reason=f"Contains control characters: {control_chars_found!r}",
-        )
-
-    # Check for expansion characters
-    expansion_chars_found = [c for c in _SHLEX_EXPANSION_CHARS if c in value]
-    if expansion_chars_found:
-        return CommandAnalysis(
-            input=value,
-            tokens=[],
-            binary="",
-            binary_allowed=False,
-            dangerous_tokens=[],
-            expansion_chars=expansion_chars_found,
-            control_chars=[],
-            safe=False,
-            reason=f"Contains shell expansion characters: {expansion_chars_found!r}",
-        )
-
-    # Parse with the core tokenizer. An explanation that used Python's shlex
-    # would drift from the decision `matches` just made.
-    try:
-        tokens = Shlex.tokenize(value)
-    except ValueError as e:
-        return CommandAnalysis(
-            input=value,
-            tokens=[],
-            binary="",
-            binary_allowed=False,
-            dangerous_tokens=[],
-            expansion_chars=[],
-            control_chars=[],
-            safe=False,
-            reason=f"Parse error: {e}",
-        )
-
-    if not tokens:
-        return CommandAnalysis(
-            input=value,
-            tokens=[],
-            binary="",
-            binary_allowed=False,
-            dangerous_tokens=[],
-            expansion_chars=[],
-            control_chars=[],
-            safe=False,
-            reason="Empty command",
-        )
-
-    binary = tokens[0]
-    if "/" in binary:
-        binary = posixpath.normpath(binary)
-    bin_name = posixpath.basename(binary)
-    allow = set(getattr(constraint, "allow", None) or getattr(constraint, "allowed_bins", []) or [])
-    binary_allowed = binary in allow or bin_name in allow
-
-    # Check for dangerous tokens
-    dangerous_tokens_found = [
-        token for token in tokens if token in _SHLEX_DANGEROUS_TOKENS or _shlex_operator_token(token)
-    ]
-
-    # Determine safety
-    safe = True
-    reason = "Command is safe"
-
-    if not binary_allowed:
-        safe = False
-        reason = f"Binary '{binary}' not in allowlist: {sorted(allow)}"
-    elif dangerous_tokens_found:
-        safe = False
-        reason = f"Contains shell operators: {dangerous_tokens_found}"
-
+    report = constraint.check(value)
+    tokens = list(report["tokens"])
     return CommandAnalysis(
         input=value,
         tokens=tokens,
-        binary=binary,
-        binary_allowed=binary_allowed,
-        dangerous_tokens=dangerous_tokens_found,
-        expansion_chars=[],
-        control_chars=[],
-        safe=safe,
-        reason=reason,
+        binary=tokens[0] if tokens else "",
+        binary_allowed=bool(report["binary_allowed"]),
+        dangerous_tokens=list(report["operators"]),
+        expansion_chars=list(report["expansion"]),
+        control_chars=list(report["controls"]),
+        safe=bool(report["allowed"]),
+        reason=str(report["reason"]),
     )
 
 
