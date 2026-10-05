@@ -1,0 +1,97 @@
+name: Envoy ext_authz E2E
+
+# Builds the authorizer image from this checkout and runs the Envoy quickstart
+# end to end (Envoy HTTP ext_authz -> tenuo-authorizer -> httpbin), plus static
+# checks of the Envoy and Istio quickstart manifests.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tenuo-core/src/bin/authorizer.rs'
+      - 'tenuo-core/src/gateway_config.rs'
+      - 'tenuo-core/src/extraction.rs'
+      - 'tenuo-core/src/planes.rs'
+      - 'tenuo-core/src/warrant.rs'
+      - 'tenuo-core/src/wire.rs'
+      - 'tenuo-core/Cargo.toml'
+      - 'tenuo-core/Cargo.lock'
+      - 'tenuo-core/deploy/docker/Dockerfile.authorizer'
+      - 'docs/quickstart/envoy/**'
+      - 'docs/quickstart/istio/**'
+      - '.github/workflows/envoy-ext-authz-e2e.yml'
+  pull_request:
+    paths:
+      - 'tenuo-core/src/bin/authorizer.rs'
+      - 'tenuo-core/src/gateway_config.rs'
+      - 'tenuo-core/src/extraction.rs'
+      - 'tenuo-core/src/planes.rs'
+      - 'tenuo-core/src/warrant.rs'
+      - 'tenuo-core/src/wire.rs'
+      - 'tenuo-core/Cargo.toml'
+      - 'tenuo-core/Cargo.lock'
+      - 'tenuo-core/deploy/docker/Dockerfile.authorizer'
+      - 'docs/quickstart/envoy/**'
+      - 'docs/quickstart/istio/**'
+      - '.github/workflows/envoy-ext-authz-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: envoy-ext-authz-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manifests:
+    name: Quickstart manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Parse manifests and validate the Envoy config
+        run: |
+          pip install 'pyyaml>=6'
+          python docs/quickstart/envoy/check_manifests.py --envoy-validate
+
+  e2e:
+    name: Envoy + authorizer + httpbin
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build authorizer image from this checkout
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: tenuo-core
+          file: tenuo-core/deploy/docker/Dockerfile.authorizer
+          tags: tenuo-authorizer:e2e
+          load: true
+          push: false
+          cache-from: type=gha,scope=authorizer-e2e
+          cache-to: type=gha,mode=max,scope=authorizer-e2e
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Tenuo SDK (mints demo warrants and PoP)
+        run: pip install 'tenuo==0.3.2'
+
+      - name: Run end-to-end test
+        env:
+          DEMO_PY: python
+          TENUO_AUTHORIZER_IMAGE: tenuo-authorizer:e2e
+        run: docs/quickstart/envoy/e2e-test.sh

@@ -1,16 +1,31 @@
 # Tenuo + Envoy Quickstart (All-in-One)
-# Apply with: kubectl apply -f all-in-one.yaml
+#
+# Envoy HTTP ext_authz -> Tenuo authorizer -> httpbin, in namespace tenuo-system.
+# The authorizer speaks Envoy's HTTP ext_authz protocol; gRPC ext_authz is not
+# supported yet.
+#
+# The demo root public key is NOT in this file. Generate it yourself and
+# create the tenuo-demo-root ConfigMap (see README.md); the authorizer pod
+# waits for it:
+#
+#   uv run demo_warrant.py init
+#   kubectl apply -f all-in-one.yaml
+#   kubectl -n tenuo-system create configmap tenuo-demo-root \
+#     --from-literal=TENUO_TRUSTED_KEYS="$(uv run demo_warrant.py root-pubkey)"
+#
 # Delete with: kubectl delete -f all-in-one.yaml
+#
+# The embedded gateway.yaml and envoy.yaml are copies of the files next to this
+# one (CI checks they stay identical).
 
 ---
-# Namespace
 apiVersion: v1
 kind: Namespace
 metadata:
   name: tenuo-system
 
 ---
-# Tenuo Authorizer Config
+# Tenuo gateway config (copy of gateway.yaml)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -18,26 +33,54 @@ metadata:
   namespace: tenuo-system
 data:
   gateway.yaml: |
+    # Tenuo gateway config for the Envoy quickstart (HTTP ext_authz).
+    #
+    # Envoy's ext_authz filter is configured with `path_prefix: /ext_authz`, so the
+    # authorizer sees every original request path as `/ext_authz/<original path>`.
+    # Route patterns below therefore start with /ext_authz. The authorizer serves
+    # its own /health, /healthz, /ready and /status only on its separate health
+    # port (9091), never on this ext_authz port; the prefix is defense in depth
+    # for older authorizers, which answered them here with 200 (read as ALLOW).
+    #
+    # Trusted roots come from TENUO_TRUSTED_KEYS (see README), so no key is
+    # hardcoded here.
     version: "1"
     settings:
       warrant_header: "X-Tenuo-Warrant"
       pop_header: "X-Tenuo-PoP"
       clock_tolerance_secs: 30
+      # Demo only: adds x-tenuo-deny-reason to denials. Turn off in production.
       debug_mode: true
-      # Demo key - replace in production
-      trusted_roots:
-        - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
+      trusted_roots: []
+
     tools:
-      http_request:
-        extract:
-          path: "$.path"
-          method: "$.method"
+      httpbin_read:
+        description: "GET a top-level httpbin endpoint"
+        constraints:
+          endpoint:
+            from: path
+            path: endpoint
+            required: true
+      httpbin_write:
+        description: "POST a JSON message to httpbin /post"
+        constraints:
+          message:
+            from: body
+            path: message
+            required: true
+
     routes:
-      - path_prefix: "/"
-        tool: http_request
+      # GET /<endpoint>  ->  httpbin_read(endpoint=<endpoint>)
+      - pattern: "/ext_authz/{endpoint}"
+        method: ["GET"]
+        tool: httpbin_read
+      # POST /post with {"message": "..."}  ->  httpbin_write(message=...)
+      - pattern: "/ext_authz/post"
+        method: ["POST"]
+        tool: httpbin_write
+      # Anything else has no route: the authorizer answers 404 and Envoy denies.
 
 ---
-# Tenuo Authorizer Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -55,14 +98,32 @@ spec:
     spec:
       containers:
       - name: authorizer
-        image: tenuo/authorizer:latest
-        imagePullPolicy: IfNotPresent
+        image: tenuo/authorizer:0.3.2
         args: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
         ports:
-        - containerPort: 9090
+        - name: http            # ext_authz check requests
+          containerPort: 9090
+        - name: health          # /health, /healthz, /ready, /status (--health-port)
+          containerPort: 9091
         env:
         - name: RUST_LOG
           value: "info"
+        # Demo root public key (hex), created by you. See README.md.
+        - name: TENUO_TRUSTED_KEYS
+          valueFrom:
+            configMapKeyRef:
+              name: tenuo-demo-root
+              key: TENUO_TRUSTED_KEYS
+        # Probes use the health port. Health routes are never served on the
+        # ext_authz port, where a 200 would mean ALLOW.
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
         volumeMounts:
         - name: config
           mountPath: /etc/tenuo
@@ -80,7 +141,6 @@ spec:
           name: tenuo-config
 
 ---
-# Tenuo Authorizer Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -94,7 +154,8 @@ spec:
     app: tenuo-authorizer
 
 ---
-# Envoy Config
+# Envoy config (copy of envoy.yaml). Short service names resolve inside
+# tenuo-system, so the same file works in docker compose and here.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -102,6 +163,11 @@ metadata:
   namespace: tenuo-system
 data:
   envoy.yaml: |
+    # Envoy config for the Tenuo quickstart: HTTP ext_authz in front of httpbin.
+    #
+    # The Tenuo authorizer speaks Envoy's HTTP ext_authz protocol (a plain HTTP
+    # check request per client request). gRPC ext_authz is not supported yet, so
+    # do not use `grpc_service` here.
     static_resources:
       listeners:
       - name: main
@@ -116,6 +182,9 @@ data:
               "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
               stat_prefix: ingress_http
               codec_type: AUTO
+              # Authorize the same path the backend will see.
+              normalize_path: true
+              merge_slashes: true
               route_config:
                 name: local_route
                 virtual_hosts:
@@ -131,13 +200,35 @@ data:
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
                   transport_api_version: V3
-                  grpc_service:
-                    envoy_grpc:
-                      cluster_name: tenuo-authorizer
-                    timeout: 1s
-              with_request_body:
-                max_request_bytes: 65536
-                allow_partial_message: true
+                  # Fail closed: if the authorizer is down or times out, deny.
+                  failure_mode_allow: false
+                  # Forward the JSON body so `from: body` extraction works.
+                  with_request_body:
+                    max_request_bytes: 65536
+                    allow_partial_message: false
+                  # Request headers copied into the check request (method, path,
+                  # host and content-length are always sent).
+                  allowed_headers:
+                    patterns:
+                    - exact: x-tenuo-warrant
+                    - exact: x-tenuo-pop
+                    - exact: x-tenuo-approvals
+                    - exact: content-type
+                  http_service:
+                    server_uri:
+                      uri: http://tenuo-authorizer:9090
+                      cluster: tenuo-authorizer
+                      timeout: 1s
+                    # Check request path = /ext_authz + original path. Matches the
+                    # route patterns in gateway.yaml. Also defense in depth: the
+                    # authorizer's health routes live on its separate health port.
+                    path_prefix: /ext_authz
+                    authorization_response:
+                      # Authorizer response headers returned to the client on deny.
+                      allowed_client_headers:
+                        patterns:
+                        - exact: x-tenuo-deny-reason
+                        - exact: content-type
               - name: envoy.filters.http.router
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -146,11 +237,6 @@ data:
         connect_timeout: 0.5s
         type: STRICT_DNS
         lb_policy: ROUND_ROBIN
-        typed_extension_protocol_options:
-          envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-            "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-            explicit_http_config:
-              http2_protocol_options: {}
         load_assignment:
           cluster_name: tenuo-authorizer
           endpoints:
@@ -158,7 +244,7 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: tenuo-authorizer.tenuo-system.svc.cluster.local
+                    address: tenuo-authorizer
                     port_value: 9090
       - name: httpbin
         connect_timeout: 0.5s
@@ -171,11 +257,10 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: httpbin.tenuo-system.svc.cluster.local
-                    port_value: 8000
+                    address: httpbin
+                    port_value: 8080
 
 ---
-# Envoy Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -193,14 +278,17 @@ spec:
     spec:
       containers:
       - name: envoy
-        image: envoyproxy/envoy:v1.28-latest
+        image: envoyproxy/envoy:v1.39.1
+        command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
         ports:
         - containerPort: 8080
+        readinessProbe:
+          tcpSocket:
+            port: 8080
         volumeMounts:
         - name: config
           mountPath: /etc/envoy
           readOnly: true
-        command: ["envoy", "-c", "/etc/envoy/envoy.yaml"]
         resources:
           requests:
             memory: "64Mi"
@@ -214,7 +302,6 @@ spec:
           name: envoy-config
 
 ---
-# Envoy Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -236,8 +323,8 @@ metadata:
   namespace: tenuo-system
 spec:
   ports:
-  - port: 8000
-    targetPort: 80
+  - port: 8080
+    targetPort: 8080
   selector:
     app: httpbin
 
@@ -259,6 +346,6 @@ spec:
     spec:
       containers:
       - name: httpbin
-        image: docker.io/kennethreitz/httpbin
+        image: mccutchen/go-httpbin:2.25.0
         ports:
-        - containerPort: 80
+        - containerPort: 8080

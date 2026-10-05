@@ -97,26 +97,19 @@ def mint(spec: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def mcp_attach(payload: dict[str, Any]) -> dict[str, Any]:
     """Build `_meta.tenuo` the way SecureMCPClient injects it."""
-    import base64
-
-    from tenuo import encode_warrant_stack
-    from tenuo._pop_canonicalize import strip_none_values
+    from tenuo.meta import argument_json
+    from tenuo_core import sign_meta
 
     tokens = payload.get("warrants") or [payload["warrant"]]
     chain = [Warrant.from_base64(token) for token in tokens]
     holder = SigningKey.from_bytes(bytes.fromhex(payload["holder_hex"]))
     tool = payload["tool"]
     args = payload["args"]
-    stack = encode_warrant_stack(chain)
-    pop = chain[-1].sign(holder, tool, strip_none_values(args), now())
     return {
         "name": tool,
         "arguments": args,
         "_meta": {
-            "tenuo": {
-                "warrant": stack,
-                "signature": base64.b64encode(bytes(pop)).decode("utf-8"),
-            }
+            "tenuo": sign_meta(chain, holder, tool, argument_json(args), now()),
         },
     }
 

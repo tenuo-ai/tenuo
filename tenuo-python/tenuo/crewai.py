@@ -128,6 +128,7 @@ from tenuo._enforcement import (
     enforce_tool_call,
     enforce_tool_call_async,
     handle_denial,
+    split_presented_warrant,
 )
 
 # Check version compatibility on import (warns, doesn't fail)
@@ -135,6 +136,7 @@ from tenuo._version_compat import check_crewai_compat  # noqa: E402
 
 # Import Python-only security constraints
 from tenuo.constraints import Shlex, Subpath, UrlSafe
+from tenuo.exceptions import ConfigurationError
 
 # Import shared constraint checking logic from framework-agnostic core
 from tenuo.core import check_constraint
@@ -556,19 +558,39 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
         self._constraints[tool_name] = constraints
         return self
 
-    def with_warrant(self, warrant: Warrant, signing_key: SigningKey) -> "GuardBuilder":
+    def with_warrant(
+        self,
+        warrant: Warrant,
+        signing_key: SigningKey,
+        *,
+        warrant_chain: Optional[List[Warrant]] = None,
+    ) -> "GuardBuilder":
         """Enable Tier 2 with warrant and signing key.
 
+        A delegated warrant only verifies when its path back to a trusted root
+        is presented with it. Pass the parents as ``warrant_chain``, or pass
+        the whole chain as ``warrant`` in one token: an encoded WarrantStack
+        string or a root-first list of warrants (the last one is the leaf).
+
         Args:
-            warrant: Cryptographic warrant authorizing tool access
+            warrant: Cryptographic warrant authorizing tool access, or the
+                whole chain as a WarrantStack string or root-first list
             signing_key: Agent's signing key for Proof-of-Possession
+            warrant_chain: Parent warrants of a delegated ``warrant``,
+                root-first and excluding the leaf
 
         Raises:
             MissingSigningKey: If signing_key is None
+            ConfigurationError: If a stack and ``warrant_chain`` are both given,
+                or a token does not decode
+
+        Example:
+            .with_warrant(leaf_warrant, agent_key, warrant_chain=[root_warrant])
+            .with_warrant(encode_warrant_stack([root_warrant, leaf_warrant]), agent_key)
         """
         if signing_key is None:
             raise MissingSigningKey()
-        self._warrant = warrant
+        self._warrant, self._warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._signing_key = signing_key
         return self
 
@@ -613,6 +635,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             audit_callback=self._audit_callback,
             approval_handler=self._approval_handler,
             approvals=self._approvals,
+            warrant_chain=self._warrant_chain,
         )
 
 
@@ -643,9 +666,13 @@ class CrewAIGuard:
         audit_callback: Optional[AuditCallback],
         approval_handler: Optional["ApprovalHandler"] = None,
         approvals: Optional[list] = None,
+        warrant_chain: Optional[List[Warrant]] = None,
     ):
         self._allowed = allowed
-        self._warrant = warrant
+        # warrant may also be a WarrantStack string or root-first list; split
+        # it so the parents travel to enforce_tool_call as warrant_chain.
+        # None leaves any ambient chain_scope() in effect.
+        self._warrant, self._warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._signing_key = signing_key
         self._trusted_roots = trusted_roots
         self._on_denial = on_denial
@@ -1007,7 +1034,7 @@ class CrewAIGuard:
                 return self._handle_denial(error, tool_name, args, agent_role)
 
         # Step 4: Tier 2 - Warrant authorization with PoP (Unified Enforcement)
-        if self._warrant and self._signing_key:
+        if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
 
             enforcement: EnforcementResult = enforce_tool_call(
@@ -1017,6 +1044,7 @@ class CrewAIGuard:
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
+                warrant_chain=self._warrant_chain,
             )
 
             if self._control_plane is not None:
@@ -1030,7 +1058,7 @@ class CrewAIGuard:
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
 
-        elif self._warrant and not self._signing_key:
+        elif self._warrant is not None:
             raise CrewAIConfigurationError(
                 f"Warrant is configured but signing_key is missing — Tier 2 PoP "
                 f"authorization cannot proceed for tool '{tool_name}'. "
@@ -1098,7 +1126,7 @@ class CrewAIGuard:
                 return self._handle_denial(error, tool_name, args, agent_role)
 
         # Step 4: Tier 2 — async warrant authorization with PoP
-        if self._warrant and self._signing_key:
+        if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
 
             enforcement: EnforcementResult = await enforce_tool_call_async(
@@ -1108,6 +1136,7 @@ class CrewAIGuard:
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
+                warrant_chain=self._warrant_chain,
             )
 
             if self._control_plane is not None:
@@ -1121,7 +1150,7 @@ class CrewAIGuard:
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
 
-        elif self._warrant and not self._signing_key:
+        elif self._warrant is not None:
             raise CrewAIConfigurationError(
                 f"Warrant is configured but signing_key is missing — Tier 2 PoP "
                 f"authorization cannot proceed for tool '{tool_name}'. "
@@ -1430,7 +1459,7 @@ class CrewAIGuard:
             1 if using constraints only (Tier 1)
             2 if using warrant with PoP (Tier 2)
         """
-        if self._warrant and self._signing_key:
+        if self._warrant is not None and self._signing_key is not None:
             return 2
         return 1
 
@@ -1809,6 +1838,8 @@ def guarded_step(
     on_denial: DenialMode = "raise",
     strict: bool = False,
     audit: Optional[Callable[[AuditEvent], None]] = None,
+    *,
+    warrant_chain: Optional[List[Warrant]] = None,
 ):
     """Decorator for guarded CrewAI Flow steps.
 
@@ -1817,12 +1848,24 @@ def guarded_step(
 
     Args:
         allow: Dict of tool_name -> constraints for Tier 1
-        warrant: Warrant for Tier 2 authorization
+        warrant: Warrant for Tier 2 authorization, or the whole chain as a
+            WarrantStack string or root-first list of warrants
         signing_key: Key for PoP signature (required with warrant)
         ttl: TTL string like "10m" or "1h" (parsed for warrant)
         on_denial: How to handle denials ("raise", "log", "skip")
         strict: If True, fail if any unguarded tool calls detected
         audit: Optional audit callback
+        warrant_chain: Parent warrants of a delegated ``warrant``,
+            root-first and excluding the leaf
+
+    Raises:
+        MissingSigningKey: If ``warrant`` is given without ``signing_key``
+        ConfigurationError: If ``warrant`` is empty or does not decode, or
+            ``warrant_chain`` is given without ``warrant``
+
+    Only ``warrant=None`` means "no warrant". Anything else is validated when
+    the decorator is applied, so an empty or malformed chain can never fall
+    back to Tier 1 constraints.
 
     Example:
         @guarded_step(
@@ -1833,6 +1876,15 @@ def guarded_step(
         def research_step(self, state):
             return self.research_crew.kickoff(state)
     """
+
+    leaf: Optional[Warrant] = None
+    parents: Optional[List[Warrant]] = None
+    if warrant is not None:
+        leaf, parents = split_presented_warrant(warrant, warrant_chain)
+        if signing_key is None:
+            raise MissingSigningKey()
+    elif warrant_chain is not None:
+        raise ConfigurationError("guarded_step: warrant_chain was given without a warrant.")
 
     def decorator(func: Callable) -> Callable:
         import functools
@@ -1846,8 +1898,8 @@ def guarded_step(
                 for tool_name, constraints in allow.items():
                     builder.allow(tool_name, **constraints)
 
-            if warrant and signing_key:
-                builder.with_warrant(warrant, signing_key)
+            if leaf is not None:
+                builder.with_warrant(leaf, signing_key, warrant_chain=parents)
 
             builder.on_denial(on_denial)
 

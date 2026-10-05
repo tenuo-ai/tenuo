@@ -570,11 +570,63 @@ for warning in warnings:
 | Each `approvals[]` entry | 8 KB |
 | `approvals` count | 64 |
 
-Oversized payloads are rejected with `-32602` (invalid params). Override the module-level constants in `tenuo.mcp.server` if needed.
+Oversized payloads are rejected with `-32602` (invalid params). These are core
+limits; adapter constants cannot raise them. Apply request-body limits at your
+HTTP/stdio gateway too, before the framework constructs a host object.
+
+Argument JSON is capped at 256 KiB before the core parses it. During traversal,
+the core allows at most 4,096 values (including containers), 64 KiB of aggregate
+decoded string/key bytes (a single string or key may use all of it), and 256
+entries per container.
+The root object is depth zero; values may reach depth nine. Limits are checked
+while building the tree, not after allocating the complete result.
+
+### Envelope and argument contract
+
+The Rust core owns `_meta.tenuo` framing, base64 and decoding. The Rust SDK's
+MCP decoder delegates to the same implementation. Producers write standard
+padded base64; consumers also accept URL-safe base64 and line-wrapped tokens.
+Missing or null `approvals` means no approvals. A present approval list must
+contain only strings; malformed entries are rejected, never filtered out.
+Decoding an approval token does not establish that it authorizes the request.
+
+Adapters capture argument JSON once. Proof verification and execution use
+that snapshot, including nested values, even if the caller's object changes
+during replay admission. Null remains part of the proof. Legacy callers that
+stripped null must upgrade and re-sign the actual arguments; there is no
+null-stripping verification fallback. Non-string Python keys are rejected,
+not converted into potentially colliding strings.
+
+Core numbers use signed 64-bit integers and finite IEEE-754 binary64 values.
+Integral floating values within the integer range have the same proof as
+integers (`1.0` and `1`, including signed zero). Python integer inputs must fit
+in i64. For exact integers crossing JavaScript hosts, stay within the safe
+integer range or encode identifiers as strings. Different host number types
+are not distinct authority: tools must not treat `1` and `1.0` as different
+privileges. NaN and infinity are not supported as argument JSON numbers.
+
+`verify_meta_pop` (Python/Rust) and `verifyMetaPop` (WASM) check **only the
+holder proof**. Their old `verify_meta` / `verifyMeta` names remain compatibility
+aliases. None checks trusted roots, chain validity, expiry, constraints,
+approvals or replay. Use `MCPVerifier`, `tenuo.mcp.verify`/`handler`, or the Rust
+`Authorizer`/`Guard` to authorize execution.
+
+The shared cases in `tests/vectors/tenuo-meta-conformance.json` are consumed by
+Rust, Python and TypeScript. They cover proof equivalence and tampering,
+escaped duplicate keys, numeric boundaries, nested nulls, malformed envelopes,
+and a delegated chain with an approval. The fixed timestamp tests codec/PoP
+conformance, not whether the historical fixture grants authority today.
 
 ---
 
 ## Error Handling
+
+`MCPVerifier.verify()` returns argument-conversion and resource-limit failures
+as denial results and emits them through the same audit path as other denials.
+Boundary `error_type` values include `invalid_arguments`, `payload_too_large`,
+`malformed_envelope`, and `invalid_pop`. Invalid argument denials contain no
+argument values or parser exception text. Hosts should branch on codes rather
+than parsing human-readable messages.
 
 MCP integration uses typed `TenuoError` exceptions with canonical wire codes:
 

@@ -115,6 +115,8 @@ class TenuoPlugin(BasePlugin):
         require_pop: bool = True,
         trusted_roots: Optional[List[Any]] = None,
         name: str = "tenuo",
+        *,
+        warrant_chain: Optional[List["Warrant"]] = None,
     ):
         """
         Initialize TenuoPlugin.
@@ -130,6 +132,12 @@ class TenuoPlugin(BasePlugin):
                            verification.  Required for Tier 2 in production.
             name: Plugin name registered with the ADK ``PluginManager`` (must be
                   unique among the Runner's plugins).
+            warrant_chain: Parent warrants of a delegated warrant, root-first and
+                  excluding the leaf. ``warrant`` (or the session-state value)
+                  may instead carry the whole chain as a WarrantStack string or
+                  root-first list; see ``TenuoGuard``. Verified only when
+                  ``require_pop=True``; with ``require_pop=False`` the plugin
+                  stays Tier 1 and does not cryptographically verify the chain.
         """
         if BasePlugin is object:
             self.name = name
@@ -143,6 +151,7 @@ class TenuoPlugin(BasePlugin):
             arg_map=arg_map,
             require_pop=require_pop,
             trusted_roots=trusted_roots,
+            warrant_chain=warrant_chain,
         )
         self._warrant_key = warrant_key
 

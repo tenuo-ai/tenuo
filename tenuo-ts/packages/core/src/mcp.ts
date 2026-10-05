@@ -35,26 +35,32 @@ export function presentCall(
     assertKnownKeys(options, ATTACH_OPTION_KEYS, `${label} options`);
   }
   const native = nativeSession(session as Session);
-  const wireArgs = stripNulls(args);
+  const snapshot = captureArguments(args);
   const local = context.authorize(
     native,
     name,
-    wireArgs,
+    snapshot.json,
     options?.approvals,
     undefined,
     options?.requestId,
   );
   emitReceipt(options?.onReceipt, local.receipt, session, host);
-  decide(local, name, native, wireArgs);
-  const signature = context.signPop(native, name, wireArgs);
-  const warrant = stackWire(native);
-  if (options?.approvals !== undefined && options.approvals.length > 0) {
-    return {
-      presented: { warrant, signature, approvals: options.approvals.map(approvalWire) },
-      wireArgs,
-    };
-  }
-  return { presented: { warrant, signature }, wireArgs };
+  decide(local, name, native, snapshot.executionArgs());
+  const envelope = context.signMeta(
+    native,
+    name,
+    snapshot.json,
+    Math.floor(Date.now() / 1000),
+    options?.approvals ?? null,
+  );
+  const presented = {
+    warrant: envelope.warrant,
+    signature: envelope.signature,
+    ...(envelope.approvals !== undefined && envelope.approvals.length > 0
+      ? { approvals: envelope.approvals }
+      : {}),
+  };
+  return { presented, wireArgs: snapshot.executionArgs() };
 }
 
 /**
@@ -81,10 +87,13 @@ export async function verifyPresented(
       `${label} needs { warrant, signature } from tenuo.present() or tenuo.mcp.attach()`,
     );
   }
+  // Capture once: replay admission and receipt callbacks may yield or mutate
+  // the caller's object. Execution must use the exact snapshot verified here.
+  const snapshot = captureArguments(args);
   const decision = context.authorizePresented(
     envelope.warrant,
     name,
-    stripNulls(args),
+    snapshot.json,
     envelope.signature,
     envelope.approvals,
     options?.allow,
@@ -97,7 +106,9 @@ export async function verifyPresented(
     await admitPop(options?.nonceStore, envelope.signature, options?.onNonceStoreError);
   }
   decide(decision, name);
-  return plainArgs(decision.args);
+  // Run the host parse of the JSON text the proof covers. The raw host
+  // object can contain values that JSON drops.
+  return snapshot.executionArgs();
 }
 
 export function createMcp(context: WasmContext, decide: Decide, host?: object): TenuoMcp {
@@ -150,23 +161,19 @@ export function createMcp(context: WasmContext, decide: Decide, host?: object): 
   return mcp;
 }
 
-function stackWire(native: object): string {
-  const session = native as { toStackWire?: () => unknown };
-  if (typeof session.toStackWire !== "function") {
-    throw new TenuoConfigurationError("session is not bound to the WASM core");
+/** A private immutable input snapshot, not an authorization token. */
+function captureArguments(args: Readonly<Record<string, unknown>>): {
+  readonly json: string;
+  executionArgs(): Record<string, unknown>;
+} {
+  const text = JSON.stringify(args);
+  if (typeof text !== "string") {
+    throw new TenuoConfigurationError("arguments must be JSON");
   }
-  const wire = session.toStackWire();
-  if (typeof wire !== "string" || wire.length === 0) {
-    throw new TenuoConfigurationError("toStackWire() did not return a warrant stack");
-  }
-  return wire;
-}
-
-function approvalWire(value: string | Uint8Array): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  return Buffer.from(value).toString("base64");
+  return Object.freeze({
+    json: text,
+    executionArgs: () => plainArgs(JSON.parse(text)),
+  });
 }
 
 function presentedEnvelope(
@@ -182,9 +189,11 @@ function presentedEnvelope(
   if (typeof tenuo.signature !== "string" || tenuo.signature.length === 0) {
     return undefined;
   }
-  const approvals = Array.isArray(tenuo.approvals)
-    ? tenuo.approvals.filter((item): item is string => typeof item === "string")
-    : undefined;
+  if (tenuo.approvals != null &&
+      (!Array.isArray(tenuo.approvals) || tenuo.approvals.some((item) => typeof item !== "string"))) {
+    return undefined;
+  }
+  const approvals = tenuo.approvals ?? undefined;
   return {
     warrant: tenuo.warrant,
     signature: tenuo.signature,
@@ -213,9 +222,6 @@ const VERIFY_OPTION_KEYS = new Set([
 ]);
 const REPLAY_STORE_UNAVAILABLE = "Replay store unavailable";
 const ATTACH_OPTION_KEYS = new Set(["approvals", "onReceipt", "requestId"]);
-const MAX_STRIP_DEPTH = 32;
-const MAX_STRIP_LEN = 1024;
-
 function assertKnownKeys(value: object, known: ReadonlySet<string>, label: string): void {
   const unknown = Object.keys(value).filter((key) => !known.has(key));
   if (unknown[0] !== undefined) {
@@ -331,39 +337,6 @@ function plainArgs(value: unknown): Record<string, unknown> {
     return { ...(value as Record<string, unknown>) };
   }
   return {};
-}
-
-/** Same rule as Python `strip_none_values`: drop null so optional MCP args do not break PoP. */
-function stripNulls(args: Readonly<Record<string, unknown>>): Record<string, unknown> {
-  const keys = Object.keys(args);
-  if (keys.length > MAX_STRIP_LEN) {
-    throw new TenuoConfigurationError("arguments exceed the TypeScript input budget");
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(args)) {
-    if (value === null || value === undefined) {
-      continue;
-    }
-    out[key] = Array.isArray(value) ? cleanList(value, 1) : value;
-  }
-  return out;
-}
-
-function cleanList(value: readonly unknown[], depth: number): unknown[] {
-  if (depth > MAX_STRIP_DEPTH) {
-    throw new TenuoConfigurationError("arguments exceed the TypeScript nesting budget");
-  }
-  if (value.length > MAX_STRIP_LEN) {
-    throw new TenuoConfigurationError("arguments exceed the TypeScript input budget");
-  }
-  const cleaned: unknown[] = [];
-  for (const item of value) {
-    if (item === null || item === undefined) {
-      continue;
-    }
-    cleaned.push(Array.isArray(item) ? cleanList(item, depth + 1) : item);
-  }
-  return cleaned;
 }
 
 function jsonRpcError(error: unknown): McpJsonRpcError {

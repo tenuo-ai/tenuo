@@ -13,7 +13,7 @@
   <a href="https://hub.docker.com/r/tenuo/authorizer"><img src="https://img.shields.io/docker/v/tenuo/authorizer?label=docker" alt="Docker"></a>
   <a href="https://tenuo.ai"><img src="https://img.shields.io/badge/docs-tenuo.ai-blue" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-  <a href="https://deepwiki.com/tenuo-ai/tenuo"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://deepwiki.com/tenuo-ai/tenuo"><img src="https://img.shields.io/badge/Ask-DeepWiki-blue.svg" alt="Ask DeepWiki"></a>
 </p>
 
 Tenuo gives each task only the authority it needs. That authority travels with the work, can only shrink when handed off, and is checked where the action runs. It works alongside your existing identity and policy systems.
@@ -365,8 +365,8 @@ This runs the [orchestrator -> worker -> authorizer](https://tenuo.ai/demo.html)
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.3.1  # Sidecar for warrant verification
-docker pull tenuo/control:0.3.1     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.3.2  # Sidecar for warrant verification
+docker pull tenuo/control:0.3.2     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -403,7 +403,7 @@ The core crate is the protocol. The `sdk` feature is the enforcement surface: a 
 
 ```toml
 [dependencies]
-tenuo = { version = "0.3.1", features = ["sdk"] }
+tenuo = { version = "0.3.2", features = ["sdk"] }
 ```
 
 ```rust
