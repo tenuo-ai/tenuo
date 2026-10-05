@@ -665,7 +665,9 @@ constraint = Shlex(allow=["ls", "cat", "grep"])
 constraint.matches("ls -la /tmp")           # True
 constraint.matches("cat file.txt")          # True
 constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
+constraint.matches('ls "foo; bar"')         # True (quoted semicolon is literal)
 constraint.matches("echo $(whoami)")        # False (command substitution)
+constraint.matches('echo "$HOME"')          # False ($ expands inside double quotes)
 constraint.matches("ls $HOME")              # False (variable expansion)
 constraint.matches("rm -rf /")              # False (rm not in allowlist)
 ```

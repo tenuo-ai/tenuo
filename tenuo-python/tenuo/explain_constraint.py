@@ -286,9 +286,35 @@ def _explain_urlsafe(constraint: Any, value: Any) -> UrlAnalysis:
     )
 
 
+# Same sets the core rejects before it tokenizes. Kept here so an explanation
+# can name the character; the allow/deny decision is `Shlex.matches`.
+_SHLEX_CONTROL_CHARS = {"\x00", "\n", "\r", "\x0b", "\x0c", "\x07", "\x08", "\x7f"}
+_SHLEX_EXPANSION_CHARS = {"$", "`"}
+_SHLEX_OPERATOR_CHARS = set("();<>|&")
+_SHLEX_DANGEROUS_TOKENS = {
+    "|",
+    "||",
+    "&",
+    "&&",
+    ";",
+    ">",
+    ">>",
+    "<",
+    "<<",
+    "<<<",
+    "(",
+    ")",
+}
+
+
+def _shlex_operator_token(token: str) -> bool:
+    """True for an unquoted operator run, including spellings like ``<>``."""
+    return bool(token) and all(ch in _SHLEX_OPERATOR_CHARS for ch in token)
+
+
 def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
     """Explain Shlex constraint check."""
-    import shlex as shlex_module
+    from tenuo_core import Shlex
 
     if not isinstance(value, str):
         return CommandAnalysis(
@@ -304,7 +330,7 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
         )
 
     # Check for control characters
-    control_chars_found = [c for c in constraint.CONTROL_CHARS if c in value]
+    control_chars_found = [c for c in _SHLEX_CONTROL_CHARS if c in value]
     if control_chars_found:
         return CommandAnalysis(
             input=value,
@@ -319,7 +345,7 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
         )
 
     # Check for expansion characters
-    expansion_chars_found = [c for c in constraint.EXPANSION_CHARS if c in value]
+    expansion_chars_found = [c for c in _SHLEX_EXPANSION_CHARS if c in value]
     if expansion_chars_found:
         return CommandAnalysis(
             input=value,
@@ -333,10 +359,10 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
             reason=f"Contains shell expansion characters: {expansion_chars_found!r}",
         )
 
-    # Parse the command
+    # Parse with the core tokenizer. An explanation that used Python's shlex
+    # would drift from the decision `matches` just made.
     try:
-        lex = shlex_module.shlex(value, posix=True, punctuation_chars=True)
-        tokens = list(lex)
+        tokens = Shlex.tokenize(value)
     except ValueError as e:
         return CommandAnalysis(
             input=value,
@@ -364,11 +390,16 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
         )
 
     binary = tokens[0]
+    if "/" in binary:
+        binary = posixpath.normpath(binary)
     bin_name = posixpath.basename(binary)
-    binary_allowed = binary in constraint.allowed_bins or bin_name in constraint.allowed_bins
+    allow = set(getattr(constraint, "allow", None) or getattr(constraint, "allowed_bins", []) or [])
+    binary_allowed = binary in allow or bin_name in allow
 
     # Check for dangerous tokens
-    dangerous_tokens_found = [t for t in tokens if t in constraint.DANGEROUS_TOKENS]
+    dangerous_tokens_found = [
+        token for token in tokens if token in _SHLEX_DANGEROUS_TOKENS or _shlex_operator_token(token)
+    ]
 
     # Determine safety
     safe = True
@@ -376,7 +407,7 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
 
     if not binary_allowed:
         safe = False
-        reason = f"Binary '{binary}' not in allowlist: {sorted(constraint.allowed_bins)}"
+        reason = f"Binary '{binary}' not in allowlist: {sorted(allow)}"
     elif dangerous_tokens_found:
         safe = False
         reason = f"Contains shell operators: {dangerous_tokens_found}"

@@ -1,0 +1,30 @@
+{
+  "description": "Shlex decisions shared by the Rust core, Python, and TypeScript. Quoted operators are literal arguments. $ and backticks are rejected in the raw command, including inside quotes. An unquoted run of ();<>|& is an operator.",
+  "cases": [
+    {"name": "simple command", "allow": ["ls"], "command": "ls -la /tmp", "matches": true},
+    {"name": "quoted semicolon", "allow": ["ls"], "command": "ls \"foo; bar\"", "matches": true},
+    {"name": "single quoted operators", "allow": ["ls"], "command": "ls 'foo && bar'", "matches": true},
+    {"name": "quoted pipe", "allow": ["grep"], "command": "grep \"a|b\" file", "matches": true},
+    {"name": "quoted ampersand", "allow": ["echo"], "command": "echo \"AT&T\"", "matches": true},
+    {"name": "quoted angle brackets", "allow": ["echo"], "command": "echo \"<html>\"", "matches": true},
+    {"name": "expansion inside double quotes", "allow": ["echo"], "command": "echo \"$VAR\"", "matches": false},
+    {"name": "expansion inside single quotes", "allow": ["echo"], "command": "echo '$HOME'", "matches": false},
+    {"name": "escaped dollar in double quotes", "allow": ["echo"], "command": "echo \"\\$HOME\"", "matches": false},
+    {"name": "backtick substitution", "allow": ["ls"], "command": "ls `pwd`", "matches": false},
+    {"name": "tab is whitespace", "allow": ["ls"], "command": "ls\t-la", "matches": true},
+    {"name": "newline is a control character", "allow": ["ls", "rm"], "command": "ls\nrm", "matches": false},
+    {"name": "carriage return", "allow": ["ls"], "command": "ls\rrm", "matches": false},
+    {"name": "null byte", "allow": ["ls"], "command": "ls\u0000rm", "matches": false},
+    {"name": "unquoted semicolon", "allow": ["ls", "rm"], "command": "ls;rm", "matches": false},
+    {"name": "unquoted and", "allow": ["ls", "rm"], "command": "ls&&rm", "matches": false},
+    {"name": "operator run", "allow": ["cat"], "command": "cat <> /etc/passwd", "matches": false},
+    {"name": "heredoc", "allow": ["cat"], "command": "cat <<EOF", "matches": false},
+    {"name": "basename after normpath", "allow": ["ls"], "command": "/usr/bin/../bin/ls -la", "matches": true},
+    {"name": "traversal to a different binary", "allow": ["ls"], "command": "/bin/../bin/rm -rf /", "matches": false},
+    {"name": "comment hides a later operator", "allow": ["ls"], "command": "ls #; rm", "matches": true},
+    {"name": "empty command", "allow": ["ls"], "command": "", "matches": false},
+    {"name": "unbalanced quote", "allow": ["ls"], "command": "ls \"", "matches": false},
+    {"name": "unlisted binary", "allow": ["ls"], "command": "cat /etc/passwd", "matches": false},
+    {"name": "quoted binary name", "allow": ["my program"], "command": "\"my program\" arg1", "matches": true}
+  ]
+}

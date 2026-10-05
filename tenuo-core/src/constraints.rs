@@ -106,9 +106,7 @@ pub mod constraint_type_id {
     // 19-127: Future standard types
 
     // Experimental / extension constraints (128-255)
-    /// Shell command safety (binary allowlist + metacharacter rejection).
-    /// Extension constraint: Rust provides conservative approximation,
-    /// Python shlex is authoritative at runtime.
+    /// Shell command safety (binary allowlist + POSIX tokenization).
     /// Wire format: `[128, { "allow": ["npm", "docker"] }]`
     pub const SHLEX: u8 = 128;
 }
@@ -3221,33 +3219,16 @@ impl From<UrlSafe> for Constraint {
 // Shlex Constraint (Shell command safety)
 // ============================================================================
 
-/// Characters that are dangerous in a shell context.
-///
-/// Includes control characters (null, newline, CR, etc.), expansion triggers
-/// ($, backtick), and operator characters (|, &, ;, <, >, parens).
-const SHELL_DANGEROUS_CHARS: &[char] = &[
-    '\0', '\n', '\r', '\x0b', '\x0c', '\x07', '\x08', '\x7f', // Control
-    '$', '`', // Expansion
-    '|', '&', ';', '<', '>', '(', ')', // Operators
-];
-
 /// Shell command safety constraint.
 ///
-/// Validates that a command string uses only allowed binaries and contains
-/// no shell metacharacters. This is a **conservative approximation** that
-/// fails closed on anything a POSIX shell might interpret specially.
+/// Validates that a command string is one allowlisted binary plus literal
+/// arguments. Quoting follows POSIX `shlex` (`punctuation_chars` of
+/// `();<>|&`): an operator inside quotes is a literal argument, and an
+/// unquoted operator run is rejected. `$` and backticks are rejected
+/// anywhere in the raw command, including inside double quotes, because a
+/// POSIX shell still expands them there.
 ///
-/// # Rust vs Python evaluation
-///
-/// The Rust `matches()` performs whitespace tokenization and rejects any
-/// character in `SHELL_DANGEROUS_CHARS`. It does NOT handle POSIX quoting.
-/// Python's `Shlex.matches()` uses full `shlex` parsing with
-/// `punctuation_chars=True`, so it accepts safely-quoted operators like
-/// `ls "foo; bar"` that Rust would reject.
-///
-/// The Rust layer is intentionally more restrictive, acting as a fail-closed
-/// pre-filter in the warrant verification path. Python's full evaluation is
-/// the authoritative runtime gate for annotated constraints in `@guard`.
+/// Every SDK calls this check. There is no second evaluator.
 ///
 /// # Wire Format
 ///
@@ -3268,46 +3249,15 @@ impl Shlex {
         }
     }
 
-    /// Conservative command matching (fail-closed approximation).
+    /// Whether `value` is a single allowlisted command with no shell operators.
     ///
-    /// Rejects any command containing shell metacharacters, then whitespace-splits
-    /// and checks the first token against the allowlist. This is strictly more
-    /// restrictive than Python's POSIX shlex parsing.
+    /// Non-strings, parse errors, control characters, and `$` / backticks
+    /// return `Ok(false)`. See [`crate::shell_words::command_allowed`].
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        let cmd = match value.as_str() {
-            Some(s) => s,
-            None => return Ok(false),
+        let Some(cmd) = value.as_str() else {
+            return Ok(false);
         };
-
-        if cmd.is_empty() {
-            return Ok(false);
-        }
-
-        // Reject any shell-dangerous character
-        for ch in cmd.chars() {
-            if SHELL_DANGEROUS_CHARS.contains(&ch) {
-                return Ok(false);
-            }
-        }
-
-        // Whitespace tokenization (no quoting awareness — conservative)
-        let tokens: Vec<&str> = cmd.split_whitespace().collect();
-        if tokens.is_empty() {
-            return Ok(false);
-        }
-
-        // Binary allowlist: check full path and basename.
-        // Reject path traversal (../) to prevent allowlist bypass.
-        let binary = tokens[0];
-        if binary.contains("..") {
-            return Ok(false);
-        }
-        let bin_name = binary.rsplit('/').next().unwrap_or(binary);
-        if !self.allow.iter().any(|a| a == binary || a == bin_name) {
-            return Ok(false);
-        }
-
-        Ok(true)
+        Ok(crate::shell_words::command_allowed(&self.allow, cmd))
     }
 
     /// Validate that `child` is a valid attenuation (child is more restrictive).
@@ -6095,21 +6045,19 @@ mod tests {
     }
 
     // ========================================================================
-    // Shlex corner cases (Rust conservative approximation)
+    // Shlex quoting
     // ========================================================================
 
     #[test]
-    fn test_shlex_quoted_operators_rejected_by_rust() {
-        // Python shlex accepts these (operators inside quotes are safe).
-        // Rust's conservative check rejects ANY metacharacter regardless of quoting.
-        // This is the intentional asymmetry documented in the spec.
-        let sh = Shlex::new(vec!["ls"]);
-        assert!(!sh
+    fn test_shlex_quoted_operators_are_literals() {
+        let sh = Shlex::new(vec!["ls", "echo"]);
+        assert!(sh
             .matches(&ConstraintValue::String(r#"ls "foo; bar""#.into()))
             .unwrap());
-        assert!(!sh
-            .matches(&ConstraintValue::String(r#"ls 'foo|bar'"#.into()))
+        assert!(sh
+            .matches(&ConstraintValue::String("ls 'foo|bar'".into()))
             .unwrap());
+        // `$` still expands inside double quotes, so the raw command is refused.
         assert!(!sh
             .matches(&ConstraintValue::String(r#"echo "$(date)""#.into()))
             .unwrap());
@@ -6134,15 +6082,17 @@ mod tests {
     }
 
     #[test]
-    fn test_shlex_path_traversal_in_binary() {
+    fn test_shlex_path_normalization() {
         let sh = Shlex::new(vec!["npm"]);
-        // Path traversal doesn't bypass the allowlist — basename check
-        // matches "npm" but "../npm" is checked as full path first
-        assert!(!sh
+        // POSIX normpath, then the path or its basename must be allowlisted.
+        assert!(sh
+            .matches(&ConstraintValue::String("/usr/../bin/npm install".into()))
+            .unwrap());
+        assert!(sh
             .matches(&ConstraintValue::String("../npm install".into()))
             .unwrap());
         assert!(!sh
-            .matches(&ConstraintValue::String("/usr/../bin/npm install".into()))
+            .matches(&ConstraintValue::String("/usr/../bin/rm install".into()))
             .unwrap());
     }
 
@@ -6166,10 +6116,7 @@ mod tests {
 
     #[test]
     fn test_shlex_backslash_not_rejected() {
-        // Backslash is NOT in SHELL_DANGEROUS_CHARS — it's a quoting mechanism
-        // but not a command separator or expansion trigger. The conservative
-        // approach accepts it, which means `ls foo\ bar` passes Rust but would
-        // need Python's full shlex to determine if it's safe.
+        // A backslash escapes the next character. `ls foo\ bar` is one argument.
         let sh = Shlex::new(vec!["ls"]);
         assert!(sh
             .matches(&ConstraintValue::String(r"ls foo\ bar".into()))
@@ -6198,9 +6145,7 @@ mod tests {
 
     #[test]
     fn test_shlex_exclamation_not_rejected() {
-        // ! is history expansion in interactive bash but NOT in sh/scripts.
-        // Conservative choice: allow it. If needed, callers can use a narrower
-        // constraint or the Python Shlex which handles this.
+        // ! is history expansion in interactive bash, not in sh scripts.
         let sh = Shlex::new(vec!["echo"]);
         assert!(sh
             .matches(&ConstraintValue::String("echo hello!".into()))
@@ -6222,6 +6167,39 @@ mod tests {
         assert!(!sh
             .matches(&ConstraintValue::String("npm install".into()))
             .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_exact_attenuation_accepts_quoted_operators() {
+        let parent = Constraint::Shlex(Shlex::new(vec!["ls"]));
+        let child = Constraint::Exact(Exact::new(r#"ls "foo; bar""#));
+        assert!(parent.validate_attenuation(&child).is_ok());
+        let chained = Constraint::Exact(Exact::new("ls; rm"));
+        assert!(parent.validate_attenuation(&chained).is_err());
+    }
+
+    #[test]
+    fn test_shlex_shared_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Suite {
+            cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            allow: Vec<String>,
+            command: String,
+            matches: bool,
+        }
+        let suite: Suite =
+            serde_json::from_str(include_str!("../../tests/vectors/shlex.json")).unwrap();
+        for case in suite.cases {
+            let sh = Shlex::new(case.allow);
+            let got = sh
+                .matches(&ConstraintValue::String(case.command.clone()))
+                .unwrap();
+            assert_eq!(got, case.matches, "{}", case.name);
+        }
     }
 
     // ========================================================================

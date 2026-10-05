@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Shlex has one POSIX tokenizer, in the Rust core.** Python `Shlex` is that
+  class. Quoted operators such as `ls "foo; bar"` are literal arguments at
+  every enforcement point. `$` and backticks are still rejected in the raw
+  command, including inside quotes. An unquoted operator run (`<>`, `&&`,
+  `;`, …) is rejected. Shared cases live in `tests/vectors/shlex.json`.
+
 ### Fixed
 
 - **CrewAI and ADK docs match the current APIs.** Delegation examples pass

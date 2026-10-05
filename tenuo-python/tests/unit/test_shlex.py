@@ -4,9 +4,14 @@ Comprehensive tests for the Shlex constraint.
 Tests based on the test vectors in shlex-constraint-spec.md.
 """
 
+import json
+from pathlib import Path
+
 import pytest
+import shlex
 
 from tenuo.constraints import Shlex
+from tenuo_core import Shlex as CoreShlex
 
 
 class TestShlexBasic:
@@ -747,36 +752,23 @@ class TestShlexAllowlistVariations:
         assert constraint.matches("./script.sh arg1")
 
 
-class TestShlexRustPythonAsymmetry:
-    """Tests documenting intentional differences between Rust and Python Shlex.
+class TestShlexQuotedOperators:
+    """Quoted operators are literal arguments. The core tokenizer and this class agree."""
 
-    Python Shlex (this class) uses full POSIX shlex parsing with
-    punctuation_chars=True. Rust Shlex uses conservative whitespace
-    splitting and rejects any shell metacharacter at the character level.
-
-    These tests document cases where Python ACCEPTS but Rust REJECTS.
-    This is the intended behavior: Rust is a fail-closed pre-filter in
-    the warrant verification path, Python is authoritative at runtime.
-    """
-
-    def test_quoted_semicolons_accepted_by_python(self):
-        """Python accepts quoted operators; Rust would reject (contains ';')."""
+    def test_quoted_semicolons_are_literals(self):
         constraint = Shlex(allow=["ls"])
         assert constraint.matches('ls "foo; bar"')
         assert constraint.matches("ls 'foo; bar'")
 
-    def test_quoted_pipes_accepted_by_python(self):
-        """Python accepts quoted pipes; Rust would reject (contains '|')."""
+    def test_quoted_pipes_are_literals(self):
         constraint = Shlex(allow=["grep"])
         assert constraint.matches('grep "a|b" file')
 
-    def test_quoted_ampersands_accepted_by_python(self):
-        """Python accepts quoted ampersands; Rust would reject (contains '&')."""
+    def test_quoted_ampersands_are_literals(self):
         constraint = Shlex(allow=["echo"])
         assert constraint.matches('echo "AT&T"')
 
-    def test_quoted_angle_brackets_accepted_by_python(self):
-        """Python accepts quoted redirects; Rust would reject (contains '<', '>')."""
+    def test_quoted_angle_brackets_are_literals(self):
         constraint = Shlex(allow=["echo"])
         assert constraint.matches('echo "<html>"')
 
@@ -856,3 +848,59 @@ class TestShlexCrossPlatform:
         # posixpath.basename("/usr/bin/ls") == "ls"
         # os.path.basename on Windows with forward slashes returns full path
         assert constraint.matches("/usr/bin/ls -la")
+
+
+_TOKEN_ORACLE = [
+    "ls -la /tmp",
+    'ls "foo; bar"',
+    "ls 'foo && bar'",
+    "ls;rm",
+    "ls&&rm",
+    'echo "AT&T"',
+    "echo AT&T",
+    "cat <<EOF",
+    "diff <(ls) <(ls -la)",
+    "ls\t-la",
+    '"ls" -la',
+    'ls -la ""',
+    '""',
+    "ls foo\\ bar",
+    "echo {a,b,c}",
+    "ls file[12].txt",
+    "ls &#59;",
+    "echo hello #world",
+    "find . -exec rm {} \\;",
+    "cat <> /etc/passwd",
+    '"my program" arg1',
+    "echo 'a'\"b\"'c'",
+    "ls #; rm",
+    "foo#bar",
+    'echo "$(date)"',
+    "echo '$HOME'",
+    "café --help",
+    "ls -- -rf;",
+]
+
+
+class TestShlexCoreTokenizer:
+    """The exported class is the core pyclass, and its tokenizer matches CPython shlex."""
+
+    def test_class_is_the_core_pyclass(self):
+        assert Shlex is CoreShlex
+
+    def test_tokenize_matches_cpython(self):
+        for command in _TOKEN_ORACLE:
+            lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+            assert CoreShlex.tokenize(command) == list(lex)
+
+    def test_shared_vectors(self):
+        path = Path(__file__).resolve().parents[3] / "tests" / "vectors" / "shlex.json"
+        suite = json.loads(path.read_text())
+        for case in suite["cases"]:
+            constraint = Shlex(allow=case["allow"])
+            assert constraint.matches(case["command"]) is case["matches"], case["name"]
+
+    def test_unquoted_operator_run_is_rejected(self):
+        """`<>` is one operator token. The old exact-token list did not name it."""
+        constraint = Shlex(allow=["cat"])
+        assert not constraint.matches("cat <> /etc/passwd")

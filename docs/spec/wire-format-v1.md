@@ -568,7 +568,7 @@ pub enum Constraint {
         block_internal_tlds: bool,      // Default: false
     },
 
-    /// Shell command safety -- extension constraint (conservative approximation)
+    /// Shell command safety -- extension constraint (POSIX tokenization)
     Shlex {
         allow: Vec<String>,             // Allowed binary names or paths (literal, no globs)
     },
@@ -823,7 +823,16 @@ Implementations MUST evaluate UrlSafe fields in this order:
 |-------|------|
 | `allow` | Child must be subset of parent (fewer binaries allowed). Entries are literal strings, no globs. |
 
-**Shlex evaluation model:** Shlex is an extension constraint with implementation-specific evaluation behavior. The Rust `matches()` performs whitespace tokenization and rejects any shell metacharacter (`|`, `&`, `;`, `$`, `` ` ``, `<`, `>`, `(`, `)`, control chars). It does NOT handle POSIX quoting rules. Python's full `shlex` parsing with `punctuation_chars=True` accepts safely-quoted operators (e.g., `ls "foo; bar"`). The Rust layer is intentionally more restrictive, acting as a fail-closed pre-filter in the warrant verification path. Python's full evaluation is the authoritative runtime gate for annotated `@guard` constraints. Verifiers that do not implement Shlex MUST reject warrants containing it (fail closed via Unknown variant).
+**Shlex evaluation model:** One tokenizer, implemented in the Rust core and used by every SDK. Verifiers that do not implement Shlex MUST reject warrants containing it (fail closed via Unknown variant).
+
+A command matches only when all of the following hold:
+
+1. The value is a non-empty string. Control characters (`NUL`, `LF`, `CR`, `VT`, `FF`, `BEL`, `BS`, `DEL`) reject the command. `$` and backticks reject the command wherever they appear, including inside quotes and backslash escapes. A double-quoted `$` still expands in a POSIX shell; the raw scan also refuses the single-quoted and escaped forms.
+2. Tokenization follows POSIX `shlex` with punctuation characters `();<>|&`: single quotes, double quotes, and backslash escapes. A run of those punctuation characters is one operator token. `#` comments through the end of the line. An unbalanced quote or a trailing backslash rejects the command.
+3. The first token is the binary. If it contains `/`, it is normalized with POSIX `normpath`. The normalized path or its basename must be an entry of `allow` (literal strings, no globs).
+4. No token is an unquoted operator run, and no token text is `|`, `||`, `&`, `&&`, `;`, `>`, `>>`, `<`, `<<`, `<<<`, `(`, or `)`.
+
+Quoted operators are literal arguments: `ls "foo; bar"` matches an allowlist that contains `ls`. Tabs are whitespace.
 
 **Implementations MUST reject attenuations not explicitly permitted in this matrix.**
 
@@ -852,7 +861,7 @@ Implementations MUST evaluate UrlSafe fields in this order:
 
 **Extension range (128–255):** For constraints with implementation-specific behavior, proprietary extensions, or experimental types. Verifiers that do not implement a given extension type MUST reject warrants containing it (fail closed via Unknown variant). Use for:
 
-- Constraints where evaluation semantics vary by implementation (e.g., Shlex)
+- Extension constraints with a defined evaluation (Shlex is type 128; see Shlex Attenuation Rules)
 - Proprietary extensions that don't need interoperability
 - Testing new constraint types before proposing standardization
 
