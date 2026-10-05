@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tenuo.a2a import A2AServer
+from tenuo.a2a import A2AClient, A2AServer
 from tenuo.a2a.errors import (
     ChainValidationError,
     UntrustedIssuerError,
@@ -918,3 +918,61 @@ class TestWarrantStackEndToEnd:
             _preloaded_parents=parents,
         )
         assert validated is not None
+
+
+class TestClientSignedTask:
+    """A2AClient signs PoP with plain arguments and a real warrant chain."""
+
+    @pytest.mark.asyncio
+    async def test_send_task_signs_pop_for_parent_child_chain(self):
+        """send_task reaches an A2AServer that requires proof of possession."""
+        httpx = pytest.importorskip("httpx")
+        core = pytest.importorskip("tenuo_core")
+
+        root_key = core.SigningKey.generate()
+        child_key = core.SigningKey.generate()
+        parent = core.Warrant.issue(
+            keypair=root_key,
+            holder=root_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+        )
+        child = parent.attenuate(
+            capabilities={"search": {}},
+            signing_key=root_key,
+            holder=child_key.public_key,
+            ttl_seconds=900,
+        )
+
+        server = A2AServer(
+            name="PoP Agent",
+            url="http://test",
+            public_key="server_key",
+            trusted_issuers=[root_key.public_key.to_bytes().hex()],
+            trust_delegated=True,
+            require_warrant=True,
+            require_audience=False,
+            require_pop=True,
+            check_replay=False,
+            audit_log=None,
+        )
+
+        @server.skill("search")
+        async def search(query: str) -> str:
+            return f"found {query}"
+
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            client = A2AClient("http://test")
+            client._client = http
+            result = await client.send_task(
+                message="Search for papers",
+                warrant=child,
+                skill="search",
+                arguments={"query": "AI safety"},
+                warrant_chain=[parent],
+                signing_key=child_key,
+            )
+
+        assert result.status == "complete"
+        assert result.output == "found AI safety"

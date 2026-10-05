@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A2A client signs proof of possession.** `A2AClient.send_task` and
+  `send_task_streaming` imported `tenuo_core.ConstraintValue`, which the
+  extension does not export, so every signed request failed before it was
+  sent. Arguments are now passed to `Warrant.sign`, which already
+  canonicalizes plain values.
+
 ## [0.3.2] - 2026-10-02
 
 ### Upgrade notes

@@ -46,6 +46,21 @@ except ImportError:
 WARRANT_CHAIN_HEADER = "X-Tenuo-Warrant-Chain"  # legacy transport fallback
 
 
+def _proof_of_possession(warrant: Any, signing_key: Any, skill: str, args: Dict[str, Any]) -> str:
+    """URL-safe base64 PoP header for this request.
+
+    ``Warrant.sign`` canonicalizes plain Python values. Do not convert them
+    first: ``ConstraintValue`` is not part of the Python API.
+    """
+    if not hasattr(warrant, "sign"):
+        raise TypeError(
+            f"warrant must have sign() method for PoP, got {type(warrant).__name__}. "
+            "Ensure you're using a tenuo_core.Warrant object."
+        )
+    signature = warrant.sign(signing_key, skill, args, int(time.time()))
+    return base64.urlsafe_b64encode(bytes(signature)).decode("ascii")
+
+
 # =============================================================================
 # A2A Client Builder
 # =============================================================================
@@ -648,28 +663,7 @@ class A2AClient:
         # Generate Proof-of-Possession signature if signing_key provided
         args = arguments or {}
         if signing_key is not None:
-            if not hasattr(warrant, "sign"):
-                raise TypeError(
-                    f"warrant must have sign() method for PoP, got {type(warrant).__name__}. "
-                    "Ensure you're using a tenuo_core.Warrant object."
-                )
-            # Convert arguments to ConstraintValue format for PoP signing
-            # SECURITY: Fail-closed if tenuo_core unavailable. PoP requires
-            # proper ConstraintValue types for deterministic signing.
-            try:
-                from tenuo_core import ConstraintValue
-
-                args_cv = {k: ConstraintValue.from_any(v) for k, v in args.items()}
-            except ImportError as e:
-                raise ImportError(
-                    "tenuo_core.ConstraintValue required for PoP signing. Install with: uv pip install tenuo[a2a]"
-                ) from e
-
-            # Sign the request
-            pop_signature = warrant.sign(signing_key, skill, args_cv, int(time.time()))
-            # Encode as base64 URL-safe
-            pop_bytes = bytes(pop_signature)
-            headers["X-Tenuo-PoP"] = base64.urlsafe_b64encode(pop_bytes).decode("ascii")
+            headers["X-Tenuo-PoP"] = _proof_of_possession(warrant, signing_key, skill, args)
             logger.debug(f"Generated PoP signature for skill '{skill}'")
 
         # Build request with known task_id for response validation
@@ -820,24 +814,7 @@ class A2AClient:
         # Generate Proof-of-Possession signature if signing_key provided
         args = arguments or {}
         if signing_key is not None:
-            if not hasattr(warrant, "sign"):
-                raise TypeError(
-                    f"warrant must have sign() method for PoP, got {type(warrant).__name__}. "
-                    "Ensure you're using a tenuo_core.Warrant object."
-                )
-            # SECURITY: Fail-closed if tenuo_core unavailable
-            try:
-                from tenuo_core import ConstraintValue
-
-                args_cv = {k: ConstraintValue.from_any(v) for k, v in args.items()}
-            except ImportError as e:
-                raise ImportError(
-                    "tenuo_core.ConstraintValue required for PoP signing. Install with: uv pip install tenuo[a2a]"
-                ) from e
-
-            pop_signature = warrant.sign(signing_key, skill, args_cv, int(time.time()))
-            pop_bytes = bytes(pop_signature)
-            headers["X-Tenuo-PoP"] = base64.urlsafe_b64encode(pop_bytes).decode("ascii")
+            headers["X-Tenuo-PoP"] = _proof_of_possession(warrant, signing_key, skill, args)
             logger.debug(f"Generated PoP signature for streaming skill '{skill}'")
 
         # Build request
