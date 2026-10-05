@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CrewAI and ADK docs match the current APIs.** Delegation examples pass
+  `warrant_chain` and trusted issuer keys. CrewAI tool snippets use
+  `crewai.tools.tool`, and per-agent hooks use `@before_tool_call(agents=[...])`.
+  ADK `map_skill` maps a constraint name to the tool argument, and `TenuoPlugin`
+  is registered on the Runner.
 - **A2A client signs proof of possession.** `A2AClient.send_task` and
   `send_task_streaming` imported `tenuo_core.ConstraintValue`, which the
   extension does not export, so every signed request failed before it was
