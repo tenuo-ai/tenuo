@@ -230,9 +230,10 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
             except (ValueError, TypeError):
                 return False
 
-        # Exact - exact value match (Rust core)
+        # Exact - exact value match (Rust core). Typed values match as passed;
+        # the str() form keeps string Exact values matching non-string args.
         if hasattr(constraint, "matches") and constraint_type == "Exact":
-            return constraint.matches(str(value))
+            return constraint.matches(value) or constraint.matches(str(value))
 
         # OneOf - set membership (Rust core)
         if hasattr(constraint, "contains") and constraint_type == "OneOf":

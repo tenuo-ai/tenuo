@@ -27,6 +27,16 @@ from tenuo.decorators import (
 )
 
 
+
+class TestAnnotatedExact:
+    def test_exact_matches_typed_and_string_values(self):
+        from tenuo import Exact
+
+        assert _check_annotated_constraint(Exact(42), 42)
+        assert not _check_annotated_constraint(Exact(42), 43)
+        # String Exact values keep matching non-string arguments by str() form
+        assert _check_annotated_constraint(Exact("42"), 42)
+
 class TestAnnotatedConstraintFailClosed:
     @given(value=st.one_of(st.text(), st.integers(), st.floats(allow_nan=False)))
     @settings(max_examples=30)
