@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Temporal docs describe sandbox signing and signal allowlists as they behave.**
+  `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and
+  `GCPSecretManagerKeyResolver` call `resolve_sync` on a thread the workflow
+  sandbox blocks, including when the cache is full, so a long `cache_ttl`
+  does not make them usable for PoP signing. Workflow workers sign with
+  `signing_key=` or a resolver whose `resolve_sync` returns a key already in
+  memory. With `authorized_signals` set, a name off the list fails the
+  workflow run. `authorized_signals` and `authorized_updates` are worker
+  settings, and an off-list update is rejected.
 - **CrewAI and ADK docs match the current APIs.** Delegation examples pass
   `warrant_chain` and trusted issuer keys. CrewAI tool snippets use
   `crewai.tools.tool`, and per-agent hooks use `@before_tool_call(agents=[...])`.
