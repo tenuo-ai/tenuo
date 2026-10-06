@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Python `Exact` accepts non-string values.** `Exact(42)` raised
+  `TypeError`, and `Exact("42")` never matched the integer `42`, so pinning an
+  integer argument needed `Range(42, 42)`. `Exact` now takes int, float, bool,
+  `None`, list and dict values and matches them type-strictly, as the Rust core
+  already did. `Exact.matches()` accepts the same types, and
+  `ensure_constraint()` can wrap non-string literals.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
