@@ -519,7 +519,9 @@ def assert_cannot_grant(
 
     Raises:
         AuthorizationAssertionError: If the grant succeeds, fails for a
-            non-attenuation reason, or fails without ``expected_reason``
+            non-attenuation reason, or ``expected_reason`` is set and is not
+            a substring of ``"<ExceptionType>: <message>"``. Omitting
+            ``expected_reason`` is valid.
 
     Example:
         def test_monotonicity_enforcement():
