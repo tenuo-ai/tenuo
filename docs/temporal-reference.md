@@ -693,19 +693,17 @@ What the TTL **does** bound is how long activities scheduled by that workflow ca
 
 ### Temporal event history overhead
 
-Each activity dispatch and each child-workflow start injects the Tenuo headers into the event payload, so every Tenuo-protected call adds per-event overhead to Temporal's event history (capped at 50,000 events / 2 MB by default, up to ~50 MB absolute depending on server config).
+Each activity dispatch and each child-workflow start puts the Tenuo headers on one history event. Temporal warns at 10 MB or 10,240 events and terminates at 50 MB or 51,200 events. Those limits are fixed on Temporal Cloud and are the defaults on a self-hosted server.
 
-Approximate size per activity, with gzip compression enabled (the default):
+`x-tenuo-warrant` is the leaf warrant, gzip-compressed. A delegated chain is a separate header, `x-tenuo-warrant-chain`, base64 of the uncompressed stack. The chain is not gzip-compressed. A longer chain grows with that base64 text.
 
-| Component | Uncompressed | Compressed (gzip, level 9) |
-|-----------|--------------|---------------------------|
-| Root-only warrant | ~1 KB | ~500 B |
-| 3-hop delegated warrant | ~4 KB | ~800 B – 1.2 KB |
-| 10-hop delegated warrant | ~12 KB | ~2 – 3 KB |
-| PoP signature (`x-tenuo-pop`) | 88 B (64 B + base64) | Not worth compressing |
-| Misc headers (key id, arg keys, compressed flag) | ~100 B | ~100 B |
+| What is stored | Encoding | Approximate size |
+|----------------|----------|------------------|
+| Leaf warrant (`x-tenuo-warrant`) | gzip of that warrant only | ~500 B for a small root warrant |
+| PoP (`x-tenuo-pop`) plus key id, arg keys, and the compressed flag | base64 PoP and short text | ~200 B |
+| 3-hop Activity, leaf + chain + those small headers | gzip leaf, plus base64 of the uncompressed stack | about 1.9–2.7 KB, measured on 0.3.2 |
 
-**Worked example.** A single workflow that dispatches 200 activities with a 3-hop warrant: `200 × (~1.2 KB warrant + ~100 B misc + ~90 B PoP) ≈ 280 KB` of Tenuo overhead in history. Well under the 2 MB limit, but non-trivial for `archival` replay costs and for workflows that also carry large user payloads.
+**Worked example.** 200 Activities with a 3-hop chain add about 0.4–0.55 MB of Tenuo headers. Each Activity writes several events and the headers sit on one of them, so the 10,240-event warning arrives while those bytes are still under 10 MB.
 
 Operational guidance:
 

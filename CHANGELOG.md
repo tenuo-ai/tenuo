@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   memory. With `authorized_signals` set, a name off the list fails the
   workflow run. `authorized_signals` and `authorized_updates` are worker
   settings, and an off-list update is rejected.
+- **Temporal history sizes count the chain header that is actually sent.**
+  `x-tenuo-warrant` is the gzip-compressed leaf. `x-tenuo-warrant-chain` is
+  base64 of the uncompressed stack. A 3-hop Activity is about 1.9–2.7 KB,
+  about 0.4–0.55 MB across 200 Activities. The 10,240-event warning still
+  arrives before the 10 MB warning.
 - **CrewAI and ADK docs match the current APIs.** Delegation examples pass
   `warrant_chain` and trusted issuer keys. CrewAI tool snippets use
   `crewai.tools.tool`, and per-agent hooks use `@before_tool_call(agents=[...])`.
