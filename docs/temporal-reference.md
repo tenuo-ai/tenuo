@@ -5,6 +5,8 @@ description: Deep reference for Tenuo's Temporal integration — production conf
 
 # Temporal Integration Reference
 
+Applies to tenuo 0.3.2.
+
 > This is the deep reference for Tenuo's Temporal integration. For the getting-started guide, see **[Temporal Integration](./temporal.md)**.
 
 ---
@@ -659,12 +661,12 @@ signing authority.
 
 ### Temporal activity retries and PoP time-drift
 
-PoP is signed at `workflow.now()` when the activity is first scheduled. Temporal retries reuse headers from the original `ACTIVITY_TASK_SCHEDULED` event. The first-attempt verifier uses `pop_max_windows=5` (~±60 s); retries use the laxer `retry_pop_max_windows`, which defaults to **40** (±20 min) — sized against Temporal's default retry policy (`initial_interval=1s`, `backoff_coefficient=2`, `max_interval=100s`) so ten retries at ~13 min still verify.
+PoP is signed at `workflow.now()` when the Activity is first scheduled. Temporal retries reuse that signature from the original `ACTIVITY_TASK_SCHEDULED` event. The first attempt accepts about ±60 s (`pop_max_windows=5`). Retries use `retry_pop_max_windows`, which defaults to **40**: 20 windows of 30 s on the past side, about 10 minutes. Temporal's default backoff (1 s, doubling, capped at 100 s) waits about 7 minutes across ten retries that fail immediately, and that fits. Queue time and attempt runtime use the rest of the window.
 
 | Retry pattern | Recommended approach |
 |---------------|---------------------|
-| Default Temporal retry policy | Default `retry_pop_max_windows=40` (±20 min) works |
-| Long retries (> 20 min) | Bump `retry_pop_max_windows` (e.g. `120` for 1 h, `480` for 4 h) |
+| Default Temporal retry policy | Default `retry_pop_max_windows=40`. Ten fast retries take about 7 minutes and fit in the 10-minute past side. |
+| Longer retries | Set `retry_pop_max_windows` to about twice the backoff you need to cover, counted in 30-second windows. 240 covers about an hour on the past side. |
 | Unbounded retries | Structure as child workflows for fresh PoP per retry |
 | Durable workflows (hours/days) | Long warrant TTL + `retry_pop_max_windows` sized to max backoff + auto-revoke on completion |
 
@@ -672,7 +674,7 @@ PoP is signed at `workflow.now()` when the activity is first scheduled. Temporal
 config = TenuoPluginConfig(
     key_resolver=resolver,
     trusted_roots=[issuer_public_key],
-    retry_pop_max_windows=120,   # 120 × 30s = 3600s
+    retry_pop_max_windows=240,   # about 1 hour on the past side
 )
 ```
 
@@ -712,8 +714,6 @@ Operational guidance:
 1. **Keep chains short.** Prefer `workflow_grant(...)` (one issuer hop, attenuates in-process) over passing a delegated warrant through multiple external hops before it hits a worker.
 2. **Watch `workflow.info().history_size_bytes`** in Temporal ≥ 1.22 and alert at, say, 1 MB; Tenuo headers are one of several contributors but one of the easier to attribute.
 3. **Structure very-long workflows as parent/child.** Each child gets a fresh history budget. Pairs well with the TTL guidance above.
-
-> **Planned for v0.2 — `warrant_hash` + worker-side LRU cache.** Activities would carry only the PoP signature plus a `warrant_hash` reference; the receiving worker resolves the full warrant from an in-process LRU (falling back to re-fetching from the source, e.g. Tenuo Cloud). This keeps per-event headers flat (~200 B) regardless of chain depth. Tracking: `temporal/warrant-cache-reference`.
 
 ### Access revocation
 
@@ -849,6 +849,8 @@ Both `tool_mappings` and `@tool()` can coexist; `tool_mappings` takes precedence
 ## Human Approval
 
 Gates and approvers live on the warrant. Configure `approval_handler` on `TenuoPluginConfig`, or pre-supply approvals per activity.
+
+A call the warrant does not grant is denied before an approver is asked. That check is capability scope. It does not check issuer trust, expiry, revocation, or PoP. If a gate fires, approvals are collected next. A pending handler may raise a retryable `ApplicationError`, and that attempt does not run the Activity. Once approvals are returned, the activity worker still checks trust, expiry, revocation, and PoP. Waiting does not extend the warrant TTL or the PoP window.
 
 | Signal | `ApplicationError.type` | Retry with |
 |--------|-------------------------|------------|

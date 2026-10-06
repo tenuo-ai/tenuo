@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Temporal retry window and approval order match the verifier.**
+  `retry_pop_max_windows=40` covers about 10 minutes on the past side.
+  Ten immediate retries under Temporal's default backoff take about 7
+  minutes. The activity worker denies an out-of-scope call before asking
+  an approver, then still checks trust, expiry, revocation, and PoP after
+  approvals return. The reference applies to tenuo 0.3.2.
 - **Temporal docs describe sandbox signing and signal allowlists as they behave.**
   `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and
   `GCPSecretManagerKeyResolver` call `resolve_sync` on a thread the workflow

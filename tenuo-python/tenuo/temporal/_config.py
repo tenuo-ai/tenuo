@@ -367,28 +367,28 @@ class TenuoPluginConfig:
     retried more than ~90 s after its first scheduling will fail PoP
     verification.
 
-    **Default ``40`` (±1200 s ≈ ±20 min)** is sized against Temporal's default
-    retry policy (``initial_interval=1s``, ``backoff_coefficient=2``,
-    ``max_interval=100s``), which places the Nth retry at roughly
-    ``1 + 2 + 4 + … + min(2^(N-1), 100)`` seconds. Concretely: ten retries
-    land at ~800 s and fifteen retries at ~1300 s, so 20 min of slack covers
-    the long-tail of flaky-backend scenarios without giving an attacker an
-    hour of replay headroom. A ``PopVerificationError`` on retry becomes
-    non-retryable, so too-tight a window silently turns transient failures
-    into permanent ones — that is precisely what this default prevents.
+    **Default ``40``** checks 20 windows of 30 s on the past side, about 10
+    minutes. Temporal's default retry policy (``initial_interval=1s``,
+    ``backoff_coefficient=2``, maximum interval 100× the initial interval)
+    waits about 7 minutes across ten retries that fail immediately
+    (1+2+4+8+16+32+64+100+100+100 seconds). That fits. Queue time and attempt
+    runtime use the remaining slack. A ``PopVerificationError`` on retry
+    becomes non-retryable, so a window that is too tight turns a transient
+    failure into a permanent one.
 
-    Set higher to accommodate longer retry windows:
+    The past side is ``(retry_pop_max_windows // 2) * 30`` seconds. To cover
+    ``T`` seconds of backoff, set ``retry_pop_max_windows`` to about
+    ``2 * ceil(T / 30)``:
 
-        # 120 × 30 s = 3600 s — covers up to 1 hour of Temporal retries
-        retry_pop_max_windows=120
+        # about 1 hour on the past side
+        retry_pop_max_windows=240
 
-        # 480 × 30 s = 14400 s — covers up to 4 hours
+        # about 2 hours on the past side
         retry_pop_max_windows=480
 
     **Security trade-off:** A wider window means a captured PoP is valid for
     longer on retried tasks (already a lesser concern since dedup is also
-    skipped for attempt > 1).  For most deployments the correct value is
-    ``ceil(max_retry_window_seconds / 30)``.
+    skipped for attempt > 1).
 
     Set to ``None`` to use the same strict window for all attempts, which
     preserves the tightest security guarantee but will cause retry failures for

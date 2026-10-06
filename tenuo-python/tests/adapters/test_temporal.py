@@ -599,35 +599,27 @@ class TestTenuoPluginConfig:
     def test_retry_pop_default_covers_temporal_default_backoff(self):
         """Default ``retry_pop_max_windows`` must survive Temporal's default retry policy.
 
-        Temporal's default exponential backoff (``initial_interval=1s``,
-        ``backoff_coefficient=2``, ``max_interval=100s``) places the Nth retry
-        at roughly ``1 + 2 + 4 + … + min(2^(N-1), 100)`` seconds. Ten retries
-        land at ~800 s and fifteen retries at ~1300 s. With a 30-second
-        window, that maps to ceil(800/30)=27 and ceil(1300/30)=44 windows.
-
-        The default must cover at least ten-retry scenarios to prevent
-        transient backend failures from becoming permanent via
-        ``PopVerificationError(non_retryable=True)``. Fifteen retries is the
-        upper tolerance: beyond ~22 minutes the operator should set the field
-        explicitly.
+        Ten immediate failures wait 1+2+4+8+16+32+64+100+100+100 seconds,
+        about 427 s. The verifier looks ``max_windows // 2`` windows of 30 s
+        into the past, so the default of 40 covers about 10 minutes.
         """
         resolver = MagicMock(spec=KeyResolver)
         cfg = TenuoPluginConfig(
             key_resolver=resolver,
             trusted_roots=_TEMPORAL_TRUST_ROOTS,
         )
-        # Simulate a 10-retry horizon under Temporal's default policy.
-        ten_retry_seconds = 1
+        ten_retry_seconds = 0
         interval = 1
         for _ in range(10):
-            interval = min(interval * 2, 100)
             ten_retry_seconds += interval
-        windows_needed = (ten_retry_seconds + 29) // 30  # ceil
+            interval = min(interval * 2, 100)
+        assert ten_retry_seconds == 427
         assert cfg.retry_pop_max_windows is not None
-        assert cfg.retry_pop_max_windows >= windows_needed, (
+        past_side_seconds = (cfg.retry_pop_max_windows // 2) * 30
+        assert past_side_seconds >= ten_retry_seconds, (
             f"Default retry_pop_max_windows={cfg.retry_pop_max_windows} "
-            f"cannot cover a 10-retry horizon (~{ten_retry_seconds} s, "
-            f"~{windows_needed} windows) under Temporal's default policy."
+            f"covers {past_side_seconds} s on the past side, short of a "
+            f"10-retry horizon (~{ten_retry_seconds} s)."
         )
 
     def test_trusted_approvers_not_accepted_on_config(self):
