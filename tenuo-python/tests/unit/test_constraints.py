@@ -18,6 +18,8 @@ from tenuo_core import Cidr, UrlPattern
 
 from tenuo import (
     Exact,
+    NotOneOf,
+    OneOf,
     Pattern,
     Range,
     SigningKey,
@@ -179,6 +181,40 @@ def test_annotated_exact_matches_typed_and_string_values():
     run_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
     assert _check_annotated_constraint(Exact(str(run_id)), run_id)
     assert not _check_annotated_constraint(Exact(str(uuid.uuid4())), run_id)
+
+
+def test_oneof_non_string_values():
+    """OneOf and NotOneOf accept non-string values and match them type-strictly."""
+
+    @guard(tool="set_priority")
+    def set_priority(level: int) -> str:
+        return f"priority {level}"
+
+    kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
+    warrant = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("set_priority", {"level": OneOf([1, 2, 3])}),
+        holder=kp.public_key,
+        ttl_seconds=60,
+    )
+
+    with warrant_scope(warrant), key_scope(kp):
+        assert set_priority(level=2) == "priority 2"
+
+        with pytest.raises(ScopeViolation):
+            set_priority(level=4)
+
+        with pytest.raises(ScopeViolation):
+            set_priority(level="2")
+
+    assert OneOf([1, 2]).contains(1)
+    assert not OneOf([1, 2]).contains("1")
+    assert OneOf(["a", 1, None]).contains(None)
+    assert OneOf([1, 2]).values == [1, 2]
+    assert not NotOneOf([0]).allows(0)
+    assert NotOneOf([0]).allows("0")
+    assert NotOneOf([0]).excluded == [0]
 
 
 def test_multiple_constraints():

@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ensure_constraint()` can wrap non-string literals. Integers outside the
   64-bit range raise `ValidationError` instead of widening to a float that would
   match neighboring values; pass them as strings.
+- **Python `OneOf` and `NotOneOf` accept non-string values.** `OneOf([1, 2])`
+  and `NotOneOf([0])` raised `TypeError`, although
+  `ensure_constraint`'s docstring recommends `OneOf([1, 2])`. Both now take int,
+  float, bool, `None`, list and dict values, mixed if needed, and match them
+  type-strictly in warrants, as the Rust core already did. `OneOf.contains()`
+  and `NotOneOf.allows()` accept the same types. For `Annotated` parameter
+  constraints, string sets still match non-string arguments by their `str()`
+  form, and `NotOneOf` excludes a value if either form is listed.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed

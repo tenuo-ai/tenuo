@@ -647,11 +647,19 @@ pub struct PyOneOf {
 
 #[pymethods]
 impl PyOneOf {
+    /// Create a one-of constraint.
+    ///
+    /// Values may be str, int, float, bool, None, list or dict, and can be mixed.
+    /// Matching is type-strict, so ``OneOf([1, 2])`` does not match ``"1"``.
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: OneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_constraint_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: OneOf::from_values(values),
+        })
     }
 
     /// Validate that another OneOf is a valid attenuation (narrowing) of this one.
@@ -679,9 +687,11 @@ impl PyOneOf {
     ///     True
     ///     >>> o.contains("development")
     ///     False
-    fn contains(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        self.inner.contains(&cv)
+    ///     >>> OneOf([1, 2]).contains(1)
+    ///     True
+    fn contains(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        Ok(self.inner.contains(&cv))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -715,11 +725,19 @@ pub struct PyNotOneOf {
 
 #[pymethods]
 impl PyNotOneOf {
+    /// Create an exclusion constraint.
+    ///
+    /// Values may be str, int, float, bool, None, list or dict, and can be mixed.
+    /// Matching is type-strict, so ``NotOneOf([0])`` still allows ``"0"``.
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: NotOneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_constraint_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: NotOneOf::from_values(values),
+        })
     }
 
     /// Validate that another NotOneOf is a valid attenuation (narrowing) of this one.
@@ -747,9 +765,11 @@ impl PyNotOneOf {
     ///     True
     ///     >>> n.allows("admin")
     ///     False
-    fn allows(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        !self.inner.excluded.contains(&cv)
+    ///     >>> NotOneOf([0]).allows(0)
+    ///     False
+    fn allows(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        Ok(!self.inner.is_excluded(&cv))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.

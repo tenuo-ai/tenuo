@@ -249,13 +249,15 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
         if hasattr(constraint, "matches") and constraint_type == "Exact":
             return bool(_typed_check(constraint.matches, value)) or constraint.matches(str(value))
 
-        # OneOf - set membership (Rust core)
+        # OneOf - set membership (Rust core). Typed sets match the value as
+        # passed; the str() form keeps string sets matching non-string args.
         if hasattr(constraint, "contains") and constraint_type == "OneOf":
-            return constraint.contains(str(value))
+            return constraint.contains(value) or constraint.contains(str(value))
 
-        # NotOneOf - exclusion list (Rust core)
+        # NotOneOf - exclusion list (Rust core). Excluded if either form is
+        # in the set, so string exclusion lists still block non-string args.
         if hasattr(constraint, "allows") and constraint_type == "NotOneOf":
-            return constraint.allows(str(value))
+            return constraint.allows(value) and constraint.allows(str(value))
 
         # Wildcard - matches anything (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Wildcard":
