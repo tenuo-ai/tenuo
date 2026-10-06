@@ -584,11 +584,15 @@ pub struct PyExact {
 
 #[pymethods]
 impl PyExact {
+    /// Create an exact-value constraint.
+    ///
+    /// Accepts any argument value: str, int, float, bool, None, list or dict.
+    /// The match is type-strict, so ``Exact(42)`` matches ``42`` but not ``"42"``.
     #[new]
-    fn new(value: &str) -> Self {
-        Self {
-            inner: Exact::new(value),
-        }
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: Exact::new(py_to_constraint_value(value)?),
+        })
     }
 
     /// Check if a value matches this exact constraint.
@@ -596,7 +600,7 @@ impl PyExact {
     /// This is the runtime check used for Tier 1 authorization.
     ///
     /// Args:
-    ///     value: Value to check (will be converted to string for comparison)
+    ///     value: Value to check. Types must match: ``Exact(42)`` does not match ``"42"``.
     ///
     /// Returns:
     ///     True if value matches exactly, False otherwise
@@ -607,8 +611,11 @@ impl PyExact {
     ///     True
     ///     >>> e.matches("staging")
     ///     False
-    fn matches(&self, value: &str) -> bool {
-        self.inner.value.as_str() == Some(value)
+    ///     >>> Exact(42).matches(42)
+    ///     True
+    fn matches(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -618,7 +625,10 @@ impl PyExact {
     }
 
     fn __repr__(&self) -> String {
-        format!("Exact('{}')", self.inner.value)
+        match &self.inner.value {
+            ConstraintValue::String(s) => format!("Exact('{}')", s),
+            other => format!("Exact({})", other),
+        }
     }
 
     #[getter]

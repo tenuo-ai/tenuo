@@ -90,6 +90,42 @@ def test_exact_constraint_matching():
             delete_database(db_name="test-db-2")
 
 
+def test_exact_non_string_values():
+    """Exact accepts non-string values and matches them type-strictly."""
+
+    @guard(tool="update_invoice")
+    def update_invoice(invoice_id: int) -> str:
+        return f"updated {invoice_id}"
+
+    kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
+    warrant = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("update_invoice", {"invoice_id": Exact(42)}),
+        holder=kp.public_key,
+        ttl_seconds=60,
+    )
+
+    with warrant_scope(warrant), key_scope(kp):
+        assert update_invoice(invoice_id=42) == "updated 42"
+
+        with pytest.raises(ScopeViolation):
+            update_invoice(invoice_id=43)
+
+        with pytest.raises(ScopeViolation):
+            update_invoice(invoice_id="42")
+
+    assert Exact(42).matches(42)
+    assert not Exact(42).matches("42")
+    assert not Exact("42").matches(42)
+    assert not Exact(True).matches(1)
+    assert Exact(None).matches(None)
+    assert Exact([1, 2]).matches([1, 2])
+    assert Exact(42).value == 42
+    assert repr(Exact(42)) == "Exact(42)"
+    assert repr(Exact("prod")) == "Exact('prod')"
+
+
 def test_multiple_constraints():
     """Test that multiple constraints are all enforced."""
 
