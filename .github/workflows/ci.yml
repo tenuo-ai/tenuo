@@ -207,7 +207,7 @@ jobs:
           echo "=== Site packages ==="
           ls -la $(python -c "import site; print(site.getsitepackages()[0])") | head -20
           echo "=== Installing other deps ==="
-          uv pip install --system pytest pytest-asyncio ruff mypy
+          uv pip install --system pytest pytest-asyncio hypothesis ruff mypy
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
           uv pip install --system types-PyYAML types-requests
@@ -261,6 +261,8 @@ jobs:
 
       - name: Test
         working-directory: tenuo-python
+        env:
+          HYPOTHESIS_PROFILE: ci
         run: |
           if [ "${{ matrix.python-version }}" = "3.14" ]; then
             pytest -v -m "not temporal_live" \

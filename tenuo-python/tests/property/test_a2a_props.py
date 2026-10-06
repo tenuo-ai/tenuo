@@ -2,7 +2,7 @@
 
 Verifies:
 - A2A server module uses Authorizer from tenuo_core
-- validate_warrant calls authorize_one/check_chain (source inspection)
+- validate_warrant's PoP path goes through verify_inbound_call (source inspection)
 - Arbitrary base64 warrant strings don't crash validate_warrant
 """
 
@@ -60,15 +60,16 @@ class TestA2AServerUsesRust:
 
 class TestA2AServerRequirePopPath:
     def test_require_pop_source_calls_authorizer(self):
-        """When require_pop=True, validate_warrant uses Authorizer for PoP verification."""
+        """When require_pop=True, validate_warrant verifies PoP through the shared inbound PEP."""
         try:
             from tenuo.a2a import server as a2a_server
         except ImportError:
             pytest.skip("a2a dependencies not installed")
 
         source = inspect.getsource(a2a_server)
-        # The require_pop path must construct and call Authorizer
-        assert "authorize_one(" in source or "check_chain(" in source
+        # The require_pop path must go through verify_inbound_call, which
+        # calls the Rust Authorizer. Adapters must not call it directly.
+        assert "verify_inbound_call(" in source
 
 
 # ---------------------------------------------------------------------------

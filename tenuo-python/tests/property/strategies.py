@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from hypothesis import strategies as st
 
 from tenuo import SigningKey, Warrant
+from tenuo.mcp.client import argument_json
+from tenuo_core import sign_meta
 from tenuo.bound_warrant import BoundWarrant
 
 # ---------------------------------------------------------------------------
@@ -174,15 +176,21 @@ def st_valid_mcp_envelope(
     has properly base64-encoded warrant and signature.
     """
     warrant, key, tool, tool_args = draw(st_warrant_bundle())
-    pop = warrant.sign(key, tool, tool_args, int(time.time()))
-
-    meta = {
-        "tenuo": {
-            "warrant": warrant.to_base64(),
-            "signature": base64.b64encode(bytes(pop)).decode(),
-        }
-    }
+    meta = {"tenuo": mcp_sign_meta(warrant, key, tool, tool_args)}
     return meta, warrant, key, tool, tool_args
+
+
+def mcp_sign_meta(
+    warrant: Warrant, key: SigningKey, tool: str, args: Dict[str, Any]
+) -> Dict[str, str]:
+    """Sign ``_meta.tenuo`` the way ``SecureMCPClient`` does.
+
+    MCP proof-of-possession covers the argument JSON text, where a
+    whole-number float such as ``2.0`` is written as ``2``. ``Warrant.sign``
+    signs the Python value instead, so its signature only verifies over MCP
+    when the arguments have no whole-number floats.
+    """
+    return dict(sign_meta([warrant], key, tool, argument_json(args), int(time.time())))
 
 
 # ---------------------------------------------------------------------------
