@@ -1,6 +1,8 @@
 import os
 import sys
+import types
 import unittest
+from unittest import mock
 from unittest.mock import MagicMock
 
 # External dependencies might still be missing in some minimal envs, so we conditionally mock them
@@ -29,7 +31,14 @@ if "pydantic" in sys.modules and isinstance(sys.modules["pydantic"], MagicMock):
 os.environ["TENUO_TEST_MODE"] = "1"
 
 from tenuo.exceptions import AuthorizationDenied  # noqa: E402
-from tenuo.testing import AuthorizationAssertionError, assert_authorized, assert_denied  # noqa: E402
+from tenuo.testing import (  # noqa: E402
+    AuthorizationAssertionError,
+    _is_test_environment,
+    assert_authorized,
+    assert_can_grant,
+    assert_cannot_grant,
+    assert_denied,
+)
 
 
 class TestDXTooling(unittest.TestCase):
@@ -136,3 +145,94 @@ class TestWarrantAssertionTrustAnchor(unittest.TestCase):
             trusted_roots=[self.warrant.issuer],
         ):
             pass
+
+
+class TestGrantAssertions(unittest.TestCase):
+    """assert_can_grant / assert_cannot_grant against real grants.
+
+    assert_can_grant used to pass the parent's timedelta TTL to the builder,
+    so every grant raised TypeError and assert_cannot_grant, which treated any
+    failure as a refusal, passed vacuously.
+    """
+
+    def setUp(self):
+        from tenuo import Exact, SigningKey, Warrant
+
+        self.Exact = Exact
+        self.key = SigningKey.generate()
+        self.parent = (
+            Warrant.mint_builder()
+            .capability("read_record", record_id=Exact("a"))
+            .holder(self.key.public_key)
+            .ttl(300)
+            .mint(self.key)
+        )
+
+    def test_can_grant_returns_a_usable_child(self):
+        child, child_key = assert_can_grant(self.parent, self.key, ["read_record"], {"record_id": self.Exact("a")})
+        self.assertEqual(child.expires_at(), self.parent.expires_at())
+        with assert_authorized(child, child_key, "read_record", {"record_id": "a"}):
+            pass
+
+    def test_can_grant_rejects_a_widening(self):
+        with self.assertRaises(AuthorizationAssertionError):
+            assert_can_grant(self.parent, self.key, ["read_record"], {"record_id": self.Exact("b")})
+
+    def test_cannot_grant_accepts_a_widened_value(self):
+        assert_cannot_grant(
+            self.parent,
+            self.key,
+            ["read_record"],
+            {"record_id": self.Exact("b")},
+            expected_reason="ExactValueMismatch",
+        )
+
+    def test_cannot_grant_accepts_an_unheld_tool(self):
+        assert_cannot_grant(self.parent, self.key, ["delete_record"], expected_reason="MonotonicityError")
+
+    def test_cannot_grant_rejects_a_valid_narrowing(self):
+        """The regression: a grant that succeeds must fail the assertion."""
+        with self.assertRaisesRegex(AuthorizationAssertionError, "Expected grant to FAIL"):
+            assert_cannot_grant(self.parent, self.key, ["read_record"], {"record_id": self.Exact("a")})
+
+    def test_cannot_grant_custom_message_still_fails(self):
+        with self.assertRaisesRegex(AuthorizationAssertionError, "^custom$"):
+            assert_cannot_grant(
+                self.parent, self.key, ["read_record"], {"record_id": self.Exact("a")}, message="custom"
+            )
+
+    def test_cannot_grant_rejects_a_non_attenuation_failure(self):
+        """Signing with a key that does not hold the parent is a broken test, not a refusal."""
+        from tenuo import SigningKey
+
+        with self.assertRaisesRegex(AuthorizationAssertionError, "attenuation reason"):
+            assert_cannot_grant(self.parent, SigningKey.generate(), ["delete_record"])
+
+    def test_cannot_grant_checks_expected_reason(self):
+        with self.assertRaisesRegex(AuthorizationAssertionError, "does not contain"):
+            assert_cannot_grant(self.parent, self.key, ["delete_record"], expected_reason="ClearanceViolation")
+
+
+class TestEnvironmentDetection(unittest.TestCase):
+    """Detection without TENUO_TEST_MODE, as a consumer's test suite runs.
+
+    The pytest check used to look for the word "pytest" inside the test id, so
+    it only passed when the test path happened to contain it.
+    """
+
+    def _detect(self, env, main_spec_name):
+        main = types.ModuleType("__main__")
+        main.__spec__ = types.SimpleNamespace(name=main_spec_name) if main_spec_name else None
+        clean = {k: v for k, v in os.environ.items() if k not in ("TENUO_TEST_MODE", "PYTEST_CURRENT_TEST")}
+        with mock.patch.dict(os.environ, {**clean, **env}, clear=True):
+            with mock.patch.dict(sys.modules, {"__main__": main}):
+                return _is_test_environment()
+
+    def test_pytest_test_id_without_pytest_in_path(self):
+        self.assertTrue(self._detect({"PYTEST_CURRENT_TEST": "tests/test_app.py::test_read (call)"}, None))
+
+    def test_python_m_unittest(self):
+        self.assertTrue(self._detect({}, "unittest.__main__"))
+
+    def test_plain_script_is_not_a_test_environment(self):
+        self.assertFalse(self._detect({}, None))
