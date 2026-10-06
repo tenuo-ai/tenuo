@@ -249,6 +249,7 @@ from tenuo.temporal import KeyResolver, KeyResolutionError, TenuoPluginConfig
 config = TenuoPluginConfig(
     signing_key=holder_signing_key,
     trusted_roots=[root_key.public_key],
+    strict_mode=True,
 )
 
 # Several holder keys. Fill `keys` before Worker(...). Do not fetch inside resolve_sync.
@@ -268,6 +269,7 @@ class MemoryKeyResolver(KeyResolver):
 config = TenuoPluginConfig(
     key_resolver=MemoryKeyResolver(keys),
     trusted_roots=[root_key.public_key],
+    strict_mode=True,
 )
 ```
 
