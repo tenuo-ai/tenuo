@@ -1210,7 +1210,8 @@ class TenuoActivityInboundInterceptor:
                     logger.debug(
                         "Activity '%s' is a retry (attempt=%d). If this fails with "
                         "PopVerificationError, set TenuoPluginConfig.retry_pop_max_windows "
-                        "to accommodate Temporal's retry time offset (e.g. 120 for 1 hour).",
+                        "to accommodate Temporal's retry time offset "
+                        "(e.g. 240 for about an hour on the past side).",
                         tool_name, info.attempt,
                     )
                 authorizer = self._authorizer
