@@ -50,9 +50,9 @@ hermes plugins install hermes-tenuo
 hermes plugins enable hermes-tenuo
 ```
 
-`install` shows the catalog entry and its disclosure, clones the reviewed commit, and asks for `TENUO_WARRANT` and `TENUO_SIGNING_KEY`. You do not have them yet, so leave both empty and continue. `enable` installs the `tenuo` dependency into the Hermes runtime.
+This is the supported installation path. `install` shows the catalog entry and its disclosure, clones the reviewed commit, and asks for `TENUO_WARRANT` and `TENUO_SIGNING_KEY`. You create them in the next step, so leave both empty and continue. `enable` activates the plugin and installs its `tenuo` dependency into the Hermes runtime.
 
-If you manage the Hermes venv yourself, `pip install hermes-tenuo` into that venv instead. That route also puts the `hermes-tenuo` command on your path.
+For direct package installation, custom Hermes environments, or unreleased builds, follow the installation guidance in the [hermes-tenuo repository](https://github.com/tenuo-ai/hermes-tenuo#install-into-hermes).
 
 ---
 
