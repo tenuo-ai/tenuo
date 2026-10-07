@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
+  passed the parent's `timedelta` TTL to the grant builder, so every grant
+  failed with `TypeError`, and `assert_cannot_grant` passed for any grant,
+  including a valid narrowing. Children now expire with the parent.
+  `assert_cannot_grant` passes only for an attenuation refusal
+  (`MonotonicityError`, `ClearanceViolation`, `LimitError`), matches
+  `expected_reason` against `"<ExceptionType>: <message>"`, and still fails
+  when given a custom `message`.
+- **`tenuo.testing` helpers recognise pytest and unittest.** Detection looked
+  for the word `pytest` inside the running test id and inspected the wrong
+  object for unittest, so the helpers raised "only works in test
+  environments" unless `TENUO_TEST_MODE=1` was set. Docs and docstrings now
+  show the warrant form of `assert_authorized` / `assert_denied` entered with
+  `with` and use the `error_code` values that are actually raised.
 - **Temporal docs describe sandbox signing and signal allowlists as they behave.**
   `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and
   `GCPSecretManagerKeyResolver` call `resolve_sync` on a thread the workflow
