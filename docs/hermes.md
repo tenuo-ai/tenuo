@@ -1,13 +1,13 @@
 ---
 title: Hermes Agent Integration
-description: Signed, expiring permission for every Hermes Agent tool call
+description: Signed, expiring authorization for Hermes Agent tool calls
 ---
 
 # Tenuo Hermes Agent Integration
 
 ## Overview
 
-[hermes-tenuo](https://github.com/tenuo-ai/hermes-tenuo) is a [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin. It checks every tool call against a Tenuo warrant before the handler runs: the tool name and each argument. A warrant is signed and it expires. When a call falls outside it, the handler never runs, and the model gets the reason back as the tool result.
+[hermes-tenuo](https://github.com/tenuo-ai/hermes-tenuo) is the official Tenuo integration for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Hermes routes agent-loop tool calls through the plugin before the handler runs, where Tenuo checks the tool name and every argument against a signed, expiring warrant. When a call falls outside the warrant, the handler never runs, and the model gets the reason back as the tool result.
 
 ```text
 ALLOW  read_file  path=/data/reports/q3.csv
@@ -71,6 +71,8 @@ This generates a key pair and a warrant, and prints the config block to paste:
 ```yaml
 # ~/.hermes/config.yaml
 plugins:
+  enabled:
+    - hermes-tenuo
   entries:
     hermes-tenuo:
       warrant: <base64>            # or a path to a .warrant file
@@ -156,15 +158,15 @@ Not sure what to allow yet? Set `on_denial: log` under `plugins.entries.hermes-t
 | `subagent_start` | Hands the child warrant to the new `delegate_task` session. |
 | `on_session_end` | Clears the session's warrant, so gateway users never share one. |
 
-The check runs in Tenuo's Rust core: signature, expiry, holder [proof-of-possession](./concepts), and every argument constraint. The plugin holds only the issuer's public key.
+The check runs in Tenuo's Rust core: signature, expiry, holder [proof-of-possession](./concepts), and every argument constraint. The plugin trusts the issuer's public key; the issuer's private key never enters Hermes. The holder signing key remains local to Hermes for proof-of-possession and delegated warrants.
 
 A plugin with a configured warrant that is missing, empty, or fails to load blocks every call. It does not fall back to allowing them.
 
 ### Coverage
 
-`pre_tool_call` runs on tool calls from the agent loop, including tools Hermes handles before the tool registry (`todo`, `memory`, `session_search`, `delegate_task`) and tool calls made from inside `execute_code` scripts.
+Hermes routes agent-loop tool calls through `pre_tool_call`, including tools handled before the tool registry (`todo`, `memory`, `session_search`, `delegate_task`) and tool calls made from inside `execute_code` scripts.
 
-It does not run when another plugin calls a tool directly through `ctx.dispatch_tool()`. Only install plugins you trust alongside it. The plugin also does not inspect what an `execute_code` script does on its own, such as starting a subprocess. Use a container terminal backend (Docker, Modal, Daytona) for that.
+Direct dispatch by another plugin through `ctx.dispatch_tool()` is outside this hook, so install trusted plugins alongside it. Code that an `execute_code` script runs on its own, such as a subprocess, belongs to the terminal sandbox boundary; use a container backend (Docker, Modal, Daytona) to isolate those effects.
 
 ---
 
