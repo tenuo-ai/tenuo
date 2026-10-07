@@ -1785,20 +1785,20 @@ impl PyUrlSafe {
         block_metadata: bool,
         block_reserved: bool,
         block_internal_tlds: bool,
-    ) -> Self {
-        Self {
-            inner: UrlSafe {
-                schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
-                allow_domains,
-                deny_domains,
-                allow_ports,
-                block_private,
-                block_loopback,
-                block_metadata,
-                block_reserved,
-                block_internal_tlds,
-            },
-        }
+    ) -> PyResult<Self> {
+        let inner = UrlSafe {
+            schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
+            allow_domains,
+            deny_domains,
+            allow_ports,
+            block_private,
+            block_loopback,
+            block_metadata,
+            block_reserved,
+            block_internal_tlds,
+        };
+        inner.validate().map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Check if a URL is safe to fetch.

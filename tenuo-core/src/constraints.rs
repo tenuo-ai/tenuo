@@ -2625,6 +2625,88 @@ const INTERNAL_TLDS: &[&str] = &[
 ];
 
 impl UrlSafe {
+    fn canonical_domain_pattern(pattern: &str) -> Result<String> {
+        use url::Host;
+
+        if pattern.is_empty() {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must not be empty".to_string(),
+            });
+        }
+
+        let (wildcard, host_pattern) = match pattern.strip_prefix("*.") {
+            Some(suffix) => (true, suffix),
+            None => (false, pattern),
+        };
+        if host_pattern.is_empty() || host_pattern.contains('*') {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must be a host name or *.host name".to_string(),
+            });
+        }
+
+        let host = Host::parse(host_pattern).map_err(|error| Error::InvalidUrl {
+            url: pattern.to_string(),
+            reason: format!("invalid domain pattern: {error}"),
+        })?;
+        let canonical = match host {
+            Host::Domain(domain) => {
+                let labels = domain.strip_suffix('.').unwrap_or(&domain);
+                let valid = !labels.is_empty()
+                    && !labels.ends_with('.')
+                    && labels.split('.').all(|label| {
+                        !label.is_empty()
+                            && label.len() <= 63
+                            && label
+                                .as_bytes()
+                                .first()
+                                .is_some_and(u8::is_ascii_alphanumeric)
+                            && label
+                                .as_bytes()
+                                .last()
+                                .is_some_and(u8::is_ascii_alphanumeric)
+                            && label
+                                .bytes()
+                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                    });
+                if !valid {
+                    return Err(Error::InvalidUrl {
+                        url: pattern.to_string(),
+                        reason: "domain pattern contains an invalid host name".to_string(),
+                    });
+                }
+                domain
+            }
+            _ if wildcard => {
+                return Err(Error::InvalidUrl {
+                    url: pattern.to_string(),
+                    reason: "wildcards require a domain name suffix".to_string(),
+                });
+            }
+            host => host.to_string(),
+        }
+        .to_lowercase();
+        Ok(if wildcard {
+            format!("*.{canonical}")
+        } else {
+            canonical
+        })
+    }
+
+    /// Validate domain allow- and deny-list configuration.
+    pub fn validate(&self) -> Result<()> {
+        for pattern in self
+            .allow_domains
+            .iter()
+            .flatten()
+            .chain(self.deny_domains.iter().flatten())
+        {
+            Self::canonical_domain_pattern(pattern)?;
+        }
+        Ok(())
+    }
+
     /// Create a new UrlSafe constraint with secure defaults.
     ///
     /// Blocks private IPs, loopback, metadata endpoints, and dangerous schemes.
@@ -2667,6 +2749,8 @@ impl UrlSafe {
     /// into a policy oracle.
     pub fn rejection_reason(&self, url: &str) -> Result<Option<UrlSafeRejection>> {
         use url::Url;
+
+        self.validate()?;
 
         // Reject null bytes
         if url.contains('\0') {
@@ -2742,12 +2826,12 @@ impl UrlSafe {
             if self.looks_like_ambiguous_ip(&host) {
                 return Ok(Some(UrlSafeRejection::AmbiguousIp));
             }
+        }
 
-            // Check domain allowlist (hostnames only — IPs use block_* flags)
-            if let Some(ref domains) = self.allow_domains {
-                if !self.check_domain_allowed(&host, domains) {
-                    return Ok(Some(UrlSafeRejection::DomainAllowList));
-                }
+        // An allowlist constrains every host, including public IP literals.
+        if let Some(ref domains) = self.allow_domains {
+            if !self.check_domain_allowed(&host, domains) {
+                return Ok(Some(UrlSafeRejection::DomainAllowList));
             }
         }
 
@@ -2982,7 +3066,9 @@ impl UrlSafe {
     /// Check if hostname matches domain allowlist.
     fn check_domain_allowed(&self, host: &str, domains: &[String]) -> bool {
         for pattern in domains {
-            let pattern = pattern.to_lowercase();
+            let Ok(pattern) = Self::canonical_domain_pattern(pattern) else {
+                continue;
+            };
             if pattern.starts_with("*.") {
                 // Wildcard subdomain: *.example.com matches sub.example.com
                 let suffix = &pattern[1..]; // .example.com
@@ -5794,6 +5880,33 @@ mod tests {
         assert!(us.is_safe("https://api.github.com/repos").unwrap());
         assert!(us.is_safe("https://sub.example.com/path").unwrap());
         assert!(!us.is_safe("https://other.com/").unwrap());
+        assert!(!us.is_safe("https://8.8.8.8/").unwrap());
+
+        let exact_ip = UrlSafe::with_domains(vec!["8.8.8.8"]);
+        assert!(exact_ip.is_safe("https://8.8.8.8/").unwrap());
+        assert!(!exact_ip.is_safe("https://1.1.1.1/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_rejects_invalid_domain_patterns() {
+        for pattern in [
+            "",
+            "*",
+            "*.",
+            "*..example.com",
+            "foo.*.com",
+            "https://example.com",
+        ] {
+            let us = UrlSafe::with_domains(vec![pattern]);
+            assert!(
+                us.validate().is_err(),
+                "accepted invalid pattern {pattern:?}"
+            );
+            assert!(
+                us.is_safe("https://example.com/").is_err(),
+                "evaluated invalid pattern {pattern:?}"
+            );
+        }
     }
 
     #[test]
