@@ -45,6 +45,7 @@ Guidance for agents writing code with Tenuo:
 - [Temporal Nexus](https://tenuo.ai/temporal-nexus): Authorization across Temporal Nexus namespace boundaries
 - [Kubernetes](https://tenuo.ai/kubernetes): Deployment patterns for Kubernetes
 - [TypeScript SDK](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-ts/README.md): `@tenuo/core` and `@tenuo/mcp` (beta)
+- [Hermes Agent](https://tenuo.ai/hermes): Signed, expiring permission for every Hermes Agent tool call (`hermes-tenuo` plugin)
 - [Claude Code](https://github.com/tenuo-ai/tenuo-claude-code): Task-scoped governance for Claude Code via hooks and an MCP proxy
 
 ## Protocol and spec

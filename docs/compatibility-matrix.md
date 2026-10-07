@@ -27,6 +27,7 @@ with the same `MAJOR.MINOR.PATCH`.
 | **OpenAI** | 1.0.0 | 2.x / 3.x | 3.7.0 | Stable | Agents SDK (`openai-agents`) tested at 0.22.0. CrewAI still requires `openai<3`. |
 | **OpenAI Agents** | 0.1 (via openai extra) | latest | 0.22.0 | Stable | Guardrail conversion covered by smoke + adapter tests. |
 | **CrewAI** | 1.5.0 | 1.x latest | 1.15.18 | Stable | `GuardedCrew` needs the `crewai.hooks` API (1.5.0+). Pins `openai<3` and `mcp~=1.28` — do not co-install with FastMCP 4 / OpenAI 3 in one env. |
+| **Hermes Agent** | 0.20 | latest | upstream `main` (nightly) | Beta | Separate plugin package, `hermes-tenuo` 0.1.3. Requires `tenuo>=0.3.2`. |
 | **AutoGen** | 0.7.0 | 0.7+ latest | 0.7.5 | Stable | Use `autogen-agentchat` / `autogen-ext` (not stale `0.0.x` squat packages). |
 | **LangChain** | 0.2.0 | 1.x latest | 1.3.18 / core 1.6.1 | Stable | |
 | **LangGraph** | 0.2.0 | 1.x latest | 1.2.11 | Stable | Requires `langchain-core>=0.2.27`. |
@@ -106,6 +107,14 @@ with the same `MAJOR.MINOR.PATCH`.
 - **1.23.0**: Minimum for `TenuoTemporalPlugin` (`SimplePlugin`).
 - Replay safety and live Temporal jobs run in the weekly compatibility matrix.
 
+### Hermes Agent
+**Current Status**: Beta
+
+**Version Notes**:
+- **0.20**: Minimum for the `hermes-tenuo` plugin.
+- A nightly job in [hermes-tenuo](https://github.com/tenuo-ai/hermes-tenuo) loads the plugin through upstream Hermes `main`'s plugin loader.
+- Calls a plugin makes through `ctx.dispatch_tool()` do not pass through `pre_tool_call`. See [Coverage](./hermes#coverage).
+
 ### FastAPI
 **Current Status**: Stable
 
@@ -124,6 +133,7 @@ Last local probe: 2026-09-02 (adapter suites + expanded smoke tests)
 | OpenAI Agents | — | Pass (0.22.0) | Not tested |
 | CrewAI | Pass (1.5.0) | Pass (1.15.18) | Not tested |
 | AutoGen | Pass (0.7.0) | Pass (0.7.5) | Not tested |
+| Hermes Agent | Not tested | — | Pass (upstream `main`, nightly) |
 | LangChain | Pass (0.2.x) | Pass (1.3.18) | Not tested |
 | LangGraph | Pass (0.2.0) | Pass (1.2.11) | Not tested |
 | MCP | Pass (1.9.4) | Pass (2.1.1) | Not tested |
