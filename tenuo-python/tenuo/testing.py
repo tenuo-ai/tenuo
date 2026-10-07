@@ -23,7 +23,13 @@ try:
 except ImportError:
     _WARRANT_HEADER = "X-Tenuo-Warrant"
 
-from .exceptions import AuthorizationDenied, ConfigurationError
+from .exceptions import (
+    AuthorizationDenied,
+    ClearanceViolation,
+    ConfigurationError,
+    LimitError,
+    MonotonicityError,
+)
 
 
 def _is_test_environment() -> bool:
@@ -39,15 +45,16 @@ def _is_test_environment() -> bool:
     if os.getenv("TENUO_TEST_MODE") == "1":
         return True
 
-    # Check if running under pytest
-    if "pytest" in os.getenv("PYTEST_CURRENT_TEST", ""):
+    # pytest sets PYTEST_CURRENT_TEST (a test id) while a test runs
+    if os.getenv("PYTEST_CURRENT_TEST"):
         return True
 
-    # Check if running under unittest
+    # Check if running under unittest (python -m unittest)
     import sys
 
     main_module = sys.modules.get("__main__")
-    if main_module and "unittest" in str(type(main_module)):
+    main_spec = getattr(main_module, "__spec__", None)
+    if main_spec is not None and (main_spec.name or "").startswith("unittest"):
         return True
 
     return False
@@ -268,14 +275,16 @@ def assert_authorized(
     """
     Assert that code is authorized or that a warrant matches.
 
-    Can be used as a context manager or a function.
-
     Context Manager Usage:
         with assert_authorized():
             protected_function()
 
-    Function Usage:
-        assert_authorized(warrant, key, "tool", args)
+    Warrant Usage:
+        with assert_authorized(warrant, key, "tool", args):
+            pass
+
+    Both forms must be entered with ``with``. Calling it without ``with``
+    returns an unentered context manager and checks nothing.
 
     Pass ``trusted_roots`` to assert issuer trust too; the default anchors on
     the configured roots, then the warrant's own issuer, so a self-minted test
@@ -333,11 +342,17 @@ def assert_denied(
     Assert that code raises AuthorizationDenied or a warrant denies access.
 
     Context Manager Usage:
-        with assert_denied(code="ScopeViolation"):
+        with assert_denied(code="authorization_denied"):
             protected_function()
 
-    Function Usage:
-        assert_denied(warrant, key, "tool", expected_reason="...")
+    Warrant Usage:
+        with assert_denied(warrant, key, "tool", args):
+            pass
+
+    Both forms must be entered with ``with``. Calling it without ``with``
+    returns an unentered context manager and checks nothing. ``code`` is
+    matched against the ``error_code`` of the ``AuthorizationDenied`` raised
+    (``"authorization_denied"`` for a ``@guard`` constraint failure).
 
     Pass ``trusted_roots`` to assert issuer trust too; the default anchors on
     the configured roots, then the warrant's own issuer, so a self-minted test
@@ -402,6 +417,26 @@ def assert_denied(
     raise AssertionError(message or "Expected AuthorizationDenied but code succeeded")
 
 
+# Grant refusals that mean "the parent cannot delegate this". Anything else
+# (wrong parent key, malformed constraint) is a broken test, not a refusal.
+_ATTENUATION_ERRORS = (MonotonicityError, ClearanceViolation, LimitError)
+
+
+def _attempt_grant(
+    parent: Warrant,
+    parent_key: SigningKey,
+    child_tools: List[str],
+    child_constraints: Optional[dict],
+) -> Tuple[Warrant, SigningKey]:
+    child_key = SigningKey.generate()
+    builder = parent.grant_builder()
+    for tool in child_tools:
+        builder.capability(tool, child_constraints or {})
+    # No TTL: the child inherits the parent's expiry.
+    builder.holder(child_key.public_key)
+    return builder.grant(parent_key), child_key
+
+
 def assert_can_grant(
     parent: Warrant,
     parent_key: SigningKey,
@@ -414,13 +449,14 @@ def assert_can_grant(
     Assert that a grant (delegation) from parent to child is valid.
 
     This verifies monotonic attenuation - that the child warrant
-    has properly narrowed capabilities from the parent.
+    has properly narrowed capabilities from the parent. The child
+    expires with the parent.
 
     Args:
         parent: Parent warrant to grant from
-        parent_key: Signing key for parent
+        parent_key: Signing key of the parent's holder
         child_tools: List of tools for child warrant
-        child_constraints: Additional constraints for child (optional)
+        child_constraints: Constraints applied to every child tool (optional)
         message: Custom assertion message (optional)
 
     Returns:
@@ -440,8 +476,10 @@ def assert_can_grant(
             )
 
             # Child can read_file but not search
-            assert_authorized(child, child_key, "read_file", {"path": "/data/x"})
-            assert_denied(child, child_key, "search", {"query": "test"})
+            with assert_authorized(child, child_key, "read_file", {"path": "/data/x"}):
+                pass
+            with assert_denied(child, child_key, "search", {"query": "test"}):
+                pass
     """
     if not _is_test_environment():
         raise RuntimeError(
@@ -449,27 +487,7 @@ def assert_can_grant(
         )
 
     try:
-        child_key = SigningKey.generate()
-
-        # Build the grant using grant_builder
-        builder = parent.grant_builder()
-
-        # Set tools
-        for tool in child_tools:
-            if child_constraints:
-                builder.capability(tool, child_constraints)
-            else:
-                builder.capability(tool, {})
-
-        # Set holder and TTL
-        builder.holder(child_key.public_key)
-        builder.ttl(parent.ttl)  # Inherit TTL
-
-        # Grant
-        child = builder.grant(parent_key)
-
-        return child, child_key
-
+        return _attempt_grant(parent, parent_key, child_tools, child_constraints)
     except Exception as e:
         raise AuthorizationAssertionError(message or f"Expected grant to succeed, but it failed: {e}") from e
 
@@ -484,21 +502,26 @@ def assert_cannot_grant(
     message: Optional[str] = None,
 ) -> None:
     """
-    Assert that a grant (delegation) would fail due to monotonicity violation.
+    Assert that a grant (delegation) is refused because it would widen authority.
 
-    This verifies that attempts to expand capabilities beyond the parent
-    are properly rejected.
+    Passes only when the grant is rejected for an attenuation reason
+    (``MonotonicityError``, ``ClearanceViolation`` or ``LimitError``). Any
+    other failure, such as signing with a key that does not hold the parent,
+    is reported as an assertion error so a broken test cannot pass.
 
     Args:
         parent: Parent warrant to attempt grant from
-        parent_key: Signing key for parent
+        parent_key: Signing key of the parent's holder
         child_tools: List of tools for attempted child warrant
-        child_constraints: Constraints for child (optional)
-        expected_reason: Expected error substring (optional)
+        child_constraints: Constraints applied to every child tool (optional)
+        expected_reason: Substring expected in "<ExceptionType>: <message>" (optional)
         message: Custom assertion message (optional)
 
     Raises:
-        AuthorizationAssertionError: If grant unexpectedly succeeds
+        AuthorizationAssertionError: If the grant succeeds, fails for a
+            non-attenuation reason, or ``expected_reason`` is set and is not
+            a substring of ``"<ExceptionType>: <message>"``. Omitting
+            ``expected_reason`` is valid.
 
     Example:
         def test_monotonicity_enforcement():
@@ -508,7 +531,7 @@ def assert_cannot_grant(
             assert_cannot_grant(
                 root, root_key,
                 child_tools=["delete_file"],  # Not in parent!
-                expected_reason="ToolNotAuthorized",
+                expected_reason="MonotonicityError",
             )
     """
     if not _is_test_environment():
@@ -517,25 +540,26 @@ def assert_cannot_grant(
         )
 
     try:
-        child, _ = assert_can_grant(parent, parent_key, child_tools, child_constraints)
-
-        # If we get here, grant unexpectedly succeeded
-        raise AuthorizationAssertionError(
-            message
-            or f"Expected grant to FAIL for tools {child_tools}, but it succeeded and created warrant {child.id}."
-        )
-
-    except AuthorizationAssertionError as e:
-        if "Expected grant to FAIL" in str(e):
-            raise
-        # Grant failed as expected
-        error_str = str(e)
-        if expected_reason and expected_reason not in error_str:
+        child, _ = _attempt_grant(parent, parent_key, child_tools, child_constraints)
+    except _ATTENUATION_ERRORS as e:
+        reason = f"{type(e).__name__}: {e}"
+        if expected_reason and expected_reason not in reason:
             raise AuthorizationAssertionError(
                 message
-                or f"Grant failed as expected, but the reason '{error_str}' "
+                or f"Grant failed as expected, but the reason '{reason}' "
                 f"does not contain expected substring '{expected_reason}'."
             ) from e
+        return
+    except Exception as e:
+        raise AuthorizationAssertionError(
+            message
+            or f"Expected grant to be refused for an attenuation reason, but it failed with "
+            f"{type(e).__name__}: {e}. Check that parent_key holds the parent warrant."
+        ) from e
+
+    raise AuthorizationAssertionError(
+        message or f"Expected grant to FAIL for tools {child_tools}, but it succeeded and created warrant {child.id}."
+    )
 
 
 # ============================================================================
