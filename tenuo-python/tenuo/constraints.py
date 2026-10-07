@@ -55,12 +55,7 @@ They're the core security building blocks across all Tenuo integrations.
     from tenuo.openai import Subpath, UrlSafe
 """
 
-import logging
-import posixpath
-import shlex
-from typing import TYPE_CHECKING, Any, Dict, List, Set
-
-logger = logging.getLogger("tenuo.constraints")
+from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
     from tenuo_core import Constraint  # type: ignore
@@ -79,6 +74,7 @@ try:
     from tenuo_core import (
         All,  # AND composite, used to build path_glob()
         Pattern,  # Glob over the whole string, used to build path_glob()
+        Shlex,  # POSIX shell-command constraint
         Subpath,  # Secure path containment constraint
         UrlSafe,  # SSRF-safe URL constraint
     )
@@ -114,6 +110,15 @@ except ImportError:
 
         def __init__(self, *args, **kwargs):
             raise ImportError("tenuo_core not available - rebuild with maturin")
+
+    class Shlex:  # type: ignore[no-redef]
+        """Fallback - Rust extension not available."""
+
+        def __init__(self, allow: List[str]):
+            raise ImportError("tenuo_core not available - rebuild with maturin")
+
+        def matches(self, value: Any) -> bool:
+            raise ImportError("tenuo_core not available")
 
 
 # =============================================================================
@@ -359,192 +364,6 @@ class Constraints(Dict[str, Any]):
         return {tool: dict(constraints) for tool in tools}
 
 
-# =============================================================================
-# Shlex Constraint (Python full evaluation + Rust conservative approximation)
-# =============================================================================
-
-
-class Shlex:
-    """Validates that a shell command string is safe and simple.
-
-    Ensures the command is a single executable with literal arguments,
-    preventing shell injection (pipes, chaining, subshells, variable expansion).
-
-    Security features:
-        - Blocks shell operators: | || & && ; > >> < <<
-        - Blocks command substitution: $() and backticks
-        - Blocks variable expansion: $VAR, ${VAR}
-        - Blocks newline/null byte injection
-        - Requires explicit binary allowlist
-
-    Usage:
-        from tenuo.openai import Shlex, guard
-
-        client = guard(
-            openai.OpenAI(),
-            constraints={
-                "run_command": {"cmd": Shlex(allow=["ls", "cat", "grep"])}
-            }
-        )
-
-        # Allowed:   ls -la /tmp
-        # Blocked:   ls -la; rm -rf /    (operator)
-        # Blocked:   echo $(whoami)      (command substitution)
-        # Blocked:   ls $HOME            (variable expansion)
-
-    Warning:
-        This constraint validates SHELL SYNTAX, not TOOL SEMANTICS.
-        Some tools interpret arguments as commands:
-
-            git --upload-pack='malicious'
-            find -exec rm {} \\;
-            tar --checkpoint-action=exec=cmd
-
-        For complete protection, use proc_jail which bypasses the shell
-        entirely via execve() and validates arguments per-tool.
-
-    Limitations:
-        - Parser differential: Python's shlex targets POSIX sh. If the
-          system shell is zsh/fish/etc, parsing may differ slightly.
-        - Does not resolve symlinks or validate binary paths exist.
-        - Does not constrain arguments (only the binary is allowlisted).
-
-        This is Tier 1 mitigation. Upgrade to proc_jail for Tier 2.
-    """
-
-    # Operators that combine commands or redirect I/O
-    # These are checked as TOKENS after punctuation_chars parsing
-    DANGEROUS_TOKENS: Set[str] = {
-        "|",
-        "||",  # Pipes
-        "&",
-        "&&",  # Background / logical AND
-        ";",  # Command separator
-        ">",
-        ">>",  # Output redirection
-        "<",
-        "<<",
-        "<<<",  # Input redirection
-        "(",
-        ")",  # Subshells
-    }
-
-    # Characters that trigger shell expansion (checked in raw string)
-    # These are dangerous even inside double quotes ("$VAR" expands)
-    EXPANSION_CHARS: Set[str] = {"$", "`"}
-
-    # Control characters that could inject commands or cause parsing issues
-    # Blocked: null, newlines, carriage returns, vertical tab, form feed, bell, backspace, DEL
-    # Allowed: tab (valid whitespace), ANSI escape (not injection vector)
-    CONTROL_CHARS: Set[str] = {
-        "\x00",  # Null - string terminator in C, security risk
-        "\n",  # Newline - command separator in shell
-        "\r",  # Carriage return - newline variant
-        "\x0b",  # Vertical tab - shlex parsing issues
-        "\x0c",  # Form feed - shlex parsing issues
-        "\x07",  # Bell - parsing anomalies
-        "\x08",  # Backspace - terminal manipulation
-        "\x7f",  # DEL - terminal manipulation
-    }
-
-    def __init__(
-        self,
-        allow: List[str],
-    ):
-        """Initialize the Shlex constraint.
-
-        Args:
-            allow: List of allowed binary names or full paths.
-                   e.g., ["ls", "/usr/bin/git"]
-
-        Raises:
-            ValueError: If allow list is empty.
-        """
-        if not allow:
-            raise ValueError("Shlex requires at least one allowed binary")
-
-        self.allowed_bins: Set[str] = set(allow)
-
-    def matches(self, value: Any) -> bool:
-        """Check if command string is safe to execute.
-
-        Uses "high-definition" parsing with shlex.shlex(punctuation_chars=True)
-        which correctly splits operators like ; | & into separate tokens
-        UNLESS they are inside quotes.
-
-        Returns True only if:
-        - Input is a string
-        - No dangerous expansion characters ($, `)
-        - No control characters (newlines, null bytes)
-        - Parses successfully with shlex
-        - First token is in allowlist
-        - No shell operator tokens (outside quotes)
-        """
-        # R1: Type check
-        if not isinstance(value, str):
-            return False
-
-        # R1: Control character check (before parsing)
-        for char in self.CONTROL_CHARS:
-            if char in value:
-                logger.debug(f"Shlex rejected control char {char!r} in: {value!r}")
-                return False
-
-        # R1: Expansion character check (before parsing)
-        # Shell expands $VAR and `cmd` even inside double quotes
-        for char in self.EXPANSION_CHARS:
-            if char in value:
-                logger.debug(f"Shlex rejected expansion char '{char}' in: {value!r}")
-                return False
-
-        # R2: "High-definition" parsing with punctuation_chars
-        # This splits unquoted operators into separate tokens:
-        #   "ls -la; rm" -> ['ls', '-la', ';', 'rm']  (';' detected!)
-        # But keeps quoted operators as part of the token:
-        #   'ls "foo; bar"' -> ['ls', 'foo; bar']    (safe)
-        try:
-            lex = shlex.shlex(value, posix=True, punctuation_chars=True)
-            tokens = list(lex)
-        except ValueError as e:
-            # Unbalanced quotes, malformed escapes, etc.
-            logger.debug(f"Shlex parse error: {e} in: {value!r}")
-            return False
-
-        # R5: Empty command check
-        if not tokens:
-            return False
-
-        # R4: Binary allowlist check
-        binary = tokens[0]
-
-        # Normalize path if absolute/relative (prevents /usr/../bin tricks)
-        # Use posixpath for Unix-style paths (shell commands) even on Windows
-        if "/" in binary:
-            binary = posixpath.normpath(binary)
-
-        bin_name = posixpath.basename(binary)
-
-        if binary not in self.allowed_bins and bin_name not in self.allowed_bins:
-            logger.debug(f"Shlex rejected binary '{binary}' not in allowlist: {self.allowed_bins}")
-            return False
-
-        # R3: Dangerous token check
-        # Because we used punctuation_chars=True, any unquoted operator
-        # is guaranteed to be its own token.
-        for token in tokens:
-            if token in self.DANGEROUS_TOKENS:
-                logger.debug(f"Shlex rejected operator token '{token}' in: {value!r}")
-                return False
-
-        return True
-
-    def satisfies(self, value: Any) -> bool:
-        """Unified constraint interface — delegates to matches()."""
-        return self.matches(value)
-
-    def __repr__(self) -> str:
-        return f"Shlex(allow={sorted(self.allowed_bins)!r})"
-
 
 # =============================================================================
 # Exports
@@ -554,7 +373,6 @@ __all__ = [
     # Security constraints (from Rust)
     "Subpath",
     "UrlSafe",
-    # Security constraints (Python full evaluation, Rust conservative approximation)
     "Shlex",
     # Helper functions
     "ensure_constraint",

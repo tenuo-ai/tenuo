@@ -1951,12 +1951,34 @@ impl PyUrlSafe {
     }
 }
 
-/// Shell command safety constraint (Rust core).
+/// Python `repr` of a string, using single quotes. Binary names in `Shlex`
+/// reprs are ordinary path text; control characters are escaped so the result
+/// stays a single line.
+fn python_single_quoted(value: &str) -> String {
+    let mut out = String::from("'");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if (ch as u32) < 0x20 || ch == '\u{7f}' => {
+                out.push_str(&format!("\\x{:02x}", u32::from(ch)));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Shell command safety constraint.
 ///
-/// Validates that a command uses only allowed binaries and contains no shell
-/// metacharacters. The Rust implementation is a conservative approximation
-/// (whitespace tokenization, no quoting). Python's ``Shlex`` class provides
-/// full POSIX shlex parsing for annotated ``@guard`` constraints.
+/// One POSIX tokenizer for every SDK. Quoted operators are literal arguments.
+/// ``$`` and backticks are rejected anywhere in the command, including inside
+/// double quotes. Unquoted operator runs (``|``, ``&&``, ``;``, ``<>``, …) are
+/// rejected.
 ///
 /// Example (Python):
 ///
@@ -1964,6 +1986,7 @@ impl PyUrlSafe {
 /// shlex = Shlex(allow=["npm", "docker"])
 /// shlex.matches("npm install express")   # True
 /// shlex.matches("npm install; rm -rf /") # False (semicolon)
+/// shlex.matches('npm install "a;b"')     # True (quoted semicolon)
 /// shlex.matches("bash -c 'evil'")        # False (not in allowlist)
 /// ```
 #[pyclass(name = "Shlex")]
@@ -1990,7 +2013,7 @@ impl PyShlex {
     #[pyo3(signature = (allow))]
     fn new(allow: Vec<String>) -> PyResult<Self> {
         if allow.is_empty() {
-            return Err(py_validation_err(
+            return Err(PyValueError::new_err(
                 "Shlex requires at least one allowed binary",
             ));
         }
@@ -1999,38 +2022,96 @@ impl PyShlex {
         })
     }
 
-    /// Check if a command string is safe to execute (conservative approximation).
+    /// Check if a command string is safe to execute.
     ///
-    /// Rejects any command containing shell metacharacters (|, &, ;, $, `, etc.),
-    /// then checks the first whitespace-delimited token against the allowlist.
+    /// Non-strings return False. Parse errors, control characters, ``$``,
+    /// backticks, and unquoted operators return False.
     ///
     /// Args:
     ///     command: Shell command string to validate.
     ///
     /// Returns:
-    ///     True if the command passes the conservative check, False otherwise.
-    fn matches(&self, command: &str) -> PyResult<bool> {
-        let cv = ConstraintValue::String(command.to_string());
+    ///     True if the command is one allowlisted binary with literal arguments.
+    fn matches(&self, command: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let Ok(command) = command.extract::<String>() else {
+            return Ok(false);
+        };
+        let cv = ConstraintValue::String(command);
         self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// The core's decision for `command`.
+    ///
+    /// Returns a dict with `allowed`, `reason`, `tokens`, `operators`,
+    /// `expansion`, `controls`, and `binary_allowed`. A non-string is not
+    /// allowed. Explanations should use this instead of a second parser.
+    fn check<'py>(
+        &self,
+        py: Python<'py>,
+        command: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        let Ok(command) = command.extract::<String>() else {
+            dict.set_item("allowed", false)?;
+            dict.set_item("reason", "value is not a string")?;
+            dict.set_item("tokens", Vec::<String>::new())?;
+            dict.set_item("operators", Vec::<String>::new())?;
+            dict.set_item("expansion", Vec::<String>::new())?;
+            dict.set_item("controls", Vec::<String>::new())?;
+            dict.set_item("binary_allowed", false)?;
+            return Ok(dict);
+        };
+        let report = crate::shell_words::check(&self.inner.allow, &command);
+        dict.set_item("allowed", report.allowed)?;
+        dict.set_item("reason", &report.reason)?;
+        dict.set_item("tokens", report.tokens)?;
+        dict.set_item("operators", report.operators)?;
+        dict.set_item("expansion", report.expansion)?;
+        dict.set_item("controls", report.controls)?;
+        dict.set_item("binary_allowed", report.binary_allowed)?;
+        Ok(dict)
+    }
+
+    /// Split a command the way [`matches`](Self::matches) does.
+    ///
+    /// Raises:
+    ///     ValueError: Unbalanced quotes or a trailing backslash.
+    #[staticmethod]
+    fn tokenize(command: &str) -> PyResult<Vec<String>> {
+        crate::shell_words::tokenize(command)
+            .map(|tokens| tokens.into_iter().map(|token| token.text).collect())
+            .map_err(|err| PyValueError::new_err(err.to_string()))
     }
 
     /// Unified constraint check.
     fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let cv = py_to_constraint_value(value)?;
-        self.inner.matches(&cv).map_err(to_py_err)
+        self.matches(value)
     }
 
     fn __repr__(&self) -> String {
-        format!("Shlex(allow={:?})", self.inner.allow)
+        let mut allow = self.inner.allow.clone();
+        allow.sort();
+        let parts: Vec<String> = allow
+            .iter()
+            .map(|item| python_single_quoted(item))
+            .collect();
+        format!("Shlex(allow=[{}])", parts.join(", "))
     }
 
     fn __str__(&self) -> String {
         self.__repr__()
     }
 
-    /// Allowed binaries.
+    /// Allowed binaries, in the order they were given.
     #[getter]
     fn allow(&self) -> Vec<String> {
+        self.inner.allow.clone()
+    }
+
+    /// Allowed binaries. Same list as ``allow``, kept for callers that read
+    /// the previous Python attribute.
+    #[getter]
+    fn allowed_bins(&self) -> Vec<String> {
         self.inner.allow.clone()
     }
 

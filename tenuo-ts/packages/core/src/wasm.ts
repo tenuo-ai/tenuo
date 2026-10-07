@@ -346,7 +346,19 @@ type Generated = {
     args: unknown,
   ): { approval_required: boolean; tool: string; error?: string };
   parse_strict_json(jsonText: string): void;
+  shlex_inspect(allow: string[], command: string): ShlexCheck;
 };
+
+/** Decision from the core Shlex check. The same object Python `Shlex.check` returns. */
+export interface ShlexCheck {
+  allowed: boolean;
+  reason: string;
+  tokens: string[];
+  operators: string[];
+  expansion: string[];
+  controls: string[];
+  binary_allowed: boolean;
+}
 
 let loaded: Generated | undefined;
 
@@ -496,6 +508,16 @@ function throwIfGateError(error: string | undefined): void {
 export function parseStrictJson(text: string): unknown {
   loadWasm().parse_strict_json(text);
   return JSON.parse(text);
+}
+
+/**
+ * The core's Shlex decision for one command.
+ *
+ * `allow` is the binary allowlist. A bare entry matches that word and the
+ * final component of a path. The reason is the same string the warrant uses.
+ */
+export function checkShlex(allow: readonly string[], command: string): ShlexCheck {
+  return loadWasm().shlex_inspect([...allow], command);
 }
 
 /**

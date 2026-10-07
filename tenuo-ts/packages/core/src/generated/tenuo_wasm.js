@@ -1280,6 +1280,27 @@ function sdkVerifyReceiptChain(wire, roots) {
 exports.sdkVerifyReceiptChain = sdkVerifyReceiptChain;
 
 /**
+ * The core's Shlex decision for `command`.
+ *
+ * `allow` is a list of binary names or paths. The returned object has
+ * `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
+ * `binary_allowed`.
+ * @param {any} allow
+ * @param {string} command
+ * @returns {any}
+ */
+function shlex_inspect(allow, command) {
+    const ptr0 = passStringToWasm0(command, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.shlex_inspect(allow, ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.shlex_inspect = shlex_inspect;
+
+/**
  * Create a Proof-of-Possession signature for a warrant
  * @param {string} private_key_hex
  * @param {string} warrant_b64

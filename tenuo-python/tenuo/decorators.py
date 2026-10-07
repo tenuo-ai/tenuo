@@ -215,7 +215,7 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
         if hasattr(constraint, "matches") and constraint_type == "Pattern":
             return constraint.matches(value)
 
-        # Shlex - shell command validation (Python full shlex parsing)
+        # Shlex - shell command validation (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Shlex":
             return constraint.matches(str(value))
 

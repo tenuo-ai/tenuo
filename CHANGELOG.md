@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Shlex (type 128) accepts commands that older verifiers rejected.**
+  Quoted and escaped operator characters are literal arguments
+  (`ls "foo; bar"`, `echo ";"`, `find . -exec rm {} \;`). A 0.3.2 verifier
+  still rejects those commands, so a mixed fleet fails closed. Words follow
+  the shell: `#` is a comment only at the start of a word, so
+  `ls foo#; rm -rf /` is rejected, and a word breaks only at unquoted
+  spaces, tabs, and operators, so `./ls,evil` is not `ls`. `$` and backticks
+  are still rejected everywhere in the raw command. The shared decisions are
+  `tests/vectors/shlex.json`.
+
+### Changed
+
+- **Python `Shlex` is the core class, and explanations come from that
+  check.** `DANGEROUS_TOKENS`, `EXPANSION_CHARS`, and `CONTROL_CHARS` are
+  gone. `allowed_bins` is the same list as `allow`, not a set. `isinstance`
+  checks see the core class. `Shlex.check(command)` returns the decision
+  (`allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`,
+  `binary_allowed`). TypeScript `checkShlex(allow, command)` returns the same
+  decision. `allow=["ls"]` matches the word `ls` and any path whose file name
+  is `ls`, including `/tmp/attacker/ls`.
+
 ### Fixed
 
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`

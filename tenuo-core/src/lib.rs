@@ -114,6 +114,7 @@ pub mod revocation_tracker;
 #[deny(missing_docs)]
 #[cfg_attr(docsrs, doc(cfg(feature = "sdk")))]
 pub mod sdk;
+pub mod shell_words;
 pub mod strict_json;
 pub mod verification;
 pub mod warrant;

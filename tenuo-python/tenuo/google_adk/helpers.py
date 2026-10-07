@@ -512,7 +512,7 @@ def generate_hints(
                 hints.append("URL must not target private IPs or metadata endpoints")
 
         elif constraint_type == "Shlex":
-            bins = getattr(constraint, "allowed_bins", [])
+            bins = getattr(constraint, "allow", None) or getattr(constraint, "allowed_bins", [])
             if bins:
                 hints.append(f"Only these binaries are allowed: {list(bins)[:5]}")
             hints.append("Shell operators (;, |, &) are not allowed")

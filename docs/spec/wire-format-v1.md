@@ -568,7 +568,7 @@ pub enum Constraint {
         block_internal_tlds: bool,      // Default: false
     },
 
-    /// Shell command safety -- extension constraint (conservative approximation)
+    /// Shell command safety -- extension constraint (shell word rules)
     Shlex {
         allow: Vec<String>,             // Allowed binary names or paths (literal, no globs)
     },
@@ -823,7 +823,19 @@ Implementations MUST evaluate UrlSafe fields in this order:
 |-------|------|
 | `allow` | Child must be subset of parent (fewer binaries allowed). Entries are literal strings, no globs. |
 
-**Shlex evaluation model:** Shlex is an extension constraint with implementation-specific evaluation behavior. The Rust `matches()` performs whitespace tokenization and rejects any shell metacharacter (`|`, `&`, `;`, `$`, `` ` ``, `<`, `>`, `(`, `)`, control chars). It does NOT handle POSIX quoting rules. Python's full `shlex` parsing with `punctuation_chars=True` accepts safely-quoted operators (e.g., `ls "foo; bar"`). The Rust layer is intentionally more restrictive, acting as a fail-closed pre-filter in the warrant verification path. Python's full evaluation is the authoritative runtime gate for annotated `@guard` constraints. Verifiers that do not implement Shlex MUST reject warrants containing it (fail closed via Unknown variant).
+**Shlex evaluation model:** One tokenizer, implemented in the Rust core and used by every SDK. The decisions in `tests/vectors/shlex.json` are normative. Verifiers that do not implement Shlex MUST reject warrants containing it (fail closed via Unknown variant).
+
+A command matches only when all of the following hold:
+
+1. The value is a non-empty string. Control characters (`NUL`, `LF`, `CR`, `VT`, `FF`, `BEL`, `BS`, `DEL`) reject the command before tokenization, so a newline cannot hide a second command inside a comment. `$` and backticks reject the command wherever they appear, including inside quotes and backslash escapes. A double-quoted `$` still expands in a POSIX shell; the raw scan also refuses the single-quoted and escaped forms.
+2. Words follow POSIX shell rules. This is not Python's `shlex` module. Unquoted spaces and tabs separate words. A word also ends immediately before an unquoted operator. Operators, longest match first, are `<<-`, `&&`, `||`, `;;`, `|&`, `<<`, `>>`, `<&`, `>&`, `<>`, `|`, `&`, `;`, `<`, `>`, `(`, and `)`. Single quotes are literal. Double quotes are literal except that a backslash before `$`, a backtick, `"`, `\`, or newline escapes that character. A backslash outside quotes makes the next character literal, including an operator and `#`. An unbalanced quote or a trailing backslash rejects the command. An empty `""` is an empty argument.
+   `#` starts a comment only when it is the first character of a word. `ls #; rm` is the command `ls`. `ls foo#; rm` is the word `ls`, the argument `foo#`, the operator `;`, and `rm`, and is rejected. A comma, bracket, brace, or other non-operator character stays in the word, so `./ls,evil` is one command name.
+3. The first token is the binary. If it contains `/`, it is normalized with POSIX `normpath` (two leading slashes are preserved; three or more collapse). The normalized path or its final path component must be an entry of `allow`. A bare entry such as `ls` matches the word `ls` and any path whose file name is `ls`, including `/tmp/attacker/ls`. It does not match `./ls,evil`. Entries are literal strings, no globs.
+4. No token is an unquoted operator. A quoted or escaped operator character is a literal argument: `echo ";"`, `ls "foo; bar"`, and `find . -exec rm {} \;` match when the binary is allowlisted. `find -exec` still runs that argument; tool semantics are outside this check.
+
+Tabs are whitespace. `*` and `?` are literal arguments to this check; a shell that later runs the command may still expand them. Bash brace expansion is not POSIX word splitting: this check keeps `{a,b,c}` as one word, and a bash host may still expand it.
+
+Type 128 accepts some commands older verifiers rejected (quoted and escaped operator characters) and rejects some a Python `shlex` tokenizer accepted (a `#` that does not start a word, and command names that contain commas or brackets). A mixed fleet fails closed on the stricter side.
 
 **Implementations MUST reject attenuations not explicitly permitted in this matrix.**
 
@@ -852,7 +864,7 @@ Implementations MUST evaluate UrlSafe fields in this order:
 
 **Extension range (128–255):** For constraints with implementation-specific behavior, proprietary extensions, or experimental types. Verifiers that do not implement a given extension type MUST reject warrants containing it (fail closed via Unknown variant). Use for:
 
-- Constraints where evaluation semantics vary by implementation (e.g., Shlex)
+- Extension constraints with a defined evaluation (Shlex is type 128; see Shlex Attenuation Rules)
 - Proprietary extensions that don't need interoperability
 - Testing new constraint types before proposing standardization
 

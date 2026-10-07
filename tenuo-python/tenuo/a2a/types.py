@@ -111,9 +111,12 @@ def _serialize_constraint(constraint: Any) -> Dict[str, Any]:
                 "root": getattr(constraint, "root", None),
             }
         elif type_name == "Shlex":
+            allow = getattr(constraint, "allow", None)
+            if allow is None:
+                allow = getattr(constraint, "allowed_bins", None)
             return {
                 "type": "Shlex",
-                "allow": getattr(constraint, "allowed_bins", None),
+                "allow": list(allow) if allow is not None else None,
             }
 
     # Last resort: wrap in generic format

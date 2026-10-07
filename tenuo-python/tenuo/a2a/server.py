@@ -25,7 +25,7 @@ Runtime Validation (_check_constraint):
 - Subpath: tenuo_core.Subpath.contains() - Rust path normalization & containment
 - UrlSafe: tenuo_core.UrlSafe.is_safe() - Rust URL parsing & SSRF protection
 - Pattern: tenuo_core.Pattern.matches() - Rust glob matching (NO Python fallback)
-- Shlex: tenuo.constraints.Shlex.matches() - Python only (shell parsing)
+- Shlex: tenuo_core.Shlex.matches() - Rust POSIX tokenization
 
 Attenuation Validation (_constraint_is_narrower):
 All constraints with validate_attenuation() use Rust core:
@@ -36,14 +36,12 @@ All constraints with validate_attenuation() use Rust core:
 - Cidr: tenuo_core.Cidr.validate_attenuation() - checks subnet containment
 - OneOf/NotOneOf: tenuo_core validate_attenuation() - checks value sets
 - All/Contains/Subset: tenuo_core validate_attenuation() - checks constraint sets
-- Shlex: Python set comparison on allowed_bins (no Rust implementation)
+- Shlex: tenuo_core.Shlex.validate_attenuation() - child allowlist must be a subset
 
 SECURITY: All checks fail-closed. If tenuo_core is not available for a constraint
 type that requires it, validation fails rather than falling back to Python.
 
-The only Python-native constraint is Shlex, which uses Python's shlex module
-for shell parsing. This is intentional - shell syntax parsing is complex and
-the Rust core doesn't implement it.
+Shlex tokenization lives in the Rust core, the same check the other SDKs run.
 """
 
 from __future__ import annotations
@@ -1622,7 +1620,7 @@ class A2AServer:
 
         # PREFERRED: Use tenuo_core's validate_attenuation() method (Rust)
         # This is available for: Subpath, UrlSafe, Pattern, Range, Cidr, OneOf,
-        # NotOneOf, Contains, Subset, All, Regex, UrlPattern, CEL
+        # NotOneOf, Contains, Subset, All, Regex, UrlPattern, CEL, Shlex
         if hasattr(parent, "validate_attenuation"):
             try:
                 parent.validate_attenuation(child)
@@ -1631,8 +1629,7 @@ class A2AServer:
                 logger.warning(f"Attenuation violation: field='{field}' - {e}")
                 return False
 
-        # Shlex: Python-only constraint (no Rust implementation)
-        # Uses allowed_bins attribute for attenuation check
+        # Allowlist fallback for a constraint object with no validate_attenuation.
         if hasattr(parent, "matches") and hasattr(parent, "allowed_bins"):
             try:
                 parent_exec = set(getattr(parent, "allowed_bins", []))
@@ -1713,7 +1710,7 @@ class A2AServer:
         if hasattr(constraint, "matches") and constraint_type == "Pattern":
             return constraint.matches(value)
 
-        # Shlex - shell command validation (Rust core via Python shlex)
+        # Shlex - shell command validation (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Shlex":
             return constraint.matches(str(value))
 
@@ -1811,9 +1808,9 @@ class A2AServer:
 
                 return UrlSafe(allow_domains=data.get("allow_domains"))
 
-            # Shell command validation (Python-only)
+            # Shell command validation
             elif constraint_type == "Shlex":
-                from tenuo.constraints import Shlex
+                from tenuo_core import Shlex
 
                 return Shlex(allow=data.get("allow", []))
 
