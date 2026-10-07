@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
+  timer outside the runtime, so every call from Python, including the
+  `atexit` hook that runs on every exit with a connected client, printed
+  `there is no reactor running` and skipped the stop signal. The timer is now
+  created inside `block_on`. (#806)
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
   passed the parent's `timedelta` TTL to the grant builder, so every grant
   failed with `TypeError`, and `assert_cannot_grant` passed for any grant,

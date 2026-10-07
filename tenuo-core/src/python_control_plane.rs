@@ -875,7 +875,12 @@ impl PyControlPlaneClient {
     #[pyo3(signature = (timeout_secs = 5.0))]
     fn shutdown(&self, timeout_secs: f64) -> PyResult<()> {
         let secs = timeout_secs.clamp(0.0, 30.0);
-        runtime().block_on(tokio::time::sleep(std::time::Duration::from_secs_f64(secs)));
+        // Build the timer inside block_on: tokio::time::sleep needs a runtime
+        // context at construction, so creating it as the argument panicked on
+        // any thread outside the runtime (including the atexit hook).
+        runtime().block_on(async move {
+            tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
+        });
         let _ = self.shutdown_tx.send(true);
         Ok(())
     }
