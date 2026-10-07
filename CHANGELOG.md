@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
+  passed the parent's `timedelta` TTL to the grant builder, so every grant
+  failed with `TypeError`, and `assert_cannot_grant` passed for any grant,
+  including a valid narrowing. Children now expire with the parent.
+  `assert_cannot_grant` passes only for an attenuation refusal
+  (`MonotonicityError`, `ClearanceViolation`, `LimitError`), matches
+  `expected_reason` against `"<ExceptionType>: <message>"`, and still fails
+  when given a custom `message`.
+- **`tenuo.testing` helpers recognise pytest and unittest.** Detection looked
+  for the word `pytest` inside the running test id and inspected the wrong
+  object for unittest, so the helpers raised "only works in test
+  environments" unless `TENUO_TEST_MODE=1` was set. Docs and docstrings now
+  show the warrant form of `assert_authorized` / `assert_denied` entered with
+  `with` and use the `error_code` values that are actually raised.
+- **Temporal docs describe sandbox signing and signal allowlists as they behave.**
+  `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and
+  `GCPSecretManagerKeyResolver` call `resolve_sync` on a thread the workflow
+  sandbox blocks, including when the cache is full, so a long `cache_ttl`
+  does not make them usable for PoP signing. Workflow workers sign with
+  `signing_key=` or a resolver whose `resolve_sync` returns a key already in
+  memory. With `authorized_signals` set, a name off the list fails the
+  workflow run. `authorized_signals` and `authorized_updates` are worker
+  settings, and an off-list update is rejected.
+- **Temporal history sizes count the chain header that is actually sent.**
+  `x-tenuo-warrant` is the gzip-compressed leaf. `x-tenuo-warrant-chain` is
+  base64 of the uncompressed stack. A 3-hop Activity is about 1.9–2.7 KB,
+  about 0.4–0.55 MB across 200 Activities. The 10,240-event warning still
+  arrives before the 10 MB warning.
 - **CrewAI and ADK docs match the current APIs.** Delegation examples pass
   `warrant_chain` and trusted issuer keys. CrewAI tool snippets use
   `crewai.tools.tool`, and per-agent hooks use `@before_tool_call(agents=[...])`.

@@ -1132,26 +1132,39 @@ jobs:
                   if not target.exists():
                       errors.append(f"{p}: broken Temporal example link -> {rel}")
 
-          # Production snippets in temporal-reference.md should use strict mode
-          # with trusted roots.
+          # The workflow worker signs from memory. That snippet uses strict mode
+          # and trusted roots. Vault, AWS, and GCP sections show store
+          # constructors only; they must not be wired in as key_resolver.
           temporal_ref_text = docs_temporal_ref.read_text(encoding="utf-8")
-          production_heads = [
-              "#### Production: Vault",
-              "#### Production: AWS Secrets Manager",
-              "#### Production: GCP Secret Manager",
-              "#### Composite Resolver (Fallback Chain)",
-          ]
-          for head in production_heads:
+          signing_head = "#### Signing from memory"
+          start = temporal_ref_text.find(signing_head)
+          if start == -1:
+              errors.append(f"{docs_temporal_ref}: missing section '{signing_head}'")
+          else:
+              next_h = temporal_ref_text.find("#### ", start + len(signing_head))
+              block = temporal_ref_text[start: next_h if next_h != -1 else len(temporal_ref_text)]
+              if "strict_mode=True" not in block:
+                  errors.append(f"{docs_temporal_ref}: section '{signing_head}' missing strict_mode=True")
+              if "trusted_roots=[root_key.public_key]" not in block:
+                  errors.append(
+                      f"{docs_temporal_ref}: section '{signing_head}' missing trusted_roots=[root_key.public_key]"
+                  )
+          for head in (
+              "#### Vault",
+              "#### AWS Secrets Manager",
+              "#### GCP Secret Manager",
+          ):
               start = temporal_ref_text.find(head)
               if start == -1:
                   errors.append(f"{docs_temporal_ref}: missing section '{head}'")
                   continue
               next_h = temporal_ref_text.find("#### ", start + len(head))
               block = temporal_ref_text[start: next_h if next_h != -1 else len(temporal_ref_text)]
-              if "strict_mode=True" not in block:
-                  errors.append(f"{docs_temporal_ref}: section '{head}' missing strict_mode=True")
-              if "trusted_roots=[root_key.public_key]" not in block:
-                  errors.append(f"{docs_temporal_ref}: section '{head}' missing trusted_roots=[root_key.public_key]")
+              if "key_resolver=" in block:
+                  errors.append(
+                      f"{docs_temporal_ref}: section '{head}' must not pass key_resolver= "
+                      "(those resolvers cannot sign inside the workflow sandbox)"
+                  )
 
           if errors:
               print("Temporal docs consistency check failed:")

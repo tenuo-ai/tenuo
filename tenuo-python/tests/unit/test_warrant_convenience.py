@@ -222,9 +222,10 @@ class TestTestingUtilities:
         warrant = Warrant.for_testing(["search"])
         assert "search" in warrant.tools
 
-    def test_for_testing_outside_test_env(self):
+    def test_for_testing_outside_test_env(self, monkeypatch):
         """Test that for_testing() fails outside test environment."""
-        os.environ.pop("TENUO_TEST_MODE", None)
+        monkeypatch.delenv("TENUO_TEST_MODE", raising=False)
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
         with pytest.raises(RuntimeError, match="test environments"):
             Warrant.for_testing(["search"])
@@ -237,10 +238,11 @@ class TestTestingUtilities:
         with allow_all():
             pass  # Currently a placeholder, but context manager works
 
-    def test_allow_all_outside_test_env(self):
+    def test_allow_all_outside_test_env(self, monkeypatch):
         """Test that allow_all() fails outside test environment."""
-        os.environ.pop("TENUO_TEST_MODE", None)
-        os.environ.pop("TENUO_ENV", None)
+        monkeypatch.delenv("TENUO_TEST_MODE", raising=False)
+        monkeypatch.delenv("TENUO_ENV", raising=False)
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
         with pytest.raises(RuntimeError, match="test environments"):
             with allow_all():
