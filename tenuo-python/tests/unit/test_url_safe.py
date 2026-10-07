@@ -292,6 +292,11 @@ class TestUrlSafeDomainAllowlist:
         with pytest.raises(ValidationError):
             UrlSafe(allow_domains=[pattern])
 
+    def test_accepts_deployment_specific_host_supported_by_url_parser(self):
+        """Core does not impose stricter DNS-label rules than its URL parser."""
+        constraint = UrlSafe(allow_domains=["_service.internal"])
+        assert constraint.matches("https://_service.internal/")
+
 
 class TestUrlSafePortBlocking:
     """Tests for port restriction functionality."""

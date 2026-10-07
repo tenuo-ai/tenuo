@@ -2651,33 +2651,7 @@ impl UrlSafe {
             reason: format!("invalid domain pattern: {error}"),
         })?;
         let canonical = match host {
-            Host::Domain(domain) => {
-                let labels = domain.strip_suffix('.').unwrap_or(&domain);
-                let valid = !labels.is_empty()
-                    && !labels.ends_with('.')
-                    && labels.split('.').all(|label| {
-                        !label.is_empty()
-                            && label.len() <= 63
-                            && label
-                                .as_bytes()
-                                .first()
-                                .is_some_and(u8::is_ascii_alphanumeric)
-                            && label
-                                .as_bytes()
-                                .last()
-                                .is_some_and(u8::is_ascii_alphanumeric)
-                            && label
-                                .bytes()
-                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                    });
-                if !valid {
-                    return Err(Error::InvalidUrl {
-                        url: pattern.to_string(),
-                        reason: "domain pattern contains an invalid host name".to_string(),
-                    });
-                }
-                domain
-            }
+            Host::Domain(domain) if !wildcard || !domain.starts_with('.') => domain,
             _ if wildcard => {
                 return Err(Error::InvalidUrl {
                     url: pattern.to_string(),
@@ -5907,6 +5881,13 @@ mod tests {
                 "evaluated invalid pattern {pattern:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_url_safe_accepts_hosts_supported_by_url_parser() {
+        let us = UrlSafe::with_domains(vec!["_service.internal"]);
+        assert!(us.validate().is_ok());
+        assert!(us.is_safe("https://_service.internal/").unwrap());
     }
 
     #[test]
