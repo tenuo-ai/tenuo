@@ -1538,19 +1538,20 @@ Cidr("10.0.0.0/8")
 Opening the file is the executor's step. The Rust SDK `filesystem` feature does both in the guarded call: it verifies the warrant, requires the leaf `Subpath` to sit inside a logical ceiling the executor configured, maps that logical path under a pinned local directory, and opens it through [`path_jail`](https://github.com/tenuo-ai/path_jail). The tool body receives a file, not a path to open later.
 
 ```rust
-let workspace = Workspace::new(
-    "/workspace",
-    "/srv/jobs/job-1842",
-    Containment::BestEffort,
-)?;
+let stamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)?
+    .as_nanos();
+let local = std::env::temp_dir().join(format!("tenuo-fs-{stamp}"));
+std::fs::create_dir_all(local.join("reports"))?;
+std::fs::write(local.join("reports/q4.md"), "quarterly")?;
+
+let workspace = Workspace::new("/workspace", &local, Containment::BestEffort)?;
 let session = runtime
     .session_from_warrant(warrant)?
     .with_filesystem(workspace);
 
 let body = session.guard(&call, |authorized| {
-    let mut file = authorized
-        .open("path", OpenOptions::read_only())
-        .map_err(std::io::Error::other)?;
+    let mut file = authorized.open("path", OpenOptions::read_only())?;
     let mut body = String::new();
     file.read_to_string(&mut body)?;
     Ok::<_, std::io::Error>(body)
@@ -1558,23 +1559,26 @@ let body = session.guard(&call, |authorized| {
 let body = body.into_inner();
 ```
 
-`Workspace`, `Containment`, `OpenOptions`, and `CapabilityAccess` come from `tenuo::sdk`. `Subpath` is `tenuo::Subpath`. `open` takes the argument name. The path is the one the warrant already allowed. Call `Workspace::limit_capability` when a capability may only read. Without that limit, the handler's `OpenOptions` decide, so a `read_file` closure can pass `write_truncate`.
+`FilesystemError` converts into `std::io::Error` and keeps `NotFound` and `PermissionDenied`. `Workspace`, `Containment`, `OpenOptions`, and `CapabilityAccess` come from `tenuo::sdk`. `Subpath` is `tenuo::Subpath`. `open` takes the argument name. The path is the one the warrant already allowed, and it must already be normalized: `//`, `.`, `..`, `\`, and a trailing slash are refused, because `Pattern` and `NotOneOf` saw the raw string. Call `Workspace::limit_capability` when a capability may only read. Without that limit, the handler's `OpenOptions` decide, so a `read_file` closure can pass `write_truncate`. `require_capability_limits` makes a typo in the capability name fail closed.
 
-`Atomic` is the kernel open on Linux x86_64 and aarch64. `BestEffort` on macOS, BSD, and other Linux architectures uses `O_NOFOLLOW` on the final component and reports that on the opened file. Linux x86_64 and aarch64 do not fall back: if `openat2` is missing or blocked, `Workspace::new` fails. On the fallback, `create` and `create_new` are refused, because a parent directory swapped for a symlink can leave the new file outside the jail. Truncate runs only after the opened handle is checked. Symlinks are rejected. On the kernel path the relative path, including a narrowed leaf such as `reports/q4.md`, is what `openat2` opens. The fallback also checks the handle's path, and that check does not include the host directory in the error.
+Creating a file requires Linux x86_64 or aarch64. `Atomic` is that kernel open. On macOS, BSD, and other architectures, `Atomic` cannot be constructed and `BestEffort` refuses `create` and `create_new`, because a parent directory swapped for a symlink can leave the new file outside the jail. The workaround is to create the file in the executor and open it with `write_truncate`. `BestEffort` uses `O_NOFOLLOW` on the final component and reports that on the opened file. Linux x86_64 and aarch64 do not fall back: if `openat2` is missing or blocked, `Workspace::new` fails. Truncate runs only after the opened handle is checked. Symlinks are rejected. On the kernel path the relative path, including a narrowed leaf such as `reports/q4.md`, is what `openat2` opens. The fallback also checks the handle's path. That check compares the jail root's path, not its inode, and the error does not include the host directory.
 
-The open rejects a directory or FIFO that yields a handle, and it rejects a file with an extra hard link, unless the caller turns those checks off. A socket fails before a handle exists.
+Every `Subpath` branch that covers the argument must sit inside the executor ceiling. `Any` of a wide root and a narrow root is denied when the wide root is outside the ceiling, same as a warrant that is only the wide root.
+
+The open rejects a directory or FIFO that yields a handle, and it rejects a file with an extra hard link, unless the caller turns those checks off. Turning both off leaves the open blocking, so a FIFO can hang the handler. A socket fails before a handle exists. On a case-insensitive directory (ext4 casefold, vfat, SMB), Linux can open a differently cased path that a case-sensitive `Not(Subpath)` did not deny. The spelling check does not fold case. The macOS fallback compares the directory entry.
 
 | Layer | What it decides |
 |-------|-----------------|
 | **Subpath** | The logical path is inside the delegated root, including after `.` and `..` normalization |
-| **Workspace ceiling** | The warrant root is inside the directory this executor is willing to expose |
+| **Open spelling** | The argument is already that normalized form. A different spelling is refused |
+| **Workspace ceiling** | Every covering `Subpath` root is inside the directory this executor is willing to expose |
 | **Opened handle** | The directory entry that was opened is the named path, under the leaf and under the pinned directory |
 
 Enable it with the `filesystem` feature. It is not part of the default build, and `Subpath` itself never consults the disk.
 
 ### Python
 
-Python callers do not get a file descriptor from this feature. A tool can still check the path with [`path_jail`](https://github.com/tenuo-ai/path_jail) and then read it. Those are two steps. On macOS and BSD a symlink can change between them. `Jail.join` is not the Rust `atomic` open.
+Python callers do not get a file descriptor from this feature. A tool can still check the path with [`path_jail`](https://github.com/tenuo-ai/path_jail) and then read it. Those are two steps on Linux, macOS, and BSD: a symlink can change between `Jail.join` and the read. `Jail.join` is not the Rust `atomic` open.
 
 ```python
 from path_jail import Jail  # uv pip install path_jail

@@ -8,26 +8,43 @@
 //!
 //! The jail root is executor configuration, attached with
 //! [`Session::with_filesystem`] or [`Guard::with_filesystem`]. A warrant cannot
-//! choose it. A warrant [`Subpath`] wider than the configured logical root is
-//! denied, including when the parent warrant is wider and the leaf has been
-//! narrowed underneath.
+//! choose it. Every [`Subpath`] branch that covers the argument must sit inside
+//! the configured logical root. A wider branch is denied even when a narrower
+//! branch in the same `Any` also matches, and even when the parent warrant was
+//! wider and the leaf has been narrowed underneath.
+//!
+//! The argument must already be in normalized form. `Subpath` folds `.`, `..`,
+//! repeated separators, and `\` before it decides containment, but `Pattern`
+//! and `NotOneOf` see the raw string. [`AuthorizedCall::open`] refuses a
+//! spelling that differs, including a trailing slash on a file.
 //!
 //! `atomic` fails at construction where the platform cannot give
-//! `openat2(RESOLVE_BENEATH)`. `best-effort` uses the platform fallback and
-//! reports that on [`OpenedFile::toctou_safe`].
+//! `openat2(RESOLVE_BENEATH)`. Use [`Containment::BestEffort`] there.
+//! `best-effort` uses the platform fallback and reports that on
+//! [`OpenedFile::toctou_safe`]. Creating a file (`create` / `create_new`)
+//! requires Linux x86_64 or aarch64. On macOS, BSD, and other architectures,
+//! the executor creates the file and the tool opens it with
+//! [`OpenOptions::write_truncate`].
 //!
 //! [`OpenOptions`] rejects a non-regular file and a file with extra hard links
-//! unless the caller turns those checks off. Symlinks are always rejected.
+//! unless the caller turns those checks off. Turning both off also leaves the
+//! open blocking, so a FIFO can hang the handler. Symlinks are always rejected.
 //! Where the kernel enforces the open, that relative path is the open. On the
-//! fallback, the opened handle is checked against the named directory entry,
-//! and `create` / `create_new` are refused because a raced parent symlink can
-//! leave a file behind. Truncate runs only after that check.
+//! fallback, the opened handle is checked against the named directory entry.
+//! That check compares path strings, including the jail root's path, not the
+//! root inode. Truncate runs only after that check.
 //!
-//! ```no_run
+//! On a case-insensitive directory (ext4 casefold, vfat, SMB), Linux can open
+//! `/workspace/SECRET/key` when the warrant denied `/workspace/secret`. The
+//! spelling check does not fold case. The macOS fallback compares the directory
+//! entry and rejects a different casing.
+//!
+//! ```
 //! # #[cfg(unix)]
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use std::fs;
 //! use std::io::Read;
-//! use std::time::Duration;
+//! use std::time::{SystemTime, UNIX_EPOCH};
 //! use tenuo::sdk::{Containment, OpenOptions, Runtime, Workspace};
 //! use tenuo::constraints::Subpath;
 //! use tenuo::{args, Call, ConstraintSet, SigningKey, Warrant};
@@ -39,29 +56,33 @@
 //! let warrant = Warrant::builder()
 //!     .capability("read_file", constraints)
 //!     .holder(holder.public_key())
-//!     .ttl(Duration::from_secs(60))
+//!     .ttl(std::time::Duration::from_secs(60))
 //!     .build(&issuer)?;
+//!
+//! let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+//! let local = std::env::temp_dir().join(format!("tenuo-fs-{stamp}"));
+//! fs::create_dir_all(local.join("reports"))?;
+//! fs::write(local.join("reports/q4.md"), "quarterly")?;
 //!
 //! let runtime = Runtime::builder()
 //!     .holder(holder)
 //!     .trusted_root(issuer.public_key())
-//!     .ttl_fallback(Duration::from_secs(120))
+//!     .ttl_fallback(std::time::Duration::from_secs(120))
 //!     .build()?;
-//! let workspace = Workspace::new("/workspace", "/srv/jobs/job-1842", Containment::Atomic)?;
+//! let workspace = Workspace::new("/workspace", &local, Containment::BestEffort)?;
 //! let session = runtime
 //!     .session_from_warrant(warrant)?
 //!     .with_filesystem(workspace);
 //!
 //! let call = Call::owned("read_file", args! { "path" => "/workspace/reports/q4.md" })?;
 //! let guarded = session.guard(&call, |authorized| {
-//!     let mut file = authorized
-//!         .open("path", OpenOptions::read_only())
-//!         .map_err(std::io::Error::other)?;
+//!     let mut file = authorized.open("path", OpenOptions::read_only())?;
 //!     let mut body = String::new();
 //!     file.read_to_string(&mut body)?;
 //!     Ok::<_, std::io::Error>(body)
 //! })?;
-//! let _body = guarded.into_inner();
+//! assert_eq!(guarded.into_inner(), "quarterly");
+//! fs::remove_dir_all(local)?;
 //! # Ok(())
 //! # }
 //! # #[cfg(not(unix))]
@@ -106,9 +127,14 @@ pub enum Containment {
     /// Use the platform fallback. [`OpenedFile::toctou_safe`] is `false` there.
     ///
     /// macOS, BSD, and Linux architectures other than x86_64 and aarch64 open
-    /// with `O_NOFOLLOW` on the final component. Linux x86_64 and aarch64 do
-    /// not fall back: if `openat2` is missing or blocked, [`Workspace::new`]
-    /// fails. `create` and `create_new` are refused on the fallback.
+    /// with `O_NOFOLLOW` on the final component. That includes Linux armv7,
+    /// which this crate does not run in CI. Linux x86_64 and aarch64 do not
+    /// fall back: if `openat2` is missing or blocked, [`Workspace::new`] fails.
+    ///
+    /// `create` and `create_new` are refused on the fallback. Creating a file
+    /// requires Linux x86_64 or aarch64. Elsewhere, create the file in the
+    /// executor and open it with [`OpenOptions::write_truncate`]. The fallback
+    /// compares the jail root's path, not its inode.
     BestEffort,
 }
 
@@ -166,6 +192,7 @@ pub struct Workspace {
     logical: Subpath,
     containment: Containment,
     limits: HashMap<String, CapabilityAccess>,
+    strict_limits: bool,
     #[cfg(unix)]
     jail: FdJail,
 }
@@ -175,6 +202,8 @@ impl fmt::Debug for Workspace {
         f.debug_struct("Workspace")
             .field("logical_root", &self.logical.root)
             .field("containment", &self.containment)
+            .field("limits", &self.limits)
+            .field("strict_limits", &self.strict_limits)
             .finish_non_exhaustive()
     }
 }
@@ -199,19 +228,20 @@ impl Workspace {
         #[cfg(not(unix))]
         {
             let _ = (local_root, containment);
-            return Err(FilesystemError::UnsupportedPlatform);
+            Err(FilesystemError::UnsupportedPlatform)
         }
         #[cfg(unix)]
         {
             if !atomic_platform() && containment == Containment::Atomic {
                 return Err(FilesystemError::AtomicUnavailable);
             }
-            let jail =
-                FdJail::new(local_root.as_ref()).map_err(|err| map_jail_new(err, containment))?;
+            let jail = FdJail::new(local_root.as_ref())
+                .map_err(|err| map_jail_new(err, containment, local_root.as_ref()))?;
             Ok(Self {
                 logical,
                 containment,
                 limits: HashMap::new(),
+                strict_limits: false,
                 jail,
             })
         }
@@ -221,12 +251,24 @@ impl Workspace {
     ///
     /// Without a limit, the handler's [`OpenOptions`] decide. A limit makes a
     /// `read_file` handler fail closed when it asks to write or create.
+    ///
+    /// A typo in `capability` stores a limit that no call uses. Pair this with
+    /// [`Self::require_capability_limits`] so an unlisted capability fails closed.
     pub fn limit_capability(
         mut self,
         capability: impl Into<String>,
         access: CapabilityAccess,
     ) -> Self {
         self.limits.insert(capability.into(), access);
+        self
+    }
+
+    /// Require every opened capability to have a [`Self::limit_capability`] entry.
+    ///
+    /// `limit_capability("read_fiel", ...)` then fails the real `read_file`
+    /// open instead of leaving it unlimited.
+    pub fn require_capability_limits(mut self) -> Self {
+        self.strict_limits = true;
         self
     }
 
@@ -249,15 +291,28 @@ impl Workspace {
             .ok_or_else(|| FilesystemError::ArgumentNotString {
                 name: argument.to_string(),
             })?;
-        let constraint = leaf_constraint(chain, capability, argument)?;
-        let effective = effective_subpath(constraint, path, argument)?;
-        if !self
-            .logical
-            .contains_path(&effective.root)
-            .map_err(FilesystemError::Policy)?
-        {
-            return Err(FilesystemError::WarrantOutsideCeiling);
+        // Pattern and NotOneOf already ran on this exact string. Opening the
+        // normalized spelling would let `//`, `.`, `..`, `\`, or a trailing
+        // slash name a different file.
+        if !Subpath::spelling_is_normalized(path) {
+            return Err(FilesystemError::UnnormalizedPath);
         }
+        let constraint = leaf_constraint(chain, capability, argument)?;
+        let covering = covering_subpaths(constraint, path, argument)?;
+        for subpath in &covering {
+            if !self
+                .logical
+                .contains_path(&subpath.root)
+                .map_err(FilesystemError::Policy)?
+            {
+                return Err(FilesystemError::WarrantOutsideCeiling);
+            }
+        }
+        // Defense in depth. Two absolute roots that both contain one
+        // normalized path nest, so AmbiguousRoot should not be reached.
+        let _narrowest = select_narrowest(&covering)?;
+        // Defense in depth. A normalized path under a covering root that sits
+        // inside the ceiling is already inside the ceiling.
         if !self
             .logical
             .contains_path(path)
@@ -280,11 +335,15 @@ impl Workspace {
                     name: capability.to_string(),
                 });
             }
+        } else if self.strict_limits {
+            return Err(FilesystemError::CapabilityUnlimited {
+                name: capability.to_string(),
+            });
         }
 
         #[cfg(not(unix))]
         {
-            return Err(FilesystemError::UnsupportedPlatform);
+            Err(FilesystemError::UnsupportedPlatform)
         }
         #[cfg(unix)]
         {
@@ -357,13 +416,13 @@ fn leaf_constraint<'a>(
 /// Subpath roots that actually cover `path`.
 ///
 /// `Any` contributes only branches that match. `Not` contributes nothing: a
-/// negated root is not a jail. The narrowest covering root is the one the
-/// open is bounded by.
-fn effective_subpath<'a>(
+/// negated root is not a jail. Every covering root is checked against the
+/// executor ceiling. The narrowest is not the only one.
+fn covering_subpaths<'a>(
     constraint: &'a Constraint,
     path: &str,
     argument: &str,
-) -> Result<&'a Subpath, FilesystemError> {
+) -> Result<Vec<&'a Subpath>, FilesystemError> {
     let mut found = Vec::new();
     collect_covering(constraint, path, &mut found)?;
     if found.is_empty() {
@@ -376,7 +435,16 @@ fn effective_subpath<'a>(
             name: argument.to_string(),
         });
     }
-    select_narrowest(&found)
+    Ok(found)
+}
+
+#[cfg(test)]
+fn effective_subpath<'a>(
+    constraint: &'a Constraint,
+    path: &str,
+    argument: &str,
+) -> Result<&'a Subpath, FilesystemError> {
+    select_narrowest(&covering_subpaths(constraint, path, argument)?)
 }
 
 fn collect_covering<'a>(
@@ -444,6 +512,8 @@ fn select_narrowest<'a>(roots: &[&'a Subpath]) -> Result<&'a Subpath, Filesystem
     Ok(best)
 }
 
+/// Linux x86_64 and aarch64 only. armv7 and other Linux targets use the
+/// fallback. CI does not build that fallback.
 #[cfg(unix)]
 fn atomic_platform() -> bool {
     cfg!(all(
@@ -518,6 +588,10 @@ enum NamedEntry {
 /// Used on the fallback, where the kernel did not enforce the open. A missing
 /// path lookup is [`NamedEntry::Unavailable`], not a claim that the file is
 /// the wrong entry. The host path is not returned.
+///
+/// The comparison is the root's path string, not its inode. Pointing that
+/// path somewhere else requires write access to the root's parent, which the
+/// executor controls.
 #[cfg(unix)]
 fn named_entry(root: &Path, relative: &str, opened: &GuardedFile) -> NamedEntry {
     let Ok(actual) = fd_path(opened.file()) else {
@@ -568,6 +642,8 @@ fn fd_path(file: &std::fs::File) -> std::io::Result<PathBuf> {
     Ok(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len])))
 }
 
+/// BSD and other Unix. CI does not compile this branch (macOS uses
+/// `F_GETPATH`; Linux reads `/proc/self/fd`).
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 fn fd_path(file: &std::fs::File) -> std::io::Result<PathBuf> {
     use std::os::unix::io::AsRawFd;
@@ -575,7 +651,7 @@ fn fd_path(file: &std::fs::File) -> std::io::Result<PathBuf> {
 }
 
 #[cfg(unix)]
-fn map_jail_new(err: JailError, containment: Containment) -> FilesystemError {
+fn map_jail_new(err: JailError, containment: Containment, local_root: &Path) -> FilesystemError {
     #[cfg(all(
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")
@@ -584,7 +660,9 @@ fn map_jail_new(err: JailError, containment: Containment) -> FilesystemError {
         return FilesystemError::KernelJailUnavailable;
     }
     let _ = (err, containment);
-    FilesystemError::InvalidJailRoot
+    FilesystemError::InvalidJailRoot {
+        path: local_root.display().to_string(),
+    }
 }
 
 /// Flags for [`AuthorizedCall::open`](crate::sdk::AuthorizedCall::open).
@@ -651,6 +729,10 @@ impl OpenOptions {
     }
 
     /// Create a file that must not already exist.
+    ///
+    /// This requires Linux x86_64 or aarch64. Elsewhere
+    /// [`FilesystemError::CreateRequiresAtomic`] is returned. Create the file
+    /// in the executor and open it with [`Self::write_truncate`].
     pub fn create_new() -> Self {
         Self {
             write: true,
@@ -684,6 +766,8 @@ impl OpenOptions {
     }
 
     /// Create the file if it is missing. Requires write or append.
+    ///
+    /// Creating a file requires Linux x86_64 or aarch64. See [`Self::create_new`].
     pub fn create(mut self, yes: bool) -> Self {
         self.create = yes;
         self
@@ -695,6 +779,10 @@ impl OpenOptions {
     /// a handle fails with [`FilesystemError::NotRegularFile`], and the handle
     /// is closed. A socket, or a write-only FIFO with no reader, fails in the
     /// kernel before a handle exists and is [`FilesystemError::OpenFailed`].
+    ///
+    /// Turning this off together with [`Self::reject_hard_links`] also turns
+    /// off the non-blocking open those checks use. A FIFO can then block the
+    /// handler until another process opens the other end.
     pub fn require_regular_file(mut self, yes: bool) -> Self {
         self.require_regular_file = yes;
         self
@@ -844,6 +932,8 @@ pub enum FilesystemError {
     /// This platform has no `path_jail` guard open.
     UnsupportedPlatform,
     /// `atomic` was requested and the open would not be TOCTOU-safe.
+    ///
+    /// Construct the workspace with [`Containment::BestEffort`] on that host.
     AtomicUnavailable,
     /// The logical ceiling is `/`.
     LogicalRootIsFilesystemRoot,
@@ -876,11 +966,24 @@ pub enum FilesystemError {
     /// [`Subpath`]: crate::Subpath
     WarrantOutsideCeiling,
     /// The authorized path is outside the executor logical ceiling.
+    ///
+    /// Defense in depth. After the argument spelling is normalized, a covering
+    /// [`Subpath`] inside the ceiling already puts the path inside it.
+    ///
+    /// [`Subpath`]: crate::Subpath
     PathOutsideCeiling,
     /// More than one covering [`Subpath`] and neither contains the other.
     ///
+    /// Defense in depth. Two absolute roots that both contain one normalized
+    /// path nest, so this should not be reached.
+    ///
     /// [`Subpath`]: crate::Subpath
     AmbiguousRoot,
+    /// The argument is not the normalized spelling `Subpath` would open.
+    ///
+    /// `//`, `.`, `..`, `\`, and a trailing slash are refused. `Pattern` and
+    /// `NotOneOf` already ran on the raw string.
+    UnnormalizedPath,
     /// The authorized path is the logical root, so there is no file beneath it.
     EmptyRelativePath,
     /// The opened handle is not a regular file.
@@ -889,6 +992,12 @@ pub enum FilesystemError {
     HardLinkRejected,
     /// The capability's [`CapabilityAccess`] does not allow these flags.
     AccessNotPermitted {
+        /// Capability name on the call.
+        name: String,
+    },
+    /// [`Workspace::require_capability_limits`] is set and this capability has
+    /// no [`Workspace::limit_capability`] entry.
+    CapabilityUnlimited {
         /// Capability name on the call.
         name: String,
     },
@@ -920,7 +1029,12 @@ pub enum FilesystemError {
     /// The authorized file already exists.
     AlreadyExists,
     /// The local directory could not be pinned.
-    InvalidJailRoot,
+    ///
+    /// `path` is the executor's configured jail root.
+    InvalidJailRoot {
+        /// `local_root` passed to [`Workspace::new`].
+        path: String,
+    },
     /// The opened handle is not the named directory entry.
     ///
     /// This covers a symlink, a case-folded name for another file, and an open
@@ -942,7 +1056,10 @@ impl fmt::Display for FilesystemError {
                 write!(f, "filesystem open is unavailable on this platform")
             }
             Self::AtomicUnavailable => {
-                write!(f, "atomic containment is unavailable on this platform")
+                write!(
+                    f,
+                    "atomic containment is unavailable on this platform; use Containment::BestEffort"
+                )
             }
             Self::LogicalRootIsFilesystemRoot => {
                 write!(f, "logical root must not be the filesystem root")
@@ -969,6 +1086,10 @@ impl fmt::Display for FilesystemError {
                 write!(f, "authorized path is outside the executor logical root")
             }
             Self::AmbiguousRoot => write!(f, "warrant Subpath roots do not nest"),
+            Self::UnnormalizedPath => write!(
+                f,
+                "authorized path must already be normalized (no '.', '..', repeated separators, backslashes, or a trailing slash)"
+            ),
             Self::EmptyRelativePath => {
                 write!(f, "authorized path is the logical root and names no file")
             }
@@ -979,8 +1100,14 @@ impl fmt::Display for FilesystemError {
             Self::AccessNotPermitted { name } => {
                 write!(f, "capability {name} does not allow this open")
             }
+            Self::CapabilityUnlimited { name } => {
+                write!(f, "capability {name} has no access limit")
+            }
             Self::CreateRequiresAtomic => {
-                write!(f, "creating a file requires kernel-enforced containment")
+                write!(
+                    f,
+                    "creating a file requires Linux x86_64 or aarch64; on other platforms create the file in the executor and open it with write_truncate"
+                )
             }
             Self::KernelJailUnavailable => {
                 write!(f, "openat2 is unavailable, so this host cannot pin a jail")
@@ -994,7 +1121,9 @@ impl fmt::Display for FilesystemError {
             Self::InvalidOpenOptions => write!(f, "open flags are not a valid combination"),
             Self::NotFound => write!(f, "authorized file does not exist"),
             Self::AlreadyExists => write!(f, "authorized file already exists"),
-            Self::InvalidJailRoot => write!(f, "local jail root could not be pinned"),
+            Self::InvalidJailRoot { path } => {
+                write!(f, "local jail root {path} could not be pinned")
+            }
             Self::NotTheNamedFile => {
                 write!(f, "opened file is not the named directory entry")
             }
@@ -1010,6 +1139,25 @@ impl std::error::Error for FilesystemError {
             Self::Policy(err) => Some(err),
             _ => None,
         }
+    }
+}
+
+impl From<FilesystemError> for std::io::Error {
+    fn from(err: FilesystemError) -> Self {
+        let kind = match &err {
+            FilesystemError::NotFound => std::io::ErrorKind::NotFound,
+            FilesystemError::AlreadyExists => std::io::ErrorKind::AlreadyExists,
+            FilesystemError::PermissionDenied | FilesystemError::AccessNotPermitted { .. } => {
+                std::io::ErrorKind::PermissionDenied
+            }
+            FilesystemError::InvalidOpenOptions
+            | FilesystemError::AccessModeMissing
+            | FilesystemError::UnnormalizedPath
+            | FilesystemError::ArgumentNotString { .. }
+            | FilesystemError::UnknownArgument { .. } => std::io::ErrorKind::InvalidInput,
+            _ => std::io::ErrorKind::Other,
+        };
+        std::io::Error::new(kind, err)
     }
 }
 
@@ -1051,6 +1199,37 @@ mod tests {
         let chosen =
             effective_subpath(&constraint, "/workspace/reports/q4.md", "path").expect("root");
         assert_eq!(chosen.root, "/workspace/reports");
+    }
+
+    #[test]
+    fn spelling_helper_rejects_rewritten_forms() {
+        assert!(Subpath::spelling_is_normalized("/workspace/reports/q4.md"));
+        assert!(!Subpath::spelling_is_normalized("/workspace//secret/key"));
+        assert!(!Subpath::spelling_is_normalized("/workspace/./secret/key"));
+        assert!(!Subpath::spelling_is_normalized(
+            "/workspace/reports/../secret/key"
+        ));
+        assert!(!Subpath::spelling_is_normalized("/workspace/secret\\key"));
+        assert!(!Subpath::spelling_is_normalized(
+            "/workspace/reports/q4.md/"
+        ));
+    }
+
+    #[test]
+    fn io_error_keeps_not_found_and_permission_denied() {
+        let missing = std::io::Error::from(FilesystemError::NotFound);
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+        let denied = std::io::Error::from(FilesystemError::PermissionDenied);
+        assert_eq!(denied.kind(), std::io::ErrorKind::PermissionDenied);
+        let other = std::io::Error::from(FilesystemError::OpenFailed);
+        assert_eq!(other.kind(), std::io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn create_error_names_the_platform_and_the_workaround() {
+        let text = FilesystemError::CreateRequiresAtomic.to_string();
+        assert!(text.contains("Linux x86_64 or aarch64"), "{text}");
+        assert!(text.contains("write_truncate"), "{text}");
     }
 
     #[test]

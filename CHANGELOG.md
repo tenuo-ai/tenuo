@@ -15,12 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory are executor configuration. `Subpath` stays lexical. `atomic`
   fails where the kernel cannot enforce the open. The open rejects a
   non-regular file and extra hard links unless the caller turns those checks
-  off. Symlinks are always rejected. `create` and `create_new` are refused
-  where the open is not kernel-enforced. `Workspace::limit_capability` can
-  stop a read capability from writing. Linux x86_64 and aarch64 do not fall
-  back when `openat2` is unavailable. Errors from the open do not include the
-  host path. Python and TypeScript callers are unchanged; Python still checks
-  a path with `path_jail` and then reads it, which is not a kernel-enforced open.
+  off. Symlinks are always rejected. The open refuses an argument that is
+  not already normalized, so `//`, `.`, `..`, `\`, and a trailing slash cannot
+  bypass `Pattern` or `NotOneOf`. Every covering `Subpath` must sit inside the
+  executor ceiling. Creating a file requires Linux x86_64 or aarch64; elsewhere
+  the executor creates the file and the tool opens it with `write_truncate`.
+  `Workspace::limit_capability` can stop a read capability from writing, and
+  `require_capability_limits` fails closed when a capability was not listed.
+  `FilesystemError` converts to `std::io::Error` and keeps `NotFound` and
+  `PermissionDenied`. Linux x86_64 and aarch64 do not fall back when `openat2`
+  is unavailable. Errors from the open do not include the host path. Python
+  and TypeScript callers are unchanged; Python still checks a path with
+  `path_jail` and then reads it, on every platform, which is not a
+  kernel-enforced open.
 
 ### Fixed
 

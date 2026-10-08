@@ -12,7 +12,8 @@ use tenuo::sdk::{
     PresentedAuthority, RevocationMode, Runtime, Workspace,
 };
 use tenuo::{
-    args, constraints, Authorizer, Call, ConstraintSet, Guard, Pattern, SigningKey, Warrant,
+    args, constraints, All, Any, Authorizer, Call, ConstraintSet, Guard, Not, NotOneOf, Pattern,
+    SigningKey, Warrant,
 };
 
 struct Layout {
@@ -36,6 +37,15 @@ fn harness(
     constraints: ConstraintSet,
     containment: Containment,
 ) -> (Guard, PresentedAuthority) {
+    harness_at("/workspace", local, constraints, containment)
+}
+
+fn harness_at(
+    logical: &str,
+    local: &Path,
+    constraints: ConstraintSet,
+    containment: Containment,
+) -> (Guard, PresentedAuthority) {
     let issuer = SigningKey::generate();
     let holder = SigningKey::generate();
     let warrant = Warrant::builder()
@@ -46,7 +56,7 @@ fn harness(
         .expect("warrant");
     let mut authorizer = Authorizer::new();
     authorizer.add_trusted_root(issuer.public_key());
-    let workspace = Workspace::new("/workspace", local, containment).expect("workspace");
+    let workspace = Workspace::new(logical, local, containment).expect("workspace");
     let guard = Guard::builder()
         .authorizer(authorizer)
         .revocation(RevocationMode::TtlOnly {
@@ -191,10 +201,9 @@ fn atomic_fails_closed_off_the_kernel_path() {
     if linux_atomic {
         assert!(built.is_ok());
     } else {
-        assert!(matches!(
-            built.err(),
-            Some(FilesystemError::AtomicUnavailable)
-        ));
+        let err = built.expect_err("atomic");
+        assert!(matches!(err, FilesystemError::AtomicUnavailable));
+        assert!(err.to_string().contains("BestEffort"), "{err}");
     }
 }
 
@@ -755,4 +764,216 @@ fn hard_link_check_can_be_turned_off() {
         .expect("open")
         .into_inner();
     assert!(file.has_hard_links());
+}
+
+#[test]
+fn unnormalized_spelling_does_not_open_a_denied_file() {
+    let layout = layout();
+    std::fs::create_dir(layout.local.path().join("secret")).unwrap();
+    std::fs::write(layout.local.path().join("secret/key"), b"hidden").unwrap();
+    let policy = All::new([
+        Subpath::new("/workspace").unwrap().into(),
+        Not::new(Pattern::new("/workspace/secret/*").unwrap().into()).into(),
+    ]);
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => policy },
+        Containment::BestEffort,
+    );
+    let canonical = read_at(&guard, &authority, "/workspace/secret/key");
+    assert!(matches!(canonical, Err(GuardError::Denied(_))));
+    for path in [
+        "/workspace//secret/key",
+        "/workspace/./secret/key",
+        "/workspace/reports/../secret/key",
+        "/workspace/secret\\key",
+    ] {
+        let err = read_at(&guard, &authority, path).expect_err(path);
+        assert!(
+            matches!(
+                err,
+                GuardError::Operation(FilesystemError::UnnormalizedPath)
+            ),
+            "{path}: {err:?}"
+        );
+    }
+    let allowed = read_at(&guard, &authority, "/workspace/reports/q4.md").expect("report");
+    assert_eq!(allowed, "quarterly");
+    assert_eq!(
+        std::fs::read(layout.local.path().join("secret/key")).unwrap(),
+        b"hidden"
+    );
+}
+
+#[test]
+fn unnormalized_spelling_does_not_widen_pattern_or_not_one_of() {
+    let layout = layout();
+    let pattern = All::new([
+        Subpath::new("/workspace").unwrap().into(),
+        Pattern::new("/workspace/reports/*").unwrap().into(),
+    ]);
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => pattern },
+        Containment::BestEffort,
+    );
+    let err =
+        read_at(&guard, &authority, "/workspace/reports/../secrets.txt").expect_err("pattern");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::UnnormalizedPath)
+    ));
+    assert_eq!(
+        std::fs::read(layout.local.path().join("secrets.txt")).unwrap(),
+        b"secret"
+    );
+
+    let denylist = All::new([
+        Subpath::new("/workspace").unwrap().into(),
+        NotOneOf::new(["/workspace/secrets.txt"]).into(),
+    ]);
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => denylist },
+        Containment::BestEffort,
+    );
+    let err = read_at(&guard, &authority, "/workspace//secrets.txt").expect_err("not one of");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::UnnormalizedPath)
+    ));
+    assert_eq!(
+        std::fs::read(layout.local.path().join("secrets.txt")).unwrap(),
+        b"secret"
+    );
+}
+
+#[test]
+fn trailing_slash_does_not_open_a_regular_file() {
+    let layout = layout();
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        Containment::BestEffort,
+    );
+    let err = read_at(&guard, &authority, "/workspace/reports/q4.md/").expect_err("slash");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::UnnormalizedPath)
+    ));
+    assert_eq!(
+        std::fs::read(layout.local.path().join("reports/q4.md")).unwrap(),
+        b"quarterly"
+    );
+}
+
+#[test]
+fn every_covering_subpath_must_sit_inside_the_ceiling() {
+    let layout = layout();
+    let reports = layout.local.path().join("reports");
+    let wide = Any::new([
+        Subpath::new("/workspace").unwrap().into(),
+        Subpath::new("/workspace/reports").unwrap().into(),
+    ]);
+    let (guard, authority) = harness_at(
+        "/workspace/reports",
+        &reports,
+        constraints! { "path" => wide },
+        Containment::BestEffort,
+    );
+    let err = read_at(&guard, &authority, "/workspace/reports/q4.md").expect_err("any");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::WarrantOutsideCeiling)
+    ));
+
+    let only_wide = Subpath::new("/workspace").unwrap();
+    let (guard, authority) = harness_at(
+        "/workspace/reports",
+        &reports,
+        constraints! { "path" => only_wide },
+        Containment::BestEffort,
+    );
+    let err = read_at(&guard, &authority, "/workspace/reports/q4.md").expect_err("wide");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::WarrantOutsideCeiling)
+    ));
+
+    let narrow = Subpath::new("/workspace/reports").unwrap();
+    let (guard, authority) = harness_at(
+        "/workspace/reports",
+        &reports,
+        constraints! { "path" => narrow },
+        Containment::BestEffort,
+    );
+    assert_eq!(
+        read_at(&guard, &authority, "/workspace/reports/q4.md").expect("narrow"),
+        "quarterly"
+    );
+    assert_eq!(std::fs::read(reports.join("q4.md")).unwrap(), b"quarterly");
+}
+
+fn limited_guard(local: &Path, strict: bool) -> (Guard, PresentedAuthority) {
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let warrant = Warrant::builder()
+        .capability(
+            "read_file",
+            constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        )
+        .holder(holder.public_key())
+        .ttl(Duration::from_secs(300))
+        .build(&issuer)
+        .unwrap();
+    let mut authorizer = Authorizer::new();
+    authorizer.add_trusted_root(issuer.public_key());
+    let mut workspace = Workspace::new("/workspace", local, Containment::BestEffort)
+        .unwrap()
+        .limit_capability("read_fiel", CapabilityAccess::read_only());
+    if strict {
+        workspace = workspace.require_capability_limits();
+    }
+    let guard = Guard::builder()
+        .authorizer(authorizer)
+        .revocation(RevocationMode::TtlOnly {
+            max_lifetime: Duration::from_secs(3600),
+        })
+        .filesystem(workspace)
+        .build()
+        .unwrap();
+    let authority =
+        PresentedAuthority::new(vec![warrant], Arc::new(LocalSigner::new(holder))).unwrap();
+    (guard, authority)
+}
+
+#[test]
+fn typo_in_limit_capability_fails_closed_when_limits_are_required() {
+    let layout = layout();
+    let (guard, authority) = limited_guard(layout.local.path(), false);
+    assert_eq!(
+        read_at(&guard, &authority, "/workspace/reports/q4.md").expect("typo is unlimited"),
+        "quarterly"
+    );
+
+    let (guard, authority) = limited_guard(layout.local.path(), true);
+    let err = read_at(&guard, &authority, "/workspace/reports/q4.md").expect_err("strict");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::CapabilityUnlimited { .. })
+    ));
+}
+
+#[test]
+fn invalid_jail_root_names_the_configured_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("not-a-directory");
+    std::fs::write(&file, b"x").unwrap();
+    let err = Workspace::new("/workspace", &file, Containment::BestEffort).unwrap_err();
+    match err {
+        FilesystemError::InvalidJailRoot { path } => {
+            assert!(path.contains("not-a-directory"), "{path}");
+        }
+        other => panic!("{other:?}"),
+    }
 }
