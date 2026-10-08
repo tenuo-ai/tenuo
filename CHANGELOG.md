@@ -20,8 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bypass `Pattern` or `NotOneOf`. Every covering `Subpath` must sit inside the
   executor ceiling. Creating a file requires Linux x86_64 or aarch64; elsewhere
   the executor creates the file and the tool opens it with `write_truncate`.
-  `Workspace::limit_capability` can stop a read capability from writing, and
-  `require_capability_limits` fails closed when a capability was not listed.
+  Filesystem capabilities require an explicit access limit by default, with
+  narrow presets for read, existing-file write, append, and create-new access;
+  `allow_handler_selected_access` is the explicit opt-out. Filesystem types are
+  exported by `sdk::prelude`. `Workspace::new` probes descriptor-path support so
+  a misconfigured host fails at startup instead of on its first request.
   `FilesystemError` converts to `std::io::Error` and keeps `NotFound` and
   `PermissionDenied`. Linux x86_64 and aarch64 do not fall back when `openat2`
   is unavailable. Every platform verifies the opened descriptor's exact path

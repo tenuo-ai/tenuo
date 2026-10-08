@@ -1538,20 +1538,25 @@ Cidr("10.0.0.0/8")
 Opening the file is the executor's step. The Rust SDK `filesystem` feature does both in the guarded call: it verifies the warrant, requires the leaf `Subpath` to sit inside a logical ceiling the executor configured, maps that logical path under a pinned local directory, and opens it through [`path_jail`](https://github.com/tenuo-ai/path_jail). The tool body receives a file, not a path to open later.
 
 ```rust
-let stamp = std::time::SystemTime::now()
-    .duration_since(std::time::UNIX_EPOCH)?
-    .as_nanos();
-let local = std::env::temp_dir().join(format!("tenuo-fs-{stamp}"));
-std::fs::create_dir_all(local.join("reports"))?;
-std::fs::write(local.join("reports/q4.md"), "quarterly")?;
+use std::io::Read;
+use tenuo::sdk::prelude::*;
 
-let workspace = Workspace::new("/workspace", &local, Containment::BestEffort)?;
+const READ_FILE: &str = "read_file";
+const PATH: &str = "path";
+
+// Warrants name /workspace; this executor maps it to its job directory.
+let workspace = Workspace::new(
+    "/workspace",
+    "/srv/jobs/job-1842",
+    Containment::Atomic,
+)?
+    .limit_capability(READ_FILE, CapabilityAccess::read_only());
 let session = runtime
     .session_from_warrant(warrant)?
     .with_filesystem(workspace);
 
 let body = session.guard(&call, |authorized| {
-    let mut file = authorized.open("path", OpenOptions::read_only())?;
+    let mut file = authorized.open(PATH, OpenOptions::read_only())?;
     let mut body = String::new();
     file.read_to_string(&mut body)?;
     Ok::<_, std::io::Error>(body)
@@ -1559,9 +1564,22 @@ let body = session.guard(&call, |authorized| {
 let body = body.into_inner();
 ```
 
-`FilesystemError` converts into `std::io::Error` and keeps `NotFound` and `PermissionDenied`. `Workspace`, `Containment`, `OpenOptions`, and `CapabilityAccess` come from `tenuo::sdk`. `Subpath` is `tenuo::Subpath`. `open` takes the argument name. The path is the one the warrant already allowed, and it must already be normalized: `//`, `.`, `..`, `\`, and a trailing slash are refused, because `Pattern` and `NotOneOf` saw the raw string. Call `Workspace::limit_capability` when a capability may only read. Without that limit, the handler's `OpenOptions` decide, so a `read_file` closure can pass `write_truncate`. `require_capability_limits` makes a typo in the capability name fail closed.
+The filesystem types are available from `tenuo::sdk::prelude::*`. `FilesystemError` converts into `std::io::Error` and keeps `NotFound` and `PermissionDenied`. `open` takes the argument name, not another path. The path is the one the warrant already allowed, and it must already be normalized: `//`, `.`, `..`, `\`, and a trailing slash are refused, because `Pattern` and `NotOneOf` saw the raw string.
 
-Creating a file requires Linux x86_64 or aarch64. `Atomic` is that kernel open. On macOS, BSD, and other architectures, `Atomic` cannot be constructed and `BestEffort` refuses `create` and `create_new`, because a parent directory swapped for a symlink can leave the new file outside the jail. The workaround is to create the file in the executor and open it with `write_truncate`. `BestEffort` uses `O_NOFOLLOW` on the final component and reports that on the opened file. Linux x86_64 and aarch64 do not fall back: if `openat2` is missing or blocked, `Workspace::new` fails. Truncate runs only after the opened handle is checked. Symlinks are rejected. On the kernel path the relative path, including a narrowed leaf such as `reports/q4.md`, is what `openat2` opens. Every platform also verifies that the opened descriptor resolves to that exact relative spelling. That check compares the jail root's path, not its inode, and the error does not include the host directory. Linux performs the check through `/proc/self/fd`, so deployments must mount and permit reads from that interface. macOS uses `F_GETPATH`. If the descriptor path cannot be resolved, the open fails closed with `EntryCheckUnavailable`.
+Every capability needs an explicit `limit_capability` entry by default. This makes a misspelled or forgotten capability fail closed with `CapabilityLimitMissing`, and stops a `read_file` handler from accidentally requesting `write_truncate`. Use the narrow presets `read_only`, `write_existing`, `append_existing`, and `create_new`; reserve `full_access` for handlers that genuinely need every mode. `allow_handler_selected_access` is an explicit escape hatch for dynamic capability sets. Capability and argument names match the dynamic tool schema, so define shared constants when they are reused.
+
+Creating a file requires Linux x86_64 or aarch64. `Atomic` is that kernel open. On macOS, BSD, and other architectures, `Atomic` cannot be constructed and `BestEffort` refuses `create` and `create_new`, because a parent directory swapped for a symlink can leave the new file outside the jail. The workaround is to create the file in the executor and open it with `write_truncate`. `BestEffort` uses `O_NOFOLLOW` on the final component and reports that on the opened file. Linux x86_64 and aarch64 do not fall back: if `openat2` is missing or blocked, `Workspace::new` fails. Truncate runs only after the opened handle is checked. Symlinks are rejected. On the kernel path the relative path, including a narrowed leaf such as `reports/q4.md`, is what `openat2` opens. Every platform also verifies that the opened descriptor resolves to that exact relative spelling. That check compares the jail root's path, not its inode, and the error does not include the host directory. Linux performs the check through `/proc/self/fd`; macOS uses `F_GETPATH`. `Workspace::new` probes that facility so a broken deployment fails at startup with `EntryCheckUnavailable`, rather than on its first request.
+
+| Host | Containment to choose | Create files | Descriptor-path requirement | CI status |
+|------|-----------------------|--------------|-----------------------------|-----------|
+| Linux x86_64 / aarch64 | `Atomic` for production | Yes | readable `/proc/self/fd` | tested |
+| macOS arm64 | `BestEffort` | No | `F_GETPATH` | tested |
+| BSD and other Unix | `BestEffort` | No | readable `/dev/fd` | not currently tested |
+| Windows | unavailable | No | — | unsupported |
+
+Before deployment, construct the workspace during startup, use `Atomic` on supported Linux hosts, configure every filesystem capability with its narrowest access preset, and run one guarded open against the mounted production volume. The constructor checks the kernel jail and descriptor-path prerequisites; the guarded open additionally checks the actual filesystem and mount behavior.
+
+`OpenedFile` implements the blocking `std::io::{Read, Write, Seek}` traits. In an async service, keep guarded file work short or move the guarded operation and file I/O into the runtime's blocking pool (for example, `tokio::task::spawn_blocking`). Do not turn the descriptor back into a path for a later async open; that discards the guarantee this API provides.
 
 Every `Subpath` branch that covers the argument must sit inside the executor ceiling. `Any` of a wide root and a narrow root is denied when the wide root is outside the ceiling, same as a warrant that is only the wide root.
 

@@ -38,8 +38,9 @@
 //! after that check.
 //!
 //! Linux resolves the descriptor through `/proc/self/fd`. A Linux deployment
-//! must mount and permit reads from that interface; otherwise the open returns
-//! [`FilesystemError::EntryCheckUnavailable`]. macOS uses `F_GETPATH`.
+//! must mount and permit reads from that interface; otherwise
+//! [`Workspace::new`] returns [`FilesystemError::EntryCheckUnavailable`].
+//! macOS uses `F_GETPATH`.
 //!
 //! ```
 //! # #[cfg(unix)]
@@ -47,9 +48,8 @@
 //! use std::fs;
 //! use std::io::Read;
 //! use std::time::{SystemTime, UNIX_EPOCH};
-//! use tenuo::sdk::{Containment, OpenOptions, Runtime, Workspace};
-//! use tenuo::constraints::Subpath;
-//! use tenuo::{args, Call, ConstraintSet, SigningKey, Warrant};
+//! use tenuo::sdk::prelude::*;
+//! use tenuo::args;
 //!
 //! let issuer = SigningKey::generate();
 //! let holder = SigningKey::generate();
@@ -71,7 +71,8 @@
 //!     .trusted_root(issuer.public_key())
 //!     .ttl_fallback(std::time::Duration::from_secs(120))
 //!     .build()?;
-//! let workspace = Workspace::new("/workspace", &local, Containment::BestEffort)?;
+//! let workspace = Workspace::new("/workspace", &local, Containment::BestEffort)?
+//!     .limit_capability("read_file", CapabilityAccess::read_only());
 //! let session = runtime
 //!     .session_from_warrant(warrant)?
 //!     .with_filesystem(workspace);
@@ -148,6 +149,7 @@ pub struct CapabilityAccess {
     append: bool,
     truncate: bool,
     create: bool,
+    create_new: bool,
 }
 
 impl CapabilityAccess {
@@ -159,19 +161,59 @@ impl CapabilityAccess {
             append: false,
             truncate: false,
             create: false,
+            create_new: false,
+        }
+    }
+
+    /// Write or truncate an existing file. Read, append, and create are refused.
+    pub fn write_existing() -> Self {
+        Self {
+            read: false,
+            write: true,
+            append: false,
+            truncate: true,
+            create: false,
+            create_new: false,
+        }
+    }
+
+    /// Append to an existing file. Read, truncate, and create are refused.
+    pub fn append_existing() -> Self {
+        Self {
+            read: false,
+            write: false,
+            append: true,
+            truncate: false,
+            create: false,
+            create_new: false,
+        }
+    }
+
+    /// Create a new file, refusing to open one that already exists.
+    ///
+    /// Creation is still refused where the open is not kernel-enforced.
+    pub fn create_new() -> Self {
+        Self {
+            read: false,
+            write: true,
+            append: false,
+            truncate: false,
+            create: false,
+            create_new: true,
         }
     }
 
     /// Read, write, append, truncate, and create.
     ///
     /// Create is still refused where the open is not kernel-enforced.
-    pub fn write() -> Self {
+    pub fn full_access() -> Self {
         Self {
             read: true,
             write: true,
             append: true,
             truncate: true,
             create: true,
+            create_new: true,
         }
     }
 
@@ -180,7 +222,8 @@ impl CapabilityAccess {
             && (!options.write || self.write)
             && (!options.append || self.append)
             && (!options.truncate || self.truncate)
-            && (!(options.create || options.create_new) || self.create)
+            && (!options.create || self.create)
+            && (!options.create_new || self.create_new)
     }
 }
 
@@ -239,11 +282,12 @@ impl Workspace {
             }
             let jail = FdJail::new(local_root.as_ref())
                 .map_err(|err| map_jail_new(err, containment, local_root.as_ref()))?;
+            probe_descriptor_paths()?;
             Ok(Self {
                 logical,
                 containment,
                 limits: HashMap::new(),
-                strict_limits: false,
+                strict_limits: true,
                 jail,
             })
         }
@@ -251,11 +295,9 @@ impl Workspace {
 
     /// Restrict `capability` to `access`.
     ///
-    /// Without a limit, the handler's [`OpenOptions`] decide. A limit makes a
-    /// `read_file` handler fail closed when it asks to write or create.
-    ///
-    /// A typo in `capability` stores a limit that no call uses. Pair this with
-    /// [`Self::require_capability_limits`] so an unlisted capability fails closed.
+    /// Every capability must have a limit by default, so a typo or omitted
+    /// entry fails closed. A limit makes a `read_file` handler fail when it
+    /// asks to write or create.
     pub fn limit_capability(
         mut self,
         capability: impl Into<String>,
@@ -267,10 +309,20 @@ impl Workspace {
 
     /// Require every opened capability to have a [`Self::limit_capability`] entry.
     ///
-    /// `limit_capability("read_fiel", ...)` then fails the real `read_file`
-    /// open instead of leaving it unlimited.
+    /// This is the default. The method is useful when shared configuration may
+    /// previously have called [`Self::allow_handler_selected_access`].
     pub fn require_capability_limits(mut self) -> Self {
         self.strict_limits = true;
+        self
+    }
+
+    /// Let a handler choose access for capabilities without an explicit limit.
+    ///
+    /// This is an escape hatch for dynamic capability sets. Prefer explicit
+    /// [`Self::limit_capability`] entries: without one, a handler for a
+    /// read-named capability can still request write, truncate, or create.
+    pub fn allow_handler_selected_access(mut self) -> Self {
+        self.strict_limits = false;
         self
     }
 
@@ -338,7 +390,7 @@ impl Workspace {
                 });
             }
         } else if self.strict_limits {
-            return Err(FilesystemError::CapabilityUnlimited {
+            return Err(FilesystemError::CapabilityLimitMissing {
                 name: capability.to_string(),
             });
         }
@@ -619,6 +671,19 @@ fn path_is_named_entry(root: &Path, relative: &str, actual: &Path) -> bool {
     rest == relative.as_bytes()
 }
 
+/// Check deployment prerequisites while constructing the workspace, rather
+/// than on the first user request.
+#[cfg(unix)]
+fn probe_descriptor_paths() -> Result<(), FilesystemError> {
+    // Use a universally available device instead of imposing read permission
+    // on an execute-only jail root. Descriptor-path support is host-wide.
+    let probe =
+        std::fs::File::open("/dev/null").map_err(|_| FilesystemError::EntryCheckUnavailable)?;
+    fd_path(&probe)
+        .map(|_| ())
+        .map_err(|_| FilesystemError::EntryCheckUnavailable)
+}
+
 #[cfg(all(unix, target_os = "linux"))]
 fn fd_path(file: &std::fs::File) -> std::io::Result<PathBuf> {
     use std::os::unix::io::AsRawFd;
@@ -681,8 +746,8 @@ fn map_jail_new(err: JailError, containment: Containment, local_root: &Path) -> 
 /// checks use `fstat` on the opened handle. Turn them off only when the tool
 /// is meant to see another file type or to decide about hard links itself.
 /// Symlinks are rejected on every open. [`Workspace::limit_capability`] is how
-/// a `read_file` capability refuses [`Self::write_truncate`]. Without a limit,
-/// the handler's flags are the access mode.
+/// a `read_file` capability permits [`Self::read_only`] while refusing
+/// [`Self::write_truncate`]. Workspaces require an explicit limit by default.
 ///
 /// `no_xdev` starts off. Linux maps it to `RESOLVE_NO_XDEV`. The fallback does
 /// not enforce it. A mount crossing that the kernel reports is
@@ -1001,9 +1066,8 @@ pub enum FilesystemError {
         /// Capability name on the call.
         name: String,
     },
-    /// [`Workspace::require_capability_limits`] is set and this capability has
-    /// no [`Workspace::limit_capability`] entry.
-    CapabilityUnlimited {
+    /// This capability has no [`Workspace::limit_capability`] entry.
+    CapabilityLimitMissing {
         /// Capability name on the call.
         name: String,
     },
@@ -1018,9 +1082,10 @@ pub enum FilesystemError {
     /// Linux x86_64 and aarch64 have no `O_NOFOLLOW` fallback. macOS and BSD
     /// do not return this error; they use [`Containment::BestEffort`].
     KernelJailUnavailable,
-    /// The platform could not read the opened handle's path.
+    /// The platform could not read a file descriptor's path.
     ///
-    /// The file was not returned. This is not evidence that the path was wrong.
+    /// Construction probes this requirement so a broken deployment fails at
+    /// startup. Linux requires readable `/proc/self/fd`; macOS uses `F_GETPATH`.
     EntryCheckUnavailable,
     /// The path leaves the jail, including a mount crossing when `no_xdev` is set.
     EscapedJail,
@@ -1106,8 +1171,8 @@ impl fmt::Display for FilesystemError {
             Self::AccessNotPermitted { name } => {
                 write!(f, "capability {name} does not allow this open")
             }
-            Self::CapabilityUnlimited { name } => {
-                write!(f, "capability {name} has no access limit")
+            Self::CapabilityLimitMissing { name } => {
+                write!(f, "capability {name} has no configured filesystem access")
             }
             Self::CreateRequiresAtomic => {
                 write!(
@@ -1119,7 +1184,7 @@ impl fmt::Display for FilesystemError {
                 write!(f, "openat2 is unavailable, so this host cannot pin a jail")
             }
             Self::EntryCheckUnavailable => {
-                write!(f, "could not confirm the opened file's directory entry")
+                write!(f, "file descriptor path verification is unavailable on this host")
             }
             Self::EscapedJail => write!(f, "the path leaves the jail"),
             Self::PermissionDenied => write!(f, "permission denied"),
@@ -1236,6 +1301,25 @@ mod tests {
         let text = FilesystemError::CreateRequiresAtomic.to_string();
         assert!(text.contains("Linux x86_64 or aarch64"), "{text}");
         assert!(text.contains("write_truncate"), "{text}");
+    }
+
+    #[test]
+    fn capability_access_presets_are_narrow() {
+        assert!(CapabilityAccess::read_only().permits(&OpenOptions::read_only()));
+        assert!(!CapabilityAccess::read_only().permits(&OpenOptions::write_truncate()));
+
+        assert!(CapabilityAccess::write_existing().permits(&OpenOptions::write_truncate()));
+        assert!(!CapabilityAccess::write_existing().permits(&OpenOptions::read_only()));
+        assert!(!CapabilityAccess::write_existing().permits(&OpenOptions::create_new()));
+
+        let append = OpenOptions::new().append(true);
+        assert!(CapabilityAccess::append_existing().permits(&append));
+        assert!(!CapabilityAccess::append_existing().permits(&OpenOptions::write_truncate()));
+
+        assert!(CapabilityAccess::create_new().permits(&OpenOptions::create_new()));
+        assert!(
+            !CapabilityAccess::create_new().permits(&OpenOptions::new().write(true).create(true))
+        );
     }
 
     #[test]

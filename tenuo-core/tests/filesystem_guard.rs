@@ -56,7 +56,9 @@ fn harness_at(
         .expect("warrant");
     let mut authorizer = Authorizer::new();
     authorizer.add_trusted_root(issuer.public_key());
-    let workspace = Workspace::new(logical, local, containment).expect("workspace");
+    let workspace = Workspace::new(logical, local, containment)
+        .expect("workspace")
+        .limit_capability("read_file", CapabilityAccess::full_access());
     let guard = Guard::builder()
         .authorizer(authorizer)
         .revocation(RevocationMode::TtlOnly {
@@ -270,7 +272,8 @@ fn wider_warrant_than_ceiling_is_denied_at_open() {
         layout.local.path().join("reports"),
         Containment::BestEffort,
     )
-    .unwrap();
+    .unwrap()
+    .limit_capability("read_file", CapabilityAccess::read_only());
     let guard = Guard::builder()
         .authorizer(authorizer)
         .revocation(RevocationMode::TtlOnly {
@@ -319,7 +322,8 @@ fn narrowed_leaf_opens_when_the_parent_root_is_wider_than_the_ceiling() {
         layout.local.path().join("reports"),
         Containment::BestEffort,
     )
-    .unwrap();
+    .unwrap()
+    .limit_capability("read_file", CapabilityAccess::read_only());
     let guard = Guard::builder()
         .authorizer(authorizer)
         .revocation(RevocationMode::TtlOnly {
@@ -417,8 +421,10 @@ fn write_and_create_stay_inside_the_jail() {
         .unwrap();
     let mut authorizer = Authorizer::new();
     authorizer.add_trusted_root(issuer.public_key());
-    let workspace =
-        Workspace::new("/workspace", layout.local.path(), Containment::BestEffort).unwrap();
+    let workspace = Workspace::new("/workspace", layout.local.path(), Containment::BestEffort)
+        .unwrap()
+        .limit_capability("write_file", CapabilityAccess::write_existing())
+        .limit_capability("create_file", CapabilityAccess::create_new());
     let guard = Guard::builder()
         .authorizer(authorizer)
         .revocation(RevocationMode::TtlOnly {
@@ -504,8 +510,9 @@ fn session_carries_the_workspace() {
         .ttl_fallback(Duration::from_secs(3600))
         .build()
         .unwrap();
-    let workspace =
-        Workspace::new("/workspace", layout.local.path(), Containment::BestEffort).unwrap();
+    let workspace = Workspace::new("/workspace", layout.local.path(), Containment::BestEffort)
+        .unwrap()
+        .limit_capability("read_file", CapabilityAccess::read_only());
     let session = runtime
         .session_from_warrant(warrant)
         .unwrap()
@@ -749,8 +756,10 @@ fn hard_link_is_rejected_without_truncating() {
         .unwrap();
     let mut authorizer = Authorizer::new();
     authorizer.add_trusted_root(issuer.public_key());
-    let workspace =
-        Workspace::new("/workspace", layout.local.path(), Containment::BestEffort).unwrap();
+    let workspace = Workspace::new("/workspace", layout.local.path(), Containment::BestEffort)
+        .unwrap()
+        .limit_capability("read_file", CapabilityAccess::read_only())
+        .limit_capability("write_file", CapabilityAccess::write_existing());
     let guard = Guard::builder()
         .authorizer(authorizer)
         .revocation(RevocationMode::TtlOnly {
@@ -962,7 +971,7 @@ fn every_covering_subpath_must_sit_inside_the_ceiling() {
     assert_eq!(std::fs::read(reports.join("q4.md")).unwrap(), b"quarterly");
 }
 
-fn limited_guard(local: &Path, strict: bool) -> (Guard, PresentedAuthority) {
+fn limited_guard(local: &Path, allow_unlisted: bool) -> (Guard, PresentedAuthority) {
     let issuer = SigningKey::generate();
     let holder = SigningKey::generate();
     let warrant = Warrant::builder()
@@ -979,8 +988,8 @@ fn limited_guard(local: &Path, strict: bool) -> (Guard, PresentedAuthority) {
     let mut workspace = Workspace::new("/workspace", local, Containment::BestEffort)
         .unwrap()
         .limit_capability("read_fiel", CapabilityAccess::read_only());
-    if strict {
-        workspace = workspace.require_capability_limits();
+    if allow_unlisted {
+        workspace = workspace.allow_handler_selected_access();
     }
     let guard = Guard::builder()
         .authorizer(authorizer)
@@ -996,20 +1005,21 @@ fn limited_guard(local: &Path, strict: bool) -> (Guard, PresentedAuthority) {
 }
 
 #[test]
-fn typo_in_limit_capability_fails_closed_when_limits_are_required() {
+fn typo_in_limit_capability_fails_closed_by_default() {
     let layout = layout();
     let (guard, authority) = limited_guard(layout.local.path(), false);
-    assert_eq!(
-        read_at(&guard, &authority, "/workspace/reports/q4.md").expect("typo is unlimited"),
-        "quarterly"
-    );
-
-    let (guard, authority) = limited_guard(layout.local.path(), true);
-    let err = read_at(&guard, &authority, "/workspace/reports/q4.md").expect_err("strict");
+    let err = read_at(&guard, &authority, "/workspace/reports/q4.md").expect_err("default");
     assert!(matches!(
         err,
-        GuardError::Operation(FilesystemError::CapabilityUnlimited { .. })
+        GuardError::Operation(FilesystemError::CapabilityLimitMissing { .. })
     ));
+
+    let (guard, authority) = limited_guard(layout.local.path(), true);
+    assert_eq!(
+        read_at(&guard, &authority, "/workspace/reports/q4.md")
+            .expect("explicit handler-selected access"),
+        "quarterly"
+    );
 }
 
 #[test]
