@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use tenuo::constraints::Subpath;
 use tenuo::sdk::{
-    Containment, FilesystemError, GuardError, Guarded, LocalSigner, OpenOptions,
+    CapabilityAccess, Containment, FilesystemError, GuardError, Guarded, LocalSigner, OpenOptions,
     PresentedAuthority, RevocationMode, Runtime, Workspace,
 };
 use tenuo::{
@@ -108,6 +108,76 @@ fn best_effort_reports_platform_toctou() {
         any(target_arch = "x86_64", target_arch = "aarch64")
     ));
     assert_eq!(file.toctou_safe(), linux_atomic);
+}
+
+#[test]
+fn atomic_open_reads_on_the_kernel_path() {
+    let linux_atomic = cfg!(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ));
+    if !linux_atomic {
+        return;
+    }
+    let layout = layout();
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        Containment::Atomic,
+    );
+    let call = Call::owned("read_file", args! { "path" => "/workspace/reports/q4.md" }).unwrap();
+    let file = guard
+        .guard(&authority, &call, |authorized| {
+            authorized.open("path", OpenOptions::read_only())
+        })
+        .expect("atomic open")
+        .into_inner();
+    assert!(file.toctou_safe());
+}
+
+#[test]
+fn read_limit_refuses_truncate() {
+    let layout = layout();
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let warrant = Warrant::builder()
+        .capability(
+            "read_file",
+            constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        )
+        .holder(holder.public_key())
+        .ttl(Duration::from_secs(300))
+        .build(&issuer)
+        .unwrap();
+    let mut authorizer = Authorizer::new();
+    authorizer.add_trusted_root(issuer.public_key());
+    let workspace = Workspace::new("/workspace", layout.local.path(), Containment::BestEffort)
+        .unwrap()
+        .limit_capability("read_file", CapabilityAccess::read_only());
+    let guard = Guard::builder()
+        .authorizer(authorizer)
+        .revocation(RevocationMode::TtlOnly {
+            max_lifetime: Duration::from_secs(3600),
+        })
+        .filesystem(workspace)
+        .build()
+        .unwrap();
+    let authority =
+        PresentedAuthority::new(vec![warrant], Arc::new(LocalSigner::new(holder))).unwrap();
+    let call = Call::owned("read_file", args! { "path" => "/workspace/reports/q4.md" }).unwrap();
+    let err = guard
+        .guard(&authority, &call, |authorized| {
+            authorized.open("path", OpenOptions::write_truncate())
+        })
+        .expect_err("write through a read limit");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::AccessNotPermitted { .. })
+    ));
+    assert_eq!(
+        std::fs::read(layout.local.path().join("reports/q4.md")).unwrap(),
+        b"quarterly"
+    );
 }
 
 #[test]
@@ -369,17 +439,33 @@ fn write_and_create_stay_inside_the_jail() {
         args! { "path" => "/workspace/reports/new.md" },
     )
     .unwrap();
-    let _created = guard
-        .guard(&authority, &create, |authorized| {
-            let mut file = authorized.open("path", OpenOptions::create_new())?;
-            file.write_all(b"created").expect("create");
-            Ok::<_, FilesystemError>(())
-        })
-        .expect("create");
-    assert_eq!(
-        std::fs::read(layout.local.path().join("reports/new.md")).unwrap(),
-        b"created"
-    );
+    let created = guard.guard(&authority, &create, |authorized| {
+        let mut file = authorized.open("path", OpenOptions::create_new())?;
+        file.write_all(b"created").expect("create");
+        Ok::<_, FilesystemError>(())
+    });
+    let kernel = cfg!(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ));
+    if kernel {
+        let _created = created.expect("create");
+        assert_eq!(
+            std::fs::read(layout.local.path().join("reports/new.md")).unwrap(),
+            b"created"
+        );
+    } else {
+        assert!(matches!(
+            created,
+            Err(GuardError::Operation(FilesystemError::CreateRequiresAtomic))
+        ));
+        assert!(layout
+            .local
+            .path()
+            .join("reports/new.md")
+            .metadata()
+            .is_err());
+    }
 }
 
 #[test]

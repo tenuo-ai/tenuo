@@ -14,10 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument from `AuthorizedCall::open`. The logical ceiling and the host
   directory are executor configuration. `Subpath` stays lexical. `atomic`
   fails where the kernel cannot enforce the open. The open rejects a
-  non-regular file, extra hard links, and any handle that is not the named
-  directory entry, unless the caller turns the file-type or hard-link check
-  off. Errors from the open do not include the host path. Python and
-  TypeScript callers are unchanged.
+  non-regular file and extra hard links unless the caller turns those checks
+  off. Symlinks are always rejected. `create` and `create_new` are refused
+  where the open is not kernel-enforced. `Workspace::limit_capability` can
+  stop a read capability from writing. Linux x86_64 and aarch64 do not fall
+  back when `openat2` is unavailable. Errors from the open do not include the
+  host path. Python and TypeScript callers are unchanged; Python still checks
+  a path with `path_jail` and then reads it, which is not a kernel-enforced open.
 
 ### Fixed
 

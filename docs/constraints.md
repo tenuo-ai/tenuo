@@ -1558,9 +1558,11 @@ let body = session.guard(&call, |authorized| {
 let body = body.into_inner();
 ```
 
-`Workspace`, `Containment`, and `OpenOptions` come from `tenuo::sdk`. `Subpath` is `tenuo::Subpath`. `open` takes the argument name. The path is the one the warrant already allowed. The tool chooses `OpenOptions`: a `read_file` handler that passes `write_truncate` writes. `Atomic` fails at construction except on Linux x86_64 and aarch64, where the kernel enforces the open. `BestEffort` is the fallback everywhere else and reports that on the opened file. Use `BestEffort` on macOS.
+`Workspace`, `Containment`, `OpenOptions`, and `CapabilityAccess` come from `tenuo::sdk`. `Subpath` is `tenuo::Subpath`. `open` takes the argument name. The path is the one the warrant already allowed. Call `Workspace::limit_capability` when a capability may only read. Without that limit, the handler's `OpenOptions` decide, so a `read_file` closure can pass `write_truncate`.
 
-The open rejects a directory or FIFO that yields a handle, and it rejects a file with an extra hard link, unless the caller turns those checks off. A socket fails before a handle exists. A truncate waits until the hard-link check and the directory-entry check pass. A symlink is not the named file, including a symlink that stays inside the jail and points at a sibling the leaf warrant did not name. The error text does not include the host directory.
+`Atomic` is the kernel open on Linux x86_64 and aarch64. `BestEffort` on macOS, BSD, and other Linux architectures uses `O_NOFOLLOW` on the final component and reports that on the opened file. Linux x86_64 and aarch64 do not fall back: if `openat2` is missing or blocked, `Workspace::new` fails. On the fallback, `create` and `create_new` are refused, because a parent directory swapped for a symlink can leave the new file outside the jail. Truncate runs only after the opened handle is checked. Symlinks are rejected. On the kernel path the relative path, including a narrowed leaf such as `reports/q4.md`, is what `openat2` opens. The fallback also checks the handle's path, and that check does not include the host directory in the error.
+
+The open rejects a directory or FIFO that yields a handle, and it rejects a file with an extra hard link, unless the caller turns those checks off. A socket fails before a handle exists.
 
 | Layer | What it decides |
 |-------|-----------------|
@@ -1569,6 +1571,21 @@ The open rejects a directory or FIFO that yields a handle, and it rejects a file
 | **Opened handle** | The directory entry that was opened is the named path, under the leaf and under the pinned directory |
 
 Enable it with the `filesystem` feature. It is not part of the default build, and `Subpath` itself never consults the disk.
+
+### Python
+
+Python callers do not get a file descriptor from this feature. A tool can still check the path with [`path_jail`](https://github.com/tenuo-ai/path_jail) and then read it. Those are two steps. On macOS and BSD a symlink can change between them. `Jail.join` is not the Rust `atomic` open.
+
+```python
+from path_jail import Jail  # uv pip install path_jail
+
+jail = Jail("/data")
+
+@guard(tool="read_file")
+async def read_file(path: str) -> str:
+    # Checked path, then a separate read. Not kernel-enforced.
+    return jail.join(path).read_text()
+```
 
 ---
 

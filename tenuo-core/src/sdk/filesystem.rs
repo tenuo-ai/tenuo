@@ -17,10 +17,11 @@
 //! reports that on [`OpenedFile::toctou_safe`].
 //!
 //! [`OpenOptions`] rejects a non-regular file and a file with extra hard links
-//! unless the caller turns those checks off. The checks run on the opened
-//! handle, and a requested truncate waits until they pass. The opened handle
-//! must be the named directory entry: a symlink, or another name for the same
-//! bytes, is rejected and is not returned.
+//! unless the caller turns those checks off. Symlinks are always rejected.
+//! Where the kernel enforces the open, that relative path is the open. On the
+//! fallback, the opened handle is checked against the named directory entry,
+//! and `create` / `create_new` are refused because a raced parent symlink can
+//! leave a file behind. Truncate runs only after that check.
 //!
 //! ```no_run
 //! # #[cfg(unix)]
@@ -102,8 +103,57 @@ pub enum Containment {
     /// Construction fails on platforms where [`path_jail`](https://github.com/tenuo-ai/path_jail)
     /// can only offer the final-component fallback.
     Atomic,
-    /// Allow the platform fallback. [`OpenedFile::toctou_safe`] is `false` there.
+    /// Use the platform fallback. [`OpenedFile::toctou_safe`] is `false` there.
+    ///
+    /// macOS, BSD, and Linux architectures other than x86_64 and aarch64 open
+    /// with `O_NOFOLLOW` on the final component. Linux x86_64 and aarch64 do
+    /// not fall back: if `openat2` is missing or blocked, [`Workspace::new`]
+    /// fails. `create` and `create_new` are refused on the fallback.
     BestEffort,
+}
+
+/// Access a [`Workspace::limit_capability`] allows for one capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapabilityAccess {
+    read: bool,
+    write: bool,
+    append: bool,
+    truncate: bool,
+    create: bool,
+}
+
+impl CapabilityAccess {
+    /// Read an existing file. Write, append, truncate, and create are refused.
+    pub fn read_only() -> Self {
+        Self {
+            read: true,
+            write: false,
+            append: false,
+            truncate: false,
+            create: false,
+        }
+    }
+
+    /// Read, write, append, truncate, and create.
+    ///
+    /// Create is still refused where the open is not kernel-enforced.
+    pub fn write() -> Self {
+        Self {
+            read: true,
+            write: true,
+            append: true,
+            truncate: true,
+            create: true,
+        }
+    }
+
+    fn permits(&self, options: &OpenOptions) -> bool {
+        (!options.read || self.read)
+            && (!options.write || self.write)
+            && (!options.append || self.append)
+            && (!options.truncate || self.truncate)
+            && (!(options.create || options.create_new) || self.create)
+    }
 }
 
 /// Executor ceiling and pinned local jail.
@@ -115,6 +165,7 @@ pub enum Containment {
 pub struct Workspace {
     logical: Subpath,
     containment: Containment,
+    limits: HashMap<String, CapabilityAccess>,
     #[cfg(unix)]
     jail: FdJail,
 }
@@ -133,7 +184,9 @@ impl Workspace {
     ///
     /// `logical_root` must be absolute and must not be the filesystem root.
     /// `local_root` must be an existing directory. [`Containment::Atomic`]
-    /// fails where the kernel guarantee is unavailable.
+    /// fails where the kernel guarantee is unavailable. On Linux x86_64 and
+    /// aarch64 both modes fail when `openat2` is missing or blocked, because
+    /// that architecture has no fallback.
     pub fn new(
         logical_root: impl AsRef<str>,
         local_root: impl AsRef<Path>,
@@ -158,9 +211,23 @@ impl Workspace {
             Ok(Self {
                 logical,
                 containment,
+                limits: HashMap::new(),
                 jail,
             })
         }
+    }
+
+    /// Restrict `capability` to `access`.
+    ///
+    /// Without a limit, the handler's [`OpenOptions`] decide. A limit makes a
+    /// `read_file` handler fail closed when it asks to write or create.
+    pub fn limit_capability(
+        mut self,
+        capability: impl Into<String>,
+        access: CapabilityAccess,
+    ) -> Self {
+        self.limits.insert(capability.into(), access);
+        self
     }
 
     pub(crate) fn open_authorized(
@@ -207,6 +274,13 @@ impl Workspace {
             return Err(FilesystemError::EmptyRelativePath);
         }
         options.validate()?;
+        if let Some(allowed) = self.limits.get(capability) {
+            if !allowed.permits(options) {
+                return Err(FilesystemError::AccessNotPermitted {
+                    name: capability.to_string(),
+                });
+            }
+        }
 
         #[cfg(not(unix))]
         {
@@ -214,6 +288,9 @@ impl Workspace {
         }
         #[cfg(unix)]
         {
+            if (options.create || options.create_new) && !atomic_platform() {
+                return Err(FilesystemError::CreateRequiresAtomic);
+            }
             reject_symlink_entries(self.jail.root(), &relative)?;
             let opened = self
                 .jail
@@ -222,8 +299,17 @@ impl Workspace {
             if self.containment == Containment::Atomic && !opened.attestation().toctou_safe {
                 return Err(FilesystemError::AtomicUnavailable);
             }
-            if !named_entry_matches(self.jail.root(), &relative, &opened) {
-                return Err(FilesystemError::NotTheNamedFile);
+            // `openat2` already opened this relative path with symlinks rejected.
+            // Reading `/proc` there is not the enforcement, and some containers
+            // do not mount it. The fallback still has to check the handle.
+            if !opened.attestation().toctou_safe {
+                match named_entry(self.jail.root(), &relative, &opened) {
+                    NamedEntry::Match => {}
+                    NamedEntry::Mismatch => return Err(FilesystemError::NotTheNamedFile),
+                    NamedEntry::Unavailable => {
+                        return Err(FilesystemError::EntryCheckUnavailable);
+                    }
+                }
             }
             if options.truncate {
                 opened
@@ -372,10 +458,10 @@ fn map_open(err: JailError) -> FilesystemError {
         JailError::FileTypeRejected { .. } => FilesystemError::NotRegularFile,
         JailError::HardLinkRejected { .. } => FilesystemError::HardLinkRejected,
         JailError::Io(err) => map_io(err),
-        JailError::Escape { .. }
-        | JailError::EscapedRoot { .. }
-        | JailError::SymlinkRejected { .. }
-        | JailError::BrokenSymlink(_) => FilesystemError::NotTheNamedFile,
+        JailError::Escape { .. } | JailError::EscapedRoot { .. } => FilesystemError::EscapedJail,
+        JailError::SymlinkRejected { .. } | JailError::BrokenSymlink(_) => {
+            FilesystemError::NotTheNamedFile
+        }
         _ => FilesystemError::OpenFailed,
     }
 }
@@ -385,6 +471,7 @@ fn map_io(err: std::io::Error) -> FilesystemError {
     match err.kind() {
         std::io::ErrorKind::NotFound => FilesystemError::NotFound,
         std::io::ErrorKind::AlreadyExists => FilesystemError::AlreadyExists,
+        std::io::ErrorKind::PermissionDenied => FilesystemError::PermissionDenied,
         _ => FilesystemError::OpenFailed,
     }
 }
@@ -410,31 +497,46 @@ fn reject_symlink_entries(root: &Path, relative: &str) -> Result<(), FilesystemE
                 }
                 return Err(FilesystemError::NotFound);
             }
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                return Err(FilesystemError::PermissionDenied);
+            }
             Err(_) => return Err(FilesystemError::OpenFailed),
         }
     }
     Ok(())
 }
 
+#[cfg(unix)]
+enum NamedEntry {
+    Match,
+    Mismatch,
+    Unavailable,
+}
+
 /// The opened handle's path is `root/relative`, byte for byte.
 ///
-/// A symlink that stays inside the jail, a case-folded name, and a raced
-/// open of a different file all fail this check. The host path is not returned.
+/// Used on the fallback, where the kernel did not enforce the open. A missing
+/// path lookup is [`NamedEntry::Unavailable`], not a claim that the file is
+/// the wrong entry. The host path is not returned.
 #[cfg(unix)]
-fn named_entry_matches(root: &Path, relative: &str, opened: &GuardedFile) -> bool {
+fn named_entry(root: &Path, relative: &str, opened: &GuardedFile) -> NamedEntry {
     let Ok(actual) = fd_path(opened.file()) else {
-        return false;
+        return NamedEntry::Unavailable;
     };
     use std::os::unix::ffi::OsStrExt;
     let root_bytes = root.as_os_str().as_bytes();
     let actual_bytes = actual.as_os_str().as_bytes();
     let Some(rest) = actual_bytes.strip_prefix(root_bytes) else {
-        return false;
+        return NamedEntry::Mismatch;
     };
     let Some(rest) = rest.strip_prefix(b"/") else {
-        return false;
+        return NamedEntry::Mismatch;
     };
-    rest == relative.as_bytes()
+    if rest == relative.as_bytes() {
+        NamedEntry::Match
+    } else {
+        NamedEntry::Mismatch
+    }
 }
 
 #[cfg(all(unix, target_os = "linux"))]
@@ -478,13 +580,9 @@ fn map_jail_new(err: JailError, containment: Containment) -> FilesystemError {
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")
     ))]
-    if containment == Containment::Atomic && matches!(err, JailError::UnsupportedKernel { .. }) {
-        return FilesystemError::AtomicUnavailable;
+    if matches!(err, JailError::UnsupportedKernel { .. }) {
+        return FilesystemError::KernelJailUnavailable;
     }
-    #[cfg(not(all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )))]
     let _ = (err, containment);
     FilesystemError::InvalidJailRoot
 }
@@ -498,13 +596,13 @@ fn map_jail_new(err: JailError, containment: Containment) -> FilesystemError {
 /// A new value requires a regular file and rejects extra hard links. Both
 /// checks use `fstat` on the opened handle. Turn them off only when the tool
 /// is meant to see another file type or to decide about hard links itself.
-/// The capability name is not one of these flags: a `read_file` handler that
-/// passes [`Self::write_truncate`] writes.
+/// Symlinks are rejected on every open. [`Workspace::limit_capability`] is how
+/// a `read_file` capability refuses [`Self::write_truncate`]. Without a limit,
+/// the handler's flags are the access mode.
 ///
-/// `no_symlinks` starts on. Linux maps it to `RESOLVE_NO_SYMLINKS`. The
-/// platform fallback does not honor the flag; the opened handle is still
-/// required to be the named directory entry. `no_xdev` starts off. Linux maps
-/// it to `RESOLVE_NO_XDEV`, and the fallback does not enforce it.
+/// `no_xdev` starts off. Linux maps it to `RESOLVE_NO_XDEV`. The fallback does
+/// not enforce it. A mount crossing that the kernel reports is
+/// [`FilesystemError::EscapedJail`].
 #[derive(Debug, Clone)]
 pub struct OpenOptions {
     read: bool,
@@ -515,7 +613,6 @@ pub struct OpenOptions {
     create_new: bool,
     require_regular_file: bool,
     reject_hard_links: bool,
-    no_symlinks: bool,
     no_xdev: bool,
 }
 
@@ -530,7 +627,6 @@ impl Default for OpenOptions {
             create_new: false,
             require_regular_file: true,
             reject_hard_links: true,
-            no_symlinks: true,
             no_xdev: false,
         }
     }
@@ -614,16 +710,6 @@ impl OpenOptions {
         self
     }
 
-    /// Ask Linux to reject symlinks with `RESOLVE_NO_SYMLINKS`.
-    ///
-    /// On by default. The platform fallback does not honor this flag. Turning
-    /// it off does not make a symlink open a different file: the handle must
-    /// still be the named directory entry.
-    pub fn no_symlinks(mut self, yes: bool) -> Self {
-        self.no_symlinks = yes;
-        self
-    }
-
     /// Reject an open that crosses a mount point.
     ///
     /// Off by default. Linux maps this to `RESOLVE_NO_XDEV`. The platform
@@ -644,7 +730,7 @@ impl OpenOptions {
             .create_new(self.create_new)
             .require_regular_file(self.require_regular_file)
             .reject_hard_links(self.reject_hard_links)
-            .no_symlinks(self.no_symlinks)
+            .no_symlinks(true)
             .no_xdev(self.no_xdev)
     }
 
@@ -801,6 +887,30 @@ pub enum FilesystemError {
     NotRegularFile,
     /// The opened file has more than one hard link.
     HardLinkRejected,
+    /// The capability's [`CapabilityAccess`] does not allow these flags.
+    AccessNotPermitted {
+        /// Capability name on the call.
+        name: String,
+    },
+    /// `create` or `create_new` was requested where the open is not kernel-enforced.
+    ///
+    /// A raced parent symlink on that fallback can create the file outside the
+    /// jail before the handle is rejected. Truncate is separate: it runs only
+    /// after the opened handle is checked.
+    CreateRequiresAtomic,
+    /// `openat2` is missing or blocked, so this architecture cannot pin a jail.
+    ///
+    /// Linux x86_64 and aarch64 have no `O_NOFOLLOW` fallback. macOS and BSD
+    /// do not return this error; they use [`Containment::BestEffort`].
+    KernelJailUnavailable,
+    /// The fallback could not read the opened handle's path.
+    ///
+    /// The file was not returned. This is not evidence that the path was wrong.
+    EntryCheckUnavailable,
+    /// The path leaves the jail, including a mount crossing when `no_xdev` is set.
+    EscapedJail,
+    /// The operating system denied access to the named file.
+    PermissionDenied,
     /// The open has no read, write, or append access.
     AccessModeMissing,
     /// The flag combination cannot be applied.
@@ -866,6 +976,20 @@ impl fmt::Display for FilesystemError {
             Self::HardLinkRejected => {
                 write!(f, "opened file has more than one hard link")
             }
+            Self::AccessNotPermitted { name } => {
+                write!(f, "capability {name} does not allow this open")
+            }
+            Self::CreateRequiresAtomic => {
+                write!(f, "creating a file requires kernel-enforced containment")
+            }
+            Self::KernelJailUnavailable => {
+                write!(f, "openat2 is unavailable, so this host cannot pin a jail")
+            }
+            Self::EntryCheckUnavailable => {
+                write!(f, "could not confirm the opened file's directory entry")
+            }
+            Self::EscapedJail => write!(f, "the path leaves the jail"),
+            Self::PermissionDenied => write!(f, "permission denied"),
             Self::AccessModeMissing => write!(f, "open needs read, write, or append"),
             Self::InvalidOpenOptions => write!(f, "open flags are not a valid combination"),
             Self::NotFound => write!(f, "authorized file does not exist"),
