@@ -1179,6 +1179,16 @@ impl<T> Guarded<T> {
     }
 }
 
+impl<T: fmt::Debug> fmt::Debug for Guarded<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Guarded")
+            .field("value", &self.value)
+            .field("capability", &self.decision.metadata.capability)
+            .field("decision_id", &self.decision.metadata.decision_id)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Build a [`Guard`]. Rejects an empty trust store and a missing revocation mode.
 #[derive(Default)]
 pub struct GuardBuilder {
@@ -1552,8 +1562,7 @@ mod tests {
                 runs.fetch_add(1, Ordering::SeqCst);
                 Ok::<_, &str>(())
             })
-            .err()
-            .expect("deny");
+            .expect_err("deny");
 
         assert_eq!(runs.load(Ordering::SeqCst), 0);
         match err {
@@ -1712,8 +1721,7 @@ mod tests {
                 runs.fetch_add(1, Ordering::SeqCst);
                 Ok::<_, &str>(())
             })
-            .err()
-            .expect("deny");
+            .expect_err("deny");
         assert_eq!(runs.load(Ordering::SeqCst), 0);
         match err {
             GuardError::Denied(denial) => {
@@ -1908,8 +1916,7 @@ mod tests {
                 runs.fetch_add(1, Ordering::SeqCst);
                 Ok::<_, &str>(())
             })
-            .err()
-            .expect("deny");
+            .expect_err("deny");
         assert_eq!(runs.load(Ordering::SeqCst), 0);
         match err {
             GuardError::Denied(denial) => {

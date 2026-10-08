@@ -18,7 +18,9 @@
 //!
 //! [`OpenOptions`] rejects a non-regular file and a file with extra hard links
 //! unless the caller turns those checks off. The checks run on the opened
-//! handle, and a requested truncate waits until they pass.
+//! handle, and a requested truncate waits until they pass. The opened handle
+//! must be the named directory entry: a symlink, or another name for the same
+//! bytes, is rejected and is not returned.
 //!
 //! ```no_run
 //! # #[cfg(unix)]
@@ -75,6 +77,8 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 #[cfg(unix)]
 use std::io::{Read, Seek, Write};
@@ -87,6 +91,7 @@ use crate::Error;
 use path_jail::guard::OpenOptions as JailOpenOptions;
 #[cfg(unix)]
 use path_jail::guard::{FdJail, GuardedFile};
+#[cfg(unix)]
 use path_jail::JailError;
 
 /// How strictly an open must be kernel-enforced.
@@ -201,20 +206,30 @@ impl Workspace {
         if !relative_is_file(&relative) {
             return Err(FilesystemError::EmptyRelativePath);
         }
+        options.validate()?;
 
         #[cfg(not(unix))]
         {
-            let _ = options;
             return Err(FilesystemError::UnsupportedPlatform);
         }
         #[cfg(unix)]
         {
+            reject_symlink_entries(self.jail.root(), &relative)?;
             let opened = self
                 .jail
                 .open(&relative, options.to_jail())
                 .map_err(map_open)?;
             if self.containment == Containment::Atomic && !opened.attestation().toctou_safe {
                 return Err(FilesystemError::AtomicUnavailable);
+            }
+            if !named_entry_matches(self.jail.root(), &relative, &opened) {
+                return Err(FilesystemError::NotTheNamedFile);
+            }
+            if options.truncate {
+                opened
+                    .file()
+                    .set_len(0)
+                    .map_err(|_| FilesystemError::OpenFailed)?;
             }
             Ok(OpenedFile { file: opened })
         }
@@ -356,8 +371,105 @@ fn map_open(err: JailError) -> FilesystemError {
     match err {
         JailError::FileTypeRejected { .. } => FilesystemError::NotRegularFile,
         JailError::HardLinkRejected { .. } => FilesystemError::HardLinkRejected,
-        other => FilesystemError::Jail(other),
+        JailError::Io(err) => map_io(err),
+        JailError::Escape { .. }
+        | JailError::EscapedRoot { .. }
+        | JailError::SymlinkRejected { .. }
+        | JailError::BrokenSymlink(_) => FilesystemError::NotTheNamedFile,
+        _ => FilesystemError::OpenFailed,
     }
+}
+
+#[cfg(unix)]
+fn map_io(err: std::io::Error) -> FilesystemError {
+    match err.kind() {
+        std::io::ErrorKind::NotFound => FilesystemError::NotFound,
+        std::io::ErrorKind::AlreadyExists => FilesystemError::AlreadyExists,
+        _ => FilesystemError::OpenFailed,
+    }
+}
+
+/// Reject a symlink anywhere in `relative` before `open` follows it.
+///
+/// The final component may be missing. An existing symlink is not the named
+/// file, and opening it can truncate the target.
+#[cfg(unix)]
+fn reject_symlink_entries(root: &Path, relative: &str) -> Result<(), FilesystemError> {
+    let mut current = root.to_path_buf();
+    let parts: Vec<&str> = relative.split('/').collect();
+    for (index, component) in parts.iter().enumerate() {
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(FilesystemError::NotTheNamedFile);
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                if index + 1 == parts.len() {
+                    return Ok(());
+                }
+                return Err(FilesystemError::NotFound);
+            }
+            Err(_) => return Err(FilesystemError::OpenFailed),
+        }
+    }
+    Ok(())
+}
+
+/// The opened handle's path is `root/relative`, byte for byte.
+///
+/// A symlink that stays inside the jail, a case-folded name, and a raced
+/// open of a different file all fail this check. The host path is not returned.
+#[cfg(unix)]
+fn named_entry_matches(root: &Path, relative: &str, opened: &GuardedFile) -> bool {
+    let Ok(actual) = fd_path(opened.file()) else {
+        return false;
+    };
+    use std::os::unix::ffi::OsStrExt;
+    let root_bytes = root.as_os_str().as_bytes();
+    let actual_bytes = actual.as_os_str().as_bytes();
+    let Some(rest) = actual_bytes.strip_prefix(root_bytes) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(b"/") else {
+        return false;
+    };
+    rest == relative.as_bytes()
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn fd_path(file: &std::fs::File) -> std::io::Result<PathBuf> {
+    use std::os::unix::io::AsRawFd;
+    std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+}
+
+#[cfg(all(unix, target_os = "macos"))]
+fn fd_path(file: &std::fs::File) -> std::io::Result<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::AsRawFd;
+    extern "C" {
+        fn fcntl(fd: std::os::raw::c_int, cmd: std::os::raw::c_int, ...) -> std::os::raw::c_int;
+    }
+    // `F_GETPATH` from `<fcntl.h>`: write the vnode's path into `buf`.
+    const F_GETPATH: std::os::raw::c_int = 50;
+    let mut buf = [0u8; 1024];
+    // SAFETY: `file` owns `fd` for this call. `buf` is writable for 1024 bytes.
+    // `F_GETPATH` writes a NUL-terminated path and does not retain the pointer.
+    let rc = unsafe { fcntl(file.as_raw_fd(), F_GETPATH, buf.as_mut_ptr()) };
+    if rc < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let len = buf
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or_else(|| std::io::Error::other("fd path was not returned"))?;
+    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len])))
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn fd_path(file: &std::fs::File) -> std::io::Result<PathBuf> {
+    use std::os::unix::io::AsRawFd;
+    std::fs::read_link(format!("/dev/fd/{}", file.as_raw_fd()))
 }
 
 #[cfg(unix)]
@@ -373,8 +485,8 @@ fn map_jail_new(err: JailError, containment: Containment) -> FilesystemError {
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")
     )))]
-    let _ = containment;
-    FilesystemError::Jail(err)
+    let _ = (err, containment);
+    FilesystemError::InvalidJailRoot
 }
 
 /// Flags for [`AuthorizedCall::open`](crate::sdk::AuthorizedCall::open).
@@ -386,9 +498,13 @@ fn map_jail_new(err: JailError, containment: Containment) -> FilesystemError {
 /// A new value requires a regular file and rejects extra hard links. Both
 /// checks use `fstat` on the opened handle. Turn them off only when the tool
 /// is meant to see another file type or to decide about hard links itself.
-/// `no_symlinks` and `no_xdev` start off. On Linux they map to
-/// `RESOLVE_NO_SYMLINKS` and `RESOLVE_NO_XDEV`. The platform fallback does not
-/// enforce them.
+/// The capability name is not one of these flags: a `read_file` handler that
+/// passes [`Self::write_truncate`] writes.
+///
+/// `no_symlinks` starts on. Linux maps it to `RESOLVE_NO_SYMLINKS`. The
+/// platform fallback does not honor the flag; the opened handle is still
+/// required to be the named directory entry. `no_xdev` starts off. Linux maps
+/// it to `RESOLVE_NO_XDEV`, and the fallback does not enforce it.
 #[derive(Debug, Clone)]
 pub struct OpenOptions {
     read: bool,
@@ -414,14 +530,16 @@ impl Default for OpenOptions {
             create_new: false,
             require_regular_file: true,
             reject_hard_links: true,
-            no_symlinks: false,
+            no_symlinks: true,
             no_xdev: false,
         }
     }
 }
 
 impl OpenOptions {
-    /// No flags set.
+    /// Handle policies at their defaults, with no read, write, or append.
+    ///
+    /// An open with no access mode is rejected. This does not read the file.
     pub fn new() -> Self {
         Self::default()
     }
@@ -477,9 +595,10 @@ impl OpenOptions {
 
     /// Reject a handle that is not a regular file.
     ///
-    /// On by default. A directory, FIFO, socket, or device fails with
-    /// [`FilesystemError::NotRegularFile`] after the handle is opened, and the
-    /// handle is closed.
+    /// On by default. A directory, FIFO, or other non-regular file that yields
+    /// a handle fails with [`FilesystemError::NotRegularFile`], and the handle
+    /// is closed. A socket, or a write-only FIFO with no reader, fails in the
+    /// kernel before a handle exists and is [`FilesystemError::OpenFailed`].
     pub fn require_regular_file(mut self, yes: bool) -> Self {
         self.require_regular_file = yes;
         self
@@ -495,10 +614,11 @@ impl OpenOptions {
         self
     }
 
-    /// Reject symlinks inside the jail.
+    /// Ask Linux to reject symlinks with `RESOLVE_NO_SYMLINKS`.
     ///
-    /// Off by default. Linux maps this to `RESOLVE_NO_SYMLINKS`. The platform
-    /// fallback does not enforce it.
+    /// On by default. The platform fallback does not honor this flag. Turning
+    /// it off does not make a symlink open a different file: the handle must
+    /// still be the named directory entry.
     pub fn no_symlinks(mut self, yes: bool) -> Self {
         self.no_symlinks = yes;
         self
@@ -519,13 +639,30 @@ impl OpenOptions {
             .read(self.read)
             .write(self.write)
             .append(self.append)
-            .truncate(self.truncate)
+            .truncate(false)
             .create(self.create)
             .create_new(self.create_new)
             .require_regular_file(self.require_regular_file)
             .reject_hard_links(self.reject_hard_links)
             .no_symlinks(self.no_symlinks)
             .no_xdev(self.no_xdev)
+    }
+
+    fn validate(&self) -> Result<(), FilesystemError> {
+        if !self.read && !self.write && !self.append {
+            return Err(FilesystemError::AccessModeMissing);
+        }
+        let can_write = self.write || self.append;
+        if (self.create || self.create_new) && !can_write {
+            return Err(FilesystemError::InvalidOpenOptions);
+        }
+        if self.truncate && !self.write {
+            return Err(FilesystemError::InvalidOpenOptions);
+        }
+        if self.truncate && self.append {
+            return Err(FilesystemError::InvalidOpenOptions);
+        }
+        Ok(())
     }
 }
 
@@ -664,8 +801,23 @@ pub enum FilesystemError {
     NotRegularFile,
     /// The opened file has more than one hard link.
     HardLinkRejected,
-    /// `path_jail` rejected the open.
-    Jail(JailError),
+    /// The open has no read, write, or append access.
+    AccessModeMissing,
+    /// The flag combination cannot be applied.
+    InvalidOpenOptions,
+    /// The authorized file does not exist.
+    NotFound,
+    /// The authorized file already exists.
+    AlreadyExists,
+    /// The local directory could not be pinned.
+    InvalidJailRoot,
+    /// The opened handle is not the named directory entry.
+    ///
+    /// This covers a symlink, a case-folded name for another file, and an open
+    /// that raced onto a different file. The host path is not included.
+    NotTheNamedFile,
+    /// The open was rejected.
+    OpenFailed,
     /// Lexical [`Subpath`] check failed.
     ///
     /// [`Subpath`]: crate::Subpath
@@ -714,7 +866,15 @@ impl fmt::Display for FilesystemError {
             Self::HardLinkRejected => {
                 write!(f, "opened file has more than one hard link")
             }
-            Self::Jail(err) => write!(f, "{err}"),
+            Self::AccessModeMissing => write!(f, "open needs read, write, or append"),
+            Self::InvalidOpenOptions => write!(f, "open flags are not a valid combination"),
+            Self::NotFound => write!(f, "authorized file does not exist"),
+            Self::AlreadyExists => write!(f, "authorized file already exists"),
+            Self::InvalidJailRoot => write!(f, "local jail root could not be pinned"),
+            Self::NotTheNamedFile => {
+                write!(f, "opened file is not the named directory entry")
+            }
+            Self::OpenFailed => write!(f, "open was rejected"),
             Self::Policy(err) => write!(f, "{err}"),
         }
     }
@@ -723,7 +883,6 @@ impl fmt::Display for FilesystemError {
 impl std::error::Error for FilesystemError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Jail(err) => Some(err),
             Self::Policy(err) => Some(err),
             _ => None,
         }

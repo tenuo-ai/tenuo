@@ -14,7 +14,7 @@ pub use super::{
     Session, SessionWarrant, SystemClock, Tenuo, ValueClass, VerifiedProjection,
 };
 pub use crate::{
-    ConstraintSet, ConstraintValue, Pattern, PublicKey, Signature, SigningKey, Warrant,
+    ConstraintSet, ConstraintValue, Pattern, PublicKey, Signature, SigningKey, Subpath, Warrant,
 };
 
 #[cfg(feature = "receipts")]

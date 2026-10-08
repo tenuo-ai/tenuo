@@ -14,8 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument from `AuthorizedCall::open`. The logical ceiling and the host
   directory are executor configuration. `Subpath` stays lexical. `atomic`
   fails where the kernel cannot enforce the open. The open rejects a
-  non-regular file and extra hard links unless the caller turns those checks
-  off. Python and TypeScript callers are unchanged.
+  non-regular file, extra hard links, and any handle that is not the named
+  directory entry, unless the caller turns the file-type or hard-link check
+  off. Errors from the open do not include the host path. Python and
+  TypeScript callers are unchanged.
 
 ### Fixed
 

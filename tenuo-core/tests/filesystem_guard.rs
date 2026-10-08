@@ -139,8 +139,11 @@ fn symlink_escape_is_rejected() {
     let err = read_at(&guard, &authority, "/workspace/link").expect_err("symlink");
     assert!(matches!(
         err,
-        GuardError::Operation(FilesystemError::Jail(_))
+        GuardError::Operation(FilesystemError::NotTheNamedFile)
     ));
+    let shown = format!("{err} {err:?}");
+    let host = layout.local.path().to_string_lossy();
+    assert!(!shown.contains(host.as_ref()), "{shown}");
 }
 
 #[test]
@@ -442,6 +445,130 @@ fn case_insensitive_subpath_does_not_open() {
         err,
         GuardError::Operation(FilesystemError::CaseInsensitive { .. })
     ));
+}
+
+#[test]
+fn symlink_inside_a_narrow_leaf_does_not_read_the_parent() {
+    let layout = layout();
+    std::os::unix::fs::symlink(
+        layout.local.path().join("secrets.txt"),
+        layout.local.path().join("reports/leak"),
+    )
+    .expect("symlink");
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => Subpath::new("/workspace/reports").unwrap() },
+        Containment::BestEffort,
+    );
+    let err = read_at(&guard, &authority, "/workspace/reports/leak").expect_err("leaf symlink");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::NotTheNamedFile)
+    ));
+    assert_eq!(
+        std::fs::read(layout.local.path().join("secrets.txt")).unwrap(),
+        b"secret"
+    );
+
+    let write = Call::owned("read_file", args! { "path" => "/workspace/reports/leak" }).unwrap();
+    let truncated = guard.guard(&authority, &write, |authorized| {
+        authorized.open("path", OpenOptions::write_truncate())
+    });
+    assert!(matches!(
+        truncated,
+        Err(GuardError::Operation(FilesystemError::NotTheNamedFile))
+    ));
+    assert_eq!(
+        std::fs::read(layout.local.path().join("secrets.txt")).unwrap(),
+        b"secret"
+    );
+}
+
+#[test]
+fn case_folded_name_does_not_open_another_entry() {
+    let layout = layout();
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        Containment::BestEffort,
+    );
+    let err = read_at(&guard, &authority, "/workspace/reports/Q4.md").expect_err("case");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::NotFound)
+            | GuardError::Operation(FilesystemError::NotTheNamedFile)
+    ));
+    assert_eq!(
+        std::fs::read(layout.local.path().join("reports/q4.md")).unwrap(),
+        b"quarterly"
+    );
+}
+
+#[test]
+fn empty_open_options_do_not_read() {
+    let layout = layout();
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        Containment::BestEffort,
+    );
+    let call = Call::owned("read_file", args! { "path" => "/workspace/reports/q4.md" }).unwrap();
+    let err = guard
+        .guard(&authority, &call, |authorized| {
+            authorized.open("path", OpenOptions::new())
+        })
+        .expect_err("no access mode");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::AccessModeMissing)
+    ));
+}
+
+#[test]
+fn raced_directory_symlink_does_not_return_outside_bytes() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let layout = layout();
+    let outside = tempfile::tempdir().expect("outside");
+    std::fs::write(outside.path().join("file"), b"OUTSIDE-RACE").expect("outside");
+    let gate = layout.local.path().join("gate");
+    let hold = layout.local.path().join("gate-hold");
+    std::fs::create_dir(&gate).expect("gate");
+    std::fs::write(gate.join("file"), b"INSIDE").expect("inside");
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        Containment::BestEffort,
+    );
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flip = Arc::clone(&stop);
+    let gate_flip = gate.clone();
+    let hold_flip = hold.clone();
+    let outside_dir = outside.path().to_path_buf();
+    let flipper = std::thread::spawn(move || {
+        while !stop_flip.load(Ordering::Relaxed) {
+            if std::fs::rename(&gate_flip, &hold_flip).is_ok() {
+                if std::os::unix::fs::symlink(&outside_dir, &gate_flip).is_ok() {
+                    std::thread::yield_now();
+                    let _ = std::fs::remove_file(&gate_flip);
+                }
+                if gate_flip.exists() {
+                    let _ = std::fs::remove_file(&gate_flip);
+                }
+                let _ = std::fs::rename(&hold_flip, &gate_flip);
+            } else {
+                let _ = std::fs::remove_file(&gate_flip);
+                let _ = std::fs::rename(&hold_flip, &gate_flip);
+            }
+        }
+    });
+    for _ in 0..200 {
+        if let Ok(body) = read_at(&guard, &authority, "/workspace/gate/file") {
+            assert_ne!(body, "OUTSIDE-RACE", "raced open returned the outside file");
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    flipper.join().expect("flipper");
 }
 
 #[test]

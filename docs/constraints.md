@@ -1541,27 +1541,32 @@ Opening the file is the executor's step. The Rust SDK `filesystem` feature does 
 let workspace = Workspace::new(
     "/workspace",
     "/srv/jobs/job-1842",
-    Containment::Atomic,
+    Containment::BestEffort,
 )?;
 let session = runtime
     .session_from_warrant(warrant)?
     .with_filesystem(workspace);
 
-session.guard(&call, |authorized| {
-    let mut file = authorized.open("path", OpenOptions::read_only())?;
+let body = session.guard(&call, |authorized| {
+    let mut file = authorized
+        .open("path", OpenOptions::read_only())
+        .map_err(std::io::Error::other)?;
     let mut body = String::new();
     file.read_to_string(&mut body)?;
-    Ok(body)
+    Ok::<_, std::io::Error>(body)
 })?;
+let body = body.into_inner();
 ```
 
-`open` takes the argument name. The path is the one the warrant already allowed. `Atomic` fails where the platform cannot enforce the open in one kernel operation. `BestEffort` uses that platform's fallback and reports it on the opened file. The open rejects a directory, FIFO, or other non-regular file, and it rejects a file with an extra hard link, unless the caller turns those checks off. A truncate waits until the hard-link check passes.
+`Workspace`, `Containment`, and `OpenOptions` come from `tenuo::sdk`. `Subpath` is `tenuo::Subpath`. `open` takes the argument name. The path is the one the warrant already allowed. The tool chooses `OpenOptions`: a `read_file` handler that passes `write_truncate` writes. `Atomic` fails at construction except on Linux x86_64 and aarch64, where the kernel enforces the open. `BestEffort` is the fallback everywhere else and reports that on the opened file. Use `BestEffort` on macOS.
+
+The open rejects a directory or FIFO that yields a handle, and it rejects a file with an extra hard link, unless the caller turns those checks off. A socket fails before a handle exists. A truncate waits until the hard-link check and the directory-entry check pass. A symlink is not the named file, including a symlink that stays inside the jail and points at a sibling the leaf warrant did not name. The error text does not include the host directory.
 
 | Layer | What it decides |
 |-------|-----------------|
 | **Subpath** | The logical path is inside the delegated root, including after `.` and `..` normalization |
 | **Workspace ceiling** | The warrant root is inside the directory this executor is willing to expose |
-| **path_jail** | The open stays under the pinned local directory, including across symlinks |
+| **Opened handle** | The directory entry that was opened is the named path, under the leaf and under the pinned directory |
 
 Enable it with the `filesystem` feature. It is not part of the default build, and `Subpath` itself never consults the disk.
 
