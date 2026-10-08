@@ -16,6 +16,10 @@
 //! `openat2(RESOLVE_BENEATH)`. `best-effort` uses the platform fallback and
 //! reports that on [`OpenedFile::toctou_safe`].
 //!
+//! [`OpenOptions`] rejects a non-regular file and a file with extra hard links
+//! unless the caller turns those checks off. The checks run on the opened
+//! handle, and a requested truncate waits until they pass.
+//!
 //! ```no_run
 //! # #[cfg(unix)]
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -208,7 +212,7 @@ impl Workspace {
             let opened = self
                 .jail
                 .open(&relative, options.to_jail())
-                .map_err(FilesystemError::Jail)?;
+                .map_err(map_open)?;
             if self.containment == Containment::Atomic && !opened.attestation().toctou_safe {
                 return Err(FilesystemError::AtomicUnavailable);
             }
@@ -348,6 +352,15 @@ fn atomic_platform() -> bool {
 }
 
 #[cfg(unix)]
+fn map_open(err: JailError) -> FilesystemError {
+    match err {
+        JailError::FileTypeRejected { .. } => FilesystemError::NotRegularFile,
+        JailError::HardLinkRejected { .. } => FilesystemError::HardLinkRejected,
+        other => FilesystemError::Jail(other),
+    }
+}
+
+#[cfg(unix)]
 fn map_jail_new(err: JailError, containment: Containment) -> FilesystemError {
     #[cfg(all(
         target_os = "linux",
@@ -369,7 +382,14 @@ fn map_jail_new(err: JailError, containment: Containment) -> FilesystemError {
 /// The warrant already decided the tool may run. These flags are how that
 /// tool opens the authorized argument. `read_file` and `write_file` stay
 /// separate capabilities; this type does not promote one into the other.
-#[derive(Debug, Clone, Default)]
+///
+/// A new value requires a regular file and rejects extra hard links. Both
+/// checks use `fstat` on the opened handle. Turn them off only when the tool
+/// is meant to see another file type or to decide about hard links itself.
+/// `no_symlinks` and `no_xdev` start off. On Linux they map to
+/// `RESOLVE_NO_SYMLINKS` and `RESOLVE_NO_XDEV`. The platform fallback does not
+/// enforce them.
+#[derive(Debug, Clone)]
 pub struct OpenOptions {
     read: bool,
     write: bool,
@@ -377,6 +397,27 @@ pub struct OpenOptions {
     truncate: bool,
     create: bool,
     create_new: bool,
+    require_regular_file: bool,
+    reject_hard_links: bool,
+    no_symlinks: bool,
+    no_xdev: bool,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self {
+            read: false,
+            write: false,
+            append: false,
+            truncate: false,
+            create: false,
+            create_new: false,
+            require_regular_file: true,
+            reject_hard_links: true,
+            no_symlinks: false,
+            no_xdev: false,
+        }
+    }
 }
 
 impl OpenOptions {
@@ -434,6 +475,44 @@ impl OpenOptions {
         self
     }
 
+    /// Reject a handle that is not a regular file.
+    ///
+    /// On by default. A directory, FIFO, socket, or device fails with
+    /// [`FilesystemError::NotRegularFile`] after the handle is opened, and the
+    /// handle is closed.
+    pub fn require_regular_file(mut self, yes: bool) -> Self {
+        self.require_regular_file = yes;
+        self
+    }
+
+    /// Reject a file with more than one hard link.
+    ///
+    /// On by default. When this is set with [`truncate`](Self::truncate), the
+    /// file is truncated only after the link count is checked, so an already
+    /// hard-linked file is not emptied.
+    pub fn reject_hard_links(mut self, yes: bool) -> Self {
+        self.reject_hard_links = yes;
+        self
+    }
+
+    /// Reject symlinks inside the jail.
+    ///
+    /// Off by default. Linux maps this to `RESOLVE_NO_SYMLINKS`. The platform
+    /// fallback does not enforce it.
+    pub fn no_symlinks(mut self, yes: bool) -> Self {
+        self.no_symlinks = yes;
+        self
+    }
+
+    /// Reject an open that crosses a mount point.
+    ///
+    /// Off by default. Linux maps this to `RESOLVE_NO_XDEV`. The platform
+    /// fallback does not enforce it.
+    pub fn no_xdev(mut self, yes: bool) -> Self {
+        self.no_xdev = yes;
+        self
+    }
+
     #[cfg(unix)]
     fn to_jail(&self) -> JailOpenOptions {
         JailOpenOptions::new()
@@ -443,6 +522,10 @@ impl OpenOptions {
             .truncate(self.truncate)
             .create(self.create)
             .create_new(self.create_new)
+            .require_regular_file(self.require_regular_file)
+            .reject_hard_links(self.reject_hard_links)
+            .no_symlinks(self.no_symlinks)
+            .no_xdev(self.no_xdev)
     }
 }
 
@@ -477,7 +560,8 @@ impl OpenedFile {
 
     /// `true` when the opened file has more than one hard link.
     ///
-    /// The jail reports the count. What to do about it is the caller's policy.
+    /// The default open rejects that file before it is returned. This is for a
+    /// caller that turned [`OpenOptions::reject_hard_links`] off.
     pub fn has_hard_links(&self) -> bool {
         #[cfg(unix)]
         {
@@ -576,6 +660,10 @@ pub enum FilesystemError {
     AmbiguousRoot,
     /// The authorized path is the logical root, so there is no file beneath it.
     EmptyRelativePath,
+    /// The opened handle is not a regular file.
+    NotRegularFile,
+    /// The opened file has more than one hard link.
+    HardLinkRejected,
     /// `path_jail` rejected the open.
     Jail(JailError),
     /// Lexical [`Subpath`] check failed.
@@ -621,6 +709,10 @@ impl fmt::Display for FilesystemError {
             Self::AmbiguousRoot => write!(f, "warrant Subpath roots do not nest"),
             Self::EmptyRelativePath => {
                 write!(f, "authorized path is the logical root and names no file")
+            }
+            Self::NotRegularFile => write!(f, "opened handle is not a regular file"),
+            Self::HardLinkRejected => {
+                write!(f, "opened file has more than one hard link")
             }
             Self::Jail(err) => write!(f, "{err}"),
             Self::Policy(err) => write!(f, "{err}"),

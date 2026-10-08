@@ -1547,9 +1547,9 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "path_jail"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfe21bf78eee1bef6eaf9e4e423cacf5c55ada71016ac652c84737a86dc38eea"
+checksum = "90ffcdca91ae4938ba61a95df85ce23c14ae81f8a70f69ca94784e6ea320d8a8"
 
 [[package]]
 name = "pem"

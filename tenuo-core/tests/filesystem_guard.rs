@@ -443,3 +443,103 @@ fn case_insensitive_subpath_does_not_open() {
         GuardError::Operation(FilesystemError::CaseInsensitive { .. })
     ));
 }
+
+#[test]
+fn directory_is_not_a_regular_file() {
+    let layout = layout();
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        Containment::BestEffort,
+    );
+    let err = read_at(&guard, &authority, "/workspace/reports").expect_err("directory");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::NotRegularFile)
+    ));
+}
+
+#[test]
+fn hard_link_is_rejected_without_truncating() {
+    let layout = layout();
+    std::fs::hard_link(
+        layout.local.path().join("reports/q4.md"),
+        layout.local.path().join("reports/q4-link.md"),
+    )
+    .expect("hard link");
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let constraints = constraints! { "path" => Subpath::new("/workspace").unwrap() };
+    let warrant = Warrant::builder()
+        .capability("read_file", constraints.clone())
+        .capability("write_file", constraints)
+        .holder(holder.public_key())
+        .ttl(Duration::from_secs(300))
+        .build(&issuer)
+        .unwrap();
+    let mut authorizer = Authorizer::new();
+    authorizer.add_trusted_root(issuer.public_key());
+    let workspace =
+        Workspace::new("/workspace", layout.local.path(), Containment::BestEffort).unwrap();
+    let guard = Guard::builder()
+        .authorizer(authorizer)
+        .revocation(RevocationMode::TtlOnly {
+            max_lifetime: Duration::from_secs(3600),
+        })
+        .filesystem(workspace)
+        .build()
+        .unwrap();
+    let authority =
+        PresentedAuthority::new(vec![warrant], Arc::new(LocalSigner::new(holder))).unwrap();
+
+    let err = read_at(&guard, &authority, "/workspace/reports/q4-link.md").expect_err("link");
+    assert!(matches!(
+        err,
+        GuardError::Operation(FilesystemError::HardLinkRejected)
+    ));
+
+    let write = Call::owned("write_file", args! { "path" => "/workspace/reports/q4.md" }).unwrap();
+    let truncated = guard.guard(&authority, &write, |authorized| {
+        authorized.open("path", OpenOptions::write_truncate())
+    });
+    assert!(matches!(
+        truncated,
+        Err(GuardError::Operation(FilesystemError::HardLinkRejected))
+    ));
+    assert_eq!(
+        std::fs::read(layout.local.path().join("reports/q4.md")).unwrap(),
+        b"quarterly"
+    );
+}
+
+#[test]
+fn hard_link_check_can_be_turned_off() {
+    let layout = layout();
+    std::fs::hard_link(
+        layout.local.path().join("reports/q4.md"),
+        layout.local.path().join("reports/q4-link.md"),
+    )
+    .expect("hard link");
+    let (guard, authority) = harness(
+        layout.local.path(),
+        constraints! { "path" => Subpath::new("/workspace").unwrap() },
+        Containment::BestEffort,
+    );
+    let call = Call::owned(
+        "read_file",
+        args! { "path" => "/workspace/reports/q4-link.md" },
+    )
+    .unwrap();
+    let file = guard
+        .guard(&authority, &call, |authorized| {
+            authorized.open(
+                "path",
+                OpenOptions::read_only()
+                    .reject_hard_links(false)
+                    .require_regular_file(false),
+            )
+        })
+        .expect("open")
+        .into_inner();
+    assert!(file.has_hard_links());
+}

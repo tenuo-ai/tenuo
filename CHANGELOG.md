@@ -10,11 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Optional filesystem open on the Rust guard.** The `filesystem` feature
-  pins a local jail with `path_jail` and opens an authorized `Subpath`
+  pins a local jail with `path_jail` 0.5 and opens an authorized `Subpath`
   argument from `AuthorizedCall::open`. The logical ceiling and the host
   directory are executor configuration. `Subpath` stays lexical. `atomic`
-  fails where the kernel cannot enforce the open. Python and TypeScript
-  callers are unchanged.
+  fails where the kernel cannot enforce the open. The open rejects a
+  non-regular file and extra hard links unless the caller turns those checks
+  off. Python and TypeScript callers are unchanged.
 
 ### Fixed
 

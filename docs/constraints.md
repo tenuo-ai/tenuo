@@ -1555,7 +1555,7 @@ session.guard(&call, |authorized| {
 })?;
 ```
 
-`open` takes the argument name. The path is the one the warrant already allowed. `Atomic` fails where the platform cannot enforce the open in one kernel operation. `BestEffort` uses that platform's fallback and reports it on the opened file.
+`open` takes the argument name. The path is the one the warrant already allowed. `Atomic` fails where the platform cannot enforce the open in one kernel operation. `BestEffort` uses that platform's fallback and reports it on the opened file. The open rejects a directory, FIFO, or other non-regular file, and it rejects a file with an extra hard link, unless the caller turns those checks off. A truncate waits until the hard-link check passes.
 
 | Layer | What it decides |
 |-------|-----------------|
