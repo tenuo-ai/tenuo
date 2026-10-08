@@ -29,15 +29,13 @@
 //! [`OpenOptions`] rejects a non-regular file and a file with extra hard links
 //! unless the caller turns those checks off. Turning both off also leaves the
 //! open blocking, so a FIFO can hang the handler. Symlinks are always rejected.
-//! Where the kernel enforces the open, that relative path is the open. On the
-//! fallback, the opened handle is checked against the named directory entry.
-//! That check compares path strings, including the jail root's path, not the
-//! root inode. Truncate runs only after that check.
-//!
-//! On a case-insensitive directory (ext4 casefold, vfat, SMB), Linux can open
-//! `/workspace/SECRET/key` when the warrant denied `/workspace/secret`. The
-//! spelling check does not fold case. The macOS fallback compares the directory
-//! entry and rejects a different casing.
+//! Every opened handle is checked against the named directory entry, including
+//! after an `openat2` open. This prevents a case-insensitive directory (ext4
+//! casefold, vfat, SMB) from opening `/workspace/secret` for an authorized
+//! spelling such as `/workspace/SECRET`. The check compares path strings,
+//! including the jail root's path, not the root inode. If the platform cannot
+//! resolve the descriptor's path, the open fails closed. Truncate runs only
+//! after that check.
 //!
 //! ```
 //! # #[cfg(unix)]
@@ -358,16 +356,15 @@ impl Workspace {
             if self.containment == Containment::Atomic && !opened.attestation().toctou_safe {
                 return Err(FilesystemError::AtomicUnavailable);
             }
-            // `openat2` already opened this relative path with symlinks rejected.
-            // Reading `/proc` there is not the enforcement, and some containers
-            // do not mount it. The fallback still has to check the handle.
-            if !opened.attestation().toctou_safe {
-                match named_entry(self.jail.root(), &relative, &opened) {
-                    NamedEntry::Match => {}
-                    NamedEntry::Mismatch => return Err(FilesystemError::NotTheNamedFile),
-                    NamedEntry::Unavailable => {
-                        return Err(FilesystemError::EntryCheckUnavailable);
-                    }
+            // Containment and name identity are separate guarantees. `openat2`
+            // keeps resolution beneath the jail, but a case-folding filesystem
+            // can still resolve different bytes to the same entry. Verify the
+            // descriptor's resolved spelling before returning or truncating it.
+            match named_entry(self.jail.root(), &relative, &opened) {
+                NamedEntry::Match => {}
+                NamedEntry::Mismatch => return Err(FilesystemError::NotTheNamedFile),
+                NamedEntry::Unavailable => {
+                    return Err(FilesystemError::EntryCheckUnavailable);
                 }
             }
             if options.truncate {
@@ -597,20 +594,25 @@ fn named_entry(root: &Path, relative: &str, opened: &GuardedFile) -> NamedEntry 
     let Ok(actual) = fd_path(opened.file()) else {
         return NamedEntry::Unavailable;
     };
-    use std::os::unix::ffi::OsStrExt;
-    let root_bytes = root.as_os_str().as_bytes();
-    let actual_bytes = actual.as_os_str().as_bytes();
-    let Some(rest) = actual_bytes.strip_prefix(root_bytes) else {
-        return NamedEntry::Mismatch;
-    };
-    let Some(rest) = rest.strip_prefix(b"/") else {
-        return NamedEntry::Mismatch;
-    };
-    if rest == relative.as_bytes() {
+    if path_is_named_entry(root, relative, &actual) {
         NamedEntry::Match
     } else {
         NamedEntry::Mismatch
     }
+}
+
+#[cfg(unix)]
+fn path_is_named_entry(root: &Path, relative: &str, actual: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let root_bytes = root.as_os_str().as_bytes();
+    let actual_bytes = actual.as_os_str().as_bytes();
+    let Some(rest) = actual_bytes.strip_prefix(root_bytes) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(b"/") else {
+        return false;
+    };
+    rest == relative.as_bytes()
 }
 
 #[cfg(all(unix, target_os = "linux"))]
@@ -1012,7 +1014,7 @@ pub enum FilesystemError {
     /// Linux x86_64 and aarch64 have no `O_NOFOLLOW` fallback. macOS and BSD
     /// do not return this error; they use [`Containment::BestEffort`].
     KernelJailUnavailable,
-    /// The fallback could not read the opened handle's path.
+    /// The platform could not read the opened handle's path.
     ///
     /// The file was not returned. This is not evidence that the path was wrong.
     EntryCheckUnavailable,
@@ -1249,5 +1251,26 @@ mod tests {
                 .as_deref(),
             None
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn named_entry_requires_the_exact_spelling() {
+        let root = Path::new("/srv/jobs/job-1842");
+        assert!(path_is_named_entry(
+            root,
+            "secret/key",
+            Path::new("/srv/jobs/job-1842/secret/key")
+        ));
+        assert!(!path_is_named_entry(
+            root,
+            "SECRET/key",
+            Path::new("/srv/jobs/job-1842/secret/key")
+        ));
+        assert!(!path_is_named_entry(
+            root,
+            "secret/key",
+            Path::new("/srv/jobs/job-1842-evil/secret/key")
+        ));
     }
 }
