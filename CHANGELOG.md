@@ -24,7 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `require_capability_limits` fails closed when a capability was not listed.
   `FilesystemError` converts to `std::io::Error` and keeps `NotFound` and
   `PermissionDenied`. Linux x86_64 and aarch64 do not fall back when `openat2`
-  is unavailable. Errors from the open do not include the host path. Python
+  is unavailable. Every platform verifies the opened descriptor's exact path
+  spelling before returning or truncating it, including on case-folding
+  filesystems. Linux performs that check through `/proc/self/fd` and fails
+  closed if it is unavailable. Errors from the open do not include the host path. Python
   and TypeScript callers are unchanged; Python still checks a path with
   `path_jail` and then reads it, on every platform, which is not a
   kernel-enforced open.

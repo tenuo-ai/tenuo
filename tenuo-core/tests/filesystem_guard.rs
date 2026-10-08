@@ -599,6 +599,54 @@ fn case_folded_name_does_not_open_another_entry() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires TENUO_CASEFOLD_TEST_ROOT on an ext4 casefold directory"]
+fn casefold_filesystem_rejects_alias_before_truncate() {
+    let local = std::path::PathBuf::from(
+        std::env::var_os("TENUO_CASEFOLD_TEST_ROOT")
+            .expect("TENUO_CASEFOLD_TEST_ROOT must name the CI casefold directory"),
+    );
+    let canonical_dir = local.join("secret");
+    let canonical_file = canonical_dir.join("key");
+    std::fs::create_dir(&canonical_dir).expect("create canonical directory");
+    std::fs::write(&canonical_file, b"hidden").expect("write canonical file");
+    assert!(
+        local.join("SECRET/key").exists(),
+        "test root is not case-insensitive"
+    );
+
+    let policy = All::new([
+        Subpath::new("/workspace").unwrap().into(),
+        NotOneOf::new(["/workspace/secret/key"]).into(),
+    ]);
+    let (guard, authority) = harness(
+        &local,
+        constraints! { "path" => policy },
+        Containment::Atomic,
+    );
+
+    let canonical = read_at(&guard, &authority, "/workspace/secret/key");
+    assert!(matches!(canonical, Err(GuardError::Denied(_))));
+
+    let alias = read_at(&guard, &authority, "/workspace/SECRET/key")
+        .expect_err("case-folded alias must not open");
+    assert!(matches!(
+        alias,
+        GuardError::Operation(FilesystemError::NotTheNamedFile)
+    ));
+
+    let call = Call::owned("read_file", args! { "path" => "/workspace/SECRET/key" }).unwrap();
+    let truncate = guard.guard(&authority, &call, |authorized| {
+        authorized.open("path", OpenOptions::write_truncate())
+    });
+    assert!(matches!(
+        truncate,
+        Err(GuardError::Operation(FilesystemError::NotTheNamedFile))
+    ));
+    assert_eq!(std::fs::read(canonical_file).unwrap(), b"hidden");
+}
+
 #[test]
 fn empty_open_options_do_not_read() {
     let layout = layout();

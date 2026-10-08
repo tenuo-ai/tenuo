@@ -37,6 +37,10 @@
 //! resolve the descriptor's path, the open fails closed. Truncate runs only
 //! after that check.
 //!
+//! Linux resolves the descriptor through `/proc/self/fd`. A Linux deployment
+//! must mount and permit reads from that interface; otherwise the open returns
+//! [`FilesystemError::EntryCheckUnavailable`]. macOS uses `F_GETPATH`.
+//!
 //! ```
 //! # #[cfg(unix)]
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
