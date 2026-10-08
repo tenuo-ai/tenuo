@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional filesystem open on the Rust guard.** The `filesystem` feature
+  pins a local jail with `path_jail` and opens an authorized `Subpath`
+  argument from `AuthorizedCall::open`. The logical ceiling and the host
+  directory are executor configuration. `Subpath` stays lexical. `atomic`
+  fails where the kernel cannot enforce the open. Python and TypeScript
+  callers are unchanged.
+
 ### Fixed
 
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`

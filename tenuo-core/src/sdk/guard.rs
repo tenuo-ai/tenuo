@@ -85,6 +85,8 @@ pub struct Guard {
     async_revocation: Option<Arc<dyn super::async_api::AsyncRevocationProvider>>,
     #[cfg(feature = "receipts")]
     evidence: EvidenceConfig,
+    #[cfg(feature = "filesystem")]
+    filesystem: Option<Arc<super::filesystem::Workspace>>,
 }
 
 #[derive(Clone)]
@@ -849,6 +851,8 @@ impl Guard {
             pop_signature,
             chain,
             approvals,
+            #[cfg(feature = "filesystem")]
+            filesystem: self.filesystem.clone(),
         })
     }
 
@@ -1062,6 +1066,8 @@ pub struct AuthorizedCall<'a> {
     pop_signature: Signature,
     chain: &'a [Warrant],
     approvals: &'a [SignedApproval],
+    #[cfg(feature = "filesystem")]
+    filesystem: Option<Arc<super::filesystem::Workspace>>,
 }
 
 impl<'a> AuthorizedCall<'a> {
@@ -1116,6 +1122,32 @@ impl<'a> AuthorizedCall<'a> {
         self.approvals
     }
 
+    /// Open the authorized string in `argument` through the guard's workspace.
+    ///
+    /// The path is [`Self::execution_args`], not a path the caller supplies.
+    /// The leaf warrant must bound that argument with [`Subpath`](crate::Subpath),
+    /// and that root must sit inside the workspace logical ceiling. The returned
+    /// file has no path.
+    #[cfg(feature = "filesystem")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+    pub fn open(
+        &self,
+        argument: &str,
+        options: super::filesystem::OpenOptions,
+    ) -> Result<super::filesystem::OpenedFile, super::filesystem::FilesystemError> {
+        let workspace = self
+            .filesystem
+            .as_ref()
+            .ok_or(super::filesystem::FilesystemError::NotConfigured)?;
+        workspace.open_authorized(
+            argument,
+            self.capability,
+            self.execution_args,
+            self.chain,
+            &options,
+        )
+    }
+
     fn as_decision(&self) -> Decision {
         Decision {
             metadata: DecisionMetadata {
@@ -1168,6 +1200,8 @@ pub struct GuardBuilder {
     receipt_link: Option<std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>>,
     #[cfg(feature = "async")]
     declared_sync_deadline: bool,
+    #[cfg(feature = "filesystem")]
+    filesystem: Option<Arc<super::filesystem::Workspace>>,
 }
 
 impl GuardBuilder {
@@ -1197,6 +1231,16 @@ impl GuardBuilder {
     ) -> Self {
         self.revocation = Some(RevocationMode::TtlUntilSrl { max_lifetime });
         self.tracker = Some(tracker);
+        self
+    }
+
+    /// Pin the local jail used by [`AuthorizedCall::open`].
+    ///
+    /// Absent by default. Without it, `open` fails closed.
+    #[cfg(feature = "filesystem")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+    pub fn filesystem(mut self, workspace: super::filesystem::Workspace) -> Self {
+        self.filesystem = Some(Arc::new(workspace));
         self
     }
 
@@ -1353,7 +1397,23 @@ impl GuardBuilder {
             async_revocation: self.async_revocation,
             #[cfg(feature = "receipts")]
             evidence,
+            #[cfg(feature = "filesystem")]
+            filesystem: self.filesystem,
         })
+    }
+}
+
+impl Guard {
+    /// Attach a workspace to a guard that was already built.
+    ///
+    /// [`Session::with_filesystem`](crate::sdk::Session::with_filesystem) is the
+    /// holder-side equivalent. One workspace per job: the logical root is what
+    /// warrants say, and the local root is this machine's directory for that job.
+    #[cfg(feature = "filesystem")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+    pub fn with_filesystem(mut self, workspace: super::filesystem::Workspace) -> Self {
+        self.filesystem = Some(Arc::new(workspace));
+        self
     }
 }
 

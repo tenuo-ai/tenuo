@@ -194,6 +194,9 @@ pub use sdk::{
 pub use sdk::{
     AsyncHolderSigner, AsyncRevocationProvider, AttemptControl, PresentedAsyncAuthority,
 };
+#[cfg(feature = "filesystem")]
+#[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+pub use sdk::{Containment, FilesystemError, OpenOptions, OpenedFile, Workspace};
 #[cfg(feature = "receipts")]
 pub use sdk::{
     EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink, ReceiptRef, ReceiptSigner,

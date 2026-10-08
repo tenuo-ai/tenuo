@@ -37,6 +37,9 @@ data-plane = []
 
 # Framework-independent Rust SDK (default-off; no extra dependencies)
 sdk = []
+# Guarded file open. Subpath stays lexical; this feature pins a local jail
+# and opens the authorized argument through path_jail. Unix only at runtime.
+filesystem = ["sdk", "dep:path_jail"]
 mcp-transport = ["sdk"]
 http-transport = ["sdk"]
 async = ["sdk", "dep:async-trait"]
@@ -147,6 +150,7 @@ thiserror = "2.0"
 # Optional SDK surfaces (never pulled by `sdk` alone)
 async-trait = { version = "0.1", optional = true }
 opentelemetry = { version = "0.30", optional = true }
+path_jail = { version = "0.4", optional = true, default-features = false, features = ["guard"] }
 
 # UUID for warrant IDs (v4 for random, v7 for time-ordered)
 uuid = { version = "1.6", features = ["v4", "v7", "serde", "js"] }
@@ -195,6 +199,11 @@ ci_group = "0.1"
 name = "holder_lifecycle_vectors"
 path = "tests/holder_lifecycle_vectors.rs"
 required-features = ["server"]
+
+[[test]]
+name = "filesystem_guard"
+path = "tests/filesystem_guard.rs"
+required-features = ["filesystem"]
 
 [[bench]]
 name = "warrant_benchmarks"

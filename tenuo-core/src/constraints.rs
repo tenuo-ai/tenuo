@@ -2358,6 +2358,32 @@ impl Subpath {
         result
     }
 
+    /// Lexical path of `path` relative to this root.
+    ///
+    /// Uses the same normalization as [`Self::contains_path`]. `Ok(None)` means
+    /// `path` is not contained. `Ok(Some(""))` means `path` is the root itself.
+    /// Case-insensitive roots have no remainder: folding can change string length,
+    /// so a byte strip would not be the path the kernel should open.
+    pub(crate) fn lexical_remainder(&self, path: &str) -> Result<Option<String>> {
+        if !self.case_sensitive {
+            return Err(Error::InvalidPath {
+                path: path.to_string(),
+                reason: "case-insensitive Subpath has no filesystem remainder".to_string(),
+            });
+        }
+        if path.contains('\0') || !Self::is_absolute(path) {
+            return Ok(None);
+        }
+        let normalized = Self::normalize_path(path);
+        if self.allow_equal && normalized == self.root {
+            return Ok(Some(String::new()));
+        }
+        let root_with_sep = format!("{}/", self.root.trim_end_matches('/'));
+        Ok(normalized
+            .strip_prefix(&root_with_sep)
+            .map(ToString::to_string))
+    }
+
     /// Check if a path is safely contained within root.
     ///
     /// # Security

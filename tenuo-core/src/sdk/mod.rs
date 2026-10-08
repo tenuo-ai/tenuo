@@ -16,6 +16,9 @@ mod clock;
 mod decision;
 mod delegation;
 mod diagnostics;
+#[cfg(feature = "filesystem")]
+#[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+pub mod filesystem;
 mod guard;
 mod identity;
 #[macro_use]
@@ -53,6 +56,8 @@ pub use decision::{
 };
 pub use delegation::{DelegationError, DelegationProfile};
 pub use diagnostics::Diagnostics;
+#[cfg(feature = "filesystem")]
+pub use filesystem::{Containment, FilesystemError, OpenOptions, OpenedFile, Workspace};
 pub use guard::{
     AuthorizationAttempt, AuthorizedCall, Guard, GuardBuildError, GuardBuilder, Guarded,
     RevocationMode,

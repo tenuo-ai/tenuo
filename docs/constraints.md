@@ -506,7 +506,7 @@ child = Subpath("/other")  # FAILS
 > [!NOTE]
 > **Symlink Handling**
 >
-> This constraint does NOT resolve symlinks. This is intentional for distributed systems where the file may be on a different machine than the validator. For symlink-aware validation, use `path_jail` at the execution layer. See [Defense in Depth](#defense-in-depth-file-paths).
+> This constraint does NOT resolve symlinks. This is intentional for distributed systems where the file may be on a different machine than the validator. Opening the file is a separate step at the executor. See [Defense in Depth](#defense-in-depth-file-paths).
 
 **Error Handling:**
 
@@ -1533,47 +1533,37 @@ Cidr("10.0.0.0/8")
 
 ## Defense in Depth: File Paths
 
-Tenuo constraints validate the **logical policy** (does the pattern allow this path?). For file operations, you should also validate the **physical path** to prevent symlink attacks and traversal.
+`Subpath` answers a logical question: is this path inside the root the warrant delegated? It normalizes `.` and `..` and does not look at the filesystem, because the warrant may be checked on a different machine from the one that opens the file.
 
-### The One-Two Punch
+Opening the file is the executor's step. The Rust SDK `filesystem` feature does both in the guarded call: it verifies the warrant, requires the leaf `Subpath` to sit inside a logical ceiling the executor configured, maps that logical path under a pinned local directory, and opens it through [`path_jail`](https://github.com/tenuo-ai/path_jail). The tool body receives a file, not a path to open later.
 
 ```rust
-use path_jail;
+let workspace = Workspace::new(
+    "/workspace",
+    "/srv/jobs/job-1842",
+    Containment::Atomic,
+)?;
+let session = runtime
+    .session_from_warrant(warrant)?
+    .with_filesystem(workspace);
 
-// Step 1: Tenuo validates policy
-if warrant.allows("read_file", &args) {
-    // Step 2: path_jail validates filesystem reality
-    let safe_path = path_jail::join("/data", &args.path)?;
-    std::fs::read_to_string(safe_path)?
-}
+session.guard(&call, |authorized| {
+    let mut file = authorized.open("path", OpenOptions::read_only())?;
+    let mut body = String::new();
+    file.read_to_string(&mut body)?;
+    Ok(body)
+})?;
 ```
 
-### Why Both?
+`open` takes the argument name. The path is the one the warrant already allowed. `Atomic` fails where the platform cannot enforce the open in one kernel operation. `BestEffort` uses that platform's fallback and reports it on the opened file.
 
-| Layer | What it catches | Example |
-|-------|-----------------|---------|
-| **Tenuo** (Pattern) | Policy violations | `path="/etc/passwd"` blocked by `Pattern("/data/*")` |
-| **path_jail** | Traversal attacks | `path="/data/../etc/passwd"` blocked after normalization |
-| **path_jail** | Symlink escapes | `path="/data/link"` where link --> `/etc` |
+| Layer | What it decides |
+|-------|-----------------|
+| **Subpath** | The logical path is inside the delegated root, including after `.` and `..` normalization |
+| **Workspace ceiling** | The warrant root is inside the directory this executor is willing to expose |
+| **path_jail** | The open stays under the pinned local directory, including across symlinks |
 
-### Recommended Pattern
-
-```python
-from path_jail import Jail  # uv pip install path_jail
-
-jail = Jail("/data")
-
-@guard(tool="read_file")
-async def read_file(path: str) -> str:
-    # Tenuo already validated the constraint
-    # Now validate the actual filesystem path
-    safe_path = jail.join(path)
-    return safe_path.read_text()
-```
-
-**Tenuo** defines the rules. **path_jail** enforces them on the filesystem.
-
-See: [path_jail on PyPI](https://pypi.org/project/path-jail/)
+Enable it with the `filesystem` feature. It is not part of the default build, and `Subpath` itself never consults the disk.
 
 ---
 
