@@ -533,7 +533,7 @@ impl std::os::unix::io::AsFd for OpenedFile {
 #[non_exhaustive]
 pub enum FilesystemError {
     /// The guard has no workspace.
-    NotConfigured,
+    WorkspaceMissing,
     /// This platform has no `path_jail` guard open.
     UnsupportedPlatform,
     /// `atomic` was requested and the open would not be TOCTOU-safe.
@@ -587,7 +587,7 @@ pub enum FilesystemError {
 impl fmt::Display for FilesystemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotConfigured => write!(f, "guard has no filesystem workspace"),
+            Self::WorkspaceMissing => write!(f, "guard has no filesystem workspace"),
             Self::UnsupportedPlatform => {
                 write!(f, "filesystem open is unavailable on this platform")
             }

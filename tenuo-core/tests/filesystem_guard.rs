@@ -295,7 +295,7 @@ fn missing_workspace_fails_closed() {
     let err = read_at(&guard, &authority, "/workspace/reports/q4.md").expect_err("no jail");
     assert!(matches!(
         err,
-        GuardError::Operation(FilesystemError::NotConfigured)
+        GuardError::Operation(FilesystemError::WorkspaceMissing)
     ));
 }
 

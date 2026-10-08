@@ -1138,7 +1138,7 @@ impl<'a> AuthorizedCall<'a> {
         let workspace = self
             .filesystem
             .as_ref()
-            .ok_or(super::filesystem::FilesystemError::NotConfigured)?;
+            .ok_or(super::filesystem::FilesystemError::WorkspaceMissing)?;
         workspace.open_authorized(
             argument,
             self.capability,
