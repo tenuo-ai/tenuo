@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
+from ..optional_deps import missing_optional_dependency
+
 if TYPE_CHECKING:
     from .client import SecureMCPClient
 
@@ -51,10 +53,10 @@ def mcp_tool_to_langchain(
         agent = create_openai_tools_agent(llm, [tool])
     """
     if not LANGCHAIN_AVAILABLE:
-        raise ImportError('LangChain not installed. Install with: uv pip install "tenuo[langchain]"')
+        raise ImportError(missing_optional_dependency("LangChain", "langchain"))
 
     if not MCP_AVAILABLE:
-        raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
+        raise ImportError(missing_optional_dependency("MCP", "mcp"))
 
     # Extract schema from MCP tool
     tool_name = mcp_tool.name
@@ -144,7 +146,7 @@ class MCPToolAdapter:
             mcp_client: Connected SecureMCPClient instance
         """
         if not LANGCHAIN_AVAILABLE:
-            raise ImportError('LangChain not installed. Install with: uv pip install "tenuo[langchain]"')
+            raise ImportError(missing_optional_dependency("LangChain", "langchain"))
 
         self.client = mcp_client
 

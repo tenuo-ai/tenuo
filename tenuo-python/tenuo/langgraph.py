@@ -108,6 +108,7 @@ from tenuo._version_compat import check_langgraph_compat  # noqa: E402
 
 from ._enforcement import enforce_tool_call, enforce_tool_call_async, filter_tools_by_warrant
 from .bound_warrant import BoundWarrant
+from .optional_deps import extra_install_command, missing_optional_dependency
 from .config import resolve_trusted_roots
 from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 from .exceptions import ApprovalGateTriggered, ConfigurationError, InsufficientApprovals
@@ -498,8 +499,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         """
         if not MIDDLEWARE_AVAILABLE:
             raise ImportError(
-                "LangChain middleware requires langchain>=1.0. "
-                "Install with: uv pip install 'langchain>=1.0'"
+                "LangGraph middleware (TenuoMiddleware) requires langchain>=1.0, "
+                "which the tenuo[langgraph] extra does not include. "
+                f'Install with: {extra_install_command("langgraph")} "langchain>=1.0"'
             )
         super().__init__()
         self._key_id = key_id
@@ -1047,10 +1049,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         **kwargs: Any,
     ):
         if not LANGGRAPH_AVAILABLE:
-            raise ImportError(
-                "LangGraph is required for TenuoToolNode. "
-                "Install with: uv pip install langgraph"
-            )
+            raise ImportError(missing_optional_dependency("LangGraph", "langgraph"))
 
         _require_constraints = require_constraints
         _trusted_roots = trusted_roots
