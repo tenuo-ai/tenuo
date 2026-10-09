@@ -953,6 +953,12 @@ jobs:
         working-directory: tenuo-ts
         run: node examples/vercel-ai-sdk/scripts/verify-packed.mjs
 
+      # Drives the worker's processor with a job double, so this needs no Redis.
+      - name: BullMQ job authorization example
+        if: steps.lane.outputs.needed == 'true'
+        working-directory: tenuo-ts
+        run: node examples/bullmq/scripts/verify-packed.mjs
+
   # Test the committed WASM package on the remaining supported Node lines
   # without rebuilding it. Node 24 is the active LTS.
   tenuo-ts-node-compat:
