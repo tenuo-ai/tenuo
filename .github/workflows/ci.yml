@@ -117,6 +117,62 @@ jobs:
           echo "OK: test-vectors.md is up to date"
         working-directory: tenuo-core
 
+  rust-filesystem:
+    name: Rust Filesystem / ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            os: ubuntu-latest
+            casefold: true
+          - label: Linux aarch64
+            os: ubuntu-24.04-arm
+            casefold: false
+          - label: macOS arm64
+            os: macos-latest
+            casefold: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: tenuo-core
+
+      - name: Test filesystem guard
+        run: cargo test --locked --features filesystem --test filesystem_guard
+        working-directory: tenuo-core
+
+      - name: Test a real ext4 casefold directory
+        if: matrix.casefold
+        shell: bash
+        run: |
+          image="$RUNNER_TEMP/tenuo-casefold.img"
+          mount_dir="$RUNNER_TEMP/tenuo-casefold"
+          truncate -s 128M "$image"
+          sudo mkfs.ext4 -q -O casefold -E encoding=utf8 "$image"
+          mkdir -p "$mount_dir"
+          sudo mount -o loop "$image" "$mount_dir"
+          cleanup() {
+            sudo umount "$mount_dir"
+          }
+          trap cleanup EXIT
+          sudo chown "$(id -u):$(id -g)" "$mount_dir"
+          mkdir "$mount_dir/jail"
+          sudo chattr +F "$mount_dir/jail"
+          TENUO_CASEFOLD_TEST_ROOT="$mount_dir/jail" \
+            cargo test --locked --features filesystem --test filesystem_guard \
+              casefold_filesystem_rejects_alias_before_truncate -- --ignored --exact
+        working-directory: tenuo-core
+
   # ============================================================================
   # PYTHON SDK
   # ============================================================================
