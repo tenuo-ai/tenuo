@@ -2,7 +2,7 @@
 use crate::connect_token::ConnectToken;
 #[cfg(feature = "python-server")]
 use crate::heartbeat::{
-    create_audit_channel, start_heartbeat_loop_with_audit_and_id, ApprovalRecord, AuditEventSender,
+    create_audit_channel, start_heartbeat_loop_until, ApprovalRecord, AuditEventSender,
     AuthorizationEvent, EnvironmentInfo, HeartbeatConfig,
 };
 #[cfg(feature = "python-server")]
@@ -13,6 +13,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 #[cfg(feature = "python-server")]
 use std::collections::HashMap;
+#[cfg(feature = "python-server")]
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "python-server")]
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(feature = "python-server")]
@@ -213,9 +215,13 @@ impl PyReceiptIssuer {
 #[cfg(feature = "python-server")]
 #[pyclass(name = "ControlPlaneClient", module = "tenuo_core")]
 pub struct PyControlPlaneClient {
-    sender: AuditEventSender,
+    /// Taken by `shutdown`: dropping the only sender closes the audit channel,
+    /// which makes the flush loop send what is buffered and exit.
+    sender: Mutex<Option<AuditEventSender>>,
     authorizer_id_py: Arc<Mutex<Option<String>>>,
-    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    /// Stop signal and handle for the heartbeat task; `None` once shut down.
+    background: Mutex<Option<BackgroundTask>>,
+    stopping: Arc<AtomicBool>,
     /// The key this enforcement point already authenticates with. Reused as the
     /// receipt signer so a deployment has one identity, not two.
     receipt_signer: crate::crypto::SigningKey,
@@ -225,6 +231,33 @@ pub struct PyControlPlaneClient {
     trust: Arc<Mutex<Option<TrustContext>>>,
     /// Digest of the last receipt emitted, for the chain link (key 14).
     last_receipt_hash: Arc<Mutex<Option<[u8; 32]>>>,
+}
+
+#[cfg(feature = "python-server")]
+struct BackgroundTask {
+    stop: tokio::sync::oneshot::Sender<()>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(feature = "python-server")]
+impl PyControlPlaneClient {
+    /// Queue an audit event; dropped if the queue is full or after shutdown.
+    fn send_event(&self, event: AuthorizationEvent) {
+        if let Ok(guard) = self.sender.lock() {
+            if let Some(sender) = guard.as_ref() {
+                let _ = sender.try_send(event);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "python-server")]
+impl Drop for PyControlPlaneClient {
+    fn drop(&mut self) {
+        // Dropping the stop sender ends the background task; that is a
+        // normal stop, not the registration failure the task warns about.
+        self.stopping.store(true, Ordering::SeqCst);
+    }
 }
 
 #[cfg(feature = "python-server")]
@@ -463,7 +496,8 @@ impl PyControlPlaneClient {
         }
 
         let (audit_tx, audit_rx) = create_audit_channel(audit_batch_size);
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+        let stopping = Arc::new(AtomicBool::new(false));
 
         let config = HeartbeatConfig {
             control_plane_url: crate::connect_token::normalize_control_plane_url(&resolved_url),
@@ -498,16 +532,15 @@ impl PyControlPlaneClient {
 
         let cp_url = config.control_plane_url.clone();
         let auth_name = config.authorizer_name.clone();
-        runtime().spawn(async move {
-            tokio::select! {
-                _ = start_heartbeat_loop_with_audit_and_id(config, Some(audit_rx), shared_id) => {
-                    eprintln!(
-                        "[tenuo] control plane loop exited for '{}' ({}). \
-                         Registration may have failed — check API key and URL.",
-                        auth_name, cp_url,
-                    );
-                }
-                _ = shutdown_rx.changed() => {}
+        let stopping_task = stopping.clone();
+        let handle = runtime().spawn(async move {
+            start_heartbeat_loop_until(config, Some(audit_rx), shared_id, Some(stop_rx)).await;
+            if !stopping_task.load(Ordering::SeqCst) {
+                eprintln!(
+                    "[tenuo] control plane loop exited for '{}' ({}). \
+                     Registration may have failed — check API key and URL.",
+                    auth_name, cp_url,
+                );
             }
         });
 
@@ -524,9 +557,13 @@ impl PyControlPlaneClient {
             receipt_signer,
             trust: Arc::new(Mutex::new(None)),
             last_receipt_hash: Arc::new(Mutex::new(None)),
-            sender: audit_tx,
+            sender: Mutex::new(Some(audit_tx)),
             authorizer_id_py,
-            shutdown_tx,
+            background: Mutex::new(Some(BackgroundTask {
+                stop: stop_tx,
+                handle,
+            })),
+            stopping,
         })
     }
 
@@ -757,7 +794,7 @@ impl PyControlPlaneClient {
             arguments,
             None,
         );
-        let _ = self.sender.try_send(event);
+        self.send_event(event);
         Ok(())
     }
 
@@ -824,7 +861,7 @@ impl PyControlPlaneClient {
             arguments,
             approval_records,
         );
-        let _ = self.sender.try_send(event);
+        self.send_event(event);
         Ok(())
     }
 
@@ -867,21 +904,38 @@ impl PyControlPlaneClient {
             arguments,
             None,
         );
-        let _ = self.sender.try_send(event);
+        self.send_event(event);
         Ok(())
     }
 
     /// Flush pending events and stop the background heartbeat task.
+    ///
+    /// Waits at most ``timeout_secs`` (clamped to 0–30; non-finite values
+    /// mean 0) and returns as soon as the final audit flush completes. Later
+    /// calls are no-ops.
     #[pyo3(signature = (timeout_secs = 5.0))]
-    fn shutdown(&self, timeout_secs: f64) -> PyResult<()> {
-        let secs = timeout_secs.clamp(0.0, 30.0);
-        // Build the timer inside block_on: tokio::time::sleep needs a runtime
-        // context at construction, so creating it as the argument panicked on
-        // any thread outside the runtime (including the atexit hook).
-        runtime().block_on(async move {
-            tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
+    fn shutdown(&self, py: Python<'_>, timeout_secs: f64) -> PyResult<()> {
+        let secs = if timeout_secs.is_finite() {
+            timeout_secs.clamp(0.0, 30.0)
+        } else {
+            0.0
+        };
+        // Close the audit channel so the flush loop drains and exits.
+        drop(self.sender.lock().ok().and_then(|mut g| g.take()));
+        let Some(task) = self.background.lock().ok().and_then(|mut g| g.take()) else {
+            return Ok(());
+        };
+        self.stopping.store(true, Ordering::SeqCst);
+        let _ = task.stop.send(());
+        // Release the GIL while waiting so other Python threads keep running.
+        // The timer is built inside block_on: tokio timers need a runtime
+        // context at construction, and this runs on a Python thread.
+        py.detach(|| {
+            runtime().block_on(async move {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs_f64(secs), task.handle)
+                    .await;
+            })
         });
-        let _ = self.shutdown_tx.send(true);
         Ok(())
     }
 

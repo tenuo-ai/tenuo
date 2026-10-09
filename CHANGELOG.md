@@ -40,8 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
-  `there is no reactor running` and skipped the stop signal. The timer is now
-  created inside `block_on`. (#806)
+  `there is no reactor running` and skipped the stop signal. Shutdown now
+  closes the audit channel, signals the background task and waits for its
+  final flush, returning as soon as it finishes instead of sleeping the full
+  timeout. It releases the GIL while waiting and accepts any float timeout.
+  (#806)
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
   passed the parent's `timedelta` TTL to the grant builder, so every grant
   failed with `TypeError`, and `assert_cannot_grant` passed for any grant,
