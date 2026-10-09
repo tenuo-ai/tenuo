@@ -6,9 +6,9 @@ Converts MCP tools to LangChain BaseTool with automatic warrant enforcement.
 
 from __future__ import annotations
 
-from ..optional_deps import missing_optional_dependency
-
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
+
+from ..optional_deps import missing_optional_dependency
 
 if TYPE_CHECKING:
     from .client import SecureMCPClient

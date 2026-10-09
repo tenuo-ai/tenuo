@@ -19,8 +19,6 @@ Usage:
         # ctx.args contains extracted arguments
         return {"results": [...]}
 """
-from .optional_deps import missing_optional_dependency
-
 
 import base64
 import logging
@@ -40,6 +38,7 @@ from tenuo.exceptions import (
     InsufficientApprovals,
     TenuoError,
 )
+from tenuo.optional_deps import missing_optional_dependency
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -55,10 +54,16 @@ except ImportError:
     # Allow import for type checking if needed, but raise at runtime use
     FastAPI = Any  # type: ignore
     APIRouter = object  # type: ignore  # SecureAPIRouter raises ImportError at construction
-    Header = Any  # type: ignore
     HTTPException = Any  # type: ignore
+
+    # Header()/Depends() are evaluated as default arguments when this module is
+    # imported, so they must be callable stubs rather than typing.Any.
+    def Header(default: Any = None, **_kwargs: Any) -> Any:  # type: ignore  # noqa: E301
+        return default
+
     def Depends(dep):  # type: ignore  # noqa: E301
         return None
+
     Request = Any  # type: ignore
     status = Any  # type: ignore
     JSONResponse = Any  # type: ignore

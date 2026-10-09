@@ -3,8 +3,6 @@ Secure MCP Client with Tenuo Authorization.
 
 Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
-from ..optional_deps import missing_optional_dependency
-
 
 import asyncio
 import logging
@@ -17,6 +15,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union, cast
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
+from ..optional_deps import missing_optional_dependency
 from ..meta import argument_json, signed_arguments
 from ..approval import ApprovalHandler
 from ..config import is_configured

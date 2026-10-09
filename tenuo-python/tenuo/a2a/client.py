@@ -13,6 +13,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Union
 
+from ..optional_deps import missing_optional_dependency
 from .errors import A2AError, A2AErrorCode, KeyMismatchError, RegistrationDeniedError, RegistrationDisabledError, WarrantExpiredError
 from .types import (
     AgentCard,
@@ -376,7 +377,7 @@ class A2AClient:
             try:
                 import httpx
             except ImportError:
-                raise ImportError("httpx is required for A2A client. Install with: uv pip install tenuo[a2a]")
+                raise ImportError(missing_optional_dependency("httpx (A2A client)", "a2a"))
             self._client = httpx.AsyncClient(timeout=self.timeout)
         return self._client
 
