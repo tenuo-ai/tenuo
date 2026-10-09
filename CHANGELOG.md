@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ControlPlaneClient.status`.** Reports the connection state
+  (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
+  error, and buffered, flushed and dropped audit event counts. It does no I/O,
+  so a health check can read it. Rust callers get the same through
+  `HeartbeatConfig::status`.
 - **Optional filesystem open on the Rust guard.** The `filesystem` feature
   pins a local jail with `path_jail` 0.5 and opens an authorized `Subpath`
   argument from `AuthorizedCall::open`. The logical ceiling and the host
@@ -40,8 +45,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
-  `there is no reactor running` and skipped the stop signal. The timer is now
-  created inside `block_on`. (#806)
+  `there is no reactor running` and skipped the stop signal. Shutdown now
+  closes the audit channel, signals the background task and waits for its
+  final flush, returning as soon as it finishes instead of sleeping the full
+  timeout. It releases the GIL while waiting and accepts any float timeout.
+  (#806)
+- **Audit events survive a control plane outage instead of being dropped
+  silently.** The audit task started only after registration, so while the
+  control plane was unreachable the channel filled at `audit_batch_size`
+  events and the rest were discarded without a log or count; the CLI
+  authorizer dropped every event emitted before registration. Events are now
+  buffered from startup (up to 10× `audit_batch_size`) and sent as soon as
+  registration succeeds, in requests of at most `audit_batch_size` events.
+  Past the cap, only the oldest events beyond it are dropped, instead of 90%
+  of the buffer at once. A rejected request drops only its own events. Failed
+  sends back off from 2s to 60s; shutdown still makes one immediate final
+  attempt rather than waiting out `Retry-After`. Every lost event is counted.
+- **Control plane outages print one notice instead of one line per retry.**
+  The client prints when it cannot reach the control plane, loses contact
+  after registering, reconnects, or drops unsent events. The per-attempt
+  registration lines and the `flushed N audit events` line now go to
+  `tracing` only. Registration retries are jittered so a fleet does not
+  reconnect in lockstep.
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
   passed the parent's `timedelta` TTL to the grant builder, so every grant
   failed with `TypeError`, and `assert_cannot_grant` passed for any grant,
