@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional filesystem open on the Rust guard.** The `filesystem` feature
+  pins a local jail with `path_jail` 0.5 and opens an authorized `Subpath`
+  argument from `AuthorizedCall::open`. The logical ceiling and the host
+  directory are executor configuration. `Subpath` stays lexical. `atomic`
+  fails where the kernel cannot enforce the open. The open rejects a
+  non-regular file and extra hard links unless the caller turns those checks
+  off. Symlinks are always rejected. The open refuses an argument that is
+  not already normalized, so `//`, `.`, `..`, `\`, and a trailing slash cannot
+  bypass `Pattern` or `NotOneOf`. Every covering `Subpath` must sit inside the
+  executor ceiling. Creating a file requires Linux x86_64 or aarch64; elsewhere
+  the executor creates the file and the tool opens it with `write_truncate`.
+  Filesystem capabilities require an explicit access limit by default, with
+  narrow presets for read, existing-file write, append, and create-new access;
+  `allow_handler_selected_access` is the explicit opt-out. Filesystem types are
+  exported by `sdk::prelude`. `Workspace::new` probes descriptor-path support so
+  a misconfigured host fails at startup instead of on its first request.
+  `FilesystemError` converts to `std::io::Error` and keeps `NotFound` and
+  `PermissionDenied`. Linux x86_64 and aarch64 do not fall back when `openat2`
+  is unavailable. Every platform verifies the opened descriptor's exact path
+  spelling before returning or truncating it, including on case-folding
+  filesystems. Linux performs that check through `/proc/self/fd` and fails
+  closed if it is unavailable. Errors from the open do not include the host path. Python
+  and TypeScript callers are unchanged; Python still checks a path with
+  `path_jail` and then reads it, on every platform, which is not a
+  kernel-enforced open.
+
 ### Fixed
 
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
