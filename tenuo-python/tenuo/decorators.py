@@ -177,6 +177,19 @@ def _is_tenuo_constraint(obj: Any) -> bool:
     return type(obj).__name__ in constraint_types
 
 
+def _typed_check(check: Callable[[Any], bool], value: Any) -> Optional[bool]:
+    """Run a Rust core check on ``value`` as passed.
+
+    Returns None when the core cannot represent the value (a UUID, Path or
+    datetime, for example), so the caller can fall back to the ``str()`` form
+    instead of failing closed on an argument a string constraint would match.
+    """
+    try:
+        return check(value)
+    except Exception:
+        return None
+
+
 def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
     """
     Check if a value satisfies an annotated constraint using Rust core bindings.
@@ -231,9 +244,10 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
                 return False
 
         # Exact - exact value match (Rust core). Typed values match as passed;
-        # the str() form keeps string Exact values matching non-string args.
+        # the str() form keeps string Exact values matching non-string args,
+        # including values the core cannot represent, such as a UUID.
         if hasattr(constraint, "matches") and constraint_type == "Exact":
-            return constraint.matches(value) or constraint.matches(str(value))
+            return bool(_typed_check(constraint.matches, value)) or constraint.matches(str(value))
 
         # OneOf - set membership (Rust core)
         if hasattr(constraint, "contains") and constraint_type == "OneOf":
