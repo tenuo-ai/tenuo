@@ -177,7 +177,7 @@ npm test           # every stage with its reference solution
 npm run typecheck
 ```
 
-The participant install pins the published `@tenuo/core@0.2.5-beta.0` package
+The participant install pins the published `@tenuo/core@0.3.2-beta.0` package
 for reproducible runs. CI also rebuilds the SDK from this checkout, packs it
 into runner-temporary storage, replaces the published SDK with that fresh
 artifact, and runs every stage. An SDK change that breaks a chain therefore

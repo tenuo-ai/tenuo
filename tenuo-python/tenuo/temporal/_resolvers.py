@@ -26,14 +26,15 @@ class KeyResolver(ABC):
 
     **Implementing a custom resolver for use inside Temporal workflows:**
     The outbound workflow interceptor calls ``resolve_sync()``, not ``resolve()``,
-    because it runs inside the Temporal workflow sandbox where async I/O is
-    restricted.  The default ``resolve_sync()`` implementation spawns a thread
-    pool executor, which may behave unexpectedly inside the sandbox.
+    because it runs inside the Temporal workflow sandbox. The default
+    ``resolve_sync()`` submits ``resolve()`` to a ``ThreadPoolExecutor`` when
+    an event loop is already running. The sandbox blocks that thread, so the
+    call fails before a subclass cache inside ``resolve()`` is read.
 
-    If you implement a custom resolver, override ``resolve_sync()`` directly
-    with a synchronous implementation (e.g. read from a pre-loaded in-memory
-    cache populated before the worker starts).  ``EnvKeyResolver`` does this
-    via ``preload_keys()``.
+    Override ``resolve_sync()`` to return a key already in memory, loaded
+    before the worker starts. ``EnvKeyResolver`` does this after
+    ``preload_keys()`` or ``preload_all()``. ``TenuoPluginConfig(signing_key=...)``
+    does this for a single key.
 
     For workflow-backed Nexus operations,
     ``tenuo_bootstrap_nexus_workflow()`` also compares the resolved signer's
@@ -147,8 +148,11 @@ class EnvKeyResolver(KeyResolver):
         if env not in self._DEV_ENVS:
             logger.warning(
                 "EnvKeyResolver is designed for development and testing only. "
-                "In production, use VaultKeyResolver, AWSSecretsManagerKeyResolver, "
-                "or GCPSecretManagerKeyResolver to fetch keys from secure storage. "
+                "A production workflow worker should pass signing_key= or a "
+                "KeyResolver whose resolve_sync returns a key already in memory. "
+                "VaultKeyResolver, AWSSecretsManagerKeyResolver, and "
+                "GCPSecretManagerKeyResolver start a thread the workflow sandbox "
+                "blocks, including when their cache is full. "
                 "Set TENUO_ENV=development to suppress this warning in local environments."
             )
         self._warned = True
@@ -560,19 +564,20 @@ class GCPSecretManagerKeyResolver(KeyResolver):
 class CompositeKeyResolver(KeyResolver):
     """Try multiple resolvers in order (fallback chain).
 
-    Useful for graceful degradation:
-    - Try Vault first (production)
-    - Fall back to cloud secrets manager (backup)
-    - Fall back to env vars (local dev)
+    ``resolve_sync`` does not start a thread itself. Each child uses its own
+    ``resolve_sync``. Inside a workflow task, the child that serves the key
+    has to return it from memory. ``VaultKeyResolver``,
+    ``AWSSecretsManagerKeyResolver``, and ``GCPSecretManagerKeyResolver``
+    raise in the sandbox on every call, and this class then tries the next
+    child.
 
     Args:
         resolvers: List of resolvers to try in order
 
     Example:
         resolver = CompositeKeyResolver([
-            VaultKeyResolver(url="https://vault.prod.internal"),
-            AWSSecretsManagerKeyResolver(secret_prefix="tenuo/"),
-            EnvKeyResolver(),  # Fallback for local dev
+            memory_resolver,  # resolve_sync returns a key loaded before Worker(...)
+            EnvKeyResolver(),  # development fallback after preload_all()
         ])
     """
 

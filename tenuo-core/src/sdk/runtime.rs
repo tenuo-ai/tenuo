@@ -221,6 +221,17 @@ impl Session {
         &self.authority
     }
 
+    /// Pin the local jail for this session.
+    ///
+    /// The runtime is process-wide. The workspace is one job: warrants speak
+    /// `logical_root`, and `local_root` is the directory on this machine.
+    #[cfg(feature = "filesystem")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+    pub fn with_filesystem(mut self, workspace: super::filesystem::Workspace) -> Self {
+        self.enforcer = self.enforcer.with_filesystem(workspace);
+        self
+    }
+
     /// Authorize `call` with this session's warrant, then run `op`.
     pub fn guard<T, E>(
         &self,

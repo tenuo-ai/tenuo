@@ -38,21 +38,19 @@ uv pip install "tenuo[crewai]"
 Use the **builder pattern** for semantic constraints, then register as a hook:
 
 ```python
-from crewai import Agent, Task, Crew, Tool
+from crewai import Agent
+from crewai.tools import tool
 from tenuo.crewai import GuardBuilder, Pattern, Subpath
 
-# Define tools
-search_tool = Tool(
-    name="search",
-    description="Search the web",
-    func=lambda query: f"Results for: {query}"
-)
+@tool("search")
+def search_tool(query: str) -> str:
+    """Search the web."""
+    return f"Results for: {query}"
 
-read_tool = Tool(
-    name="read_file",
-    description="Read a file",
-    func=lambda path: f"Contents of: {path}"
-)
+@tool("read_file")
+def read_tool(path: str) -> str:
+    """Read a file."""
+    return f"Contents of: {path}"
 
 # Create guard with constraints
 guard = (GuardBuilder()
@@ -215,6 +213,16 @@ guard.register()
 2. `tool_name` (global fallback)
 3. Reject if neither exists
 
+`register()` is process-wide. `register(agent_role="Researcher")` does not limit the hook to that agent. It forces every call in the process to look up the `Researcher::` namespace. To run a different guard for one agent, use CrewAI's agent filter:
+
+```python
+from crewai.hooks import before_tool_call
+
+@before_tool_call(agents=["Researcher"])
+def authorize_researcher(context):
+    return researcher_guard.authorize_hook(context)
+```
+
 ---
 
 ## Constraints
@@ -254,49 +262,92 @@ guard = GuardBuilder().allow("api_call", url=UrlSafe(), timeout=Wildcard()).buil
 CrewAI's hierarchical process mode allows a manager to delegate tasks to workers. Tenuo's `WarrantDelegator` ensures delegation follows **attenuation-only** rules: child warrants can only narrow scope, never expand.
 
 > [!TIP]
-> Use `chain_scope` on the parent warrant to limit maximum delegation depth and prevent unbounded chains in complex multi-agent crews.
+> A worker guard that trusts only the issuer must also be given the parent warrants. Pass them as `warrant_chain` (root first, excluding the leaf). Without them, the leaf's issuer is the delegator, and the call is denied with `Root warrant issuer is not trusted`.
 
 ```python
-from tenuo import Pattern
-from tenuo.crewai import WarrantDelegator
+from tenuo import Pattern, SigningKey, Warrant
+from tenuo.crewai import GuardBuilder, WarrantDelegator
 
-delegator = WarrantDelegator()
+control_plane_key = SigningKey.generate()
+manager_key = SigningKey.generate()
+researcher_key = SigningKey.generate()
 
-# Manager delegates to researcher with narrowed scope
-researcher_warrant = delegator.delegate(
+manager_warrant = (Warrant.mint_builder()
+    .capability("search", query=Pattern("*"))
+    .holder(manager_key.public_key)
+    .ttl(3600)
+    .mint(control_plane_key))
+
+researcher_warrant = WarrantDelegator().delegate(
     parent_warrant=manager_warrant,
     parent_key=manager_key,
-    child_holder=researcher.public_key,
-    attenuations={
-        "search": {"query": Pattern("arxiv:*")},  # Only arxiv
-        "fetch": {"url": Pattern("https://arxiv.org/*")},
-    },
-    ttl=300,  # 5 minute delegation
+    child_holder=researcher_key.public_key,
+    attenuations={"search": {"query": Pattern("arxiv:*")}},
+    ttl=300,
 )
 
-# Researcher can ONLY search arxiv (even if manager has broader access)
+# The worker presents the parent and trusts the issuer, not the delegator.
+researcher_guard = (GuardBuilder()
+    .allow("search", query=Pattern("arxiv:*"))
+    .with_warrant(
+        researcher_warrant,
+        researcher_key,
+        warrant_chain=[manager_warrant],
+    )
+    .with_trusted_roots([control_plane_key.public_key])
+    .build())
+
+researcher_guard.authorize("search", {"query": "arxiv:safety"})  # allowed
 ```
+
+`chain_scope([manager_warrant])` still supplies those parents when `warrant_chain` is omitted. Put the chain on the guard that verifies the call.
 
 ### Escalation Prevention
 
 Delegation is blocked if:
-- Child requests a tool the parent doesn't have
-- Child constraint would widen access
+- The child requests a tool the parent does not have (`EscalationAttempt`)
+- A `Pattern` would be wider than the parent's (`PatternExpanded`)
+- A `Subpath` would leave the parent's root (`ConstraintViolation`)
 
 ```python
-# Manager has: search(query=Pattern("arxiv:*"))
+from tenuo import Pattern, SigningKey, Subpath, Warrant
+from tenuo.exceptions import ConstraintViolation, PatternExpanded
+from tenuo.crewai import EscalationAttempt, WarrantDelegator, Wildcard
 
-# Fails: widening constraint
-delegator.delegate(
-    ...,
-    attenuations={"search": {"query": Pattern("*")}},  # EscalationAttempt!
-)
+issuer = SigningKey.generate()
+parent_key = SigningKey.generate()
+child_key = SigningKey.generate()
+parent = (Warrant.mint_builder()
+    .capability("search", query=Pattern("arxiv:*"))
+    .capability("read_file", path=Subpath("/data"))
+    .holder(parent_key.public_key)
+    .ttl(3600)
+    .mint(issuer))
+delegator = WarrantDelegator()
 
-# Fails: new tool
-delegator.delegate(
-    ...,
-    attenuations={"delete_all": {"target": Wildcard()}},  # EscalationAttempt!
-)
+try:
+    delegator.delegate(
+        parent, parent_key, child_key.public_key,
+        {"search": {"query": Pattern("*")}}, ttl=60,
+    )
+except PatternExpanded:
+    pass  # "*" is wider than "arxiv:*"
+
+try:
+    delegator.delegate(
+        parent, parent_key, child_key.public_key,
+        {"read_file": {"path": Subpath("/")}}, ttl=60,
+    )
+except ConstraintViolation:
+    pass  # "/" is not inside "/data"
+
+try:
+    delegator.delegate(
+        parent, parent_key, child_key.public_key,
+        {"delete_all": {"target": Wildcard()}}, ttl=60,
+    )
+except EscalationAttempt:
+    pass  # the parent has no delete_all tool
 ```
 
 ---
@@ -416,29 +467,33 @@ guard.register()
 
 | Mode | Behavior | Use Case | Trade-off |
 |------|----------|----------|-----------|
-| `"raise"` | Exception | **Production** | Fail-closed on denial; callers must handle the exception. |
-| `"log"` | Return `DenialResult` | **Development** | Visible errors without crashing agent, but dangerous if result ignored. |
-| `"skip"` | Return `DenialResult` | **Legacy/Transition** | Simulates "tool unavailable", might confuse agent. |
+| `"raise"` | Exception from `authorize()` | **Production** | Fail-closed on denial; callers must handle the exception. |
+| `"log"` | `DenialResult` from `authorize()`, after a warning | **Direct calls** | Does not let a hooked tool call through. |
+| `"skip"` | `DenialResult` from `authorize()`, quietly | **Direct calls** | Same hook behavior as `"log"`. |
+
+A registered hook blocks the tool in every mode. `register()` and `@before_tool_call` return `False` on a denial, so `"log"` and `"skip"` do not turn the hook into a dry run. Those modes apply when you call `guard.authorize()` yourself. To inspect a call without running it, use `guard.explain(tool_name, arguments)`. The audit callback still runs when a hook denies a call.
 
 ### Production Recommendations
 
 > [!IMPORTANT]
-> **Always use `"raise"` in production.**
-> Fail-closed behavior is critical for security. Using `"log"` or `"skip"` can lead to silent failures where an attacker bypasses controls without detection.
+> **Use `"raise"` when you call `authorize()` yourself.**
+> A registered hook already blocks the tool in every mode. `"log"` and `"skip"` only change `authorize()`. Ignoring the `DenialResult` it returns lets that direct call continue.
 
 ### Handling DenialResult (Non-Raising Modes)
 
 When utilizing `"log"` or `"skip"`, checks must be explicit:
 
 ```python
-result = protected_tool.func(path="/etc/passwd")
+from tenuo.crewai import DenialResult, GuardBuilder, Subpath
 
+guard = (GuardBuilder()
+    .allow("read_file", path=Subpath("/data"))
+    .on_denial("log")
+    .build())
+
+result = guard.authorize("read_file", {"path": "/etc/passwd"})
 if isinstance(result, DenialResult):
-    # Logged but didn't raise
     print(f"Blocked: {result.reason}")
-else:
-    # Success
-    pass
 ```
 
 ---
@@ -522,29 +577,19 @@ Robust agents should handle authorization failures gracefully.
 ```python
 from tenuo.crewai import (
     ToolDenied, CrewAIConstraintViolation, UnlistedArgument,
-    WarrantExpired, InvalidPoP, EscalationAttempt
+    WarrantExpired, InvalidPoP,
 )
 
 try:
-    result = protected_tool.func(arg="value")
+    result = guard.authorize("read_file", {"path": "/data/report.txt"})
 except ToolDenied:
-    # Retrying won't help unless we use a different tool
-    agent.memory.add("Tool access denied. Trying alternative...")
-    return execute_alternative()
-
+    # The tool is not in the guard. Pick a different tool.
+    ...
 except CrewAIConstraintViolation as e:
-    # Argument validation failed. Agent can correct the argument.
-    agent.memory.add(f"Argument invalid: {e}. Retrying with valid constraints.")
-    return retry_with_correction()
-
-except WarrantExpired:
-    # Credential dead. Hard stop or request refresh.
-    system.alert("Warrant expired during active task")
-    raise
-
-except (InvalidPoP, EscalationAttempt):
-    # Potential security breach or misconfiguration
-    system.security_alert("Integrity check failed!")
+    # The arguments failed a constraint. Retry with values inside it.
+    ...
+except (UnlistedArgument, WarrantExpired, InvalidPoP):
+    # Closed-world rejection, an expired warrant, or a failed holder proof.
     raise
 ```
 
@@ -553,15 +598,7 @@ except (InvalidPoP, EscalationAttempt):
 When using `.on_denial("log")` or `.on_denial("skip")`, exceptions are suppressed.
 Check the result explicitly:
 
-```python
-result = protected_tool.func(...)
-
-if isinstance(result, DenialResult):
-    print(f"Action Blocked: {result.reason}")
-    # Recovery: skip this step or try another parameter
-else:
-    process(result)
-```
+`authorize()` returns `DenialResult` instead of raising. See the check under Denial Modes. Delegation widening is separate: `PatternExpanded`, `ConstraintViolation`, and `EscalationAttempt` come from `WarrantDelegator.delegate()`, not from `authorize()`.
 
 ### Error Reference Table
 
@@ -570,7 +607,9 @@ else:
 | `ToolDenied` | 1+ | Use different tool |
 | `CrewAIConstraintViolation` | 1+ | Retry with compliant arguments |
 | `UnlistedArgument` | 1+ | Remove extra arguments |
-| `EscalationAttempt` | 1+ | Do not escalate privileges |
+| `EscalationAttempt` | Delegation | The child asked for a tool the parent does not have |
+| `PatternExpanded` | Delegation | The child `Pattern` is wider than the parent's |
+| `ConstraintViolation` | Delegation | The child `Subpath` is not inside the parent's root |
 | `UnguardedToolError` | 1+ | (Strict Mode) Fix configuration |
 | `WarrantExpired` | 2 | Refresh warrant |
 | `InvalidPoP` | 2 | Check signing key configuration |
@@ -581,7 +620,9 @@ else:
 ## Full Example: Hierarchical Research Crew
 
 ```python
-from crewai import Agent, Task, Crew, Tool, Process
+from crewai import Agent, Task, Crew, Process
+from crewai.hooks import before_tool_call
+from crewai.tools import tool
 from tenuo import SigningKey, Warrant
 from tenuo.crewai import (
     GuardBuilder,
@@ -595,23 +636,20 @@ from tenuo.crewai import (
 # 1. Define Tools
 # =============================================================================
 
-search_tool = Tool(
-    name="search",
-    description="Search academic papers",
-    func=lambda query, max_results=10: f"Found {max_results} results for: {query}"
-)
+@tool("search")
+def search_tool(query: str, max_results: int = 10) -> str:
+    """Search academic papers."""
+    return f"Found {max_results} results for: {query}"
 
-read_tool = Tool(
-    name="read_file",
-    description="Read a file",
-    func=lambda path: f"Contents of: {path}"
-)
+@tool("read_file")
+def read_tool(path: str) -> str:
+    """Read a file."""
+    return f"Contents of: {path}"
 
-summarize_tool = Tool(
-    name="summarize",
-    description="Summarize text",
-    func=lambda text, style="brief": f"Summary ({style}): {text[:100]}..."
-)
+@tool("summarize")
+def summarize_tool(text: str, style: str = "brief") -> str:
+    """Summarize text."""
+    return f"Summary ({style}): {text[:100]}..."
 
 # =============================================================================
 # 2. Create Warrants (Tier 2)
@@ -668,18 +706,26 @@ writer_warrant = delegator.delegate(
 researcher_guard = (GuardBuilder()
     .allow("search", query=Pattern("arxiv:*"), max_results=Range(1, 20))
     .allow("read_file", path=Subpath("/research/papers"))
-    .with_warrant(researcher_warrant, researcher_key)
+    .with_warrant(researcher_warrant, researcher_key, warrant_chain=[manager_warrant])
+    .with_trusted_roots([control_plane_key.public_key])
     .build())
 
 writer_guard = (GuardBuilder()
     .allow("summarize", text=Pattern("*"), style=Pattern("*"))
     .allow("read_file", path=Subpath("/research/drafts"))
-    .with_warrant(writer_warrant, writer_key)
+    .with_warrant(writer_warrant, writer_key, warrant_chain=[manager_warrant])
+    .with_trusted_roots([control_plane_key.public_key])
     .build())
 
-# Register guards — agent role is resolved from hook context automatically
-researcher_guard.register(agent_role="Researcher")
-writer_guard.register(agent_role="Writer")
+# CrewAI's agent filter keeps each guard on that agent's calls.
+# register(agent_role=...) does not: the hook is process-wide.
+@before_tool_call(agents=["Researcher"])
+def authorize_researcher(context):
+    return researcher_guard.authorize_hook(context)
+
+@before_tool_call(agents=["Writer"])
+def authorize_writer(context):
+    return writer_guard.authorize_hook(context)
 
 # =============================================================================
 # 5. Create Agents and Run Crew (tools are unmodified)
@@ -688,22 +734,26 @@ writer_guard.register(agent_role="Writer")
 researcher = Agent(
     role="Researcher",
     goal="Find relevant papers on arxiv",
+    backstory="You search arxiv and read papers under /research/papers.",
     tools=[search_tool, read_tool],
 )
 
 writer = Agent(
     role="Writer",
     goal="Summarize research findings",
+    backstory="You summarize papers and read drafts under /research/drafts.",
     tools=[summarize_tool, read_tool],
 )
 
 research_task = Task(
-    description="Find papers on 'language model safety'",
+    description="Find papers on language model safety",
+    expected_output="A short list of papers",
     agent=researcher,
 )
 
 writing_task = Task(
     description="Summarize the findings",
+    expected_output="A short summary",
     agent=writer,
 )
 
@@ -714,8 +764,6 @@ crew = Crew(
 )
 
 # result = crew.kickoff()
-# researcher_guard.unregister()
-# writer_guard.unregister()
 ```
 
 ---
@@ -724,7 +772,7 @@ crew = Crew(
 
 Moving from unprotected CrewAI to Tenuo GuardedCrew:
 
-1. **Audit Phase**: Configure `GuardedCrew` with `.on_denial("log")`. Run your existing agents and capture the audit logs.
+1. **Audit Phase**: Add `.audit(callback)` and keep `.on_denial("raise")`. A CrewAI hook blocks denied calls in every denial mode. Use `guard.explain(tool, args)` to check one call without running the crew.
 2. **Policy Generation**: Map the audit logs to agent roles. Identify which tools are actually used by each agent.
 3. **Constraint Hardening**: Replace `Wildcard()` with `Pattern` or `Subpath` based on observed data (e.g., if agent only reads `/tmp`, restrict to `/tmp`).
 4. **Enforcement**: Switch to `.on_denial("raise")` and enable `.strict()` to prevent future drift.
@@ -745,7 +793,7 @@ Before deploying CrewAI agents with Tenuo protection:
 - [ ] **Authority Model:** Use warrants and holder proof when crews need verifiable delegated authority. Local-policy-only deployments explicitly use Tier 1 and keep policy enforcement in trusted code.
 - [ ] **Hooks Registered:** Guards use `guard.register()` or explicitly register the callable returned by `as_hook()` for framework-level enforcement. Both use global hooks; `as_hook()` does not provide crew isolation.
 - [ ] **Least Privilege:** Each agent has specific allowed tools (no `*` patterns unless necessary).
-- [ ] **Delegation Depth:** Max delegation depth configured (via `chain_scope`) to prevent infinite chains.
+- [ ] **Delegated warrants:** Worker guards pass `warrant_chain=` (parents, root first, excluding the leaf) and `.with_trusted_roots()` set to the issuer. Trusting the delegator's key instead of the issuer accepts a self-issued leaf.
 
 ### Decision Matrix
 

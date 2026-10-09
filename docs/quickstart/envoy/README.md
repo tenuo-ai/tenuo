@@ -51,7 +51,7 @@ Kubernetes probes and health checks go to port 9091.
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) (or Python 3.9+ with `pip install tenuo==0.3.1`)
+- [uv](https://docs.astral.sh/uv/) (or Python 3.9+ with `pip install tenuo==0.3.2`)
 - Docker with Compose, **or** a Kubernetes cluster (kind, minikube, cloud) with kubectl
 - curl
 
