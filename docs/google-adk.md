@@ -1,4 +1,4 @@
-# Google ADK Integration
+# ADK Integration
 
 Tenuo provides first-class support for [Google's Agent Development Kit (ADK)](https://github.com/google/adk-toolkit), enabling warrant-based authorization and constraint validation for ADK agents.
 
@@ -131,6 +131,52 @@ guard = (GuardBuilder()
     .build())
 ```
 
+### Delegated warrants
+
+A leaf minted by a delegator is denied when the guard trusts only the original issuer. Pass the parents as `warrant_chain` (root first, excluding the leaf) and set `with_trusted_roots` to that issuer.
+
+```python
+from tenuo import Pattern, SigningKey, Warrant
+from tenuo.google_adk import GuardBuilder
+
+root_key = SigningKey.generate()
+mid_key = SigningKey.generate()
+leaf_key = SigningKey.generate()
+
+parent = (Warrant.mint_builder()
+    .holder(mid_key.public_key)
+    .capability("search", query=Pattern("*"))
+    .ttl(600)
+    .mint(root_key))
+leaf = (parent.grant_builder()
+    .holder(leaf_key.public_key)
+    .capability("search", query=Pattern("customers:*"))
+    .ttl(300)
+    .grant(mid_key))
+
+guard = (GuardBuilder()
+    .with_warrant(leaf, leaf_key, warrant_chain=[parent])
+    .with_trusted_roots([root_key.public_key])
+    .build())
+```
+
+`customers:acme` is allowed. `employees:x` is denied by the leaf's narrower pattern. The same call without `warrant_chain` is denied because the leaf's issuer is `mid_key`, not `root_key`.
+
+`TenuoPlugin` takes the same `warrant_chain` and `trusted_roots` arguments. Register it on the Runner:
+
+```python
+from google.adk.runners import InMemoryRunner
+from tenuo.google_adk import TenuoPlugin
+
+plugin = TenuoPlugin(
+    warrant=leaf,
+    signing_key=leaf_key,
+    trusted_roots=[root_key.public_key],
+    warrant_chain=[parent],
+)
+runner = InMemoryRunner(agent=agent, app_name="research", plugins=[plugin])
+```
+
 ---
 
 ## Skill Mapping (When Names Don't Match)
@@ -141,7 +187,7 @@ If your tool function name differs from the warrant skill name:
 # Warrant has skill "read_file", but your function is named "read_file_tool"
 guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
-    .map_skill("read_file_tool", "read_file")  # tool_name -> skill_name
+    .map_skill("read_file_tool", "read_file")  # tool name -> warrant skill
     .build())
 ```
 
@@ -367,34 +413,39 @@ agent = Agent(
 When multiple agents share the same session, use `ScopedWarrant` to prevent cross-agent warrant leaks:
 
 ```python
-from tenuo.google_adk import TenuoPlugin, ScopedWarrant
+from google.adk.runners import InMemoryRunner
+from tenuo.google_adk import ScopedWarrant, TenuoPlugin
 
-# At agent creation time, scope the warrant
-plugin = TenuoPlugin(warrant_key="my_warrant")
-scoped = ScopedWarrant(warrant, agent_name="research_agent")
+plugin = TenuoPlugin(
+    warrant_key="my_warrant",
+    signing_key=agent_key,
+    trusted_roots=[issuer_key.public_key],
+)
+runner = InMemoryRunner(agent=agent, app_name="research", plugins=[plugin])
 
-# Store in session state
-session_state["my_warrant"] =scoped
-
-# Before each turn, plugin validates the warrant belongs to this agent
-agent = Agent(
-    name="research_agent",
-    before_agent_callback=plugin.before_agent_callback,
+session = await runner.session_service.create_session(
+    app_name="research",
+    user_id="u",
+    state={"my_warrant": ScopedWarrant(warrant, "research_agent")},
 )
 ```
 
+Register `TenuoPlugin` on the Runner. Assigning `before_agent_callback` on the `Agent` does not install the plugin. The plugin drops a `ScopedWarrant` when `callback_context.agent_name` does not match.
+
 ### Argument Remapping
 
-Map ADK tool argument names to warrant constraint names:
+The keyword is the warrant constraint. The value is the tool argument:
 
 ```python
 guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
-    .map_skill("read_file_tool", "read_file", file_path="path")
+    .map_skill("read_file_tool", "read_file", path="file_path")
     .build())
 
-# Tool called with {"file_path": "/data/report.txt"}
-# Validated against warrant's "path" constraint
+# The keyword is the warrant constraint name. The value is the tool argument.
+# A call with {"file_path": "/data/report.txt"} is checked against "path".
+# The tool still receives file_path. Prefer .allow("read_file", file_path=...)
+# when the tool's own argument name is the one you want to constrain.
 ```
 
 ### Denial Handling
@@ -411,7 +462,7 @@ guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("retu
 
 ### Error Handling
 
-Google ADK integration uses custom exceptions (`ToolAuthorizationError`, `MissingSigningKeyError`) for API consistency. Authorization goes through the `before_tool` callback registered on the ADK agent — there is no standalone `guard.check()` method.
+The ADK integration uses `ToolAuthorizationError` and `MissingSigningKeyError`. Authorization goes through the `before_tool` callback on the agent, or through `TenuoPlugin` on the Runner. There is no standalone `guard.check()` method.
 
 **With `on_denial("raise")`**, the `before_tool` callback raises `ToolAuthorizationError`:
 
@@ -447,7 +498,7 @@ guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("retu
 # }
 ```
 
-**Note**: Google ADK is designed as a higher-level wrapper with ADK-specific error handling. For direct access to Tenuo's canonical wire codes (1000-2199), use the `tenuo.langchain` integration or raw `Warrant.authorize()` calls.
+**Note**: This integration uses ADK-specific errors. For Tenuo's canonical wire codes (1000-2199), use the `tenuo.langchain` integration or `Warrant` authorization directly.
 
 ---
 
@@ -501,7 +552,7 @@ Map tool/argument names to warrant skills:
 ```python
 guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
-    .map_skill("read_file_tool", "read_file", file_path="path")
+    .map_skill("read_file_tool", "read_file", path="file_path")
     .build())
 ```
 
@@ -580,14 +631,14 @@ agent = Agent(
 )
 ```
 
-**Tier 2 - Multi-Agent System**:
+**Tier 2 - Runner plugin**:
 ```python
 from google.adk.agents import Agent
-from tenuo.google_adk import GuardBuilder, TenuoPlugin, ScopedWarrant
+from google.adk.runners import InMemoryRunner
+from tenuo.google_adk import TenuoPlugin
 from tenuo import SigningKey, Warrant
 from tenuo.constraints import Subpath
 
-# Control plane issues warrants
 orchestrator_key = SigningKey.generate()
 researcher_key = SigningKey.generate()
 
@@ -598,26 +649,13 @@ researcher_warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(orchestrator_key))
 
-# Create scoped warrant for session isolation
-plugin = TenuoPlugin(warrant_key="agent_warrant")
-scoped = ScopedWarrant(researcher_warrant, "researcher")
-
-# Build guard
-guard = (GuardBuilder()
-    .with_warrant(researcher_warrant, researcher_key)
-    .build())
-
-# Create agent
-researcher = Agent(
-    name="researcher",
-    tools=guard.filter_tools([read_file, web_search]),
-    before_tool_callback=guard.before_tool,
-    before_agent_callback=plugin.before_agent_callback,
+plugin = TenuoPlugin(
+    warrant=researcher_warrant,
+    signing_key=researcher_key,
+    trusted_roots=[orchestrator_key.public_key],
 )
-
-# Run with scoped warrant in session state
-session_state = {"agent_warrant": scoped}
-# ... use session_state in agent execution
+researcher = Agent(name="researcher", tools=[read_file, web_search])
+runner = InMemoryRunner(agent=researcher, app_name="research", plugins=[plugin])
 ```
 
 ---

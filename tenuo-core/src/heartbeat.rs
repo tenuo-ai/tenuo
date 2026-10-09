@@ -40,7 +40,7 @@ use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
@@ -702,6 +702,115 @@ fn get_memory_usage() -> Option<u64> {
 }
 
 // ============================================================================
+// Connection Status
+// ============================================================================
+
+/// Connection to the control plane, as seen by the background task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ConnectionState {
+    /// Not registered yet; registration is being retried.
+    Registering = 0,
+    /// Registered, and the last heartbeat succeeded.
+    Connected = 1,
+    /// Registered, but the last heartbeat failed. Audit events are buffered.
+    Degraded = 2,
+    /// Registration was rejected; running without a control plane.
+    Standalone = 3,
+    /// The background task has exited.
+    Stopped = 4,
+}
+
+impl ConnectionState {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Connected,
+            2 => Self::Degraded,
+            3 => Self::Standalone,
+            4 => Self::Stopped,
+            _ => Self::Registering,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Registering => "registering",
+            Self::Connected => "connected",
+            Self::Degraded => "degraded",
+            Self::Standalone => "standalone",
+            Self::Stopped => "stopped",
+        }
+    }
+}
+
+/// Shared, lock-light view of control plane health and audit delivery.
+///
+/// Cloned into every task through [`HeartbeatConfig::status`] so callers can
+/// expose it (health checks, the Python `status` property) without polling
+/// the network.
+#[derive(Debug, Default)]
+pub struct ControlPlaneStatus {
+    state: AtomicU8,
+    last_error: std::sync::Mutex<Option<String>>,
+    buffered: AtomicU64,
+    flushed: AtomicU64,
+    dropped: AtomicU64,
+}
+
+impl ControlPlaneStatus {
+    pub fn state(&self) -> ConnectionState {
+        ConnectionState::from_u8(self.state.load(Ordering::SeqCst))
+    }
+
+    /// Most recent registration, heartbeat or flush error, if any.
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Audit events held in memory waiting to be sent.
+    pub fn buffered(&self) -> u64 {
+        self.buffered.load(Ordering::Relaxed)
+    }
+
+    /// Audit events the control plane accepted.
+    pub fn flushed(&self) -> u64 {
+        self.flushed.load(Ordering::Relaxed)
+    }
+
+    /// Audit events lost: queue full, buffer cap reached, rejected by the
+    /// control plane, or still unsent when the task stopped.
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
+    pub fn record_dropped(&self, n: u64) {
+        if n > 0 {
+            self.dropped.fetch_add(n, Ordering::Relaxed);
+        }
+    }
+
+    fn set_buffered(&self, n: usize) {
+        self.buffered.store(n as u64, Ordering::Relaxed);
+    }
+
+    fn record_flushed(&self, n: usize) {
+        self.flushed.fetch_add(n as u64, Ordering::Relaxed);
+    }
+
+    fn set_error(&self, error: impl Into<String>) {
+        if let Ok(mut g) = self.last_error.lock() {
+            *g = Some(error.into());
+        }
+    }
+
+    /// Move to `to`, returning the previous state if it changed.
+    fn transition(&self, to: ConnectionState) -> Option<ConnectionState> {
+        let prev = ConnectionState::from_u8(self.state.swap(to as u8, Ordering::SeqCst));
+        (prev != to).then_some(prev)
+    }
+}
+
+// ============================================================================
 // Heartbeat Configuration
 // ============================================================================
 
@@ -749,6 +858,8 @@ pub struct HeartbeatConfig {
     /// When set, fetched SRLs go through the tracker (freshness + file floor)
     /// before they are installed on the authorizer.
     pub revocation_tracker: Option<Arc<crate::revocation_tracker::RevocationTracker>>,
+    /// Connection state and audit delivery counters, shared with the caller.
+    pub status: Arc<ControlPlaneStatus>,
 }
 
 impl Default for HeartbeatConfig {
@@ -772,6 +883,7 @@ impl Default for HeartbeatConfig {
             agent_id: None,
             connect_token: None,
             revocation_tracker: None,
+            status: Arc::default(),
         }
     }
 }
@@ -941,6 +1053,19 @@ pub async fn start_heartbeat_loop_until(
         .build()
         .expect("Failed to create HTTP client");
 
+    // Start the audit flush task before registering so events emitted while
+    // the control plane is unreachable are buffered instead of filling the
+    // channel and being dropped. It sends nothing until it has an ID.
+    let (target_tx, target_rx) = tokio::sync::watch::channel(AuditTarget::Pending);
+    let flush_handle = audit_rx.map(|rx| {
+        tokio::spawn(run_audit_flush_loop(
+            client.clone(),
+            config.clone(),
+            target_rx,
+            rx,
+        ))
+    });
+
     // Auto-claim agent if a connect token with agent binding is present.
     // This is idempotent — repeated claims by other authorizer instances
     // sharing the same token are silently accepted.
@@ -952,12 +1077,21 @@ pub async fn start_heartbeat_loop_until(
 
     // Register with retry until success, a non-retryable status, or shutdown.
     let authorizer_id = match register_with_retry(&client, &config, &mut shutdown).await {
-        Some(id) => id,
-        None => {
+        Registration::Registered(id) => id,
+        Registration::Rejected => {
             warn!(
                 "Failed to register with control plane. \
                  Authorizer will run in standalone mode without heartbeats."
             );
+            config.status.transition(ConnectionState::Standalone);
+            let _ = target_tx.send(AuditTarget::Unavailable);
+            join_flush_task(flush_handle).await;
+            return;
+        }
+        Registration::Stopped => {
+            let _ = target_tx.send(AuditTarget::Unavailable);
+            join_flush_task(flush_handle).await;
+            config.status.transition(ConnectionState::Stopped);
             return;
         }
     };
@@ -967,6 +1101,9 @@ pub async fn start_heartbeat_loop_until(
         name = %config.authorizer_name,
         "Registered with control plane"
     );
+
+    config.status.transition(ConnectionState::Connected);
+    let _ = target_tx.send(AuditTarget::Registered(authorizer_id.clone()));
 
     // Store authorizer_id in shared state for request handlers
     {
@@ -1006,19 +1143,6 @@ pub async fn start_heartbeat_loop_until(
         }
     }
 
-    // Spawn audit event flush task if receiver provided; join it on shutdown.
-    let flush_handle = if let Some(rx) = audit_rx {
-        let audit_client = client.clone();
-        let audit_config = config.clone();
-        let audit_authorizer_id = authorizer_id.clone();
-        info!("Audit event streaming enabled");
-        Some(tokio::spawn(async move {
-            run_audit_flush_loop(audit_client, audit_config, audit_authorizer_id, rx).await;
-        }))
-    } else {
-        None
-    };
-
     // Heartbeat loop
     let mut ticker = interval(Duration::from_secs(config.interval_secs));
 
@@ -1036,6 +1160,15 @@ pub async fn start_heartbeat_loop_until(
 
         match send_heartbeat(&client, &config, &authorizer_id).await {
             Ok(response) => {
+                if config.status.transition(ConnectionState::Connected)
+                    == Some(ConnectionState::Degraded)
+                {
+                    info!(authorizer_id = %authorizer_id, "Reconnected to control plane");
+                    eprintln!(
+                        "[tenuo] reconnected to control plane at {}",
+                        config.control_plane_url
+                    );
+                }
                 debug!(
                     authorizer_id = %authorizer_id,
                     status = %response.status,
@@ -1050,6 +1183,19 @@ pub async fn start_heartbeat_loop_until(
                     error = %e,
                     "Heartbeat failed, will retry on next interval"
                 );
+                config.status.set_error(e.to_string());
+                if config.status.transition(ConnectionState::Degraded)
+                    == Some(ConnectionState::Connected)
+                {
+                    eprintln!(
+                        "[tenuo] WARN: lost contact with control plane at {} ({}). \
+                         Authorization is unaffected; audit events are buffered \
+                         (up to {}) until it is reachable.",
+                        config.control_plane_url,
+                        e,
+                        audit_buffer_cap(config.audit_batch_size),
+                    );
+                }
             }
         }
 
@@ -1083,7 +1229,30 @@ pub async fn start_heartbeat_loop_until(
         }
     }
 
-    if let Some(handle) = flush_handle {
+    join_flush_task(flush_handle).await;
+    config.status.transition(ConnectionState::Stopped);
+}
+
+/// Where the audit flush task may send events.
+#[derive(Clone, Debug)]
+enum AuditTarget {
+    /// Registration in progress: buffer, do not send.
+    Pending,
+    /// Registered under this authorizer ID: send.
+    Registered(String),
+    /// Registration rejected or the task is stopping before registering:
+    /// nothing can be sent, so drop what is buffered and exit.
+    Unavailable,
+}
+
+enum Registration {
+    Registered(String),
+    Rejected,
+    Stopped,
+}
+
+async fn join_flush_task(handle: Option<tokio::task::JoinHandle<()>>) {
+    if let Some(handle) = handle {
         match tokio::time::timeout(Duration::from_secs(10), handle).await {
             Ok(Ok(())) => info!("Audit flush loop finished"),
             Ok(Err(e)) => warn!(error = %e, "Audit flush task failed"),
@@ -1102,95 +1271,150 @@ async fn wait_shutdown(shutdown: &mut Option<oneshot::Receiver<()>>) {
 }
 
 /// Run the audit event flush loop.
-/// Collects events from the channel and flushes them in batches.
+///
+/// Collects events from the channel and flushes them in batches once
+/// `target` carries an authorizer ID. Until then events are buffered, up to
+/// [`audit_buffer_cap`]; past that the oldest are dropped and counted.
 async fn run_audit_flush_loop(
     client: Client,
     config: HeartbeatConfig,
-    authorizer_id: String,
+    mut target: tokio::sync::watch::Receiver<AuditTarget>,
     mut rx: mpsc::Receiver<AuthorizationEvent>,
 ) {
+    let status = config.status.clone();
+    let cap = audit_buffer_cap(config.audit_batch_size);
     let mut buffer: Vec<AuthorizationEvent> = Vec::with_capacity(config.audit_batch_size);
     let mut flush_ticker = interval(Duration::from_secs(config.audit_flush_interval_secs));
     let mut next_flush_at = Instant::now();
+    let mut target_open = true;
+    let mut registered_id: Option<String> = None;
+    let mut in_flight: Option<tokio::task::JoinHandle<FlushCompletion>> = None;
+    let mut in_flight_count = 0usize;
+    let mut flush_requested = false;
+    let mut draining = false;
+    let mut rx_open = true;
+    let mut consecutive_failures = 0u32;
 
     // Skip the first immediate tick
     flush_ticker.tick().await;
 
     loop {
         tokio::select! {
-            // Receive events from channel
-            event = rx.recv() => {
+            event = rx.recv(), if rx_open => {
                 match event {
                     Some(e) => {
                         buffer.push(e);
-                        cap_audit_buffer(&mut buffer, config.audit_batch_size);
-
-                        // Flush if batch is full and Retry-After has elapsed.
-                        if buffer.len() >= config.audit_batch_size
-                            && Instant::now() >= next_flush_at
-                        {
-                            if let Some(wait) = flush_audit_events(
-                                &client,
-                                &config,
-                                &authorizer_id,
-                                &mut buffer,
-                                false,
-                            )
-                            .await
-                            {
-                                next_flush_at = Instant::now() + wait;
-                            }
-                        }
+                        let available = cap.saturating_sub(in_flight_count);
+                        status.record_dropped(cap_audit_buffer(&mut buffer, available) as u64);
+                        flush_requested |= buffer.len() >= config.audit_batch_size;
                     }
                     None => {
-                        // Channel closed: one immediate flush, no Retry-After wait.
-                        if !buffer.is_empty() {
-                            let remaining = buffer.len();
-                            info!(
-                                authorizer_id = %authorizer_id,
-                                remaining_events = remaining,
-                                "Flushing remaining audit events before shutdown"
-                            );
-                            let _ = flush_audit_events(
-                                &client,
-                                &config,
-                                &authorizer_id,
-                                &mut buffer,
-                                true,
-                            )
-                            .await;
-                            if !buffer.is_empty() {
-                                warn!(
-                                    authorizer_id = %authorizer_id,
-                                    dropped_events = buffer.len(),
-                                    "Final audit drain failed; dropping remaining events"
-                                );
-                                buffer.clear();
-                            }
-                        }
-                        info!("Audit channel closed, exiting flush loop");
-                        break;
+                        rx_open = false;
+                        draining = true;
+                        flush_requested = true;
                     }
                 }
             }
+            changed = target.changed(), if target_open => {
+                if changed.is_err() {
+                    target_open = false;
+                } else if matches!(*target.borrow(), AuditTarget::Unavailable) {
+                    // Nothing can be sent: count what is buffered or queued.
+                    rx.close();
+                    let mut queued = 0u64;
+                    while rx.try_recv().is_ok() {
+                        queued += 1;
+                    }
+                    status.record_dropped(queued);
+                    drop_unsent(&status, &mut buffer, "control plane unavailable");
+                    break;
+                }
+                registered_id = match &*target.borrow() {
+                    AuditTarget::Registered(id) => Some(id.clone()),
+                    _ => None,
+                };
+                flush_requested |= registered_id.is_some();
+            }
             // Periodic flush
             _ = flush_ticker.tick() => {
-                if !buffer.is_empty() && Instant::now() >= next_flush_at {
-                    if let Some(wait) = flush_audit_events(
-                        &client,
-                        &config,
-                        &authorizer_id,
-                        &mut buffer,
-                        false,
-                    )
-                    .await
-                    {
-                        next_flush_at = Instant::now() + wait;
+                flush_requested = true;
+            }
+            _ = tokio::time::sleep_until(next_flush_at.into()),
+                if in_flight.is_none()
+                    && !buffer.is_empty()
+                    && registered_id.is_some()
+                    && Instant::now() < next_flush_at =>
+            {
+                flush_requested = true;
+            }
+            completed = async { in_flight.as_mut().expect("guarded").await }, if in_flight.is_some() => {
+                in_flight = None;
+                let lost_in_flight = std::mem::take(&mut in_flight_count);
+                match completed {
+                    Ok(FlushCompletion::Sent) | Ok(FlushCompletion::Rejected) => {
+                        // The control plane answered. A rejected batch was
+                        // already counted; the rest of the buffer still goes.
+                        consecutive_failures = 0;
+                        flush_requested |= !buffer.is_empty();
+                    }
+                    Ok(FlushCompletion::Retry { mut events, retry_after }) => {
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        events.append(&mut buffer);
+                        buffer = events;
+                        next_flush_at = Instant::now()
+                            + retry_after.unwrap_or_else(|| flush_backoff(consecutive_failures));
+                        // While draining, the requeued batch goes straight out
+                        // as the last attempt instead of waiting.
+                        flush_requested |= draining;
+                    }
+                    Ok(FlushCompletion::FinalAttemptFailed) => {
+                        // Shutdown gets one attempt; the rest cannot be sent either.
+                        drop_unsent(&status, &mut buffer, "final flush failed");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Audit flush task failed");
+                        status.record_dropped(lost_in_flight as u64);
+                        drop_unsent(&status, &mut buffer, "audit flush task failed");
                     }
                 }
             }
         }
+
+        if draining && registered_id.is_none() {
+            drop_unsent(
+                &status,
+                &mut buffer,
+                "stopped before registering with the control plane",
+            );
+        }
+
+        // Shutdown flushes immediately: waiting out Retry-After or backoff
+        // would outlast the caller's timeout and lose the events uncounted.
+        if in_flight.is_none()
+            && flush_requested
+            && !buffer.is_empty()
+            && (draining || Instant::now() >= next_flush_at)
+        {
+            if let Some(id) = registered_id.clone() {
+                let batch_len = buffer.len().min(config.audit_batch_size.max(1));
+                let batch: Vec<_> = buffer.drain(..batch_len).collect();
+                in_flight_count = batch_len;
+                let flush_client = client.clone();
+                let flush_config = config.clone();
+                in_flight = Some(tokio::spawn(async move {
+                    flush_audit_events(&flush_client, &flush_config, &id, batch, draining).await
+                }));
+                flush_requested = false;
+            }
+        }
+
+        status.set_buffered(buffer.len() + in_flight_count);
+        if draining && in_flight.is_none() && buffer.is_empty() {
+            info!("Audit channel closed, exiting flush loop");
+            break;
+        }
     }
+    status.set_buffered(0);
 }
 
 /// Sign an authorization event to create a cryptographic receipt.
@@ -1263,20 +1487,38 @@ fn sign_event(
     }
 }
 
+/// Outcome of one audit batch upload.
+enum FlushCompletion {
+    Sent,
+    /// Retryable failure; the batch comes back to be requeued. `retry_after`
+    /// is the server's Retry-After, otherwise the caller backs off.
+    Retry {
+        events: Vec<AuthorizationEvent>,
+        retry_after: Option<Duration>,
+    },
+    /// Non-retryable rejection of this batch; it was counted as dropped.
+    Rejected,
+    /// The last attempt during shutdown failed; this batch was counted as dropped.
+    FinalAttemptFailed,
+}
+
+/// Backoff after `failures` consecutive retryable flush failures:
+/// 2s, 4s, 8s ... capped at 60s, jittered.
+fn flush_backoff(failures: u32) -> Duration {
+    let secs = 2u64.saturating_pow(failures.clamp(1, 6)).min(60);
+    jittered(Duration::from_secs(secs))
+}
+
 /// Flush buffered audit events to the control plane.
 /// If a signing key is configured, events are signed before sending.
 async fn flush_audit_events(
     client: &Client,
     config: &HeartbeatConfig,
     authorizer_id: &str,
-    buffer: &mut Vec<AuthorizationEvent>,
+    events: Vec<AuthorizationEvent>,
     last_attempt: bool,
-) -> Option<Duration> {
-    if buffer.is_empty() {
-        return None;
-    }
-
-    let event_count = buffer.len();
+) -> FlushCompletion {
+    let event_count = events.len();
     let url = format!(
         "{}/v1/authorizers/{}/events",
         config.control_plane_url, authorizer_id
@@ -1284,7 +1526,7 @@ async fn flush_audit_events(
 
     // Sign all events, using the canonical authorizer_id from registration
     // (events may carry a stale "pending" ID if emitted before registration completed)
-    let signed_events: Vec<SignedEvent> = buffer
+    let signed_events: Vec<SignedEvent> = events
         .iter()
         .map(|event| sign_event(event, &config.signing_key, authorizer_id))
         .collect();
@@ -1297,6 +1539,7 @@ async fn flush_audit_events(
         .send()
         .await;
 
+    let status = &config.status;
     match result {
         Ok(response) if response.status().is_success() => {
             debug!(
@@ -1304,98 +1547,99 @@ async fn flush_audit_events(
                 event_count = %event_count,
                 "Flushed audit events to control plane"
             );
-            eprintln!(
-                "[tenuo] flushed {} audit events for {}",
-                event_count, authorizer_id
-            );
-            buffer.clear();
-            None
+            status.record_flushed(event_count);
+            FlushCompletion::Sent
         }
         Ok(response) => {
-            let status = response.status();
+            let http_status = response.status();
             let retry_after = parse_retry_after(response.headers());
             let body = response.text().await.unwrap_or_default();
-            let retryable = status.as_u16() == 429 || status.is_server_error();
+            let body: String = body.chars().take(200).collect();
+            let retryable = http_status.as_u16() == 429 || http_status.is_server_error();
+            status.set_error(format!("audit flush failed: HTTP {}", http_status));
             if !retryable {
                 warn!(
                     authorizer_id = %authorizer_id,
                     event_count = %event_count,
-                    status = %status,
+                    status = %http_status,
                     "Audit batch rejected; dropping"
                 );
                 eprintln!(
                     "[tenuo] WARN: flush rejected status={} body={} (authorizer={}); dropping batch",
-                    status,
-                    &body[..body.len().min(200)],
-                    authorizer_id
+                    http_status, body, authorizer_id
                 );
-                buffer.clear();
-                return None;
-            }
-            if last_attempt {
-                warn!(
-                    authorizer_id = %authorizer_id,
-                    dropped_events = %event_count,
-                    status = %status,
-                    "Final audit drain failed; dropping remaining events"
-                );
-                eprintln!(
-                    "[tenuo] WARN: final drain failed status={} body={} (authorizer={}); dropping {}",
-                    status,
-                    &body[..body.len().min(200)],
-                    authorizer_id,
-                    event_count
-                );
-                buffer.clear();
-                return None;
+                status.record_dropped(event_count as u64);
+                return FlushCompletion::Rejected;
             }
             warn!(
                 authorizer_id = %authorizer_id,
                 event_count = %event_count,
-                status = %status,
+                status = %http_status,
+                body = %body,
                 "Failed to flush audit events, will retry"
             );
-            eprintln!(
-                "[tenuo] WARN: flush failed status={} body={} (authorizer={})",
-                status,
-                &body[..body.len().min(200)],
-                authorizer_id
-            );
-            cap_audit_buffer(buffer, config.audit_batch_size);
-            retry_after
+            if last_attempt {
+                status.record_dropped(event_count as u64);
+                FlushCompletion::FinalAttemptFailed
+            } else {
+                FlushCompletion::Retry {
+                    events,
+                    retry_after,
+                }
+            }
         }
         Err(e) => {
-            if last_attempt {
-                warn!(
-                    authorizer_id = %authorizer_id,
-                    dropped_events = %event_count,
-                    error = %e,
-                    "Final audit drain failed; dropping remaining events"
-                );
-                buffer.clear();
-                return None;
-            }
+            status.set_error(format!("audit flush failed: {}", e));
             warn!(
                 authorizer_id = %authorizer_id,
                 event_count = %event_count,
                 error = %e,
                 "Network error flushing audit events, will retry"
             );
-            cap_audit_buffer(buffer, config.audit_batch_size);
-            None
+            if last_attempt {
+                status.record_dropped(event_count as u64);
+                FlushCompletion::FinalAttemptFailed
+            } else {
+                FlushCompletion::Retry {
+                    events,
+                    retry_after: None,
+                }
+            }
         }
     }
 }
 
-fn cap_audit_buffer(buffer: &mut Vec<AuthorizationEvent>, batch_size: usize) {
-    if buffer.len() > batch_size * 10 {
-        let drain_count = buffer.len() - batch_size;
-        warn!(
-            dropped_events = %drain_count,
+/// Most audit events held in memory before the oldest are dropped.
+fn audit_buffer_cap(batch_size: usize) -> usize {
+    batch_size.saturating_mul(10).max(1)
+}
+
+/// Drop the oldest events beyond `cap`, returning how many were dropped.
+fn cap_audit_buffer(buffer: &mut Vec<AuthorizationEvent>, cap: usize) -> usize {
+    let excess = buffer.len().saturating_sub(cap);
+    if excess > 0 {
+        debug!(
+            dropped_events = %excess,
             "Dropping oldest audit events due to buffer overflow"
         );
-        buffer.drain(0..drain_count);
+        buffer.drain(0..excess);
     }
+    excess
+}
+
+/// Count and report events that will never be sent, then clear them.
+fn drop_unsent(status: &ControlPlaneStatus, buffer: &mut Vec<AuthorizationEvent>, reason: &str) {
+    if buffer.is_empty() {
+        return;
+    }
+    let n = buffer.len();
+    warn!(dropped_events = n, reason, "Dropping unsent audit events");
+    eprintln!(
+        "[tenuo] WARN: dropping {} unsent audit events ({})",
+        n, reason
+    );
+    status.record_dropped(n as u64);
+    buffer.clear();
 }
 
 fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
@@ -1410,58 +1654,77 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 }
 
 /// Register with the control plane, retrying retryable failures until shutdown.
+///
+/// Prints one notice on the first failure instead of one per attempt; the
+/// per-attempt detail goes to `tracing` and [`ControlPlaneStatus::last_error`].
 async fn register_with_retry(
     client: &Client,
     config: &HeartbeatConfig,
     shutdown: &mut Option<oneshot::Receiver<()>>,
-) -> Option<String> {
+) -> Registration {
     let mut attempt = 0u32;
 
     loop {
         attempt = attempt.saturating_add(1);
         match register(client, config).await {
-            Ok(id) => return Some(id),
+            Ok(id) => {
+                if attempt > 1 {
+                    eprintln!(
+                        "[tenuo] registered with control plane at {} after {} attempts",
+                        config.control_plane_url, attempt
+                    );
+                }
+                return Registration::Registered(id);
+            }
             Err(e) if !e.is_retryable() => {
                 warn!(
                     attempt = attempt,
                     error = %e,
                     "Registration failed with a non-retryable status"
                 );
+                config.status.set_error(e.to_string());
                 eprintln!(
-                    "[tenuo] registration attempt {} failed permanently: {}",
-                    attempt, e,
+                    "[tenuo] WARN: failed to register '{}' with {}: {}. \
+                     Running in standalone mode; audit events will not be sent.",
+                    config.authorizer_name, config.control_plane_url, e,
                 );
-                eprintln!(
-                    "[tenuo] WARN: failed to register '{}' with {}. \
-                     Running in standalone mode.",
-                    config.authorizer_name, config.control_plane_url,
-                );
-                return None;
+                return Registration::Rejected;
             }
             Err(e) => {
                 let backoff = e
                     .retry_after()
-                    .unwrap_or_else(|| Duration::from_secs(2u64.pow(attempt.min(6))));
+                    .unwrap_or_else(|| jittered(Duration::from_secs(2u64.pow(attempt.min(6)))));
                 warn!(
                     attempt = attempt,
                     error = %e,
                     backoff_secs = backoff.as_secs(),
                     "Registration attempt failed, retrying..."
                 );
-                eprintln!(
-                    "[tenuo] registration attempt {} failed: {} (retry in {}s)",
-                    attempt,
-                    e,
-                    backoff.as_secs(),
-                );
+                config.status.set_error(e.to_string());
+                if attempt == 1 {
+                    eprintln!(
+                        "[tenuo] WARN: cannot reach control plane at {} ({}). \
+                         Retrying in the background; authorization is unaffected and \
+                         audit events are buffered (up to {}).",
+                        config.control_plane_url,
+                        e,
+                        audit_buffer_cap(config.audit_batch_size),
+                    );
+                }
 
                 tokio::select! {
-                    _ = wait_shutdown(shutdown) => return None,
+                    _ = wait_shutdown(shutdown) => return Registration::Stopped,
                     _ = tokio::time::sleep(backoff) => {}
                 }
             }
         }
     }
+}
+
+/// Spread retries over [base/2, base] so a fleet that lost the control plane
+/// together does not reconnect in lockstep.
+fn jittered(base: Duration) -> Duration {
+    base.mul_f64(0.5 + rand::random::<f64>() * 0.5)
 }
 
 /// Register this authorizer with the control plane.
@@ -1719,6 +1982,7 @@ mod tests {
             agent_id: None,
             connect_token: None,
             revocation_tracker: None,
+            status: Arc::default(),
         }
     }
 
@@ -2289,7 +2553,399 @@ mod tests {
             None,
         );
         let mut buffer = vec![event; 21];
-        cap_audit_buffer(&mut buffer, 2);
-        assert_eq!(buffer.len(), 2);
+        assert_eq!(cap_audit_buffer(&mut buffer, audit_buffer_cap(2)), 1);
+        assert_eq!(buffer.len(), 20);
+    }
+
+    #[test]
+    fn jittered_backoff_stays_within_half_to_full() {
+        let base = Duration::from_secs(8);
+        for _ in 0..200 {
+            let d = jittered(base);
+            assert!(d >= base / 2 && d <= base, "{d:?}");
+        }
+    }
+
+    // ---- control plane outage behavior, against an in-process mock ----
+
+    use axum::{body::Bytes, extract::State, http::StatusCode, http::Uri, response::IntoResponse};
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+    #[derive(Default)]
+    struct MockCp {
+        /// Registration answers 503 (Retry-After: 1) until this is set.
+        register_open: AtomicBool,
+        /// Registration answers 401 (non-retryable).
+        register_reject: AtomicBool,
+        /// Heartbeats answer 503 while this is set.
+        heartbeat_down: AtomicBool,
+        events: AtomicUsize,
+        max_event_batch: AtomicUsize,
+    }
+
+    async fn mock_handler(
+        State(cp): State<Arc<MockCp>>,
+        uri: Uri,
+        body: Bytes,
+    ) -> impl IntoResponse {
+        let path = uri.path();
+        let unavailable = || {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("retry-after", "1")],
+                String::new(),
+            )
+        };
+        if path.ends_with("/register") {
+            if cp.register_reject.load(Ordering::SeqCst) {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    [("retry-after", "0")],
+                    String::new(),
+                );
+            }
+            if !cp.register_open.load(Ordering::SeqCst) {
+                return unavailable();
+            }
+            return (
+                StatusCode::OK,
+                [("retry-after", "0")],
+                r#"{"id":"auth-1"}"#.into(),
+            );
+        }
+        if path.ends_with("/events") {
+            let batch: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+            cp.max_event_batch.fetch_max(batch.len(), Ordering::SeqCst);
+            cp.events.fetch_add(batch.len(), Ordering::SeqCst);
+            return (StatusCode::OK, [("retry-after", "0")], "{}".into());
+        }
+        if path.ends_with("/heartbeat") {
+            if cp.heartbeat_down.load(Ordering::SeqCst) {
+                return unavailable();
+            }
+            return (
+                StatusCode::OK,
+                [("retry-after", "0")],
+                r#"{"status":"active"}"#.into(),
+            );
+        }
+        (StatusCode::NOT_FOUND, [("retry-after", "0")], String::new())
+    }
+
+    async fn start_mock(cp: Arc<MockCp>) -> String {
+        let app = axum::Router::new().fallback(mock_handler).with_state(cp);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    fn outage_config(url: String) -> HeartbeatConfig {
+        HeartbeatConfig {
+            control_plane_url: url,
+            interval_secs: 1,
+            audit_batch_size: 100,
+            audit_flush_interval_secs: 60,
+            ..test_config()
+        }
+    }
+
+    fn event() -> AuthorizationEvent {
+        AuthorizationEvent::allow(
+            "pending".into(),
+            "w".into(),
+            "t".into(),
+            0,
+            None,
+            None,
+            0,
+            "r".into(),
+            None,
+            None,
+        )
+    }
+
+    async fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
+        for _ in 0..100 {
+            if cond() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("timed out waiting for {what}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn events_emitted_before_registration_are_delivered() {
+        let cp = Arc::new(MockCp::default());
+        let config = outage_config(start_mock(cp.clone()).await);
+        let status = config.status.clone();
+        let (tx, rx) = create_audit_channel(config.audit_batch_size);
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let task = tokio::spawn(start_heartbeat_loop_until(
+            config,
+            Some(rx),
+            Arc::new(RwLock::new(None)),
+            Some(stop_rx),
+        ));
+
+        // More than the channel holds: only works if something is consuming
+        // the channel while registration is still failing.
+        for _ in 0..250 {
+            tokio::time::timeout(Duration::from_secs(5), tx.send(event()))
+                .await
+                .expect("audit channel not drained before registration")
+                .unwrap();
+        }
+        wait_for("events buffered", || status.buffered() == 250).await;
+        assert_eq!(status.state(), ConnectionState::Registering);
+        assert!(status.last_error().is_some());
+        assert_eq!(cp.events.load(Ordering::SeqCst), 0);
+
+        cp.register_open.store(true, Ordering::SeqCst);
+        wait_for("backlog delivered", || {
+            cp.events.load(Ordering::SeqCst) == 250 && status.flushed() == 250
+        })
+        .await;
+        assert_eq!(status.flushed(), 250);
+        assert_eq!(status.dropped(), 0);
+        assert_eq!(cp.max_event_batch.load(Ordering::SeqCst), 100);
+        assert_eq!(status.state(), ConnectionState::Connected);
+
+        drop(tx);
+        stop_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.state(), ConnectionState::Stopped);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rejected_registration_counts_buffered_events_as_dropped() {
+        let cp = Arc::new(MockCp::default());
+        cp.register_reject.store(true, Ordering::SeqCst);
+        let config = outage_config(start_mock(cp.clone()).await);
+        let status = config.status.clone();
+        let (tx, rx) = create_audit_channel(config.audit_batch_size);
+        for _ in 0..5 {
+            tx.try_send(event()).unwrap();
+        }
+        let task = tokio::spawn(start_heartbeat_loop_until(
+            config,
+            Some(rx),
+            Arc::new(RwLock::new(None)),
+            None,
+        ));
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.state(), ConnectionState::Standalone);
+        assert_eq!(status.dropped(), 5);
+        assert_eq!(status.buffered(), 0);
+        assert!(tx.try_send(event()).is_err(), "channel should be closed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shutdown_while_registering_stops_and_counts_drops() {
+        let cp = Arc::new(MockCp::default());
+        let config = outage_config(start_mock(cp.clone()).await);
+        let status = config.status.clone();
+        let (tx, rx) = create_audit_channel(config.audit_batch_size);
+        for _ in 0..5 {
+            tx.try_send(event()).unwrap();
+        }
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let task = tokio::spawn(start_heartbeat_loop_until(
+            config,
+            Some(rx),
+            Arc::new(RwLock::new(None)),
+            Some(stop_rx),
+        ));
+        wait_for("first registration failure", || {
+            status.last_error().is_some()
+        })
+        .await;
+        stop_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.state(), ConnectionState::Stopped);
+        assert_eq!(status.dropped(), 5);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn heartbeat_failure_degrades_then_recovers() {
+        let cp = Arc::new(MockCp::default());
+        cp.register_open.store(true, Ordering::SeqCst);
+        let config = outage_config(start_mock(cp.clone()).await);
+        let status = config.status.clone();
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let task = tokio::spawn(start_heartbeat_loop_until(
+            config,
+            None,
+            Arc::new(RwLock::new(None)),
+            Some(stop_rx),
+        ));
+        wait_for("connected", || status.state() == ConnectionState::Connected).await;
+        cp.heartbeat_down.store(true, Ordering::SeqCst);
+        wait_for("degraded", || status.state() == ConnectionState::Degraded).await;
+        cp.heartbeat_down.store(false, Ordering::SeqCst);
+        wait_for("reconnected", || {
+            status.state() == ConnectionState::Connected
+        })
+        .await;
+        stop_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod flush_failure_tests {
+    use super::*;
+    use axum::{body::Bytes, extract::State, http::StatusCode, http::Uri};
+    use std::sync::atomic::AtomicUsize;
+
+    /// Registers immediately; the first events request gets `first_status`
+    /// with `retry_after`, later ones succeed.
+    struct Cp {
+        first_status: StatusCode,
+        retry_after: &'static str,
+        calls: AtomicUsize,
+        delivered: AtomicUsize,
+        first_batch: AtomicUsize,
+    }
+
+    type Reply = (StatusCode, [(&'static str, &'static str); 1], String);
+
+    async fn handler(State(cp): State<Arc<Cp>>, uri: Uri, body: Bytes) -> Reply {
+        let ok = |b: &str| (StatusCode::OK, [("retry-after", "0")], b.to_string());
+        let path = uri.path();
+        if path.ends_with("/register") {
+            return ok(r#"{"id":"auth-1"}"#);
+        }
+        if path.ends_with("/events") {
+            let batch: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+            if cp.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                cp.first_batch.store(batch.len(), Ordering::SeqCst);
+                return (
+                    cp.first_status,
+                    [("retry-after", cp.retry_after)],
+                    String::new(),
+                );
+            }
+            cp.delivered.fetch_add(batch.len(), Ordering::SeqCst);
+            return ok("{}");
+        }
+        ok(r#"{"status":"active"}"#)
+    }
+
+    fn event() -> AuthorizationEvent {
+        AuthorizationEvent::allow(
+            "pending".into(),
+            "w".into(),
+            "t".into(),
+            0,
+            None,
+            None,
+            0,
+            "r".into(),
+            None,
+            None,
+        )
+    }
+
+    /// Queue `n` events, start the loop, wait for the first events request,
+    /// then shut down. Returns the mock, the status and how long shutdown took.
+    async fn run_then_shutdown(
+        first_status: StatusCode,
+        retry_after: &'static str,
+        n: usize,
+    ) -> (Arc<Cp>, Arc<ControlPlaneStatus>, Duration) {
+        let cp = Arc::new(Cp {
+            first_status,
+            retry_after,
+            calls: AtomicUsize::new(0),
+            delivered: AtomicUsize::new(0),
+            first_batch: AtomicUsize::new(0),
+        });
+        let app = axum::Router::new().fallback(handler).with_state(cp.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let config = HeartbeatConfig {
+            control_plane_url: url,
+            interval_secs: 60,
+            audit_batch_size: 100,
+            audit_flush_interval_secs: 1,
+            ..Default::default()
+        };
+        let status = config.status.clone();
+        let (tx, rx) = create_audit_channel(1000);
+        for _ in 0..n {
+            tx.try_send(event()).unwrap();
+        }
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let task = tokio::spawn(start_heartbeat_loop_until(
+            config,
+            Some(rx),
+            Arc::new(RwLock::new(None)),
+            Some(stop_rx),
+        ));
+        for _ in 0..50 {
+            if cp.calls.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let start = Instant::now();
+        drop(tx);
+        stop_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(15), task)
+            .await
+            .unwrap()
+            .unwrap();
+        (cp, status, start.elapsed())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rejected_batch_drops_only_that_batch() {
+        let (cp, status, _) = run_then_shutdown(StatusCode::BAD_REQUEST, "0", 250).await;
+        // The first request holds whatever had arrived when registration
+        // landed (at most one batch); only those events are lost.
+        let rejected = cp.first_batch.load(Ordering::SeqCst);
+        assert!((1..=100).contains(&rejected), "first batch was {rejected}");
+        assert_eq!(status.dropped(), rejected as u64);
+        assert_eq!(cp.delivered.load(Ordering::SeqCst), 250 - rejected);
+        assert_eq!(status.flushed(), (250 - rejected) as u64);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shutdown_flushes_without_waiting_out_retry_after() {
+        let (cp, status, took) = run_then_shutdown(StatusCode::TOO_MANY_REQUESTS, "30", 5).await;
+        assert!(took < Duration::from_secs(5), "shutdown took {took:?}");
+        assert_eq!(cp.delivered.load(Ordering::SeqCst), 5);
+        assert_eq!(status.dropped(), 0);
+        assert_eq!(status.buffered(), 0);
+    }
+
+    #[test]
+    fn flush_backoff_grows_and_caps() {
+        for _ in 0..50 {
+            let first = flush_backoff(1);
+            assert!(first >= Duration::from_secs(1) && first <= Duration::from_secs(2));
+            let third = flush_backoff(3);
+            assert!(third >= Duration::from_secs(4) && third <= Duration::from_secs(8));
+            let many = flush_backoff(50);
+            assert!(many >= Duration::from_secs(30) && many <= Duration::from_secs(60));
+        }
     }
 }

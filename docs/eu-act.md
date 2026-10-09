@@ -434,6 +434,7 @@ With Tenuo: the model processes the resume and generates the `send_email` call. 
 ## References
 
 - [EU AI Act (official consolidated text)](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32024R1689), the authoritative source for all article numbers cited here.
+- [Digital Omnibus on AI, Regulation (EU) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj), the amendment that moved the high-risk application dates.
 - [EU AI Act Service Desk](https://artificialintelligenceact.eu/), official guidance and FAQ.
 - [Annex III: High-Risk AI Systems](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32024R1689#d1e38-206-1), full list of high-risk application domains.
 - [Tenuo security model](./security), cryptographic guarantees and threat model.
@@ -444,14 +445,18 @@ With Tenuo: the model processes the resume and generates the `send_email` call. 
 
 ## Appendix A: EU AI Act timeline
 
-Key compliance deadlines following the Act's entry into force (August 1, 2024):
+Key compliance deadlines following the Act's entry into force (August 1, 2024), as amended by the [Digital Omnibus on AI, Regulation (EU) 2026/1744](https://eur-lex.europa.eu/eli/reg/2026/1744/oj):
 
 | Date | Obligation |
 |------|------------|
 | February 2, 2025 | Prohibited AI systems, definitions, AI literacy requirements |
 | August 2, 2025 | General Purpose AI (GPAI) obligations |
-| August 2, 2026 | High-risk AI systems under Annex III |
-| August 1, 2027 | High-risk AI systems under Annex I |
+| August 2, 2026 | Transparency obligations (Article 50) |
+| December 2, 2026 | Marking of AI-generated content (Article 50(2)) for systems already on the market |
+| December 2, 2027 | High-risk AI systems under Annex III |
+| August 2, 2028 | High-risk AI systems under Annex I |
+
+The Digital Omnibus moved the high-risk dates from August 2, 2026 (Annex III) and August 2, 2027 (Annex I).
 
 ---
 

@@ -280,15 +280,20 @@ class TenuoPluginConfig:
     authorized_signals: Optional[List[str]] = None
     """
     When set, only signals whose name is in this list are accepted.
-    Unrecognized signals are denied and logged. When None (default),
-    all signals pass through (backward compatible).
+    An unrecognized signal raises ``TemporalConstraintViolation`` during
+    signal handling. The plugin registers that type as a workflow failure,
+    so the signal fails the workflow run. When None (default), all signals
+    pass through. One worker shares this list across every workflow it runs.
     """
 
     authorized_updates: Optional[List[str]] = None
     """
     When set, only workflow updates whose name is in this list are
-    accepted.  Unrecognized updates are rejected at the validator
-    stage.  When None (default), all updates pass through.
+    accepted. An unrecognized update raises ``TemporalConstraintViolation``
+    from the update validator, when the update defines one, and from the
+    update handler for every update. That failure rejects the update.
+    When None (default), all updates pass through. One worker shares this
+    list across every workflow it runs.
     """
 
     activity_fns: Optional[List[Callable]] = None
