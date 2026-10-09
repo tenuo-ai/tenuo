@@ -1,10 +1,10 @@
-use super::{decode_owned, encode_approval_standard, encode_parts, DecodeLimits, TransportError};
+use super::TransportError;
 use crate::approval::SignedApproval;
 use crate::crypto::Signature;
 use crate::sdk::authority::OwnedReceivedAuthorization;
 use crate::sdk::AuthorizedCall;
 use crate::warrant::Warrant;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// Decoded `params._meta.tenuo` payload. Owns the artifacts.
 pub type TenuoMeta = OwnedReceivedAuthorization;
@@ -15,21 +15,19 @@ pub fn encode_meta(
     signature: &Signature,
     approvals: &[SignedApproval],
 ) -> Result<Value, TransportError> {
-    let (warrant, pop, _) = encode_parts(chain, signature, approvals)?;
-    let mut object = Map::new();
-    object.insert("warrant".into(), Value::String(warrant));
-    object.insert("signature".into(), Value::String(pop));
-    if !approvals.is_empty() {
-        let encoded = approvals
-            .iter()
-            .map(encode_approval_standard)
-            .collect::<Result<Vec<_>, _>>()?;
-        object.insert(
-            "approvals".into(),
-            Value::Array(encoded.into_iter().map(Value::String).collect()),
-        );
+    crate::meta_envelope::encode_meta(chain, &signature.to_bytes(), approvals)
+        .map(|meta| meta.to_json())
+        .map_err(meta_error)
+}
+
+fn meta_error(err: crate::meta_envelope::MetaError) -> TransportError {
+    match err {
+        crate::meta_envelope::MetaError::MissingField(name) => TransportError::MissingField(name),
+        crate::meta_envelope::MetaError::TooManyApprovals => TransportError::TooManyApprovals,
+        crate::meta_envelope::MetaError::InvalidSignature => TransportError::InvalidSignature,
+        crate::meta_envelope::MetaError::PayloadTooLarge => TransportError::PayloadTooLarge,
+        _ => TransportError::InvalidEncoding,
     }
-    Ok(Value::Object(object))
 }
 
 /// Build `_meta.tenuo` for a call: the holder signs a proof of possession
@@ -64,37 +62,9 @@ pub fn encode_meta_from_authorized(call: &AuthorizedCall<'_>) -> Result<Value, T
 ///
 /// Size bounds are enforced before any decoding work.
 pub fn decode_meta(meta: &Value) -> Result<TenuoMeta, TransportError> {
-    let object = meta.as_object().ok_or(TransportError::InvalidEncoding)?;
-    let warrant = object
-        .get("warrant")
-        .and_then(Value::as_str)
-        .ok_or(TransportError::MissingField("warrant"))?;
-    let signature = object
-        .get("signature")
-        .and_then(Value::as_str)
-        .ok_or(TransportError::MissingField("signature"))?;
-    let approvals = match object.get("approvals") {
-        None => None,
-        Some(Value::Array(items)) => {
-            if items.len() > super::MAX_APPROVALS {
-                return Err(TransportError::TooManyApprovals);
-            }
-            for item in items {
-                let s = item.as_str().ok_or(TransportError::InvalidEncoding)?;
-                if s.len() > super::MCP_APPROVAL_STRING_MAX {
-                    return Err(TransportError::PayloadTooLarge);
-                }
-            }
-            Some(serde_json::to_string(items).map_err(|_| TransportError::InvalidEncoding)?)
-        }
-        Some(_) => return Err(TransportError::InvalidEncoding),
-    };
-    decode_owned(
-        warrant,
-        signature,
-        approvals.as_deref(),
-        DecodeLimits::mcp(),
-    )
+    let decoded = crate::meta_envelope::decode_meta(meta).map_err(meta_error)?;
+    OwnedReceivedAuthorization::new(decoded.warrants, decoded.signature, decoded.approvals)
+        .map_err(Into::into)
 }
 
 /// Remove `tenuo` from a `_meta` object.
@@ -110,6 +80,39 @@ pub fn strip_tenuo(meta: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoder_matches_core_conformance() {
+        let suite: Value = serde_json::from_str(include_str!(
+            "../../../../tests/vectors/tenuo-meta-conformance.json"
+        ))
+        .unwrap();
+        let mut valid = suite["delegated"].clone();
+        for approvals in [
+            Value::Null,
+            serde_json::json!([]),
+            valid["approvals"].clone(),
+        ] {
+            valid["approvals"] = approvals;
+            assert!(decode_meta(&valid).is_ok());
+            assert!(crate::meta_envelope::decode_meta(&valid).is_ok());
+        }
+        for case in suite["invalid_envelopes"].as_array().unwrap() {
+            let mut invalid = suite["delegated"].clone();
+            for (key, value) in case.as_object().unwrap() {
+                if key != "error" {
+                    invalid[key] = value.clone();
+                }
+            }
+            assert!(decode_meta(&invalid).is_err());
+            assert!(crate::meta_envelope::decode_meta(&invalid).is_err());
+        }
+        valid.as_object_mut().unwrap().remove("signature");
+        assert_eq!(
+            decode_meta(&valid).err(),
+            Some(TransportError::MissingField("signature"))
+        );
+    }
 
     #[test]
     fn signed_meta_verifies_at_a_guard() {
@@ -156,5 +159,79 @@ mod tests {
         assert!(guard
             .check_received(&received.as_received().unwrap(), &other)
             .is_err());
+    }
+
+    /// A Rust SDK client and a Python/TS client (core `sign_meta` /
+    /// `verify_meta_pop`) must agree on the proof for an integral float.
+    #[test]
+    fn integral_float_proofs_agree_across_sdk_and_core() {
+        use crate::sdk::{Call, Guard, LocalSigner, PresentedAuthority, RevocationMode};
+        use crate::{ConstraintSet, SigningKey};
+        use std::sync::Arc;
+
+        for (value, text) in [
+            (serde_json::json!({"n": 1.0}), r#"{"n":1.0}"#),
+            (serde_json::json!({"n": 1}), r#"{"n":1.0}"#),
+            (serde_json::json!({"n": 1.0}), r#"{"n":1}"#),
+            (serde_json::json!({"n": 1.5}), r#"{"n":1.5}"#),
+        ] {
+            let issuer = SigningKey::generate();
+            let holder = SigningKey::generate();
+            let warrant = Warrant::builder()
+                .capability("calc", ConstraintSet::new())
+                .holder(holder.public_key())
+                .ttl(std::time::Duration::from_secs(60))
+                .build(&issuer)
+                .unwrap();
+            let ts = chrono::Utc::now().timestamp();
+            let call = Call::try_from_json("calc", &value).unwrap();
+
+            // Rust SDK signs, the core verifies.
+            let authority = PresentedAuthority::new(
+                vec![warrant.clone()],
+                Arc::new(LocalSigner::new(holder.clone())),
+            )
+            .unwrap();
+            let meta = sign_meta(
+                &authority,
+                &call,
+                &[],
+                ts,
+                crate::planes::DEFAULT_POP_WINDOW_SECS,
+            )
+            .unwrap();
+            assert!(
+                crate::meta_envelope::verify_meta_pop(
+                    meta["warrant"].as_str().unwrap(),
+                    meta["signature"].as_str().unwrap(),
+                    "calc",
+                    text,
+                    ts,
+                )
+                .unwrap(),
+                "core rejected a Rust SDK proof for {value} / {text}"
+            );
+
+            // The core signs, a Rust SDK Guard verifies.
+            let core = crate::meta_envelope::sign_meta(&[warrant], &holder, "calc", text, ts, &[])
+                .unwrap()
+                .to_json();
+            let mut authorizer = crate::Authorizer::new();
+            authorizer.add_trusted_root(issuer.public_key());
+            let guard = Guard::builder()
+                .authorizer(authorizer)
+                .revocation(RevocationMode::TtlOnly {
+                    max_lifetime: std::time::Duration::from_secs(3600),
+                })
+                .build()
+                .unwrap();
+            let received = decode_meta(&core).unwrap();
+            assert!(
+                guard
+                    .check_received(&received.as_received().unwrap(), &call)
+                    .is_ok(),
+                "Rust Guard rejected a core proof for {text} / {value}"
+            );
+        }
     }
 }

@@ -26,10 +26,11 @@ If you're coming from Temporal's RBAC or namespace-based access control, here's 
 Issuer (control_key)                Holder (agent_key)
 ────────────────────                ─────────────────
 Owned by: authorization team        Owned by: worker / CI / agent process
-Lives in: Vault, KMS, CI secret,    Lives in: worker's KeyResolver (Vault, etc.)
+Lives in: Vault, KMS, CI secret,    Lives in: the workflow worker's memory
           or Tenuo Cloud
 Used to: mint warrants               Used to: sign PoP on each activity dispatch
-If compromised: rotate trusted root  If compromised: rotate key_id + re-issue warrant
+If compromised: rotate trusted root  If compromised: restart the worker with a
+                                     new key, then re-issue the warrant
 ```
 
 The issuer key never touches the worker. The holder key never leaves the worker. Headers carry only the holder `key_id` and warrant material, not private keys.
@@ -40,7 +41,7 @@ The issuer key never touches the worker. The holder key never leaves the worker.
 
 Checklist for moving past local demos (each item stands alone; links go deeper):
 
-1. **Issuer vs holder keys** — Issuer (`control_key`) only mints warrants; the holder key is resolved on the worker via a production [`KeyResolver`](#key-management-required) (Vault, AWS Secrets Manager, or GCP Secret Manager), not [`EnvKeyResolver`](#development-environment-variables).
+1. **Issuer vs holder keys** — Issuer (`control_key`) only mints warrants. The workflow worker signs with a holder key already in memory: `signing_key=`, or a [`KeyResolver`](#key-management-required) whose `resolve_sync` returns that key without starting a thread. [`EnvKeyResolver`](#development-environment-variables) is for development, after preload. `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and `GCPSecretManagerKeyResolver` are not a signing path inside the workflow sandbox.
 2. **Preload if you still use env keys in lower envs** — Call [`preload_keys`](#development-environment-variables) with every holder `key_id` **before** `Worker(...)`, because PoP signing runs in the workflow sandbox where `os.environ` is unavailable for non-determinism reasons.
 3. **Sandbox passthrough** — `TenuoTemporalPlugin` handles this automatically. If using `TenuoWorkerInterceptor` manually, you must set `SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")` so PyO3 can load once; without it, workflow tasks fail with `ImportError: PyO3 modules may only be initialized once...` ([details](#sandbox-passthrough-explained)).
 4. **Named argument constraints** — If the warrant constrains fields like `path=` or `bucket=`, set [`activity_fns`](#activity-registry-activity_fns-and-pop-argument-names) to the **same** callables as `Worker(activities=[...])`, or use `tenuo_execute_activity()`, so PoP can name arguments correctly.
@@ -233,12 +234,51 @@ For distributed deployments (separate client and worker processes):
 
 ### Key Management (REQUIRED)
 
-Tenuo NEVER transmits private keys in headers. Workers must be configured with a `KeyResolver` to fetch signing keys from secure storage.
+Tenuo NEVER transmits private keys in headers. The workflow worker signs PoP by calling `resolve_sync` inside the workflow sandbox, so that call has to return a key already in memory.
 
-#### Production: Vault
+Pass `signing_key=` for one holder key, or a `KeyResolver` whose `resolve_sync` returns from memory and does not start a thread or do I/O. Load that key before `Worker(...)`. A later change in Vault or a cloud secret store is picked up when the workflow worker restarts with the new key. `EnvKeyResolver` is for development, and only after `preload_all()`.
+
+`VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and `GCPSecretManagerKeyResolver` run `resolve_sync` on a thread pool. The sandbox blocks that thread on every dispatch, including when `cache_ttl` still holds the key, so warming the cache does not make them usable for workflow signing. The constructors below show how those stores are addressed from ordinary Python. They are not the resolver a sandboxed workflow worker should use to sign.
+
+#### Signing from memory
 
 ```python
-from tenuo.temporal import VaultKeyResolver, TenuoPluginConfig
+from tenuo.temporal import KeyResolver, KeyResolutionError, TenuoPluginConfig
+
+# One holder key for this worker.
+config = TenuoPluginConfig(
+    signing_key=holder_signing_key,
+    trusted_roots=[root_key.public_key],
+    strict_mode=True,
+)
+
+# Several holder keys. Fill `keys` before Worker(...). Do not fetch inside resolve_sync.
+class MemoryKeyResolver(KeyResolver):
+    def __init__(self, keys: dict) -> None:
+        self._keys = keys
+
+    async def resolve(self, key_id: str):
+        return self.resolve_sync(key_id)
+
+    def resolve_sync(self, key_id: str):
+        try:
+            return self._keys[key_id]
+        except KeyError as exc:
+            raise KeyResolutionError(key_id=key_id) from exc
+
+config = TenuoPluginConfig(
+    key_resolver=MemoryKeyResolver(keys),
+    trusted_roots=[root_key.public_key],
+    strict_mode=True,
+)
+```
+
+If both `signing_key` and `key_resolver` are set, the worker calls `key_resolver`.
+
+#### Vault
+
+```python
+from tenuo.temporal import VaultKeyResolver
 
 resolver = VaultKeyResolver(
     url="https://vault.company.com:8200",
@@ -247,13 +287,9 @@ resolver = VaultKeyResolver(
     mount="secret",
     cache_ttl=300,
 )
-
-config = TenuoPluginConfig(
-    key_resolver=resolver,
-    trusted_roots=[root_key.public_key],
-    strict_mode=True,
-)
 ```
+
+`cache_ttl` applies only to calls that reach `resolve()`. Workflow signing never gets that far: `resolve_sync` starts a thread first. Fetch the key with ordinary Python before `Worker(...)`, then pass the bytes through `signing_key=` or `MemoryKeyResolver`.
 
 Store keys in Vault:
 ```bash
@@ -261,7 +297,7 @@ vault kv put secret/production/tenuo/agent-2024 \
   key=@signing_key.b64
 ```
 
-#### Production: AWS Secrets Manager
+#### AWS Secrets Manager
 
 ```python
 from tenuo.temporal import AWSSecretsManagerKeyResolver
@@ -271,13 +307,9 @@ resolver = AWSSecretsManagerKeyResolver(
     region_name="us-west-2",
     cache_ttl=300,
 )
-
-config = TenuoPluginConfig(
-    key_resolver=resolver,
-    trusted_roots=[root_key.public_key],
-    strict_mode=True,
-)
 ```
+
+Same limit as Vault: this class cannot sign from inside the workflow sandbox. Load the secret before `Worker(...)` and keep the key in memory.
 
 Store keys in AWS:
 ```bash
@@ -287,7 +319,7 @@ aws secretsmanager create-secret \
   --region us-west-2
 ```
 
-#### Production: GCP Secret Manager
+#### GCP Secret Manager
 
 ```python
 from tenuo.temporal import GCPSecretManagerKeyResolver
@@ -297,13 +329,9 @@ resolver = GCPSecretManagerKeyResolver(
     secret_prefix="tenuo-keys-",
     cache_ttl=300,
 )
-
-config = TenuoPluginConfig(
-    key_resolver=resolver,
-    trusted_roots=[root_key.public_key],
-    strict_mode=True,
-)
 ```
+
+Same limit as Vault: this class cannot sign from inside the workflow sandbox. Load the secret before `Worker(...)` and keep the key in memory.
 
 Store keys in GCP:
 ```bash
@@ -347,38 +375,41 @@ export TENUO_ENV=development   # suppress production warning
 
 `TenuoTemporalPlugin` calls `preload_all()` automatically, scanning all `TENUO_KEY_*` variables into an in-memory cache before the sandbox activates. If using `TenuoWorkerInterceptor` manually, call `resolver.preload_all()` before `Worker(...)` — PoP signing runs inside the workflow sandbox where `os.environ` is blocked.
 
-> **Warning:** `EnvKeyResolver` is for development only. In production, use Vault, AWS Secrets Manager, or GCP Secret Manager.
+> **Warning:** `EnvKeyResolver` is for development only. A production workflow worker should use `signing_key=` or a custom resolver whose `resolve_sync` returns a key already in memory.
 
 #### `KeyResolver` and the workflow sandbox
 
-PoP signing runs inside `_TenuoWorkflowOutboundInterceptor.start_activity`, which is **inside the workflow sandbox**. That means the sandbox determinism and I/O restrictions apply to whatever the resolver's `resolve_sync` does on each call. Pure-memory resolvers are safe; I/O-bound resolvers must be preloaded at worker startup and must return from their in-memory cache inside the sandbox.
+PoP signing runs inside `_TenuoWorkflowOutboundInterceptor.start_activity`, which is **inside the workflow sandbox**. The default `KeyResolver.resolve_sync` submits `resolve()` to a `ThreadPoolExecutor` when an event loop is already running. The sandbox blocks that thread, and the cache inside `resolve()` is only consulted after the thread starts. A filled cache and a long `cache_ttl` do not avoid the failure.
 
-| Resolver | Safe inside sandbox as-is? | How to make it safe |
-|----------|---------------------------|--------------------|
-| `EnvKeyResolver` | Yes — only if `preload_all()` ran outside the sandbox. `TenuoTemporalPlugin` does this automatically; manual `TenuoWorkerInterceptor` users must call it. `os.environ` reads from inside the sandbox will fail. |
-| `DictKeyResolver` | Yes — pure in-memory lookup. |
-| `VaultKeyResolver` | No — does HTTP on cache miss. | Warm the cache at worker startup by issuing one `resolve_sync(key_id)` per key *before* `Worker(...)` is created; tune `cache_ttl` > workflow lifetime. |
-| `AWSSecretsManagerKeyResolver` | No — does boto3 network I/O on cache miss. | Same warmup + cache-TTL strategy. |
-| `GCPSecretManagerKeyResolver` | No — does gRPC on cache miss. | Same warmup + cache-TTL strategy. |
-| `CompositeKeyResolver` | Inherits from whichever child resolver it falls through to. | Put an in-memory / preloaded resolver first so the common path stays in the sandbox. |
+| Resolver | Signs inside the sandbox? | Notes |
+|----------|---------------------------|-------|
+| `signing_key=` | Yes | The config builds a resolver whose `resolve_sync` returns that key from memory. |
+| Custom `KeyResolver` | Yes, when `resolve_sync` returns a key already in memory and does not start a thread or do I/O | Fetch before `Worker(...)`. There is no shipped `DictKeyResolver`; that name appears only in tests. |
+| `EnvKeyResolver` | Yes, after `preload_all()` outside the sandbox | `TenuoTemporalPlugin` preloads automatically. A manual `TenuoWorkerInterceptor` setup must call `preload_all()` before `Worker(...)`. A cache miss reads `os.environ` and fails in the sandbox. Development only. |
+| `VaultKeyResolver` | No | Every `resolve_sync` starts a thread before the HTTP cache is read. `cache_ttl` does not change that. |
+| `AWSSecretsManagerKeyResolver` | No | Every `resolve_sync` starts a thread before the boto3 cache is read. |
+| `GCPSecretManagerKeyResolver` | No | Every `resolve_sync` starts a thread before the gRPC cache is read. |
+| `CompositeKeyResolver` | Only for a child whose own `resolve_sync` stays in memory | `CompositeKeyResolver.resolve_sync` does not start a thread itself. A Vault, AWS, or GCP child still does, and Composite then tries the next child. |
 
-A sandbox violation surfaces as `temporalio.worker.workflow_sandbox.RestrictedWorkflowAccessError`, wrapped by our interceptor as a non-retryable `TenuoContextError`. If you see this on a live workflow, the fix is almost always "preload before the sandbox activates" or "extend `cache_ttl`" — not "turn off the sandbox".
+A blocked call is raised at `execute_activity` as a non-retryable `ApplicationError` with type `CONTEXT_MISSING` (`TenuoContextError`). The message includes the sandbox's `RestrictedWorkflowAccessError`. The Activity is not scheduled, and Temporal does not retry that workflow task. The workflow run fails unless workflow code catches the error.
 
 Note: `SigningKey.__repr__` is explicitly redacted (prints `SigningKey(public_key=…, secret=[REDACTED])`), so a surprise `logger.info(f"{sk}")` or `ApplicationError(str(resolver))` will not leak secret bytes into Temporal history or the Temporal Web UI.
 
 #### Composite Resolver (Fallback Chain)
 
 ```python
-from tenuo.temporal import CompositeKeyResolver, VaultKeyResolver, EnvKeyResolver
+from tenuo.temporal import CompositeKeyResolver, EnvKeyResolver
 
 resolver = CompositeKeyResolver(
     resolvers=[
-        VaultKeyResolver(url="https://vault.company.com"),
-        EnvKeyResolver(),
+        memory_resolver,   # resolve_sync returns a key loaded before Worker(...)
+        EnvKeyResolver(),  # development fallback; preload_all() first
     ],
     warn_on_fallback=True,
 )
 ```
+
+A Vault, AWS, or GCP child raises inside the sandbox on every call. Composite records that and tries the next child, so those classes cannot be the resolver that serves the workflow worker.
 
 > **Tenuo Cloud alternative:** If you prefer not to operate your own KMS or Vault, Tenuo Cloud provides managed key issuance and rotation.
 
@@ -388,7 +419,7 @@ resolver = CompositeKeyResolver(
 from tenuo.temporal import TenuoPluginConfig
 
 config = TenuoPluginConfig(
-    key_resolver=EnvKeyResolver(),
+    signing_key=holder_signing_key,            # In-memory holder key. See Key Management.
     on_denial="raise",                         # "raise" | "log" | "skip"
     dry_run=False,                             # Shadow mode only; never for production
     trusted_roots=[control_key.public_key],
@@ -399,8 +430,8 @@ config = TenuoPluginConfig(
     max_chain_depth=10,                        # Max delegation depth
     audit_callback=on_audit,                   # Optional audit event handler
     metrics=TenuoMetrics(),                    # Optional Prometheus metrics
-    authorized_signals=["approve"],            # Optional signal allowlist
-    authorized_updates=["update_config"],      # Optional update allowlist
+    authorized_signals=["approve"],            # Worker-wide. A name off the list fails the workflow.
+    authorized_updates=["update_config"],      # Worker-wide. A name off the list rejects that update.
 )
 ```
 
@@ -664,19 +695,17 @@ What the TTL **does** bound is how long activities scheduled by that workflow ca
 
 ### Temporal event history overhead
 
-Each activity dispatch and each child-workflow start injects the Tenuo headers into the event payload, so every Tenuo-protected call adds per-event overhead to Temporal's event history (capped at 50,000 events / 2 MB by default, up to ~50 MB absolute depending on server config).
+Each activity dispatch and each child-workflow start puts the Tenuo headers on one history event. Temporal warns at 10 MB or 10,240 events and terminates at 50 MB or 51,200 events. Those limits are fixed on Temporal Cloud and are the defaults on a self-hosted server.
 
-Approximate size per activity, with gzip compression enabled (the default):
+`x-tenuo-warrant` is the leaf warrant, gzip-compressed. A delegated chain is a separate header, `x-tenuo-warrant-chain`, base64 of the uncompressed stack. The chain is not gzip-compressed. A longer chain grows with that base64 text.
 
-| Component | Uncompressed | Compressed (gzip, level 9) |
-|-----------|--------------|---------------------------|
-| Root-only warrant | ~1 KB | ~500 B |
-| 3-hop delegated warrant | ~4 KB | ~800 B – 1.2 KB |
-| 10-hop delegated warrant | ~12 KB | ~2 – 3 KB |
-| PoP signature (`x-tenuo-pop`) | 88 B (64 B + base64) | Not worth compressing |
-| Misc headers (key id, arg keys, compressed flag) | ~100 B | ~100 B |
+| What is stored | Encoding | Approximate size |
+|----------------|----------|------------------|
+| Leaf warrant (`x-tenuo-warrant`) | gzip of that warrant only | ~500 B for a small root warrant |
+| PoP (`x-tenuo-pop`) plus key id, arg keys, and the compressed flag | base64 PoP and short text | ~200 B |
+| 3-hop Activity, leaf + chain + those small headers | gzip leaf, plus base64 of the uncompressed stack | about 1.9–2.7 KB, measured on 0.3.2 |
 
-**Worked example.** A single workflow that dispatches 200 activities with a 3-hop warrant: `200 × (~1.2 KB warrant + ~100 B misc + ~90 B PoP) ≈ 280 KB` of Tenuo overhead in history. Well under the 2 MB limit, but non-trivial for `archival` replay costs and for workflows that also carry large user payloads.
+**Worked example.** 200 Activities with a 3-hop chain add about 0.4–0.55 MB of Tenuo headers. Each Activity writes several events and the headers sit on one of them, so the 10,240-event warning arrives while those bytes are still under 10 MB.
 
 Operational guidance:
 
@@ -692,7 +721,7 @@ Operational guidance:
 |-----------|---------|-----|
 | **Warrant TTL expiry** | Passive | Mint short-lived warrants |
 | **Remove trusted root** | Next provider refresh (30-60s) | Remove issuer key from provider output |
-| **Revoke holder key** | Immediate on next resolve | Remove key from `KeyResolver` backend |
+| **Revoke holder key** | When the workflow worker restarts | The worker signs with the key already in memory (`signing_key=` or a custom `resolve_sync`). Removing it from Vault or a cloud secret store does not change that process. Restart the worker with the new key. |
 
 > **Tenuo Cloud** manages root distribution and rotation as a first-class primitive.
 
@@ -735,7 +764,7 @@ When warrants are attenuated, the full chain is propagated via `x-tenuo-warrant-
 
 ```python
 config = TenuoPluginConfig(
-    key_resolver=EnvKeyResolver(),
+    signing_key=holder_signing_key,
     on_denial="raise",
     trusted_roots=[control_key.public_key],
     authorized_signals=["approve", "reject"],
@@ -743,7 +772,11 @@ config = TenuoPluginConfig(
 )
 ```
 
-Unrecognized signals raise `TemporalConstraintViolation`. When set to `None` (default), all signals and updates pass through.
+`authorized_signals` and `authorized_updates` are optional settings on the worker config. One worker uses one pair of lists for every workflow it runs. Leave them unset (`None`, the default) and every signal and update name is allowed. Queries are not checked.
+
+With `authorized_signals` set, a name that is not on the list raises `TemporalConstraintViolation` during signal handling, including a signal that arrives with the first workflow task. The plugin registers that exception as a workflow failure type, so the signal fails the workflow run. A caller who can send a signal can end the run by choosing a name that is not on the list. Set the list when that outcome is acceptable. Workflows that need different names need separate worker configs.
+
+With `authorized_updates` set, the same check runs in the update validator when the update defines one, and in the update handler for every update, including an update with no validator. That failure rejects the update.
 
 ---
 
@@ -1060,6 +1093,7 @@ Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to 
 | Approval gate / partial multi-sig | `ApplicationError` (`approval_required` / `insufficient_approvals`) | **No** — workflow must collect signatures and retry |
 | Local activity without `@unprotected` | `LocalActivityError` | **No** |
 | Key resolution failure | `KeyResolutionError` | Retry only for transient backend failures |
+| PoP signing blocked in the workflow sandbox | `ApplicationError` type `CONTEXT_MISSING` | **No** — the Activity is never scheduled |
 | Missing `trusted_roots` | `ConfigurationError` | Fix config |
 
 ---
@@ -1072,7 +1106,8 @@ Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to 
 | `ConfigurationError: requires trusted_roots` | No `trusted_roots` on config | Pass `trusted_roots=` or call `tenuo.configure(trusted_roots=[...])` first |
 | `TenuoContextError: No Tenuo headers in store` | Workflow started without warrant | Use `execute_workflow_authorized(...)` |
 | `TenuoContextError: no TenuoPluginConfig registered for task_queue=...` | Manual setup; mint activity dispatched but not registered | Pass `task_queue=` to `TenuoWorkerInterceptor(...)` **and** splat `TENUO_TEMPORAL_ACTIVITIES` into `Worker(activities=[...])` |
-| `KeyResolutionError: Cannot resolve key` | Key not found | Check `TENUO_KEY_*` / Vault path; call `preload_keys()` before `Worker(...)` |
+| `KeyResolutionError: Cannot resolve key` | Key not found | Check `TENUO_KEY_*` for `EnvKeyResolver`, or the dict passed to an in-memory `resolve_sync`. Call `preload_all()` before `Worker(...)` for env keys. |
+| Non-retryable `ApplicationError` type `CONTEXT_MISSING` at `execute_activity`, mentioning `RestrictedWorkflowAccessError` | `resolve_sync` started a thread inside the sandbox | Happens on every dispatch with `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, or `GCPSecretManagerKeyResolver`, including a warm cache. Use `signing_key=` or a resolver whose `resolve_sync` returns a key already in memory. |
 | `TemporalConstraintViolation: No warrant provided` | Client interceptor missing | Verify `client_interceptor` in `Client.connect(interceptors=[...])` |
 | `PopVerificationError: replay detected` | Multi-replica without shared dedup | Configure `pop_dedup_store` for fleet-wide suppression |
 | `PopVerificationError` on retry (attempt >= 2) | PoP timestamp stale | Set `retry_pop_max_windows` ([details](#temporal-activity-retries-and-pop-time-drift)) |

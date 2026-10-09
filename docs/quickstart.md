@@ -92,6 +92,7 @@ with mint_sync(Capability("read_file", path=Subpath("/data"))):
 | **MCP** | `from tenuo.mcp import SecureMCPClient` | [MCP Guide](/mcp) |
 | **FastAPI** | `from tenuo.fastapi import SecureAPIRouter` | [FastAPI Guide](/fastapi) |
 | **AutoGen** | `from tenuo.autogen import ...` | [AutoGen Guide](/autogen) |
+| **Hermes Agent** | `hermes plugins install hermes-tenuo` | [Hermes Guide](/hermes) |
 | **A2A** | `from tenuo.a2a import ...` | [A2A Guide](/a2a) |
 | **Custom** | `from tenuo import Warrant, SigningKey` | [API Reference](/api-reference) |
 

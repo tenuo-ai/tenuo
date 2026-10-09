@@ -9,17 +9,17 @@ description: "Supported versions of Tenuo packages and upstream libraries."
 
 Tracks compatibility between Tenuo artifacts and upstream integration libraries.
 
-## Tenuo artifacts (0.3.1)
+## Tenuo artifacts (0.3.2)
 
 These four packages share the same protocol line. TypeScript stays on the
-`beta` npm dist-tag (`0.3.1-beta.0`).
+`beta` npm dist-tag (`0.3.2-beta.0`).
 
 | Artifact | Package | Version |
 |----------|---------|---------|
-| Rust core | `tenuo` | 0.3.1 |
-| WASM | `tenuo-wasm` | 0.3.1 |
-| Python | `tenuo` / `tenuo_core` | 0.3.1 |
-| TypeScript | `@tenuo/core` | 0.3.1-beta.0 |
+| Rust core | `tenuo` | 0.3.2 |
+| WASM | `tenuo-wasm` | 0.3.2 |
+| Python | `tenuo` / `tenuo_core` | 0.3.2 |
+| TypeScript | `@tenuo/core` | 0.3.2-beta.0 |
 
 `make version-check` (and the CI job of the same name) fails if the Rust,
 Python, and WASM crate versions diverge, or if `@tenuo/core` does not start
@@ -32,6 +32,7 @@ with the same `MAJOR.MINOR.PATCH`.
 | **OpenAI** | 1.0.0 | 2.x / 3.x | 3.7.0 | Stable | Agents SDK (`openai-agents`) tested at 0.22.0. CrewAI still requires `openai<3`. |
 | **OpenAI Agents** | 0.1 (via openai extra) | latest | 0.22.0 | Stable | Guardrail conversion covered by smoke + adapter tests. |
 | **CrewAI** | 1.5.0 | 1.x latest | 1.15.18 | Stable | `GuardedCrew` needs the `crewai.hooks` API (1.5.0+). Pins `openai<3` and `mcp~=1.28` — do not co-install with FastMCP 4 / OpenAI 3 in one env. |
+| **Hermes Agent** | 0.20 (plugin floor) | latest | upstream `main` (nightly) | Supported | Official plugin package, `hermes-tenuo` 0.1.3. Requires `tenuo>=0.3.2`. |
 | **AutoGen** | 0.7.0 | 0.7+ latest | 0.7.5 | Stable | Use `autogen-agentchat` / `autogen-ext` (not stale `0.0.x` squat packages). |
 | **LangChain** | 0.2.0 | 1.x latest | 1.3.18 / core 1.6.1 | Stable | |
 | **LangGraph** | 0.2.0 | 1.x latest | 1.2.11 | Stable | Requires `langchain-core>=0.2.27`. |
@@ -53,6 +54,7 @@ with the same `MAJOR.MINOR.PATCH`.
 
 ### Status Legend
 - **Stable**: Production-ready, actively tested
+- **Supported**: Official integration with maintained documentation and dedicated compatibility testing
 - **Beta**: Works but may have rough edges
 - **In Development**: Not yet released
 - **Deprecated**: No longer supported
@@ -111,6 +113,14 @@ with the same `MAJOR.MINOR.PATCH`.
 - **1.23.0**: Minimum for `TenuoTemporalPlugin` (`SimplePlugin`).
 - Replay safety and live Temporal jobs run in the weekly compatibility matrix.
 
+### Hermes Agent
+**Current Status**: Supported
+
+**Version Notes**:
+- **0.20**: Declared package floor for the `hermes-tenuo` plugin.
+- Dedicated CI in [hermes-tenuo](https://github.com/tenuo-ai/hermes-tenuo) loads the plugin through upstream Hermes `main`'s plugin loader every night.
+- Calls a plugin makes through `ctx.dispatch_tool()` do not pass through `pre_tool_call`. See [Coverage](./hermes#coverage).
+
 ### FastAPI
 **Current Status**: Stable
 
@@ -129,6 +139,7 @@ Last local probe: 2026-09-02 (adapter suites + expanded smoke tests)
 | OpenAI Agents | — | Pass (0.22.0) | Not tested |
 | CrewAI | Pass (1.5.0) | Pass (1.15.18) | Not tested |
 | AutoGen | Pass (0.7.0) | Pass (0.7.5) | Not tested |
+| Hermes Agent | Not pinned (floor: 0.20) | — | Pass (upstream `main`, nightly) |
 | LangChain | Pass (0.2.x) | Pass (1.3.18) | Not tested |
 | LangGraph | Pass (0.2.0) | Pass (1.2.11) | Not tested |
 | MCP | Pass (1.9.4) | Pass (2.1.1) | Not tested |
@@ -139,6 +150,7 @@ Last local probe: 2026-09-02 (adapter suites + expanded smoke tests)
 
 **Testing Cadence**:
 - Main CI: installs OpenAI, Agents SDK, AutoGen, Google ADK, LangChain/LangGraph, FastAPI, CrewAI, MCP, Temporal (where Python allows)
+- Hermes Agent: dedicated nightly compatibility tests in the `hermes-tenuo` repository against upstream Hermes `main`
 - MCP / FastMCP: dedicated dual-line `mcp-smoke` CI jobs (latest `FastMCP 3` + MCP 1.x, `FastMCP 4` + MCP 2.x) gated by `scripts/check_installed_majors.py` so CrewAI's MCP 1.x pin cannot hide regressions; the 3.2.1 floor runs in the weekly matrix
 - Weekly compatibility matrix: minimum + latest per integration (including FastAPI, Google ADK, MCP, FastMCP, Temporal)
 
@@ -205,7 +217,9 @@ Tenuo maintains compatibility with:
 - 2.5.x (latest)
 - 2.4.x (previous minor)
 - 1.x.x (previous major, best-effort)
-- Minimum declared version (always tested)
+- Minimum declared version (tested for in-repo adapters)
+
+Separately distributed integrations publish their package floor and run compatibility tests in their own repository. Their matrix row identifies the tested upstream target and cadence.
 
 ---
 

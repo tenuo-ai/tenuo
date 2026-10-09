@@ -138,7 +138,7 @@ print(info())
 Tenuo Configuration
 ==================================================
 
-[OK] SDK Version: 0.3.1
+[OK] SDK Version: 0.3.2
 [OK] Rust Core: loaded (wire version 1)
 [OK] Issuer Key: configured
 ```

@@ -4,7 +4,7 @@
 //! `Authorizer` decision. Transport bindings are extra features.
 //!
 //! `ObservingGuard` is an assessment window, not enforcement. Receipts, async,
-//! and OpenTelemetry are separate default-off features.
+//! filesystem, and OpenTelemetry are separate default-off features.
 //!
 //! [`Runtime`] is the primary holder entry: persist identity, apply SRLs,
 //! and bind warrants into [`Session`]s. [`Tenuo::local`] is deprecated.
@@ -16,6 +16,9 @@ mod clock;
 mod decision;
 mod delegation;
 mod diagnostics;
+#[cfg(feature = "filesystem")]
+#[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+pub mod filesystem;
 mod guard;
 mod identity;
 #[macro_use]
@@ -53,6 +56,11 @@ pub use decision::{
 };
 pub use delegation::{DelegationError, DelegationProfile};
 pub use diagnostics::Diagnostics;
+#[cfg(feature = "filesystem")]
+#[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+pub use filesystem::{
+    CapabilityAccess, Containment, FilesystemError, OpenOptions, OpenedFile, Workspace,
+};
 pub use guard::{
     AuthorizationAttempt, AuthorizedCall, Guard, GuardBuildError, GuardBuilder, Guarded,
     RevocationMode,

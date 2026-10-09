@@ -116,17 +116,16 @@ def test_access_denial_reason_signature_invalid_mentions_raw_args():
     msg = _access_denial_reason(
         SignatureInvalid("Proof-of-Possession verification failed")
     )
-    assert "raw tool arguments" in msg
+    assert "argument JSON" in msg
     assert "same extracted constraint dict" not in msg
 
 
-def test_access_denial_reason_signature_mismatch_mentions_strip_none_values():
+def test_access_denial_reason_signature_mismatch_mentions_argument_json():
     from tenuo.exceptions import SignatureMismatch
     from tenuo.mcp.server import _access_denial_reason
 
     msg = _access_denial_reason(SignatureMismatch())
-    assert "raw wire-args view" in msg
-    assert "strip_none_values" in msg
+    assert "argument JSON" in msg
 
 
 # ---------------------------------------------------------------------------

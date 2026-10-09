@@ -1,6 +1,5 @@
 import asyncio
 import sys
-import base64
 import os
 import tempfile
 from contextlib import AsyncExitStack
@@ -175,13 +174,21 @@ def _make_client() -> "SecureMCPClient":
 
 
 def _mock_warrant_context():
-    """Return (mock_warrant, mock_keypair, patchers) for warrant injection tests."""
+    """Return (mock_warrant, mock_keypair) for warrant injection tests."""
     mock_warrant = MagicMock()
     mock_warrant.to_base64.return_value = "warrant_b64"
     mock_warrant.sign.return_value = b"pop_bytes"
     mock_warrant.is_expired.return_value = False
     mock_keypair = MagicMock()
     return mock_warrant, mock_keypair
+
+
+def _fake_sign_meta(chain, key, tool, args_json, timestamp, approvals=None):
+    """Stand in for the core envelope so client tests can inspect the call."""
+    meta = {"warrant": "warrant_b64", "signature": "c2ln"}
+    if approvals:
+        meta["approvals"] = [f"approval-{index}" for index, _approval in enumerate(approvals)]
+    return meta
 
 
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
@@ -198,6 +205,7 @@ class TestCallToolApprovalsInjection:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -210,9 +218,8 @@ class TestCallToolApprovalsInjection:
         meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
         assert meta_injected is not None
         assert "tenuo" in meta_injected
-        assert "approvals" in meta_injected["tenuo"]
-        expected = base64.b64encode(b"approval_cbor").decode("utf-8")
-        assert meta_injected["tenuo"]["approvals"] == [expected]
+        assert meta_injected["tenuo"]["approvals"] == ["approval-0"]
+        assert sign_meta.call_args.args[5] == [fake_approval]
 
     @pytest.mark.asyncio
     async def test_multiple_approvals_all_serialized(self):
@@ -227,6 +234,7 @@ class TestCallToolApprovalsInjection:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta),
         ):
             await client.call_tool(
                 "read_file",
@@ -238,10 +246,7 @@ class TestCallToolApprovalsInjection:
 
         meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
         assert meta_injected is not None
-        assert meta_injected["tenuo"]["approvals"] == [
-            base64.b64encode(b"cbor_0").decode("utf-8"),
-            base64.b64encode(b"cbor_1").decode("utf-8"),
-        ]
+        assert meta_injected["tenuo"]["approvals"] == ["approval-0", "approval-1"]
 
     @pytest.mark.asyncio
     async def test_no_approvals_omits_field(self):
@@ -252,6 +257,7 @@ class TestCallToolApprovalsInjection:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta),
         ):
             await client.call_tool(
                 "read_file",
@@ -308,14 +314,17 @@ class TestCallToolApprovalsInjection:
         fake_approval = MagicMock()
         fake_approval.to_bytes.return_value = b"approval_cbor"
 
-        with warrant_scope(warrant), key_scope(keypair):
+        with (
+            warrant_scope(warrant),
+            key_scope(keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
+        ):
             await protected(path="/data/file.txt", _approvals=[fake_approval])
 
         meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
         assert meta_injected is not None
-        assert "approvals" in meta_injected["tenuo"]
-        expected = base64.b64encode(b"approval_cbor").decode("utf-8")
-        assert meta_injected["tenuo"]["approvals"] == [expected]
+        assert meta_injected["tenuo"]["approvals"] == ["approval-0"]
+        assert sign_meta.call_args.args[5] == [fake_approval]
 
     @pytest.mark.asyncio
     async def test_protected_tool_approvals_not_in_schema_args(self):
@@ -341,7 +350,11 @@ class TestCallToolApprovalsInjection:
         fake_approval = MagicMock()
         fake_approval.to_bytes.return_value = b"bytes"
 
-        with warrant_scope(warrant), key_scope(keypair):
+        with (
+            warrant_scope(warrant),
+            key_scope(keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta),
+        ):
             await protected(path="/data/file.txt", _approvals=[fake_approval])
 
         injected = client.session.call_tool.call_args[0][1]
@@ -365,6 +378,7 @@ class TestCallToolArgumentInjection:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -376,9 +390,9 @@ class TestCallToolArgumentInjection:
         forwarded = client.session.call_tool.call_args.args[1]
         envelope = forwarded["_tenuo"]
         assert envelope["warrant"] == "warrant_b64"
-        assert envelope["signature"] == base64.b64encode(b"pop_bytes").decode()
+        assert envelope["signature"] == "c2ln"
         assert client.session.call_tool.call_args.kwargs["meta"] is None
-        assert mock_warrant.sign.call_args.args[2] == {"path": "/data/file.txt"}
+        assert "encoding" in sign_meta.call_args.args[3]
         assert original == {"path": "/data/file.txt", "encoding": None}
 
     @pytest.mark.asyncio
@@ -391,6 +405,7 @@ class TestCallToolArgumentInjection:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -401,9 +416,8 @@ class TestCallToolArgumentInjection:
             )
 
         forwarded = client.session.call_tool.call_args.args[1]
-        assert forwarded["_tenuo"]["approvals"] == [
-            base64.b64encode(b"approval_cbor").decode()
-        ]
+        assert forwarded["_tenuo"]["approvals"] == ["approval-0"]
+        assert sign_meta.call_args.args[5] == [approval]
 
     @pytest.mark.asyncio
     async def test_argument_transport_rejects_reserved_argument_collision(self):
@@ -425,17 +439,17 @@ class TestCallToolArgumentInjection:
 
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 class TestPopSignsRawWireArgs:
-    """PoP is always computed over the raw wire args (with None values stripped),
-    independently of whether the client has a CompiledMcpConfig loaded.
+    """The client asks the core to sign argument JSON for the wire args.
 
-    The server performs any constraint extraction (field renaming, coercion)
-    separately as part of its split-view authorize call, so client-side
-    config is never needed for PoP byte parity with the server.
+    Constraint extraction stays off that path. ``None`` remains JSON null in
+    the text.
     """
 
     @pytest.mark.asyncio
     async def test_pop_signs_raw_wire_args_even_with_config_loaded(self):
-        """With compiled_config loaded, sign() still receives raw args, not extracted ones."""
+        """With compiled_config loaded, the signed text is still the wire args."""
+        from tenuo.meta import argument_json
+
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
@@ -449,6 +463,7 @@ class TestPopSignsRawWireArgs:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -457,16 +472,16 @@ class TestPopSignsRawWireArgs:
                 inject_warrant=True,
             )
 
-        # Extraction is never used by the signing path now — the server does it.
         mock_config.extract_constraints.assert_not_called()
-        sign_call_args = mock_warrant.sign.call_args[0]
-        assert sign_call_args[0] is mock_keypair  # key
-        assert sign_call_args[1] == "read_file"  # tool_name
-        assert sign_call_args[2] == raw_args  # raw wire args, not extracted
+        assert sign_meta.call_args.args[1] is mock_keypair
+        assert sign_meta.call_args.args[2] == "read_file"
+        assert sign_meta.call_args.args[3] == argument_json(raw_args)
 
     @pytest.mark.asyncio
     async def test_pop_signs_raw_args_without_config(self):
-        """Without compiled_config, warrant.sign() receives raw args (unchanged behavior)."""
+        """Without compiled_config, the signed text is still the wire args."""
+        from tenuo.meta import argument_json
+
         client = _make_client()
         assert client.compiled_config is None
         mock_warrant, mock_keypair = _mock_warrant_context()
@@ -476,6 +491,7 @@ class TestPopSignsRawWireArgs:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -484,13 +500,11 @@ class TestPopSignsRawWireArgs:
                 inject_warrant=True,
             )
 
-        sign_call_args = mock_warrant.sign.call_args[0]
-        assert sign_call_args[2] == raw_args
+        assert sign_meta.call_args.args[3] == argument_json(raw_args)
 
     @pytest.mark.asyncio
-    async def test_pop_signs_args_with_none_values_stripped(self):
-        """None-valued wire args are stripped before signing (bridges Rust FFI
-        which rejects None, and must match the server's identical stripping)."""
+    async def test_pop_signs_args_with_none_values_kept(self):
+        """None stays in the argument JSON the core signs."""
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
@@ -499,6 +513,7 @@ class TestPopSignsRawWireArgs:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -507,9 +522,7 @@ class TestPopSignsRawWireArgs:
                 inject_warrant=True,
             )
 
-        sign_call_args = mock_warrant.sign.call_args[0]
-        assert sign_call_args[2] == {"path": "/data/log.txt", "maxSize": 2048}
-        assert "encoding" not in sign_call_args[2]
+        assert '"encoding":null' in sign_meta.call_args.args[3]
 
 
 # ---------------------------------------------------------------------------
@@ -930,7 +943,7 @@ class TestValidateToolSplitView:
         kwargs = mock_enforce.call_args.kwargs
         assert kwargs["tool_name"] == "read_file"
         assert kwargs["tool_args"] == {"path": "/tmp/x.txt", "maxSize": None}
-        assert kwargs["pop_args"] == {"path": "/tmp/x.txt"}
+        assert kwargs["pop_args"] == {"path": "/tmp/x.txt", "maxSize": None}
         assert kwargs["constraint_args"] == {
             "path": "/tmp/x.txt",
             "max_size": 1024,

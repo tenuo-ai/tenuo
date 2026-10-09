@@ -1716,7 +1716,7 @@ def test_authorization():
         read_file("/data/report.txt")
     
     # Assert code is denied (with optional code/reason check)
-    with assert_denied(code="ConstraintViolation"):
+    with assert_denied(code="authorization_denied"):
         read_file("/etc/passwd")
     
     # Assert with custom message
@@ -1728,9 +1728,19 @@ def test_authorization():
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `code` | `str` | Expected error code (e.g., `"ConstraintViolation"`) |
+| `code` | `str` | Expected `error_code` of the `AuthorizationDenied` (e.g., `"authorization_denied"`) |
 | `expected_reason` | `str` | Substring expected in error message |
 | `message` | `str` | Custom assertion failure message |
+
+Both helpers also take `(warrant, key, tool, args)` to check a warrant directly. Enter them with `with` in that form too; a bare call checks nothing.
+
+```python
+with assert_authorized(warrant, key, "read_file", {"path": "/data/report.txt"}):
+    pass
+
+with assert_denied(warrant, key, "read_file", {"path": "/etc/passwd"}):
+    pass
+```
 
 ### `assert_can_grant()` / `assert_cannot_grant()`
 
@@ -1754,9 +1764,11 @@ def test_delegation_chain():
     assert_cannot_grant(
         root, root_key,
         child_tools=["delete_file"],  # Not in parent!
-        expected_reason="ToolNotAuthorized",
+        expected_reason="MonotonicityError",
     )
 ```
+
+`assert_cannot_grant` passes only when the grant is refused for an attenuation reason (`MonotonicityError`, `ClearanceViolation`, or `LimitError`); `expected_reason` is matched against `"<ExceptionType>: <message>"`. Any other failure, such as signing with a key that does not hold the parent, fails the assertion. Children granted by `assert_can_grant` expire with the parent.
 
 ### `Warrant.quick_mint()`
 

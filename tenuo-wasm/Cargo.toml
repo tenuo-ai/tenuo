@@ -1,6 +1,6 @@
 [package]
 name = "tenuo-wasm"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "WebAssembly bindings for Tenuo, task-scoped authorization for AI agents"

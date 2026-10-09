@@ -1,6 +1,6 @@
 {
   "name": "@tenuo/core",
-  "version": "0.3.1-beta.0",
+  "version": "0.3.2-beta.0",
   "description": "Task-scoped authorization for AI agents in TypeScript: signed warrants limit which tools an agent can call and with which arguments, verified by the Tenuo Rust core compiled to WASM (beta).",
   "license": "Apache-2.0",
   "author": "Tenuo Contributors",

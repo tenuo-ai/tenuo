@@ -298,7 +298,7 @@ Pattern("/data/*").matches("/data/../etc/passwd")  # True (BAD!)
 Subpath("/data").matches("/data/../etc/passwd")    # False (SAFE!)
 ```
 
-For maximum security, combine `Subpath` with [path_jail](https://github.com/tenuo-ai/path_jail) at execution time.
+Rust executors open the file with the `filesystem` feature (`AuthorizedCall::open`). Python still joins with [path_jail](https://github.com/tenuo-ai/path_jail) and then reads. That check and the read are separate steps on Linux, macOS, and BSD. See [Defense in Depth: File Paths](constraints.md#defense-in-depth-file-paths).
 
 ### UrlSafe: SSRF Protection
 

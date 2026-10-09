@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "tenuo"
-version = "0.3.1"
+version = "0.3.2"
 description = "Task-scoped authorization for AI agents: signed warrants limit which tools an agent can call, with which arguments, and for how long. Adapters for LangChain, LangGraph, CrewAI, OpenAI Agents SDK, Google ADK, AutoGen, MCP, FastMCP, A2A, FastAPI, and Temporal."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -44,7 +44,7 @@ import inspect
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, cast
 
 if TYPE_CHECKING:
     from .approval import ApprovalHandler
@@ -1087,9 +1087,10 @@ def _enforce_tool_call_impl(
         _raw_constraint_args = (
             constraint_args if constraint_args is not None else tool_args
         )
-        # Keep original tool_args for diagnostics/audit payloads, but canonicalize
-        # each auth view independently before crossing the Rust FFI boundary.
-        _pop_auth_args = _strip_none_values(_raw_pop_args)
+        # The proof covers the argument map the caller passed, including None.
+        # Constraint matching still drops None so an omitted optional field and
+        # an extracted constraint view stay the same shape.
+        _pop_auth_args = _raw_pop_args
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
@@ -1567,7 +1568,9 @@ async def _enforce_tool_call_async_impl(
         _raw_constraint_args = (
             constraint_args if constraint_args is not None else tool_args
         )
-        _pop_auth_args = _strip_none_values(_raw_pop_args)
+        # The proof covers the argument map the caller passed, including None.
+        # Constraint matching still drops None.
+        _pop_auth_args = _raw_pop_args
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
@@ -1973,6 +1976,138 @@ def parents_from_presented_chain(
     return items
 
 
+# Mirrors ``MAX_STACK_SIZE`` in tenuo-core/src/wire.rs (256 KiB of CBOR). The
+# Rust constant is not exported to Python, so keep the two in sync by hand.
+_MAX_STACK_SIZE = 256 * 1024
+
+# Longest string that can legitimately encode a stack of _MAX_STACK_SIZE bytes.
+# The decoder allocates the decoded buffer before decode_stack applies its size
+# limit, so the input length is checked here, before any stripping or decoding.
+#   * Padded base64 of N bytes is 4 * ceil(N / 3) chars (unpadded is shorter).
+_MAX_STACK_B64_CHARS = 4 * -(-_MAX_STACK_SIZE // 3)  # 349,528
+#   * encode_pem_stack wraps the body at 64 chars per line; allow CRLF endings.
+_PEM_LINE_CHARS = 64
+_PEM_NEWLINE_CHARS = 2 * -(-_MAX_STACK_B64_CHARS // _PEM_LINE_CHARS)
+#   * Plus its header and footer lines, each with a CRLF.
+_PEM_ARMOR_CHARS = len("-----BEGIN TENUO WARRANT CHAIN-----") + len("-----END TENUO WARRANT CHAIN-----") + 2 * 2
+_MAX_WARRANT_TOKEN_CHARS = _MAX_STACK_B64_CHARS + _PEM_NEWLINE_CHARS + _PEM_ARMOR_CHARS  # 360,524
+
+
+def _decode_warrant_token(token: str, *, what: str) -> List[Any]:
+    """Decode a base64 or PEM warrant token into a root-first list of warrants.
+
+    ``decode_warrant_stack_base64`` accepts an encoded WarrantStack and every
+    single-warrant form ``Warrant.from_base64`` accepts (URL-safe base64, PEM,
+    whitespace-wrapped), returning a one-element list for the latter.
+
+    Raises:
+        ConfigurationError: If the token is empty, longer than any encoding of
+            a maximum-size stack (checked before decoding), or does not decode.
+    """
+    from tenuo_core import decode_warrant_stack_base64
+
+    if len(token) > _MAX_WARRANT_TOKEN_CHARS:
+        raise ConfigurationError(
+            f"{what} is {len(token)} characters, exceeding the {_MAX_WARRANT_TOKEN_CHARS} character "
+            f"limit for an encoded warrant stack ({_MAX_STACK_SIZE} bytes)."
+        )
+    text = token.strip()
+    if not text:
+        raise ConfigurationError(f"{what} is an empty string")
+    try:
+        return list(decode_warrant_stack_base64(text))
+    except Exception as e:
+        raise ConfigurationError(f"Failed to decode {what}: {e}") from e
+
+
+def _coerce_chain_entry(entry: Any, *, what: str, allow_bound: bool) -> Any:
+    """Return one chain entry as a Warrant (or a BoundWarrant leaf when allowed)."""
+    from tenuo_core import Warrant
+
+    if isinstance(entry, BoundWarrant):
+        return entry if allow_bound else entry.warrant
+    if isinstance(entry, Warrant):
+        return entry
+    if isinstance(entry, str):
+        decoded = _decode_warrant_token(entry, what=what)
+        if len(decoded) != 1:
+            raise ConfigurationError(
+                f"{what} is a {len(decoded)}-warrant stack; each entry must be a single warrant. "
+                "Pass the whole stack as the warrant instead."
+            )
+        return decoded[0]
+    raise ConfigurationError(f"{what} must be a Warrant or base64 warrant token, got {type(entry).__name__}.")
+
+
+def split_presented_warrant(
+    value: Any,
+    warrant_chain: Optional[Sequence[Any]] = None,
+) -> Tuple[Any, Optional[List[Any]]]:
+    """Split a presented warrant into ``(leaf, parents)`` for enforcement.
+
+    A delegated warrant only verifies when the path back to a trusted root
+    travels with it. Adapters accept that path in two equivalent forms and
+    call this helper to normalize both:
+
+    * ``value`` is the leaf and ``warrant_chain`` lists its parents,
+      root-first and **excluding** the leaf (same semantics as
+      ``enforce_tool_call(warrant_chain=...)`` and LangGraph).
+    * ``value`` is the whole chain as one token: an encoded WarrantStack
+      string (``encode_warrant_stack([root, ..., leaf])``) or a root-first
+      list/tuple of warrants. The last element is the leaf; the rest are
+      the parents.
+
+    Args:
+        value: A Warrant, BoundWarrant, base64 warrant or WarrantStack token,
+            root-first list/tuple of warrants, or None. Any other object is
+            returned unchanged as the leaf.
+        warrant_chain: Optional explicit parents (Warrant objects or base64
+            single-warrant tokens), root-first, excluding the leaf.
+
+    Returns:
+        ``(leaf, parents)``. ``parents`` is None when no parents were
+        presented, so ``enforce_tool_call`` still falls back to an ambient
+        ``chain_scope()``. An empty ``warrant_chain`` is treated as None.
+
+    Raises:
+        ConfigurationError: If a token does not decode, an entry has the wrong
+            type, a list is empty, or a multi-warrant stack is combined with an
+            explicit ``warrant_chain`` (ambiguous; pass one or the other).
+
+    This only reshapes what was presented. Verification is unchanged: the
+    Rust core still checks every link back to a trusted root and the leaf's
+    own constraints.
+    """
+    parents: Optional[List[Any]] = None
+    if warrant_chain is not None:
+        if isinstance(warrant_chain, (str, bytes)) or not isinstance(warrant_chain, (list, tuple)):
+            raise ConfigurationError(
+                "warrant_chain must be a list of parent warrants (root-first, excluding the leaf), "
+                f"got {type(warrant_chain).__name__}. To present an encoded WarrantStack, pass it as the warrant."
+            )
+        parents = [
+            _coerce_chain_entry(p, what=f"warrant_chain[{i}]", allow_bound=False) for i, p in enumerate(warrant_chain)
+        ] or None
+
+    if isinstance(value, str):
+        items: List[Any] = _decode_warrant_token(value, what="warrant token")
+    elif isinstance(value, (list, tuple)):
+        if not value:
+            raise ConfigurationError("Warrant chain is empty; expected [root, ..., leaf].")
+        last = len(value) - 1
+        items = [_coerce_chain_entry(w, what=f"warrant[{i}]", allow_bound=(i == last)) for i, w in enumerate(value)]
+    else:
+        return value, parents
+
+    leaf, stack_parents = items[-1], items[:-1]
+    if stack_parents and parents is not None:
+        raise ConfigurationError(
+            "Received both a multi-warrant stack and an explicit warrant_chain. "
+            "Pass the full chain one way: either the stack as the warrant, or the leaf plus warrant_chain."
+        )
+    return leaf, (stack_parents or parents)
+
+
 class VerificationOnlyKey:
     """Sentinel used when binding a warrant for inbound verify. Never signs."""
 
@@ -2025,6 +2160,7 @@ __all__ = [
     "enforce_tool_call_async",
     "verify_inbound_call",
     "parents_from_presented_chain",
+    "split_presented_warrant",
     "filter_tools_by_warrant",
     "handle_denial",
 ]
