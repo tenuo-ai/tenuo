@@ -78,7 +78,7 @@ use tenuo::{
     gateway_config::{CompiledGatewayConfig, GatewayConfig},
     heartbeat::{
         self, create_audit_channel, ApprovalRecord, AuditEventSender, AuthorizationEvent,
-        EnvironmentInfo, HeartbeatConfig, MetricsCollector,
+        ControlPlaneStatus, EnvironmentInfo, HeartbeatConfig, MetricsCollector,
     },
     planes::Authorizer,
     revocation::SignedRevocationList,
@@ -594,6 +594,8 @@ struct AppState {
     debug_mode: bool,
     /// Audit event sender (None if control plane not configured)
     audit_tx: Option<AuditEventSender>,
+    /// Shared delivery status used to count producer-side queue drops.
+    control_plane_status: Option<Arc<ControlPlaneStatus>>,
     /// Authorizer ID from control plane registration (for audit events)
     authorizer_id: Arc<tokio::sync::RwLock<Option<String>>>,
     /// Metrics collector (None if control plane not configured)
@@ -794,10 +796,11 @@ async fn prepare_serve(
         .or(settings_first_root);
 
     // Create audit channel, metrics collector, and spawn heartbeat task if control plane is configured
-    let (audit_tx, metrics, heartbeat, revocation_tracker) =
+    let (audit_tx, control_plane_status, metrics, heartbeat, revocation_tracker) =
         if let (Some(url), Some(key), Some(name)) = (resolved_url, resolved_key, resolved_name) {
             // Create audit event channel (buffer 1000 events)
             let (tx, rx) = create_audit_channel(1000);
+            let status = Arc::new(ControlPlaneStatus::default());
 
             // Create metrics collector for runtime stats
             let metrics = MetricsCollector::new();
@@ -912,7 +915,7 @@ async fn prepare_serve(
                 agent_id: resolved_agent_id,
                 connect_token: resolved_connect_token,
                 revocation_tracker: revocation_tracker.clone(),
-                status: Default::default(),
+                status: status.clone(),
             };
 
             let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
@@ -930,6 +933,7 @@ async fn prepare_serve(
 
             (
                 Some(tx),
+                Some(status),
                 Some(metrics),
                 Some(HeartbeatShutdown {
                     handle,
@@ -938,7 +942,7 @@ async fn prepare_serve(
                 revocation_tracker,
             )
         } else {
-            (None, None, None, None)
+            (None, None, None, None, None)
         };
 
     let state = Arc::new(AppState {
@@ -946,6 +950,7 @@ async fn prepare_serve(
         config: compiled,
         debug_mode,
         audit_tx,
+        control_plane_status,
         authorizer_id: shared_authorizer_id,
         metrics,
         started_at: std::time::Instant::now(),
@@ -2211,6 +2216,9 @@ async fn emit_audit_event(state: &AppState, mut event: AuthorizationEvent) {
 
         // Send event (non-blocking, drop if channel is full)
         if let Err(e) = tx.try_send(event) {
+            if let Some(status) = &state.control_plane_status {
+                status.record_dropped(1);
+            }
             match e {
                 tokio::sync::mpsc::error::TrySendError::Full(_) => {
                     warn!(
@@ -2416,6 +2424,7 @@ routes:
             config: compiled,
             debug_mode: true,
             audit_tx: None,
+            control_plane_status: None,
             authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
             metrics: None,
             started_at: std::time::Instant::now(),
@@ -2974,6 +2983,7 @@ routes:
             config: compiled,
             debug_mode: true,
             audit_tx: None,
+            control_plane_status: None,
             authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
             metrics: None,
             started_at,
@@ -3094,6 +3104,7 @@ routes:
             config: compiled,
             debug_mode: true,
             audit_tx: None,
+            control_plane_status: None,
             authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
             metrics: None,
             started_at: std::time::Instant::now(),
@@ -3549,6 +3560,7 @@ routes:
             config: compiled,
             debug_mode: true,
             audit_tx: None,
+            control_plane_status: None,
             authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
             metrics: None,
             started_at: std::time::Instant::now(),

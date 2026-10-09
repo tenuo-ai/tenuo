@@ -1287,57 +1287,30 @@ async fn run_audit_flush_loop(
     let mut flush_ticker = interval(Duration::from_secs(config.audit_flush_interval_secs));
     let mut next_flush_at = Instant::now();
     let mut target_open = true;
+    let mut registered_id: Option<String> = None;
+    let mut in_flight: Option<tokio::task::JoinHandle<FlushCompletion>> = None;
+    let mut in_flight_count = 0usize;
+    let mut flush_requested = false;
+    let mut draining = false;
+    let mut rx_open = true;
 
     // Skip the first immediate tick
     flush_ticker.tick().await;
 
     loop {
-        let registered_id = match &*target.borrow() {
-            AuditTarget::Registered(id) => Some(id.clone()),
-            _ => None,
-        };
-
         tokio::select! {
-            event = rx.recv() => {
+            event = rx.recv(), if rx_open => {
                 match event {
                     Some(e) => {
                         buffer.push(e);
-                        status.record_dropped(cap_audit_buffer(&mut buffer, cap) as u64);
-
-                        // Flush if batch is full and Retry-After has elapsed.
-                        if let Some(id) = registered_id.as_deref() {
-                            if buffer.len() >= config.audit_batch_size
-                                && Instant::now() >= next_flush_at
-                            {
-                                if let Some(wait) =
-                                    flush_audit_events(&client, &config, id, &mut buffer, false)
-                                        .await
-                                {
-                                    next_flush_at = Instant::now() + wait;
-                                }
-                            }
-                        }
+                        let available = cap.saturating_sub(in_flight_count);
+                        status.record_dropped(cap_audit_buffer(&mut buffer, available) as u64);
+                        flush_requested |= buffer.len() >= config.audit_batch_size;
                     }
                     None => {
-                        // Channel closed: one immediate flush, no Retry-After wait.
-                        if let Some(id) = registered_id.as_deref() {
-                            if !buffer.is_empty() {
-                                info!(
-                                    authorizer_id = %id,
-                                    remaining_events = buffer.len(),
-                                    "Flushing remaining audit events before shutdown"
-                                );
-                                flush_audit_events(&client, &config, id, &mut buffer, true).await;
-                            }
-                        }
-                        let reason = if registered_id.is_some() {
-                            "final flush failed"
-                        } else {
-                            "stopped before registering with the control plane"
-                        };
-                        drop_unsent(&status, &mut buffer, reason);
-                        info!("Audit channel closed, exiting flush loop");
-                        break;
+                        rx_open = false;
+                        draining = true;
+                        flush_requested = true;
                     }
                 }
             }
@@ -1355,33 +1328,78 @@ async fn run_audit_flush_loop(
                     drop_unsent(&status, &mut buffer, "control plane unavailable");
                     break;
                 }
-                // Just registered: send the backlog now rather than on the next tick.
-                let id = match &*target.borrow() {
+                registered_id = match &*target.borrow() {
                     AuditTarget::Registered(id) => Some(id.clone()),
                     _ => None,
                 };
-                if let Some(id) = id {
-                    if let Some(wait) =
-                        flush_audit_events(&client, &config, &id, &mut buffer, false).await
-                    {
-                        next_flush_at = Instant::now() + wait;
-                    }
-                }
+                flush_requested |= registered_id.is_some();
             }
             // Periodic flush
             _ = flush_ticker.tick() => {
-                if let Some(id) = registered_id.as_deref() {
-                    if !buffer.is_empty() && Instant::now() >= next_flush_at {
-                        if let Some(wait) =
-                            flush_audit_events(&client, &config, id, &mut buffer, false).await
-                        {
-                            next_flush_at = Instant::now() + wait;
-                        }
+                flush_requested = true;
+            }
+            _ = tokio::time::sleep_until(next_flush_at.into()),
+                if in_flight.is_none()
+                    && !buffer.is_empty()
+                    && registered_id.is_some()
+                    && Instant::now() < next_flush_at =>
+            {
+                flush_requested = true;
+            }
+            completed = async { in_flight.as_mut().expect("guarded").await }, if in_flight.is_some() => {
+                in_flight = None;
+                in_flight_count = 0;
+                match completed {
+                    Ok(FlushCompletion::Sent) => {
+                        flush_requested |= !buffer.is_empty();
+                    }
+                    Ok(FlushCompletion::Retry { mut events, wait }) => {
+                        events.append(&mut buffer);
+                        buffer = events;
+                        next_flush_at = Instant::now() + wait;
+                    }
+                    Ok(FlushCompletion::Rejected) => {
+                        drop_unsent(&status, &mut buffer, "control plane rejected audit events");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Audit flush task failed");
+                        drop_unsent(&status, &mut buffer, "audit flush task failed");
                     }
                 }
             }
         }
-        status.set_buffered(buffer.len());
+
+        if draining && registered_id.is_none() {
+            drop_unsent(
+                &status,
+                &mut buffer,
+                "stopped before registering with the control plane",
+            );
+        }
+
+        if in_flight.is_none()
+            && flush_requested
+            && !buffer.is_empty()
+            && Instant::now() >= next_flush_at
+        {
+            if let Some(id) = registered_id.clone() {
+                let batch_len = buffer.len().min(config.audit_batch_size.max(1));
+                let batch: Vec<_> = buffer.drain(..batch_len).collect();
+                in_flight_count = batch_len;
+                let flush_client = client.clone();
+                let flush_config = config.clone();
+                in_flight = Some(tokio::spawn(async move {
+                    flush_audit_events(&flush_client, &flush_config, &id, batch, draining).await
+                }));
+                flush_requested = false;
+            }
+        }
+
+        status.set_buffered(buffer.len() + in_flight_count);
+        if draining && in_flight.is_none() && buffer.is_empty() {
+            info!("Audit channel closed, exiting flush loop");
+            break;
+        }
     }
     status.set_buffered(0);
 }
@@ -1458,18 +1476,23 @@ fn sign_event(
 
 /// Flush buffered audit events to the control plane.
 /// If a signing key is configured, events are signed before sending.
+enum FlushCompletion {
+    Sent,
+    Retry {
+        events: Vec<AuthorizationEvent>,
+        wait: Duration,
+    },
+    Rejected,
+}
+
 async fn flush_audit_events(
     client: &Client,
     config: &HeartbeatConfig,
     authorizer_id: &str,
-    buffer: &mut Vec<AuthorizationEvent>,
+    events: Vec<AuthorizationEvent>,
     last_attempt: bool,
-) -> Option<Duration> {
-    if buffer.is_empty() {
-        return None;
-    }
-
-    let event_count = buffer.len();
+) -> FlushCompletion {
+    let event_count = events.len();
     let url = format!(
         "{}/v1/authorizers/{}/events",
         config.control_plane_url, authorizer_id
@@ -1477,7 +1500,7 @@ async fn flush_audit_events(
 
     // Sign all events, using the canonical authorizer_id from registration
     // (events may carry a stale "pending" ID if emitted before registration completed)
-    let signed_events: Vec<SignedEvent> = buffer
+    let signed_events: Vec<SignedEvent> = events
         .iter()
         .map(|event| sign_event(event, &config.signing_key, authorizer_id))
         .collect();
@@ -1499,8 +1522,7 @@ async fn flush_audit_events(
                 "Flushed audit events to control plane"
             );
             status.record_flushed(event_count);
-            buffer.clear();
-            None
+            FlushCompletion::Sent
         }
         Ok(response) => {
             let http_status = response.status();
@@ -1521,8 +1543,7 @@ async fn flush_audit_events(
                     http_status, body, authorizer_id
                 );
                 status.record_dropped(event_count as u64);
-                buffer.clear();
-                return None;
+                return FlushCompletion::Rejected;
             }
             warn!(
                 authorizer_id = %authorizer_id,
@@ -1531,8 +1552,15 @@ async fn flush_audit_events(
                 body = %body,
                 "Failed to flush audit events, will retry"
             );
-            // On the last attempt the caller drops and reports what is left.
-            (!last_attempt).then_some(retry_after).flatten()
+            if last_attempt {
+                status.record_dropped(event_count as u64);
+                FlushCompletion::Rejected
+            } else {
+                FlushCompletion::Retry {
+                    events,
+                    wait: retry_after.unwrap_or_else(|| jittered(Duration::from_secs(2))),
+                }
+            }
         }
         Err(e) => {
             status.set_error(format!("audit flush failed: {}", e));
@@ -1542,7 +1570,15 @@ async fn flush_audit_events(
                 error = %e,
                 "Network error flushing audit events, will retry"
             );
-            None
+            if last_attempt {
+                status.record_dropped(event_count as u64);
+                FlushCompletion::Rejected
+            } else {
+                FlushCompletion::Retry {
+                    events,
+                    wait: jittered(Duration::from_secs(2)),
+                }
+            }
         }
     }
 }
@@ -2518,6 +2554,7 @@ mod tests {
         /// Heartbeats answer 503 while this is set.
         heartbeat_down: AtomicBool,
         events: AtomicUsize,
+        max_event_batch: AtomicUsize,
     }
 
     async fn mock_handler(
@@ -2552,6 +2589,7 @@ mod tests {
         }
         if path.ends_with("/events") {
             let batch: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+            cp.max_event_batch.fetch_max(batch.len(), Ordering::SeqCst);
             cp.events.fetch_add(batch.len(), Ordering::SeqCst);
             return (StatusCode::OK, [("retry-after", "0")], "{}".into());
         }
@@ -2640,11 +2678,12 @@ mod tests {
 
         cp.register_open.store(true, Ordering::SeqCst);
         wait_for("backlog delivered", || {
-            cp.events.load(Ordering::SeqCst) == 250
+            cp.events.load(Ordering::SeqCst) == 250 && status.flushed() == 250
         })
         .await;
         assert_eq!(status.flushed(), 250);
         assert_eq!(status.dropped(), 0);
+        assert_eq!(cp.max_event_batch.load(Ordering::SeqCst), 100);
         assert_eq!(status.state(), ConnectionState::Connected);
 
         drop(tx);

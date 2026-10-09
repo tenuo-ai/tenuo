@@ -48,25 +48,46 @@ def test_shutdown_stops_task_without_waiting_out_timeout():
 
 
 def test_shutdown_releases_gil_while_waiting():
-    # A server that accepts but never answers keeps registration in flight,
-    # so shutdown waits out its timeout. Python threads must keep running.
+    # A server that accepts but never answers keeps registration in flight.
+    # Synchronize on accept so this exercises the timeout path rather than
+    # relying on scheduler timing to infer that registration has started.
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
     server.listen()
     port = server.getsockname()[1]
+    accepted = threading.Event()
+    release_server = threading.Event()
+
+    def hold_connection():
+        conn, _ = server.accept()
+        accepted.set()
+        release_server.wait(timeout=5)
+        conn.close()
+
+    server_thread = threading.Thread(target=hold_connection, daemon=True)
+    server_thread.start()
     try:
         client = _client("shutdown-gil", url=f"http://127.0.0.1:{port}")
-        time.sleep(0.2)  # let registration connect and block
-        worker = threading.Thread(target=client.shutdown, kwargs={"timeout_secs": 1})
-        worker.start()
-        ticks = 0
-        while worker.is_alive():
-            ticks += 1
-            time.sleep(0.01)
-        worker.join()
-        assert ticks >= 20, f"main thread only ran {ticks} times during shutdown"
+        assert accepted.wait(timeout=5), "registration never connected"
+
+        progressed = threading.Event()
+        def mark_progress():
+            time.sleep(0.05)
+            progressed.set()
+
+        marker = threading.Thread(target=mark_progress)
+        marker.start()
+        start = time.monotonic()
+        client.shutdown(timeout_secs=1)
+        elapsed = time.monotonic() - start
+        marker.join(timeout=1)
+
+        assert elapsed >= 0.5, "shutdown did not exercise the in-flight timeout path"
+        assert progressed.is_set(), "another Python thread could not run during shutdown"
     finally:
+        release_server.set()
         server.close()
+        server_thread.join(timeout=1)
 
 
 def test_dropped_client_does_not_warn_about_registration():
