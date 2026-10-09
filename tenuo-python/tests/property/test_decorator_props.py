@@ -27,23 +27,6 @@ from tenuo.decorators import (
 )
 
 
-
-class TestAnnotatedSetConstraints:
-    def test_oneof_matches_typed_and_string_sets(self):
-        from tenuo import OneOf
-
-        assert _check_annotated_constraint(OneOf([1, 2]), 1)
-        assert not _check_annotated_constraint(OneOf([1, 2]), 3)
-        # String sets keep matching non-string arguments by their str() form
-        assert _check_annotated_constraint(OneOf(["1", "2"]), 1)
-
-    def test_notoneof_excludes_typed_and_string_forms(self):
-        from tenuo import NotOneOf
-
-        assert not _check_annotated_constraint(NotOneOf([0]), 0)
-        assert not _check_annotated_constraint(NotOneOf(["0"]), 0)
-        assert _check_annotated_constraint(NotOneOf([0]), 1)
-
 class TestAnnotatedConstraintFailClosed:
     @given(value=st.one_of(st.text(), st.integers(), st.floats(allow_nan=False)))
     @settings(max_examples=30)

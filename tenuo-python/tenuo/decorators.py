@@ -250,14 +250,17 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
             return bool(_typed_check(constraint.matches, value)) or constraint.matches(str(value))
 
         # OneOf - set membership (Rust core). Typed sets match the value as
-        # passed; the str() form keeps string sets matching non-string args.
+        # passed; the str() form keeps string sets matching non-string args,
+        # including values the core cannot represent, such as a UUID.
         if hasattr(constraint, "contains") and constraint_type == "OneOf":
-            return constraint.contains(value) or constraint.contains(str(value))
+            return bool(_typed_check(constraint.contains, value)) or constraint.contains(str(value))
 
         # NotOneOf - exclusion list (Rust core). Excluded if either form is
         # in the set, so string exclusion lists still block non-string args.
+        # A value the core cannot represent cannot be in a typed set, so only
+        # its str() form is checked.
         if hasattr(constraint, "allows") and constraint_type == "NotOneOf":
-            return constraint.allows(value) and constraint.allows(str(value))
+            return _typed_check(constraint.allows, value) is not False and constraint.allows(str(value))
 
         # Wildcard - matches anything (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Wildcard":

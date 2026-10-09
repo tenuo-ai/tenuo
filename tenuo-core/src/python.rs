@@ -651,11 +651,12 @@ impl PyOneOf {
     ///
     /// Values may be str, int, float, bool, None, list or dict, and can be mixed.
     /// Matching is type-strict, so ``OneOf([1, 2])`` does not match ``"1"``.
+    /// Integers must fit in 64 bits; pass larger IDs as strings.
     #[new]
     fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
         let values = values
             .iter()
-            .map(py_to_constraint_value)
+            .map(py_to_exact_constraint_value)
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: OneOf::from_values(values),
@@ -729,11 +730,12 @@ impl PyNotOneOf {
     ///
     /// Values may be str, int, float, bool, None, list or dict, and can be mixed.
     /// Matching is type-strict, so ``NotOneOf([0])`` still allows ``"0"``.
+    /// Integers must fit in 64 bits; pass larger IDs as strings.
     #[new]
     fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
         let values = values
             .iter()
-            .map(py_to_constraint_value)
+            .map(py_to_exact_constraint_value)
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: NotOneOf::from_values(values),
@@ -2430,7 +2432,8 @@ fn py_dict_to_constraint_set(
 }
 
 /// Convert a Python value to a ConstraintValue for an exact-match constraint
-/// value (``Exact``), rejecting integers outside the signed 64-bit range.
+/// value (``Exact``, ``OneOf``, ``NotOneOf``), rejecting integers outside the
+/// signed 64-bit range.
 ///
 /// ``py_to_constraint_value`` maps those integers to ``Float``, which is
 /// lossy: ``Exact(2**64)`` would also match ``2**64 + 1``. Exact values are

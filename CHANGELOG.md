@@ -57,7 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type-strictly in warrants, as the Rust core already did. `OneOf.contains()`
   and `NotOneOf.allows()` accept the same types. For `Annotated` parameter
   constraints, string sets still match non-string arguments by their `str()`
-  form, and `NotOneOf` excludes a value if either form is listed.
+  form, including values the core cannot represent such as a `UUID`, and
+  `NotOneOf` excludes a value if either form is listed. As with `Exact`,
+  integers outside the 64-bit range raise `ValidationError`; pass them as
+  strings.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed

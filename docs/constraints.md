@@ -283,7 +283,12 @@ OneOf(["staging", "production", "dev"])
 
 # Allows specific actions
 OneOf(["read", "list"])
+
+# Non-string values work too, and can be mixed
+OneOf([1, 2, 3])
 ```
+
+Like `Exact`, matching is type-strict: `OneOf([1, 2])` matches the integer `1`, not the string `"1"`.
 
 ---
 
@@ -793,7 +798,12 @@ from tenuo import NotOneOf
 
 # Block admin and root
 NotOneOf(["admin", "root"])
+
+# Block user ID 0
+NotOneOf([0])
 ```
+
+Matching is type-strict: `NotOneOf([0])` blocks the integer `0` but not the string `"0"`, so list both if an argument can arrive either way.
 
 **Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist). `NotOneOf` can only appear in root warrants or attenuate from another `NotOneOf` or `Wildcard` parent. Attenuating from `OneOf` to `NotOneOf` is **forbidden** because `NotOneOf` accepts values outside the parent's allowlist. To narrow an `OneOf`, use `OneOf(subset)` instead.
 

@@ -217,6 +217,42 @@ def test_oneof_non_string_values():
     assert NotOneOf([0]).excluded == [0]
 
 
+def test_oneof_rejects_integers_outside_64_bits():
+    """OneOf and NotOneOf refuse integers they cannot hold losslessly."""
+    assert OneOf([2**63 - 1]).contains(2**63 - 1)
+
+    for cls in (OneOf, NotOneOf):
+        with pytest.raises(ValidationError, match="pass it as a string"):
+            cls([1, 2**64])
+
+    assert OneOf([str(2**64)]).contains(str(2**64))
+    assert not OneOf([str(2**64)]).contains(str(2**64 + 1))
+
+
+def test_annotated_oneof_matches_typed_and_string_sets():
+    """Annotated OneOf checks match typed sets, then fall back to the str() form."""
+    assert _check_annotated_constraint(OneOf([1, 2]), 1)
+    assert not _check_annotated_constraint(OneOf([1, 2]), 3)
+    # String sets keep matching non-string arguments by their str() form
+    assert _check_annotated_constraint(OneOf(["1", "2"]), 1)
+
+    # Values the core cannot represent fall back to str() instead of failing closed
+    run_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    assert _check_annotated_constraint(OneOf([str(run_id)]), run_id)
+    assert not _check_annotated_constraint(OneOf([str(uuid.uuid4())]), run_id)
+
+
+def test_annotated_notoneof_excludes_typed_and_string_forms():
+    """Annotated NotOneOf excludes a value if either its typed or str() form is listed."""
+    assert not _check_annotated_constraint(NotOneOf([0]), 0)
+    assert not _check_annotated_constraint(NotOneOf(["0"]), 0)
+    assert _check_annotated_constraint(NotOneOf([0]), 1)
+
+    run_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    assert not _check_annotated_constraint(NotOneOf([str(run_id)]), run_id)
+    assert _check_annotated_constraint(NotOneOf([str(uuid.uuid4())]), run_id)
+
+
 def test_multiple_constraints():
     """Test that multiple constraints are all enforced."""
 
