@@ -70,20 +70,27 @@ def test_shutdown_releases_gil_while_waiting():
         client = _client("shutdown-gil", url=f"http://127.0.0.1:{port}")
         assert accepted.wait(timeout=5), "registration never connected"
 
-        progressed = threading.Event()
+        # The marker needs the GIL to read the clock. If shutdown held the GIL,
+        # it would run only as shutdown returns (the GIL can switch before the
+        # caller reads `end`), so require it well inside the wait.
+        ran_at = []
+
         def mark_progress():
             time.sleep(0.05)
-            progressed.set()
+            ran_at.append(time.monotonic())
 
         marker = threading.Thread(target=mark_progress)
         marker.start()
         start = time.monotonic()
         client.shutdown(timeout_secs=1)
-        elapsed = time.monotonic() - start
+        end = time.monotonic()
         marker.join(timeout=1)
 
-        assert elapsed >= 0.5, "shutdown did not exercise the in-flight timeout path"
-        assert progressed.is_set(), "another Python thread could not run during shutdown"
+        assert end - start >= 0.5, "shutdown did not exercise the in-flight timeout path"
+        assert ran_at, "marker thread never ran"
+        assert ran_at[0] - start < (end - start) / 2, (
+            "another Python thread could not run during shutdown"
+        )
     finally:
         release_server.set()
         server.close()

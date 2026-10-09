@@ -1293,6 +1293,7 @@ async fn run_audit_flush_loop(
     let mut flush_requested = false;
     let mut draining = false;
     let mut rx_open = true;
+    let mut consecutive_failures = 0u32;
 
     // Skip the first immediate tick
     flush_ticker.tick().await;
@@ -1348,21 +1349,31 @@ async fn run_audit_flush_loop(
             }
             completed = async { in_flight.as_mut().expect("guarded").await }, if in_flight.is_some() => {
                 in_flight = None;
-                in_flight_count = 0;
+                let lost_in_flight = std::mem::take(&mut in_flight_count);
                 match completed {
-                    Ok(FlushCompletion::Sent) => {
+                    Ok(FlushCompletion::Sent) | Ok(FlushCompletion::Rejected) => {
+                        // The control plane answered. A rejected batch was
+                        // already counted; the rest of the buffer still goes.
+                        consecutive_failures = 0;
                         flush_requested |= !buffer.is_empty();
                     }
-                    Ok(FlushCompletion::Retry { mut events, wait }) => {
+                    Ok(FlushCompletion::Retry { mut events, retry_after }) => {
+                        consecutive_failures = consecutive_failures.saturating_add(1);
                         events.append(&mut buffer);
                         buffer = events;
-                        next_flush_at = Instant::now() + wait;
+                        next_flush_at = Instant::now()
+                            + retry_after.unwrap_or_else(|| flush_backoff(consecutive_failures));
+                        // While draining, the requeued batch goes straight out
+                        // as the last attempt instead of waiting.
+                        flush_requested |= draining;
                     }
-                    Ok(FlushCompletion::Rejected) => {
-                        drop_unsent(&status, &mut buffer, "control plane rejected audit events");
+                    Ok(FlushCompletion::FinalAttemptFailed) => {
+                        // Shutdown gets one attempt; the rest cannot be sent either.
+                        drop_unsent(&status, &mut buffer, "final flush failed");
                     }
                     Err(e) => {
                         warn!(error = %e, "Audit flush task failed");
+                        status.record_dropped(lost_in_flight as u64);
                         drop_unsent(&status, &mut buffer, "audit flush task failed");
                     }
                 }
@@ -1377,10 +1388,12 @@ async fn run_audit_flush_loop(
             );
         }
 
+        // Shutdown flushes immediately: waiting out Retry-After or backoff
+        // would outlast the caller's timeout and lose the events uncounted.
         if in_flight.is_none()
             && flush_requested
             && !buffer.is_empty()
-            && Instant::now() >= next_flush_at
+            && (draining || Instant::now() >= next_flush_at)
         {
             if let Some(id) = registered_id.clone() {
                 let batch_len = buffer.len().min(config.audit_batch_size.max(1));
@@ -1474,17 +1487,30 @@ fn sign_event(
     }
 }
 
-/// Flush buffered audit events to the control plane.
-/// If a signing key is configured, events are signed before sending.
+/// Outcome of one audit batch upload.
 enum FlushCompletion {
     Sent,
+    /// Retryable failure; the batch comes back to be requeued. `retry_after`
+    /// is the server's Retry-After, otherwise the caller backs off.
     Retry {
         events: Vec<AuthorizationEvent>,
-        wait: Duration,
+        retry_after: Option<Duration>,
     },
+    /// Non-retryable rejection of this batch; it was counted as dropped.
     Rejected,
+    /// The last attempt during shutdown failed; this batch was counted as dropped.
+    FinalAttemptFailed,
 }
 
+/// Backoff after `failures` consecutive retryable flush failures:
+/// 2s, 4s, 8s ... capped at 60s, jittered.
+fn flush_backoff(failures: u32) -> Duration {
+    let secs = 2u64.saturating_pow(failures.clamp(1, 6)).min(60);
+    jittered(Duration::from_secs(secs))
+}
+
+/// Flush buffered audit events to the control plane.
+/// If a signing key is configured, events are signed before sending.
 async fn flush_audit_events(
     client: &Client,
     config: &HeartbeatConfig,
@@ -1554,11 +1580,11 @@ async fn flush_audit_events(
             );
             if last_attempt {
                 status.record_dropped(event_count as u64);
-                FlushCompletion::Rejected
+                FlushCompletion::FinalAttemptFailed
             } else {
                 FlushCompletion::Retry {
                     events,
-                    wait: retry_after.unwrap_or_else(|| jittered(Duration::from_secs(2))),
+                    retry_after,
                 }
             }
         }
@@ -1572,11 +1598,11 @@ async fn flush_audit_events(
             );
             if last_attempt {
                 status.record_dropped(event_count as u64);
-                FlushCompletion::Rejected
+                FlushCompletion::FinalAttemptFailed
             } else {
                 FlushCompletion::Retry {
                     events,
-                    wait: jittered(Duration::from_secs(2)),
+                    retry_after: None,
                 }
             }
         }
@@ -2776,5 +2802,150 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod flush_failure_tests {
+    use super::*;
+    use axum::{body::Bytes, extract::State, http::StatusCode, http::Uri};
+    use std::sync::atomic::AtomicUsize;
+
+    /// Registers immediately; the first events request gets `first_status`
+    /// with `retry_after`, later ones succeed.
+    struct Cp {
+        first_status: StatusCode,
+        retry_after: &'static str,
+        calls: AtomicUsize,
+        delivered: AtomicUsize,
+        first_batch: AtomicUsize,
+    }
+
+    type Reply = (StatusCode, [(&'static str, &'static str); 1], String);
+
+    async fn handler(State(cp): State<Arc<Cp>>, uri: Uri, body: Bytes) -> Reply {
+        let ok = |b: &str| (StatusCode::OK, [("retry-after", "0")], b.to_string());
+        let path = uri.path();
+        if path.ends_with("/register") {
+            return ok(r#"{"id":"auth-1"}"#);
+        }
+        if path.ends_with("/events") {
+            let batch: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+            if cp.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                cp.first_batch.store(batch.len(), Ordering::SeqCst);
+                return (
+                    cp.first_status,
+                    [("retry-after", cp.retry_after)],
+                    String::new(),
+                );
+            }
+            cp.delivered.fetch_add(batch.len(), Ordering::SeqCst);
+            return ok("{}");
+        }
+        ok(r#"{"status":"active"}"#)
+    }
+
+    fn event() -> AuthorizationEvent {
+        AuthorizationEvent::allow(
+            "pending".into(),
+            "w".into(),
+            "t".into(),
+            0,
+            None,
+            None,
+            0,
+            "r".into(),
+            None,
+            None,
+        )
+    }
+
+    /// Queue `n` events, start the loop, wait for the first events request,
+    /// then shut down. Returns the mock, the status and how long shutdown took.
+    async fn run_then_shutdown(
+        first_status: StatusCode,
+        retry_after: &'static str,
+        n: usize,
+    ) -> (Arc<Cp>, Arc<ControlPlaneStatus>, Duration) {
+        let cp = Arc::new(Cp {
+            first_status,
+            retry_after,
+            calls: AtomicUsize::new(0),
+            delivered: AtomicUsize::new(0),
+            first_batch: AtomicUsize::new(0),
+        });
+        let app = axum::Router::new().fallback(handler).with_state(cp.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let config = HeartbeatConfig {
+            control_plane_url: url,
+            interval_secs: 60,
+            audit_batch_size: 100,
+            audit_flush_interval_secs: 1,
+            ..Default::default()
+        };
+        let status = config.status.clone();
+        let (tx, rx) = create_audit_channel(1000);
+        for _ in 0..n {
+            tx.try_send(event()).unwrap();
+        }
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let task = tokio::spawn(start_heartbeat_loop_until(
+            config,
+            Some(rx),
+            Arc::new(RwLock::new(None)),
+            Some(stop_rx),
+        ));
+        for _ in 0..50 {
+            if cp.calls.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let start = Instant::now();
+        drop(tx);
+        stop_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(15), task)
+            .await
+            .unwrap()
+            .unwrap();
+        (cp, status, start.elapsed())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rejected_batch_drops_only_that_batch() {
+        let (cp, status, _) = run_then_shutdown(StatusCode::BAD_REQUEST, "0", 250).await;
+        // The first request holds whatever had arrived when registration
+        // landed (at most one batch); only those events are lost.
+        let rejected = cp.first_batch.load(Ordering::SeqCst);
+        assert!((1..=100).contains(&rejected), "first batch was {rejected}");
+        assert_eq!(status.dropped(), rejected as u64);
+        assert_eq!(cp.delivered.load(Ordering::SeqCst), 250 - rejected);
+        assert_eq!(status.flushed(), (250 - rejected) as u64);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shutdown_flushes_without_waiting_out_retry_after() {
+        let (cp, status, took) = run_then_shutdown(StatusCode::TOO_MANY_REQUESTS, "30", 5).await;
+        assert!(took < Duration::from_secs(5), "shutdown took {took:?}");
+        assert_eq!(cp.delivered.load(Ordering::SeqCst), 5);
+        assert_eq!(status.dropped(), 0);
+        assert_eq!(status.buffered(), 0);
+    }
+
+    #[test]
+    fn flush_backoff_grows_and_caps() {
+        for _ in 0..50 {
+            let first = flush_backoff(1);
+            assert!(first >= Duration::from_secs(1) && first <= Duration::from_secs(2));
+            let third = flush_backoff(3);
+            assert!(third >= Duration::from_secs(4) && third <= Duration::from_secs(8));
+            let many = flush_backoff(50);
+            assert!(many >= Duration::from_secs(30) && many <= Duration::from_secs(60));
+        }
     }
 }

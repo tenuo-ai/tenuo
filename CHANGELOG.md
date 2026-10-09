@@ -56,8 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   events and the rest were discarded without a log or count; the CLI
   authorizer dropped every event emitted before registration. Events are now
   buffered from startup (up to 10× `audit_batch_size`) and sent as soon as
-  registration succeeds. Past the cap, only the oldest events beyond it are
-  dropped, instead of 90% of the buffer at once. Every lost event is counted.
+  registration succeeds, in requests of at most `audit_batch_size` events.
+  Past the cap, only the oldest events beyond it are dropped, instead of 90%
+  of the buffer at once. A rejected request drops only its own events. Failed
+  sends back off from 2s to 60s; shutdown still makes one immediate final
+  attempt rather than waiting out `Retry-After`. Every lost event is counted.
 - **Control plane outages print one notice instead of one line per retry.**
   The client prints when it cannot reach the control plane, loses contact
   after registering, reconnects, or drops unsent events. The per-attempt
