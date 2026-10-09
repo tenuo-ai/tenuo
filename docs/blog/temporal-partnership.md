@@ -1,11 +1,12 @@
 ---
 title: "Task-scoped authorization for durable AI workflows"
 description: "How Tenuo and Temporal combine durable execution with task-scoped cryptographic authorization."
-layout: default
+layout: blog-post
+blog_post: true
 permalink: /blog/temporal-partnership.html
 canonical_url: https://tenuo.ai/blog/temporal-partnership.html
 og_image: /images/og-temporal-partnership.png
-author: "Niki Aimable Niyikiza"
+author: "Tenuo Engineering"
 date: 2026-05-27
 tags: ["Temporal", "AI agents", "authorization", "security"]
 ---

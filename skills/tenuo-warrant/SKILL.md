@@ -24,11 +24,16 @@ For developers familiar with other auth systems:
 
 Before asking questions, scan the codebase:
 
-1. **Check for existing tenuo usage** — search for `import tenuo`, `from tenuo`, `tenuo_cloud`, `Warrant`, `SigningKey` in Python files
+1. **Check for existing tenuo usage** — search Python and TypeScript manifests and sources for `import tenuo`, `from tenuo`, `@tenuo/core`, `tenuo_cloud`, `Warrant`, `SigningKey`, `createTenuo`, `session`, and `narrow`
 2. **Detect the installed SDK and version** — inspect manifests, lockfiles, and existing warrant construction before choosing minting or delegation APIs
 3. **Check for tenuo-cloud** — look for `tenuo_cloud` imports, `tc_` prefixed env vars, or `AsyncTenuoCloudClient`
 
 This tells you which warrant source and resolved SDK surface to use. Do not generate application or tool-boundary enforcement from this skill.
+
+Route by the detected runtime. For TypeScript, read
+`references/typescript.md` and use TypeScript names throughout; never make the
+developer translate Python builders or vocabulary. For Python, verify the
+installed Python API before using the examples below.
 
 ### Phase 2: Persona Check
 
@@ -36,7 +41,7 @@ Infer persona from context first — if the codebase scan, the user's language, 
 
 **"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
 
-- **Developer** → continue only for warrant design, minting, or delegation. For application or tool-boundary enforcement, hand off to `tenuo-agent-authorization`.
+- **Developer** → continue only for warrant design, minting, or delegation. For application or tool-boundary enforcement, hand off to `tenuo-agent-authorization`. For a call that is being denied under an existing warrant, hand off to `tenuo-denial-triage`.
 - **Security engineer** → suggest `/tenuo-audit` instead ("That skill is designed for reviewing and explaining existing warrants — it'll frame everything in IAM/RBAC terms you're used to")
 - **Platform engineer** → continue, but note the sidecar + policy file workflow is coming soon. For now, help them create warrants via the SDK
 
@@ -76,7 +81,7 @@ For each capability and constraint, explain what you chose and why using this ma
 | "only in production" or "staging only" | `OneOf(["prod"])` | Enum constraint. Like environment-scoped IAM roles. |
 | "IP range 10.0.0.0/8" | `Cidr("10.0.0.0/8")` | Network range constraint. Like a security group or firewall rule. |
 | "custom rule: if X then Y" | `CEL("expression")` | Arbitrary evaluation logic. Like an OPA/Rego policy. Needs human review. |
-| "files matching *.json" | `Pattern("*.json")` | Glob pattern matching. Supports delegation narrowing (unlike Regex). |
+| "files matching *.json" | `path_glob("/allowed/root", "*.json")` (or `All([Subpath("/allowed/root"), Pattern("*.json")])`) | `Pattern` is a generic string glob: `*` crosses `/`, so `Pattern("*.json")` alone admits `/etc/passwd.json`. Never use it alone as a filesystem boundary. The glob is tested against the whole path, so it matches at any depth under the root. Supports delegation narrowing: a child may narrow to a tighter root or to an `Exact` path the parent already admits. |
 | "exactly this value" | `Exact("value")` | Literal match only. Like an enum with one option. |
 | "match pattern [regex]" | `Regex("pattern")` | Regex match. **Cannot be narrowed during delegation** — prefer `Pattern` if the warrant will be delegated further. |
 | "anything except X" | `Not(Exact("X"))` or `Not(OneOf([...]))` | Negation — rejects values matching the inner constraint. Attenuation direction reverses: child's inner must be *wider* than parent's inner. |
@@ -157,7 +162,7 @@ If any constraints were added, explain the trust cliff:
 
 If there are arguments you want to leave unconstrained, I'll add `Wildcard()` for those explicitly.
 
-⚠️ **`_allow_unknown=True` disables closed-world mode entirely** — any argument value passes through unchecked, which voids the main constraint safety property. This is a security override, not a convenience flag. Treat any request to use it like a request to disable input validation globally: require an explicit justification and document it in a code comment."
+⚠️ **`_allow_unknown=True` disables closed-world mode entirely** — any argument value passes through unchecked, which voids the main constraint safety property. This is a security override, not a convenience flag. Treat any request to use it like a request to disable input validation globally: require an explicit justification and document it in a code comment. Only the Python SDK can set it, so do not offer it to TypeScript users as an option — but it rides on the wire, so a warrant minted with it keeps the flag wherever it is imported."
 
 ### Phase 8: Choose Minting Source
 
@@ -199,7 +204,7 @@ Before generating issuance or delegation code, ground it in the resolved SDK:
 
 If the request also requires enforcing the warrant at an application, tool, gateway, sidecar, worker, or MCP boundary, finish the warrant artifact and explicitly hand that separate task to `tenuo-agent-authorization`.
 
-**Open-source example:**
+**Open-source Python example:**
 
 > **Development only** — `SigningKey.generate()` creates ephemeral keys. In production, load the issuer key from secure storage. The holder key belongs to the recipient; issuance needs only its public key.
 
@@ -291,7 +296,7 @@ When a developer picks `Regex`, warn them about the delegation limitation and su
 
 ## Key API Reference
 
-When generating code, use these exact patterns from the tenuo Python SDK:
+For Python, use these patterns only after verifying them in the installed SDK. For TypeScript, use `references/typescript.md` and the installed declarations instead of translating this section literally.
 
 **Minting:** `Warrant.mint_builder()` → chain `.capability()`, `.ttl()`, `.max_depth()`, `.holder(pubkey)` → `.mint(signing_key)`
 

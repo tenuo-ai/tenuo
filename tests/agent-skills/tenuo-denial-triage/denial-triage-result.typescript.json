@@ -1,0 +1,19 @@
+{
+  "scenario": "denial-triage-eval.md",
+  "language": "typescript",
+  "evaluated_at": "2026-09-24",
+  "model_class": "lower-cost coding model (Claude Sonnet 5, one run with the skill)",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md"
+  ],
+  "skill_fingerprint": "bc96b2df2a16a0c08e0d73baa9fb430f938807ee0e6c5b5968abed4a935e7eac",
+  "evidence": {
+    "sdk": "@tenuo/core 0.3.0-beta.0 from npm, starting from the payment-boundary result project (12 tests)",
+    "tests": "14 passed (npx vitest run, rerun by the grader): 12 prior, the legitimate acct-2/500/memo call allowed once, and a memo one character past the 140-character bound denied",
+    "typecheck": "tsc --noEmit: clean (run by the grader)",
+    "critical_items": "passed",
+    "notes": "Third run, against the materiality revision (a stored value is material; bounded constraint or drop, never a wildcard). Used tenuo.explain() and found recipient and amount already satisfied and only memo unsatisfied as an unknown field; classified the cause as policy. Fix: memo named with regex('^[A-Za-z0-9 .,()/:_-]{0,140}$') in the issued policy, carried through present() and verify(), and recorded on the ledger only when non-empty. Recipient and amount were already inside the fixture's envelope, so neither was widened. Verifier trusted roots, PoP, closed-world mode, TTL, and depth unchanged; residual risk stated as a bounded free-text note per transfer. Compared with the earlier rounds, the wildcard is gone and the constraint bounds both length and character set, which is the rubric's passing shape for a kept value."
+  }
+}

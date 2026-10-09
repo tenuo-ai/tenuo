@@ -1,5 +1,5 @@
 """
-Tenuo Python SDK - Capability tokens for AI agents
+Tenuo Python SDK: task-scoped authorization for AI agents
 
 80% API - The essentials for most users:
 
@@ -98,6 +98,7 @@ from tenuo_core import (  # type: ignore
     UrlPattern,
     Warrant,
     Wildcard,
+    verify_receipt,
 )
 from tenuo_core import (
     py_build_approval_context_attestation as build_approval_context_attestation,
@@ -117,6 +118,8 @@ from tenuo_core import (
     decode_warrant_stack_base64,
     encode_warrant_stack,
 )
+
+from .arguments import parse_strict_json
 
 # Wildcard: allow any value for a field in a closed-world constraint set.
 # `Any` used to alias Wildcard and collided with the OR combinator (`AnyOf`).
@@ -147,7 +150,7 @@ from .nonce import (
 )
 
 # Constraints
-from .constraints import Capability, Shlex, Subpath, UrlSafe
+from .constraints import Capability, Shlex, Subpath, UrlSafe, path_glob
 
 # Authority context managers
 from .scoped import (
@@ -173,6 +176,9 @@ import tenuo.warrant_ext  # noqa: F401
 
 # BoundWarrant (common result of warrant.bind())
 from .bound_warrant import BoundWarrant
+
+# Framework-agnostic enforcement (what every adapter calls under the hood)
+from ._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async
 
 # Holder runtime (identity, connect token, session lifecycle)
 from .connect import ConnectToken
@@ -271,6 +277,11 @@ __all__ = [
     "get_runtime",
     "bind_runtime",
     "Authorizer",
+    "verify_receipt",
+    # Enforcement (framework-agnostic; adapters call these)
+    "enforce_tool_call",
+    "enforce_tool_call_async",
+    "EnforcementResult",
     # Chain verification (returned by Authorizer.authorize_one / check_chain)
     "ChainVerificationResult",
     "ChainStep",
@@ -352,6 +363,7 @@ __all__ = [
     "Subpath",  # Secure path containment (path traversal protection)
     "UrlSafe",  # SSRF protection (IP/domain blocking)
     "Shlex",  # Shell injection protection (command validation)
+    "path_glob",  # Subpath + Pattern: traversal-safe filesystem glob
     # Constraint aliases (shorter names)
     "Path",  # Alias for Subpath
     "Url",  # Alias for UrlSafe
@@ -379,6 +391,7 @@ __all__ = [
     "info",
     # Result types
     "ValidationResult",
+    "parse_strict_json",
     # Key management
     "KeyRegistry",
     "Keyring",
@@ -399,7 +412,7 @@ __all__ = [
     "get_default_nonce_store",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.3.2"
 
 
 def __getattr__(name: str):

@@ -128,27 +128,32 @@ For technical details, see **[Revocation](./spec/protocol-spec-v1#11-revocation)
 ## Production Deployment Policy
 
 > [!IMPORTANT]
-> **Tier 2 (Warrant + PoP) is the recommended pattern for production systems.**
+> **Tier 1 when trusted code owns the policy. Tier 2 when another component must verify the authority.**
 >
-> While Tier 1 guardrails provide effective protection against prompt injection and accidental misuse, they can be modified or bypassed by anyone with code access. For production environments where insider threats or container compromise are concerns, use Tier 2 with cryptographic warrants.
+> Tier 1 rejects out-of-policy tool calls on the guarded path, including calls a manipulated prompt induces. Tier 2 keeps those checks and adds signed, holder-bound warrants and delegation that can only narrow, so an independent verifier can check the caller locally. When the agent can skip the in-process guard, run that check in the component that performs the effect, outside the agent's control.
 
 ---
 
 ## Tier 1 vs Tier 2
 
-**Tier 1** (Runtime Guardrails):
-- Constraint checking at runtime
-- Trust boundary: code access
-- Protects against: prompt injection, LLM hallucinations, SSRF
-- Does NOT protect against: insider threats, container compromise
+**Tier 1** (local policy):
+- Tool allowlists and argument constraints in trusted application code
+- The model proposes calls; trusted code rejects anything outside policy before dispatch
+- Holds in production when that code is the trust boundary
+- A manipulated prompt cannot authorize a call the policy rejects
 
-**Tier 2** (Cryptographic Authorization):
-- All of Tier 1, plus warrant signatures and PoP
-- Trust boundary: cryptographic proof
-- Protects against: all Tier 1 threats, plus tampering and untrusted callers
-- Required for: multi-process delegation, zero-trust environments, audit compliance
+Issuer, holder, and delegation signatures are Tier 2.
 
-**When to use**: Tier 1 for single-process trusted environments. Tier 2 for distributed systems or when you cannot trust the execution environment.
+**Tier 2** (signed authority):
+- The same tool and argument checks, carried in a signed warrant
+- Holder-bound proof of possession on each call
+- Delegation that can only narrow scope, verified back to trusted roots
+- An independent verifier checks this locally, from trusted roots it configured
+- Signed receipts of the presented authority and the verifier's decision, including denials, when receipt signing is configured
+
+A warrant is proof of what was authorized. A signed receipt is proof of what the verifier decided. When the agent can skip an in-process guard, enforce in the component that performs the effect, outside the agent's control.
+
+**When to use**: Tier 1 when trusted application code owns the policy. Tier 2 when the component that performs the effect must verify issuer-granted, holder-bound authority, including across agents or processes.
 
 See integration docs ([OpenAI](./openai.md#tier-1-security-model), [ADK](./google-adk.md#tier-1-security-model)) for detailed threat models.
 

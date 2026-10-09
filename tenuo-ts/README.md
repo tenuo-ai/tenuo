@@ -458,7 +458,8 @@ Every constraint is evaluated in the Rust core and attenuates monotonically.
 | Helper | Meaning |
 |---|---|
 | `under(root, { caseSensitive?, allowEqual? })` | Path inside a directory, traversal-safe |
-| `pattern(glob)`, `regex(source)` | String shape |
+| `pathGlob(root, glob)` | Traversal-safe path containment plus a glob, tested against the whole path |
+| `pattern(glob)`, `regex(source)` | Generic string shape; `pattern("*")` crosses `/` and is not path containment |
 | `exact(value)`, `oneOf(values)`, `notOneOf(values)` | Value sets |
 | `max(n)`, `min(n)`, `range({ min, max, minExclusive?, maxExclusive? })` | Numeric bounds |
 | `email({ domain })` | Address on a domain |

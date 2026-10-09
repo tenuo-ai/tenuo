@@ -832,9 +832,9 @@ def _warrant_delegate(
             # Fallback/Error
             raise ValueError(f"Invalid item in 'allow': {item}. Expected string or Capability.")
 
-    # Narrow to specified tools (strings)
+    # Keep only the requested string tools after the explicit full inheritance.
     if tool_names_only:
-        builder.tools(tool_names_only)
+        builder.retain_tools(tool_names_only)
 
     # Apply additional constraints if provided (only applies to string tools)
     if constraints and tool_names_only:

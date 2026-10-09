@@ -1343,13 +1343,14 @@ async def tenuo_complete_async_activity(
                     "trusted_roots_provider returned empty during async completion; "
                     "retaining last good roots"
                 )
-    with worker_cfg._provider_state_lock:
-        roots = list(
-            refreshed_roots
-            or worker_cfg._last_good_trusted_roots
-            or worker_cfg.trusted_roots
-            or []
-        )
+    # Snapshot reads need no lock: the last-known-good record is immutable and
+    # swapped in whole, so a concurrent refresh cannot be observed half-applied.
+    roots = list(
+        refreshed_roots
+        or worker_cfg._last_good_trusted_roots
+        or worker_cfg.trusted_roots
+        or []
+    )
     if not roots:
         raise TenuoContextError(
             "tenuo_complete_async_activity: trusted roots are required."
@@ -1392,20 +1393,20 @@ async def tenuo_complete_async_activity(
                     "revocation_list_provider returned None during async completion; "
                     "retaining last good revocation list"
                 )
-    with worker_cfg._provider_state_lock:
-        if (
-            refreshed_revocations is not _MISSING_REVOCATION_LIST
-            and worker_cfg._last_good_revocation_list is not None
-        ):
-            _ensure_srl_refresh_not_rolled_back(
-                worker_cfg._last_good_revocation_list,
-                refreshed_revocations,
-            )
-        revocations = (
-            refreshed_revocations
-            if refreshed_revocations is not _MISSING_REVOCATION_LIST
-            else worker_cfg._last_good_revocation_list
+    last_good_revocations = worker_cfg._last_good_revocation_list
+    if (
+        refreshed_revocations is not _MISSING_REVOCATION_LIST
+        and last_good_revocations is not None
+    ):
+        _ensure_srl_refresh_not_rolled_back(
+            last_good_revocations,
+            refreshed_revocations,
         )
+    revocations = (
+        refreshed_revocations
+        if refreshed_revocations is not _MISSING_REVOCATION_LIST
+        else last_good_revocations
+    )
 
     from tenuo.exceptions import ConfigurationError
     from tenuo_core import Authorizer
@@ -1426,11 +1427,14 @@ async def tenuo_complete_async_activity(
             "set_revocation_list; upgrade tenuo_core to a build that exposes "
             "revocation-list installation."
         ) from exc
-    with worker_cfg._provider_state_lock:
-        if refreshed_roots is not None:
-            worker_cfg._last_good_trusted_roots = list(refreshed_roots)
-        if refreshed_revocations is not _MISSING_REVOCATION_LIST:
-            worker_cfg._last_good_revocation_list = refreshed_revocations
+    worker_cfg._record_provider_snapshot(
+        trusted_roots=refreshed_roots,
+        revocation_list=(
+            None
+            if refreshed_revocations is _MISSING_REVOCATION_LIST
+            else refreshed_revocations
+        ),
+    )
     try:
         authorizer.verify_chain(chain)
     except Exception as exc:

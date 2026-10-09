@@ -26,8 +26,8 @@ jobs:
           fetch-depth: 0
       - name: Test skill validator
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - name: Validate skill metadata and portable references
-        run: python3 scripts/validate_agent_skills.py
+      - name: Validate skill structure and report behavioral evidence
+        run: python3 scripts/validate_agent_skills.py --summary "$GITHUB_STEP_SUMMARY"
 
   version-check:
     name: Version check
@@ -58,7 +58,7 @@ jobs:
           packages: mold
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
           components: clippy, rustfmt
@@ -73,7 +73,7 @@ jobs:
           EOF
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Cache Rust
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
@@ -115,6 +115,62 @@ jobs:
             exit 1
           fi
           echo "OK: test-vectors.md is up to date"
+        working-directory: tenuo-core
+
+  rust-filesystem:
+    name: Rust Filesystem / ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            os: ubuntu-latest
+            casefold: true
+          - label: Linux aarch64
+            os: ubuntu-24.04-arm
+            casefold: false
+          - label: macOS arm64
+            os: macos-latest
+            casefold: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: tenuo-core
+
+      - name: Test filesystem guard
+        run: cargo test --locked --features filesystem --test filesystem_guard
+        working-directory: tenuo-core
+
+      - name: Test a real ext4 casefold directory
+        if: matrix.casefold
+        shell: bash
+        run: |
+          image="$RUNNER_TEMP/tenuo-casefold.img"
+          mount_dir="$RUNNER_TEMP/tenuo-casefold"
+          truncate -s 128M "$image"
+          sudo mkfs.ext4 -q -O casefold -E encoding=utf8 "$image"
+          mkdir -p "$mount_dir"
+          sudo mount -o loop "$image" "$mount_dir"
+          cleanup() {
+            sudo umount "$mount_dir"
+          }
+          trap cleanup EXIT
+          sudo chown "$(id -u):$(id -g)" "$mount_dir"
+          mkdir "$mount_dir/jail"
+          sudo chattr +F "$mount_dir/jail"
+          TENUO_CASEFOLD_TEST_ROOT="$mount_dir/jail" \
+            cargo test --locked --features filesystem --test filesystem_guard \
+              casefold_filesystem_rejects_alias_before_truncate -- --ignored --exact
         working-directory: tenuo-core
 
   # ============================================================================
@@ -172,7 +228,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -183,7 +239,7 @@ jobs:
           key: ${{ matrix.os }}-py${{ matrix.python-version }}
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -276,6 +332,62 @@ jobs:
   # FastMCP 3 pairs with MCP SDK 1.x; FastMCP 4 requires MCP SDK 2.x.
   # Keep these jobs separate from the main matrix (CrewAI pins mcp~=1.x).
   # ============================================================================
+  linux-wheel-portability:
+    name: Linux wheel portability (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            target: ""
+            wheel_tag: manylinux_2_28_x86_64
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64
+            wheel_tag: manylinux_2_28_aarch64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same build the release workflow ships. The wheel must carry the
+      # manylinux_2_28 tag and import on a glibc 2.36 image (python:3.12-slim,
+      # Debian bookworm), which a native ubuntu-latest build (glibc 2.38) fails.
+      - name: Build wheel in the manylinux_2_28 container
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: tenuo-python
+          command: build
+          args: --release --locked --compatibility pypi
+          maturin-version: v1.15.0
+          manylinux: 2_28
+          target: ${{ matrix.target }}
+
+      - name: Check the platform tag
+        run: |
+          ls -la tenuo-python/target/wheels/
+          wheel=$(ls tenuo-python/target/wheels/*.whl)
+          case "$wheel" in
+            *${{ matrix.wheel_tag }}.whl) echo "tag ok: $wheel" ;;
+            *) echo "unexpected wheel tag: $wheel"; exit 1 ;;
+          esac
+
+      - name: Install and import on Debian bookworm (glibc 2.36)
+        run: |
+          docker run --rm -v "$PWD/tenuo-python/target/wheels:/wheels:ro" python:3.12-slim-bookworm bash -ec '
+            test "$(uname -m)" = "${{ matrix.arch }}"
+            ldd --version | head -1
+            pip install --quiet /wheels/*.whl
+            python -c "import tenuo, tenuo_core; from tenuo import SigningKey, Warrant; k = SigningKey.generate(); w = Warrant.mint_builder().tool(\"ping\").holder(k.public_key).ttl(60).mint(k); print(\"tenuo\", tenuo.__version__, \"ok\", w.id[:12])"
+          '
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: wheel-manylinux_2_28-${{ matrix.arch }}
+          path: tenuo-python/target/wheels/*.whl
+          if-no-files-found: error
+
   mcp-smoke:
     name: MCP Smoke (FastMCP ${{ matrix.fastmcp-line }})
     runs-on: ubuntu-latest
@@ -300,7 +412,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -310,7 +422,7 @@ jobs:
           workspaces: tenuo-python
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -351,7 +463,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -361,7 +473,7 @@ jobs:
           workspaces: tenuo-python
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -406,7 +518,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -416,7 +528,7 @@ jobs:
           workspaces: tenuo-python
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.10"
           cache: pip
@@ -465,7 +577,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -497,10 +609,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build Control Plane
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: tenuo-core
           file: tenuo-core/deploy/docker/Dockerfile.control
@@ -510,7 +622,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=control
 
       - name: Build Authorizer
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: tenuo-core
           file: tenuo-core/deploy/docker/Dockerfile.authorizer
@@ -530,7 +642,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -540,7 +652,7 @@ jobs:
           workspaces: tenuo-python
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -592,7 +704,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
@@ -610,7 +722,7 @@ jobs:
         run: wasm-pack build --target web --out-dir ../tenuo-explorer/src/wasm
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: npm
@@ -668,21 +780,69 @@ jobs:
   # ============================================================================
   # TYPESCRIPT SDK (WASM-backed @tenuo/core)
   # ============================================================================
+  # Node 20 is the minimum in tenuo-ts/package.json engines. The job keeps the
+  # bare name because the repository ruleset requires the "TypeScript SDK" check.
   tenuo-ts:
     name: TypeScript SDK
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Two independent questions, because the answers differ for most pull
+      # requests: does this lane need to run at all, and does it need to
+      # recompile the WASM? When no Rust changed, the committed binary is
+      # already the one that ships and the other lanes test, so rebuilding it
+      # only re-runs wasm-opt. Gated as steps rather than a job `if:` so the
+      # required check still reports.
+      - name: Select lane
+        id: lane
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "Not a pull request: running the full lane."
+            exit 0
+          fi
+          # Falling back to the full lane keeps a transient API failure from
+          # quietly skipping checks, and from blocking the pull request.
+          if ! files="$(gh api --paginate \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename')"; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "Could not list changed files: running the full lane."
+            exit 0
+          fi
+          needed=false
+          rust=false
+          if grep -Eq '^(tenuo-core/|tenuo-wasm/|tenuo-ts/|tenuo-python/|\.github/workflows/ci\.yml$)' <<<"$files"; then
+            needed=true
+          fi
+          if grep -Eq '^(tenuo-core/|tenuo-wasm/|\.github/workflows/ci\.yml$)' <<<"$files"; then
+            rust=true
+          fi
+          echo "needed=$needed" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "needed=$needed rust=$rust"
+
+      # maturin needs the toolchain even when nothing WASM is rebuilt.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        if: steps.lane.outputs.needed == 'true'
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
           components: clippy
 
       - name: Cache Rust
+        if: steps.lane.outputs.needed == 'true'
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           workspaces: |
@@ -690,9 +850,11 @@ jobs:
             tenuo-python
 
       - name: Install wasm-pack
+        if: steps.lane.outputs.rust == 'true'
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Check locked WASM adapter and lint
+        if: steps.lane.outputs.rust == 'true'
         working-directory: tenuo-wasm
         run: |
           cargo check --locked --target wasm32-unknown-unknown
@@ -703,13 +865,15 @@ jobs:
             -A clippy::too_many_arguments
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        if: steps.lane.outputs.needed == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: tenuo-python/pyproject.toml
 
       - name: Build and install the Python binding
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-python
         run: |
           pip install uv
@@ -719,35 +883,53 @@ jobs:
           python -c "import tenuo; from tenuo.mcp.server import MCPVerifier; print(f'tenuo {tenuo.__version__}')"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        if: steps.lane.outputs.needed == 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 9.15.9
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - name: Setup Node.js 20
+        if: steps.lane.outputs.needed == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: pnpm
           cache-dependency-path: tenuo-ts/pnpm-lock.yaml
 
       - name: Install
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: pnpm typecheck
 
-      - name: Test
+      - name: Test (rebuilt WASM)
+        if: steps.lane.outputs.rust == 'true'
         working-directory: tenuo-ts
         env:
           TENUO_REQUIRE_INTEROP: "1"
         run: pnpm test
 
+      # No Rust changed, so `pnpm build:wasm` would recompile the committed
+      # binary into a differently optimized copy of itself. Test the committed
+      # one instead: it is what ships, and interop still runs against Python.
+      - name: Test (committed WASM)
+        if: steps.lane.outputs.needed == 'true' && steps.lane.outputs.rust != 'true'
+        working-directory: tenuo-ts
+        env:
+          TENUO_REQUIRE_INTEROP: "1"
+        run: |
+          pnpm --filter @tenuo/core test
+          pnpm --filter @tenuo/mcp test
+
       # Optimized .wasm bytes and private export ordering vary across Rust and
       # wasm-pack patch releases. The public adapters are the deterministic
       # generated contract; the rebuilt binary is exercised by the tests above.
       - name: Verify public WASM bindings are current
+        if: steps.lane.outputs.rust == 'true'
         run: |
           git diff --exit-code -- \
             tenuo-wasm/Cargo.lock \
@@ -755,17 +937,24 @@ jobs:
             tenuo-ts/packages/core/src/generated/tenuo_wasm.d.ts
 
       - name: Pack smoke (Node 20)
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
 
       - name: Next.js Node runtime example
+        if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         env:
           NEXT_TELEMETRY_DISABLED: "1"
         run: node examples/nextjs-node/scripts/verify-packed.mjs
 
-  # Test the committed WASM package on every supported active Node line without
-  # rebuilding it. Node 20 above remains the reproducible Rust/WASM build lane.
+      - name: Vercel AI SDK example
+        if: steps.lane.outputs.needed == 'true'
+        working-directory: tenuo-ts
+        run: node examples/vercel-ai-sdk/scripts/verify-packed.mjs
+
+  # Test the committed WASM package on the remaining supported Node lines
+  # without rebuilding it. Node 24 is the active LTS.
   tenuo-ts-node-compat:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
@@ -778,12 +967,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 9.15.9
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
@@ -817,12 +1006,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 9.15.9
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: pnpm
@@ -848,7 +1037,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
@@ -862,12 +1051,12 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 9.15.9
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: pnpm
@@ -913,7 +1102,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -923,7 +1112,7 @@ jobs:
           workspaces: tenuo-python
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           # No pip caching - this job doesn't install pip packages
@@ -999,26 +1188,39 @@ jobs:
                   if not target.exists():
                       errors.append(f"{p}: broken Temporal example link -> {rel}")
 
-          # Production snippets in temporal-reference.md should use strict mode
-          # with trusted roots.
+          # The workflow worker signs from memory. That snippet uses strict mode
+          # and trusted roots. Vault, AWS, and GCP sections show store
+          # constructors only; they must not be wired in as key_resolver.
           temporal_ref_text = docs_temporal_ref.read_text(encoding="utf-8")
-          production_heads = [
-              "#### Production: Vault",
-              "#### Production: AWS Secrets Manager",
-              "#### Production: GCP Secret Manager",
-              "#### Composite Resolver (Fallback Chain)",
-          ]
-          for head in production_heads:
+          signing_head = "#### Signing from memory"
+          start = temporal_ref_text.find(signing_head)
+          if start == -1:
+              errors.append(f"{docs_temporal_ref}: missing section '{signing_head}'")
+          else:
+              next_h = temporal_ref_text.find("#### ", start + len(signing_head))
+              block = temporal_ref_text[start: next_h if next_h != -1 else len(temporal_ref_text)]
+              if "strict_mode=True" not in block:
+                  errors.append(f"{docs_temporal_ref}: section '{signing_head}' missing strict_mode=True")
+              if "trusted_roots=[root_key.public_key]" not in block:
+                  errors.append(
+                      f"{docs_temporal_ref}: section '{signing_head}' missing trusted_roots=[root_key.public_key]"
+                  )
+          for head in (
+              "#### Vault",
+              "#### AWS Secrets Manager",
+              "#### GCP Secret Manager",
+          ):
               start = temporal_ref_text.find(head)
               if start == -1:
                   errors.append(f"{docs_temporal_ref}: missing section '{head}'")
                   continue
               next_h = temporal_ref_text.find("#### ", start + len(head))
               block = temporal_ref_text[start: next_h if next_h != -1 else len(temporal_ref_text)]
-              if "strict_mode=True" not in block:
-                  errors.append(f"{docs_temporal_ref}: section '{head}' missing strict_mode=True")
-              if "trusted_roots=[root_key.public_key]" not in block:
-                  errors.append(f"{docs_temporal_ref}: section '{head}' missing trusted_roots=[root_key.public_key]")
+              if "key_resolver=" in block:
+                  errors.append(
+                      f"{docs_temporal_ref}: section '{head}' must not pass key_resolver= "
+                      "(those resolvers cannot sign inside the workflow sandbox)"
+                  )
 
           if errors:
               print("Temporal docs consistency check failed:")
@@ -1040,7 +1242,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
           components: llvm-tools-preview
@@ -1059,7 +1261,7 @@ jobs:
           cargo llvm-cov --all-features --lcov --output-path lcov-rust.info
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -1113,7 +1315,7 @@ jobs:
           packages: mold
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -1127,7 +1329,7 @@ jobs:
           EOF
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Cache Rust
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
@@ -1189,7 +1391,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
         with:
           toolchain: stable
 
@@ -1199,7 +1401,7 @@ jobs:
           workspaces: tenuo-python
 
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 

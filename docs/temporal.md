@@ -76,7 +76,7 @@ worker = Worker(
 `TenuoPluginConfig` requires two things:
 
 - **`trusted_roots`** — public keys of warrant issuers (for verification on the activity worker)
-- **`key_resolver`** — how the workflow worker fetches holder signing keys for PoP (e.g. `EnvKeyResolver`, `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`)
+- **`key_resolver` or `signing_key`** — the holder key the workflow worker uses to sign PoP. The call runs inside the workflow sandbox, so it has to return a key already in memory. `signing_key=` does that. `EnvKeyResolver` does too, after preload, and is for development. `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and `GCPSecretManagerKeyResolver` start a thread the sandbox blocks, including when their cache is full.
 
 `EnvKeyResolver` maps `key_id` to environment variables using the convention **`TENUO_KEY_<key_id>`** with **base64-encoded** signing key bytes:
 
@@ -90,7 +90,7 @@ worker = Worker(
 export TENUO_KEY_agent1=$(python -c "from tenuo import SigningKey; import base64; k=SigningKey.generate(); print(base64.b64encode(k.secret_key_bytes()).decode())")
 ```
 
-`TenuoTemporalPlugin` automatically preloads all `TENUO_KEY_*` variables into an in-memory cache so that key resolution never touches `os.environ` inside the workflow sandbox. For production, use `VaultKeyResolver` or `AWSSecretsManagerKeyResolver` instead. **[Tenuo Cloud](https://cloud.tenuo.ai)** handles key issuance, warrant minting, rotation, and audit for teams that prefer a managed control plane. See the [reference](./temporal-reference.md#key-management-required) for key management details.
+`TenuoTemporalPlugin` automatically preloads all `TENUO_KEY_*` variables into an in-memory cache so that key resolution never touches `os.environ` inside the workflow sandbox. For production, pass `signing_key=` or a resolver whose `resolve_sync` returns a key already in memory. See the [reference](./temporal-reference.md#key-management-required). **[Tenuo Cloud](https://cloud.tenuo.ai)** handles key issuance, warrant minting, rotation, and audit for teams that prefer a managed control plane.
 
 > **Important:** Pass the plugin on `Client.connect(plugins=[plugin])` only. Workers created from that client automatically merge client plugins — do not duplicate.
 
@@ -342,7 +342,7 @@ Temporal topology.
 
 **Fail-closed by default.** Missing or invalid warrants block execution. Each activity dispatch includes a Proof-of-Possession (PoP) signature binding the tool name and arguments to the holder key. Enforcement is in-process (no Tenuo network hop at verify time).
 
-**Private keys never leave your infrastructure.** Only the `key_id` and warrant material travel in Temporal headers. Workers resolve signing keys from your Vault, AWS Secrets Manager, GCP Secret Manager, or (for development) environment variables via `KeyResolver`. No private key material is transmitted to the Temporal cluster or any Tenuo endpoint.
+**Private keys never leave your infrastructure.** Only the `key_id` and warrant material travel in Temporal headers. The workflow worker signs with a holder key it already has in memory (`signing_key=`, or a `KeyResolver` whose `resolve_sync` does not leave the process). `EnvKeyResolver` is the development form of that, after preload. No private key material is transmitted to the Temporal cluster or any Tenuo endpoint.
 
 **Warrant chain verification.** When warrants are attenuated (e.g. for child workflows), the full delegation chain is validated back to trusted roots, ensuring no intermediate warrant was forged or widened.
 
@@ -361,7 +361,7 @@ Authorization failures are wrapped in Temporal's `ApplicationError(non_retryable
 |-----------|------|
 | **Issuer / control plane** | Mints warrants; public keys configured as `trusted_roots` on workers |
 | **Temporal service** | Schedules tasks and carries headers; Tenuo does not replace Temporal's own security |
-| **Workflow workers** | Sign PoP using keys from `KeyResolver`; sandbox passthrough required for `tenuo_core` |
+| **Workflow workers** | Sign PoP with a holder key already in memory; sandbox passthrough required for `tenuo_core` |
 | **Activity workers** | Verify warrants, PoP, and constraints before running activities |
 
 For the full threat model, PoP time windows, replay protection, root rotation, and revocation, see [Temporal Integration Reference](./temporal-reference.md#security-considerations).

@@ -7,24 +7,522 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- **Agent skill boundaries.** `tenuo-warrant` now stops at warrant issuance
-  and delegation, `tenuo-audit` routes application enforcement work to the
-  authorization skill, and release-tagged SDK references are validated against
-  one version contract.
-- **LangChain / LangGraph guidance.** `TenuoMiddleware` is the recommended
-  path for LangChain 1.x `create_agent()`. `TenuoToolNode` remains the
-  path for existing LangGraph `StateGraph` graphs. The experimental label
-  is dropped.
+- **`ControlPlaneClient.status`.** Reports the connection state
+  (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
+  error, and buffered, flushed and dropped audit event counts. It does no I/O,
+  so a health check can read it. Rust callers get the same through
+  `HeartbeatConfig::status`.
+- **Optional filesystem open on the Rust guard.** The `filesystem` feature
+  pins a local jail with `path_jail` 0.5 and opens an authorized `Subpath`
+  argument from `AuthorizedCall::open`. The logical ceiling and the host
+  directory are executor configuration. `Subpath` stays lexical. `atomic`
+  fails where the kernel cannot enforce the open. The open rejects a
+  non-regular file and extra hard links unless the caller turns those checks
+  off. Symlinks are always rejected. The open refuses an argument that is
+  not already normalized, so `//`, `.`, `..`, `\`, and a trailing slash cannot
+  bypass `Pattern` or `NotOneOf`. Every covering `Subpath` must sit inside the
+  executor ceiling. Creating a file requires Linux x86_64 or aarch64; elsewhere
+  the executor creates the file and the tool opens it with `write_truncate`.
+  Filesystem capabilities require an explicit access limit by default, with
+  narrow presets for read, existing-file write, append, and create-new access;
+  `allow_handler_selected_access` is the explicit opt-out. Filesystem types are
+  exported by `sdk::prelude`. `Workspace::new` probes descriptor-path support so
+  a misconfigured host fails at startup instead of on its first request.
+  `FilesystemError` converts to `std::io::Error` and keeps `NotFound` and
+  `PermissionDenied`. Linux x86_64 and aarch64 do not fall back when `openat2`
+  is unavailable. Every platform verifies the opened descriptor's exact path
+  spelling before returning or truncating it, including on case-folding
+  filesystems. Linux performs that check through `/proc/self/fd` and fails
+  closed if it is unavailable. Errors from the open do not include the host path. Python
+  and TypeScript callers are unchanged; Python still checks a path with
+  `path_jail` and then reads it, on every platform, which is not a
+  kernel-enforced open.
 
 ### Fixed
 
+- **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
+  timer outside the runtime, so every call from Python, including the
+  `atexit` hook that runs on every exit with a connected client, printed
+  `there is no reactor running` and skipped the stop signal. Shutdown now
+  closes the audit channel, signals the background task and waits for its
+  final flush, returning as soon as it finishes instead of sleeping the full
+  timeout. It releases the GIL while waiting and accepts any float timeout.
+  (#806)
+- **Audit events survive a control plane outage instead of being dropped
+  silently.** The audit task started only after registration, so while the
+  control plane was unreachable the channel filled at `audit_batch_size`
+  events and the rest were discarded without a log or count; the CLI
+  authorizer dropped every event emitted before registration. Events are now
+  buffered from startup (up to 10× `audit_batch_size`) and sent as soon as
+  registration succeeds, in requests of at most `audit_batch_size` events.
+  Past the cap, only the oldest events beyond it are dropped, instead of 90%
+  of the buffer at once. A rejected request drops only its own events. Failed
+  sends back off from 2s to 60s; shutdown still makes one immediate final
+  attempt rather than waiting out `Retry-After`. Every lost event is counted.
+- **Control plane outages print one notice instead of one line per retry.**
+  The client prints when it cannot reach the control plane, loses contact
+  after registering, reconnects, or drops unsent events. The per-attempt
+  registration lines and the `flushed N audit events` line now go to
+  `tracing` only. Registration retries are jittered so a fleet does not
+  reconnect in lockstep.
+- **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
+  passed the parent's `timedelta` TTL to the grant builder, so every grant
+  failed with `TypeError`, and `assert_cannot_grant` passed for any grant,
+  including a valid narrowing. Children now expire with the parent.
+  `assert_cannot_grant` passes only for an attenuation refusal
+  (`MonotonicityError`, `ClearanceViolation`, `LimitError`), matches
+  `expected_reason` against `"<ExceptionType>: <message>"`, and still fails
+  when given a custom `message`.
+- **`tenuo.testing` helpers recognise pytest and unittest.** Detection looked
+  for the word `pytest` inside the running test id and inspected the wrong
+  object for unittest, so the helpers raised "only works in test
+  environments" unless `TENUO_TEST_MODE=1` was set. Docs and docstrings now
+  show the warrant form of `assert_authorized` / `assert_denied` entered with
+  `with` and use the `error_code` values that are actually raised.
+- **Temporal docs describe sandbox signing and signal allowlists as they behave.**
+  `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and
+  `GCPSecretManagerKeyResolver` call `resolve_sync` on a thread the workflow
+  sandbox blocks, including when the cache is full, so a long `cache_ttl`
+  does not make them usable for PoP signing. Workflow workers sign with
+  `signing_key=` or a resolver whose `resolve_sync` returns a key already in
+  memory. With `authorized_signals` set, a name off the list fails the
+  workflow run. `authorized_signals` and `authorized_updates` are worker
+  settings, and an off-list update is rejected.
+- **Temporal history sizes count the chain header that is actually sent.**
+  `x-tenuo-warrant` is the gzip-compressed leaf. `x-tenuo-warrant-chain` is
+  base64 of the uncompressed stack. A 3-hop Activity is about 1.9–2.7 KB,
+  about 0.4–0.55 MB across 200 Activities. The 10,240-event warning still
+  arrives before the 10 MB warning.
+- **CrewAI and ADK docs match the current APIs.** Delegation examples pass
+  `warrant_chain` and trusted issuer keys. CrewAI tool snippets use
+  `crewai.tools.tool`, and per-agent hooks use `@before_tool_call(agents=[...])`.
+  ADK `map_skill` maps a constraint name to the tool argument, and `TenuoPlugin`
+  is registered on the Runner.
+- **A2A client signs proof of possession.** `A2AClient.send_task` and
+  `send_task_streaming` imported `tenuo_core.ConstraintValue`, which the
+  extension does not export, so every signed request failed before it was
+  sent. Arguments are now passed to `Warrant.sign`, which already
+  canonicalizes plain values.
+
+## [0.3.2] - 2026-10-02
+
+### Upgrade notes
+
+This patch release changes behavior that some deployments depend on. Check
+these before upgrading:
+
+- **Upgrade MCP clients and servers together.** A 0.3.1 peer and a 0.3.2 peer
+  disagree on the proof whenever tool arguments contain `null` (at any depth,
+  including list elements) or an integral float such as `1.0`, in either
+  direction. Such calls are denied with `invalid_pop` until both sides run
+  0.3.2. Calls without nulls or integral floats keep working across versions.
+- **Move authorizer health probes to port 9091.** `/health`, `/healthz`,
+  `/ready` and `/status` no longer answer on the authorization port (9090).
+- **MCP tool arguments are size-limited.** Argument JSON is capped at 256 KiB,
+  64 KiB of decoded string and key bytes in total (one string may use all of
+  it), 4,096 values, 256 entries per object or list, and nesting depth 9.
+  Larger calls are denied with `-32602` `payload_too_large`. 0.3.1 had no
+  such limits in Python or TypeScript.
+- **Google ADK: `TenuoPlugin` callbacks are async and keyword-only.** Code that
+  calls `before_tool_callback` / `after_tool_callback` directly must `await`
+  them and pass `tool_args=` instead of `args`.
+- **Rust: guards no longer print denials to stderr by default.** Set
+  `.denial_reporting(DenialReporting::Error)` to keep the old output.
+
+### Breaking
+
+- **MCP proofs cover `null` and treat integral floats as integers, so mixed
+  versions disagree.** A 0.3.1 Python or TypeScript client removed `null`
+  values before signing; a 0.3.2 verifier keeps them, so it rejects those
+  calls. A 0.3.2 client signs `null` and signs `1.0` as `1`; a 0.3.1 verifier
+  strips `null` and keeps `1.0` a float, so it rejects those calls. Rust to
+  Rust differs only for integral floats. Upgrade both sides. Envelope
+  encoding itself is compatible in both directions (see Changed).
+
+- **Google ADK `TenuoPlugin` callback signatures changed** to match ADK's
+  `BasePlugin`: `before_tool_callback`, `after_tool_callback` and
+  `before_agent_callback` are `async` and keyword-only, and the tool callbacks
+  take `tool_args=` instead of `args`. Under a real ADK `Runner` the plugin
+  did not work before (see Fixed), so only code that called these callbacks
+  directly is affected.
+
+- **Authorizer health and status endpoints moved to a separate port.**
+  `tenuo-authorizer serve` now answers `/health`, `/healthz`, `/ready` and
+  `/status` only on a dedicated health listener, `--health-port` (env
+  `TENUO_HEALTH_PORT`, default 9091, bound to `--health-bind` / `TENUO_HEALTH_BIND`,
+  default the `--bind` address; `0` disables it). On the authorization port
+  (9090) those paths are now ordinary requests: they need a matching route and
+  a warrant like any other path. In Unix-socket mode the socket no longer
+  serves them either, and a TCP health listener starts only if
+  `--health-port` is set (on `127.0.0.1` unless `--health-bind` says
+  otherwise). To migrate:
+  - Point liveness/readiness probes and any health or `/status` checks at port
+    9091 (the Helm chart and the Envoy/Istio quickstart manifests now use a
+    named `health` container port; if you override the chart's
+    `livenessProbe` / `readinessProbe`, use `port: health`).
+  - Expose or allow 9091 wherever you ran probes against 9090 from outside
+    the pod (Docker `-p 9091:9091`, network policies, load balancer checks).
+  - Only as a stopgap, `--legacy-health-on-main-port` (env
+    `TENUO_LEGACY_HEALTH_ON_MAIN_PORT`, Helm `health.legacyOnMainPort`) also
+    serves the old routes on the authorization port and logs a startup
+    warning. It is unsafe behind Envoy/Istio HTTP ext_authz without a
+    `path_prefix`; see Security below. **Deprecated: the flag, its env var
+    and the Helm value are removed in 0.4.0.**
+
+### Security
+
+- **Envoy HTTP ext_authz without `path_prefix` let `/health`, `/healthz`,
+  `/ready` and `/status` bypass authorization.** The authorizer serves those
+  paths itself and answers 200, and Envoy's HTTP ext_authz forwards the
+  client's original path to the authorizer by default. With the
+  `http_service` example previously in `docs/enforcement.md` (no
+  `path_prefix`), a client request to one of those four paths was treated as
+  authorized and forwarded to the backend without a warrant. Other paths were
+  not affected, and the gRPC-based quickstarts never reached the authorizer at
+  all. If you deployed from that example, set `path_prefix: /ext_authz` on the
+  ext_authz `http_service` (Istio: `pathPrefix`) and prefix your gateway route
+  patterns with `/ext_authz/`, as the updated docs now do. The authorizer
+  itself no longer answers those paths on the ext_authz port: they are served
+  only on the separate health port (see Breaking above), so a missing
+  `path_prefix` no longer turns them into an unauthenticated ALLOW. Keep the
+  prefix as defense in depth, and do not combine
+  `--legacy-health-on-main-port` with an unprefixed ext_authz config.
+
+### Added
+
+- **One `_meta.tenuo` envelope in the core.** `sign_meta` and `decode_meta` are
+  the producer and consumer of that object. The proof covers the core's parse
+  of the argument JSON text, and JSON null stays in that map. Python and
+  TypeScript translate a host value into that text and call the core; they do
+  not pick a base64 alphabet or omit null from the proof. Warrant matching
+  still ignores a null field. The canonical warrant stack, signature, and
+  approval tokens are standard base64, which a previous server already
+  decodes. `decode_meta` still accepts an envelope already issued as unpadded
+  URL-safe base64. An integral number is the same proof whether the text says
+  `1` or `1.0`, in every SDK including the Rust SDK's `Call`. Adding or
+  removing null invalidates the proof, including
+  null list elements. The shared vector is
+  `tests/vectors/tenuo-meta.json`.
+
+- **Holder signing, approval hashes, and receipt chains in the Rust SDK**
+  (#751):
+  - `PresentedAuthority::prove` and `mcp_meta::sign_meta`: the holder side of
+    the proof path, so a caller can build `_meta.tenuo` without a local
+    `Guard`. `sign_meta` takes the enforcement point's proof timestamp and
+    window. `TransportError::ProofFailed` is new.
+  - `ApprovalRequest::matches` checks request-hash consistency;
+    `matches_warrant` also checks display metadata against a trusted warrant
+    before human review. `sdk::approve_request` takes that warrant and rechecks
+    the reviewed request, including its message, approvers, threshold, and expiry.
+    An empty approver list is refused. The nonce is random and expiry is
+    capped at the warrant's. `ApprovalError::RequestMismatch` is new.
+  - `receipt::verify_chain`: verify signatures, a single signer, and
+    `prev_receipt_hash` links across a non-empty run of receipts.
+
+- **Strict JSON parsing for tool-argument text** (#755).
+  `parse_json_strict` and `Call::try_from_json_str` walk every object,
+  including nested values, and reject a repeated key. Python
+  (`parse_strict_json`) and the WASM build (`parseStrictJson`) expose the
+  same check. Python then parses that text with `json.loads`, and
+  TypeScript with `JSON.parse`, so numbers, `null`, and keys match the
+  value the tool executes. OpenAI, AutoGen, and the CLIs use it where the
+  argument string is still available. `MCPVerifier.verify` and `mcp.verify`
+  still take an object the host already parsed; a duplicate key is not
+  visible there.
+
+- **Linux aarch64 Python wheel.** Releases publish a `manylinux_2_28_aarch64`
+  wheel next to the existing Linux x86_64, macOS arm64, and Windows wheels, so
+  `pip install tenuo` on ARM Linux no longer builds from source. Linux wheels
+  are built for glibc 2.28 and imported on Debian bookworm before publishing,
+  and the release checks each platform tag (#743).
+
+- **`TenuoServerMiddleware` for the official MCP SDK 2.x.** A
+  `ServerMiddleware` for `MCPServer` / low-level `Server` that runs
+  `MCPVerifier` on every `tools/call` before params validation, accepting the
+  envelope from `_meta.tenuo` or the gateway-safe `arguments._tenuo` carrier,
+  and forwarding `clean_arguments` with the carrier removed. Tools keep plain
+  signatures. This is what makes `inject_warrant="argument"` usable with
+  decorated tools: pydantic rejects a `_tenuo` parameter, and the SDK prunes
+  unknown arguments before the handler runs, so the carrier could previously
+  only be consumed by a raw `tools/call` handler (#719).
+  Register decorated tools with `@authorization.tool(mcp)` so a post-validation
+  guard also checks that final arguments match the verified request. Unsigned
+  defaults and SDK transformations fail closed; callers must send exact final
+  values. `raw_handler=True` is restricted to low-level dispatch that executes
+  clean arguments unchanged.
+
+- Python `verify_receipt` checks a signed receipt without importing the Rust extension directly.
+
+- **Delegated warrants verify in the CrewAI, Google ADK, AutoGen, OpenAI, and
+  LangChain adapters without `chain_scope`.** Every place these adapters
+  accept a warrant (constructors, `with_warrant(...)` builders, and helpers
+  such as `guard()`, `verify_tool_call()`, `create_tier2_guardrail()`, and
+  `guarded_step()`) now takes an optional `warrant_chain=` (parents,
+  root-first, excluding the leaf), matching LangGraph and `BoundWarrant`. The
+  warrant itself may also be the whole chain as one token: an encoded
+  WarrantStack string or a root-first list of warrants. For Google ADK this
+  includes the session-state warrant. Passing a stack together with
+  `warrant_chain=` raises `ConfigurationError`. Parents are passed to
+  `enforce_tool_call` unchanged, so verification is the same as before: the
+  chain must reach a trusted root and the leaf's constraints still apply.
+  When no chain is given, `chain_scope()` still applies. The chain is only
+  verified on the Tier 2 (Proof-of-Possession) path; Google ADK with
+  `require_pop=False` stays Tier 1 and does not cryptographically verify it.
+
+### Changed
+
+- **MCP boundary hardening:** one Rust MCP decoder, bounded argument parsing,
+  captured argument snapshots, and structured, audited Python parsing denials.
+  The bounds are 256 KiB of argument JSON, 64 KiB of decoded string and key
+  bytes in total (a single string or key may use all of it), 4,096 values, 256
+  entries per container, and depth 9; anything larger is denied with `-32602`
+  `payload_too_large`. Python and TypeScript had no argument-size limits in
+  0.3.1. `verify_meta_pop` / `verifyMetaPop` are the proof-only check. Shared
+  conformance cases now include delegated chains, approvals and malformed
+  input. See the MCP guide for numeric and compatibility rules.
+
+- **`_meta.tenuo` is one envelope.** New clients write standard base64, so a
+  server from the previous release can decode the warrant stack and the
+  signature. That server still rejects the proof when the arguments contain
+  null or an integral float such as `1.0`, and a new server rejects those
+  calls from an old client, so client and server must both be on this release
+  for such calls. `decode_meta` still accepts unpadded URL-safe text, including
+  line-wrapped text. The proof covers JSON null. Clients that previously
+  removed null before signing must upgrade and re-sign the actual arguments;
+  verifiers do not retry against a null-stripped map. Float parsing preserves
+  the host's IEEE-754 value, and TypeScript executes the argument snapshot
+  verified before asynchronous replay admission.
+  - Python `enforce_tool_call` proofs now include `None` arguments instead of
+    stripping them, matching the MCP path.
+  - TypeScript `verify()` returns the JSON form of the caller's arguments:
+    `null` values are kept, `undefined` is dropped, and values JSON cannot
+    represent throw. `wireArgs` keeps `null` too. A non-string entry in
+    `approvals` is rejected instead of being filtered out.
+
+- **The `tenuo` crate enables `serde_json`'s `float_roundtrip` feature.** It
+  makes float parsing exact, so a proof signs the same float on every peer.
+  Cargo unifies features, so this also changes `serde_json` float parsing in
+  any crate that builds alongside `tenuo`.
+
+- **Guards no longer log denials by default** (#751). `DenialReporting` now
+  defaults to `Debug`, which writes nothing; the caller receives every
+  `Denial`. `Guard::builder`, `Runtime::builder`, `Tenuo::local`, and
+  `Tenuo::enforcement` use that default. The previous default, `Error`,
+  printed each denial message to stderr, and messages can quote argument
+  values. Set `.denial_reporting(DenialReporting::Error)` to restore it.
+
+### Fixed
+
+- **Temporal approval handlers can request retries.** Retryable
+  `ApplicationError`s from sync or async handlers propagate unchanged for pending
+  approvals or transient service failures. Pending attempts do not execute the
+  activity; returned approvals still require full authorization on retry.
+- **Calls outside the warrant's capabilities are denied before any approval is
+  requested.** When an approval gate matched a call that also broke the
+  warrant's constraints (wrong payee, amount over the limit, tool not granted),
+  the approval handler ran first and the call was denied only afterwards. The
+  shared enforcement path and the Temporal interceptor now run the
+  `approval_requirement` preflight first and deny with the constraint reason,
+  so an approver is not asked to override a capability constraint. This preflight
+  is deny-only; issuer trust, expiry, revocation, PoP, and collected approvals
+  still require full authorization before execution.
+- **Temporal `authorized_signals` / `authorized_updates` apply to a signal or
+  update delivered in the workflow's first activation.** Update-with-start,
+  and an update sent immediately after start, run the handler before
+  `execute_workflow` registered the run config, so the allowlist saw no
+  config and let the call through. The inbound interceptor now registers
+  the run for those handlers. Early registration is scoped and cleaned up on
+  rejection, handler failure, or cancellation if the workflow body never starts;
+  overlapping handlers retain their context until the last handler exits.
+- **Helm chart: authorizer pods start.** The chart ran
+  `command: ["tenuo-authorizer", ...]`, but the distroless image's binary is
+  `/tenuo-authorizer` (the ENTRYPOINT) and is not on `PATH`, so pods failed
+  with "executable file not found". The chart now passes `args`.
+
+- **Envoy and Istio quickstarts now work end to end.** The Envoy all-in-one
+  manifest had invalid YAML, both quickstarts configured gRPC ext_authz (the
+  authorizer only serves HTTP ext_authz), their `gateway.yaml` used a schema the
+  authorizer rejects, and the "demo warrant" was a truncated placeholder. The
+  configs now use HTTP ext_authz with a `path_prefix` (so the authorizer's own
+  `/health`, `/ready` and `/status` cannot be reached through the proxy and
+  answer 200 for a client request), pin image versions, and ship a
+  `demo_warrant.py` helper plus a Docker Compose e2e test that runs in CI. The
+  Istio quickstart also no longer overwrites the mesh config, enables sidecar
+  injection, and tests from inside the mesh instead of through port-forward.
+  The nginx example now forwards the original method and path.
+
+- **Authorizer: early denials carry `x-tenuo-deny-reason` in debug mode.**
+  `missing_warrant` (401), `invalid_warrant` (400), `no_route` (404) and the
+  other pre-authorization errors now set the header like 403 denials do, so it
+  reaches clients through Envoy's `allowed_client_headers`.
+
+- **MCP docs no longer show `_tenuo: dict | None = None` as a tool parameter.**
+  That signature fails at registration on the official SDK; the docs now point
+  at the two middlewares and the raw-handler form.
+
+- **`TenuoPlugin` (Google ADK) now works under a real ADK `Runner`.** It did
+  not match ADK's `BasePlugin` contract: it never called
+  `BasePlugin.__init__(name=...)`, so the `PluginManager` failed on
+  `plugin.name`; its callbacks were synchronous, but ADK awaits them; and
+  `before_tool_callback` / `after_tool_callback` took `args`, while ADK passes
+  `tool_args=` by keyword. The callbacks are now `async` with ADK's
+  keyword-only signatures, and the tool check uses
+  `TenuoGuard.async_before_tool`. A new `name=` argument (default `"tenuo"`)
+  sets the plugin name. Code that called these callbacks directly must now
+  `await` them and pass keywords. The existing tests mocked `google.adk`, so a
+  new test drives the plugin through a real `InMemoryRunner`.
+  Expired and wrong-agent session warrants are cleared through ADK's tracked
+  state assignment API, preserving revocation without calling unsupported `pop`.
+
+- **`SecureAPIRouter` (FastAPI) works again on FastAPI 0.120 and later.**
+  It was a wrapper that delegated to an inner `APIRouter`. FastAPI 0.120+
+  includes routers lazily, by reference, which a wrapper cannot satisfy, so
+  `app.include_router(router)` silently registered nothing and every protected
+  route returned 404. `SecureAPIRouter` is now a real `APIRouter` subclass, so
+  the documented `app.include_router(router)` and nested includes work on
+  every supported FastAPI version. `router._router` still works for code that
+  used it as a workaround. No test included a `SecureAPIRouter` in an app;
+  one now does, and it fails on the old class under current FastAPI.
+
+## [0.3.1] - 2026-09-23
+
+### Breaking
+
+Both changes are in the Python SDK. Code written against 0.3.0 may need
+updating; see the linked entries below for the full rationale.
+
+- **`BoundWarrant.validate()` and `headers()` now require a trust anchor.**
+  They previously trusted the warrant's own issuer, so every warrant validated
+  by construction. Supply roots with the new `trusted_roots=` parameter, at
+  bind time, through `tenuo.configure()`, or from a `Runtime`; a delegated
+  warrant presents its parents with `warrant_chain=`. Without any of these,
+  both raise `ConfigurationError`. See the Security entry below.
+- **`GrantBuilder.tool()` and `tools()` raise after `inherit_all()`.** They add
+  parent capabilities rather than narrowing, so calling them after
+  `inherit_all()` — which already selects every parent tool — now raises
+  `ValidationError` instead of silently keeping them all. The narrowing idiom
+  is `retain_tool()` / `retain_tools()`. See the Fixed entry below.
+
+### Security
+
+- **`Pattern` is documented as a string glob, not a path boundary, and
+  `pathGlob()`/`path_glob()` provide the safe composition.** `Pattern`'s `*`
+  crosses `/`, so `Pattern("*.json")` admits `/etc/passwd.json`; guidance that
+  presented it as protection against arbitrary file access was wrong. The new
+  helper pairs `Subpath` with `Pattern` so the value must stay under a root and
+  match the glob, which is decided after path normalization and so is not
+  defeated by `..` or a shared textual prefix like `/workspace-evil`. An `All`
+  constraint can now be narrowed to an `Exact` value that every conjunct
+  already admits, so a delegatee can still pin a path glob to one file.
+- **TypeScript/WASM constraint expressions fail closed on unknown options.**
+  A raw constraint object (JSON/YAML policy, `narrow()`, approval-gate
+  `when`/`exempt`, `constraintBounds`) with a key its kind does not accept,
+  or a value of the wrong type, is now rejected when the policy compiles
+  instead of being silently ignored; `{ kind: "urlSafe", domains: [...] }`
+  previously compiled to an unrestricted `urlSafe`. The `@tenuo/core`
+  builders reject misspelled options at the call site with
+  `TenuoConfigurationError`.
+- **Core chain verification hardening.** Multi-warrant chains must begin with
+  a depth-0 warrant without a parent hash, and a child may not claim an
+  issuance time before its parent. `Authorizer::with_max_token_lifetime()` can
+  enforce a deployment-specific warrant lifetime ceiling. Empty `All([])`
+  constraints now fail closed instead of matching every value; empty `Any([])`
+  keeps its existing deny-all behavior.
+- **`BoundWarrant.validate()` no longer accepts self-signed authority.**
+  It built its `Authorizer` from the warrant's own issuer, so every warrant
+  was trusted by construction and any `trusted_roots` passed at bind time were
+  silently ignored — a warrant `enforce_tool_call` denied could still validate.
+  It now resolves roots exactly as enforcement does (call argument, bind-time
+  roots, `tenuo.configure()`, `Runtime`) and raises `ConfigurationError` when
+  none are available. **Breaking:** `validate()` and `headers()` now require a
+  trust anchor. New `trusted_roots=` and `warrant_chain=` parameters let
+  callers supply one and present a delegated warrant's parents.
+
+### Fixed
+
+- **TypeScript unknown-field hint no longer suggests `pattern("*")`.** The
+  closed-world denial hint pointed at a match-everything string glob, which
+  is not a boundary and is the widening the guidance elsewhere warns against.
+  It now says to name the argument with the tightest constraint that admits
+  the real values, use `wildcard()` only when the value does not change what
+  the tool does, or remove the argument if the tool does not act on it.
+- **MCP warrants can cross `_meta`-stripping gateways.**
+  `SecureMCPClient(inject_warrant="argument")` carries the warrant, PoP, and
+  approvals in reserved `arguments._tenuo`; `MCPVerifier` removes it before
+  verification and tool dispatch, and rejects conflicting `_meta` and argument
+  envelopes.
+- **Linux wheels install on glibc 2.28 and newer.** Release wheels were built
+  natively on `ubuntu-latest` and tagged `manylinux_2_38`, so `pip install
+  tenuo` refused the wheel on Ubuntu 20.04/22.04, Debian 11/12, RHEL 8/9,
+  and the default `python:3.x` Docker images, falling back to a source build
+  that needs a Rust toolchain. The Linux wheel is now built in the
+  `manylinux_2_28` container; CI installs it on `python:3.12-slim-bookworm`
+  (glibc 2.36) to prove it.
+- **Python SRL builder chaining.** `SrlBuilder.revoke()`, `revoke_all()`,
+  `version()`, and `from_existing()` now return the builder as documented, and
+  the publicly exported `SrlBuilder` can be constructed directly.
+- **LangGraph delegated warrants can present their chain.** A warrant issued
+  by a supervisor is not signed by a trusted root, so a sub-agent holding one
+  was denied with `Root warrant issuer is not trusted` and the only documented
+  workaround was an undocumented `chain_scope()` around the invocation.
+  `TenuoToolNode` and `TenuoMiddleware` now read a `warrant_chain` state field
+  (parents root-first, excluding the leaf, as `Warrant` objects or base64
+  tokens) and accept a `warrant_chain=` constructor default. A chain that
+  cannot be read, does not hash-link to the leaf, or does not root in
+  `trusted_roots` denies the call.
+- **Python grant tool selection and range errors.** `GrantBuilder.tool()` and
+  `tools()` now add the named parent capabilities with their existing
+  constraints instead of retaining from an initially empty builder, never
+  overwrite a narrower `capability()` already set for the same tool, and
+  report a missing parent tool, or an issuer parent, with a specific error.
+  After `inherit_all()` they raise instead of silently keeping every parent
+  tool; the narrowing idiom is `retain_tool()` / `retain_tools()`.
+  `RangeExpanded` messages no longer print the literal text `hint=hint`.
+- **MCP client denial messages read once.** `SecureMCPClient` built its typed
+  exceptions by feeding the already-formatted `denial_reason` back into
+  constructors that format their own sentence, producing messages such as
+  `Tool 'Tool 'write_file' is not authorized' is not authorized` and
+  `Constraint 'path' not satisfied: Constraint 'path' not satisfied: ...`.
+  Denials now map to `ConstraintViolation`, `ToolNotAuthorized`,
+  `ExpiredError`, `RevokedError` (new for `error_type="revoked"`), and
+  `AuthorizationDenied` from their structured parts, so each message reads
+  once and `details` carries the tool, field, or warrant id.
+- **`ExpiredError` carried the reason where the warrant id belongs.**
+  `EnforcementResult.raise_if_denied()` and the AutoGen adapter passed
+  `denial_reason` as the warrant id, yielding
+  `Warrant 'Warrant has expired' has expired`. They now pass `warrant_id`.
+- **`SecureMCPClient.close()` no longer raises on transport teardown races.**
+  anyio `ClosedResourceError` / `BrokenResourceError` (bare or in an
+  `ExceptionGroup`) from the streamable-HTTP transport's own background tasks
+  are logged at debug level and dropped; anything else still propagates.
+  Session state is cleared either way.
+- **Temporal provider snapshots survive config copies.** Copying a
+  `TenuoPluginConfig` with `dataclasses.replace()` used to keep the
+  "providers already primed" flag while dropping the last-known-good trusted
+  roots and revocation list, so the copy had nothing to fall back on when a
+  refresh failed and built its `Authorizer` with no revocation list. Both
+  halves now travel as one immutable record, and readiness is derived from it
+  rather than tracked separately.
 - **`rustls` 0.23.45** in `tenuo-core/Cargo.lock` and `tenuo-python/Cargo.lock`
   (RUSTSEC-2026-0285).
 
 ### Added
 
+- **`tenuo-denial-triage` agent skill.** Diagnoses a denied call from the
+  SDK's own diagnostics and receipts, classifies the denied check, and ranks
+  fixes from "fix the call" to "widen minimally at the issuer", with an
+  explicit never-list (closed-world opt-out, wildcards on material
+  arguments, longer TTLs, new trusted roots, optional-warrant modes). Install
+  with `npx skills add tenuo-ai/tenuo --skill tenuo-denial-triage`. The skills
+  validator now validates evidence structure and reports advisory behavioral
+  results for any skill under `tests/agent-skills/<skill>/`.
+- **`tenuo.enforce_tool_call`, `tenuo.enforce_tool_call_async`, and
+  `tenuo.EnforcementResult`** are exported from the package. They are what
+  every adapter calls under the hood, and are the right entry point for tests
+  and custom integrations that need a single authorization decision without
+  a framework.
 - **Agent skill re-pin automation.** Publishing a release runs the Agent skill
   re-pin workflow, which re-pins `tenuo-agent-authorization` to the new tag and
   opens the change for review. The skill validator now fails, on every branch,
@@ -39,6 +537,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and server with one `guardTools()` tool, one `tenuo.mcp.attach()` call
   that is allowed, and one swapped-argument call that is denied before the
   handler runs. `pnpm example:mcp:v2` runs it. (#570)
+
+### Changed
+
+- **Agent skill boundaries.** `tenuo-warrant` now stops at warrant issuance
+  and delegation, `tenuo-audit` routes application enforcement work to the
+  authorization skill, and release-tagged SDK references are validated against
+  one version contract.
+- **LangChain / LangGraph guidance.** `TenuoMiddleware` is the recommended
+  path for LangChain 1.x `create_agent()`. `TenuoToolNode` remains the
+  path for existing LangGraph `StateGraph` graphs. The experimental label
+  is dropped.
 
 ## [0.3.0] - 2026-09-11
 

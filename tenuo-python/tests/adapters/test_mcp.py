@@ -1,5 +1,5 @@
 import asyncio
-import base64
+import sys
 import os
 import tempfile
 from contextlib import AsyncExitStack
@@ -174,13 +174,21 @@ def _make_client() -> "SecureMCPClient":
 
 
 def _mock_warrant_context():
-    """Return (mock_warrant, mock_keypair, patchers) for warrant injection tests."""
+    """Return (mock_warrant, mock_keypair) for warrant injection tests."""
     mock_warrant = MagicMock()
     mock_warrant.to_base64.return_value = "warrant_b64"
     mock_warrant.sign.return_value = b"pop_bytes"
     mock_warrant.is_expired.return_value = False
     mock_keypair = MagicMock()
     return mock_warrant, mock_keypair
+
+
+def _fake_sign_meta(chain, key, tool, args_json, timestamp, approvals=None):
+    """Stand in for the core envelope so client tests can inspect the call."""
+    meta = {"warrant": "warrant_b64", "signature": "c2ln"}
+    if approvals:
+        meta["approvals"] = [f"approval-{index}" for index, _approval in enumerate(approvals)]
+    return meta
 
 
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
@@ -197,6 +205,7 @@ class TestCallToolApprovalsInjection:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -209,9 +218,8 @@ class TestCallToolApprovalsInjection:
         meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
         assert meta_injected is not None
         assert "tenuo" in meta_injected
-        assert "approvals" in meta_injected["tenuo"]
-        expected = base64.b64encode(b"approval_cbor").decode("utf-8")
-        assert meta_injected["tenuo"]["approvals"] == [expected]
+        assert meta_injected["tenuo"]["approvals"] == ["approval-0"]
+        assert sign_meta.call_args.args[5] == [fake_approval]
 
     @pytest.mark.asyncio
     async def test_multiple_approvals_all_serialized(self):
@@ -226,6 +234,7 @@ class TestCallToolApprovalsInjection:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta),
         ):
             await client.call_tool(
                 "read_file",
@@ -237,10 +246,7 @@ class TestCallToolApprovalsInjection:
 
         meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
         assert meta_injected is not None
-        assert meta_injected["tenuo"]["approvals"] == [
-            base64.b64encode(b"cbor_0").decode("utf-8"),
-            base64.b64encode(b"cbor_1").decode("utf-8"),
-        ]
+        assert meta_injected["tenuo"]["approvals"] == ["approval-0", "approval-1"]
 
     @pytest.mark.asyncio
     async def test_no_approvals_omits_field(self):
@@ -251,6 +257,7 @@ class TestCallToolApprovalsInjection:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta),
         ):
             await client.call_tool(
                 "read_file",
@@ -307,14 +314,17 @@ class TestCallToolApprovalsInjection:
         fake_approval = MagicMock()
         fake_approval.to_bytes.return_value = b"approval_cbor"
 
-        with warrant_scope(warrant), key_scope(keypair):
+        with (
+            warrant_scope(warrant),
+            key_scope(keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
+        ):
             await protected(path="/data/file.txt", _approvals=[fake_approval])
 
         meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
         assert meta_injected is not None
-        assert "approvals" in meta_injected["tenuo"]
-        expected = base64.b64encode(b"approval_cbor").decode("utf-8")
-        assert meta_injected["tenuo"]["approvals"] == [expected]
+        assert meta_injected["tenuo"]["approvals"] == ["approval-0"]
+        assert sign_meta.call_args.args[5] == [fake_approval]
 
     @pytest.mark.asyncio
     async def test_protected_tool_approvals_not_in_schema_args(self):
@@ -340,12 +350,86 @@ class TestCallToolApprovalsInjection:
         fake_approval = MagicMock()
         fake_approval.to_bytes.return_value = b"bytes"
 
-        with warrant_scope(warrant), key_scope(keypair):
+        with (
+            warrant_scope(warrant),
+            key_scope(keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta),
+        ):
             await protected(path="/data/file.txt", _approvals=[fake_approval])
 
         injected = client.session.call_tool.call_args[0][1]
         assert "_approvals" not in injected
         assert "_tenuo" not in injected
+
+
+# ---------------------------------------------------------------------------
+# Argument-carried warrant injection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestCallToolArgumentInjection:
+    @pytest.mark.asyncio
+    async def test_argument_transport_injects_reserved_argument(self):
+        client = _make_client()
+        mock_warrant, mock_keypair = _mock_warrant_context()
+        original = {"path": "/data/file.txt", "encoding": None}
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
+        ):
+            await client.call_tool(
+                "read_file",
+                original,
+                warrant_context=False,
+                inject_warrant="argument",
+            )
+
+        forwarded = client.session.call_tool.call_args.args[1]
+        envelope = forwarded["_tenuo"]
+        assert envelope["warrant"] == "warrant_b64"
+        assert envelope["signature"] == "c2ln"
+        assert client.session.call_tool.call_args.kwargs["meta"] is None
+        assert "encoding" in sign_meta.call_args.args[3]
+        assert original == {"path": "/data/file.txt", "encoding": None}
+
+    @pytest.mark.asyncio
+    async def test_argument_transport_carries_approvals(self):
+        client = _make_client()
+        mock_warrant, mock_keypair = _mock_warrant_context()
+        approval = MagicMock()
+        approval.to_bytes.return_value = b"approval_cbor"
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
+        ):
+            await client.call_tool(
+                "read_file",
+                {"path": "/data/file.txt"},
+                warrant_context=False,
+                inject_warrant="argument",
+                approvals=[approval],
+            )
+
+        forwarded = client.session.call_tool.call_args.args[1]
+        assert forwarded["_tenuo"]["approvals"] == ["approval-0"]
+        assert sign_meta.call_args.args[5] == [approval]
+
+    @pytest.mark.asyncio
+    async def test_argument_transport_rejects_reserved_argument_collision(self):
+        client = _make_client()
+
+        with pytest.raises(ValueError, match="'_tenuo' is reserved"):
+            await client.call_tool(
+                "read_file",
+                {"path": "/data/file.txt", "_tenuo": {"user": "value"}},
+                warrant_context=False,
+                inject_warrant="argument",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -355,17 +439,17 @@ class TestCallToolApprovalsInjection:
 
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 class TestPopSignsRawWireArgs:
-    """PoP is always computed over the raw wire args (with None values stripped),
-    independently of whether the client has a CompiledMcpConfig loaded.
+    """The client asks the core to sign argument JSON for the wire args.
 
-    The server performs any constraint extraction (field renaming, coercion)
-    separately as part of its split-view authorize call, so client-side
-    config is never needed for PoP byte parity with the server.
+    Constraint extraction stays off that path. ``None`` remains JSON null in
+    the text.
     """
 
     @pytest.mark.asyncio
     async def test_pop_signs_raw_wire_args_even_with_config_loaded(self):
-        """With compiled_config loaded, sign() still receives raw args, not extracted ones."""
+        """With compiled_config loaded, the signed text is still the wire args."""
+        from tenuo.meta import argument_json
+
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
@@ -379,6 +463,7 @@ class TestPopSignsRawWireArgs:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -387,16 +472,16 @@ class TestPopSignsRawWireArgs:
                 inject_warrant=True,
             )
 
-        # Extraction is never used by the signing path now — the server does it.
         mock_config.extract_constraints.assert_not_called()
-        sign_call_args = mock_warrant.sign.call_args[0]
-        assert sign_call_args[0] is mock_keypair  # key
-        assert sign_call_args[1] == "read_file"  # tool_name
-        assert sign_call_args[2] == raw_args  # raw wire args, not extracted
+        assert sign_meta.call_args.args[1] is mock_keypair
+        assert sign_meta.call_args.args[2] == "read_file"
+        assert sign_meta.call_args.args[3] == argument_json(raw_args)
 
     @pytest.mark.asyncio
     async def test_pop_signs_raw_args_without_config(self):
-        """Without compiled_config, warrant.sign() receives raw args (unchanged behavior)."""
+        """Without compiled_config, the signed text is still the wire args."""
+        from tenuo.meta import argument_json
+
         client = _make_client()
         assert client.compiled_config is None
         mock_warrant, mock_keypair = _mock_warrant_context()
@@ -406,6 +491,7 @@ class TestPopSignsRawWireArgs:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -414,13 +500,11 @@ class TestPopSignsRawWireArgs:
                 inject_warrant=True,
             )
 
-        sign_call_args = mock_warrant.sign.call_args[0]
-        assert sign_call_args[2] == raw_args
+        assert sign_meta.call_args.args[3] == argument_json(raw_args)
 
     @pytest.mark.asyncio
-    async def test_pop_signs_args_with_none_values_stripped(self):
-        """None-valued wire args are stripped before signing (bridges Rust FFI
-        which rejects None, and must match the server's identical stripping)."""
+    async def test_pop_signs_args_with_none_values_kept(self):
+        """None stays in the argument JSON the core signs."""
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
@@ -429,6 +513,7 @@ class TestPopSignsRawWireArgs:
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+            patch("tenuo_core.sign_meta", side_effect=_fake_sign_meta) as sign_meta,
         ):
             await client.call_tool(
                 "read_file",
@@ -437,9 +522,7 @@ class TestPopSignsRawWireArgs:
                 inject_warrant=True,
             )
 
-        sign_call_args = mock_warrant.sign.call_args[0]
-        assert sign_call_args[2] == {"path": "/data/log.txt", "maxSize": 2048}
-        assert "encoding" not in sign_call_args[2]
+        assert '"encoding":null' in sign_meta.call_args.args[3]
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +627,14 @@ class TestSchemaStrippingEmptyProperties:
 
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 class TestTransportValidation:
+    def test_invalid_warrant_injection_mode_rejected(self):
+        with pytest.raises(
+            ValueError, match="inject_warrant must be False, True, or 'argument'"
+        ):
+            SecureMCPClient(
+                command="python", inject_warrant="invalid"  # type: ignore[arg-type]
+            )
+
     def test_stdio_requires_command(self):
         with pytest.raises(ValueError, match="transport='stdio' requires 'command'"):
             SecureMCPClient(transport="stdio")
@@ -852,7 +943,7 @@ class TestValidateToolSplitView:
         kwargs = mock_enforce.call_args.kwargs
         assert kwargs["tool_name"] == "read_file"
         assert kwargs["tool_args"] == {"path": "/tmp/x.txt", "maxSize": None}
-        assert kwargs["pop_args"] == {"path": "/tmp/x.txt"}
+        assert kwargs["pop_args"] == {"path": "/tmp/x.txt", "maxSize": None}
         assert kwargs["constraint_args"] == {
             "path": "/tmp/x.txt",
             "max_size": 1024,
@@ -930,3 +1021,137 @@ class TestToolDiscoveryAndWrappingRaces:
         # leaking partially wrapped tool dicts.
         assert wrapped == {}
         assert client._wrapped_tools == {}
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestDenialMessagesReadOnce:
+    """Each denial maps to one typed exception whose message is not re-wrapped.
+
+    ``denial_reason`` already is a full sentence. Before this mapping was fixed
+    the MCP client fed it back into constructors that format their own
+    sentence, producing "Tool 'Tool 'x' is not authorized' is not authorized".
+    """
+
+    @staticmethod
+    def _result(**overrides):
+        from types import SimpleNamespace
+
+        fields = dict(
+            allowed=False,
+            tool="read_file",
+            arguments={},
+            denial_reason=None,
+            constraint_violated=None,
+            error_type=None,
+            warrant_id=None,
+            approval_metadata=None,
+        )
+        fields.update(overrides)
+        return SimpleNamespace(**fields)
+
+    def test_constraint_violation_is_not_doubled(self):
+        from tenuo.exceptions import ConstraintViolation
+        from tenuo.mcp.client import _raise_for_denial
+
+        result = self._result(
+            error_type="constraint_violation",
+            constraint_violated="path",
+            denial_reason="Constraint 'path' not satisfied: value does not match constraint",
+        )
+        with pytest.raises(ConstraintViolation) as excinfo:
+            _raise_for_denial(result, "read_file")
+        assert excinfo.value.message == "Constraint 'path' not satisfied: value does not match constraint"
+
+    def test_constraint_violation_takes_the_field_from_the_reason_when_missing(self):
+        from tenuo.exceptions import ConstraintViolation
+        from tenuo.mcp.client import _raise_for_denial
+
+        result = self._result(
+            error_type="constraint_violation",
+            denial_reason="Constraint 'raw' not satisfied: unknown field not allowed by warrant",
+        )
+        with pytest.raises(ConstraintViolation) as excinfo:
+            _raise_for_denial(result, "fetch")
+        assert excinfo.value.message == "Constraint 'raw' not satisfied: unknown field not allowed by warrant"
+
+    def test_tool_not_authorized_names_the_tool_once(self):
+        from tenuo.exceptions import ToolNotAuthorized
+        from tenuo.mcp.client import _raise_for_denial
+
+        result = self._result(error_type="tool_not_allowed", denial_reason="Tool 'write_file' is not authorized")
+        with pytest.raises(ToolNotAuthorized) as excinfo:
+            _raise_for_denial(result, "write_file")
+        assert excinfo.value.message == "Tool 'write_file' is not authorized"
+
+    def test_expired_uses_the_warrant_id(self):
+        from tenuo.exceptions import ExpiredError
+        from tenuo.mcp.client import _raise_for_denial
+
+        result = self._result(error_type="expired", warrant_id="tnu_wrt_abc", denial_reason="Warrant has expired")
+        with pytest.raises(ExpiredError) as excinfo:
+            _raise_for_denial(result, "read_file")
+        assert excinfo.value.message == "Warrant 'tnu_wrt_abc' has expired"
+
+    def test_expired_recovers_the_warrant_id_from_the_reason(self):
+        from tenuo.exceptions import ExpiredError
+        from tenuo.mcp.client import _raise_for_denial
+
+        result = self._result(error_type="expired", denial_reason="Warrant 'tnu_wrt_abc' has expired")
+        with pytest.raises(ExpiredError) as excinfo:
+            _raise_for_denial(result, "read_file")
+        assert excinfo.value.message == "Warrant 'tnu_wrt_abc' has expired"
+
+    def test_revoked_maps_to_revoked_error(self):
+        from tenuo.exceptions import RevokedError
+        from tenuo.mcp.client import _raise_for_denial
+
+        result = self._result(error_type="revoked", denial_reason="Warrant 'tnu_wrt_abc' has been revoked")
+        with pytest.raises(RevokedError) as excinfo:
+            _raise_for_denial(result, "read_file")
+        assert excinfo.value.message == "Warrant 'tnu_wrt_abc' has been revoked"
+
+    def test_other_denials_name_the_tool_and_keep_the_reason(self):
+        from tenuo.exceptions import AuthorizationDenied
+        from tenuo.mcp.client import _raise_for_denial
+
+        result = self._result(error_type="untrusted_issuer", denial_reason="Root warrant issuer is not trusted")
+        with pytest.raises(AuthorizationDenied) as excinfo:
+            _raise_for_denial(result, "read_file")
+        assert excinfo.value.message.splitlines()[0] == "Access denied for tool 'read_file'"
+        assert "Reason: Root warrant issuer is not trusted" in excinfo.value.message
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestCloseToleratesTransportTeardown:
+    @pytest.mark.asyncio
+    async def test_close_drops_connection_teardown_errors_and_clears_state(self):
+        from anyio import ClosedResourceError
+
+        client = _make_client()
+        client.exit_stack = MagicMock()
+        client.exit_stack.aclose = AsyncMock(side_effect=ClosedResourceError())
+        await client.close()
+        assert client.session is None
+        assert client._wrapped_tools == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup needs Python 3.11+")
+    async def test_close_drops_grouped_connection_teardown_errors(self):
+        from anyio import BrokenResourceError, ClosedResourceError
+
+        client = _make_client()
+        client.exit_stack = MagicMock()
+        client.exit_stack.aclose = AsyncMock(
+            side_effect=ExceptionGroup("teardown", [ClosedResourceError(), BrokenResourceError()])  # noqa: F821
+        )
+        await client.close()
+        assert client.session is None
+
+    @pytest.mark.asyncio
+    async def test_close_still_raises_unexpected_errors(self):
+        client = _make_client()
+        client.exit_stack = MagicMock()
+        client.exit_stack.aclose = AsyncMock(side_effect=RuntimeError("boom"))
+        with pytest.raises(RuntimeError):
+            await client.close()
+        assert client.session is None

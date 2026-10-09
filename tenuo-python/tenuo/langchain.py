@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langchain_compat  # noqa: E402
 
-from ._enforcement import enforce_tool_call, enforce_tool_call_async
+from ._enforcement import enforce_tool_call, enforce_tool_call_async, split_presented_warrant
 from .audit import log_authorization_success
 from .config import allow_passthrough, resolve_trusted_roots
 from .decorators import chain_scope, get_allowed_tools_context, key_scope, warrant_scope
@@ -98,6 +98,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
     strict: bool = False
     _schemas: Dict[str, ToolSchema] = {}
     _bound_warrant: Optional[Any] = None
+    _warrant_chain: Optional[List[Any]] = None
 
     def __init__(
         self,
@@ -108,6 +109,8 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         trusted_roots: Optional[list] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
+        *,
+        warrant_chain: Optional[List[Any]] = None,
         **kwargs: Any,
     ):
         """
@@ -117,13 +120,28 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             wrapped: The LangChain tool to wrap
             strict: Enforce constraints for require_at_least_one tools
             schemas: Tool schemas for risk level checking
-            bound_warrant: Explicit BoundWarrant to use (optional, overrides context)
+            bound_warrant: Explicit BoundWarrant to use (optional, overrides context).
+                May also be the whole delegation chain as one token: an encoded
+                WarrantStack string or a root-first list of warrants whose last
+                element is the leaf. A leaf that is a plain Warrant (always the
+                case for a string) is bound at call time with the ``key_scope()``
+                signing key, like a context warrant.
             trusted_roots: List of trusted issuer public keys (tenuo_core.PublicKey).
                 Warrant issuers are verified against these roots via
                 Authorizer.authorize_one() — closes the self-signed trust gap.
                 Always supply in production. Emits SecurityWarning when omitted.
             approval_handler: Handler for warrant approval gates (e.g. ``cli_prompt``)
+            warrant_chain: Parent warrants of a delegated warrant, root-first and
+                excluding the leaf, so the chain verifies back to a trusted root
+                without ``chain_scope``. Also applies to a context warrant when no
+                ``bound_warrant`` is given. When None, ``chain_scope()`` is used.
+
+        Raises:
+            ConfigurationError: If a stack and ``warrant_chain`` are both given,
+                or a token does not decode
         """
+        bound_warrant, warrant_chain = split_presented_warrant(bound_warrant, warrant_chain)
+
         # Get tool name and description
         tool_name = _get_tool_name(wrapped)
         tool_desc = getattr(wrapped, "description", f"Protected tool: {tool_name}")
@@ -136,6 +154,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         object.__setattr__(self, "strict", strict)
         object.__setattr__(self, "_schemas", schemas or TOOL_SCHEMAS)
         object.__setattr__(self, "_bound_warrant", bound_warrant)
+        object.__setattr__(self, "_warrant_chain", warrant_chain)
         object.__setattr__(self, "_trusted_roots", trusted_roots)
         object.__setattr__(self, "_approval_handler", approval_handler)
         object.__setattr__(self, "_approvals", approvals)
@@ -155,8 +174,20 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         from .bound_warrant import BoundWarrant as _BoundWarrant
 
         bound_warrant = getattr(self, "_bound_warrant", None)
-        if bound_warrant:
-            return bound_warrant
+        if bound_warrant is not None:
+            from tenuo_core import Warrant as _Warrant
+
+            if not isinstance(bound_warrant, _Warrant):
+                return bound_warrant
+            # A plain Warrant leaf (e.g. from a WarrantStack token) binds to
+            # the holder key in scope, the same as a context warrant.
+            signing_key = key_scope()
+            if signing_key is None:
+                raise ConfigurationError(
+                    f"Tool '{self.name}' was given an unbound warrant; bind it with "
+                    "warrant.bind(key) or run inside key_scope(key)."
+                )
+            return bound_warrant.bind(signing_key)
 
         warrant = warrant_scope()
         if warrant is None:
@@ -186,7 +217,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
             approval_handler=getattr(self, "_approval_handler", None),
             approvals=getattr(self, "_approvals", None),
-            warrant_chain=chain_scope(),
+            warrant_chain=self._presented_parents(),
         )
         self._emit_and_check(result, bound_warrant, tool_input)
 
@@ -202,9 +233,14 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
             approval_handler=getattr(self, "_approval_handler", None),
             approvals=getattr(self, "_approvals", None),
-            warrant_chain=chain_scope(),
+            warrant_chain=self._presented_parents(),
         )
         self._emit_and_check(result, bound_warrant, tool_input)
+
+    def _presented_parents(self) -> Optional[List[Any]]:
+        """Parents for enforcement: the explicit warrant_chain, else chain_scope()."""
+        explicit = getattr(self, "_warrant_chain", None)
+        return explicit if explicit is not None else chain_scope()
 
     def _emit_and_check(self, result: Any, bound_warrant: Any, tool_input: Dict[str, Any]) -> None:
         """Emit control plane event and raise on denial."""
@@ -426,6 +462,7 @@ def guard(
     strict: bool = False,
     approval_handler: Optional[Any] = None,
     approvals: Optional[Any] = None,
+    warrant_chain: Optional[List[Any]] = None,
 ) -> List[Any]:
     """
     Guard tools with Tenuo authorization (unified API).
@@ -435,9 +472,12 @@ def guard(
     Args:
         tools: List of tools (functions or BaseTools)
         bound: Optional BoundWarrant for explicit auth.
-               If None, uses context.
+               If None, uses context. May also be the whole delegation chain
+               as a WarrantStack string or root-first list (see TenuoTool).
         strict: Require constraints for critical tools
         approval_handler: Handler for warrant approval gates
+        warrant_chain: Parent warrants of a delegated warrant, root-first and
+               excluding the leaf
 
     Returns:
         List of guarded TenuoTool wrappers
@@ -451,15 +491,21 @@ def guard(
         # Explicit bound warrant:
         bound = warrant.bind(key)
         tools = guard([search, calculator], bound)
+
+        # Delegated warrant with its parents:
+        tools = guard([search], leaf.bind(key), warrant_chain=[root])
     """
+    # Split once, before the empty-tools shortcut, so a malformed or empty
+    # chain always fails here rather than per tool (or not at all).
+    bound, warrant_chain = split_presented_warrant(bound, warrant_chain)
     if not tools:
         return []
-
     return [
         TenuoTool(
             t, strict=strict, bound_warrant=bound,
             approval_handler=approval_handler,
             approvals=approvals,
+            warrant_chain=warrant_chain,
         )
         for t in tools
     ]

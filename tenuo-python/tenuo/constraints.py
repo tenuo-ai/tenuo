@@ -77,6 +77,8 @@ if TYPE_CHECKING:
 
 try:
     from tenuo_core import (
+        All,  # AND composite, used to build path_glob()
+        Pattern,  # Glob over the whole string, used to build path_glob()
         Subpath,  # Secure path containment constraint
         UrlSafe,  # SSRF-safe URL constraint
     )
@@ -101,10 +103,57 @@ except ImportError:
         def is_safe(self, url: str) -> bool:
             raise ImportError("tenuo_core not available")
 
+    class All:  # type: ignore[no-redef]
+        """Fallback - Rust extension not available."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError("tenuo_core not available - rebuild with maturin")
+
+    class Pattern:  # type: ignore[no-redef]
+        """Fallback - Rust extension not available."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError("tenuo_core not available - rebuild with maturin")
+
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+
+def path_glob(
+    root: str,
+    glob: str,
+    *,
+    case_sensitive: bool = True,
+    allow_equal: bool = True,
+) -> Any:
+    """
+    A traversal-safe filesystem glob: the value must stay under ``root`` and
+    match ``glob``.
+
+    ``Pattern`` on its own is a generic string glob whose ``*`` crosses ``/``,
+    so ``Pattern("*.json")`` admits ``/etc/passwd.json``. Pairing it with
+    ``Subpath`` is what makes it a filesystem boundary.
+
+    The glob is tested against the whole path, not against the part below
+    ``root``, so it matches at any depth::
+
+        path_glob("/workspace", "*.json")
+        # /workspace/reports/q3.json  OK
+        # /workspace/secrets.env      BLOCKED (glob)
+        # /etc/passwd.json            BLOCKED (root)
+
+    A delegatee can narrow this to a single ``Exact`` path the parent already
+    admits, or to a tighter ``path_glob``. Narrowing to a value outside the
+    root, or one the glob rejects, raises ``MonotonicityError``.
+    """
+    return All(
+        [
+            Subpath(root, case_sensitive=case_sensitive, allow_equal=allow_equal),
+            Pattern(glob),
+        ]
+    )
 
 
 def ensure_constraint(value: Any) -> Any:
@@ -509,6 +558,7 @@ __all__ = [
     "Shlex",
     # Helper functions
     "ensure_constraint",
+    "path_glob",
     # Capability API
     "Capability",
     "Constraints",

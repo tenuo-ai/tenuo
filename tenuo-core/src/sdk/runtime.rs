@@ -92,7 +92,7 @@ impl Runtime {
             srl_max_age: DEFAULT_SRL_MAX_AGE,
             srl_clock_tolerance: DEFAULT_SRL_CLOCK_TOLERANCE,
             floor_path: None,
-            denial_reporting: DenialReporting::Error,
+            denial_reporting: DenialReporting::default(),
             #[cfg(feature = "receipts")]
             evidence: EvidencePolicy::Disabled,
             #[cfg(feature = "receipts")]
@@ -219,6 +219,17 @@ impl Session {
     /// Warrant chain bound to the runtime holder key.
     pub fn authority(&self) -> &PresentedAuthority {
         &self.authority
+    }
+
+    /// Pin the local jail for this session.
+    ///
+    /// The runtime is process-wide. The workspace is one job: warrants speak
+    /// `logical_root`, and `local_root` is the directory on this machine.
+    #[cfg(feature = "filesystem")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "filesystem")))]
+    pub fn with_filesystem(mut self, workspace: super::filesystem::Workspace) -> Self {
+        self.enforcer = self.enforcer.with_filesystem(workspace);
+        self
     }
 
     /// Authorize `call` with this session's warrant, then run `op`.
@@ -361,6 +372,8 @@ impl RuntimeBuilder {
     }
 
     /// Log level for denials. Never changes whether the operation runs.
+    ///
+    /// Defaults to [`DenialReporting::Debug`], which writes nothing.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
         self

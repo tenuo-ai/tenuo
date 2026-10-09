@@ -1,13 +1,13 @@
 # Tenuo Python SDK
 
-**Capability tokens for AI agents**
+**Task-scoped authorization for AI agents**
 
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
-> **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](../CHANGELOG.md).
+> **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](https://github.com/tenuo-ai/tenuo/blob/main/CHANGELOG.md).
 
-Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing cryptographically-enforced capability attenuation for AI agent workflows.
+The Python SDK for [Tenuo](https://github.com/tenuo-ai/tenuo). A warrant is a signed grant of which tools an agent may call, with which argument constraints, and for how long. Tenuo checks every tool call against it before the tool runs, so a prompt-injected or confused agent cannot act outside its task. Warrants are bound to the agent holding them, can only narrow when delegated to another agent, verify offline, and produce signed allow/deny receipts. Adapters cover LangChain, LangGraph, CrewAI, the OpenAI Agents SDK, Google ADK, AutoGen, MCP (official SDK and FastMCP), A2A, FastAPI, and Temporal.
 
 ## Installation
 
@@ -145,8 +145,9 @@ warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(key))
 
-# Bind key for repeated use
-bound = warrant.bind(key)
+# Bind key for repeated use. trusted_roots is the anchor the warrant's issuer
+# must chain back to; this warrant is self-minted, so that anchor is `key`.
+bound = warrant.bind(key, trusted_roots=[key.public_key])
 
 items = ["item1", "item2", "item3"]
 for item in items:
@@ -394,11 +395,11 @@ response = client.chat.completions.create(
 | `Pattern(glob)` | Glob pattern matching | `Pattern("*@company.com")` |
 | `UrlPattern(url)` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as Wildcard ("Any Path"). Use `/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
 
-For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.ai/openai).
+Tier 1 rejects out-of-policy calls on the guarded path. The constraints above are that policy: path scope, URL safety, shell allowlists, and patterns. Tier 2 carries the same policy in a signed, holder-bound warrant, with delegation that can only narrow. See [OpenAI Integration](https://tenuo.ai/openai). When the agent can skip the wrapper, enforce in the component that performs the effect, outside the agent's control.
 
 ## Google ADK Integration
 
-Warrant-based tool protection for Google ADK agents:
+Local policy checks for Google ADK agents (Tier 1):
 
 ```python
 from google.adk.agents import Agent
@@ -660,7 +661,7 @@ async with SecureMCPClient("python", ["server.py"]) as client:
 async with SecureMCPClient(
     url="https://mcp.example.com/mcp",
     transport="http",          # or "sse"
-    inject_warrant=True,       # send warrant via params._meta.tenuo
+    inject_warrant=True,       # params._meta.tenuo; use "argument" for _tenuo
 ) as client:
     ...
 ```
@@ -684,7 +685,7 @@ async def read_file(path: str, **kwargs) -> str:
     return open(clean["path"]).read()
 ```
 
-MCP servers return JSON-RPC `-32002` when an approval gate fires or multi-sig threshold is not met; retry with `_meta.tenuo.approvals`. See [Human Approvals](../docs/approvals.md).
+MCP servers return JSON-RPC `-32002` when an approval gate fires or multi-sig threshold is not met; retry with `_meta.tenuo.approvals`. See [Human Approvals](https://tenuo.ai/approvals).
 
 ## Security Considerations
 
@@ -770,7 +771,7 @@ python examples/mcp/mcp_client_demo.py
 |-----------|-----------|
 | **Python** | 3.9 - 3.14 (some extras require ≥3.10, see Installation) |
 | **OS** | Linux, macOS, Windows |
-| **Rust** | Not required (binary wheels for macOS, Linux, Windows) |
+| **Rust** | Not required for Linux (x86_64, aarch64), macOS (arm64), or Windows (x64) wheels. Other platforms build from source |
 
 ## Documentation
 

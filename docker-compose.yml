@@ -8,7 +8,7 @@
 #
 # This runs:
 #   - Control Plane (port 8080) - issues warrants
-#   - Authorizer (port 9090) - verifies warrants
+#   - Authorizer (port 9090) - verifies warrants; health/status on port 9091
 #   - Orchestrator - receives root warrant, delegates to worker
 #   - Worker - receives delegated warrant, performs actions
 
@@ -55,7 +55,8 @@ services:
       dockerfile: deploy/docker/Dockerfile.authorizer
     command: ["serve", "--config", "/etc/tenuo/gateway.yaml"]
     ports:
-      - "9090:9090"
+      - "9090:9090"   # authorization API
+      - "9091:9091"   # health: /health, /healthz, /ready, /status
     environment:
       TENUO_TRUSTED_KEYS: "02b04e930d436f40552de8e2fd3222a9840c8343c6332908a6b0a07039a4b53e"
     volumes:

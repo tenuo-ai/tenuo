@@ -3,27 +3,39 @@
 # This is a minimal distroless image for the data plane authorizer.
 # Designed to be small (~15MB) and fast for sidecar deployment.
 #
+# Ports:
+#   9090 - authorization API (Envoy/Istio/nginx ext_authz, --port)
+#   9091 - health listener (--health-port; 0 disables it)
+#
+# Health endpoints are served ONLY on the health port, never on 9090. Behind
+# Envoy/Istio HTTP ext_authz the client's path is forwarded to the authorizer
+# and a 200 means ALLOW, so health routes on the authorization port would let
+# clients reach /health etc on the backend without a warrant.
+#
 # Note: No HEALTHCHECK instruction - distroless has no shell/curl.
-# For Kubernetes, use HTTP probes:
+# For Kubernetes, use HTTP probes against the health port:
 #   livenessProbe:
 #     httpGet:
 #       path: /health
-#       port: 8080
+#       port: 9091
 #   readinessProbe:
 #     httpGet:
 #       path: /ready
-#       port: 8080
+#       port: 9091
 #
-# Available health endpoints (no auth required):
+# Health endpoints on the health port (no auth required):
 #   GET /health  - Returns {"status": "healthy"}
 #   GET /healthz - Same (K8s convention)
 #   GET /ready   - Same (readiness probe)
+#   GET /status  - Version, uptime, control-plane registration state
 #
 # Build:
 #   docker build -f deploy/docker/Dockerfile.authorizer -t tenuo/authorizer:latest .
 #
 # Run:
-#   docker run -p 9090:9090 -e TENUO_TRUSTED_KEYS=<hex> tenuo/authorizer:latest serve
+#   docker run -p 9090:9090 -p 9091:9091 -e TENUO_TRUSTED_KEYS=<hex> \
+#     -v "$PWD/gateway.yaml:/etc/tenuo/gateway.yaml:ro" \
+#     tenuo/authorizer:latest serve --config /etc/tenuo/gateway.yaml
 
 # ============================================================================
 # Build stage
@@ -64,6 +76,9 @@ COPY --from=builder /app/target/release/tenuo-authorizer /tenuo-authorizer
 
 # Run as non-root
 USER 1000
+
+# Authorization API, health listener
+EXPOSE 9090 9091
 
 # Entry point
 ENTRYPOINT ["/tenuo-authorizer"]

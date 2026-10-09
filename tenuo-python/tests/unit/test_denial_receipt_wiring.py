@@ -112,13 +112,7 @@ def test_key_10_uses_the_canonical_vocabulary():
 
 
 def test_a_split_view_denial_commits_to_what_the_holder_signed(bound, signing_key):
-    """Key 7 must hash the PoP view, not the host's original tool_args.
-
-    Allows hash the pop_args view inside check_chain. A None-valued argument
-    makes the stripped PoP view differ from tool_args, so hashing the wrong
-    view here would produce a receipt that fails a later --args check against
-    the wire payload — a genuine receipt, rejected.
-    """
+    """Key 7 must hash the PoP view the core signed, including JSON null."""
     from tenuo.receipts import InMemoryReceiptSink
 
     raw_args = {"path": "/etc/passwd", "note": None}
@@ -129,9 +123,7 @@ def test_a_split_view_denial_commits_to_what_the_holder_signed(bound, signing_ke
         trusted_roots=[signing_key.public_key],
     )
     assert not result.allowed
-    assert result.pop_auth_args == {"path": "/etc/passwd"}, (
-        "the denial must carry the stripped view the holder signed over"
-    )
+    assert result.pop_auth_args == {"path": "/etc/passwd", "note": None}
 
     from tenuo.control_plane import ControlPlaneClient as PyControlPlaneClient
 
@@ -154,13 +146,8 @@ def test_a_split_view_denial_commits_to_what_the_holder_signed(bound, signing_ke
     leaf_id = leaf.id() if callable(leaf.id) else leaf.id
 
     pop_view_hash = tenuo_core.py_compute_request_hash(
-        leaf_id, "read_file", {"path": "/etc/passwd"}, holder
+        leaf_id, "read_file", {"path": "/etc/passwd", "note": None}, holder
     ).hex()
-
-    # The raw view is not even hashable — py_compute_request_hash rejects the
-    # None value — which is its own proof that hashing result.arguments here
-    # could never have matched what allows commit to.
-    assert result.arguments != result.pop_auth_args
     assert payload.request_hash == pop_view_hash
 
 

@@ -67,7 +67,7 @@ impl Tenuo {
             chain: None,
             signer: None,
             revocation: None,
-            denial_reporting: DenialReporting::Error,
+            denial_reporting: DenialReporting::default(),
             _state: PhantomData,
         }
     }
@@ -78,7 +78,7 @@ impl Tenuo {
         EnforcementBuilder {
             roots: Vec::new(),
             revocation: None,
-            denial_reporting: DenialReporting::Error,
+            denial_reporting: DenialReporting::default(),
             _state: PhantomData,
         }
     }
@@ -169,6 +169,8 @@ impl LocalBuilder<NeedRevocation> {
 
 impl LocalBuilder<Ready> {
     /// Log level for denials. Never changes whether the operation runs.
+    ///
+    /// Defaults to [`DenialReporting::Debug`], which writes nothing.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
         self
@@ -238,6 +240,8 @@ impl EnforcementBuilder<NeedRevocation> {
 
 impl EnforcementBuilder<Ready> {
     /// Log level for denials. Never changes whether the operation runs.
+    ///
+    /// Defaults to [`DenialReporting::Debug`], which writes nothing.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
         self

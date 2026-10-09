@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Generic, List, Optional, TypeVar
 
-from ._enforcement import DenialPolicy
+from ._enforcement import DenialPolicy, split_presented_warrant
 from .bound_warrant import BoundWarrant
 from .exceptions import ConfigurationError, ExpiredError, MissingSigningKey
 
@@ -150,6 +150,7 @@ class BaseGuardBuilder(Generic[T]):
         """Initialize common builder state."""
         self._constraints: Dict[str, Dict[str, Any]] = {}
         self._warrant: Optional[Any] = None
+        self._warrant_chain: Optional[List[Any]] = None
         self._signing_key: Optional[Any] = None
         self._trusted_roots: Optional[list] = None
         self._on_denial: str = DenialPolicy.RAISE
@@ -174,23 +175,30 @@ class BaseGuardBuilder(Generic[T]):
         self._constraints[tool_name] = constraints
         return self
 
-    def with_warrant(self: T, warrant: Any, signing_key: Any) -> T:
+    def with_warrant(self: T, warrant: Any, signing_key: Any, *, warrant_chain: Optional[List[Any]] = None) -> T:
         """
         Enable Tier 2 authorization with warrant and signing key.
 
         Args:
-            warrant: Cryptographic warrant authorizing tool access
+            warrant: Cryptographic warrant authorizing tool access. May also be
+                an encoded WarrantStack string or a root-first list of warrants
+                (the last one is the leaf), so a delegated warrant verifies
+                back to a trusted root without ``chain_scope``.
             signing_key: Agent's signing key for Proof-of-Possession
+            warrant_chain: Parent warrants for a delegated ``warrant``,
+                root-first and excluding the leaf.
 
         Returns:
             self for method chaining
 
         Raises:
             MissingSigningKey: If signing_key is None
+            ConfigurationError: If a stack and ``warrant_chain`` are both given,
+                or a token does not decode
         """
         if signing_key is None:
             raise MissingSigningKey("Signing key is required for Tier 2")
-        self._warrant = warrant
+        self._warrant, self._warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._signing_key = signing_key
         return self
 

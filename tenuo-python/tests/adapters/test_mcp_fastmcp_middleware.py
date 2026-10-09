@@ -76,7 +76,7 @@ def _make_meta_strip_none(
     tool: str,
     tool_args: Dict[str, Any],
 ) -> Any:
-    """Build metadata using the same canonicalization as MCP client/server."""
+    """Model a legacy client that signed a different, null-stripped map."""
     return _make_meta(warrant, key, tool, strip_none_values(tool_args))
 
 
@@ -271,6 +271,40 @@ async def test_middleware_accepts_and_strips_tenuo(
 
 
 @pytest.mark.asyncio
+async def test_middleware_accepts_and_strips_argument_carrier(
+    authorizer: Authorizer,
+    simple_warrant: Warrant,
+    agent_key: SigningKey,
+) -> None:
+    verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
+    mw = TenuoMiddleware(verifier)
+    tool_args = {"path": "/data/x.txt"}
+    envelope = request_params_meta_as_dict(
+        _make_meta(simple_warrant, agent_key, "read_file", tool_args)
+    )["tenuo"]
+    params = CallToolRequestParams(
+        name="read_file", arguments={**tool_args, "_tenuo": envelope}
+    )
+    ctx = MiddlewareContext(
+        message=params,
+        source="client",
+        type="request",
+        method="tools/call",
+        fastmcp_context=None,
+    )
+    seen: dict[str, Any] = {}
+
+    async def call_next(c: MiddlewareContext) -> ToolResult:
+        seen["args"] = dict(c.message.arguments or {})
+        return ToolResult(content=[TextContent(type="text", text="ok")])
+
+    out = await mw.on_call_tool(ctx, call_next)
+
+    assert seen["args"] == tool_args
+    assert isinstance(out, ToolResult)
+
+
+@pytest.mark.asyncio
 async def test_middleware_denies_tampered_pop(
     authorizer: Authorizer,
     simple_warrant: Warrant,
@@ -304,16 +338,19 @@ async def test_middleware_denies_tampered_pop(
 
 
 @pytest.mark.asyncio
-async def test_middleware_accepts_none_optional_args(
+@pytest.mark.parametrize("strip_null", [False, True])
+async def test_middleware_requires_signed_none_optional_args(
     authorizer: Authorizer,
     simple_warrant: Warrant,
     agent_key: SigningKey,
+    strip_null: bool,
 ) -> None:
-    """Regression: None-valued args must not crash through middleware path."""
+    """Null is forwarded only when the holder signed it, not via a fallback."""
     verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
     mw = TenuoMiddleware(verifier)
     args = {"path": "/data/x.txt", "max_size": None}
-    meta = _make_meta_strip_none(simple_warrant, agent_key, "read_file", args)
+    make_meta = _make_meta_strip_none if strip_null else _make_meta
+    meta = make_meta(simple_warrant, agent_key, "read_file", args)
     params = CallToolRequestParams(name="read_file", arguments=args, _meta=meta)
     ctx = MiddlewareContext(
         message=params,
@@ -330,7 +367,11 @@ async def test_middleware_accepts_none_optional_args(
 
     out = await mw.on_call_tool(ctx, call_next)
     assert isinstance(out, ToolResult)
-    # Middleware keeps original call args for handler; verifier strips internally.
+    if strip_null:
+        assert call_tool_result_is_error(out.to_mcp_result()) is True
+        assert seen == {}
+        return
+    # The handler receives exactly the signed arguments, null included.
     assert seen["args"]["path"] == "/data/x.txt"
     assert "max_size" in seen["args"]
 

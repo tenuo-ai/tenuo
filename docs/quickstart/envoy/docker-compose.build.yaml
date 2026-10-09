@@ -1,0 +1,7 @@
+# Override: build the authorizer from this checkout instead of pulling it.
+services:
+  tenuo-authorizer:
+    image: tenuo-authorizer:e2e
+    build:
+      context: ../../../tenuo-core
+      dockerfile: deploy/docker/Dockerfile.authorizer

@@ -296,6 +296,29 @@ class SdkContext {
         return this;
     }
     /**
+     * `_meta.tenuo` for argument JSON text at `timestamp` (unix seconds).
+     *
+     * The proof covers the core's parse of `args_json`, including JSON null.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {string} args_json
+     * @param {number} timestamp
+     * @param {any} approvals
+     * @returns {any}
+     */
+    signMeta(session, tool, args_json, timestamp, approvals) {
+        _assertClass(session, SdkSession);
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_signMeta(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, ptr1, len1, timestamp, approvals);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
      * @param {SdkSession} session
      * @param {string} tool
@@ -370,6 +393,54 @@ class SdkContext {
         } finally {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
         }
+    }
+    /**
+     * Compatibility alias for verifyMetaPop. NOT an authorization check.
+     * @param {string} warrant
+     * @param {string} signature
+     * @param {string} tool
+     * @param {string} args_json
+     * @param {number} timestamp
+     * @returns {boolean}
+     */
+    verifyMeta(warrant, signature, tool, args_json, timestamp) {
+        const ptr0 = passStringToWasm0(warrant, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_verifyMeta(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, timestamp);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] !== 0;
+    }
+    /**
+     * Check ONLY the holder proof, not trust, expiry, constraints, approvals or replay.
+     * @param {string} warrant
+     * @param {string} signature
+     * @param {string} tool
+     * @param {string} args_json
+     * @param {number} timestamp
+     * @returns {boolean}
+     */
+    verifyMetaPop(warrant, signature, tool, args_json, timestamp) {
+        const ptr0 = passStringToWasm0(warrant, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_verifyMetaPop(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, timestamp);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] !== 0;
     }
     /**
      * Sign verifier receipts with this 32-byte holder secret instead of an
@@ -519,7 +590,7 @@ class SdkSession {
         return SdkSession.__wrap(ret[0]);
     }
     /**
-     * CBOR warrant stack as standard base64. Matches Python `encode_warrant_stack`.
+     * CBOR warrant stack as unpadded URL-safe base64. Same bytes as `_meta.tenuo.warrant`.
      * @returns {string}
      */
     toStackWire() {
@@ -876,6 +947,27 @@ function parse_connect_token(token) {
     return ret;
 }
 exports.parse_connect_token = parse_connect_token;
+
+/**
+ * Reject a repeated key in any object.
+ *
+ * A tools/call the host has already turned into an object cannot be checked:
+ * the duplicate key is gone. Call this while the text is still available.
+ * Nested objects are checked too. On success the caller parses `json_text`
+ * with the host parser. This function does not build a JavaScript object:
+ * that conversion turns `__proto__` into a prototype change and `null` into
+ * `undefined`.
+ * @param {string} json_text
+ */
+function parse_strict_json(json_text) {
+    const ptr0 = passStringToWasm0(json_text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_strict_json(ptr0, len0);
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
+}
+exports.parse_strict_json = parse_strict_json;
 
 /**
  * Decode and check an approval envelope. Not authorization.

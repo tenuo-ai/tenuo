@@ -183,11 +183,13 @@ env:
 ```yaml
 containers:
 - name: tenuo-authorizer
-  image: tenuo/authorizer:0.3.0
+  image: tenuo/authorizer:0.3.2
   args: ["serve", "--config", "/etc/tenuo/gateway.yaml"]
   ports:
   - name: http
-    containerPort: 9090
+    containerPort: 9090   # authorization API
+  - name: health
+    containerPort: 9091   # /health, /healthz, /ready, /status (--health-port)
   env:
   - name: TENUO_TRUSTED_KEYS
     value: "<control-plane-public-key-hex>"
@@ -197,13 +199,13 @@ containers:
   livenessProbe:
     httpGet:
       path: /health
-      port: 9090
+      port: health
     initialDelaySeconds: 5
     periodSeconds: 10
   readinessProbe:
     httpGet:
       path: /ready
-      port: 9090
+      port: health
     initialDelaySeconds: 3
     periodSeconds: 5
 - name: agent
@@ -211,6 +213,8 @@ containers:
 ```
 
 > The authorizer binary reads trusted keys from `TENUO_TRUSTED_KEYS` (comma-separated hex). When using the Helm chart, keys are set via `config.trustedRoots` in `values.yaml` instead.
+
+> Health and status endpoints are served only on the health port (`--health-port`, default 9091), never on the authorization port. Behind Envoy or Istio HTTP ext_authz the client's path is forwarded to the authorizer and a 200 means ALLOW, so health routes on port 9090 would let clients reach `/health` and friends on your backend without a warrant. Point probes at the `health` port. `--legacy-health-on-main-port` restores the old routes for a migration window and logs a warning; do not use it behind ext_authz without a `path_prefix`.
 
 ### As Gateway
 
@@ -394,7 +398,11 @@ settings:
   debug_mode: true   # Non-production only!
 ```
 
-Denied responses include `X-Tenuo-Deny-Reason`:
+Authorization failures (403) include `X-Tenuo-Deny-Reason`; since 0.3.2 the
+401 `missing_warrant`, 400 `invalid_warrant` and 404 `no_route` responses carry
+it too. Behind Envoy or Istio, allow the header through
+(`allowed_client_headers` / `headersToDownstreamOnDeny`) or the client will not
+see it:
 
 ```http
 HTTP/1.1 403 Forbidden
@@ -438,20 +446,20 @@ kubectl logs -l app=tenuo-authorizer --since=1h | \
 
 ### `/status` Endpoint
 
-The authorizer exposes a `/status` endpoint (no auth required) for debugging:
+The authorizer exposes a `/status` endpoint (no auth required) for debugging, on the health port (default 9091), not the authorization port:
 
 ```bash
 # From the agent container in the same pod (distroless authorizer has no shell):
-kubectl exec deploy/your-agent -c agent -- curl -s localhost:9090/status | jq
+kubectl exec deploy/your-agent -c agent -- curl -s localhost:9091/status | jq
 
 # Or port-forward and query from your machine:
-kubectl port-forward deploy/your-agent 9090:9090 &
-curl -s localhost:9090/status | jq
+kubectl port-forward deploy/your-agent 9091:9091 &
+curl -s localhost:9091/status | jq
 ```
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.2",
   "uptime_secs": 42,
   "cp": {
     "enabled": true,
@@ -476,7 +484,7 @@ metrics:
     interval: 30s
 ```
 
-> **Note:** The authorizer currently reports metrics to the Tenuo control plane via heartbeat rather than exposing a Prometheus `/metrics` endpoint. The `ServiceMonitor` monitors the `/health` endpoint for up/down status. For detailed authorization metrics (allow/deny counts, latency percentiles), use structured logs or the control plane dashboard.
+> **Note:** The authorizer currently reports metrics to the Tenuo control plane via heartbeat rather than exposing a Prometheus `/metrics` endpoint. For up/down status, probe `/health` on the health port (9091). For detailed authorization metrics (allow/deny counts, latency percentiles), use structured logs or the control plane dashboard.
 
 ---
 

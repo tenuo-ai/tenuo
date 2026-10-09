@@ -11,14 +11,15 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tenuo::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
-use tenuo::constraints::Subpath;
+use tenuo::constraints::{Shlex, Subpath, UrlSafe};
 use tenuo::payload::WarrantPayload;
 use tenuo::receipt::{Receipt, ReceiptPayload};
 use tenuo::wire::WarrantStack;
 use tenuo::{
-    encode_approval_gate_map, wire, ApprovalGateMap, Authorizer, Constraint, ConstraintSet,
-    ConstraintValue, Error, Exact, OneOf, Pattern, PublicKey, Range, Signature,
-    SignedRevocationList, SigningKey, ToolApprovalGate, Warrant, APPROVAL_GATE_EXTENSION_KEY,
+    encode_approval_gate_map, wire, All, Any, ApprovalGateMap, Authorizer, CelConstraint, Cidr,
+    Constraint, ConstraintSet, ConstraintValue, Contains, Error, Exact, Not, NotOneOf, OneOf,
+    Pattern, PublicKey, Range, RegexConstraint, Signature, SignedRevocationList, SigningKey,
+    Subset, ToolApprovalGate, UrlPattern, Warrant, Wildcard, APPROVAL_GATE_EXTENSION_KEY,
     MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS,
 };
 use wasm_bindgen::prelude::*;
@@ -627,7 +628,73 @@ impl SdkContext {
         let signature = leaf
             .sign(holder, tool, &args)
             .map_err(|e| JsError::new(&format!("failed to sign proof-of-possession: {e}")))?;
-        Ok(base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()))
+        Ok(canonical_token(&signature.to_bytes()))
+    }
+
+    /// `_meta.tenuo` for argument JSON text at `timestamp` (unix seconds).
+    ///
+    /// The proof covers the core's parse of `args_json`, including JSON null.
+    #[wasm_bindgen(js_name = signMeta)]
+    pub fn sign_meta(
+        &self,
+        session: &SdkSession,
+        tool: &str,
+        args_json: &str,
+        timestamp: f64,
+        approvals: JsValue,
+    ) -> Result<JsValue, JsError> {
+        init_panic_hook();
+        let _ = self;
+        let timestamp = unix_seconds(timestamp)?;
+        let holder = session
+            .holder
+            .as_ref()
+            .ok_or_else(|| JsError::new(NO_HOLDER_SECRET))?;
+        let approvals = parse_approvals(&approvals).map_err(|err| JsError::new(&err))?;
+        let meta = tenuo::meta_envelope::sign_meta(
+            &session.chain,
+            holder,
+            tool,
+            args_json,
+            timestamp,
+            &approvals,
+        )
+        .map_err(|err| JsError::new(&err.to_string()))?;
+        Ok(to_js_value(&MetaEnvelopeJs {
+            warrant: meta.warrant,
+            signature: meta.signature,
+            approvals: meta.approvals,
+        }))
+    }
+
+    /// Check ONLY the holder proof, not trust, expiry, constraints, approvals or replay.
+    #[wasm_bindgen(js_name = verifyMetaPop)]
+    pub fn verify_meta_pop(
+        &self,
+        warrant: &str,
+        signature: &str,
+        tool: &str,
+        args_json: &str,
+        timestamp: f64,
+    ) -> Result<bool, JsError> {
+        init_panic_hook();
+        let _ = self;
+        let timestamp = unix_seconds(timestamp)?;
+        tenuo::meta_envelope::verify_meta_pop(warrant, signature, tool, args_json, timestamp)
+            .map_err(|err| JsError::new(&err.to_string()))
+    }
+
+    /// Compatibility alias for verifyMetaPop. NOT an authorization check.
+    #[wasm_bindgen(js_name = verifyMeta)]
+    pub fn verify_meta(
+        &self,
+        warrant: &str,
+        signature: &str,
+        tool: &str,
+        args_json: &str,
+        timestamp: f64,
+    ) -> Result<bool, JsError> {
+        self.verify_meta_pop(warrant, signature, tool, args_json, timestamp)
     }
 
     /// Authorize a warrant + PoP presented on the wire. No holder secret.
@@ -689,13 +756,12 @@ impl SdkSession {
         Ok(to_js_value(&ids))
     }
 
-    /// CBOR warrant stack as standard base64. Matches Python `encode_warrant_stack`.
+    /// CBOR warrant stack as unpadded URL-safe base64. Same bytes as `_meta.tenuo.warrant`.
     #[wasm_bindgen(js_name = toStackWire)]
     pub fn to_stack_wire(&self) -> Result<String, JsError> {
         init_panic_hook();
-        let bytes = wire::encode_stack(&WarrantStack(self.chain.clone()))
-            .map_err(|e| JsError::new(&format!("failed to encode warrant stack: {e}")))?;
-        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+        tenuo::meta_envelope::encode_warrant_chain(&self.chain)
+            .map_err(|err| JsError::new(&err.to_string()))
     }
 
     /// Application idempotency key: SHA-256 of `(warrant_id, tool, canonical args)`.
@@ -1046,7 +1112,7 @@ impl SdkContext {
         // commit to arguments it never parsed.
         let mut request_hash: Option<[u8; 32]> = None;
 
-        let args = match js_to_args(&args_json) {
+        let args = match canonical_args(&args_json) {
             Ok(a) => a,
             Err(e) => {
                 return self.finish_decision(
@@ -1187,12 +1253,13 @@ impl SdkContext {
             }
         };
 
+        let constraints = constraint_view(&args);
         let result = match as_of {
             Some(t) => self.authorizer.check_chain_with_pop_args_as_of(
                 &session.chain,
                 tool,
                 &args,
-                &args,
+                &constraints,
                 Some(&signature),
                 &approvals,
                 t,
@@ -1201,7 +1268,7 @@ impl SdkContext {
                 &session.chain,
                 tool,
                 &args,
-                &args,
+                &constraints,
                 Some(&signature),
                 &approvals,
             ),
@@ -1209,7 +1276,7 @@ impl SdkContext {
 
         match result {
             Ok(_) => {
-                if let Err(e) = apply_tool_ceiling(&tool_allow, &args) {
+                if let Err(e) = apply_tool_ceiling(&tool_allow, &constraints) {
                     return self.finish_decision(
                         &session.chain,
                         tool,
@@ -1342,7 +1409,7 @@ impl SdkContext {
             }
         };
 
-        let args = match js_to_args(&args_json) {
+        let args = match canonical_args(&args_json) {
             Ok(a) => a,
             Err(e) => {
                 return self.finish_decision(
@@ -1437,12 +1504,13 @@ impl SdkContext {
             }
         };
 
+        let constraints = constraint_view(&args);
         let result = match as_of {
             Some(t) => self.authorizer.check_chain_with_pop_args_as_of(
                 &chain,
                 tool,
                 &args,
-                &args,
+                &constraints,
                 Some(&signature),
                 &approvals,
                 t,
@@ -1451,7 +1519,7 @@ impl SdkContext {
                 &chain,
                 tool,
                 &args,
-                &args,
+                &constraints,
                 Some(&signature),
                 &approvals,
             ),
@@ -1459,7 +1527,7 @@ impl SdkContext {
 
         match result {
             Ok(_) => {
-                if let Err(e) = apply_tool_ceiling(&tool_allow, &args) {
+                if let Err(e) = apply_tool_ceiling(&tool_allow, &constraints) {
                     return self.finish_decision(
                         &chain,
                         tool,
@@ -1608,6 +1676,9 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
         return Err("approvals must be an array of SignedApproval envelopes".into());
     }
     let arr = js_sys::Array::from(value);
+    if arr.length() as usize > tenuo::meta_envelope::MAX_APPROVALS {
+        return Err("too many approvals".into());
+    }
     let mut out = Vec::with_capacity(arr.length() as usize);
     for i in 0..arr.length() {
         out.push(parse_one_approval(&arr.get(i))?);
@@ -1617,10 +1688,16 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
 
 fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
     if let Some(text) = value.as_string() {
+        if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+            return Err("approval exceeds size limit".into());
+        }
         return signed_approval_from_text(&text);
     }
     if js_sys::Uint8Array::instanceof(value) {
         let bytes = js_sys::Uint8Array::new(value);
+        if bytes.length() as usize > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+            return Err("approval exceeds size limit".into());
+        }
         let mut buf = vec![0u8; bytes.length() as usize];
         bytes.copy_to(&mut buf);
         return signed_approval_from_bytes(&buf);
@@ -1629,19 +1706,19 @@ fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
 }
 
 pub(crate) fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
+    if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+        return Err("approval exceeds size limit".into());
+    }
+    // The MCP alphabets, whitespace policy, size limits and CBOR decoding
+    // live in the core. Hex remains an SDK import convenience only.
+    if let Ok(approval) = tenuo::meta_envelope::decode_approval(text) {
+        return Ok(approval);
+    }
     let trimmed = text.trim();
     if let Ok(bytes) = parse_hex(trimmed) {
         if let Ok(approval) = signed_approval_from_bytes(&bytes) {
             return Ok(approval);
         }
-    }
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(trimmed.as_bytes()) {
-        if let Ok(approval) = signed_approval_from_bytes(&bytes) {
-            return Ok(approval);
-        }
-    }
-    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(trimmed.as_bytes()) {
-        return signed_approval_from_bytes(&bytes);
     }
     Err("approval is not valid hex or base64 SignedApproval CBOR".into())
 }
@@ -1650,27 +1727,120 @@ pub(crate) fn signed_approval_from_bytes(bytes: &[u8]) -> Result<SignedApproval,
     ciborium::from_reader(bytes).map_err(|e| format!("invalid SignedApproval: {e}"))
 }
 
+/// Wire vocabulary for constraint expressions: the `{ kind, ... }` objects
+/// the TypeScript builders emit and that JSON/YAML policies, approval gates,
+/// `constraintBounds`, and `narrow()` all feed through `constraint_from_expr`.
+///
+/// One definition drives kind dispatch, the keys each kind accepts, and the
+/// type each value must have. A key the kind does not know or a value of the
+/// wrong type is an error, never silently dropped: dropping `allowDomains`
+/// or reading `min: "10"` as absent would widen authority.
+#[derive(Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+enum ConstraintExpr {
+    #[serde(rename = "under", rename_all = "camelCase")]
+    Under {
+        root: String,
+        case_sensitive: Option<bool>,
+        allow_equal: Option<bool>,
+    },
+    #[serde(rename = "email")]
+    Email { domain: String },
+    #[serde(rename = "max")]
+    Max { value: f64 },
+    #[serde(rename = "min")]
+    Min { value: f64 },
+    #[serde(rename = "range", rename_all = "camelCase")]
+    Range {
+        min: Option<f64>,
+        max: Option<f64>,
+        min_exclusive: Option<bool>,
+        max_exclusive: Option<bool>,
+    },
+    #[serde(rename = "oneOf")]
+    OneOf { values: Vec<String> },
+    #[serde(rename = "notOneOf")]
+    NotOneOf { values: Vec<String> },
+    #[serde(rename = "pattern")]
+    Pattern { pattern: String },
+    #[serde(rename = "regex")]
+    Regex { source: String },
+    #[serde(rename = "exact")]
+    Exact { value: serde_json::Value },
+    #[serde(rename = "wildcard")]
+    Wildcard {},
+    #[serde(rename = "cidr")]
+    Cidr { network: String },
+    #[serde(rename = "urlPattern")]
+    UrlPattern { pattern: String },
+    #[serde(rename = "urlSafe", rename_all = "camelCase")]
+    UrlSafe {
+        schemes: Option<Vec<String>>,
+        allow_domains: Option<Vec<String>>,
+        deny_domains: Option<Vec<String>>,
+    },
+    #[serde(rename = "shlex")]
+    Shlex { allow: Vec<String> },
+    #[serde(rename = "contains")]
+    Contains { values: Vec<serde_json::Value> },
+    #[serde(rename = "subset")]
+    Subset { values: Vec<serde_json::Value> },
+    #[serde(rename = "anyOf")]
+    AnyOf { constraints: Vec<serde_json::Value> },
+    #[serde(rename = "all")]
+    All { constraints: Vec<serde_json::Value> },
+    #[serde(rename = "not")]
+    Not { constraint: serde_json::Value },
+    #[serde(rename = "cel")]
+    Cel { expression: String },
+}
+
+fn value_list(values: &[serde_json::Value]) -> Result<Vec<ConstraintValue>, String> {
+    let mut budget = InputBudget::default();
+    values
+        .iter()
+        .map(|v| json_to_cv(v, 0, &mut budget))
+        .collect()
+}
+
+fn inner_list(kind: &str, items: &[serde_json::Value]) -> Result<Vec<Constraint>, String> {
+    if items.is_empty() {
+        return Err(format!("{kind} requires at least one constraint"));
+    }
+    items.iter().map(constraint_from_expr).collect()
+}
+
 pub(crate) fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> {
     let kind = expr
         .get("kind")
         .and_then(|v| v.as_str())
         .ok_or("constraint is missing kind")?;
-    match kind {
-        "under" => {
-            if expr.get("caseSensitive").is_some() || expr.get("allowEqual").is_some() {
-                return crate::sdk_ext::constraint_from_expr_ext("under", expr);
-            }
-            let root = expr
-                .get("root")
-                .and_then(|v| v.as_str())
-                .ok_or("under requires root")?;
-            Ok(Subpath::new(root).map_err(|e| e.to_string())?.into())
+    let parsed: ConstraintExpr = serde_json::from_value(expr.clone()).map_err(|e| {
+        let message = e.to_string();
+        if message.starts_with("unknown variant") {
+            format!("unknown constraint kind '{kind}'")
+        } else {
+            format!("{kind}: {message}")
         }
-        "email" => {
-            let domain = expr
-                .get("domain")
-                .and_then(|v| v.as_str())
-                .ok_or("email requires domain")?;
+    })?;
+    match parsed {
+        ConstraintExpr::Under {
+            root,
+            case_sensitive: None,
+            allow_equal: None,
+        } => Ok(Subpath::new(&root).map_err(|e| e.to_string())?.into()),
+        ConstraintExpr::Under {
+            root,
+            case_sensitive,
+            allow_equal,
+        } => Ok(Subpath::with_options(
+            &root,
+            case_sensitive.unwrap_or(true),
+            allow_equal.unwrap_or(true),
+        )
+        .map_err(|e| e.to_string())?
+        .into()),
+        ConstraintExpr::Email { domain } => {
             if domain.is_empty() || domain.contains('@') {
                 return Err("email domain must be a hostname, not an address".into());
             }
@@ -1678,43 +1848,92 @@ pub(crate) fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constrain
                 .map_err(|e| e.to_string())?
                 .into())
         }
-        "max" => {
-            let value = expr
-                .get("value")
-                .and_then(|v| v.as_f64())
-                .ok_or("max requires a numeric value")?;
-            Ok(Range::new(None, Some(value))
-                .map_err(|e| e.to_string())?
-                .into())
+        ConstraintExpr::Max { value } => Ok(Range::new(None, Some(value))
+            .map_err(|e| e.to_string())?
+            .into()),
+        ConstraintExpr::Min { value } => Ok(Range::new(Some(value), None)
+            .map_err(|e| e.to_string())?
+            .into()),
+        ConstraintExpr::Range {
+            min,
+            max,
+            min_exclusive,
+            max_exclusive,
+        } => {
+            if min.is_none() && max.is_none() {
+                return Err("range requires min, max, or both".into());
+            }
+            let mut range = Range::new(min, max).map_err(|e| e.to_string())?;
+            if min_exclusive == Some(true) {
+                range = range.min_exclusive();
+            }
+            if max_exclusive == Some(true) {
+                range = range.max_exclusive();
+            }
+            Ok(range.into())
         }
-        "oneOf" => {
-            let values = expr
-                .get("values")
-                .and_then(|v| v.as_array())
-                .ok_or("oneOf requires values")?;
-            let strings: Result<Vec<String>, _> = values
-                .iter()
-                .map(|v| {
-                    v.as_str()
-                        .map(|s| s.to_string())
-                        .ok_or("oneOf values must be strings")
-                })
-                .collect();
-            Ok(OneOf::new(strings?).into())
+        ConstraintExpr::OneOf { values } => Ok(OneOf::new(values).into()),
+        ConstraintExpr::NotOneOf { values } => Ok(NotOneOf::new(values).into()),
+        ConstraintExpr::Pattern { pattern } => {
+            Ok(Pattern::new(&pattern).map_err(|e| e.to_string())?.into())
         }
-        "pattern" => {
-            let pattern = expr
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .ok_or("pattern requires pattern")?;
-            Ok(Pattern::new(pattern).map_err(|e| e.to_string())?.into())
-        }
-        "exact" => {
-            let value = expr.get("value").ok_or("exact requires value")?;
-            let cv = json_to_cv(value, 0, &mut InputBudget::default())?;
+        ConstraintExpr::Regex { source } => Ok(RegexConstraint::new(&source)
+            .map_err(|e| e.to_string())?
+            .into()),
+        ConstraintExpr::Exact { value } => {
+            let cv = json_to_cv(&value, 0, &mut InputBudget::default())?;
             Ok(Exact::new(cv).into())
         }
-        other => crate::sdk_ext::constraint_from_expr_ext(other, expr),
+        ConstraintExpr::Wildcard {} => Ok(Wildcard::new().into()),
+        ConstraintExpr::Cidr { network } => {
+            Ok(Cidr::new(&network).map_err(|e| e.to_string())?.into())
+        }
+        ConstraintExpr::UrlPattern { pattern } => {
+            Ok(UrlPattern::new(&pattern).map_err(|e| e.to_string())?.into())
+        }
+        ConstraintExpr::UrlSafe {
+            schemes,
+            allow_domains,
+            deny_domains,
+        } => {
+            let mut safe = UrlSafe::new();
+            if let Some(schemes) = schemes {
+                if schemes.is_empty() {
+                    return Err("urlSafe schemes must not be empty".into());
+                }
+                safe.schemes = schemes;
+            }
+            if allow_domains.is_some() {
+                safe.allow_domains = allow_domains;
+            }
+            if deny_domains.is_some() {
+                safe.deny_domains = deny_domains;
+            }
+            Ok(safe.into())
+        }
+        ConstraintExpr::Shlex { allow } => {
+            if allow.is_empty() {
+                return Err("shlex requires at least one allowed command".into());
+            }
+            Ok(Shlex::new(allow).into())
+        }
+        ConstraintExpr::Contains { values } => Ok(Contains::new(value_list(&values)?).into()),
+        ConstraintExpr::Subset { values } => Ok(Subset::new(value_list(&values)?).into()),
+        ConstraintExpr::AnyOf { constraints } => {
+            Ok(Any::new(inner_list("anyOf", &constraints)?).into())
+        }
+        ConstraintExpr::All { constraints } => {
+            Ok(All::new(inner_list("all", &constraints)?).into())
+        }
+        ConstraintExpr::Not { constraint } => {
+            Ok(Not::new(constraint_from_expr(&constraint)?).into())
+        }
+        ConstraintExpr::Cel { expression } => {
+            if expression.trim().is_empty() {
+                return Err("cel expression must not be empty".into());
+            }
+            Ok(CelConstraint::new(&expression).into())
+        }
     }
 }
 
@@ -2262,9 +2481,9 @@ pub(crate) fn session_from_chain(
 pub(crate) fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
     reject_encoded_budget(input, MAX_ENCODED_CHAIN_CHARS, "encoded warrant chain")?;
     let trimmed = input.trim();
-    if let Ok(stack) = wire::decode_pem_chain(trimmed) {
-        if !stack.0.is_empty() {
-            return Ok(stack.0);
+    if let Ok(chain) = tenuo::meta_envelope::decode_warrant_chain(trimmed) {
+        if !chain.is_empty() {
+            return Ok(chain);
         }
     }
     if let Ok(warrant) = parse_warrant(trimmed) {
@@ -2275,17 +2494,65 @@ pub(crate) fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
             return Ok(stack.0);
         }
     }
-    let compact: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(compact.as_bytes()) {
-        if let Ok(stack) = wire::decode_stack(&bytes) {
-            if !stack.0.is_empty() {
-                return Ok(stack.0);
-            }
-        }
-    }
     Err(JsError::new(
         "TENUO_CHAIN_INVALID: invalid warrant or warrant chain",
     ))
+}
+
+fn canonical_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, String> {
+    if let Some(text) = value.as_string() {
+        return tenuo::meta_envelope::args_from_json(&text).map_err(|err| err.to_string());
+    }
+    js_to_args(value)
+}
+
+/// Constraint matching ignores JSON null. The proof still covers it.
+fn constraint_view(args: &HashMap<String, ConstraintValue>) -> HashMap<String, ConstraintValue> {
+    args.iter()
+        .filter_map(|(key, value)| match value {
+            ConstraintValue::Null => None,
+            ConstraintValue::List(items) => {
+                Some((key.clone(), ConstraintValue::List(clean_nulls(items))))
+            }
+            other => Some((key.clone(), other.clone())),
+        })
+        .collect()
+}
+
+fn clean_nulls(items: &[ConstraintValue]) -> Vec<ConstraintValue> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            ConstraintValue::Null => None,
+            ConstraintValue::List(nested) => Some(ConstraintValue::List(clean_nulls(nested))),
+            other => Some(other.clone()),
+        })
+        .collect()
+}
+
+fn canonical_token(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn unix_seconds(timestamp: f64) -> Result<i64, JsError> {
+    if !timestamp.is_finite()
+        || timestamp.fract() != 0.0
+        || timestamp < i64::MIN as f64
+        || timestamp > i64::MAX as f64
+    {
+        return Err(JsError::new(
+            "timestamp must be an integer number of unix seconds",
+        ));
+    }
+    Ok(timestamp as i64)
+}
+
+#[derive(Serialize)]
+struct MetaEnvelopeJs {
+    warrant: String,
+    signature: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    approvals: Vec<String>,
 }
 
 fn parse_presented_chain(warrants: &JsValue) -> Result<Vec<Warrant>, JsError> {
@@ -2504,8 +2771,134 @@ fn to_js(dto: &DecisionDto) -> JsValue {
     to_js_value(dto)
 }
 
+/// Reject a repeated key in any object.
+///
+/// A tools/call the host has already turned into an object cannot be checked:
+/// the duplicate key is gone. Call this while the text is still available.
+/// Nested objects are checked too. On success the caller parses `json_text`
+/// with the host parser. This function does not build a JavaScript object:
+/// that conversion turns `__proto__` into a prototype change and `null` into
+/// `undefined`.
+#[wasm_bindgen]
+pub fn parse_strict_json(json_text: &str) -> Result<(), JsError> {
+    tenuo::parse_json_strict(json_text).map_err(|err| JsError::new(&err.to_string()))?;
+    Ok(())
+}
+
 pub(crate) fn to_js_value<T: Serialize>(dto: &T) -> JsValue {
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     dto.serialize(&serializer)
         .unwrap_or_else(|_| JsValue::from_str("internal serialize error"))
+}
+
+#[cfg(test)]
+mod constraint_expr_tests {
+    use super::constraint_from_expr;
+    use serde_json::json;
+
+    #[test]
+    fn unknown_key_on_a_known_kind_is_rejected() {
+        let err = constraint_from_expr(&json!({ "kind": "urlSafe", "domains": ["example.com"] }))
+            .unwrap_err();
+        assert!(err.contains("urlSafe"), "{err}");
+        assert!(err.contains("unknown field `domains`"), "{err}");
+        assert!(err.contains("allowDomains"), "{err}");
+    }
+
+    #[test]
+    fn wrong_typed_values_are_rejected_not_dropped() {
+        for expr in [
+            json!({ "kind": "range", "min": "10", "max": 100 }),
+            json!({ "kind": "range", "min": 1, "minExclusive": "true" }),
+            json!({ "kind": "under", "root": "/data", "allowEqual": "false" }),
+            json!({ "kind": "oneOf", "values": ["a", 1] }),
+            json!({ "kind": "urlSafe", "allowDomains": "example.com" }),
+        ] {
+            let err = constraint_from_expr(&expr).unwrap_err();
+            assert!(err.contains("invalid type"), "{expr}: {err}");
+        }
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected_inside_composites() {
+        let inner = json!({ "kind": "under", "root": "/data", "allowEquals": true });
+        for expr in [
+            json!({ "kind": "not", "constraint": inner }),
+            json!({ "kind": "anyOf", "constraints": [inner] }),
+            json!({ "kind": "all", "constraints": [json!({ "kind": "wildcard" }), inner] }),
+        ] {
+            let err = constraint_from_expr(&expr).unwrap_err();
+            assert!(err.contains("unknown field `allowEquals`"), "{expr}: {err}");
+        }
+    }
+
+    #[test]
+    fn every_kind_parses_with_its_documented_keys() {
+        for expr in [
+            json!({ "kind": "under", "root": "/data" }),
+            json!({ "kind": "under", "root": "/data", "caseSensitive": false, "allowEqual": false }),
+            json!({ "kind": "email", "domain": "example.com" }),
+            json!({ "kind": "max", "value": 10 }),
+            json!({ "kind": "min", "value": 1.5 }),
+            json!({ "kind": "range", "min": 1, "max": 2, "minExclusive": true, "maxExclusive": true }),
+            json!({ "kind": "oneOf", "values": ["a"] }),
+            json!({ "kind": "notOneOf", "values": ["a"] }),
+            json!({ "kind": "pattern", "pattern": "a*" }),
+            json!({ "kind": "regex", "source": "^a$" }),
+            json!({ "kind": "exact", "value": { "nested": [1, "x"] } }),
+            json!({ "kind": "wildcard" }),
+            json!({ "kind": "cidr", "network": "10.0.0.0/8" }),
+            json!({ "kind": "urlPattern", "pattern": "https://*.example.com/*" }),
+            json!({ "kind": "urlSafe", "schemes": ["https"], "allowDomains": ["*.example.com"], "denyDomains": ["evil.example.com"] }),
+            json!({ "kind": "shlex", "allow": ["ls"] }),
+            json!({ "kind": "contains", "values": ["a", 1, true] }),
+            json!({ "kind": "subset", "values": ["a"] }),
+            json!({ "kind": "anyOf", "constraints": [{ "kind": "wildcard" }] }),
+            json!({ "kind": "all", "constraints": [{ "kind": "wildcard" }] }),
+            json!({ "kind": "not", "constraint": { "kind": "wildcard" } }),
+            json!({ "kind": "cel", "expression": "value > 1" }),
+        ] {
+            constraint_from_expr(&expr).unwrap_or_else(|e| panic!("{expr}: {e}"));
+        }
+    }
+
+    #[test]
+    fn kind_and_semantic_errors_keep_their_messages() {
+        let cases = [
+            (json!({ "root": "/data" }), "constraint is missing kind"),
+            (
+                json!({ "kind": "glob", "pattern": "*" }),
+                "unknown constraint kind 'glob'",
+            ),
+            (json!({ "kind": "under" }), "under: missing field `root`"),
+            (
+                json!({ "kind": "range" }),
+                "range requires min, max, or both",
+            ),
+            (
+                json!({ "kind": "urlSafe", "schemes": [] }),
+                "urlSafe schemes must not be empty",
+            ),
+            (
+                json!({ "kind": "shlex", "allow": [] }),
+                "shlex requires at least one allowed command",
+            ),
+            (
+                json!({ "kind": "anyOf", "constraints": [] }),
+                "anyOf requires at least one constraint",
+            ),
+            (
+                json!({ "kind": "cel", "expression": "  " }),
+                "cel expression must not be empty",
+            ),
+            (
+                json!({ "kind": "email", "domain": "a@b" }),
+                "email domain must be a hostname, not an address",
+            ),
+        ];
+        for (expr, expected) in cases {
+            let err = constraint_from_expr(&expr).unwrap_err();
+            assert_eq!(err, expected, "{expr}");
+        }
+    }
 }

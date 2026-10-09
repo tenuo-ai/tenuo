@@ -254,11 +254,15 @@
     /* Main content */
     .main {
       flex: 1;
+      display: flex;
+      min-height: calc(100vh - 56px);
+      flex-direction: column;
       padding: 48px 64px;
       min-width: 0;
     }
 
     .content {
+      flex: 1;
       max-width: 800px;
     }
 
@@ -616,6 +620,7 @@
     <span class="spacer"></span>
     <a href="{{ site.baseurl }}/quickstart">Docs</a>
     <a href="{{ site.baseurl }}/explorer">Explorer</a>
+    <a href="{{ site.baseurl }}/blog/">Blog</a>
     <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
     <a href="https://cloud.tenuo.ai">Tenuo Cloud</a>
   </nav>
@@ -635,6 +640,7 @@
         <p>
           © 2026 Tenuo ·
           <a href="{{ site.baseurl }}/quickstart">Docs</a> ·
+          <a href="{{ site.baseurl }}/blog/">Blog</a> ·
           <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> ·
           <a href="{{ site.baseurl }}/early-access.html">Early Access</a>
         </p>

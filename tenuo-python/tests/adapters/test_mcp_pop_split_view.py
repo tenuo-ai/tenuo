@@ -238,11 +238,7 @@ class TestPopParityAcrossConfigAsymmetry:
 
 
 class TestNoneValuedArguments:
-    """None values on the wire used to crash both ``warrant.sign`` and
-    ``Authorizer.*`` with ``ValueError``. They are now stripped symmetrically
-    on client and server, so an optional argument left as ``None`` flows
-    through authorization cleanly.
-    """
+    """JSON null stays in the proof. Constraint extraction still drops it."""
 
     def test_warrant_sign_accepts_none_after_strip(
         self,
@@ -283,13 +279,13 @@ class TestNoneValuedArguments:
             "encoding": None,
             "limit": None,
         }
-        meta = _meta(warrant, agent_key, "read_file", strip_none_values(wire_args))
+        meta = _meta(warrant, agent_key, "read_file", wire_args)
 
         result = MCPVerifier(authorizer=authorizer).verify(
             "read_file", wire_args, meta=meta
         )
         assert result.allowed, result.denial_reason
-        # None keys are not exposed as constraints
+        # None stays in the proof. Constraint extraction still drops it.
         assert "encoding" not in result.constraints
         assert "limit" not in result.constraints
         assert result.constraints["path"] == "/data/log.txt"
@@ -313,7 +309,7 @@ class TestNoneValuedArguments:
             holder=agent_key.public_key,
         )
         wire_args = {"path": "/data/log.txt", "tags": ["a", None, "b"]}
-        meta = _meta(warrant, agent_key, "read_file", strip_none_values(wire_args))
+        meta = _meta(warrant, agent_key, "read_file", wire_args)
 
         result = MCPVerifier(authorizer=authorizer).verify(
             "read_file", wire_args, meta=meta

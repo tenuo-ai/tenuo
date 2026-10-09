@@ -1,13 +1,16 @@
 [package]
 name = "tenuo"
-version = "0.3.0"
+version = "0.3.2"
 edition = "2021"
 authors = ["Tenuo Contributors"]
-description = "Agent Capability Flow Control - Rust core library"
+description = "Task-scoped authorization for AI agents: signed warrants that constrain tools and arguments, narrow on delegation, and verify offline. Rust core of Tenuo."
 license = "Apache-2.0"
+license-file = "LICENSE"
 repository = "https://github.com/tenuo-ai/tenuo"
 readme = "README.md"
-keywords = ["authorization", "capabilities", "agents", "security", "middleware"]
+homepage = "https://tenuo.ai"
+documentation = "https://docs.rs/tenuo"
+keywords = ["authorization", "ai-agents", "capabilities", "delegation", "mcp"]
 categories = ["authentication", "cryptography", "network-programming", "web-programming", "security"]
 
 [package.metadata.docs.rs]
@@ -34,6 +37,9 @@ data-plane = []
 
 # Framework-independent Rust SDK (default-off; no extra dependencies)
 sdk = []
+# Guarded file open. Subpath stays lexical; this feature pins a local jail
+# and opens the authorized argument through path_jail. Unix only at runtime.
+filesystem = ["sdk", "dep:path_jail"]
 mcp-transport = ["sdk"]
 http-transport = ["sdk"]
 async = ["sdk", "dep:async-trait"]
@@ -105,7 +111,9 @@ zeroize = "1.7"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
-serde_json = "1.0"
+# Authorization must read the same IEEE-754 value as Python/JavaScript, not
+# an adjacent float produced by serde_json's default approximate parser.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 ciborium = "0.2"
 base64 = "0.23"
@@ -142,6 +150,7 @@ thiserror = "2.0"
 # Optional SDK surfaces (never pulled by `sdk` alone)
 async-trait = { version = "0.1", optional = true }
 opentelemetry = { version = "0.30", optional = true }
+path_jail = { version = "0.5", optional = true, default-features = false, features = ["guard"] }
 
 # UUID for warrant IDs (v4 for random, v7 for time-ordered)
 uuid = { version = "1.6", features = ["v4", "v7", "serde", "js"] }
@@ -191,6 +200,11 @@ name = "holder_lifecycle_vectors"
 path = "tests/holder_lifecycle_vectors.rs"
 required-features = ["server"]
 
+[[test]]
+name = "filesystem_guard"
+path = "tests/filesystem_guard.rs"
+required-features = ["filesystem"]
+
 [[bench]]
 name = "warrant_benchmarks"
 harness = false
@@ -215,4 +229,3 @@ opt-level = 3       # Maximum optimization
 # This makes 'cargo test' and 'maturin develop' much faster after the initial build
 [profile.dev.package."*"]
 opt-level = 3
-

@@ -106,6 +106,12 @@ export class SdkContext {
     narrow(session: SdkSession, allow_json: any, options: any): SdkSession;
     constructor();
     /**
+     * `_meta.tenuo` for argument JSON text at `timestamp` (unix seconds).
+     *
+     * The proof covers the core's parse of `args_json`, including JSON null.
+     */
+    signMeta(session: SdkSession, tool: string, args_json: string, timestamp: number, approvals: any): any;
+    /**
      * Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
      */
     signPop(session: SdkSession, tool: string, args_json: any): string;
@@ -118,6 +124,14 @@ export class SdkContext {
      * `loadRevocationList` anywhere this issuer is a trusted root.
      */
     signRevocationListVersioned(ids: any, version?: number | null): string;
+    /**
+     * Compatibility alias for verifyMetaPop. NOT an authorization check.
+     */
+    verifyMeta(warrant: string, signature: string, tool: string, args_json: string, timestamp: number): boolean;
+    /**
+     * Check ONLY the holder proof, not trust, expiry, constraints, approvals or replay.
+     */
+    verifyMetaPop(warrant: string, signature: string, tool: string, args_json: string, timestamp: number): boolean;
     /**
      * Sign verifier receipts with this 32-byte holder secret instead of an
      * ephemeral key. Used by the TypeScript `Runtime`.
@@ -164,7 +178,7 @@ export class SdkSession {
      */
     static fromWire(warrant: string, holder_secret: Uint8Array): SdkSession;
     /**
-     * CBOR warrant stack as standard base64. Matches Python `encode_warrant_stack`.
+     * CBOR warrant stack as unpadded URL-safe base64. Same bytes as `_meta.tenuo.warrant`.
      */
     toStackWire(): string;
     /**
@@ -295,6 +309,18 @@ export function inspect_approval_gate(warrant_b64: string, tool: string): any;
  * Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
  */
 export function parse_connect_token(token: string): any;
+
+/**
+ * Reject a repeated key in any object.
+ *
+ * A tools/call the host has already turned into an object cannot be checked:
+ * the duplicate key is gone. Call this while the text is still available.
+ * Nested objects are checked too. On success the caller parses `json_text`
+ * with the host parser. This function does not build a JavaScript object:
+ * that conversion turns `__proto__` into a prototype change and `null` into
+ * `undefined`.
+ */
+export function parse_strict_json(json_text: string): void;
 
 /**
  * Decode and check an approval envelope. Not authorization.

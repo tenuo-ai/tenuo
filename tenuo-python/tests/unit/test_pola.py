@@ -89,7 +89,7 @@ class TestPOLAWithInheritAll:
     """Test inherit_all() followed by narrowing."""
 
     def test_inherit_all_then_narrow_tools(self):
-        """inherit_all() + tools() narrows to subset."""
+        """inherit_all() + retain_tools() narrows to a subset."""
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
@@ -100,7 +100,7 @@ class TestPOLAWithInheritAll:
         # Inherit all, then narrow to just read_file
         builder = parent.grant_builder()
         builder.inherit_all()
-        builder.tools(["read_file"])
+        builder.retain_tools(["read_file"])
         builder.holder(worker_kp.public_key)
         child = builder.grant(kp)
 

@@ -146,6 +146,30 @@ description: External writing, talks, and coverage about Tenuo
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--mention">Mention</span>
+    <div class="wild-title"><a href="https://www.agentpatternscatalog.org/patterns/attenuating-delegation-chain/">Attenuating Delegation Chain</a></div>
+    <div class="wild-attribution">Agent Patterns Catalog</div>
+    <p class="wild-description">Independent pattern write-up of signed, append-only delegation chains that a verifier can reject for widening without calling the issuer. The AAT Internet-Draft is listed among the references.</p>
+    <a class="wild-link" href="https://www.agentpatternscatalog.org/patterns/attenuating-delegation-chain/">Read the pattern →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--mention">Mention</span>
+    <div class="wild-title"><a href="https://datatracker.ietf.org/doc/draft-asor-wimse-agent-delegation-chain/">Verifiable Attenuated Delegation for AI Agent Chains</a></div>
+    <div class="wild-attribution">R. Asor · IETF WIMSE</div>
+    <p class="wild-description">WIMSE individual draft for offline-verifiable attenuated delegation chains. It shares its approach with the AAT Internet-Draft and is intended to converge with it.</p>
+    <a class="wild-link" href="https://datatracker.ietf.org/doc/draft-asor-wimse-agent-delegation-chain/">Read the draft →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--mention">Mention</span>
+    <div class="wild-title"><a href="https://datatracker.ietf.org/doc/draft-sweeney-wimse-credential-delegation/">Credential Delegation Protocol for AI Agents</a></div>
+    <div class="wild-attribution">K. Sweeney · IETF WIMSE</div>
+    <p class="wild-description">WIMSE individual draft for an online Delegation Server. AAT is cited as the offline, holder-attenuable counterpart with the same goal and a different trust model.</p>
+    <a class="wild-link" href="https://datatracker.ietf.org/doc/draft-sweeney-wimse-credential-delegation/">Read the draft →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--mention">Mention</span>
     <div class="wild-title"><a href="https://www.windley.com/archives/2026/06/internet_identity_workshop_xlii_report.shtml">Internet Identity Workshop XLII Report</a></div>
     <div class="wild-attribution">Phil Windley · IIW Organizer</div>
     <p class="wild-description">Report from IIW 42 at the Computer History Museum. Covers the Demo Hour where Niki Niyikiza showed Tenuo's attenuating authorization tokens that cryptographically narrow an agent's capabilities at each delegation hop.</p>

@@ -62,6 +62,27 @@ interface ValidationWarning {
   message: string;
 }
 
+type ExplorerMode = 'decoder' | 'builder' | 'chain' | 'diff' | 'receipt';
+
+const MODE_META: Record<ExplorerMode, { label: string; description: string }> = {
+  decoder: { label: 'Inspect', description: 'Decode a warrant and simulate an authorization decision.' },
+  builder: { label: 'Build', description: 'Create a scoped warrant from real constraints and export working code.' },
+  diff: { label: 'Compare', description: 'See exactly how authority changes between two warrants.' },
+  chain: { label: 'Delegate', description: 'Validate multi-hop delegation and monotonic attenuation.' },
+  receipt: { label: 'Verify', description: 'Verify execution receipts and chained evidence locally.' },
+};
+
+const ModeIcon = ({ mode }: { mode: ExplorerMode }) => {
+  const paths: Record<ExplorerMode, React.ReactNode> = {
+    decoder: <><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></>,
+    builder: <><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="8"/></>,
+    diff: <><path d="M7 3v14a4 4 0 0 0 4 4h6"/><path d="m13 17 4 4-4 4" transform="translate(0 -4)"/><path d="M17 3v8a4 4 0 0 1-4 4H7"/></>,
+    chain: <><rect x="3" y="4" width="7" height="6" rx="2"/><rect x="14" y="14" width="7" height="6" rx="2"/><path d="M10 7h2a5 5 0 0 1 5 5v2"/></>,
+    receipt: <><path d="M6 3h12v18l-3-2-3 2-3-2-3 2Z"/><path d="m9 11 2 2 4-5"/></>,
+  };
+  return <svg className="mode-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[mode]}</svg>;
+};
+
 // Sample definitions - will be populated with fresh warrants on page load
 interface SampleDef {
   name: string;
@@ -85,7 +106,7 @@ const SAMPLE_TEMPLATES: Record<string, {
   ttl: number;
 }> = {
   valid_read: {
-    name: "✅ Valid Read",
+    name: "Valid Read",
     description: "Authorized: path matches docs/* constraint",
     wasmTool: "read_file",
     wasmField: "path",
@@ -95,7 +116,7 @@ const SAMPLE_TEMPLATES: Record<string, {
     ttl: 3600
   },
   valid_nested: {
-    name: "✅ Nested Path",
+    name: "Nested Path",
     description: "Authorized: nested paths like docs/api/guide.md",
     wasmTool: "read_file",
     wasmField: "path",
@@ -105,7 +126,7 @@ const SAMPLE_TEMPLATES: Record<string, {
     ttl: 3600
   },
   expiring_soon: {
-    name: "⏰ Expiring (10s)",
+    name: "Expiring (10s)",
     description: "Watch this warrant expire! Valid for 10 seconds only.",
     wasmTool: "read_file",
     wasmField: "path",
@@ -115,7 +136,7 @@ const SAMPLE_TEMPLATES: Record<string, {
     ttl: 10
   },
   denied_path: {
-    name: "❌ Wrong Path",
+    name: "Denied: Wrong Path",
     description: "Denied: /etc/passwd is outside docs/* scope",
     wasmTool: "read_file",
     wasmField: "path",
@@ -125,7 +146,7 @@ const SAMPLE_TEMPLATES: Record<string, {
     ttl: 3600
   },
   denied_tool: {
-    name: "❌ Wrong Tool",
+    name: "Denied: Wrong Tool",
     description: "Denied: delete_file not in warrant's tools",
     wasmTool: "read_file",
     wasmField: "path",
@@ -135,7 +156,7 @@ const SAMPLE_TEMPLATES: Record<string, {
     ttl: 3600
   },
   denied_write: {
-    name: "❌ Write Attempt",
+    name: "Denied: Write Attempt",
     description: "Denied: write_file not authorized",
     wasmTool: "read_file",
     wasmField: "path",
@@ -145,7 +166,7 @@ const SAMPLE_TEMPLATES: Record<string, {
     ttl: 3600
   },
   execution_only: {
-    name: "🔍 Inspect Warrant",
+    name: "Inspect Warrant",
     description: "Just decode to see warrant structure",
     wasmTool: "read_file",
     wasmField: "path",
@@ -206,7 +227,7 @@ const CopyBtn = ({ text, label }: { text: string; label?: string }) => {
       className="copy-btn"
       title="Copy to clipboard"
     >
-      {copied ? '✓' : '📋'} {label}
+      {copied ? 'Copied' : (label || 'Copy')}
     </button>
   );
 };
@@ -227,7 +248,7 @@ const Explainer = ({ title, children, docLink }: { title: string; children: Reac
     <div className="explainer">
       <div className="explainer-header" onClick={() => setOpen(!open)}>
         <span style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
-        <span>💡 {title}</span>
+        <span>{title}</span>
       </div>
       {open && (
         <div className="explainer-content">
@@ -273,7 +294,7 @@ const ExpirationDisplay = ({ issuedAt, expiresAt }: { issuedAt: number; expiresA
     <div className="panel" style={{ padding: '16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
         <span style={{ fontSize: '12px', color: isExpired ? 'var(--red)' : 'var(--muted)' }}>
-          {isExpired ? '⛔ Expired' : '⏱ Time Remaining'}
+          {isExpired ? 'Expired' : 'Time Remaining'}
         </span>
         <span style={{
           fontSize: '16px',
@@ -288,7 +309,7 @@ const ExpirationDisplay = ({ issuedAt, expiresAt }: { issuedAt: number; expiresA
       {/* Timeline Visualization - simplified, no overlapping labels */}
       <div className="timeline">
         <div className="timeline-track">
-          <div className="timeline-fill" style={{ width: `${percent}%`, background: isExpired ? 'var(--red)' : 'linear-gradient(90deg, var(--green), var(--accent))' }} />
+          <div className="timeline-fill" style={{ width: `${percent}%`, background: isExpired ? 'var(--red)' : 'var(--green)' }} />
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '11px' }}>
           <div style={{ color: 'var(--green)' }}>
@@ -403,10 +424,10 @@ const PresetsManager = ({
     return (
       <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
         <button onClick={() => setShowSave(true)} className="btn btn-secondary" style={{ flex: 1, fontSize: '11px' }} disabled={!currentWarrant}>
-          💾 Save as Preset
+          Save as Preset
         </button>
         <label className="btn btn-secondary" style={{ flex: 1, fontSize: '11px', cursor: 'pointer' }}>
-          📂 Import
+          Import
           <input type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
         </label>
       </div>
@@ -416,7 +437,7 @@ const PresetsManager = ({
   return (
     <div className="presets-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>💾 Presets</span>
+        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Presets</span>
         <div style={{ display: 'flex', gap: '4px' }}>
           <button onClick={() => setShowSave(!showSave)} className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '10px' }}>
             + Save
@@ -486,7 +507,7 @@ const VerificationSteps = ({ decoded, tool, args: _args, authResult }: {
 
   return (
     <div className="panel" style={{ padding: '16px' }}>
-      <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>🔍 Verification Steps</div>
+      <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>Verification Steps</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {steps.map((step, i) => (
           <div key={i} className={`step step-${step.status}`}>
@@ -995,13 +1016,12 @@ ${argsLines}
     <div className="panel" style={{ padding: '16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '16px' }}>💻</span>
           <span style={{ fontSize: '14px', fontWeight: 600 }}>Code Generation</span>
         </div>
         <div style={{ display: 'flex', gap: '4px' }}>
           {(['python', 'rust'] as const).map(l => (
             <button key={l} onClick={() => setLang(l)} className={`lang-btn ${lang === l ? 'active' : ''}`}>
-              {l === 'python' ? '🐍' : '🦀'} {l}
+              {l}
             </button>
           ))}
         </div>
@@ -1009,11 +1029,11 @@ ${argsLines}
       <pre className="code-block" style={{ height: '320px', minHeight: '200px', maxHeight: '600px', fontSize: '12px', lineHeight: '1.6' }}>{code}</pre>
       <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
         <button onClick={handleCopy} className="btn btn-secondary" style={{ flex: 1 }}>
-          {copied ? '✓ Copied!' : '📋 Copy Code'}
+          {copied ? 'Copied' : 'Copy Code'}
         </button>
       </div>
       <p style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '8px', textAlign: 'center' }}>
-        💡 Drag bottom-right corner to resize
+        Drag the bottom-right corner to resize
       </p>
     </div>
   );
@@ -1241,14 +1261,14 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
   };
 
   const templates: { name: string; tools: ToolConstraint[]; ttl: number }[] = [
-    { name: '📁 File Read', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'data/*' }] }], ttl: 3600 },
-    { name: '🔧 Multi-Tool', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: '*' }] }, { name: 'write_file', constraints: [{ key: 'path', type: 'pattern', value: 'tmp/*' }] }], ttl: 1800 },
-    { name: '🌐 API Gateway', tools: [{ name: 'http_request', constraints: [{ key: 'url', type: 'urlpattern', value: 'https://*.example.com/api/*' }, { key: 'method', type: 'oneof', value: 'GET,POST' }] }], ttl: 300 },
-    { name: '💰 Limited Spend', tools: [{ name: 'transfer', constraints: [{ key: 'amount', type: 'range', value: '0-1000' }, { key: 'currency', type: 'exact', value: 'USD' }] }], ttl: 600 },
-    { name: '🔒 Internal Network', tools: [{ name: 'connect', constraints: [{ key: 'ip', type: 'cidr', value: '10.0.0.0/8' }, { key: 'port', type: 'range', value: '80-443' }] }], ttl: 1800 },
-    { name: '🤖 AI Agent', tools: [{ name: 'llm_call', constraints: [{ key: 'model', type: 'oneof', value: 'gpt-4,claude-3' }, { key: 'tokens', type: 'range', value: '0-4000' }] }, { name: 'search', constraints: [{ key: 'query', type: 'contains', value: 'safe' }] }], ttl: 900 },
-    { name: '📧 Email Send', tools: [{ name: 'send_email', constraints: [{ key: 'to', type: 'regex', value: '^[a-z]+@company\\.com$' }, { key: 'subject', type: 'notoneof', value: 'URGENT,SPAM' }] }], ttl: 3600 },
-    { name: '🗄️ Database', tools: [{ name: 'query', constraints: [{ key: 'table', type: 'oneof', value: 'users,orders,products' }, { key: 'operation', type: 'exact', value: 'SELECT' }] }], ttl: 600 },
+    { name: 'File Read', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'data/*' }] }], ttl: 3600 },
+    { name: 'Multi-Tool', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: '*' }] }, { name: 'write_file', constraints: [{ key: 'path', type: 'pattern', value: 'tmp/*' }] }], ttl: 1800 },
+    { name: 'API Gateway', tools: [{ name: 'http_request', constraints: [{ key: 'url', type: 'urlpattern', value: 'https://*.example.com/api/*' }, { key: 'method', type: 'oneof', value: 'GET,POST' }] }], ttl: 300 },
+    { name: 'Limited Spend', tools: [{ name: 'transfer', constraints: [{ key: 'amount', type: 'range', value: '0-1000' }, { key: 'currency', type: 'exact', value: 'USD' }] }], ttl: 600 },
+    { name: 'Internal Network', tools: [{ name: 'connect', constraints: [{ key: 'ip', type: 'cidr', value: '10.0.0.0/8' }, { key: 'port', type: 'range', value: '80-443' }] }], ttl: 1800 },
+    { name: 'AI Agent', tools: [{ name: 'llm_call', constraints: [{ key: 'model', type: 'oneof', value: 'gpt-4,claude-3' }, { key: 'tokens', type: 'range', value: '0-4000' }] }, { name: 'search', constraints: [{ key: 'query', type: 'contains', value: 'safe' }] }], ttl: 900 },
+    { name: 'Email Send', tools: [{ name: 'send_email', constraints: [{ key: 'to', type: 'regex', value: '^[a-z]+@company\\.com$' }, { key: 'subject', type: 'notoneof', value: 'URGENT,SPAM' }] }], ttl: 3600 },
+    { name: 'Database', tools: [{ name: 'query', constraints: [{ key: 'table', type: 'oneof', value: 'users,orders,products' }, { key: 'operation', type: 'exact', value: 'SELECT' }] }], ttl: 600 },
   ];
 
   const applyTemplate = (template: typeof templates[0]) => {
@@ -1290,7 +1310,6 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
   return (
     <div className="panel">
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-        <span style={{ fontSize: '18px' }}>🏗️</span>
         <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Warrant Builder</h2>
       </div>
 
@@ -1608,10 +1627,9 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
   return (
     <div className="panel">
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-        <span style={{ fontSize: '18px' }}>🔗</span>
         <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Chain Verifier</h2>
         <button onClick={loadSampleChain} className="btn btn-secondary" style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: '11px' }}>
-          📋 Load Sample Chain
+          Load Sample Chain
         </button>
         <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
           {validCount}/{warrants.length} warrants decoded
@@ -1625,7 +1643,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
             <div className={`chain-tester-node ${warrant.decoded ? '' : 'empty'} ${i === 0 ? 'root' : ''}`}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <span style={{ fontWeight: 600, fontSize: '13px' }}>
-                  {i === 0 ? '🔐 Root Warrant' : `📋 Warrant ${i + 1}`}
+                  {i === 0 ? 'Root Warrant' : `Warrant ${i + 1}`}
                 </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {warrant.decoded && (
@@ -1690,7 +1708,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
                   {warrant.decoded.approval_gates && Object.keys(warrant.decoded.approval_gates).length > 0 && (
                     <div style={{ marginTop: '8px' }}>
                       <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                        <strong>🛡️ Approval Gates:</strong>
+                        <strong>Approval Gates:</strong>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         {Object.entries(warrant.decoded.approval_gates).map(([tool, gateDef]) => (
@@ -1771,7 +1789,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
 
       {/* Authorization Test */}
       <div style={{ marginTop: '20px', padding: '16px', background: 'var(--surface-2)', borderRadius: '8px' }}>
-        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>🛡️ Test Authorization</div>
+        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>Test Authorization</div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
           <div>
@@ -1862,19 +1880,19 @@ function generateDiffSamples(samples: Record<string, SampleDef>): DiffSample[] {
   const firstSample = samples[sampleKeys[0]];
   return [
     {
-      name: "🔬 Same Warrant",
+      name: "Same Warrant",
       description: "Load same warrant in both to verify tool works",
       a: firstSample?.warrant || "",
       b: firstSample?.warrant || "",
     },
     {
-      name: "📄 A Only",
+      name: "A Only",
       description: "Load sample in A, paste your own in B",
       a: firstSample?.warrant || "",
       b: "",
     },
     {
-      name: "📝 B Only",
+      name: "B Only",
       description: "Load sample in B, paste your own in A",
       a: "",
       b: firstSample?.warrant || "",
@@ -1935,7 +1953,6 @@ const DiffViewer = ({ samples }: { samples: Record<string, SampleDef> }) => {
     <div className="panel">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '18px' }}>📊</span>
           <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Warrant Diff Viewer</h2>
         </div>
       </div>
@@ -1973,7 +1990,7 @@ const DiffViewer = ({ samples }: { samples: Record<string, SampleDef> }) => {
 
       {diffs.length > 0 && (
         <div className="diff-results">
-          <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>🔍 Differences Found: {diffs.length}</div>
+          <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>Differences Found: {diffs.length}</div>
           {diffs.slice(0, 10).map((d, i) => (
             <div key={i} className="diff-item">
               <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent)', marginBottom: '4px' }}>{d.path}</div>
@@ -2001,7 +2018,6 @@ const DiffViewer = ({ samples }: { samples: Record<string, SampleDef> }) => {
 
       {!decodedA && !decodedB && (
         <div className="empty-state" style={{ padding: '24px', textAlign: 'center' }}>
-          <div style={{ fontSize: '32px', marginBottom: '12px', opacity: 0.3 }}>📊</div>
           <p style={{ color: 'var(--muted)', fontSize: '13px', maxWidth: '300px', margin: '0 auto' }}>
             Paste two warrants above and click "Compare" to see the differences.
           </p>
@@ -2056,7 +2072,7 @@ const HistorySidebar = ({
 
 // Main App
 // ============================================================================
-// Receipt Mode — verify signed authorization receipts
+// Receipt Mode: verify signed authorization receipts
 //
 // A receipt says what an enforcement point decided. Verifying its signature
 // establishes only that the holder of `signer_key` made that statement, which
@@ -2124,7 +2140,7 @@ function ReceiptField({ label, value, absentNote }: { label: string; value?: str
       <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{label}</span>
       {missing ? (
         <span style={{ fontSize: '12px', color: absentNote ? '#d97706' : 'var(--muted)' }}>
-          {absentNote ?? '—'}
+          {absentNote ?? 'Not provided'}
         </span>
       ) : (
         <span style={{ fontSize: '12px', fontFamily: 'monospace', wordBreak: 'break-all' }}>{value}</span>
@@ -2137,7 +2153,7 @@ function ReceiptField({ label, value, absentNote }: { label: string; value?: str
  * Resolve every chain link against the receipts actually present.
  *
  * A link pointing at something absent means a receipt was removed from the
- * stream — the omission chaining exists to catch. More than one receipt without
+ * stream. The omission chaining exists to catch this. More than one receipt without
  * a predecessor means separate streams were merged, or chaining was off for
  * some of them; links still resolve, so that has to be surfaced rather than
  * counted as a clean run.
@@ -2169,7 +2185,7 @@ function ReceiptMode() {
       .map((l) => (l.startsWith('{') ? (JSON.parse(l).receipt as string) : l));
 
     if (lines.length === 0) {
-      setError('Paste a receipt — hex, or the JSONL a FileReceiptSink writes.');
+      setError('Paste a receipt in hex or the JSONL a FileReceiptSink writes.');
       return;
     }
 
@@ -2188,7 +2204,7 @@ function ReceiptMode() {
           row.chain = sdkVerifyReceiptChain(wire, roots) as ReceiptChainCheck;
         }
         // Signer membership is the viewer's own judgment against a set this
-        // page cannot know — that is why it is an input, not a lookup.
+        // page cannot know. That is why it is an input, not a lookup.
         if (authSet.size > 0 && payload.signer_key) {
           row.signerRecognized = authSet.has(payload.signer_key.toLowerCase());
         }
@@ -2209,10 +2225,9 @@ function ReceiptMode() {
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
       <div className="panel">
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-          <span style={{ fontSize: '18px' }}>🧾</span>
-          <h2 style={{ fontSize: '15px', fontWeight: 600 }}>1. Paste Receipt(s)</h2>
+          <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Paste Receipt(s)</h2>
         </div>
-        <label className="label">One receipt per line — hex, or FileReceiptSink JSONL</label>
+        <label className="label">One receipt per line: hex or FileReceiptSink JSONL</label>
         <textarea
           className="input"
           value={input}
@@ -2222,7 +2237,7 @@ function ReceiptMode() {
           style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
         />
         <div style={{ marginTop: '12px' }}>
-          <label className="label">Trusted roots (hex, one per line) — optional</label>
+          <label className="label">Trusted roots (hex, one per line), optional</label>
           <textarea
             className="input"
             value={rootsText}
@@ -2233,7 +2248,7 @@ function ReceiptMode() {
           />
         </div>
         <div style={{ marginTop: '8px' }}>
-          <label className="label">Authorizer keys you recognize (hex, one per line) — optional</label>
+          <label className="label">Authorizer keys you recognize (hex, one per line), optional</label>
           <textarea
             className="input"
             value={authText}
@@ -2248,7 +2263,7 @@ function ReceiptMode() {
         </button>
         <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '12px', lineHeight: 1.5 }}>
           Paste a whole stream to check the chain. Everything runs locally in
-          WebAssembly — no receipt leaves your browser.
+          WebAssembly. No receipt leaves your browser.
         </p>
       </div>
 
@@ -2271,7 +2286,7 @@ function ReceiptMode() {
                   <div style={{ marginTop: '8px' }}>Every link resolves to a receipt you pasted.</div>
                 ) : (
                   <div style={{ marginTop: '8px', color: '#dc2626' }}>
-                    {breaks.length} break{breaks.length === 1 ? '' : 's'} — a receipt is missing from this stream:
+                    {breaks.length} break{breaks.length === 1 ? '' : 's'}. A receipt is missing from this stream:
                     <ul style={{ marginTop: '6px', paddingLeft: '18px' }}>
                       {breaks.map((b) => (
                         <li key={b.line} style={{ fontFamily: 'monospace', fontSize: '11px' }}>
@@ -2283,7 +2298,7 @@ function ReceiptMode() {
                 )}
                 {roots.length > 1 && (
                   <div style={{ marginTop: '8px', color: '#d97706' }}>
-                    ⚠️ {roots.length} receipts have no predecessor. Expect one per signer — more
+                    ⚠️ {roots.length} receipts have no predecessor. Expect one per signer. More
                     means separate streams were merged, or chaining was off for some.
                   </div>
                 )}
@@ -2310,19 +2325,19 @@ function ReceiptMode() {
                       row.chain.chain_valid
                         ? `✅ verifies to ${row.chain.root_issuer?.slice(0, 16)}… at the decision instant`
                         : row.chain.corroborates_denial
-                          ? `✅ fails with ${row.chain.chain_error} — corroborates the stated reason`
+                          ? `✅ fails with ${row.chain.chain_error}, corroborating the stated reason`
                           : row.payload.outcome === 'deny'
                             ? `ℹ️ fails (${row.chain.chain_error}); receipt states ${row.payload.decision_code}`
                             : undefined
                     }
-                    absentNote={`❌ does not verify (${row.chain.chain_error ?? 'unknown'}) — an allow over authority you cannot validate`}
+                    absentNote={`❌ does not verify (${row.chain.chain_error ?? 'unknown'}). This is an allow over authority you cannot validate`}
                   />
                 )}
                 {row.payload.decision_code && <ReceiptField label="reason" value={row.payload.decision_code} />}
                 <ReceiptField
                   label="revocation"
                   value={row.payload.srl_hash && `${row.payload.srl_version !== undefined ? `v${row.payload.srl_version} ` : '(unversioned) '}${row.payload.srl_hash.slice(0, 24)}…`}
-                  absentNote="NOT consulted — cannot conclude the warrant was unrevoked"
+                  absentNote="NOT consulted. Cannot conclude the warrant was unrevoked"
                 />
                 <ReceiptField
                   label="trust anchors"
@@ -2337,7 +2352,7 @@ function ReceiptMode() {
                 <ReceiptField
                   label="chained to"
                   value={row.payload.prev_receipt_hash?.slice(0, 24)}
-                  absentNote="nothing — first receipt, or chaining off"
+                  absentNote="Nothing. This is the first receipt, or chaining is off"
                 />
               </div>
             ))}
@@ -2349,7 +2364,7 @@ function ReceiptMode() {
               <p style={{ fontSize: '12px', lineHeight: 1.6 }}>
                 A verified signature proves only that the holder of the signing key made this
                 statement. It does <strong>not</strong> prove that key legitimately speaks for a
-                deployment — resolving it against an authorizer registry is out of band, and this
+                deployment. Resolving it against an authorizer registry is out of band, and this
                 page has no access to one. Verifying the holder's proof-of-possession additionally
                 requires the original arguments, which a receipt commits to but does not carry.
               </p>
@@ -2373,11 +2388,12 @@ function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showSamples, setShowSamples] = useState(false);
   const [activeTab, setActiveTab] = useState<'decode' | 'debug' | 'code'>('decode');
-  const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff' | 'receipt'>('decoder');
+  const [mode, setMode] = useState<ExplorerMode>('decoder');
   const [sharedChain, setSharedChain] = useState<SharedChain | undefined>(undefined);
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
   const [showBuilderJson, setShowBuilderJson] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
+  const [navOpen, setNavOpen] = useState(false);
   const [samples, setSamples] = useState<Record<string, SampleDef>>({});
   const [pemDetected, setPemDetected] = useState(false);
   const [chainResult, setChainResult] = useState<ChainDecodeResult | null>(null);
@@ -2386,7 +2402,7 @@ function App() {
   useEffect(() => {
     const initWasm = async () => {
       try {
-        await init(wasmUrl);  // Must call init(url) to load WASM correctly in Vite!
+        await init({ module_or_path: wasmUrl });  // Pass the Vite asset URL using wasm-bindgen's current init shape.
         init_panic_hook();
         setWasmReady(true);
         // Generate fresh samples with 1-hour TTL
@@ -2466,6 +2482,9 @@ function App() {
         } else if (e.key === '4') {
           e.preventDefault();
           setMode('chain');
+        } else if (e.key === '5') {
+          e.preventDefault();
+          setMode('receipt');
         } else if (e.key === '/' && e.shiftKey) {
           // ⌘? to toggle shortcuts
           e.preventDefault();
@@ -2696,62 +2715,49 @@ function App() {
 
   return (
     <>
-      {/* Background */}
-      <div className="site-grid-bg" />
-      <div className="site-glow" />
-
-      <div style={{ position: 'relative', zIndex: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div className="app-shell">
         {/* Navigation */}
-        <nav style={{ borderBottom: '1px solid var(--border)' }}>
-          <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <a href="https://tenuo.ai" style={{ fontSize: '20px', fontWeight: 600, color: 'var(--text-bright)', textDecoration: 'none' }}>tenuo</a>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <a href="https://tenuo.ai/quickstart" className="nav-link">Quick Start</a>
-              <a href="https://tenuo.ai/concepts" className="nav-link">Concepts</a>
-              <a href="https://tenuo.ai/api-reference" className="nav-link">API</a>
+        <nav className="site-nav" aria-label="Main navigation">
+          <div className="nav-inner">
+            <a href="https://tenuo.ai" className="brand" aria-label="Tenuo home">tenuo</a>
+            <button className="nav-toggle" onClick={() => setNavOpen(open => !open)} aria-label="Toggle menu" aria-expanded={navOpen}>
+              <span /><span /><span />
+            </button>
+            <div className={`nav-links ${navOpen ? 'show' : ''}`}>
+              <a href="https://tenuo.ai/quickstart" className="nav-link">Docs</a>
+              <a href="https://tenuo.ai/explorer" className="nav-link active" aria-current="page">Explorer</a>
               <a href="https://github.com/tenuo-ai/tenuo" className="nav-link">GitHub</a>
+              <a href="https://cloud.tenuo.ai" className="nav-link">Sign in</a>
             </div>
           </div>
         </nav>
 
         {/* Hero */}
-        <header style={{ textAlign: 'center', padding: '40px 24px 24px' }}>
-          <h1 style={{ fontSize: '32px', fontWeight: 700, letterSpacing: '-0.02em', marginBottom: '8px' }}>
-            Warrant Playground
-          </h1>
-          <p style={{ fontSize: '15px', color: 'var(--muted)', maxWidth: '520px', margin: '0 auto 12px' }}>
-            Decode, build, and test authorization in real-time
-          </p>
-          <p style={{ fontSize: '12px', color: 'var(--green)', maxWidth: '580px', margin: '0 auto 20px', padding: '8px 16px', background: 'rgba(34, 197, 94, 0.1)', borderRadius: '8px', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
-            🔒 100% client-side — nothing leaves your browser. Warrants contain only signed claims, not secrets.
-          </p>
-
-          {/* Mode Switcher */}
-          <div className="mode-switcher">
-            <button onClick={() => setMode('decoder')} className={`mode-btn ${mode === 'decoder' ? 'active' : ''}`}>
-              🔍 Decoder
-            </button>
-            <button onClick={() => setMode('builder')} className={`mode-btn ${mode === 'builder' ? 'active' : ''}`}>
-              🏗️ Builder
-            </button>
-            <button onClick={() => setMode('diff')} className={`mode-btn ${mode === 'diff' ? 'active' : ''}`}>
-              📊 Diff
-            </button>
-            <button onClick={() => setMode('chain')} className={`mode-btn ${mode === 'chain' ? 'active' : ''}`}>
-              📚 Delegation
-            </button>
-            <button onClick={() => setMode('receipt')} className={`mode-btn ${mode === 'receipt' ? 'active' : ''}`}>
-              🧾 Receipt
-            </button>
+        <header className="explorer-hero">
+          <div className="explorer-heading">
+            <div>
+              <h1>Tenuo Explorer</h1>
+              <p className="hero-copy">Inspect warrants, test policy decisions, and trace delegation locally in your browser.</p>
+            </div>
           </div>
 
+          {/* Mode Switcher */}
+          <div className="mode-switcher" role="tablist" aria-label="Explorer tools">
+            {(Object.keys(MODE_META) as ExplorerMode[]).map(item => (
+              <button key={item} onClick={() => setMode(item)} className={`mode-btn ${mode === item ? 'active' : ''}`} role="tab" aria-selected={mode === item}>
+                <ModeIcon mode={item} />
+                <span>{MODE_META[item].label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="mode-description" aria-live="polite">{MODE_META[mode].description}</div>
         </header>
 
         {/* Main Content */}
-        <main style={{ flex: 1, maxWidth: '1200px', width: '100%', margin: '0 auto', padding: '0 24px 64px' }}>
+        <main className="app-main">
           {/* Builder Mode */}
           {mode === 'builder' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+            <div className="two-column-grid">
               <WarrantBuilder onGenerate={(config) => {
                 // Generate real warrant from config using WASM
                 const result = create_warrant_from_config(config);
@@ -2760,7 +2766,6 @@ function App() {
               }} />
               <div className="panel">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                  <span style={{ fontSize: '18px' }}>👁️</span>
                   <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Generated Warrant</h2>
                 </div>
                 {builderPreview ? (
@@ -2800,7 +2805,7 @@ function App() {
                                 className="btn btn-secondary"
                                 style={{ fontSize: '11px', padding: '4px 8px' }}
                               >
-                                📋 Copy
+                                Copy
                               </button>
                               <button
                                 onClick={() => {
@@ -2817,7 +2822,7 @@ function App() {
                                 className="btn btn-secondary"
                                 style={{ fontSize: '11px', padding: '4px 8px' }}
                               >
-                                📚 Use in Delegation
+                                Use in Delegation
                               </button>
                             </div>
                           </div>
@@ -2861,7 +2866,6 @@ function App() {
                   </div>
                 ) : (
                   <div className="empty-state">
-                    <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.2 }}>👁️</div>
                     <p>Click "Generate Preview" to create a real warrant</p>
                   </div>
                 )}
@@ -2891,7 +2895,7 @@ function App() {
               {/* Validation Warnings */}
               <ValidationWarnings decoded={decodedWarrant} tool={tool} args={argsJson} />
 
-              <div style={{ display: 'grid', gridTemplateColumns: history.length > 0 ? '200px 1fr 1fr' : '1fr 1fr', gap: '24px' }}>
+              <div className={`decoder-grid ${history.length > 0 ? 'with-history' : ''}`}>
                 {/* History Sidebar */}
                 {history.length > 0 && (
                   <HistorySidebar history={history} onLoad={loadHistoryItem} onClear={clearHistory} />
@@ -2903,32 +2907,30 @@ function App() {
                   <div className="panel">
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{ fontSize: '18px' }}>📄</span>
-                        <h2 style={{ fontSize: '15px', fontWeight: 600 }}>1. Paste Warrant</h2>
+                        <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Paste Warrant</h2>
                       </div>
                       <div style={{ position: 'relative' }}>
                         <button onClick={() => setShowSamples(!showSamples)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', gap: '6px' }}>
-                          <span>📦</span>
                           <span>Samples</span>
                           <span>{showSamples ? '▲' : '▼'}</span>
                         </button>
                         {showSamples && (
                           <div className="samples-dropdown" style={{ right: 0, left: 'auto', transform: 'none', minWidth: '280px' }}>
                             <div style={{ padding: '8px 12px', fontSize: '10px', color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: '4px' }}>
-                              🔄 Fresh warrants generated on page load
+                              Fresh warrants generated on page load
                             </div>
                             {Object.keys(samples).length === 0 ? (
                               <div style={{ padding: '12px', fontSize: '12px', color: 'var(--muted)' }}>Loading samples...</div>
                             ) : (
                               Object.entries(samples).map(([key, sample]) => (
-                                <div key={key} className="sample-item" onClick={() => handleLoadSample(key)}>
+                                <button key={key} className="sample-item" onClick={() => handleLoadSample(key)}>
                                   <div style={{ fontWeight: 500 }}>{sample.name}</div>
                                   <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{sample.description}</div>
-                                </div>
+                                </button>
                               ))
                             )}
                             <div style={{ padding: '8px 12px', fontSize: '10px', color: 'var(--muted)', borderTop: '1px solid var(--border)', marginTop: '4px' }}>
-                              💡 Paste your own warrant for real testing
+                              Paste your own warrant for real testing
                             </div>
                           </div>
                         )}
@@ -2972,8 +2974,7 @@ function App() {
                   {/* Authorization Check Panel */}
                   <div className="panel">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                      <span style={{ fontSize: '18px' }}>🔐</span>
-                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>2. Check Authorization</h2>
+                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Check Authorization</h2>
                     </div>
 
                     {decodedWarrant && decodedWarrant.tools.length > 0 && (
@@ -3033,7 +3034,7 @@ function App() {
                         <p style={{ marginTop: '8px' }}><strong>Why this matters:</strong></p>
                         <p>• Without PoP: Intercepted warrant = full access</p>
                         <p>• With PoP: Intercepted warrant = useless (no private key)</p>
-                        <p style={{ marginTop: '8px', color: 'var(--accent)' }}>💡 This explorer runs in <strong>dry run mode</strong> (policy-only check). Real PoP requires the holder's private key, which we don't have.</p>
+                        <p style={{ marginTop: '8px', color: 'var(--accent)' }}>This explorer runs in <strong>dry run mode</strong> (policy-only check). Real PoP requires the holder's private key, which we don't have.</p>
                       </Explainer>
 
                       <button onClick={handleAuthorize} disabled={!wasmReady || !warrantB64 || !tool} className="btn btn-primary">
@@ -3046,10 +3047,10 @@ function App() {
                   {decodedWarrant && (
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button onClick={() => handleExport('json')} className="btn btn-secondary" style={{ flex: 1, fontSize: '12px' }}>
-                        📥 Export JSON
+                        Export JSON
                       </button>
                       <button onClick={() => handleExport('curl')} className="btn btn-secondary" style={{ flex: 1, fontSize: '12px' }}>
-                        📋 Copy cURL
+                        Copy cURL
                       </button>
                     </div>
                   )}
@@ -3059,9 +3060,9 @@ function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                   {/* Tab Navigation */}
                   <div className="tabs">
-                    <button onClick={() => setActiveTab('decode')} className={`tab ${activeTab === 'decode' ? 'active' : ''}`}>🔍 Decoded</button>
-                    <button onClick={() => setActiveTab('debug')} className={`tab ${activeTab === 'debug' ? 'active' : ''}`}>🐛 Debug</button>
-                    <button onClick={() => setActiveTab('code')} className={`tab ${activeTab === 'code' ? 'active' : ''}`}>💻 Code</button>
+                    <button onClick={() => setActiveTab('decode')} className={`tab ${activeTab === 'decode' ? 'active' : ''}`}>Decoded</button>
+                    <button onClick={() => setActiveTab('debug')} className={`tab ${activeTab === 'debug' ? 'active' : ''}`}>Debug</button>
+                    <button onClick={() => setActiveTab('code')} className={`tab ${activeTab === 'code' ? 'active' : ''}`}>Code</button>
                   </div>
 
                   {/* Decoded Panel */}
@@ -3069,7 +3070,6 @@ function App() {
                     <div className="panel">
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontSize: '18px' }}>🔍</span>
                           <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Decoded Warrant</h2>
                           {pemDetected && (
                             <span style={{ background: 'rgba(34, 197, 94, 0.1)', color: 'var(--green)', fontSize: '10px', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--green)' }}>
@@ -3079,14 +3079,13 @@ function App() {
                         </div>
                         {decodedWarrant && warrantB64 && (
                           <button onClick={handleShare} className="btn btn-secondary" style={{ padding: '6px 10px', fontSize: '11px' }}>
-                            {shareUrl ? '✓ Copied!' : '🔗 Share'}
+                            {shareUrl ? 'Copied' : 'Share'}
                           </button>
                         )}
                       </div>
 
                       {!decoded && (
                         <div className="empty-state" style={{ padding: '40px' }}>
-                          <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.3 }}>🔍</div>
                           <p style={{ color: 'var(--muted)' }}>Paste a warrant and click "Decode" to see its contents</p>
                         </div>
                       )}
@@ -3103,7 +3102,6 @@ function App() {
                         <div style={{ marginBottom: '12px', padding: '12px', borderRadius: '10px', border: '1px solid var(--accent)', background: 'rgba(56, 189, 248, 0.08)' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ fontSize: '16px' }}>⛓️</span>
                               <span style={{ fontWeight: 600, fontSize: '13px' }}>Warrant Chain Detected</span>
                               <span style={{ fontSize: '11px', color: 'var(--muted)' }}>({chainResult.warrants.length} warrants)</span>
                             </div>
@@ -3123,7 +3121,6 @@ function App() {
                                   border: `1px solid ${idx === 0 ? 'var(--green)' : idx === chainResult.warrants.length - 1 ? 'var(--accent)' : 'var(--border)'}`,
                                   fontSize: '11px'
                                 }}>
-                                  <span style={{ marginRight: '4px' }}>{idx === 0 ? '🔑' : idx === chainResult.warrants.length - 1 ? '🤖' : '🔗'}</span>
                                   {idx === 0 ? 'Root' : idx === chainResult.warrants.length - 1 ? 'Leaf' : `Lvl ${idx}`}
                                   <span style={{ color: 'var(--muted)', marginLeft: '6px' }}>d:{w.depth}</span>
                                 </div>
@@ -3180,7 +3177,6 @@ function App() {
                           {/* Chain Visualization */}
                           <div className="chain-box">
                             <div className="chain-node">
-                              <div className="chain-icon">🔑</div>
                               <div className="chain-label">Issuer</div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <code style={{ fontSize: '10px', color: 'var(--accent)' }}>{truncate(decodedWarrant.issuer)}</code>
@@ -3192,7 +3188,6 @@ function App() {
                               <div className="chain-depth">depth {decodedWarrant.depth}</div>
                             </div>
                             <div className="chain-node">
-                              <div className="chain-icon">🤖</div>
                               <div className="chain-label">Holder</div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <code style={{ fontSize: '10px', color: 'var(--green)' }}>{truncate(decodedWarrant.authorized_holder)}</code>
@@ -3204,20 +3199,20 @@ function App() {
                           <ExpirationDisplay issuedAt={decodedWarrant.issued_at} expiresAt={decodedWarrant.expires_at} />
 
                           <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
-                            <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>🔧 Authorized Tools</div>
+                            <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>Authorized Tools</div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                               {decodedWarrant.tools.map(t => <span key={t} className="tool-tag">{t}</span>)}
                             </div>
                           </div>
 
                           <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
-                            <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>📋 Constraints</div>
+                            <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>Constraints</div>
                             <pre className="code-block" style={{ height: '120px', minHeight: '80px', maxHeight: '400px', resize: 'vertical' }}>{JSON.stringify(decodedWarrant.capabilities, null, 2)}</pre>
                           </div>
 
                           {decodedWarrant.approval_gates && (
                             <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
-                              <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>🛡️ Approval Gates</div>
+                              <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>Approval Gates</div>
                               <pre className="code-block" style={{ height: '120px', minHeight: '80px', maxHeight: '400px', resize: 'vertical' }}>{JSON.stringify(decodedWarrant.approval_gates, null, 2)}</pre>
                             </div>
                           )}
@@ -3238,7 +3233,6 @@ function App() {
                     ) : (
                       <div className="panel">
                         <div className="empty-state" style={{ padding: '40px' }}>
-                          <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.3 }}>💻</div>
                           <p style={{ color: 'var(--muted)' }}>Decode a warrant first to generate code</p>
                         </div>
                       </div>
@@ -3248,7 +3242,6 @@ function App() {
                   {/* Result Panel */}
                   <div className="panel">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                      <span style={{ fontSize: '18px' }}>⚡</span>
                       <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Authorization Result</h2>
                     </div>
 
@@ -3271,7 +3264,6 @@ function App() {
                       </div>
                     ) : (
                       <div className="empty-state">
-                        <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.2 }}>⚡</div>
                         <p>Run an authorization check to see results</p>
                       </div>
                     )}
@@ -3302,7 +3294,7 @@ function App() {
             <div className="shortcut"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>↵</kbd><span>Auth</span></div>
             <div className="shortcut"><kbd>⌘</kbd><kbd>K</kbd><span>Clear</span></div>
             <div className="shortcut-divider" />
-            <div className="shortcut"><kbd>⌘</kbd><kbd>1-4</kbd><span>Modes</span></div>
+            <div className="shortcut"><kbd>⌘</kbd><kbd>1-5</kbd><span>Modes</span></div>
             <div className="shortcut"><kbd>⌘</kbd><kbd>B</kbd><span>Builder</span></div>
             <div className="shortcut"><kbd>⌘</kbd><kbd>D</kbd><span>Diff</span></div>
           </div>
@@ -3310,11 +3302,9 @@ function App() {
 
         {/* Footer */}
         <footer className="site-footer">
+          <p className="local-note">Runs locally in your browser. No uploads or account required.</p>
           <p>
-            © 2026 Tenuo ·{' '}
-            <a href="https://tenuo.ai/quickstart">Docs</a> ·{' '}
-            <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> ·{' '}
-            <a href="https://tenuo.ai/early-access.html">Early Access</a>
+            © 2026 Tenuo · <a href="https://tenuo.ai/quickstart">Docs</a> · <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> · <a href="https://tenuo.ai/early-access.html">Early Access</a>
           </p>
         </footer>
       </div>
