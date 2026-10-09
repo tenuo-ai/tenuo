@@ -90,8 +90,12 @@ class TestNonceHexFormat:
 class TestInMemoryBackendEviction:
     def test_eviction_removes_expired(self):
         """Expired entries are evicted on next operation."""
-        import time
+        from unittest.mock import patch
+
+        # Drive the clock directly: time.monotonic() ticks every ~15.6 ms on
+        # Windows, so a short sleep may not move it past the expiry.
         backend = _InMemoryBackend()
-        backend.record("test_nonce", 0)
-        time.sleep(0.01)
-        assert not backend.seen("test_nonce")
+        with patch("tenuo.nonce.time.monotonic", return_value=1000.0):
+            backend.record("test_nonce", 0)
+        with patch("tenuo.nonce.time.monotonic", return_value=1000.001):
+            assert not backend.seen("test_nonce")

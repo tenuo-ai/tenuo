@@ -749,16 +749,31 @@ class TestADKControlPlane:
         """
         from unittest.mock import patch
 
-        with patch.dict(sys.modules, _make_adk_sys_modules_patch(), clear=False):
-            # Re-import guard module so it picks up the patched google.adk
-            for mod_name in list(sys.modules):
-                if mod_name.startswith("tenuo.google_adk"):
-                    del sys.modules[mod_name]
-            yield
-            # Clean up the re-imported tenuo.google_adk modules after the test
-            for mod_name in list(sys.modules):
-                if mod_name.startswith("tenuo.google_adk"):
-                    del sys.modules[mod_name]
+        import tenuo
+
+        # Re-importing sets tenuo.google_adk to the re-imported package.
+        # patch.dict restores sys.modules but not that attribute, and on
+        # Python < 3.11 mock.patch("tenuo.google_adk.guard....") resolves
+        # through it, patching a module that later tests do not call.
+        missing = object()
+        saved_attr = getattr(tenuo, "google_adk", missing)
+        try:
+            with patch.dict(sys.modules, _make_adk_sys_modules_patch(), clear=False):
+                # Re-import guard module so it picks up the patched google.adk
+                for mod_name in list(sys.modules):
+                    if mod_name.startswith("tenuo.google_adk"):
+                        del sys.modules[mod_name]
+                yield
+                # Clean up the re-imported tenuo.google_adk modules after the test
+                for mod_name in list(sys.modules):
+                    if mod_name.startswith("tenuo.google_adk"):
+                        del sys.modules[mod_name]
+        finally:
+            if saved_attr is missing:
+                if hasattr(tenuo, "google_adk"):
+                    delattr(tenuo, "google_adk")
+            else:
+                tenuo.google_adk = saved_attr
 
     @pytest.fixture
     def adk_keys(self):

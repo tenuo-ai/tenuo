@@ -10,7 +10,6 @@ generate arbitrary valid warrants via Hypothesis, and assert the spy was called.
 
 from __future__ import annotations
 
-import base64
 import time
 from unittest.mock import MagicMock, patch
 
@@ -19,7 +18,7 @@ from hypothesis import given, settings
 
 from tenuo import Authorizer, SigningKey
 
-from .strategies import st_warrant_bundle
+from .strategies import mcp_sign_meta, st_warrant_bundle
 
 
 # ---------------------------------------------------------------------------
@@ -47,17 +46,11 @@ class TestMCPServerCallsRust:
         """MCPVerifier.verify accepts a valid warrant+PoP (proving Rust authorized it)."""
         warrant, key, tool, args = data
         auth = _make_authorizer(key)
-        pop = _make_pop(warrant, key, tool, args)
 
         from tenuo.mcp.server import MCPVerifier
 
         verifier = MCPVerifier(authorizer=auth, control_plane=None, nonce_store=None)
-        meta = {
-            "tenuo": {
-                "warrant": warrant.to_base64(),
-                "signature": base64.b64encode(pop).decode(),
-            }
-        }
+        meta = {"tenuo": mcp_sign_meta(warrant, key, tool, args)}
 
         result = verifier.verify(tool, args, meta=meta)
         assert result.allowed is True
@@ -69,17 +62,11 @@ class TestMCPServerCallsRust:
         warrant, key, tool, args = data
         untrusted = SigningKey.generate()
         auth = Authorizer(trusted_roots=[untrusted.public_key])
-        pop = _make_pop(warrant, key, tool, args)
 
         from tenuo.mcp.server import MCPVerifier
 
         verifier = MCPVerifier(authorizer=auth, control_plane=None, nonce_store=None)
-        meta = {
-            "tenuo": {
-                "warrant": warrant.to_base64(),
-                "signature": base64.b64encode(pop).decode(),
-            }
-        }
+        meta = {"tenuo": mcp_sign_meta(warrant, key, tool, args)}
 
         result = verifier.verify(tool, args, meta=meta)
         assert result.allowed is False
@@ -90,7 +77,6 @@ class TestMCPServerCallsRust:
         """MCPVerifier.verify accepts single-element WarrantStack via Rust."""
         warrant, key, tool, args = data
         auth = _make_authorizer(key)
-        pop = _make_pop(warrant, key, tool, args)
 
         from tenuo import encode_warrant_stack
         from tenuo.mcp.server import MCPVerifier
@@ -100,7 +86,7 @@ class TestMCPServerCallsRust:
         meta = {
             "tenuo": {
                 "warrant": stack_b64,
-                "signature": base64.b64encode(pop).decode(),
+                "signature": mcp_sign_meta(warrant, key, tool, args)["signature"],
             }
         }
 
@@ -109,15 +95,15 @@ class TestMCPServerCallsRust:
 
 
 # ===========================================================================
-# FastAPI: TenuoGuard._enforce_with_pop_signature calls enforce_tool_call
+# FastAPI: TenuoGuard._enforce_with_pop_signature reaches shared enforcement
 # ===========================================================================
 
 
 class TestFastAPICallsRust:
     @given(data=st_warrant_bundle())
     @settings(max_examples=20)
-    def test_guard_calls_enforce_tool_call(self, data):
-        """FastAPI TenuoGuard._enforce_with_pop_signature calls enforce_tool_call."""
+    def test_guard_calls_enforcement(self, data):
+        """FastAPI TenuoGuard._enforce_with_pop_signature reaches the shared enforcement path."""
         warrant, key, tool, args = data
         pop = _make_pop(warrant, key, tool, args)
 
@@ -129,9 +115,9 @@ class TestFastAPICallsRust:
         _config["trusted_issuers"] = [key.public_key]
         try:
             guard = TenuoGuard(tool)
-            from tenuo._enforcement import enforce_tool_call as _real_enforce
+            from tenuo._enforcement import _enforce_tool_call_impl as _real_enforce
 
-            with patch("tenuo._enforcement.enforce_tool_call", wraps=_real_enforce) as spy:
+            with patch("tenuo._enforcement._enforce_tool_call_impl", wraps=_real_enforce) as spy:
                 try:
                     guard._enforce_with_pop_signature(warrant, tool, args, pop)
                 except Exception:
