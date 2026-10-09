@@ -1121,3 +1121,80 @@ fn cold_case_insensitive_volume_rejects_alias() {
     ));
     assert_eq!(std::fs::read(mount.join("secret/key")).unwrap(), b"hidden");
 }
+
+/// A case-insensitive Linux volume whose dcache has not seen the file yet.
+///
+/// Linux builds `/proc/self/fd/N` from the dentry name, and a cold lookup
+/// names the dentry with the caller's spelling, not the stored one. ext4
+/// casefold and vfat (including 8.3 short names) both do this, under
+/// `openat2` too. The volume must be mounted and populated beforehand, then
+/// remounted so nothing is cached, and each run must be the first lookup:
+///
+/// - `TENUO_COLD_CI_ROOT`: jail directory on the case-insensitive volume.
+/// - `TENUO_COLD_CI_DENIED`: stored relative path of the denied file, holding
+///   `hidden` (default `secret/key`).
+/// - `TENUO_COLD_CI_ALIAS`: another spelling of that file (default
+///   `SECRET/KEY`), such as `LONGFI~1.TXT` on vfat.
+/// - `TENUO_COLD_CI_ALLOWED`: stored relative path of an allowed file holding
+///   `notes` (default `notes.txt`).
+/// - `TENUO_COLD_CI_CONTAINMENT`: `atomic` (default) or `best_effort`.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires TENUO_COLD_CI_ROOT on a freshly mounted case-insensitive volume"]
+fn cold_case_insensitive_linux_volume_rejects_alias() {
+    let var = |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.into());
+    let local = std::path::PathBuf::from(
+        std::env::var_os("TENUO_COLD_CI_ROOT").expect("TENUO_COLD_CI_ROOT must name the jail"),
+    );
+    let denied = var("TENUO_COLD_CI_DENIED", "secret/key");
+    let alias = var("TENUO_COLD_CI_ALIAS", "SECRET/KEY");
+    let allowed = var("TENUO_COLD_CI_ALLOWED", "notes.txt");
+    let containment = match var("TENUO_COLD_CI_CONTAINMENT", "atomic").as_str() {
+        "atomic" => Containment::Atomic,
+        "best_effort" => Containment::BestEffort,
+        other => panic!("unknown containment {other}"),
+    };
+    assert_ne!(denied, alias, "the alias must be a different spelling");
+
+    let policy = All::new([
+        Subpath::new("/workspace").unwrap().into(),
+        NotOneOf::new([format!("/workspace/{denied}")]).into(),
+    ]);
+    let (guard, authority) = harness(&local, constraints! { "path" => policy }, containment);
+
+    // The alias goes first: any earlier lookup of the stored spelling would
+    // warm the dcache and hide the bug.
+    let aliased = format!("/workspace/{alias}");
+    let read = read_at(&guard, &authority, &aliased);
+    eprintln!("{containment:?} read {aliased}: {read:?}");
+    let call = Call::owned("read_file", args! { "path" => aliased.as_str() }).unwrap();
+    let truncate = guard
+        .guard(&authority, &call, |authorized| {
+            authorized.open("path", OpenOptions::write_truncate())
+        })
+        .map(|_| "opened for write_truncate");
+    eprintln!("{containment:?} write_truncate {aliased}: {truncate:?}");
+    let stored = read_at(&guard, &authority, &format!("/workspace/{allowed}"));
+    eprintln!("{containment:?} read /workspace/{allowed}: {stored:?}");
+    let denied_bytes = std::fs::read(local.join(&denied)).expect("denied file");
+    eprintln!(
+        "{denied} now holds {:?}",
+        String::from_utf8_lossy(&denied_bytes)
+    );
+
+    fn refused<T>(result: &Result<T, GuardError<FilesystemError>>) -> bool {
+        matches!(
+            result,
+            Err(GuardError::Operation(
+                FilesystemError::NotTheNamedFile | FilesystemError::NotFound
+            ))
+        )
+    }
+    assert!(refused(&read), "alias opened the denied file: {read:?}");
+    assert!(
+        refused(&truncate),
+        "alias opened for truncate: {truncate:?}"
+    );
+    assert_eq!(denied_bytes, b"hidden");
+    assert_eq!(stored.expect("stored spelling"), "notes");
+}
