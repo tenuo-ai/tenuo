@@ -87,6 +87,55 @@ def test_dropped_client_does_not_warn_about_registration():
     assert "control plane loop exited" not in proc.stderr
 
 
+def _deny(client: ControlPlaneClient) -> None:
+    client._inner.emit_deny("w", "t", "denied", None, 1, None, None, 0, "r", None)
+
+
+def test_status_reports_outage_without_io():
+    client = _client("status-outage")
+    try:
+        status = client.status
+        assert set(status) == {"state", "last_error", "buffered", "flushed", "dropped"}
+        assert status["state"] == "registering"
+        for _ in range(3):
+            _deny(client)
+        deadline = time.monotonic() + 5
+        while client.status["buffered"] < 3 or client.status["last_error"] is None:
+            assert time.monotonic() < deadline, client.status
+            time.sleep(0.05)
+        assert client.status["dropped"] == 0
+    finally:
+        client.shutdown(timeout_secs=5)
+    # Never registered, so buffered events could not be sent.
+    assert client.status["state"] == "stopped"
+    assert client.status["dropped"] == 3
+
+
+def test_events_after_shutdown_are_counted_as_dropped():
+    client = _client("status-after-shutdown")
+    client.shutdown(timeout_secs=5)
+    before = client.status["dropped"]
+    _deny(client)
+    assert client.status["dropped"] == before + 1
+
+
+def test_unreachable_control_plane_warns_once():
+    script = textwrap.dedent(
+        """
+        import time
+        from tenuo.control_plane import connect
+        connect(url="http://127.0.0.1:1", api_key="k", authorizer_name="warn-once")
+        time.sleep(4)  # long enough for several registration retries
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stderr.count("cannot reach control plane") == 1, proc.stderr
+    assert "registration attempt" not in proc.stderr
+
+
 def test_atexit_shutdown_is_quiet_and_fast():
     script = textwrap.dedent(
         """

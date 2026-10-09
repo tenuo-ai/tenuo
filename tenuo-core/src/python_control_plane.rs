@@ -3,7 +3,7 @@ use crate::connect_token::ConnectToken;
 #[cfg(feature = "python-server")]
 use crate::heartbeat::{
     create_audit_channel, start_heartbeat_loop_until, ApprovalRecord, AuditEventSender,
-    AuthorizationEvent, EnvironmentInfo, HeartbeatConfig,
+    AuthorizationEvent, ControlPlaneStatus, EnvironmentInfo, HeartbeatConfig,
 };
 #[cfg(feature = "python-server")]
 use crate::python::{to_py_err, PyChainVerificationResult, PySigningKey};
@@ -13,8 +13,6 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 #[cfg(feature = "python-server")]
 use std::collections::HashMap;
-#[cfg(feature = "python-server")]
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "python-server")]
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(feature = "python-server")]
@@ -221,7 +219,7 @@ pub struct PyControlPlaneClient {
     authorizer_id_py: Arc<Mutex<Option<String>>>,
     /// Stop signal and handle for the heartbeat task; `None` once shut down.
     background: Mutex<Option<BackgroundTask>>,
-    stopping: Arc<AtomicBool>,
+    status: Arc<ControlPlaneStatus>,
     /// The key this enforcement point already authenticates with. Reused as the
     /// receipt signer so a deployment has one identity, not two.
     receipt_signer: crate::crypto::SigningKey,
@@ -241,22 +239,18 @@ struct BackgroundTask {
 
 #[cfg(feature = "python-server")]
 impl PyControlPlaneClient {
-    /// Queue an audit event; dropped if the queue is full or after shutdown.
+    /// Queue an audit event. If the queue is full, closed or already shut
+    /// down the event is dropped and counted in `status`.
     fn send_event(&self, event: AuthorizationEvent) {
-        if let Ok(guard) = self.sender.lock() {
-            if let Some(sender) = guard.as_ref() {
-                let _ = sender.try_send(event);
-            }
+        let sent = self
+            .sender
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.try_send(event).is_ok()))
+            .unwrap_or(false);
+        if !sent {
+            self.status.record_dropped(1);
         }
-    }
-}
-
-#[cfg(feature = "python-server")]
-impl Drop for PyControlPlaneClient {
-    fn drop(&mut self) {
-        // Dropping the stop sender ends the background task; that is a
-        // normal stop, not the registration failure the task warns about.
-        self.stopping.store(true, Ordering::SeqCst);
     }
 }
 
@@ -497,7 +491,7 @@ impl PyControlPlaneClient {
 
         let (audit_tx, audit_rx) = create_audit_channel(audit_batch_size);
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-        let stopping = Arc::new(AtomicBool::new(false));
+        let status = Arc::new(ControlPlaneStatus::default());
 
         let config = HeartbeatConfig {
             control_plane_url: crate::connect_token::normalize_control_plane_url(&resolved_url),
@@ -517,6 +511,7 @@ impl PyControlPlaneClient {
             agent_id,
             connect_token: parsed_token,
             revocation_tracker: None,
+            status: status.clone(),
         };
 
         let authorizer_id_async = Arc::new(RwLock::new(None::<String>));
@@ -530,19 +525,12 @@ impl PyControlPlaneClient {
         let mut config = config;
         config.id_notify = Some(id_tx);
 
-        let cp_url = config.control_plane_url.clone();
-        let auth_name = config.authorizer_name.clone();
-        let stopping_task = stopping.clone();
-        let handle = runtime().spawn(async move {
-            start_heartbeat_loop_until(config, Some(audit_rx), shared_id, Some(stop_rx)).await;
-            if !stopping_task.load(Ordering::SeqCst) {
-                eprintln!(
-                    "[tenuo] control plane loop exited for '{}' ({}). \
-                     Registration may have failed — check API key and URL.",
-                    auth_name, cp_url,
-                );
-            }
-        });
+        let handle = runtime().spawn(start_heartbeat_loop_until(
+            config,
+            Some(audit_rx),
+            shared_id,
+            Some(stop_rx),
+        ));
 
         runtime().spawn(async move {
             if id_rx.changed().await.is_ok() {
@@ -563,7 +551,7 @@ impl PyControlPlaneClient {
                 stop: stop_tx,
                 handle,
             })),
-            stopping,
+            status,
         })
     }
 
@@ -925,7 +913,6 @@ impl PyControlPlaneClient {
         let Some(task) = self.background.lock().ok().and_then(|mut g| g.take()) else {
             return Ok(());
         };
-        self.stopping.store(true, Ordering::SeqCst);
         let _ = task.stop.send(());
         // Release the GIL while waiting so other Python threads keep running.
         // The timer is built inside block_on: tokio timers need a runtime
@@ -944,5 +931,22 @@ impl PyControlPlaneClient {
     #[getter]
     fn get_authorizer_id(&self) -> Option<String> {
         self.authorizer_id_py.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Connection state and audit delivery counters.
+    ///
+    /// ``state`` is one of ``registering``, ``connected``, ``degraded``,
+    /// ``standalone`` or ``stopped``. ``buffered`` events are waiting to be
+    /// sent, ``flushed`` were accepted, ``dropped`` were lost. Reading it does
+    /// no I/O, so it is safe to call from a health check.
+    #[getter]
+    fn get_status<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        let d = pyo3::types::PyDict::new(py);
+        d.set_item("state", self.status.state().as_str())?;
+        d.set_item("last_error", self.status.last_error())?;
+        d.set_item("buffered", self.status.buffered())?;
+        d.set_item("flushed", self.status.flushed())?;
+        d.set_item("dropped", self.status.dropped())?;
+        Ok(d)
     }
 }

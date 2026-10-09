@@ -912,6 +912,7 @@ async fn prepare_serve(
                 agent_id: resolved_agent_id,
                 connect_token: resolved_connect_token,
                 revocation_tracker: revocation_tracker.clone(),
+                status: Default::default(),
             };
 
             let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
@@ -2196,41 +2197,32 @@ fn encode_warrant_stack_for_audit(chain: &[tenuo::Warrant]) -> Option<String> {
 }
 
 /// Emit an audit event to the control plane (if configured).
-/// Fills in the authorizer_id from shared state.
+/// Fills in the authorizer_id from shared state once registration completes;
+/// earlier events are buffered and signed with the real ID when flushed.
 async fn emit_audit_event(state: &AppState, mut event: AuthorizationEvent) {
     if let Some(ref tx) = state.audit_tx {
-        // Get authorizer_id from shared state
-        let authorizer_id = state.authorizer_id.read().await;
-        if let Some(ref id) = *authorizer_id {
+        if let Some(ref id) = *state.authorizer_id.read().await {
             event.authorizer_id = id.clone();
+        }
 
-            // Extract fields for logging before moving event
-            let decision = event.decision;
-            let tool = event.tool.clone();
+        // Extract fields for logging before moving event
+        let decision = event.decision;
+        let tool = event.tool.clone();
 
-            // Send event (non-blocking, drop if channel is full)
-            if let Err(e) = tx.try_send(event) {
-                match e {
-                    tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                        warn!(
-                            decision = decision,
-                            tool = %tool,
-                            "Audit event dropped: channel buffer full (high authorization rate or slow control plane)"
-                        );
-                    }
-                    tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                        debug!("Audit event dropped: channel closed (shutdown in progress)");
-                    }
+        // Send event (non-blocking, drop if channel is full)
+        if let Err(e) = tx.try_send(event) {
+            match e {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    warn!(
+                        decision = decision,
+                        tool = %tool,
+                        "Audit event dropped: channel buffer full (high authorization rate or slow control plane)"
+                    );
+                }
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    debug!("Audit event dropped: channel closed (shutdown in progress)");
                 }
             }
-        } else {
-            // Authorizer ID not set yet - control plane registration still in progress
-            warn!(
-                decision = event.decision,
-                tool = %event.tool,
-                request_id = %event.request_id,
-                "Audit event dropped: authorizer not registered with control plane yet (early request)"
-            );
         }
     }
 }
