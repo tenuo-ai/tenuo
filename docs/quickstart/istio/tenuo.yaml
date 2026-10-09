@@ -1,5 +1,13 @@
-# Tenuo Authorizer for Istio
+# Tenuo authorizer for the Istio quickstart.
 # Apply with: kubectl apply -f tenuo.yaml
+#
+# The demo root public key is NOT in this file. Create it yourself (see
+# README.md); the authorizer pod waits for the tenuo-demo-root ConfigMap:
+#
+#   kubectl -n tenuo-system create configmap tenuo-demo-root \
+#     --from-literal=TENUO_TRUSTED_KEYS="$(uv run demo_warrant.py root-pubkey)"
+#
+# The embedded gateway.yaml is a copy of ../envoy/gateway.yaml (CI checks it).
 
 ---
 apiVersion: v1
@@ -15,23 +23,52 @@ metadata:
   namespace: tenuo-system
 data:
   gateway.yaml: |
+    # Tenuo gateway config for the Envoy quickstart (HTTP ext_authz).
+    #
+    # Envoy's ext_authz filter is configured with `path_prefix: /ext_authz`, so the
+    # authorizer sees every original request path as `/ext_authz/<original path>`.
+    # Route patterns below therefore start with /ext_authz. The authorizer serves
+    # its own /health, /healthz, /ready and /status only on its separate health
+    # port (9091), never on this ext_authz port; the prefix is defense in depth
+    # for older authorizers, which answered them here with 200 (read as ALLOW).
+    #
+    # Trusted roots come from TENUO_TRUSTED_KEYS (see README), so no key is
+    # hardcoded here.
     version: "1"
     settings:
       warrant_header: "X-Tenuo-Warrant"
       pop_header: "X-Tenuo-PoP"
       clock_tolerance_secs: 30
+      # Demo only: adds x-tenuo-deny-reason to denials. Turn off in production.
       debug_mode: true
-      # Demo key - replace in production
-      trusted_roots:
-        - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
+      trusted_roots: []
+
     tools:
-      http_request:
-        extract:
-          path: "$.path"
-          method: "$.method"
+      httpbin_read:
+        description: "GET a top-level httpbin endpoint"
+        constraints:
+          endpoint:
+            from: path
+            path: endpoint
+            required: true
+      httpbin_write:
+        description: "POST a JSON message to httpbin /post"
+        constraints:
+          message:
+            from: body
+            path: message
+            required: true
+
     routes:
-      - path_prefix: "/"
-        tool: http_request
+      # GET /<endpoint>  ->  httpbin_read(endpoint=<endpoint>)
+      - pattern: "/ext_authz/{endpoint}"
+        method: ["GET"]
+        tool: httpbin_read
+      # POST /post with {"message": "..."}  ->  httpbin_write(message=...)
+      - pattern: "/ext_authz/post"
+        method: ["POST"]
+        tool: httpbin_write
+      # Anything else has no route: the authorizer answers 404 and Envoy denies.
 
 ---
 apiVersion: apps/v1
@@ -51,14 +88,32 @@ spec:
     spec:
       containers:
       - name: authorizer
-        image: tenuo/authorizer:latest
-        imagePullPolicy: IfNotPresent
+        image: tenuo/authorizer:0.3.2
         args: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
         ports:
-        - containerPort: 9090
+        - name: http            # ext_authz check requests
+          containerPort: 9090
+        - name: health          # /health, /healthz, /ready, /status (--health-port)
+          containerPort: 9091
         env:
         - name: RUST_LOG
           value: "info"
+        # Demo root public key (hex), created by you. See README.md.
+        - name: TENUO_TRUSTED_KEYS
+          valueFrom:
+            configMapKeyRef:
+              name: tenuo-demo-root
+              key: TENUO_TRUSTED_KEYS
+        # Probes use the health port. Health routes are never served on the
+        # ext_authz port, where a 200 would mean ALLOW.
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
         volumeMounts:
         - name: config
           mountPath: /etc/tenuo
@@ -83,7 +138,8 @@ metadata:
   namespace: tenuo-system
 spec:
   ports:
-  - port: 9090
+  - name: http
+    port: 9090
     targetPort: 9090
   selector:
     app: tenuo-authorizer

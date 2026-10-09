@@ -30,10 +30,17 @@ from typing import (
 )
 
 from ._builder import BaseGuardBuilder
-from ._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async, handle_denial
+from ._enforcement import (
+    EnforcementResult,
+    enforce_tool_call,
+    enforce_tool_call_async,
+    handle_denial,
+    split_presented_warrant,
+)
 from .config import resolve_trusted_roots
 from .exceptions import (
     AuthorizationDenied,
+    ConfigurationError,
     ConstraintViolation,
     InsufficientApprovals,
     ToolNotAuthorized,
@@ -186,6 +193,11 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             .on_denial("raise"|"log"|"skip")
             .with_warrant(warrant, signing_key)  # Tier 2
             .build()
+
+    For a delegated warrant, pass its parents so the chain verifies back to
+    a trusted root: ``.with_warrant(leaf, key, warrant_chain=[root])``, or
+    pass the whole chain as one token (an encoded WarrantStack string or a
+    root-first list of warrants) as ``warrant``.
     """
 
     def __init__(self) -> None:
@@ -196,6 +208,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
         return _Guard(
             constraints=self._constraints,
             bound=bound,
+            warrant_chain=self._warrant_chain,
             trusted_roots=self._trusted_roots,
             on_denial=self._on_denial,
             approval_handler=self._approval_handler,
@@ -216,6 +229,7 @@ class _Guard:
         *,
         constraints: Dict[str, Dict[str, Any]],
         bound: Any,
+        warrant_chain: Optional[Sequence[Any]] = None,
         trusted_roots: Any = None,
         on_denial: str,
         approval_handler: Any = None,
@@ -223,6 +237,9 @@ class _Guard:
     ) -> None:
         self._constraints = constraints
         self._bound = bound
+        # Parents of a delegated warrant (root-first, excluding the leaf).
+        # None leaves any ambient chain_scope() in effect.
+        self._warrant_chain = list(warrant_chain) if warrant_chain else None
         self._trusted_roots = trusted_roots
         self._on_denial = on_denial
         self._approval_handler = approval_handler
@@ -323,12 +340,13 @@ class _Guard:
             # Validate complete args for each buffered tool call
             invalid_ids: set[str] = set()
             final_args: Dict[str, Dict[str, Any]] = {}
+            from tenuo.arguments import parse_strict_json
 
             for cid, pieces in arg_buffers.items():
                 complete = "".join(pieces)
                 name = tool_names.get(cid, "")
                 try:
-                    args_dict = json.loads(complete) if complete else {}
+                    args_dict = parse_strict_json(complete) if complete else {}
                 except Exception as e:
                     if self._on_denial == "skip":
                         invalid_ids.add(cid)
@@ -410,6 +428,7 @@ class _Guard:
             result = enforce_tool_call(
                 tool_name, auth_args, self._bound,
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                warrant_chain=self._warrant_chain,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )
@@ -426,7 +445,7 @@ class _Guard:
 
                 # Handle specific error types
                 if result.error_type == "expired":
-                    raise ExpiredError(result.denial_reason or "Warrant has expired")
+                    raise ExpiredError(result.warrant_id or "unknown")
                 elif result.error_type == "tool_not_allowed":
                     raise ToolNotAuthorized(tool=tool_name)
                 elif result.error_type == "clearance_insufficient":
@@ -475,6 +494,7 @@ class _Guard:
             result = await enforce_tool_call_async(
                 tool_name, auth_args, self._bound,
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                warrant_chain=self._warrant_chain,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )
@@ -489,7 +509,7 @@ class _Guard:
                 from .exceptions import ConstraintResult, ExpiredError
 
                 if result.error_type == "expired":
-                    raise ExpiredError(result.denial_reason or "Warrant has expired")
+                    raise ExpiredError(result.warrant_id or "unknown")
                 elif result.error_type == "tool_not_allowed":
                     raise ToolNotAuthorized(tool=tool_name)
                 elif result.error_type == "clearance_insufficient":
@@ -595,11 +615,35 @@ class _Guard:
         return await fn(*args, **kwargs)
 
 
-def guard_tool(fn_or_tool: Any, bound: Any, *, tool_name: Optional[str] = None) -> Any:
+def _split_bound(bound: Any, warrant_chain: Optional[Sequence[Any]]) -> Tuple[Any, Optional[list]]:
+    """Split ``bound`` (a BoundWarrant or root-first list ending in one) into leaf and parents."""
+    from .bound_warrant import BoundWarrant
+
+    leaf, parents = split_presented_warrant(bound, warrant_chain)
+    if isinstance(bound, (str, list, tuple)) and not isinstance(leaf, BoundWarrant):
+        raise ConfigurationError(
+            "The leaf of the presented chain must be a BoundWarrant (warrant.bind(key)). "
+            "To pass a WarrantStack string, use GuardBuilder().with_warrant(token, signing_key)."
+        )
+    return leaf, parents
+
+
+def guard_tool(
+    fn_or_tool: Any,
+    bound: Any,
+    *,
+    tool_name: Optional[str] = None,
+    warrant_chain: Optional[Sequence[Any]] = None,
+) -> Any:
     """
     Guard a single tool/callable with Tenuo authorization using an explicit BoundWarrant.
+
+    For a delegated warrant, pass its parents (root-first, excluding the leaf)
+    as ``warrant_chain``, or pass ``bound`` as a root-first list whose last
+    element is the BoundWarrant leaf.
     """
-    guard = _Guard(constraints={}, bound=bound, on_denial="raise")
+    leaf, parents = _split_bound(bound, warrant_chain)
+    guard = _Guard(constraints={}, bound=leaf, warrant_chain=parents, on_denial="raise")
     return guard.guard_tool(fn_or_tool, tool_name=tool_name)
 
 
@@ -608,11 +652,15 @@ def guard_tools(
     bound: Any,
     *,
     tool_name_fn: Optional[Callable[[Any], str]] = None,
+    warrant_chain: Optional[Sequence[Any]] = None,
 ) -> Union[list[Any], dict[str, Any]]:
     """
     Guard a collection of tools using a BoundWarrant (Tier 2).
+
+    ``bound`` and ``warrant_chain`` accept the same chain forms as guard_tool().
     """
-    guard = _Guard(constraints={}, bound=bound, on_denial="raise")
+    leaf, parents = _split_bound(bound, warrant_chain)
+    guard = _Guard(constraints={}, bound=leaf, warrant_chain=parents, on_denial="raise")
     return guard.guard_tools(tools, tool_name_fn=tool_name_fn)
 
 

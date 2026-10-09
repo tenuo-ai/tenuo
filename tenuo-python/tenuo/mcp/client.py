@@ -5,20 +5,22 @@ Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
 
 import asyncio
-import base64
 import logging
 import random
+import re
 import sys
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Callable, Dict, List, Literal, Optional, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Union, cast
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
+from ..meta import argument_json, signed_arguments
 from ..approval import ApprovalHandler
 from ..config import is_configured
 from ..decorators import key_scope, warrant_scope
 from ..exceptions import (
+    RevokedError,
     AuthorizationDenied,
     ConfigurationError,
     ConstraintViolation,
@@ -30,6 +32,17 @@ from ..exceptions import (
 from ..validation import ValidationResult
 
 logger = logging.getLogger(__name__)
+
+
+def _constraint_view(
+    pop_args: Dict[str, Any], extracted: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Warrant matching ignores null. The proof map still contains it."""
+    view = strip_none_values(pop_args)
+    if extracted is not None:
+        view.update(strip_none_values(extracted))
+    return view
+
 
 # Optional MCP import (requires Python 3.10+)
 try:
@@ -58,17 +71,54 @@ if sys.version_info < (3, 10) and MCP_AVAILABLE:
     MCP_AVAILABLE = False
 
 
+_CONSTRAINT_PREFIX = re.compile(r"^Constraint '(?P<field>[^']+)' not satisfied:\s*")
+_WARRANT_ID_IN_REASON = re.compile(r"Warrant '(?P<id>[^']+)' has (?:expired|been revoked)")
+
+WarrantInjection = Union[bool, Literal["argument"]]
+
+
+def _warrant_injection_mode(value: WarrantInjection) -> Literal["none", "meta", "argument"]:
+    """Normalize the backwards-compatible public injection setting."""
+    if value is False:
+        return "none"
+    if value is True:
+        return "meta"
+    if value == "argument":
+        return "argument"
+    raise ValueError("inject_warrant must be False, True, or 'argument'")
+
+
+def _warrant_id_for(result: "EnforcementResult", reason: str) -> str:
+    """Best-effort warrant id for an exception: the result's field, else parsed from the reason."""
+    warrant_id = getattr(result, "warrant_id", None)
+    if isinstance(warrant_id, str) and warrant_id:
+        return warrant_id
+    match = _WARRANT_ID_IN_REASON.search(reason)
+    return match.group("id") if match else "unknown"
+
+
 def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
-    """Raise the appropriate exception for a denied EnforcementResult."""
+    """Raise the typed exception for a denied EnforcementResult.
+
+    ``denial_reason`` is already a complete sentence, so each exception is built
+    from its structured parts rather than re-wrapping the sentence: the message
+    reads once, and ``details`` carries the tool, field, or warrant id.
+    """
     reason = result.denial_reason or "Authorization denied"
     etype = result.error_type or ""
     if etype == "constraint_violation":
-        field = result.constraint_violated or tool_name
-        raise ConstraintViolation(field, reason)
+        field = result.constraint_violated or ""
+        match = _CONSTRAINT_PREFIX.match(reason)
+        if match:
+            field = field or match.group("field")
+            reason = reason[match.end() :] or "value does not match constraint"
+        raise ConstraintViolation(field or tool_name, reason)
     if etype in {"tool_not_allowed", "tool_not_authorized"}:
-        raise ToolNotAuthorized(reason)
+        raise ToolNotAuthorized(tool=tool_name)
     if etype == "expired":
-        raise ExpiredError(reason)
+        raise ExpiredError(_warrant_id_for(result, reason))
+    if etype == "revoked":
+        raise RevokedError(_warrant_id_for(result, reason), reason=reason)
     if etype == "insufficient_approvals":
         meta = result.approval_metadata or {}
         raise InsufficientApprovals(
@@ -76,7 +126,7 @@ def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
             received=meta.get("got", 0),
             detail=reason,
         )
-    raise AuthorizationDenied(reason)
+    raise AuthorizationDenied(tool=tool_name, reason=reason)
 
 
 def _extract_tenuo_error_code(structured: Any) -> Optional[int]:
@@ -144,7 +194,7 @@ class SecureMCPClient:
         env: Optional[Dict[str, str]] = None,
         config_path: Optional[str] = None,
         register_config: Optional[bool] = None,
-        inject_warrant: bool = False,
+        inject_warrant: WarrantInjection = False,
         url: Optional[str] = None,
         transport: Literal["stdio", "sse", "http"] = "stdio",
         headers: Optional[Dict[str, str]] = None,
@@ -176,8 +226,9 @@ class SecureMCPClient:
                 ``False`` — call ``configure(mcp_config=...)`` explicitly if you
                 need global registration.
             inject_warrant: Inject warrants into tool calls for server-side
-                verification (default: False). Set True when the server runs
-                Tenuo verification.
+                verification (default: False). Set ``True`` to use
+                ``params._meta.tenuo`` or ``"argument"`` to use the reserved
+                ``arguments._tenuo`` carrier for gateways that strip ``_meta``.
             approval_handler: Optional callable for warrant approval gates.
                 Receives an ``ApprovalRequest`` and returns ``SignedApproval``
                 (or raises ``ApprovalDenied``). Used during local enforcement
@@ -199,6 +250,8 @@ class SecureMCPClient:
                 f"transport='{transport}' requires 'url'. "
                 "Provide the MCP server endpoint URL."
             )
+
+        _warrant_injection_mode(inject_warrant)
 
         self.command = command
         self.args = args or []
@@ -359,12 +412,35 @@ class SecureMCPClient:
             self._wrapped_tools[tool.name] = self.create_protected_tool(tool)
 
     async def close(self):
-        """Close the MCP connection and clear all session state."""
+        """Close the MCP connection and clear all session state.
+
+        Transport teardown can race with the SDK's own background tasks (a
+        post-writer sending on a memory stream that was just closed). Those
+        surface as anyio ``ClosedResourceError`` / ``BrokenResourceError``,
+        sometimes wrapped in an ``ExceptionGroup``. They carry no information
+        once the connection is going away, so they are logged and dropped;
+        anything else propagates. State is cleared either way.
+        """
         async with self._connect_lock:
-            await self.exit_stack.aclose()
-            self.session = None
-            self._tools = None
-            self._wrapped_tools = {}
+            try:
+                await self.exit_stack.aclose()
+            except Exception as exc:
+                if not self._is_teardown_noise(exc):
+                    raise
+                logger.debug("Ignored transport teardown error on close: %r", exc)
+            finally:
+                self.exit_stack = AsyncExitStack()
+                self.session = None
+                self._tools = None
+                self._wrapped_tools = {}
+
+    @classmethod
+    def _is_teardown_noise(cls, exc: BaseException) -> bool:
+        """True when ``exc`` is only connection-teardown errors (possibly grouped)."""
+        nested = getattr(exc, "exceptions", None)
+        if isinstance(nested, (list, tuple)):
+            return len(nested) > 0 and all(cls._is_teardown_noise(sub) for sub in nested)
+        return cls._is_connection_error(exc)
 
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
@@ -519,14 +595,12 @@ class SecureMCPClient:
                 suggestions=["Ensure the active key matches the warrant holder"],
             )
 
-        pop_args = strip_none_values(arguments)
-        constraint_args = pop_args
+        pop_args = signed_arguments(arguments)
+        constraint_args = _constraint_view(pop_args)
         if self.compiled_config:
             try:
                 result = self.compiled_config.extract_constraints(tool_name, arguments)
-                combined = dict(pop_args)
-                combined.update(strip_none_values(dict(result.constraints)))
-                constraint_args = combined
+                constraint_args = _constraint_view(pop_args, dict(result.constraints))
             except Exception:
                 logger.warning(
                     "Constraint extraction failed for '%s'; falling back to raw arguments",
@@ -572,7 +646,7 @@ class SecureMCPClient:
         tool_name: str,
         arguments: Dict[str, Any],
         warrant_context: bool = True,
-        inject_warrant: Optional[bool] = None,
+        inject_warrant: Optional[WarrantInjection] = None,
         approvals: Optional[List] = None,
         timeout: float = 30.0,
         raise_on_tool_error: bool = True,
@@ -581,19 +655,23 @@ class SecureMCPClient:
         Call an MCP tool with Tenuo authorization.
 
         MCP Warrant Transport:
-            When injection is enabled, the current warrant and PoP signature are
-            sent via ``params._meta.tenuo`` (the MCP spec extension point).
+            With ``inject_warrant=True``, the current warrant and PoP signature
+            are sent via ``params._meta.tenuo`` (the MCP spec extension point).
+            With ``inject_warrant="argument"``, they are sent via the reserved
+            ``arguments._tenuo`` key for gateways that strip ``_meta``.
             If ``approvals`` are provided, they are serialized into
-            ``_meta.tenuo.approvals`` so the server can satisfy any approval gate on the tool.
+            the selected envelope so the server can satisfy any approval gate.
 
         Args:
             tool_name: Name of the MCP tool to call
             arguments: Tool arguments
             warrant_context: If True, authorize locally before sending
-            inject_warrant: Override client's inject_warrant setting (default: None)
+            inject_warrant: Override the client's injection setting. Use
+                ``True`` for ``_meta``, ``"argument"`` for ``_tenuo``, or
+                ``False`` to disable injection (default: None, inherit client).
             approvals: Pre-obtained SignedApproval objects to forward to the server
-                via ``_meta.tenuo.approvals``. Required when the tool is approval-gate-protected
-                and the server performs Tenuo verification (``inject_warrant=True``).
+                through the selected warrant carrier. Required when the tool is
+                approval-gate-protected and the server performs Tenuo verification.
             timeout: Maximum seconds to wait for the server response (default: 30).
                 Raises ``asyncio.TimeoutError`` if exceeded.
             raise_on_tool_error: If True (default), a server response with
@@ -620,6 +698,12 @@ class SecureMCPClient:
             )
 
         should_inject = self.inject_warrant if inject_warrant is None else inject_warrant
+        injection_mode = _warrant_injection_mode(should_inject)
+        if injection_mode == "argument" and "_tenuo" in arguments:
+            raise ValueError(
+                "'_tenuo' is reserved for Tenuo warrant transport; "
+                "remove it from tool arguments"
+            )
 
         # Pre-flight expiry check — fail fast before touching the network
         _active_warrant = warrant_scope()
@@ -635,44 +719,30 @@ class SecureMCPClient:
             call_args = args.copy()
             meta_payload: Optional[Dict[str, Any]] = None
 
-            if should_inject:
+            if injection_mode != "none":
                 warrant = warrant_scope()
                 keypair = key_scope()
 
                 if warrant is not None and keypair is not None:
-                    # Encode as WarrantStack when the parent chain is
-                    # available via chain_scope(), otherwise single warrant.
+                    # The core writes the envelope. Argument JSON is the
+                    # translation of this dict; nulls stay in that text.
                     from ..decorators import chain_scope as _chain_scope
-                    _parents = _chain_scope()
-                    if _parents:
-                        try:
-                            from tenuo_core import encode_warrant_stack
-                            warrant_base64 = encode_warrant_stack(
-                                list(_parents) + [warrant]
-                            )
-                        except Exception:
-                            warrant_base64 = warrant.to_base64()
-                    else:
-                        warrant_base64 = warrant.to_base64()
-                    # PoP covers the raw wire args. The server canonicalizes the
-                    # same wire args for verification (split-view authorize) and
-                    # runs constraint extraction separately for policy matching.
-                    # See tenuo._pop_canonicalize.strip_none_values for the exact
-                    # canonicalization both sides apply.
-                    sign_args = strip_none_values(args)
-                    pop_sig = warrant.sign(keypair, tool_name, sign_args, int(time.time()))
-                    signature_base64 = base64.b64encode(bytes(pop_sig)).decode("utf-8")
+                    from tenuo_core import sign_meta
 
-                    tenuo_meta: Dict[str, Any] = {
-                        "warrant": warrant_base64,
-                        "signature": signature_base64,
-                    }
-                    if approvals:
-                        tenuo_meta["approvals"] = [
-                            base64.b64encode(a.to_bytes()).decode("utf-8")
-                            for a in approvals
-                        ]
-                    meta_payload = {"tenuo": tenuo_meta}
+                    _parents = _chain_scope()
+                    chain = list(_parents) + [warrant] if _parents else [warrant]
+                    tenuo_meta = sign_meta(
+                        chain,
+                        keypair,
+                        tool_name,
+                        argument_json(args),
+                        int(time.time()),
+                        approvals or None,
+                    )
+                    if injection_mode == "argument":
+                        call_args["_tenuo"] = tenuo_meta
+                    else:
+                        meta_payload = {"tenuo": tenuo_meta}
 
             if self.session is None:
                 raise RuntimeError("Not connected to MCP server. Call connect() first.")
@@ -744,16 +814,14 @@ class SecureMCPClient:
                     "Use `with warrant_scope(w), key_scope(k):` or set warrant_context=False."
                 )
             bw = BoundWarrant(w, k)
-            pop_args = strip_none_values(arguments)
-            constraint_args = pop_args
+            pop_args = signed_arguments(arguments)
+            constraint_args = _constraint_view(pop_args)
             if self.compiled_config:
                 try:
                     extracted = self.compiled_config.extract_constraints(
                         tool_name, arguments
                     )
-                    combined = dict(pop_args)
-                    combined.update(strip_none_values(dict(extracted.constraints)))
-                    constraint_args = combined
+                    constraint_args = _constraint_view(pop_args, dict(extracted.constraints))
                 except Exception:
                     logger.warning(
                         "Constraint extraction failed for '%s'; falling back to raw arguments",
@@ -818,10 +886,8 @@ class SecureMCPClient:
                 # We do NOT suppress exceptions here (Fail Closed).
                 # If extraction fails, it means the request doesn't match the required configuration.
                 result = self.compiled_config.extract_constraints(tool_name, tool_kwargs)
-                combined = tool_kwargs.copy()
-                combined.update(dict(result.constraints))
-                return combined
-            return tool_kwargs
+                return _constraint_view(tool_kwargs, dict(result.constraints))
+            return _constraint_view(tool_kwargs)
 
         async def protected_tool(**kwargs):
             """Protected MCP tool wrapper."""
@@ -831,9 +897,9 @@ class SecureMCPClient:
             _approvals = kwargs.pop("_approvals", None)
 
             constraint_args = _extract_constraint_args(**kwargs)
-            pop_args = {
-                k: v for k, v in kwargs.items() if k != "_approvals"
-            }
+            pop_args = signed_arguments(
+                {k: v for k, v in kwargs.items() if k != "_approvals"}
+            )
 
             w = warrant_scope()
             k = key_scope()
@@ -906,7 +972,7 @@ async def discover_and_protect(
     timeout: float = 30.0,
     sse_read_timeout: float = 300.0,
     auth: Optional[Any] = None,
-    inject_warrant: bool = False,
+    inject_warrant: WarrantInjection = False,
 ):  # type: ignore[misc]
     """
     Discover MCP tools and return protected wrappers.
@@ -927,6 +993,9 @@ async def discover_and_protect(
         ) as tools:
             async with mint(Capability("search")):
                 result = await tools["search"](query="tenuo")
+
+    Gateways that discard MCP ``_meta`` can use
+    ``inject_warrant="argument"`` instead.
     """
     async with SecureMCPClient(
         command=command,

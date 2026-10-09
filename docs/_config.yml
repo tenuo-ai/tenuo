@@ -1,7 +1,10 @@
 title: Tenuo
-description: Capability tokens for AI agents
+description: Task-scoped authorization for AI agents. Signed warrants limit which tools an agent can call, with which arguments, and for how long.
 url: "https://tenuo.ai"
 baseurl: ""
+
+# Newsletter signup destination.
+buttondown_username: "tenuo-engineering"
 
 # Markdown pages get full site chrome (nav, typography). Without this, Jekyll
 # emits HTML fragments only — fine for embedding, wrong for published pages.

@@ -1,12 +1,13 @@
 ---
 title: "Per-request authorization for Temporal Nexus"
 description: "Nexus allowlists decide whether a namespace may reach an endpoint. They cannot evaluate the request. Here is how task-scoped warrants close that gap without changing service contracts."
-layout: default
+layout: blog-post
+blog_post: true
 permalink: /blog/temporal-nexus-authorization.html
 canonical_url: https://tenuo.ai/blog/temporal-nexus-authorization.html
 og_image: /images/og-temporal-nexus-authorization.png
 og_image_alt: "Per-request authorization for Temporal Nexus — task-scoped authority across namespace boundaries"
-author: "Niki Aimable Niyikiza"
+author: "Tenuo Engineering"
 date: 2026-09-03
 tags: ["Temporal", "Nexus", "authorization", "AI agents"]
 ---

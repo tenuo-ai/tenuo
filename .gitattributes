@@ -38,3 +38,13 @@ ietf/** linguist-documentation
 # Scripts and verification helpers are tooling, not the SDK
 scripts/** linguist-documentation
 docs/formal_verification/z3_bounds.py linguist-documentation
+
+# Keep legal files byte-identical across platforms.
+/LICENSE text eol=lf
+/NOTICE text eol=lf
+/tenuo-python/LICENSE text eol=lf
+/tenuo-python/NOTICE text eol=lf
+/tenuo-core/LICENSE text eol=lf
+/tenuo-core/NOTICE text eol=lf
+/tenuo-wasm/LICENSE text eol=lf
+/tenuo-wasm/NOTICE text eol=lf

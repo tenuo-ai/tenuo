@@ -1,22 +1,27 @@
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
+requires = ["maturin>=1.9.3,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "tenuo"
-version = "0.3.0"
-description = "Capability tokens for AI agents - Python SDK"
+version = "0.3.2"
+description = "Task-scoped authorization for AI agents: signed warrants limit which tools an agent can call, with which arguments, and for how long. Adapters for LangChain, LangGraph, CrewAI, OpenAI Agents SDK, Google ADK, AutoGen, MCP, FastMCP, A2A, FastAPI, and Temporal."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [
     { name = "Tenuo Contributors" }
 ]
-keywords = ["authorization", "capabilities", "agents", "security", "warrants", "mcp"]
+keywords = [
+    "authorization", "ai-agents", "agent-security", "llm-security", "access-control",
+    "least-privilege", "capabilities", "warrants", "delegation", "prompt-injection",
+    "mcp", "fastmcp", "model-context-protocol", "langchain", "langgraph", "crewai",
+    "openai-agents", "google-adk", "autogen", "a2a", "temporal", "fastapi",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -25,8 +30,12 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Security",
+    "Topic :: Security :: Cryptography",
     "Topic :: Software Development :: Libraries",
+    "Framework :: FastAPI",
+    "Typing :: Typed",
 ]
 
 # Core runtime dependencies
@@ -95,7 +104,7 @@ cloud = [
 # Development dependencies (includes features + tools)
 dev = [
     # Build tools
-    "maturin>=1.0",
+    "maturin>=1.9.3",
     # Testing
     "pytest>=7.0",
     "pytest-asyncio",
@@ -120,6 +129,8 @@ Homepage = "https://tenuo.ai"
 Documentation = "https://tenuo.ai/quickstart"
 Repository = "https://github.com/tenuo-ai/tenuo"
 Issues = "https://github.com/tenuo-ai/tenuo/issues"
+Changelog = "https://github.com/tenuo-ai/tenuo/blob/main/CHANGELOG.md"
+"Security Policy" = "https://github.com/tenuo-ai/tenuo/blob/main/SECURITY.md"
 
 [tool.maturin]
 module-name = "tenuo_core"
@@ -195,6 +206,5 @@ ignore = ["E501"]  # Line too long - handled by formatter
 ignore_missing_imports = true
 
 [[tool.maturin.sdist]]
-include = ["README.md", "LICENSE*", "examples/**/*", "tenuo/**/*.py"]
-
+include = ["README.md", "examples/**/*", "tenuo/**/*.py"]
 

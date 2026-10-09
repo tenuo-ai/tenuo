@@ -1,0 +1,26 @@
+{
+  "dependencies": {
+    "@tenuo/core": "0.3.2-beta.0",
+    "ai": "7.0.127",
+    "zod": "4.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "tsx": "4.23.15",
+    "typescript": "5.8.3",
+    "vitest": "3.2.7"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "name": "@tenuo/example-vercel-ai-sdk",
+  "private": true,
+  "scripts": {
+    "demo": "tsx demo.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify:packed": "node scripts/verify-packed.mjs"
+  },
+  "type": "module",
+  "version": "0.0.0"
+}

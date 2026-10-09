@@ -956,3 +956,22 @@ class TestEnforceToolCallWithAuthorizer:
         assert result.allowed is False
         assert result.error_type == "tool_not_allowed"
         assert result.constraint_violated == "tool"
+
+
+class TestRaiseIfDeniedMessages:
+    """Exceptions raised from a denied result read once and carry structured fields."""
+
+    def test_expired_names_the_warrant_id_not_the_reason(self):
+        from tenuo.exceptions import ExpiredError
+
+        result = EnforcementResult(
+            allowed=False,
+            tool="read_file",
+            arguments={},
+            denial_reason="Warrant has expired",
+            error_type="expired",
+            warrant_id="tnu_wrt_abc",
+        )
+        with pytest.raises(ExpiredError) as excinfo:
+            result.raise_if_denied()
+        assert excinfo.value.message == "Warrant 'tnu_wrt_abc' has expired"

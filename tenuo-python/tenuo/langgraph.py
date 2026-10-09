@@ -27,19 +27,41 @@ Multi-Agent Delegation Pattern:
     Each agent holds an *attenuated* copy of the root warrant in graph state.
     Downstream nodes and tool-nodes only see the narrowed capability set.
 
-    # Supervisor attenuates warrant for sub-agent and stores it in state
+    A delegated warrant is issued by the delegating agent, not by a trusted
+    root, so it cannot be authorized on its own — enforcement would deny it
+    with "Root warrant issuer is not trusted". Carry the path back to the root
+    in a ``warrant_chain`` state field, root-first and *excluding* the leaf.
+    This is only unnecessary when the delegating agent is itself a trusted
+    root, which is rarely true beyond two levels.
+
+    class State(TypedDict):
+        messages: Annotated[list, add_messages]
+        warrant: Warrant
+        warrant_chain: list  # parents, root-first, excluding `warrant`
+
+    # Supervisor narrows its warrant for a sub-agent and appends itself
+    # to the chain the sub-agent will present.
     @tenuo_node
     def supervisor(state: State, bound_warrant: BoundWarrant) -> dict:
-        researcher_warrant = bound_warrant.warrant.attenuate(
-            signing_key=supervisor_key,
-            holder=researcher_pubkey,
-            capabilities={"search": {}, "read": {}},
-            ttl_seconds=300,
+        researcher_warrant = bound_warrant.grant(
+            to=researcher_pubkey,
+            allow=["search", "read"],
+            ttl=300,
         )
-        return {"warrant": researcher_warrant}
+        return {
+            "warrant": researcher_warrant,
+            "warrant_chain": [*state.get("warrant_chain", []), bound_warrant.warrant],
+        }
 
     # Researcher's TenuoToolNode can only call search/read — not write
     researcher_tools = TenuoToolNode([search_tool, read_tool, write_tool])
+
+    Entries may be ``Warrant`` objects or base64 tokens. A chain that does not
+    hash-link to the leaf, or that does not root in a trusted issuer, is
+    denied. When a graph cannot thread the chain through state, pass it once
+    at construction (``TenuoToolNode([...], warrant_chain=[root])``) or wrap
+    the invocation in ``tenuo.chain_scope([root])``; the state field wins when
+    more than one is present.
 
 LangChain 1.x Pattern (TenuoMiddleware):
     Recommended for create_agent(). Same enforcement path as TenuoToolNode:
@@ -170,6 +192,7 @@ def _authorize_tool_request(
     handler: Callable[..., Any],
     *,
     bw_factory: Callable[[Any], "BoundWarrant"],
+    chain_factory: Optional[Callable[[Any], Optional[List[Any]]]] = None,
     require_constraints: bool = False,
     trusted_roots: Optional[List[Any]] = None,
     approval_handler: Optional[Any] = None,
@@ -186,6 +209,9 @@ def _authorize_tool_request(
         handler: Downstream handler to call on success.
         bw_factory: Callable that extracts a BoundWarrant from the request.
             Raises on failure (e.g. missing warrant or key).
+        chain_factory: Callable that extracts the parent warrant chain from the
+            request, or None to leave any ambient ``chain_scope()`` in effect.
+            Raises on a malformed chain, which is handled as a config error.
         debug: If True, include detailed denial reasons in ToolMessages.
     """
     import time
@@ -195,10 +221,13 @@ def _authorize_tool_request(
     tool_name = tool_call.get("name", "unknown")
     tool_args = tool_call.get("args", {})
 
+    # A malformed chain is resolved here, alongside the warrant, so it denies
+    # the call rather than silently falling back to a leaf-only check.
     try:
         bw = bw_factory(request)
+        warrant_chain = chain_factory(request) if chain_factory is not None else None
     except Exception as e:
-        logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
+        logger.warning(f"[{request_id}] Failed to resolve warrant authority from state: {e}")
         error_msg = (
             f"Configuration error: {e}" if debug
             else f"Security configuration error (ref: {request_id})"
@@ -219,6 +248,7 @@ def _authorize_tool_request(
             trusted_roots=trusted_roots,
             approval_handler=approval_handler,
             approvals=approvals,
+            warrant_chain=warrant_chain,
         )
     except (ApprovalGateTriggered, ApprovalRequired, ApprovalDenied, ApprovalVerificationError):
         raise
@@ -262,6 +292,7 @@ async def _authorize_tool_request_async(
     handler: Callable[..., Any],
     *,
     bw_factory: Callable[[Any], "BoundWarrant"],
+    chain_factory: Optional[Callable[[Any], Optional[List[Any]]]] = None,
     require_constraints: bool = False,
     trusted_roots: Optional[List[Any]] = None,
     approval_handler: Optional[Any] = None,
@@ -279,8 +310,9 @@ async def _authorize_tool_request_async(
 
     try:
         bw = bw_factory(request)
+        warrant_chain = chain_factory(request) if chain_factory is not None else None
     except Exception as e:
-        logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
+        logger.warning(f"[{request_id}] Failed to resolve warrant authority from state: {e}")
         error_msg = (
             f"Configuration error: {e}" if debug
             else f"Security configuration error (ref: {request_id})"
@@ -301,6 +333,7 @@ async def _authorize_tool_request_async(
             trusted_roots=trusted_roots,
             approval_handler=approval_handler,
             approvals=approvals,
+            warrant_chain=warrant_chain,
         )
     except (ApprovalGateTriggered, ApprovalRequired, ApprovalDenied, ApprovalVerificationError):
         raise
@@ -441,6 +474,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         require_constraints: bool = False,
         debug: bool = False,
         trusted_roots: Optional[List[Any]] = None,
+        warrant_chain: Optional[List[Any]] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
         control_plane: Optional[Any] = None,
@@ -457,6 +491,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 Warrant issuers are verified against these roots via
                 Authorizer.authorize_one() — closes the self-signed trust gap.
                 Always supply in production. Emits SecurityWarning when omitted.
+            warrant_chain: Default parent warrants (root-first, excluding the leaf)
+                for graphs that do not carry a ``warrant_chain`` state field.
+                The state field takes precedence when present.
             approval_handler: Handler for warrant approval gates (e.g. ``cli_prompt``)
         """
         if not MIDDLEWARE_AVAILABLE:
@@ -470,6 +507,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         self._require_constraints = require_constraints
         self._debug = debug
         self._trusted_roots = trusted_roots
+        self._warrant_chain = warrant_chain
         self._approval_handler = approval_handler
         self._approvals = approvals
         if control_plane is None:
@@ -486,6 +524,12 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         # Use runtime.config for key_id if available
         config = getattr(runtime, "config", None) or {}
         return _get_bound_warrant(state, config, key_id=self._key_id)
+
+    def _get_warrant_chain_from_request(self, request: Any) -> Optional[List[Any]]:
+        """Read the parent chain from agent state, falling back to the default."""
+        state = request.state
+        state_dict = state if isinstance(state, dict) else vars(state)
+        return _get_warrant_chain(state_dict, self._warrant_chain)
 
     def wrap_model_call(
         self,
@@ -585,6 +629,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         return _authorize_tool_request(
             request, handler,
             bw_factory=self._bw_factory,
+            chain_factory=self._get_warrant_chain_from_request,
             require_constraints=self._require_constraints,
             trusted_roots=resolve_trusted_roots(self._trusted_roots),
             approval_handler=self._approval_handler,
@@ -602,6 +647,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         return await _authorize_tool_request_async(
             request, handler,
             bw_factory=self._bw_factory,
+            chain_factory=self._get_warrant_chain_from_request,
             require_constraints=self._require_constraints,
             trusted_roots=resolve_trusted_roots(self._trusted_roots),
             approval_handler=self._approval_handler,
@@ -624,6 +670,60 @@ def _get_key_id_from_config(config: Optional[Dict[str, Any]]) -> str:
     # LangGraph stores custom config in "configurable"
     configurable = config.get("configurable", {})
     return configurable.get("tenuo_key_id", "default")
+
+
+_MAX_WARRANT_B64 = 64 * 1024
+
+
+def _get_warrant_chain(
+    state: Dict[str, Any],
+    fallback: Optional[List[Any]] = None,
+) -> Optional[List[Any]]:
+    """Read the parent warrant chain from graph state.
+
+    A delegated warrant is issued by the delegating holder, not by a trusted
+    root, so it can only be authorized when the path back to the root is
+    presented alongside it. State carries that path in ``warrant_chain``,
+    root-first and **excluding** the leaf in ``warrant``.
+
+    Returns ``None`` when state carries no chain, which leaves any ambient
+    ``chain_scope()`` in effect. Entries may be ``Warrant`` objects or base64
+    tokens; anything else raises so a malformed chain fails closed instead of
+    silently degrading to a leaf-only check.
+    """
+    chain = state.get("warrant_chain")
+    if chain is None or (isinstance(chain, (list, tuple)) and not chain):
+        chain = fallback
+    if chain is None or (isinstance(chain, (list, tuple)) and not chain):
+        return None
+    if isinstance(chain, (str, bytes)) or not isinstance(chain, (list, tuple)):
+        raise ConfigurationError(
+            "State field 'warrant_chain' must be a list of parent warrants "
+            f"(root-first, excluding the leaf), got {type(chain).__name__}."
+        )
+
+    parents: List[Any] = []
+    for index, parent in enumerate(chain):
+        if isinstance(parent, str):
+            if len(parent) > _MAX_WARRANT_B64:
+                raise ConfigurationError(
+                    f"warrant_chain[{index}] is {len(parent)} bytes, exceeding the "
+                    f"{_MAX_WARRANT_B64} byte safety limit. Possible corruption or attack."
+                )
+            try:
+                parents.append(Warrant.from_base64(parent))
+            except Exception as e:
+                raise ConfigurationError(
+                    f"Failed to decode warrant_chain[{index}] from string token: {e}"
+                )
+        elif isinstance(parent, Warrant):
+            parents.append(parent)
+        else:
+            raise ConfigurationError(
+                f"warrant_chain[{index}] must be a Warrant or base64 token, "
+                f"got {type(parent).__name__}."
+            )
+    return parents
 
 
 def _get_bound_warrant(
@@ -660,7 +760,6 @@ def _get_bound_warrant(
 
     # Auto-inflate from string (Base64) if needed (for serialization safety)
     if isinstance(warrant, str):
-        _MAX_WARRANT_B64 = 64 * 1024
         if len(warrant) > _MAX_WARRANT_B64:
             raise ConfigurationError(
                 f"Warrant string is {len(warrant)} bytes, exceeding the "
@@ -687,12 +786,15 @@ def _get_bound_warrant(
             f"Either register it manually or use load_tenuo_keys() to load from env vars."
         )
 
-    # Bind key to warrant
+    # Bind key to warrant, carrying the configured trust anchor so nodes that
+    # call validate()/headers() on the injected BoundWarrant are not left
+    # without one. Adapters still pass trusted_roots explicitly at enforcement
+    # time, which takes precedence over what is attached here.
     if isinstance(warrant, BoundWarrant):
         # Already bound - use as-is (rare in state)
         return warrant
     elif hasattr(warrant, "bind"):
-        return warrant.bind(key)
+        return warrant.bind(key, trusted_roots=resolve_trusted_roots(None))
 
     raise ConfigurationError(f"Invalid warrant type in state: {type(warrant)}")
 
@@ -756,6 +858,7 @@ def guard_node(
 
         try:
             bw = _get_bound_warrant(state_dict, config, key_id=key_id)
+            warrant_chain = _get_warrant_chain(state_dict)
         except Exception as e:
             raise ConfigurationError(f"Authorization failed in node '{node.__name__}': {e}") from e
 
@@ -764,7 +867,7 @@ def guard_node(
         if required_tools:
             from ._enforcement import enforce_tool_call
             for tool_name in required_tools:
-                result = enforce_tool_call(tool_name=tool_name, tool_args={}, bound_warrant=bw, trusted_roots=trusted_roots)
+                result = enforce_tool_call(tool_name=tool_name, tool_args={}, bound_warrant=bw, trusted_roots=trusted_roots, warrant_chain=warrant_chain)
                 if not result.allowed:
                     raise ConfigurationError(
                         f"Node '{node.__name__}': warrant does not cover required tool "
@@ -860,11 +963,20 @@ def require_warrant(
 
     Use this if you can't use decorators/wrappers.
 
-    Example:
+    This binds the warrant; it does not authorize anything. Gate the call on
+    ``enforce_tool_call``, which resolves trusted roots and verifies the
+    delegation chain::
+
+        from tenuo import enforce_tool_call
+
         def my_node(state, config=None):
             bw = require_warrant(state, config)
-            result = bw.validate("search", {"query": "test"})
-            if result.success:
+            result = enforce_tool_call(
+                "search", {"query": "test"}, bw,
+                trusted_roots=[root_key.public_key],
+                warrant_chain=state.get("warrant_chain"),
+            )
+            if result.allowed:
                 ...
     """
     return _get_bound_warrant(state, config)
@@ -899,6 +1011,26 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         researcher_node = TenuoToolNode([search_tool])
         executor_node   = TenuoToolNode([write_tool])
         # Each node enforces the warrant currently in state independently.
+
+    Delegated warrants::
+
+        # A warrant issued by a sub-agent's supervisor does not chain to a
+        # trusted root on its own. Put the parents in state, root-first and
+        # excluding the leaf, and this node presents the whole path:
+        state = {
+            "messages": [...],
+            "warrant": researcher_warrant,   # issued by the supervisor
+            "warrant_chain": [task_warrant], # issued by the trusted root
+        }
+
+    Args:
+        tools: Tools to expose, as with LangGraph's ``ToolNode``.
+        require_constraints: Require constraints for sensitive tools.
+        trusted_roots: Trusted issuer public keys (``tenuo_core.PublicKey``).
+        warrant_chain: Default parent warrants (root-first, excluding the leaf)
+            for graphs that do not carry a ``warrant_chain`` state field. The
+            state field takes precedence when present.
+        key_id: Which signing key to use (default: from config or "default").
     """
 
     def __init__(
@@ -907,6 +1039,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         *,
         require_constraints: bool = False,
         trusted_roots: Optional[List[Any]] = None,
+        warrant_chain: Optional[List[Any]] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
         control_plane: Optional[Any] = None,
@@ -921,21 +1054,28 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
 
         _require_constraints = require_constraints
         _trusted_roots = trusted_roots
+        _warrant_chain = warrant_chain
         _approval_handler = approval_handler
         _approvals = approvals
         _control_plane = control_plane
         _key_id = key_id
 
-        def _bw_factory(request: Any) -> Any:
+        def _state_dict(request: Any) -> Dict[str, Any]:
             state = request.state
-            state_dict = state if isinstance(state, dict) else vars(state)
+            return state if isinstance(state, dict) else vars(state)
+
+        def _bw_factory(request: Any) -> Any:
             config = getattr(request.runtime, "config", None)
-            return _get_bound_warrant(state_dict, config, key_id=_key_id)
+            return _get_bound_warrant(_state_dict(request), config, key_id=_key_id)
+
+        def _chain_factory(request: Any) -> Optional[List[Any]]:
+            return _get_warrant_chain(_state_dict(request), _warrant_chain)
 
         def _auth_wrap(request: Any, handler: Callable[..., Any]) -> Any:
             return _authorize_tool_request(
                 request, handler,
                 bw_factory=_bw_factory,
+                chain_factory=_chain_factory,
                 require_constraints=_require_constraints,
                 trusted_roots=_trusted_roots,
                 approval_handler=_approval_handler,
@@ -947,6 +1087,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             return await _authorize_tool_request_async(
                 request, handler,
                 bw_factory=_bw_factory,
+                chain_factory=_chain_factory,
                 require_constraints=_require_constraints,
                 trusted_roots=_trusted_roots,
                 approval_handler=_approval_handler,
@@ -970,6 +1111,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             ) from exc
         # Store for test introspection / approval param checks
         self._require_constraints = require_constraints
+        self._warrant_chain = warrant_chain
         self._approval_handler = approval_handler
         self._approvals = approvals
         if control_plane is None:

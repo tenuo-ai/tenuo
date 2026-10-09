@@ -2,9 +2,12 @@
 
 //! # Tenuo Core
 //!
-//! Agent Capability Flow Control - Rust core library.
+//! Task-scoped authorization for AI agents: the Rust core of Tenuo.
 //!
-//! Tenuo provides cryptographically-enforced capability attenuation for AI agent workflows.
+//! A warrant is a signed grant of which tools an agent may call, with which argument
+//! constraints, and for how long. Warrants are holder-bound, can only narrow when
+//! delegated, verify offline where the action runs, and produce signed receipts.
+//!
 //! Unlike traditional IAM systems that answer "Who are you?", Tenuo answers
 //! "Who delegated this authority, what task context does it carry, and is this action
 //! within the delegated bounds?"
@@ -100,6 +103,7 @@ pub mod error;
 pub mod extraction;
 pub mod gateway_config;
 pub mod mcp;
+pub mod meta_envelope;
 pub mod payload;
 pub mod planes;
 pub mod receipt;
@@ -110,9 +114,12 @@ pub mod revocation_tracker;
 #[deny(missing_docs)]
 #[cfg_attr(docsrs, doc(cfg(feature = "sdk")))]
 pub mod sdk;
+pub mod strict_json;
 pub mod verification;
 pub mod warrant;
 pub mod wire;
+
+pub use strict_json::{parse_json_strict, StrictJsonError};
 
 // Re-export extraction types
 pub use extraction::{
@@ -143,8 +150,8 @@ pub mod python_control_plane;
 // Re-exports for convenience
 pub use constraints::{
     All, Any, AnyOf, CelConstraint, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains,
-    Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subset, UrlPattern, Wildcard,
-    MAX_CONSTRAINT_DEPTH,
+    Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subpath, Subset, UrlPattern,
+    Wildcard, MAX_CONSTRAINT_DEPTH,
 };
 pub use crypto::{PublicKey, Signature, SigningKey};
 pub use error::{Error, ErrorCode, Result};

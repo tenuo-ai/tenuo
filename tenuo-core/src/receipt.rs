@@ -679,10 +679,104 @@ impl Receipt {
     }
 }
 
+/// Verify an ordered run of receipts from one enforcement point.
+///
+/// Checks every signature, that one key signed them all (and that it is
+/// `signer` when given), and that each receipt's `prev_receipt_hash` is the
+/// digest of the receipt before it. The first receipt may link to one outside
+/// the run. Returns the payloads in order.
+/// Empty input is rejected because it provides no signed evidence.
+///
+/// A valid chain shows that no receipt inside the run was changed, removed,
+/// or inserted. It does not show that newer receipts were not cut from the end;
+/// export or anchor the latest digest elsewhere for that.
+pub fn verify_chain(
+    receipts: &[Receipt],
+    signer: Option<&PublicKey>,
+) -> Result<Vec<ReceiptPayload>> {
+    if receipts.is_empty() {
+        return Err(Error::InvalidReceipt("receipt chain is empty".to_string()));
+    }
+    let mut payloads = Vec::with_capacity(receipts.len());
+    let mut previous: Option<[u8; 32]> = None;
+    let expected = signer.or_else(|| receipts.first().map(|receipt| &receipt.signer_key));
+    for (index, receipt) in receipts.iter().enumerate() {
+        if Some(&receipt.signer_key) != expected {
+            return Err(Error::InvalidReceipt(format!(
+                "receipt {index} is signed by a different key"
+            )));
+        }
+        let payload = receipt.verify_signature()?;
+        if let Some(previous) = previous {
+            if payload.prev_receipt_hash != Some(previous) {
+                return Err(Error::InvalidReceipt(format!(
+                    "receipt {index} does not link to the receipt before it"
+                )));
+            }
+        }
+        previous = Some(receipt.digest()?);
+        payloads.push(payload);
+    }
+    Ok(payloads)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::crypto::SigningKey;
+
+    fn chain(key: &SigningKey, length: usize) -> Vec<Receipt> {
+        let mut receipts: Vec<Receipt> = Vec::new();
+        for index in 0..length {
+            let mut next = payload();
+            next.request_id = format!("req-{index}");
+            next.prev_receipt_hash = receipts.last().map(|receipt| receipt.digest().unwrap());
+            receipts.push(Receipt::create(&next, key).unwrap());
+        }
+        receipts
+    }
+
+    #[test]
+    fn verify_chain_rejects_empty_input() {
+        let key = SigningKey::generate().public_key();
+        for signer in [None, Some(&key)] {
+            assert!(matches!(
+                verify_chain(&[], signer),
+                Err(Error::InvalidReceipt(reason)) if reason == "receipt chain is empty"
+            ));
+        }
+    }
+
+    #[test]
+    fn verify_chain_detects_edits_gaps_and_foreign_signers() {
+        let key = SigningKey::generate();
+        let receipts = chain(&key, 4);
+        let payloads = verify_chain(&receipts, Some(&key.public_key())).unwrap();
+        assert_eq!(payloads.len(), 4);
+        assert_eq!(payloads[3].request_id, "req-3");
+        assert!(
+            verify_chain(&receipts[1..], None).is_ok(),
+            "a run may start mid-chain"
+        );
+
+        let mut gap = receipts.clone();
+        gap.remove(2);
+        assert!(verify_chain(&gap, None).is_err());
+
+        let mut swapped = receipts.clone();
+        swapped.swap(1, 2);
+        assert!(verify_chain(&swapped, None).is_err());
+
+        let other = SigningKey::generate();
+        assert!(verify_chain(&receipts, Some(&other.public_key())).is_err());
+        let mut mixed = receipts.clone();
+        mixed[3] = chain(&other, 1).remove(0);
+        assert!(verify_chain(&mixed, None).is_err());
+
+        let mut tampered = receipts;
+        tampered[1].payload[5] ^= 1;
+        assert!(verify_chain(&tampered, None).is_err());
+    }
 
     fn payload() -> ReceiptPayload {
         ReceiptPayload::allow(

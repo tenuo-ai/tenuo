@@ -7,6 +7,14 @@ Cryptographic authorization primitive for AI agents.
 
 > **Status: v0.2 — Production/Stable.** Core semantics are stable. See [CHANGELOG](../CHANGELOG.md).
 
+Install Tenuo's implementation skill to have a supported coding agent inspect
+the resolved crate features, select an enforcement topology, and generate
+deny-before-effect tests:
+
+```bash
+npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
+```
+
 ## Overview
 
 Tenuo implements **capability tokens** (Warrants) for AI agent authorization:

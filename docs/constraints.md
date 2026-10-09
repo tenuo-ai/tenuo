@@ -506,7 +506,7 @@ child = Subpath("/other")  # FAILS
 > [!NOTE]
 > **Symlink Handling**
 >
-> This constraint does NOT resolve symlinks. This is intentional for distributed systems where the file may be on a different machine than the validator. For symlink-aware validation, use `path_jail` at the execution layer. See [Defense in Depth](#defense-in-depth-file-paths).
+> This constraint does NOT resolve symlinks. This is intentional for distributed systems where the file may be on a different machine than the validator. Opening the file is a separate step at the executor. See [Defense in Depth](#defense-in-depth-file-paths).
 
 **Error Handling:**
 
@@ -1533,30 +1533,70 @@ Cidr("10.0.0.0/8")
 
 ## Defense in Depth: File Paths
 
-Tenuo constraints validate the **logical policy** (does the pattern allow this path?). For file operations, you should also validate the **physical path** to prevent symlink attacks and traversal.
+`Subpath` answers a logical question: is this path inside the root the warrant delegated? It normalizes `.` and `..` and does not look at the filesystem, because the warrant may be checked on a different machine from the one that opens the file.
 
-### The One-Two Punch
+Opening the file is the executor's step. The Rust SDK `filesystem` feature does both in the guarded call: it verifies the warrant, requires the leaf `Subpath` to sit inside a logical ceiling the executor configured, maps that logical path under a pinned local directory, and opens it through [`path_jail`](https://github.com/tenuo-ai/path_jail). The tool body receives a file, not a path to open later.
 
 ```rust
-use path_jail;
+use std::io::Read;
+use tenuo::sdk::prelude::*;
 
-// Step 1: Tenuo validates policy
-if warrant.allows("read_file", &args) {
-    // Step 2: path_jail validates filesystem reality
-    let safe_path = path_jail::join("/data", &args.path)?;
-    std::fs::read_to_string(safe_path)?
-}
+const READ_FILE: &str = "read_file";
+const PATH: &str = "path";
+
+// Warrants name /workspace; this executor maps it to its job directory.
+let workspace = Workspace::new(
+    "/workspace",
+    "/srv/jobs/job-1842",
+    Containment::Atomic,
+)?
+    .limit_capability(READ_FILE, CapabilityAccess::read_only());
+let session = runtime
+    .session_from_warrant(warrant)?
+    .with_filesystem(workspace);
+
+let body = session.guard(&call, |authorized| {
+    let mut file = authorized.open(PATH, OpenOptions::read_only())?;
+    let mut body = String::new();
+    file.read_to_string(&mut body)?;
+    Ok::<_, std::io::Error>(body)
+})?;
+let body = body.into_inner();
 ```
 
-### Why Both?
+The filesystem types are available from `tenuo::sdk::prelude::*`. `FilesystemError` converts into `std::io::Error` and keeps `NotFound` and `PermissionDenied`. `open` takes the argument name, not another path. The path is the one the warrant already allowed, and it must already be normalized: `//`, `.`, `..`, `\`, and a trailing slash are refused, because `Pattern` and `NotOneOf` saw the raw string.
 
-| Layer | What it catches | Example |
-|-------|-----------------|---------|
-| **Tenuo** (Pattern) | Policy violations | `path="/etc/passwd"` blocked by `Pattern("/data/*")` |
-| **path_jail** | Traversal attacks | `path="/data/../etc/passwd"` blocked after normalization |
-| **path_jail** | Symlink escapes | `path="/data/link"` where link --> `/etc` |
+Every capability needs an explicit `limit_capability` entry by default. This makes a misspelled or forgotten capability fail closed with `CapabilityLimitMissing`, and stops a `read_file` handler from accidentally requesting `write_truncate`. Use the narrow presets `read_only`, `write_existing`, `append_existing`, and `create_new`; reserve `full_access` for handlers that genuinely need every mode. `allow_handler_selected_access` is an explicit escape hatch for dynamic capability sets. Capability and argument names match the dynamic tool schema, so define shared constants when they are reused.
 
-### Recommended Pattern
+Creating a file requires Linux x86_64 or aarch64. `Atomic` is that kernel open. On macOS, BSD, and other architectures, `Atomic` cannot be constructed and `BestEffort` refuses `create` and `create_new`, because a parent directory swapped for a symlink can leave the new file outside the jail. The workaround is to create the file in the executor and open it with `write_truncate`. `BestEffort` uses `O_NOFOLLOW` on the final component and reports that on the opened file. Linux x86_64 and aarch64 do not fall back: if `openat2` is missing or blocked, `Workspace::new` fails. Truncate runs only after the opened handle is checked. Symlinks are rejected. On the kernel path the relative path, including a narrowed leaf such as `reports/q4.md`, is what `openat2` opens. Every platform also verifies that the opened descriptor resolves to that exact relative spelling. That check compares the jail root's path, not its inode, and the error does not include the host directory. Linux performs the check through `/proc/self/fd`; macOS uses `F_GETPATH`. `Workspace::new` probes that facility so a broken deployment fails at startup with `EntryCheckUnavailable`, rather than on its first request.
+
+| Host | Containment to choose | Create files | Descriptor-path requirement | CI status |
+|------|-----------------------|--------------|-----------------------------|-----------|
+| Linux x86_64 / aarch64 | `Atomic` for production | Yes | readable `/proc/self/fd` | tested |
+| macOS arm64 | `BestEffort` | No | `F_GETPATH` | tested |
+| BSD and other Unix | `BestEffort` | No | readable `/dev/fd` | not currently tested |
+| Windows | unavailable | No | — | unsupported |
+
+Before deployment, construct the workspace during startup, use `Atomic` on supported Linux hosts, configure every filesystem capability with its narrowest access preset, and run one guarded open against the mounted production volume. The constructor checks the kernel jail and descriptor-path prerequisites; the guarded open additionally checks the actual filesystem and mount behavior.
+
+`OpenedFile` implements the blocking `std::io::{Read, Write, Seek}` traits. In an async service, keep guarded file work short or move the guarded operation and file I/O into the runtime's blocking pool (for example, `tokio::task::spawn_blocking`). Do not turn the descriptor back into a path for a later async open; that discards the guarantee this API provides.
+
+Every `Subpath` branch that covers the argument must sit inside the executor ceiling. `Any` of a wide root and a narrow root is denied when the wide root is outside the ceiling, same as a warrant that is only the wide root.
+
+The open rejects a directory or FIFO that yields a handle, and it rejects a file with an extra hard link, unless the caller turns those checks off. Turning both off leaves the open blocking, so a FIFO can hang the handler. A socket fails before a handle exists. On a case-insensitive directory (ext4 casefold, vfat, SMB), the exact-spelling check rejects a differently cased entry before returning or truncating the handle.
+
+| Layer | What it decides |
+|-------|-----------------|
+| **Subpath** | The logical path is inside the delegated root, including after `.` and `..` normalization |
+| **Open spelling** | The argument is already that normalized form. A different spelling is refused |
+| **Workspace ceiling** | Every covering `Subpath` root is inside the directory this executor is willing to expose |
+| **Opened handle** | The directory entry that was opened is the named path, under the leaf and under the pinned directory |
+
+Enable it with the `filesystem` feature. It is not part of the default build, and `Subpath` itself never consults the disk.
+
+### Python
+
+Python callers do not get a file descriptor from this feature. A tool can still check the path with [`path_jail`](https://github.com/tenuo-ai/path_jail) and then read it. Those are two steps on Linux, macOS, and BSD: a symlink can change between `Jail.join` and the read. `Jail.join` is not the Rust `atomic` open.
 
 ```python
 from path_jail import Jail  # uv pip install path_jail
@@ -1565,15 +1605,9 @@ jail = Jail("/data")
 
 @guard(tool="read_file")
 async def read_file(path: str) -> str:
-    # Tenuo already validated the constraint
-    # Now validate the actual filesystem path
-    safe_path = jail.join(path)
-    return safe_path.read_text()
+    # Checked path, then a separate read. Not kernel-enforced.
+    return jail.join(path).read_text()
 ```
-
-**Tenuo** defines the rules. **path_jail** enforces them on the filesystem.
-
-See: [path_jail on PyPI](https://pypi.org/project/path-jail/)
 
 ---
 

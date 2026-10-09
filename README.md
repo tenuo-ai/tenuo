@@ -13,6 +13,7 @@
   <a href="https://hub.docker.com/r/tenuo/authorizer"><img src="https://img.shields.io/docker/v/tenuo/authorizer?label=docker" alt="Docker"></a>
   <a href="https://tenuo.ai"><img src="https://img.shields.io/badge/docs-tenuo.ai-blue" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+  <a href="https://deepwiki.com/tenuo-ai/tenuo"><img src="https://img.shields.io/badge/Ask-DeepWiki-blue.svg" alt="Ask DeepWiki"></a>
 </p>
 
 Tenuo gives each task only the authority it needs. That authority travels with the work, can only shrink when handed off, and is checked where the action runs. It works alongside your existing identity and policy systems.
@@ -21,7 +22,7 @@ A **warrant** is a signed grant of which tools an agent can call, under what con
 
 > **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](./CHANGELOG.md).
 >
-> **Tenuo Cloud: Early Access.** Managed control plane with revocation, observability, and multi-tenant warrant issuance. [Request access →](https://tenuo.ai/early-access.html)
+> **Tenuo Cloud: Open Beta.** Managed control plane with revocation, observability, and multi-tenant warrant issuance. [Sign Up](https://cloud.tenuo.ai/)
 
 ## Install
 
@@ -41,7 +42,21 @@ cargo add tenuo --features sdk
 
 See [`tenuo-ts/README.md`](tenuo-ts/README.md) for TypeScript. Rust is [below](#rust).
 
-Or try it without installing:
+### AI coding agents
+
+Install Tenuo's implementation skill so a supported coding agent can place
+authorization at the effect boundary, use the SDK version in your project, and
+generate both allow and deny-before-effect tests:
+
+```bash
+npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
+```
+
+The skill distinguishes an in-process guardrail from an independently enforced
+boundary and reports the guarantee and remaining bypasses explicitly. It does
+not ask the agent to reimplement Tenuo's cryptography or protocol.
+
+To try Tenuo without installing an SDK:
 
 <a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
 <a href="https://tenuo.ai/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a" alt="Explorer"></a>
@@ -276,7 +291,7 @@ Tenuo uses the same warrant format and attenuation rules everywhere. Pick the en
 
 | Enforcement point | Use it when | Integrations | Start here |
 |-------------------|-------------|--------------|------------|
-| **Inside the agent runtime** | You own the application and want the shortest path to enforcement | Python functions, OpenAI, LangChain, LangGraph, Google ADK, CrewAI, AutoGen, Rust `Guard` | [`@guard`](./docs/quickstart.md), [OpenAI](./docs/openai.md), [Rust](#rust), [framework guides](#documentation) |
+| **Inside the agent runtime** | You own the application and want the shortest path to enforcement | Python functions, OpenAI, LangChain, LangGraph, Google ADK, CrewAI, AutoGen, Hermes Agent, Rust `Guard` | [`@guard`](./docs/quickstart.md), [OpenAI](./docs/openai.md), [Hermes](./docs/hermes.md), [Rust](#rust), [framework guides](#documentation) |
 | **At the MCP tool server** | Agents call tools across a process or vendor boundary | FastMCP, official MCP SDK, custom MCP servers | [MCP guide](./docs/mcp.md) |
 | **At an API or service edge** | Multiple agent runtimes share the same downstream services | FastAPI, authorizer sidecar, gateway, Kubernetes | [FastAPI](./docs/fastapi.md), [Kubernetes](./docs/kubernetes.md) |
 | **Inside a durable workflow** | Authority must survive retries, queues, and long-running execution | Temporal | [Temporal guide](./docs/temporal-reference.md) |
@@ -298,6 +313,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 | **[OpenAI](https://tenuo.ai/openai)** | Direct API protection with streaming |
 | **[Google ADK](https://tenuo.ai/google-adk)** | ADK agent tool protection |
 | **[AutoGen](https://tenuo.ai/autogen)** | AgentChat tool protection |
+| **[Hermes Agent](https://tenuo.ai/hermes)** | Official Hermes plugin for signed, expiring tool authorization |
 | **[A2A](https://tenuo.ai/a2a)** | Inter-agent delegation |
 | **[FastAPI](https://tenuo.ai/fastapi)** | Protect FastAPI routes |
 | **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
@@ -315,7 +331,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 | **Python** | 3.9 - 3.14 |
 | **Node.js** | **Beta**. Node 20+ (`npm i @tenuo/core@beta`) |
 | **OS** | Linux, macOS, Windows |
-| **Python installation** | Prebuilt wheels; no Rust toolchain required |
+| **Python installation** | Prebuilt wheels for Linux (x86_64 and aarch64), macOS (arm64), and Windows (x64). Other platforms build from source and need Rust |
 
 ### Optional Dependencies
 
@@ -350,8 +366,8 @@ This runs the [orchestrator -> worker -> authorizer](https://tenuo.ai/demo.html)
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.3.0  # Sidecar for warrant verification
-docker pull tenuo/control:0.3.0     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.3.2  # Sidecar for warrant verification
+docker pull tenuo/control:0.3.2     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -388,7 +404,7 @@ The core crate is the protocol. The `sdk` feature is the enforcement surface: a 
 
 ```toml
 [dependencies]
-tenuo = { version = "0.3.0", features = ["sdk"] }
+tenuo = { version = "0.3.2", features = ["sdk"] }
 ```
 
 ```rust

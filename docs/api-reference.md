@@ -508,7 +508,8 @@ Tenuo follows **POLA**: when you attenuate a warrant, the child starts with **NO
 |--------|----------|
 | `capability(tool, {})` | Grant only that tool |
 | `inherit_all()` | Explicitly opt-in to inherit all parent capabilities |
-| `tools([...])` | After `inherit_all()`, narrow to subset |
+| `tool(name)` / `tools([...])` | Add tools with the parent's constraints for them |
+| `retain_tool(name)` / `retain_tools([...])` | After `inherit_all()`, keep only these |
 
 **Pattern 1: Grant specific capabilities (recommended)**
 
@@ -527,10 +528,13 @@ child = builder.grant(parent_key)
 # Start with all parent capabilities, then narrow
 builder = parent.grant_builder()
 builder.inherit_all()                    # Explicit opt-in
-builder.tools(["read_file"])             # Keep only this tool
+builder.retain_tools(["read_file"])      # Keep only this tool
 builder.holder(worker_key.public_key)
 child = builder.grant(parent_key)
 ```
+
+`tool()` and `tools()` add capabilities and never narrow, so calling them
+after `inherit_all()` raises `ValidationError`; use `retain_tools()` there.
 
 **Pattern 3: Via grant() convenience method**
 
@@ -622,10 +626,18 @@ bound = warrant.bind(keypair)
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `validate(tool, args)` | `ValidationResult` | Full security check (PoP + constraints) |
+| `validate(tool, args, *, trusted_roots=None, warrant_chain=None)` | `ValidationResult` | Full security check (issuer trust + PoP + constraints) |
 | `allows(tool, args=None)` | `bool` | Logic check (no PoP) |
 | `grant(allow, to=None, ttl=None, **constraints)` | `BoundWarrant` | Delegate (uses bound key) |
-| `headers(tool, args)` | `dict` | HTTP headers (uses bound key) |
+| `headers(tool, args, *, trusted_roots=None, warrant_chain=None)` | `dict` | HTTP headers (uses bound key) |
+
+`validate()` and `headers()` need a trust anchor. They resolve one from the
+`trusted_roots` argument, then the roots given at bind time, then
+`tenuo.configure(trusted_roots=[...])`, then the active `Runtime`, and raise
+`ConfigurationError` when none of those supply one — a warrant is never trusted
+just because it signed itself. A delegated warrant is issued by the agent that
+delegated it rather than by a root, so pass its parents via `warrant_chain`
+(root-first, excluding the warrant itself).
 | `unbind()` | `tuple[Warrant, SigningKey]` | Extract warrant and key |
 | `why_denied(tool, **args)` | `WhyDenied` | Get denial reason |
 
@@ -704,8 +716,10 @@ All setter methods are **dual-purpose**: call with argument to set (returns self
 |--------|---------|-------------|
 | `inherit_all()` | `GrantBuilder` | **POLA opt-in**: Inherit all capabilities from parent |
 | `capability(tool, constraints)` | `GrantBuilder` | Grant specific capability with constraints |
-| `tool(name)` | `GrantBuilder` | After `inherit_all()`, narrow to single tool |
-| `tools(names)` | `GrantBuilder` | After `inherit_all()`, narrow to subset of tools |
+| `tool(name)` | `GrantBuilder` | Add a parent tool with its parent constraints; never widens an existing selection; raises after `inherit_all()` |
+| `tools(names)` | `GrantBuilder` | Add parent tools with their constraints; one missing name adds nothing |
+| `retain_tool(name)` | `GrantBuilder` | After `inherit_all()`, keep only this tool |
+| `retain_tools(names)` | `GrantBuilder` | After `inherit_all()`, keep only these tools |
 | `issuable_tool(name)` | `GrantBuilder` | Narrow issuable tools (issuer warrants) |
 | `issuable_tools(names)` | `GrantBuilder` | Narrow issuable tools (issuer warrants) |
 | `holder(pk)` / `holder()` | `GrantBuilder` / `PublicKey` | Set/get holder |
@@ -730,7 +744,7 @@ child = (parent.grant_builder()
 # Pattern 2: Inherit all, then narrow
 child = (parent.grant_builder()
     .inherit_all()                    # Explicit opt-in
-    .tools(["read_file"])             # Keep only this tool
+    .retain_tools(["read_file"])      # Keep only this tool
     .holder(worker_key.public_key)
     .grant(parent_key))
 
@@ -1287,7 +1301,8 @@ async with SecureMCPClient(
 Parameters:
 - `command`, `args`, `env` - Stdio transport (local subprocess)
 - `url`, `transport`, `headers`, `timeout` - HTTP transports (remote server)
-- `inject_warrant` - Send warrant via `params._meta.tenuo` for server-side verification
+- `inject_warrant` - `True` sends the warrant via `params._meta.tenuo`;
+  `"argument"` uses reserved `arguments._tenuo` for gateways that strip `_meta`
 - `config_path`, `register_config` - Load MCP config for constraint extraction
 
 ### MCPVerifier
@@ -1701,7 +1716,7 @@ def test_authorization():
         read_file("/data/report.txt")
     
     # Assert code is denied (with optional code/reason check)
-    with assert_denied(code="ConstraintViolation"):
+    with assert_denied(code="authorization_denied"):
         read_file("/etc/passwd")
     
     # Assert with custom message
@@ -1713,9 +1728,19 @@ def test_authorization():
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `code` | `str` | Expected error code (e.g., `"ConstraintViolation"`) |
+| `code` | `str` | Expected `error_code` of the `AuthorizationDenied` (e.g., `"authorization_denied"`) |
 | `expected_reason` | `str` | Substring expected in error message |
 | `message` | `str` | Custom assertion failure message |
+
+Both helpers also take `(warrant, key, tool, args)` to check a warrant directly. Enter them with `with` in that form too; a bare call checks nothing.
+
+```python
+with assert_authorized(warrant, key, "read_file", {"path": "/data/report.txt"}):
+    pass
+
+with assert_denied(warrant, key, "read_file", {"path": "/etc/passwd"}):
+    pass
+```
 
 ### `assert_can_grant()` / `assert_cannot_grant()`
 
@@ -1739,9 +1764,11 @@ def test_delegation_chain():
     assert_cannot_grant(
         root, root_key,
         child_tools=["delete_file"],  # Not in parent!
-        expected_reason="ToolNotAuthorized",
+        expected_reason="MonotonicityError",
     )
 ```
+
+`assert_cannot_grant` passes only when the grant is refused for an attenuation reason (`MonotonicityError`, `ClearanceViolation`, or `LimitError`); `expected_reason` is matched against `"<ExceptionType>: <message>"`. Any other failure, such as signing with a key that does not hold the parent, fails the assertion. Children granted by `assert_can_grant` expire with the parent.
 
 ### `Warrant.quick_mint()`
 
@@ -1753,8 +1780,9 @@ from tenuo import Warrant
 # Returns (warrant, signing_key)
 warrant, key = Warrant.quick_mint(["read_file", "search"], ttl=300)
 
-# Use the warrant
-bound = warrant.bind(key)
+# Use the warrant. trusted_roots anchors the issuer check; this warrant is
+# self-minted, so the anchor is `key` itself.
+bound = warrant.bind(key, trusted_roots=[key.public_key])
 headers = bound.headers("search", {"query": "test"})
 ```
 

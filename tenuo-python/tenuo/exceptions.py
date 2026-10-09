@@ -535,6 +535,10 @@ class ConstraintViolation(ScopeViolation):
     rust_variant = "ConstraintNotSatisfied"
 
     def __init__(self, field: str, reason: str, value: Optional[Any] = None, hint: Optional[str] = None):
+        # Denial reasons from the core already carry this prefix; don't repeat it.
+        prefix = f"Constraint '{field}' not satisfied: "
+        if reason.startswith(prefix):
+            reason = reason[len(prefix):]
         details: dict[str, Any] = {"field": field, "reason": reason}
         if value is not None:
             details["value"] = str(value)
@@ -654,7 +658,8 @@ class RangeExpanded(MonotonicityError):
 
     def __init__(self, bound: str, parent_value: float, child_value: float, hint: Optional[str] = None):
         super().__init__(
-            f"Child {bound} ({child_value}, hint=hint) exceeds parent {bound} ({parent_value}, hint=hint)", hint=hint
+            f"range expanded: child {bound} ({child_value}) exceeds parent {bound} ({parent_value})",
+            hint=hint,
         )
         self.details = {"bound": bound, "parent_value": parent_value, "child_value": child_value}
 

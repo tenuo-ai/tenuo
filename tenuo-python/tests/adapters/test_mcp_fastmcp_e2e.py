@@ -87,6 +87,38 @@ async def test_e2e_middleware_accepts_injected_warrant(e2e_server: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_e2e_middleware_accepts_argument_carried_warrant(
+    e2e_server: Path,
+) -> None:
+    """Gateway path: middleware strips ``_tenuo`` before schema validation."""
+    issuer = SigningKey.generate()
+    pub_hex = issuer.public_key.to_bytes().hex()
+    configure(issuer_key=issuer, dev_mode=True)
+    env = {
+        **os.environ,
+        "TENUO_MCP_E2E_ISSUER_PUB": pub_hex,
+        "PYTHONPATH": _repo_pythonpath(),
+    }
+
+    async with SecureMCPClient(
+        command=sys.executable,
+        args=[str(e2e_server)],
+        env=env,
+        inject_warrant="argument",
+    ) as client:
+        async with mint(Capability("ping")):
+            raw = await client.call_tool(
+                "ping",
+                {},
+                warrant_context=False,
+                inject_warrant="argument",
+            )
+
+    text = "".join(getattr(b, "text", str(b)) for b in raw)
+    assert "pong" in text
+
+
+@pytest.mark.asyncio
 async def test_e2e_none_arg_pop_canonicalization(e2e_server: Path) -> None:
     """Regression: PoP succeeds when an optional arg is sent as None.
 

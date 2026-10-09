@@ -61,6 +61,22 @@ python guarded_crew.py
 - Audit logging for all authorization decisions
 - Fail-closed behavior with `on_denial("raise")`
 
+### guarded_crew_builder.py
+
+Official quickstart demonstrating the public `GuardedCrew()` fluent builder API for CrewAI (#656).
+
+```bash
+python guarded_crew_builder.py
+```
+
+**Demonstrates:**
+- Fluent `GuardedCrew` builder chaining:
+  - `.policy({role: [tool_names]})` to map agent roles to authorized capabilities
+  - `.constraints({role: {tool: {arg: constraint}}})` for fine-grained argument control (e.g. `Pattern("topic:*")`)
+  - `.strict()` to audit and raise `UnguardedToolError` after kickoff if any unguarded tool calls occurred
+- Public `crew.kickoff()` execution through CrewAI's native `before_tool_call` hooks
+- Reproducible, offline testing using a deterministic LLM double (no provider keys or network required)
+
 ### guarded_flow.py
 
 Step-level protection for CrewAI Flows using `@guarded_step` decorator.

@@ -204,7 +204,14 @@ class TestTenuoNode:
         assert "docstring" in my_documented_node.__doc__
 
     def test_bound_warrant_can_authorize(self, warrant_and_key, registry):
-        """BoundWarrant injected by @tenuo_node can authorize calls."""
+        """BoundWarrant injected by @tenuo_node can authorize calls.
+
+        The injected warrant inherits the application's configured trust
+        anchor; without one, validate() fails closed rather than trusting the
+        warrant's own issuer.
+        """
+        import tenuo
+
         warrant, key_id = warrant_and_key
 
         auth_result = None
@@ -218,7 +225,11 @@ class TestTenuoNode:
         state = {"warrant": warrant}
         config = make_config(key_id)
 
-        my_node(state, config=config)
+        tenuo.configure(trusted_roots=[warrant.issuer])
+        try:
+            my_node(state, config=config)
+        finally:
+            tenuo.reset_config()
 
         assert auth_result
 
@@ -1530,9 +1541,10 @@ class TestMultiAgentDelegation:
         from langgraph.graph import StateGraph, END, START
         from langgraph.graph.message import add_messages
 
-        class _State(TypedDict):
+        class _State(TypedDict, total=False):
             messages: Annotated[list[BaseMessage], add_messages]
             warrant: Any
+            warrant_chain: Any
 
         workflow = StateGraph(_State)
         workflow.add_node("tools", tool_node)
@@ -1801,16 +1813,18 @@ class TestMultiAgentDelegation:
             ttl_seconds=60,
         )
 
-        # Executor TenuoToolNode with both tools available — only search is allowed
-        # trusted_roots covers the full delegation chain:
-        #   orchestrator_key → root_warrant → researcher_warrant
-        #   researcher_key   → executor_warrant (leaf issuer)
+        # Only the orchestrator is a trusted root. The intermediate delegator is
+        # deliberately NOT trusted: doing so would let it self-issue any
+        # capability (see test_trusting_the_delegator_as_root_enables_escalation).
+        # The executor presents its parents instead, root-first.
         tool_node = TenuoToolNode(
             [search_tool, write_tool],
-            trusted_roots=[orchestrator_key.public_key, researcher_key.public_key],
+            trusted_roots=[orchestrator_key.public_key],
         )
         if not getattr(tool_node, "_tenuo_hooks_active", True):
             pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
+        chain = [root_warrant, researcher_warrant]
 
         # Search is allowed
         search_state = {
@@ -1821,6 +1835,7 @@ class TestMultiAgentDelegation:
                 )
             ],
             "warrant": executor_warrant,
+            "warrant_chain": chain,
         }
         result = self._run_tool_node(tool_node, search_state, "executor")
         assert "Authorization denied" not in result["messages"][-1].content, (
@@ -1838,8 +1853,351 @@ class TestMultiAgentDelegation:
                 )
             ],
             "warrant": executor_warrant,
+            "warrant_chain": chain,
         }
         result = self._run_tool_node(tool_node, write_state, "executor")
         assert "Authorization denied" in result["messages"][-1].content, (
             "D6: write_file must be denied — executor never received that capability"
         )
+
+
+class TestWarrantChainStateField:
+    """Parsing of the ``warrant_chain`` state field.
+
+    Exercised directly so the rules hold on interpreters where the LangGraph
+    version is too old for ``TenuoToolNode``'s enforcement hook.
+    """
+
+    @pytest.fixture
+    def parent(self):
+        warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
+        return warrant
+
+    def test_absent_field_returns_fallback(self, parent):
+        """No field means 'no chain here', leaving chain_scope() in effect."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        assert _get_warrant_chain({}) is None
+        assert _get_warrant_chain({}, [parent]) == [parent]
+
+    def test_empty_field_is_treated_as_absent(self, parent):
+        """A default-initialized list must not suppress a configured chain."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        assert _get_warrant_chain({"warrant_chain": []}) is None
+        assert _get_warrant_chain({"warrant_chain": []}, [parent]) == [parent]
+
+    def test_state_field_overrides_fallback(self, parent):
+        """The graph's own chain wins over a constructor default."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        other, _ = Warrant.quick_mint(tools=["read_file"], ttl=3600)
+        assert _get_warrant_chain({"warrant_chain": [parent]}, [other]) == [parent]
+
+    def test_base64_entries_are_inflated(self, parent):
+        """Checkpointed state stores tokens, not Warrant objects."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        resolved = _get_warrant_chain({"warrant_chain": [parent.to_base64()]})
+        assert [w.id for w in resolved] == [parent.id]
+
+    def test_base64_fallback_entries_are_inflated(self, parent):
+        """Serialized constructor defaults use the same normalization path."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        resolved = _get_warrant_chain({}, [parent.to_base64()])
+        assert [w.id for w in resolved] == [parent.id]
+
+    def test_malformed_fallback_raises(self):
+        """Constructor defaults fail as configuration errors, like state."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        with pytest.raises(ConfigurationError, match=r"warrant_chain\[0\]"):
+            _get_warrant_chain({}, ["not-base64!!"])
+
+    def test_order_is_preserved(self):
+        """Chains are root-first; reordering them would break linkage."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        first, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
+        second, _ = Warrant.quick_mint(tools=["read_file"], ttl=3600)
+        resolved = _get_warrant_chain({"warrant_chain": [first, second.to_base64()]})
+        assert [w.id for w in resolved] == [first.id, second.id]
+
+    @pytest.mark.parametrize(
+        "value",
+        ["a-bare-string", b"bytes", 42, {"warrant": "x"}],
+        ids=["str", "bytes", "int", "dict"],
+    )
+    def test_non_list_field_raises(self, value):
+        """A scalar in the field is a wiring mistake, not an empty chain."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        with pytest.raises(ConfigurationError, match="must be a list"):
+            _get_warrant_chain({"warrant_chain": value})
+
+    def test_undecodable_token_raises_with_index(self, parent):
+        """The error names the offending position."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        with pytest.raises(ConfigurationError, match=r"warrant_chain\[1\]"):
+            _get_warrant_chain({"warrant_chain": [parent, "not-base64!!"]})
+
+    def test_oversized_token_raises_before_decoding(self):
+        """Mirrors the size guard on the 'warrant' field."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        with pytest.raises(ConfigurationError, match="safety limit"):
+            _get_warrant_chain({"warrant_chain": ["A" * (64 * 1024 + 1)]})
+
+    def test_bound_warrant_entry_is_rejected(self, parent):
+        """BoundWarrant carries a private key and must never reach state."""
+        from tenuo.langgraph import _get_warrant_chain
+
+        _, key = Warrant.quick_mint(tools=["search"], ttl=3600)
+        with pytest.raises(ConfigurationError, match="must be a Warrant or base64"):
+            _get_warrant_chain({"warrant_chain": [parent.bind(key)]})
+
+
+class TestDelegatedWarrantChain:
+    """
+    Issue #675: a delegated warrant is issued by the delegating holder, not by
+    a trusted root, so it can only be authorized when the path back to the root
+    is presented alongside it.
+
+    Invariants verified:
+      C1  A delegated leaf on its own is denied.
+      C2  The same leaf with its parents in state is allowed.
+      C3  Parents may be base64 tokens.
+      C4  A chain that does not hash-link to the leaf is denied.
+      C5  A malformed chain fails closed and never runs the tool.
+      C6  A constructor default applies when state carries no chain.
+      C7  Trusting the delegator instead of supplying a chain is an escalation.
+    """
+
+    @pytest.fixture
+    def delegation(self, registry):
+        """root -> supervisor -> worker, where only root is a trusted issuer."""
+        root_key = SigningKey.generate()
+        supervisor_key = SigningKey.generate()
+        worker_key = SigningKey.generate()
+        registry.register("worker", worker_key)
+
+        task = Warrant.issue(
+            root_key,
+            capabilities={"search": {}, "write_file": {}},
+            ttl_seconds=3600,
+            holder=supervisor_key.public_key,
+        )
+        child = task.attenuate(
+            signing_key=supervisor_key,
+            holder=worker_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=300,
+        )
+        return {
+            "root_key": root_key,
+            "supervisor_key": supervisor_key,
+            "worker_key": worker_key,
+            "task": task,
+            "child": child,
+        }
+
+    @pytest.fixture
+    def _lc_tool(self):
+        try:
+            from langchain_core.tools import tool as lc_tool
+        except ImportError:
+            pytest.skip("langchain_core not installed")
+        return lc_tool
+
+    @pytest.fixture
+    def search_tool(self, _lc_tool):
+        @_lc_tool
+        def search(query: str) -> str:
+            """Search the web."""
+            return f"results: {query}"
+
+        return search
+
+    def _run(self, tool_node, state):
+        """Run one tool call through a real StateGraph and return the message."""
+        from typing import Annotated
+        from langchain_core.messages import AIMessage, BaseMessage
+        from langgraph.graph import StateGraph, END, START
+        from langgraph.graph.message import add_messages
+
+        class _State(TypedDict, total=False):
+            messages: Annotated[list[BaseMessage], add_messages]
+            warrant: Any
+            warrant_chain: Any
+
+        state = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "search", "args": {"query": "papers"}, "id": "s1"}],
+                )
+            ],
+            **state,
+        }
+        workflow = StateGraph(_State)
+        workflow.add_node("tools", tool_node)
+        workflow.add_edge(START, "tools")
+        workflow.add_edge("tools", END)
+        result = workflow.compile().invoke(state, config=make_config("worker"))
+        return result["messages"][-1]
+
+    def _node(self, search_tool, root_key, **kwargs):
+        from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
+
+        if not LANGGRAPH_AVAILABLE:
+            pytest.skip("LangGraph not installed")
+        node = TenuoToolNode([search_tool], trusted_roots=[root_key.public_key], **kwargs)
+        if not getattr(node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support wrap_tool_call")
+        return node
+
+    # C1 ---------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_delegated_leaf_without_chain_is_denied(self, delegation, search_tool, caplog):
+        """C1: the leaf alone does not chain to a trusted root."""
+        node = self._node(search_tool, delegation["root_key"])
+        with caplog.at_level("WARNING"):
+            message = self._run(node, {"warrant": delegation["child"]})
+        assert "Authorization denied" in message.content
+        assert "Root warrant issuer is not trusted" in caplog.text
+
+    # C2 ---------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_chain_in_state_authorizes_delegated_leaf(self, delegation, search_tool):
+        """C2: presenting the parents makes the same call succeed."""
+        node = self._node(search_tool, delegation["root_key"])
+        message = self._run(
+            node,
+            {"warrant": delegation["child"], "warrant_chain": [delegation["task"]]},
+        )
+        assert "Authorization denied" not in message.content
+        assert "results: papers" in message.content
+
+    # C3 ---------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_chain_accepts_base64_tokens(self, delegation, search_tool):
+        """C3: state survives checkpoint serialization as base64 tokens."""
+        node = self._node(search_tool, delegation["root_key"])
+        message = self._run(
+            node,
+            {
+                "warrant": delegation["child"].to_base64(),
+                "warrant_chain": [delegation["task"].to_base64()],
+            },
+        )
+        assert "Authorization denied" not in message.content
+
+    # C4 ---------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_chain_not_linking_to_leaf_is_denied(self, delegation, search_tool, caplog):
+        """C4: a sibling warrant from the same trusted root does not substitute."""
+        sibling = Warrant.issue(
+            delegation["root_key"],
+            capabilities={"search": {}, "write_file": {}},
+            ttl_seconds=3600,
+            holder=delegation["supervisor_key"].public_key,
+        )
+        node = self._node(search_tool, delegation["root_key"])
+        with caplog.at_level("WARNING"):
+            message = self._run(
+                node, {"warrant": delegation["child"], "warrant_chain": [sibling]}
+            )
+        assert "Authorization denied" in message.content
+        assert "parent_hash mismatch" in caplog.text
+
+    # C5 ---------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.parametrize(
+        "bad_chain",
+        ["not-a-warrant-token", [42], ["not-valid-base64!!"], "a-bare-string"],
+        ids=["scalar-string", "wrong-element-type", "undecodable-token", "bare-string"],
+    )
+    def test_malformed_chain_fails_closed(self, delegation, search_tool, bad_chain):
+        """C5: an unreadable chain is a config error, not a silent leaf-only check."""
+        node = self._node(search_tool, delegation["root_key"])
+        message = self._run(
+            node, {"warrant": delegation["child"], "warrant_chain": bad_chain}
+        )
+        assert message.status == "error"
+        assert "results: papers" not in message.content
+        # Distinguishes "we could not read the chain" from "the chain was read
+        # and rejected"; silently ignoring the field would report the latter.
+        assert "Security configuration error" in message.content
+
+    # C6 ---------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_constructor_chain_applies_when_state_has_none(self, delegation, search_tool):
+        """C6: graphs that cannot thread state can pin the chain at construction."""
+        node = self._node(
+            search_tool, delegation["root_key"], warrant_chain=[delegation["task"]]
+        )
+        message = self._run(node, {"warrant": delegation["child"]})
+        assert "Authorization denied" not in message.content
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_empty_state_chain_falls_back_to_constructor(self, delegation, search_tool):
+        """C6: a default-initialized empty field is 'no chain', not 'suppress'."""
+        node = self._node(
+            search_tool, delegation["root_key"], warrant_chain=[delegation["task"]]
+        )
+        message = self._run(node, {"warrant": delegation["child"], "warrant_chain": []})
+        assert "Authorization denied" not in message.content
+
+    # C7 ---------------------------------------------------------------
+
+    def test_trusting_the_delegator_as_root_enables_escalation(self, delegation):
+        """C7: why the chain exists — trusting the delegator is not equivalent.
+
+        Adding the intermediate's key to trusted_roots is the tempting fix for
+        "Root warrant issuer is not trusted". It also lets that intermediate
+        self-issue capabilities it was never delegated, because its warrants
+        are then checked as roots rather than as links in a chain.
+        """
+        from tenuo import enforce_tool_call
+
+        supervisor_key = delegation["supervisor_key"]
+        worker_key = delegation["worker_key"]
+        args = {"path": "/tmp/x", "content": "y"}
+
+        # The supervisor was delegated search only, at this depth.
+        assert not delegation["child"].allows("write_file", args)
+
+        # ... but can mint itself a fresh root granting write_file.
+        self_issued = Warrant.issue(
+            supervisor_key,
+            capabilities={"write_file": {}},
+            ttl_seconds=60,
+            holder=worker_key.public_key,
+        )
+
+        escalated = enforce_tool_call(
+            "write_file",
+            args,
+            self_issued.bind(worker_key),
+            trusted_roots=[delegation["root_key"].public_key, supervisor_key.public_key],
+        )
+        assert escalated.allowed, (
+            "guard premise: trusting the delegator accepts its self-issued warrants"
+        )
+
+        contained = enforce_tool_call(
+            "write_file",
+            args,
+            self_issued.bind(worker_key),
+            trusted_roots=[delegation["root_key"].public_key],
+        )
+        assert not contained.allowed
+        assert "not trusted" in (contained.denial_reason or "")

@@ -42,6 +42,16 @@ peer dependency:
 npm install @tenuo/mcp@beta @modelcontextprotocol/server
 ```
 
+To have a supported coding agent inspect the installed SDK and implement a
+tested effect boundary for this project:
+
+```bash
+npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
+```
+
+The skill labels official adapters, verified recipes, generic integrations,
+and unsupported framework paths separately.
+
 ## Protect your first tool
 
 This example creates a development issuer, protects a file-reading function,
@@ -172,6 +182,15 @@ const reports = tenuo.narrow(session, {
 
 To hand that narrower authority to a different agent, bind the child to that
 agent's key. See [Delegate to another agent](#delegate-to-another-agent).
+
+### Concurrent requests keep separate sessions
+
+`withSession()` scopes the session with Node's `AsyncLocalStorage`, so
+requests that run at the same time each see only their own session. Work that
+a queue or worker runs from outside `withSession()` has no ambient session;
+pass `{ session }` on that call. `pnpm example:sessions` runs
+[`concurrent-sessions.ts`](packages/core/examples/concurrent-sessions.ts),
+which shows both.
 
 ## Production setup
 
@@ -439,7 +458,8 @@ Every constraint is evaluated in the Rust core and attenuates monotonically.
 | Helper | Meaning |
 |---|---|
 | `under(root, { caseSensitive?, allowEqual? })` | Path inside a directory, traversal-safe |
-| `pattern(glob)`, `regex(source)` | String shape |
+| `pathGlob(root, glob)` | Traversal-safe path containment plus a glob, tested against the whole path |
+| `pattern(glob)`, `regex(source)` | Generic string shape; `pattern("*")` crosses `/` and is not path containment |
 | `exact(value)`, `oneOf(values)`, `notOneOf(values)` | Value sets |
 | `max(n)`, `min(n)`, `range({ min, max, minExclusive?, maxExclusive? })` | Numeric bounds |
 | `email({ domain })` | Address on a domain |

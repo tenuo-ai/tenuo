@@ -596,3 +596,70 @@ def test_pattern_complex_attenuation():
             holder=kp.public_key,
             ttl_seconds=60,
         )
+
+
+def test_path_glob_is_traversal_safe():
+    """path_glob() constrains the root, not just the filename shape."""
+    from tenuo import path_glob
+
+    glob = path_glob("/workspace", "*.json")
+
+    assert glob.matches("/workspace/reports/q3.json")
+
+    # Pattern alone would admit all of these: the Subpath half is what stops them.
+    assert not glob.matches("/etc/passwd.json")
+    assert not glob.matches("/workspace/../etc/passwd.json")
+    assert not glob.matches("/workspace/a/../../etc/passwd.json")
+    assert not glob.matches("/workspace-evil/x.json")
+
+    # And the Pattern half still constrains the filename at any depth.
+    assert not glob.matches("/workspace/secrets.env")
+
+
+def test_pattern_alone_is_not_path_containment():
+    """The footgun path_glob() exists to close."""
+    assert Pattern("*.json").matches("/etc/passwd.json")
+
+
+def test_path_glob_narrows_to_exact():
+    """A delegatee can pin a path_glob to one file the parent already admits."""
+    from tenuo import path_glob
+
+    kp = SigningKey.generate()
+    parent = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("file_ops", {"path": path_glob("/data", "*.json")}),
+        holder=kp.public_key,
+        ttl_seconds=3600,
+    )
+
+    child = parent.attenuate(
+        capabilities=Constraints.for_tool("file_ops", {"path": Exact("/data/reports/q3.json")}),
+        signing_key=kp,
+        holder=kp.public_key,
+        ttl_seconds=60,
+    )
+    assert child is not None
+
+
+def test_path_glob_refuses_exact_outside_root():
+    """Narrowing cannot escape the parent's root, even with a matching glob."""
+    from tenuo.exceptions import MonotonicityError
+
+    from tenuo import path_glob
+
+    kp = SigningKey.generate()
+    parent = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("file_ops", {"path": path_glob("/data", "*.json")}),
+        holder=kp.public_key,
+        ttl_seconds=3600,
+    )
+
+    with pytest.raises(MonotonicityError):
+        parent.attenuate(
+            capabilities=Constraints.for_tool("file_ops", {"path": Exact("/etc/passwd.json")}),
+            signing_key=kp,
+            holder=kp.public_key,
+            ttl_seconds=60,
+        )

@@ -90,7 +90,7 @@ describe("participant CLI", () => {
     expect(report.stage).toBe(5);
     expect(report).toMatchObject({
       challengeVersion: "0.2.0",
-      sdkVersion: "0.2.5-beta.0",
+      sdkVersion: "0.3.2-beta.0",
       runtime: { nodeMajor: expect.any(Number), platform: expect.any(String) },
     });
     expect(report.sessionId).toMatch(/^[0-9a-f-]{36}$/i);

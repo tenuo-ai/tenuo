@@ -18,6 +18,7 @@ from tenuo import (
     Warrant,
 )
 from tenuo.constraints import Constraints
+from tenuo.exceptions import MonotonicityError, ValidationError
 
 
 class TestIssuerWarrantExists:
@@ -219,10 +220,9 @@ class TestGrantMethod:
 class TestGrantBuilderToolSelection:
     """Test tool selection/narrowing via grant_builder."""
 
-    def test_grant_builder_can_narrow_tools(self):
+    def test_grant_builder_can_select_tools(self):
         """
-        GrantBuilder.tools() CAN narrow tools for execution warrants.
-        This enables "always shrinking authority" for non-terminal warrants.
+        GrantBuilder.tools() selects a subset from an empty POLA builder.
         """
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
@@ -234,10 +234,8 @@ class TestGrantBuilderToolSelection:
             ttl_seconds=3600,
         )
 
-        # POLA: inherit_all first, then narrow
         builder = parent.grant_builder()
-        builder.inherit_all()  # Start with all parent capabilities
-        builder.tools(["read_file"])  # Then narrow
+        builder.tools(["read_file"])
         builder.holder(worker_kp.public_key)
         child = builder.grant(kp)
 
@@ -247,7 +245,7 @@ class TestGrantBuilderToolSelection:
         assert "query_db" not in child.tools
 
     def test_grant_builder_tool_single(self):
-        """tool() narrows to a single tool."""
+        """tool() selects a single tool from the parent."""
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
@@ -257,38 +255,95 @@ class TestGrantBuilderToolSelection:
             ttl_seconds=3600,
         )
 
-        # POLA: inherit_all first, then narrow
         builder = parent.grant_builder()
-        builder.inherit_all()
-        builder.tool("send_email")  # Narrow to just send_email
+        builder.tool("send_email")
         builder.holder(worker_kp.public_key)
         child = builder.grant(kp)
 
         assert child.tools == ["send_email"]
 
     def test_grant_builder_rejects_tool_not_in_parent(self):
-        """Cannot add tools that weren't in parent."""
+        """A missing parent tool is distinct from an empty child warrant."""
 
         kp = SigningKey.generate()
-        worker_kp = SigningKey.generate()
-
         parent = Warrant.mint(
             keypair=kp,
             capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
 
-        # POLA: inherit_all first, then narrow
         builder = parent.grant_builder()
-        builder.inherit_all()
-        builder.tools(["read_file", "delete_file"])  # delete_file not in parent!
-        builder.holder(worker_kp.public_key)
+        with pytest.raises(
+            MonotonicityError,
+            match="tool 'delete_file' not in parent's tools",
+        ):
+            builder.tools(["read_file", "delete_file"])
+        assert builder.capabilities == {}
 
-        # Should not raise, but silently ignore 'delete_file'
-        child = builder.grant(kp)
+        with pytest.raises(
+            ValidationError,
+            match="execution warrant must have at least one tool",
+        ):
+            builder.grant(kp)
 
-        assert "read_file" in child.tools
-        assert "delete_file" not in child.tools
+    def test_grant_builder_tool_inherits_parent_constraints(self):
+        """Constraint-free tool selection retains the parent's constraints."""
+        kp = SigningKey.generate()
+        parent = Warrant.mint(
+            keypair=kp,
+            capabilities=Constraints.for_tool(
+                "lookup_order", {"order_id": Pattern("A-*")}
+            ),
+            ttl_seconds=3600,
+        )
+
+        child = parent.grant_builder().tool("lookup_order").grant(kp)
+
+        assert child.check_constraints("lookup_order", {"order_id": "A-100"}) is None
+        assert child.check_constraints("lookup_order", {"order_id": "B-100"}) is not None
+
+    def test_grant_builder_tool_preserves_explicit_capabilities(self):
+        """tool() adds an unconstrained tool without dropping prior selections."""
+        kp = SigningKey.generate()
+        parent = Warrant.mint(
+            keypair=kp,
+            capabilities={
+                "lookup_order": {"order_id": Pattern("A-*")},
+                "search_knowledge_base": {},
+            },
+            ttl_seconds=3600,
+        )
+
+        child = (
+            parent.grant_builder()
+            .capability("lookup_order", order_id=Exact("A-100"))
+            .tool("search_knowledge_base")
+            .grant(kp)
+        )
+
+        assert set(child.tools) == {"lookup_order", "search_knowledge_base"}
+        assert child.check_constraints("lookup_order", {"order_id": "A-100"}) is None
+        assert child.check_constraints("lookup_order", {"order_id": "A-200"}) is not None
+
+    def test_attenuate_builder_with_tools_inherits_constraints(self):
+        """The raw attenuation builder uses the same selection semantics."""
+        kp = SigningKey.generate()
+        parent = Warrant.mint(
+            keypair=kp,
+            capabilities={
+                "lookup_order": {"order_id": Pattern("A-*")},
+                "search_knowledge_base": {},
+            },
+            ttl_seconds=3600,
+        )
+
+        builder = parent.attenuate_builder()
+        builder.with_tools(["lookup_order", "search_knowledge_base"])
+        child = builder.delegate(kp)
+
+        assert set(child.tools) == {"lookup_order", "search_knowledge_base"}
+        assert child.check_constraints("lookup_order", {"order_id": "A-100"}) is None
+        assert child.check_constraints("lookup_order", {"order_id": "B-100"}) is not None
 
     def test_issue_execution_can_select_tools(self):
         """
@@ -313,6 +368,59 @@ class TestGrantBuilderToolSelection:
         exec_warrant = builder.build(issuer_kp)
 
         assert exec_warrant.tools == ["read_file"]
+
+    def test_grant_builder_tool_never_widens_an_explicit_capability(self):
+        """tool()/tools() after a narrower capability() for the same tool keep the narrowing."""
+        kp = SigningKey.generate()
+        parent = Warrant.mint(
+            keypair=kp,
+            capabilities=Constraints.for_tool("lookup_order", {"order_id": Pattern("A-*")}),
+            ttl_seconds=3600,
+        )
+        child = (
+            parent.grant_builder()
+            .capability("lookup_order", order_id=Exact("A-100"))
+            .tool("lookup_order")
+            .tools(["lookup_order"])
+            .grant(kp)
+        )
+        assert child.check_constraints("lookup_order", {"order_id": "A-100"}) is None
+        assert child.check_constraints("lookup_order", {"order_id": "A-200"}) is not None
+
+    def test_grant_builder_tools_after_inherit_all_fails_loudly(self):
+        """The old narrowing idiom inherit_all().tools([...]) raises instead of keeping everything."""
+        kp = SigningKey.generate()
+        parent = Warrant.mint(
+            keypair=kp,
+            capabilities={"read_file": {}, "write_file": {}, "delete_file": {}},
+            ttl_seconds=3600,
+        )
+        with pytest.raises(ValidationError, match="retain_tools"):
+            parent.grant_builder().inherit_all().tools(["read_file"])
+        with pytest.raises(ValidationError, match="retain_tools"):
+            parent.grant_builder().inherit_all().tool("read_file")
+
+        # retain_tools() is the narrowing verb; afterwards adds are unambiguous again.
+        child = (
+            parent.grant_builder()
+            .inherit_all()
+            .retain_tools(["read_file"])
+            .tool("write_file")
+            .grant(kp)
+        )
+        assert set(child.tools) == {"read_file", "write_file"}
+
+    def test_grant_builder_tool_on_issuer_parent_points_to_issuable_tool(self):
+        """tool() on an issuer warrant names the right method instead of a missing-tool error."""
+        kp = SigningKey.generate()
+        issuer = Warrant.issue_issuer(
+            issuable_tools=["read_file", "send_email"],
+            clearance=Clearance.INTERNAL,
+            keypair=kp,
+            ttl_seconds=3600,
+        )
+        with pytest.raises(ValidationError, match="issuable_tool"):
+            issuer.grant_builder().tool("read_file")
 
 
 class TestTerminalWarrants:

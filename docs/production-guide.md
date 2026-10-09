@@ -172,7 +172,7 @@ warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(key))
 
-bound = warrant.bind(key)
+bound = warrant.bind(key, trusted_roots=[key.public_key])
 
 for item in items:
     headers = bound.headers("process", {"item": item})

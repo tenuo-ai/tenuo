@@ -466,6 +466,17 @@ class ControlPlaneClient:
     def authorizer_id(self) -> Optional[str]:
         return self._inner.authorizer_id
 
+    @property
+    def status(self) -> dict:
+        """Control plane connection state and audit delivery counters.
+
+        Keys: ``state`` (``registering``, ``connected``, ``degraded``,
+        ``standalone`` or ``stopped``), ``last_error``, ``buffered``,
+        ``flushed`` and ``dropped``. Does no I/O, so it is safe to call from
+        a health check.
+        """
+        return self._inner.status
+
 def _auto_shutdown():
     client = get_client()
     if client:

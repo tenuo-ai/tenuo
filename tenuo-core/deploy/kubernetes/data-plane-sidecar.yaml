@@ -66,6 +66,14 @@ spec:
         ports:
         - name: authz
           containerPort: 9090
+        # Health listener (/health, /healthz, /ready, /status). Kept off the
+        # authorization port; point probes here.
+        - name: health
+          containerPort: 9091
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
         env:
         - name: TENUO_TRUSTED_KEYS
           valueFrom:

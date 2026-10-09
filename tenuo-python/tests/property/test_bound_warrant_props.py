@@ -78,7 +78,7 @@ class TestHeadersOutputShape:
     def test_headers_returns_two_keys(self, data):
         """headers() returns exactly X-Tenuo-Warrant and X-Tenuo-PoP."""
         warrant, key, tool, args = data
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
         headers = bound.headers(tool, args)
         assert isinstance(headers, dict)
         assert len(headers) == 2
@@ -91,7 +91,7 @@ class TestHeadersOutputShape:
         """Both header values are valid base64-encoded strings."""
         import re
         warrant, key, tool, args = data
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
         headers = bound.headers(tool, args)
         b64_pattern = re.compile(r"^[A-Za-z0-9+/\-_]+=*$")
         for name, value in headers.items():
@@ -106,7 +106,7 @@ class TestValidateUsesRust:
     def test_validate_success_for_matching_tool(self, data):
         """validate() returns truthy for a tool in the warrant."""
         warrant, key, tool, args = data
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
         result = bound.validate(tool, args)
         assert result
 
@@ -115,7 +115,7 @@ class TestValidateUsesRust:
     def test_validate_failure_for_wrong_tool(self, data):
         """validate() returns falsy for a tool not in the warrant."""
         warrant, key, tool, args = data
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
         result = bound.validate("definitely_not_in_warrant_xyz", {})
         assert not result
 

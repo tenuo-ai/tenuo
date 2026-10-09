@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page.title }} | Tenuo</title>
+  <meta name="description" content="{{ page.description }}">
+  <meta name="robots" content="{{ page.robots | default: 'index,follow' }}">
+  <link rel="canonical" href="{{ page.canonical_url | default: 'https://tenuo.ai/blog/' }}">
+  <link rel="icon" type="image/svg+xml" href="{{ site.baseurl }}/images/favicon-t.svg">
+  <link rel="apple-touch-icon" href="{{ site.baseurl }}/images/apple-touch-icon.png">
+  <meta property="og:type" content="{% if page.blog_post %}article{% else %}website{% endif %}">
+  <meta property="og:title" content="{{ page.title }} | Tenuo">
+  <meta property="og:description" content="{{ page.description }}">
+  <meta property="og:url" content="{{ page.canonical_url | default: 'https://tenuo.ai/blog/' }}">
+  <meta property="og:image" content="{% if page.og_image %}https://tenuo.ai{{ page.og_image }}{% else %}https://tenuo.ai/images/og-image.png{% endif %}">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    :root {
+      --bg: #040a0f;
+      --surface: #0a1018;
+      --surface-2: #0e1620;
+      --border: rgba(56,189,248,0.09);
+      --text: #c8d8e4;
+      --text-bright: #e8e8e8;
+      --muted: #7a9aaa;
+      --muted-dim: #658494;
+      --accent: #38bdf8;
+      --accent2: #a855f7;
+      --green: #00ff88;
+      --red: #ff4466;
+      --gold: #c8a96e;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      font-family: 'Inter', -apple-system, sans-serif;
+      font-weight: 400;
+      font-size: 137.5%;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    .grid-bg {
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .glow {
+      position: fixed;
+      top: -80px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 560px;
+      height: 420px;
+      background: radial-gradient(ellipse, rgba(56,189,248,0.07) 0%, transparent 65%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      width: 100%;
+      flex: 1;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 24px 0;
+      border-bottom: 1px solid rgba(56,189,248,0.07);
+    }
+
+    .nav-logo {
+      color: var(--text-bright);
+      font-size: 1.25rem;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 32px;
+    }
+
+    .nav-links a {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.82rem;
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover,
+    .nav-links a[aria-current="page"] {
+      color: var(--text);
+    }
+
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .blog-index-content {
+      padding: 64px 0 80px;
+      font-size: 16px;
+    }
+
+    .subscription-status {
+      max-width: 680px;
+      margin: 32px auto 48px;
+      padding: 36px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .subscription-status-label {
+      margin: 0 0 12px;
+      color: var(--accent);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .subscription-status h1 {
+      margin: 0 0 16px;
+      color: var(--text-bright);
+      font-size: clamp(2rem, 5vw, 2.8rem);
+      line-height: 1.1;
+      letter-spacing: -0.04em;
+    }
+
+    .subscription-status-copy {
+      max-width: 580px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.7;
+    }
+
+    .subscription-status-note {
+      margin: 16px 0 0;
+      color: var(--muted-dim);
+      font-size: 0.84rem;
+      line-height: 1.65;
+    }
+
+    .subscription-status-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .subscription-status-actions a {
+      display: inline-flex;
+      padding: 10px 14px;
+      align-items: center;
+      color: var(--text);
+      background: var(--surface-2);
+      border: 1px solid rgba(122, 154, 170, 0.4);
+      border-radius: 7px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      text-decoration: none;
+    }
+
+    .subscription-status-actions a:hover {
+      background: #14202b;
+      border-color: rgba(56, 189, 248, 0.5);
+    }
+
+    footer {
+      position: relative;
+      z-index: 1;
+      padding: 48px 24px;
+      border-top: 1px solid rgba(56,189,248,0.07);
+      text-align: center;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+    }
+
+    footer a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      color: var(--text);
+    }
+
+    .nav-toggle {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    .nav-toggle span {
+      display: block;
+      width: 22px;
+      height: 2px;
+      background: var(--text);
+    }
+
+    @media (max-width: 768px) {
+      .blog-index-content {
+        padding: 44px 0 64px;
+      }
+
+      .subscription-status {
+        margin-top: 12px;
+        padding: 26px 22px;
+      }
+
+      .nav-toggle {
+        display: flex;
+      }
+
+      .nav-links {
+        display: none;
+        position: absolute;
+        top: 77px;
+        left: 0;
+        right: 0;
+        padding: 16px 24px;
+        flex-direction: column;
+        gap: 16px;
+        background: var(--bg);
+        border-bottom: 1px solid rgba(56,189,248,0.07);
+        z-index: 100;
+      }
+
+      .nav-links.show {
+        display: flex;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-bg"></div>
+  <div class="glow"></div>
+
+  <div class="container">
+    <nav aria-label="Main navigation">
+      <a class="nav-logo" href="{{ site.baseurl }}/">tenuo</a>
+      <button class="nav-toggle" type="button" onclick="document.querySelector('.nav-links').classList.toggle('show')" aria-label="Toggle menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="nav-links">
+        <a href="{{ site.baseurl }}/quickstart">Docs</a>
+        <a href="{{ site.baseurl }}/explorer">Explorer</a>
+        <a href="{{ site.baseurl }}/blog/"{% if page.url == '/blog/' %} aria-current="page"{% endif %}>Blog</a>
+        <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+        <a href="https://cloud.tenuo.ai">Tenuo Cloud</a>
+      </div>
+    </nav>
+
+    <main class="blog-index-content">
+      {{ content }}
+    </main>
+  </div>
+
+  <footer>
+    <p>
+      © 2026 Tenuo ·
+      <a href="{{ site.baseurl }}/quickstart">Docs</a> ·
+      <a href="{{ site.baseurl }}/blog/">Blog</a> ·
+      <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> ·
+      <a href="{{ site.baseurl }}/early-access.html">Early Access</a>
+    </p>
+  </footer>
+</body>
+</html>

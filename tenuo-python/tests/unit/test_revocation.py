@@ -14,6 +14,7 @@ from tenuo import (
     RevocationRequest,
     SignedRevocationList,
     SigningKey,
+    SrlBuilder,
 )
 
 # =============================================================================
@@ -174,6 +175,29 @@ class TestSignedRevocationList:
         assert len(srl) == 1
         assert srl.is_revoked("tnu_wrt_single")
         assert not srl.is_revoked("tnu_wrt_not_revoked")
+
+    def test_builder_is_constructible_and_fluent(self, control_plane_keypair):
+        """All documented builder mutators return the same builder instance."""
+        existing = (
+            SignedRevocationList.builder()
+            .revoke("tnu_wrt_existing")
+            .build(control_plane_keypair)
+        )
+
+        builder = SrlBuilder()
+        assert builder.revoke("tnu_wrt_single") is builder
+        assert builder.revoke_all(["tnu_wrt_batch_1", "tnu_wrt_batch_2"]) is builder
+        assert builder.version(7) is builder
+        assert builder.from_existing(existing) is builder
+
+        srl = builder.build(control_plane_keypair)
+        assert srl.version == 7
+        assert set(srl.revoked_ids) == {
+            "tnu_wrt_single",
+            "tnu_wrt_batch_1",
+            "tnu_wrt_batch_2",
+            "tnu_wrt_existing",
+        }
 
     def test_builder_multiple_revocations(self, control_plane_keypair):
         """Build SRL with multiple revocations."""

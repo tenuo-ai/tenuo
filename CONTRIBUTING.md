@@ -43,7 +43,8 @@ security model.
 
 ### Prerequisites
 
-- Node.js 20 or newer
+- Node.js 24 (the active LTS) for local development. Node.js 20 is the minimum
+  supported version, and CI runs the SDK checks on both.
 - pnpm 9.15.9, as pinned by `tenuo-ts/package.json`
 
 Rust and `wasm-pack` are not required for ordinary TypeScript-only changes. The
@@ -186,13 +187,14 @@ paths inside a map point at files consumers never receive. Declaration maps
 and shipping `src` just to serve editor navigation would also ship build
 inputs. Editors fall back to the published `.d.ts` files.
 
-### Run the MCP scenarios
+### Run the examples
 
 ```bash
 pnpm example:mcp          # quarterly-close wire scenario
 pnpm example:mcp:host     # official MCP v1 recipe
 pnpm example:mcp:adapter  # @tenuo/mcp v2 adapter tests
 pnpm example:mcp:v2       # minimal @tenuo/mcp v2 client/server example
+pnpm example:sessions     # concurrent session isolation
 ```
 
 ### TypeScript contribution rules

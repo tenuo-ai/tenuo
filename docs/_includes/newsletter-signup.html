@@ -1,0 +1,29 @@
+<section class="newsletter-signup" id="subscribe" aria-labelledby="newsletter-title">
+  <div class="newsletter-copy">
+    <p class="newsletter-label">Newsletter</p>
+    <h2 id="newsletter-title">Keep up with Tenuo Engineering</h2>
+    <p>Get each new article in your inbox.</p>
+  </div>
+
+  <div class="newsletter-form-wrap">
+    <form
+      class="newsletter-form"
+      action="https://buttondown.com/api/emails/embed-subscribe/{{ site.buttondown_username }}"
+      method="post"
+    >
+      <input type="hidden" name="embed" value="1">
+      <label class="visually-hidden" for="newsletter-email-{{ include.location | default: 'page' }}">Email address</label>
+      <input
+        id="newsletter-email-{{ include.location | default: 'page' }}"
+        name="email"
+        type="email"
+        autocomplete="email"
+        inputmode="email"
+        placeholder="you@company.com"
+        required
+      >
+      <button type="submit">Subscribe</button>
+    </form>
+    <p class="newsletter-note">Confirm by email. Unsubscribe at any time.</p>
+  </div>
+</section>

@@ -73,10 +73,10 @@ class BoundWarrant:
             warrant: The warrant to bind
             key: The signing key to bind to
             trusted_roots: Optional list of trusted issuer PublicKeys.  When provided,
-                ``enforce_tool_call`` uses these as the trust anchor instead of
-                requiring callers to pass ``trusted_roots`` explicitly.  If neither
-                this attribute nor the ``trusted_roots`` parameter to
-                ``enforce_tool_call`` is set, enforcement fails closed.
+                ``enforce_tool_call`` and :meth:`validate` use these as the trust
+                anchor instead of requiring callers to pass ``trusted_roots``
+                explicitly.  When no roots are set here, at the call site, in
+                ``tenuo.configure()``, or on the active ``Runtime``, both fail closed.
         """
         self._warrant = warrant
         self._key = key
@@ -233,7 +233,15 @@ class BoundWarrant:
         """
         return self._warrant.grant(to=to, allow=allow, ttl=ttl, key=self._key, **constraints)
 
-    def headers(self, tool: str, args: dict, approvals=None) -> Dict[str, str]:
+    def headers(
+        self,
+        tool: str,
+        args: dict,
+        approvals=None,
+        *,
+        trusted_roots: Optional[List[Any]] = None,
+        warrant_chain: Optional[List[Any]] = None,
+    ) -> Dict[str, str]:
         """
         Generate HTTP authorization headers using the bound key.
 
@@ -243,6 +251,11 @@ class BoundWarrant:
             approvals: Optional list of SignedApproval objects. Required when the
                 warrant has a guard on this tool — pass the verified approvals so
                 the guard is satisfied during PoP validation on the server side.
+            trusted_roots: Trusted issuer public keys for the pre-flight check.
+                Forwarded to :meth:`validate`.
+            warrant_chain: Parent warrants in root-first order, excluding this
+                warrant. Required for delegated warrants; validated locally
+                and encoded with this warrant as a WarrantStack for transport.
 
         Returns:
             Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
@@ -252,24 +265,98 @@ class BoundWarrant:
 
         # Validate before signing for better error messages.
         # Pass approvals so guarded tools don't fail here.
-        validation = self.validate(tool, args, approvals=approvals)
+        validation = self.validate(
+            tool,
+            args,
+            approvals=approvals,
+            trusted_roots=trusted_roots,
+            warrant_chain=warrant_chain,
+        )
         if not validation:
             raise RuntimeError(f"Authorization failed: {validation.reason}")
 
         pop_sig = self._warrant.sign(self._key, tool, args, int(time.time()))
         # sign returns bytes, encode to base64
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
+
+        # The pre-flight above verified the complete delegation path, so send
+        # that same path to the remote PEP. A plain leaf is not independently
+        # trusted when it was issued by an intermediate holder.
+        warrant_token = self._warrant.to_base64()
+        if warrant_chain:
+            from tenuo_core import encode_warrant_stack
+
+            warrant_token = encode_warrant_stack(
+                list(warrant_chain) + [self._warrant]
+            )
         return {
-            _WARRANT_HEADER: self._warrant.to_base64(),
+            _WARRANT_HEADER: warrant_token,
             "X-Tenuo-PoP": pop_b64,
         }
 
-    def validate(self, tool: str, args: dict, approvals=None) -> ValidationResult:
+    def _resolve_validation_roots(self, explicit: Optional[List[Any]]) -> List[Any]:
+        """Resolve trusted roots the same way ``enforce_tool_call`` does.
+
+        Explicit argument, then the roots bound at construction, then
+        ``tenuo.configure()``, then the active ``Runtime``. Exhausting all of
+        them is a configuration error rather than a fallback to the warrant's
+        own issuer: anchoring on the issuer would make every warrant trusted
+        by construction.
+        """
+        if explicit is not None:
+            return list(explicit)
+        if self._trusted_roots is not None:
+            return list(self._trusted_roots)
+
+        from .config import resolve_trusted_roots
+
+        roots = resolve_trusted_roots(None)
+        if roots is None:
+            from .runtime import get_runtime
+
+            runtime = get_runtime()
+            if runtime is not None:
+                roots = list(runtime.trusted_roots)
+        if roots is None:
+            from tenuo.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "BoundWarrant.validate() requires trusted_roots. "
+                "Pass trusted_roots=[issuer_public_key] to validate(), "
+                "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
+                "or call tenuo.configure(trusted_roots=[...]) at application startup. "
+                "Accepting self-signed warrants is not permitted (fail-closed). "
+                "See tenuo_core.Authorizer for details."
+            )
+        return list(roots)
+
+    def validate(
+        self,
+        tool: str,
+        args: dict,
+        approvals=None,
+        *,
+        trusted_roots: Optional[List[Any]] = None,
+        warrant_chain: Optional[List[Any]] = None,
+    ) -> ValidationResult:
         """
         Pre-check if this action would be authorized.
 
-        Use before making the actual API call to verify locally that
-        the warrant allows the action and the PoP signature is valid.
+        Use before making the actual API call to verify locally that the
+        warrant allows the action, that its issuer chains up to a trusted
+        root, and that the PoP signature is valid.
+
+        This is the same trust decision ``enforce_tool_call`` makes, so a
+        warrant that validates here is not one that enforcement will reject
+        for trust reasons. Trusted roots are resolved from ``trusted_roots``,
+        then the roots bound at construction, then ``tenuo.configure()``, then
+        the active ``Runtime``; when none of those supply roots, validation
+        raises ``ConfigurationError`` instead of trusting the warrant's own
+        issuer.
+
+        A delegated warrant cannot be validated on its own, because its issuer
+        is the delegating holder rather than a trusted root. Pass the parents
+        via ``warrant_chain`` so the full path back to the root is checked.
 
         Args:
             tool: Tool name
@@ -277,9 +364,16 @@ class BoundWarrant:
             approvals: Optional list of SignedApproval objects. Pass when the warrant
                 has guards that require approval — the Rust core verifies these and
                 satisfies the guard check atomically with PoP verification.
+            trusted_roots: Trusted issuer public keys (``tenuo_core.PublicKey``)
+                to anchor this check on, overriding any bound or configured roots.
+            warrant_chain: Parent warrants in root-first order, **excluding** this
+                warrant. Required for delegated warrants.
 
         Returns:
             ValidationResult (True if authorized and PoP is valid, with feedback on failure)
+
+        Raises:
+            ConfigurationError: If no trusted roots can be resolved.
 
         Example:
             result = bound.validate("search", {"query": "test"})
@@ -288,21 +382,38 @@ class BoundWarrant:
                 # ...
             else:
                 print(f"Validation failed: {result.reason}")
+
+            # Delegated warrant — present the path back to the root:
+            result = child.bind(worker_key).validate(
+                "search", {"query": "test"}, warrant_chain=[root_warrant]
+            )
         """
         import time
 
         from tenuo_core import Authorizer
 
+        roots = self._resolve_validation_roots(trusted_roots)
+
         # 1. Sign PoP
         pop_signature = self._warrant.sign(self._key, tool, args, int(time.time()))
 
-        # 2. Verify via Authorizer.authorize_one() — full check: issuer trust,
-        #    expiry, revocation, clearance, PoP, constraints, guard satisfaction.
-        issuer_pub = getattr(self._warrant, "issuer_public_key", None) or getattr(self._warrant, "issuer", None)
-        roots = [issuer_pub] if issuer_pub is not None else []
+        # 2. Verify via the Authorizer — full check: issuer trust, expiry,
+        #    revocation, clearance, PoP, constraints, guard satisfaction.
         auth = Authorizer(trusted_roots=roots)
+        from .runtime import apply_runtime_revocation
+
+        apply_runtime_revocation(auth)
         try:
-            auth.authorize_one(self._warrant, tool, args, signature=bytes(pop_signature), approvals=approvals or [])
+            if warrant_chain:
+                auth.check_chain(
+                    list(warrant_chain) + [self._warrant],
+                    tool,
+                    args,
+                    signature=bytes(pop_signature),
+                    approvals=approvals or [],
+                )
+            else:
+                auth.authorize_one(self._warrant, tool, args, signature=bytes(pop_signature), approvals=approvals or [])
             return ValidationResult.ok()
         except Exception as exc:
             # Re-raise structural failures — callers should handle these explicitly.
@@ -311,7 +422,20 @@ class BoundWarrant:
             from tenuo.exceptions import ExpiredError, MissingSignature, SignatureInvalid
             if isinstance(exc, (ExpiredError, SignatureInvalid, MissingSignature)):
                 raise
-            # 3. Policy-level denial: return rich feedback via why_denied
+            # 3. Trust-level denial. ``why_denied`` only reasons about tools and
+            #    constraints, so when those already permit the call it has no
+            #    explanation to offer and would report "would be allowed" for a
+            #    warrant the Authorizer just rejected. Report the real reason.
+            if self._warrant.allows(tool, args):
+                return ValidationResult.fail(
+                    reason=str(exc) or type(exc).__name__,
+                    suggestions=[
+                        "Delegated warrants must present their parents: "
+                        "validate(..., warrant_chain=[root, ...]) root-first, "
+                        "excluding this warrant."
+                    ],
+                )
+            # 4. Policy-level denial: return rich feedback via why_denied
             why = self.why_denied(tool, args)
             return ValidationResult.fail(
                 reason=why.suggestion or f"Authorization failed ({why.deny_code})",
