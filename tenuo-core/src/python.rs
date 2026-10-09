@@ -35,7 +35,7 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySequence, PyTuple};
+use pyo3::types::{PyDict, PyInt, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -584,11 +584,16 @@ pub struct PyExact {
 
 #[pymethods]
 impl PyExact {
+    /// Create an exact-value constraint.
+    ///
+    /// Accepts any argument value: str, int, float, bool, None, list or dict.
+    /// The match is type-strict, so ``Exact(42)`` matches ``42`` but not ``"42"``.
+    /// Integers must fit in 64 bits; pass larger IDs as strings.
     #[new]
-    fn new(value: &str) -> Self {
-        Self {
-            inner: Exact::new(value),
-        }
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: Exact::new(py_to_exact_constraint_value(value)?),
+        })
     }
 
     /// Check if a value matches this exact constraint.
@@ -596,7 +601,7 @@ impl PyExact {
     /// This is the runtime check used for Tier 1 authorization.
     ///
     /// Args:
-    ///     value: Value to check (will be converted to string for comparison)
+    ///     value: Value to check. Types must match: ``Exact(42)`` does not match ``"42"``.
     ///
     /// Returns:
     ///     True if value matches exactly, False otherwise
@@ -607,8 +612,11 @@ impl PyExact {
     ///     True
     ///     >>> e.matches("staging")
     ///     False
-    fn matches(&self, value: &str) -> bool {
-        self.inner.value.as_str() == Some(value)
+    ///     >>> Exact(42).matches(42)
+    ///     True
+    fn matches(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -618,7 +626,10 @@ impl PyExact {
     }
 
     fn __repr__(&self) -> String {
-        format!("Exact('{}')", self.inner.value)
+        match &self.inner.value {
+            ConstraintValue::String(s) => format!("Exact('{}')", s),
+            other => format!("Exact({})", other),
+        }
     }
 
     #[getter]
@@ -636,11 +647,20 @@ pub struct PyOneOf {
 
 #[pymethods]
 impl PyOneOf {
+    /// Create a one-of constraint.
+    ///
+    /// Values may be str, int, float, bool, None, list or dict, and can be mixed.
+    /// Matching is type-strict, so ``OneOf([1, 2])`` does not match ``"1"``.
+    /// Integers must fit in 64 bits; pass larger IDs as strings.
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: OneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_exact_constraint_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: OneOf::from_values(values),
+        })
     }
 
     /// Validate that another OneOf is a valid attenuation (narrowing) of this one.
@@ -668,9 +688,11 @@ impl PyOneOf {
     ///     True
     ///     >>> o.contains("development")
     ///     False
-    fn contains(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        self.inner.contains(&cv)
+    ///     >>> OneOf([1, 2]).contains(1)
+    ///     True
+    fn contains(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        Ok(self.inner.contains(&cv))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -704,11 +726,20 @@ pub struct PyNotOneOf {
 
 #[pymethods]
 impl PyNotOneOf {
+    /// Create an exclusion constraint.
+    ///
+    /// Values may be str, int, float, bool, None, list or dict, and can be mixed.
+    /// Matching is type-strict, so ``NotOneOf([0])`` still allows ``"0"``.
+    /// Integers must fit in 64 bits; pass larger IDs as strings.
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: NotOneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_exact_constraint_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: NotOneOf::from_values(values),
+        })
     }
 
     /// Validate that another NotOneOf is a valid attenuation (narrowing) of this one.
@@ -736,9 +767,11 @@ impl PyNotOneOf {
     ///     True
     ///     >>> n.allows("admin")
     ///     False
-    fn allows(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        !self.inner.excluded.contains(&cv)
+    ///     >>> NotOneOf([0]).allows(0)
+    ///     False
+    fn allows(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        Ok(!self.inner.is_excluded(&cv))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -2396,6 +2429,44 @@ fn py_dict_to_constraint_set(
     }
 
     Ok(constraint_set)
+}
+
+/// Convert a Python value to a ConstraintValue for an exact-match constraint
+/// value (``Exact``, ``OneOf``, ``NotOneOf``), rejecting integers outside the
+/// signed 64-bit range.
+///
+/// ``py_to_constraint_value`` maps those integers to ``Float``, which is
+/// lossy: ``Exact(2**64)`` would also match ``2**64 + 1``. Exact values are
+/// meant to pin identifiers losslessly, so refuse them and point the caller
+/// at a string instead. Nested list and dict values are checked too.
+pub(crate) fn py_to_exact_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
+    reject_lossy_ints(obj)?;
+    py_to_constraint_value(obj)
+}
+
+fn reject_lossy_ints(obj: &Bound<'_, PyAny>) -> PyResult<()> {
+    if obj.is_instance_of::<PyInt>() {
+        if obj.extract::<i64>().is_err() {
+            return Err(py_validation_err(
+                "integer is outside the 64-bit range and cannot be matched exactly; pass it as a string",
+            ));
+        }
+        return Ok(());
+    }
+    if let Ok(dict) = obj.cast::<PyDict>() {
+        for (_, value) in dict.iter() {
+            reject_lossy_ints(&value)?;
+        }
+        return Ok(());
+    }
+    if obj.extract::<String>().is_err() {
+        if let Ok(items) = obj.extract::<Vec<Bound<'_, PyAny>>>() {
+            for item in &items {
+                reject_lossy_ints(item)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Convert a Python value to a ConstraintValue.

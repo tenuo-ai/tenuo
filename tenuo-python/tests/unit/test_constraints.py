@@ -11,12 +11,17 @@ Tests cover:
 - URL pattern constraints
 """
 
+import uuid
+
 import pytest
 from tenuo_core import Cidr, UrlPattern
 
 from tenuo import (
     Exact,
+    NotOneOf,
+    OneOf,
     Pattern,
+    Range,
     SigningKey,
     Warrant,
     configure,
@@ -26,7 +31,8 @@ from tenuo import (
 )
 from tenuo.config import reset_config
 from tenuo.constraints import Constraints
-from tenuo.exceptions import ScopeViolation
+from tenuo.decorators import _check_annotated_constraint
+from tenuo.exceptions import MonotonicityError, ScopeViolation, ValidationError
 
 
 @pytest.fixture(autouse=True)
@@ -88,6 +94,163 @@ def test_exact_constraint_matching():
 
         with pytest.raises(ScopeViolation):
             delete_database(db_name="test-db-2")
+
+
+def test_exact_non_string_values():
+    """Exact accepts non-string values and matches them type-strictly."""
+
+    @guard(tool="update_invoice")
+    def update_invoice(invoice_id: int) -> str:
+        return f"updated {invoice_id}"
+
+    kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
+    warrant = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("update_invoice", {"invoice_id": Exact(42)}),
+        holder=kp.public_key,
+        ttl_seconds=60,
+    )
+
+    with warrant_scope(warrant), key_scope(kp):
+        assert update_invoice(invoice_id=42) == "updated 42"
+
+        with pytest.raises(ScopeViolation):
+            update_invoice(invoice_id=43)
+
+        with pytest.raises(ScopeViolation):
+            update_invoice(invoice_id="42")
+
+    assert Exact(42).matches(42)
+    assert not Exact(42).matches("42")
+    assert not Exact("42").matches(42)
+    assert not Exact(True).matches(1)
+    assert Exact(None).matches(None)
+    assert Exact([1, 2]).matches([1, 2])
+    assert Exact(42).value == 42
+    assert repr(Exact(42)) == "Exact(42)"
+    assert repr(Exact("prod")) == "Exact('prod')"
+
+
+def test_exact_rejects_integers_outside_64_bits():
+    """Exact refuses integers it cannot hold losslessly instead of widening to float."""
+    assert Exact(2**63 - 1).matches(2**63 - 1)
+    assert Exact(-(2**63)).matches(-(2**63))
+
+    for value in (2**64, -(2**63) - 1, [1, 2**64], {"id": 2**64}):
+        with pytest.raises(ValidationError, match="pass it as a string"):
+            Exact(value)
+
+    # Large IDs pin losslessly as strings
+    assert Exact(str(2**64)).matches(str(2**64))
+    assert not Exact(str(2**64)).matches(str(2**64 + 1))
+
+
+def test_exact_attenuates_from_range():
+    """Range -> Exact attenuation needs a numeric Exact, as docs/constraints.md shows."""
+    kp = SigningKey.generate()
+    root = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("transfer", {"amount": Range(min=0, max=100)}),
+        holder=kp.public_key,
+        ttl_seconds=60,
+    )
+
+    def attenuate(child):
+        return root.attenuate(
+            capabilities=Constraints.for_tool("transfer", {"amount": child}),
+            signing_key=kp,
+            holder=kp.public_key,
+            ttl_seconds=30,
+        )
+
+    assert attenuate(Exact(50)).depth == 1
+    for child in (Exact(150), Exact("50")):
+        with pytest.raises(MonotonicityError):
+            attenuate(child)
+
+
+def test_annotated_exact_matches_typed_and_string_values():
+    """Annotated Exact checks match typed values, then fall back to the str() form."""
+    assert _check_annotated_constraint(Exact(42), 42)
+    assert not _check_annotated_constraint(Exact(42), 43)
+    # String Exact values keep matching non-string arguments by str() form
+    assert _check_annotated_constraint(Exact("42"), 42)
+
+    # Values the core cannot represent fall back to str() instead of failing closed
+    run_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    assert _check_annotated_constraint(Exact(str(run_id)), run_id)
+    assert not _check_annotated_constraint(Exact(str(uuid.uuid4())), run_id)
+
+
+def test_oneof_non_string_values():
+    """OneOf and NotOneOf accept non-string values and match them type-strictly."""
+
+    @guard(tool="set_priority")
+    def set_priority(level: int) -> str:
+        return f"priority {level}"
+
+    kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
+    warrant = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("set_priority", {"level": OneOf([1, 2, 3])}),
+        holder=kp.public_key,
+        ttl_seconds=60,
+    )
+
+    with warrant_scope(warrant), key_scope(kp):
+        assert set_priority(level=2) == "priority 2"
+
+        with pytest.raises(ScopeViolation):
+            set_priority(level=4)
+
+        with pytest.raises(ScopeViolation):
+            set_priority(level="2")
+
+    assert OneOf([1, 2]).contains(1)
+    assert not OneOf([1, 2]).contains("1")
+    assert OneOf(["a", 1, None]).contains(None)
+    assert OneOf([1, 2]).values == [1, 2]
+    assert not NotOneOf([0]).allows(0)
+    assert NotOneOf([0]).allows("0")
+    assert NotOneOf([0]).excluded == [0]
+
+
+def test_oneof_rejects_integers_outside_64_bits():
+    """OneOf and NotOneOf refuse integers they cannot hold losslessly."""
+    assert OneOf([2**63 - 1]).contains(2**63 - 1)
+
+    for cls in (OneOf, NotOneOf):
+        with pytest.raises(ValidationError, match="pass it as a string"):
+            cls([1, 2**64])
+
+    assert OneOf([str(2**64)]).contains(str(2**64))
+    assert not OneOf([str(2**64)]).contains(str(2**64 + 1))
+
+
+def test_annotated_oneof_matches_typed_and_string_sets():
+    """Annotated OneOf checks match typed sets, then fall back to the str() form."""
+    assert _check_annotated_constraint(OneOf([1, 2]), 1)
+    assert not _check_annotated_constraint(OneOf([1, 2]), 3)
+    # String sets keep matching non-string arguments by their str() form
+    assert _check_annotated_constraint(OneOf(["1", "2"]), 1)
+
+    # Values the core cannot represent fall back to str() instead of failing closed
+    run_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    assert _check_annotated_constraint(OneOf([str(run_id)]), run_id)
+    assert not _check_annotated_constraint(OneOf([str(uuid.uuid4())]), run_id)
+
+
+def test_annotated_notoneof_excludes_typed_and_string_forms():
+    """Annotated NotOneOf excludes a value if either its typed or str() form is listed."""
+    assert not _check_annotated_constraint(NotOneOf([0]), 0)
+    assert not _check_annotated_constraint(NotOneOf(["0"]), 0)
+    assert _check_annotated_constraint(NotOneOf([0]), 1)
+
+    run_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    assert not _check_annotated_constraint(NotOneOf([str(run_id)]), run_id)
+    assert _check_annotated_constraint(NotOneOf([str(uuid.uuid4())]), run_id)
 
 
 def test_multiple_constraints():
