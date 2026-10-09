@@ -1035,3 +1035,89 @@ fn invalid_jail_root_names_the_configured_path() {
         other => panic!("{other:?}"),
     }
 }
+
+/// A case-insensitive volume whose name cache has not seen the file yet.
+///
+/// FAT and exFAT on macOS report a descriptor's path with the spelling of the
+/// first lookup, not the stored name, so a path-string check alone cannot
+/// tell `SECRET/KEY` from `secret/key`. Needs `hdiutil`, so it is opt-in.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "creates and mounts a FAT32 disk image with hdiutil"]
+fn cold_case_insensitive_volume_rejects_alias() {
+    use std::process::Command;
+    let scratch = tempfile::tempdir().expect("scratch");
+    let image = scratch.path().join("ci.dmg");
+    let mount = scratch.path().join("mnt");
+    let hdiutil = |args: &[&std::ffi::OsStr]| {
+        let status = Command::new("hdiutil")
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("hdiutil");
+        assert!(status.success(), "hdiutil {args:?}");
+    };
+    let attach = || {
+        hdiutil(&[
+            "attach".as_ref(),
+            "-nobrowse".as_ref(),
+            "-mountpoint".as_ref(),
+            mount.as_os_str(),
+            image.as_os_str(),
+        ])
+    };
+    let detach = || hdiutil(&["detach".as_ref(), mount.as_os_str()]);
+    hdiutil(&[
+        "create".as_ref(),
+        "-size".as_ref(),
+        "40m".as_ref(),
+        "-fs".as_ref(),
+        "MS-DOS FAT32".as_ref(),
+        "-volname".as_ref(),
+        "TCI".as_ref(),
+        image.as_os_str(),
+    ]);
+    attach();
+    std::fs::create_dir(mount.join("secret")).expect("secret dir");
+    std::fs::write(mount.join("secret/key"), b"hidden").expect("secret file");
+    std::fs::write(mount.join("notes.txt"), b"notes").expect("allowed file");
+    detach();
+    // Remount so no vnode for the canonical spelling is cached.
+    attach();
+    struct Detach<'a>(&'a dyn Fn());
+    impl Drop for Detach<'_> {
+        fn drop(&mut self) {
+            (self.0)();
+        }
+    }
+    let _cleanup = Detach(&detach);
+
+    let policy = All::new([
+        Subpath::new("/workspace").unwrap().into(),
+        NotOneOf::new(["/workspace/secret/key"]).into(),
+    ]);
+    let (guard, authority) = harness(
+        &mount,
+        constraints! { "path" => policy },
+        Containment::BestEffort,
+    );
+    let allowed = read_at(&guard, &authority, "/workspace/notes.txt").expect("stored spelling");
+    assert_eq!(allowed, "notes");
+    let alias = read_at(&guard, &authority, "/workspace/SECRET/KEY");
+    assert!(
+        matches!(
+            alias,
+            Err(GuardError::Operation(FilesystemError::NotTheNamedFile))
+        ),
+        "case-folded alias opened the denied file: {alias:?}"
+    );
+    let call = Call::owned("read_file", args! { "path" => "/workspace/SECRET/KEY" }).unwrap();
+    let truncate = guard.guard(&authority, &call, |authorized| {
+        authorized.open("path", OpenOptions::write_truncate())
+    });
+    assert!(matches!(
+        truncate,
+        Err(GuardError::Operation(FilesystemError::NotTheNamedFile))
+    ));
+    assert_eq!(std::fs::read(mount.join("secret/key")).unwrap(), b"hidden");
+}
