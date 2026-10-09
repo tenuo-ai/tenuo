@@ -21,9 +21,8 @@ lab_version: "0.2.0"
 <pre class="lab-cmd"><code>git clone https://github.com/tenuo-ai/tenuo
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Every challenge check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> uses the network. Every challenge check and score is real.</p>
 </div>
 <details class="lab-reveal lab-expect">
 <summary>What to expect <span>5 stages · about 90 min · 2 optional bosses</span></summary>
@@ -39,8 +38,7 @@ npm run lab</code></pre>
 <p>The same lab runs in GitHub Codespaces with no install. It needs a free GitHub account and no payment method. GitHub includes 120 core-hours a month on personal accounts, and the lab is pinned to the smallest 2-core machine, so a full session uses about 3 of them.</p>
 <a class="lab-button" href="https://codespaces.new/tenuo-ai/tenuo?devcontainer_path=.devcontainer/agent-delegation-lab/devcontainer.json">Open in GitHub Codespaces</a>
 <p>At the Codespaces terminal:</p>
-<pre class="lab-cmd"><code>npm run star       # optional
-npm run lab</code></pre>
+<pre class="lab-cmd"><code>npm run lab</code></pre>
 <p class="lab-muted">Create it from the link so it counts against your own free hours. A codespace created inside an organization is billed to that organization. Stop the codespace when you are done.</p>
 </div>
 </details>
