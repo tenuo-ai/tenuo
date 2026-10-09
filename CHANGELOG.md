@@ -67,6 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registration lines and the `flushed N audit events` line now go to
   `tracing` only. Registration retries are jittered so a fleet does not
   reconnect in lockstep.
+- **Python `Shlex` rejects every unquoted shell operator.** The tokenizer
+  merges adjacent operator characters into one token, and the check compared
+  tokens against a fixed list, so combinations such as `|&`, `>|`, `&>`, `<>`
+  and `>&` were allowed. Any token made only of `();<>|&` is now rejected, in
+  `matches()` and in `explain`. The Rust `Shlex` used in warrants was not
+  affected.
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
   passed the parent's `timedelta` TTL to the grant builder, so every grant
   failed with `TypeError`, and `assert_cannot_grant` passed for any grant,

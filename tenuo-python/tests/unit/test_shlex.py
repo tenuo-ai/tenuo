@@ -104,6 +104,54 @@ class TestShlexOperatorBlocking:
         assert not constraint.matches("cat < /etc/passwd")
 
 
+class TestShlexMergedOperatorTokens:
+    """Adjacent operator characters parse as one token; every such token is blocked."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls |& sh",          # pipe stdout and stderr
+            "ls >| /tmp/x",      # clobbering redirect
+            "ls &> /tmp/x",      # redirect stdout and stderr
+            "ls &>> /tmp/x",     # append stdout and stderr
+            "ls 2>&1",           # fd duplication
+            "ls <&0",            # input fd duplication
+            "cat x 3<> /etc/hosts",  # read-write open
+            "ls ;; x",
+            "ls ;& x",
+            "ls >(x)",
+            "ls <(x)",
+        ],
+    )
+    def test_blocks_merged_operator(self, command):
+        assert not Shlex(allow=["ls", "cat"]).matches(command)
+
+    def test_no_operator_character_combination_passes(self):
+        """Every unquoted run of 1-3 operator characters is rejected, in any position."""
+        import itertools
+
+        constraint = Shlex(allow=["ls"])
+        chars = "();<>|&"
+        for n in (1, 2, 3):
+            for combo in itertools.product(chars, repeat=n):
+                op = "".join(combo)
+                for template in ("ls {op} x", "ls{op}x", "ls 2{op}x", "ls x {op}"):
+                    command = template.format(op=op)
+                    assert not constraint.matches(command), command
+
+    def test_quoted_operators_still_allowed(self):
+        constraint = Shlex(allow=["grep"])
+        assert constraint.matches('grep "a|&b" file')
+        assert constraint.matches("grep 'x >| y' file")
+
+    def test_explain_reports_merged_operator(self):
+        from tenuo.explain_constraint import _explain_shlex
+
+        analysis = _explain_shlex(Shlex(allow=["ls"]), "ls |& sh")
+        assert not analysis.safe
+        assert "|&" in analysis.dangerous_tokens
+
+
 class TestShlexExpansionBlocking:
     """Tests for variable/command expansion blocking."""
 
