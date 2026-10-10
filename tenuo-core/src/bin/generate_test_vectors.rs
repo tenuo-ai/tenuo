@@ -3007,6 +3007,13 @@ fn main() {
     println!("list was loaded, which is a different claim from a loaded list that");
     println!("revoked nothing.");
     println!();
+    println!("Key 16 `enforced` is optional and is encoded only as `false`; absent");
+    println!("means `true`. `false` marks a denial that was recorded but not enforced");
+    println!("(observe mode: the policy said deny and the call ran anyway), and is");
+    println!("valid only when key 4 is `deny`. An explicit `true` MUST be rejected so");
+    println!("a receipt has one encoding. Verifiers that predate key 16 (Tenuo");
+    println!("0.3.2 and earlier) reject unknown keys, so they reject A.30.6.");
+    println!();
 
     const ID_A30: [u8; 16] = [
         0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30,
@@ -3165,6 +3172,28 @@ fn main() {
         "Key 14 links to A.30.2. Removing A.30.2 from a stream leaves this \
          receipt pointing at nothing, which is what turns \"this decision \
          happened\" into \"these are all the decisions\".",
+    );
+
+    // A.30.6 — an observed denial: decided deny, not enforced. Same chain and
+    // PoP as the allows, so the only differences are keys 4, 10 and 16.
+    let mut payload_a30_6 = ReceiptPayload::deny(
+        chain_a30.clone(),
+        "read_file",
+        ISSUED_AT as i64,
+        "req-a30-observed",
+        "constraint-violation",
+        pop_a30.to_bytes(),
+    );
+    payload_a30_6.trusted_roots_hash = Some(roots_digest_a30);
+    payload_a30_6.enforced = false;
+    let receipt_a30_6 = Receipt::create(&payload_a30_6, &authorizer).expect("A.30.6 signs");
+    print_receipt_vector(
+        "A.30.6 Observed Denial (Not Enforced)",
+        &receipt_a30_6,
+        "Key 16 is `false`: the enforcement point decided deny but was in observe \
+         mode, so the call ran. A reader must not conclude the action was \
+         blocked. Key 16 sorts last and is the only key absent from enforced \
+         receipts.",
     );
 
     print_derivation_vectors(&control_plane, &worker);
@@ -3351,6 +3380,11 @@ fn print_receipt_vector(label: &str, receipt: &Receipt, note: &str) {
             .map(|h| format!("`{}`", h))
             .unwrap_or_else(|| "absent".to_string())
     );
+    // Absent means true; printed only when present so the enforced vectors'
+    // tables are unchanged by the key's introduction.
+    if !payload.enforced {
+        println!("| Key 16 enforced | `false` |");
+    }
     println!();
     println!("**Receipt (hex):**");
     println!();

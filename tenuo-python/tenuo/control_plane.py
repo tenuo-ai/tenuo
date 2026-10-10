@@ -343,6 +343,11 @@ class ControlPlaneClient:
         else:
             deny_reason = getattr(result, "denial_reason", "") or ""
             failed = getattr(result, "constraint_violated", None)
+            # TODO(tenuo-cloud): the audit event cannot yet say an observed
+            # denial was not enforced. The control plane has no field for it and
+            # would drop one silently, and the event's signed CBOR must not
+            # change until the cloud verifies it. The signed receipt carries the
+            # distinction (key 16, enforced=False) in the meantime.
             self._inner.emit_deny(
                 warrant_id, tool, deny_reason, failed,
                 chain_depth, root_principal, warrant_stack,
@@ -421,6 +426,8 @@ class ControlPlaneClient:
                     if getattr(result, "error_type", None) in _POP_ESTABLISHED_ERROR_TYPES
                     else None
                 ),
+                # An observed denial ran anyway; the receipt says so (key 16).
+                enforced=not getattr(result, "observed", False),
             )
         except Exception as exc:  # noqa: BLE001 - must not fail the caller
             logger.warning("failed to emit denial receipt for %r", tool, exc_info=exc)

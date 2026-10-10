@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Receipt key 16, `enforced`.** A denial that observe mode let through is
+  now signed as a deny receipt with `enforced = false`, so the receipt no
+  longer reads as if the call was blocked. The key is written only when
+  `false`, and a receipt without it reads as enforced. Receipts for enforced
+  decisions are byte-for-byte unchanged, and so are test vectors A.30.1 to
+  A.30.5. A.30.6 adds an observed denial. Python exposes the flag as
+  `ReceiptPayload.enforced`. **Compatibility:** verifiers from Tenuo 0.3.2
+  and earlier reject unknown payload keys, so they reject observed-denial
+  receipts. Upgrade the verifier, including Explorer and the TypeScript SDK,
+  before relying on observe-mode receipts. Control-plane audit events do not
+  carry the flag yet.
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,

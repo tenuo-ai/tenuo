@@ -2006,8 +2006,10 @@ def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
 
     The full decision has already run. Denial fields (including integrity
     error types such as ``invalid_pop``) stay on the result and ``observed`` is
-    set, so receipts and control-plane events still record a denial. Argument
-    values are never logged, only keys and value type names.
+    set, so receipts and control-plane events still record a denial. Receipts
+    also mark it not enforced (key 16), which is why the caller collects the
+    receipt after this runs. Argument values are never logged, only keys and
+    value type names.
     """
     from .config import should_block_violation
 
@@ -2037,14 +2039,14 @@ from functools import wraps as _wraps  # noqa: E402
 
 @_wraps(_enforce_tool_call_impl)
 def enforce_tool_call(*args, **kwargs):
-    return _apply_observe_mode(_collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs)))
+    # Observe is applied before the receipt is collected so the receipt can
+    # record an observed denial as not enforced (key 16).
+    return _collect_runtime_receipt(_apply_observe_mode(_enforce_tool_call_impl(*args, **kwargs)))
 
 
 @_wraps(_enforce_tool_call_async_impl)
 async def enforce_tool_call_async(*args, **kwargs):
-    return _apply_observe_mode(
-        _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
-    )
+    return _collect_runtime_receipt(_apply_observe_mode(await _enforce_tool_call_async_impl(*args, **kwargs)))
 
 
 def parents_from_presented_chain(

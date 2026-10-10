@@ -18,7 +18,7 @@ Tenuo has two modes:
 
 `audit` and `permissive` are accepted aliases of `observe`.
 
-In observe mode every denial, including a bad signature or untrusted root, is logged as one `WARNING` (`OBSERVE: would deny <tool>: <reason>`) with structured fields: `tool`, `args_keys`, `arg_types` (value type names, never values), `error_type`, `constraint_violated`, `denial_reason`, `warrant_id`. The result is returned as allowed with `observed=True` and the denial details kept, and receipts still record it as a denial. Approval gates are not prompted; the call is recorded with `error_type="approval_required"` and proceeds.
+In observe mode every denial, including a bad signature or untrusted root, is logged as one `WARNING` (`OBSERVE: would deny <tool>: <reason>`) with structured fields: `tool`, `args_keys`, `arg_types` (value type names, never values), `error_type`, `constraint_violated`, `denial_reason`, `warrant_id`. The result is returned as allowed with `observed=True` and the denial details kept, and receipts still record it as a denial, marked `enforced=false` (receipt key 16) because the call ran. Verifying those receipts requires a Tenuo version that understands key 16; 0.3.2 and earlier reject them. Approval gates are not prompted; the call is recorded with `error_type="approval_required"` and proceeds.
 
 ```python
 from tenuo import configure, SigningKey
