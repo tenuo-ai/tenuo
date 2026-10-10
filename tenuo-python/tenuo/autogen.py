@@ -32,12 +32,13 @@ from typing import (
 from ._builder import BaseGuardBuilder
 from ._enforcement import (
     EnforcementResult,
+    _apply_observe_mode,
     enforce_tool_call,
     enforce_tool_call_async,
     handle_denial,
     split_presented_warrant,
 )
-from .config import resolve_trusted_roots
+from .config import resolve_trusted_roots, should_block_violation
 from .exceptions import (
     AuthorizationDenied,
     ConfigurationError,
@@ -162,6 +163,35 @@ def _check_constraints(
             raise
         except Exception as e:  # pragma: no cover - defensive
             raise ConstraintViolation(field=key, reason=str(e), value=value)
+
+
+def _check_constraints_or_observe(
+    tool_name: str,
+    constraints: Optional[Dict[str, Any]],
+    auth_args: Dict[str, Any],
+) -> None:
+    """Tier 1 check that honors observe mode.
+
+    Tier 2 denials go through observe mode inside enforce_tool_call. In
+    observe mode a Tier 1 denial logs the shared ``OBSERVE: would deny ...``
+    warning and the call proceeds.
+    """
+    try:
+        _check_constraints(tool_name, constraints, auth_args)
+    except (ToolNotAuthorized, ConstraintViolation) as exc:
+        if should_block_violation():
+            raise
+        not_granted = isinstance(exc, ToolNotAuthorized)
+        _apply_observe_mode(
+            EnforcementResult(
+                allowed=False,
+                tool=tool_name,
+                arguments=auth_args,
+                denial_reason=str(exc),
+                constraint_violated="tool" if not_granted else getattr(exc, "field", None),
+                error_type="tool_not_allowed" if not_granted else "constraint_violation",
+            )
+        )
 
 
 @dataclass
@@ -486,7 +516,7 @@ class _Guard:
 
         # Tier 1: Constraint-only enforcement (no warrant)
         constraints = self._constraints.get(tool_name)
-        _check_constraints(tool_name, constraints, auth_args)
+        _check_constraints_or_observe(tool_name, constraints, auth_args)
 
     async def _authorize_async(self, tool_name: str, auth_args: Dict[str, Any]) -> None:
         """Async variant of _authorize — uses enforce_tool_call_async for Tier 2."""
@@ -547,7 +577,7 @@ class _Guard:
             return
 
         constraints = self._constraints.get(tool_name)
-        _check_constraints(tool_name, constraints, auth_args)
+        _check_constraints_or_observe(tool_name, constraints, auth_args)
 
     def _handle_denial(
         self,
