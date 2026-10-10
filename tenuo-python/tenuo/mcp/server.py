@@ -136,7 +136,7 @@ from typing import Any, Dict, List, Optional
 
 from .._pop_canonicalize import strip_none_values
 from ..meta import _capture_arguments
-from ..approval import ApprovalRequired
+from ..approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 from ..exceptions import (
     ApprovalExpired,
     ApprovalGateTriggered,
@@ -1086,6 +1086,23 @@ class MCPVerifier:
                 constraints=constraints,
                 warrant_id=warrant_id,
                 denial_reason=_access_denial_reason(exc),
+                jsonrpc_error_code=-32001,
+            )
+        except (ApprovalDenied, ApprovalVerificationError) as exc:
+            # Not TenuoErrors before; keep reporting them as internal errors.
+            logger.error(
+                "Unexpected error during MCP verification for '%s': %s",
+                tool_name,
+                exc,
+                exc_info=True,
+            )
+            result = MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments=clean_arguments,
+                constraints=constraints,
+                warrant_id=warrant_id,
+                denial_reason=f"Internal verification error: {exc}",
                 jsonrpc_error_code=-32001,
             )
         except TenuoError as exc:

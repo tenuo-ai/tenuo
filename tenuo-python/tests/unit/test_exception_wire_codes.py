@@ -107,6 +107,8 @@ class TestWireCodeRegistry:
             for exc in all_exceptions
             if not exc.__name__.endswith("Result")  # Skip ConstraintResult
             and exc is not TenuoError
+            # Python-side approval-flow outcomes (tenuo.approval); no wire code assigned yet.
+            and exc.__module__ != "tenuo.approval"
         ]
 
         missing = []
