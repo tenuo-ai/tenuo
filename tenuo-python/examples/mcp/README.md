@@ -340,22 +340,38 @@ async def search_files(path: str, pattern: str):
 
 ### Pattern 4: CrewAI Workflows
 
-CrewAI agents with MCP tool access.
+Give each crew member its own attenuated warrant, and make every MCP call inside that member's scope. `SecureMCPClient` reads the warrant, its parent chain and the holder key from context, so a call made outside a scope fails closed with `ConfigurationError`.
 
 ```python
-from crewai import Agent, Task, Crew
+from contextlib import contextmanager
+from tenuo import Pattern, Subpath, chain_scope, configure, key_scope, warrant_scope
 from tenuo.mcp import SecureMCPClient
 
-async with SecureMCPClient(...) as client:
-    # Create agents with MCP tools
-    researcher = Agent(
-        role="Researcher",
-        tools=[client.tools["web_search"], client.tools["read_file"]],
-        ...
-    )
+# Trust only the control plane root; members' warrants verify through the chain
+configure(issuer_key=control_key, trusted_roots=[control_key.public_key])
 
-    crew = Crew(agents=[researcher, ...])
+researcher_warrant = orchestrator_warrant.attenuate(
+    signing_key=orchestrator_key,
+    holder=orchestrator_key.public_key,
+    capabilities={
+        "web_search": {"domain": Pattern("*.org"), "query": Pattern("*")},
+        "read_file": {"path": Subpath("/tmp/research/sources")},
+    },
+    ttl_seconds=1800,
+)
+
+@contextmanager
+def crew_member(warrant):
+    # The parent chain lets a root-only verifier check the delegated warrant
+    with chain_scope([orchestrator_warrant]), warrant_scope(warrant), key_scope(orchestrator_key):
+        yield
+
+async with SecureMCPClient(...) as client:
+    with crew_member(researcher_warrant):
+        await client.tools["read_file"](path="/tmp/research/sources/notes.txt")
 ```
+
+The scope lives in Python context variables. CrewAI runs some work on worker threads that do not inherit them, for example tasks with `async_execution=True` and agents with `max_execution_time`. Calls made there have no warrant in scope and are refused. Enter the scope inside the code that makes the MCP call, as [`crewai_mcp_demo.py`](crewai_mcp_demo.py) does, rather than around `crew.kickoff()`.
 
 ---
 
