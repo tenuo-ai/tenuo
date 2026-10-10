@@ -772,10 +772,10 @@ crew = Crew(
 
 Moving from unprotected CrewAI to Tenuo GuardedCrew:
 
-1. **Audit Phase**: Add `.audit(callback)` and keep `.on_denial("raise")`. A CrewAI hook blocks denied calls in every denial mode. Use `guard.explain(tool, args)` to check one call without running the crew.
+1. **Audit Phase**: Run with `tenuo.configure(mode="observe")` and add `.audit(callback)`. Calls the policy would deny still run; each one is logged as `OBSERVE: would deny <tool>: <reason>` and audited as a `DENY` with `observed=True`. `.on_denial("log")` is not an audit mode: in enforce mode a CrewAI hook blocks denied calls whatever `on_denial` is set to. Use `guard.explain(tool, args)` to check one call without running the crew.
 2. **Policy Generation**: Map the audit logs to agent roles. Identify which tools are actually used by each agent.
 3. **Constraint Hardening**: Replace `Wildcard()` with `Pattern` or `Subpath` based on observed data (e.g., if agent only reads `/tmp`, restrict to `/tmp`).
-4. **Enforcement**: Switch to `.on_denial("raise")` and enable `.strict()` to prevent future drift.
+4. **Enforcement**: Remove `mode="observe"` (enforce is the default), keep `.on_denial("raise")`, and enable `.strict()` to prevent future drift.
 
 ## Performance Considerations
 

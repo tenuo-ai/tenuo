@@ -119,12 +119,13 @@ from tenuo import (
     Wildcard,
 )
 from ._builder import BaseGuardBuilder
-from .config import resolve_trusted_roots
+from .config import resolve_trusted_roots, should_block_violation
 
 # Import unified enforcement logic
 from tenuo._enforcement import (
     DenialResult,
     EnforcementResult,
+    _apply_observe_mode,
     enforce_tool_call,
     enforce_tool_call_async,
     handle_denial,
@@ -456,6 +457,7 @@ class AuditEvent:
         error_code: Machine-readable code if denied
         agent_role: CrewAI agent role (for namespaced tools)
         timestamp: ISO timestamp
+        observed: True for a DENY that observe mode let proceed
     """
 
     tool: str
@@ -465,6 +467,7 @@ class AuditEvent:
     error_code: Optional[str] = None
     agent_role: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    observed: bool = False
 
 
 AuditCallback = Callable[[AuditEvent], None]
@@ -1221,7 +1224,13 @@ class CrewAIGuard:
 
         Always emits audit event, regardless of mode.
         Uses shared handle_denial() for consistent behavior across integrations.
+
+        In observe mode (``tenuo.configure(mode="observe")``) the denial is
+        audited and logged as ``OBSERVE: would deny ...``, then the call
+        proceeds. ``on_denial`` only governs enforced denials.
         """
+        observe = not should_block_violation()
+
         # Always audit denials (CrewAI-specific)
         self._emit_audit(
             tool_name,
@@ -1230,6 +1239,7 @@ class CrewAIGuard:
             str(error),
             error_code=error.error_code,
             agent_role=agent_role,
+            observed=observe,
         )
 
         # Create an EnforcementResult-like object for the shared handler
@@ -1241,6 +1251,13 @@ class CrewAIGuard:
             denial_reason=str(error),
             error_type=error.error_code.lower() if error.error_code else None,
         )
+
+        if observe:
+            pseudo_result.constraint_violated = (
+                "tool" if isinstance(error, ToolDenied) else getattr(error, "argument", None)
+            )
+            _apply_observe_mode(pseudo_result)  # logs the shared OBSERVE warning
+            return None
 
         return handle_denial(
             pseudo_result,
@@ -1257,6 +1274,7 @@ class CrewAIGuard:
         *,
         error_code: Optional[str] = None,
         agent_role: Optional[str] = None,
+        observed: bool = False,
     ) -> None:
         """Emit audit event for authorization decision.
 
@@ -1274,6 +1292,7 @@ class CrewAIGuard:
                 reason=reason,
                 error_code=error_code,
                 agent_role=agent_role,
+                observed=observed,
             )
             try:
                 self._audit_callback(event)
