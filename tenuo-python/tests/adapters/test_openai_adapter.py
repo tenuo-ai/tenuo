@@ -3377,3 +3377,129 @@ class TestShlexOpenAIIntegration:
             constraints={"run_command": {"cmd": Shlex(allow=["ls"])}},
         )
         assert result is None
+
+
+# =============================================================================
+# Async Client Tests (guard(AsyncOpenAI()) must not bypass verification)
+# =============================================================================
+
+
+def make_async_mock_client(result: Any) -> Mock:
+    """Create a mock AsyncOpenAI-style client whose create() methods are async."""
+
+    async def _create(*args, **kwargs):
+        return result
+
+    client = Mock()
+    client.chat.completions.create = _create
+    client.responses.create = _create
+    return client
+
+
+class TestAsyncClientGuard:
+    """Awaiting the guarded create() on an async client must verify tool calls."""
+
+    def test_async_denied_tool_raises(self):
+        import asyncio
+
+        response = make_response([("send_email", {"to": "attacker@example.com"})])
+        client = guard(make_async_mock_client(response), allow_tools=["search"], on_denial="raise")
+
+        async def run():
+            return await client.chat.completions.create(model="gpt-4o", messages=[])
+
+        with pytest.raises(ToolDenied) as exc:
+            asyncio.run(run())
+        assert exc.value.tool_name == "send_email"
+
+    def test_async_denied_tool_skipped(self):
+        import asyncio
+
+        response = make_response([("send_email", {"to": "attacker@example.com"})])
+        client = guard(make_async_mock_client(response), allow_tools=["search"], on_denial="skip")
+
+        async def run():
+            return await client.chat.completions.create(model="gpt-4o", messages=[])
+
+        result = asyncio.run(run())
+        assert result.choices[0].message.tool_calls is None
+
+    def test_async_allowed_tool_passes(self):
+        import asyncio
+
+        response = make_response([("search", {"query": "python"})])
+        client = guard(make_async_mock_client(response), allow_tools=["search"], on_denial="raise")
+
+        async def run():
+            return await client.chat.completions.create(model="gpt-4o", messages=[])
+
+        result = asyncio.run(run())
+        assert [tc.function.name for tc in result.choices[0].message.tool_calls] == ["search"]
+
+    def test_async_stream_denied_tool_raises(self):
+        import asyncio
+
+        chunks = [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(name="delete_system", arguments='{"path": "/"}'),
+                                )
+                            ]
+                        ),
+                    )
+                ],
+            ),
+            MockStreamChunk(
+                id="chunk_1", choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")]
+            ),
+        ]
+
+        async def agen():
+            for c in chunks:
+                yield c
+
+        client = guard(make_async_mock_client(agen()), allow_tools=["safe_tool"], on_denial="raise")
+
+        async def run():
+            stream = await client.chat.completions.create(model="gpt-4o", messages=[], stream=True)
+            return [c async for c in stream]
+
+        with pytest.raises(ToolDenied) as exc:
+            asyncio.run(run())
+        assert exc.value.tool_name == "delete_system"
+
+    def test_async_responses_denied_function_call_raises(self):
+        import asyncio
+
+        class FunctionCall:
+            type = "function_call"
+            name = "delete_file"
+            arguments = json.dumps({"path": "/etc/passwd"})
+
+        class ResponsesResult:
+            output = [FunctionCall()]
+
+        client = guard(make_async_mock_client(ResponsesResult()), allow_tools=["search"], on_denial="raise")
+
+        async def run():
+            return await client.responses.create(model="gpt-4o", input="hi")
+
+        with pytest.raises(ToolDenied):
+            asyncio.run(run())
+
+    def test_responses_stream_fails_closed(self):
+        mock_client = Mock()
+        client = guard(mock_client, allow_tools=["search"])
+
+        with pytest.raises(OpenAIConfigurationError) as exc:
+            client.responses.create(model="gpt-4o", input="hi", stream=True)
+        assert exc.value.code == "CFG_004"
+        mock_client.responses.create.assert_not_called()
