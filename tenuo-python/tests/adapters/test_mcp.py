@@ -620,6 +620,89 @@ class TestSchemaStrippingEmptyProperties:
         assert "injected_evil" not in forwarded
 
 
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestProtectedToolNoContextFailsClosed:
+    """client.tools[...] with no warrant/key in scope must deny unless dev passthrough is on."""
+
+    @staticmethod
+    def _protected(client):
+        fake_mcp_tool = MagicMock()
+        fake_mcp_tool.name = "read_file"
+        fake_mcp_tool.description = "Read"
+        fake_mcp_tool.inputSchema = {"properties": {"path": {"type": "string"}}}
+        return client.create_protected_tool(fake_mcp_tool)
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        from tenuo.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_no_context_raises_and_does_not_call_server(self):
+        from tenuo import SigningKey, configure
+        from tenuo.exceptions import ConfigurationError
+
+        configure(issuer_key=SigningKey.generate(), dev_mode=True)
+        client = _make_client()
+        protected = self._protected(client)
+
+        with pytest.raises(ConfigurationError, match="No authorization context"):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dev_mode_without_passthrough_still_raises(self):
+        from tenuo import SigningKey, configure
+        from tenuo.exceptions import ConfigurationError
+
+        configure(issuer_key=SigningKey.generate(), dev_mode=True, allow_passthrough=False)
+        client = _make_client()
+        protected = self._protected(client)
+
+        with pytest.raises(ConfigurationError):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_passthrough_opt_in_calls_server_with_warning(self, caplog):
+        import logging
+
+        from tenuo import SigningKey, configure
+
+        configure(issuer_key=SigningKey.generate(), dev_mode=True, allow_passthrough=True)
+        client = _make_client()
+        protected = self._protected(client)
+
+        with caplog.at_level(logging.WARNING, logger="tenuo.mcp.client"):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_called_once()
+        assert client.session.call_tool.call_args[0][1] == {"path": "/data/f.txt"}
+        assert any("PASSTHROUGH" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_warrant_and_key_in_scope_unchanged(self):
+        from tenuo import SigningKey, configure
+        from tenuo.decorators import key_scope, warrant_scope
+        from tenuo_core import Warrant
+
+        keypair = SigningKey.generate()
+        configure(issuer_key=keypair, dev_mode=True)
+        warrant = Warrant.issue(keypair, capabilities={"read_file": {}})
+        client = _make_client()
+        protected = self._protected(client)
+
+        with warrant_scope(warrant), key_scope(keypair):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Transport validation tests
 # ---------------------------------------------------------------------------
