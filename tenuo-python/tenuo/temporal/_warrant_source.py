@@ -59,7 +59,7 @@ class EnvWarrantSource(WarrantSource):
     """Reads a warrant from an environment variable (base64-encoded CBOR bytes).
 
     Mirrors EnvKeyResolver's pattern. Reads fresh on each resolve() call.
-    Raises WarrantExpired if the resolved warrant's expires_at is in the past.
+    Raises TenuoContextError if the resolved warrant has expired.
 
     Example::
 
@@ -75,7 +75,6 @@ class EnvWarrantSource(WarrantSource):
 
     async def resolve(self, *args: Any, **kwargs: Any) -> tuple:
         import os
-        import time
 
         from tenuo_core import Warrant as _Warrant  # type: ignore[import-not-found]
 
@@ -96,11 +95,10 @@ class EnvWarrantSource(WarrantSource):
 
         warrant = _Warrant.from_bytes(warrant_bytes)
 
-        if hasattr(warrant, "expires_at") and warrant.expires_at is not None:
-            if warrant.expires_at < int(time.time()):
-                raise TenuoContextError(
-                    f"EnvWarrantSource: warrant in '{self._env_var}' has expired"
-                )
+        if warrant.is_expired():
+            raise TenuoContextError(
+                f"EnvWarrantSource: warrant in '{self._env_var}' has expired"
+            )
 
         return (warrant, self._key_id)
 
@@ -144,8 +142,6 @@ class CloudTriggerWarrantSource(WarrantSource):
         self._timeout = timeout
 
     async def resolve(self, *args: Any, **kwargs: Any) -> tuple:
-        import time
-
         try:
             import httpx
         except ImportError:
@@ -179,10 +175,9 @@ class CloudTriggerWarrantSource(WarrantSource):
         warrant_bytes = base64.b64decode(warrant_b64)
         warrant = _Warrant.from_bytes(warrant_bytes)
 
-        if hasattr(warrant, "expires_at") and warrant.expires_at is not None:
-            if warrant.expires_at < int(time.time()):
-                raise TenuoContextError(
-                    "CloudTriggerWarrantSource: fired warrant has already expired"
-                )
+        if warrant.is_expired():
+            raise TenuoContextError(
+                "CloudTriggerWarrantSource: fired warrant has already expired"
+            )
 
         return (warrant, self._key_id)
