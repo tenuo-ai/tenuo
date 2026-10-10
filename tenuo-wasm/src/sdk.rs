@@ -136,6 +136,9 @@ struct ReceiptInspectDto {
     /// Commitment to the trusted root set in force.
     #[serde(skip_serializing_if = "Option::is_none")]
     trusted_roots_hash: Option<String>,
+    /// Key 16. False on a denial recorded in observe mode: the policy said
+    /// deny and the call ran anyway. True on every other receipt.
+    enforced: bool,
 }
 
 #[derive(Serialize)]
@@ -941,6 +944,7 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         policy_definition_hash: payload.policy_definition_hash.map(hex::encode),
         prev_receipt_hash: payload.prev_receipt_hash.map(hex::encode),
         trusted_roots_hash: payload.trusted_roots_hash.map(hex::encode),
+        enforced: payload.enforced,
     }))
 }
 

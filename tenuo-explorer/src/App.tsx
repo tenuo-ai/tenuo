@@ -2103,7 +2103,19 @@ export type VerifiedReceipt = {
   policy_definition_hash?: string;
   prev_receipt_hash?: string;
   trusted_roots_hash?: string;
+  /** False on a denial recorded in observe mode (key 16): the call ran. */
+  enforced?: boolean;
 };
+
+/**
+ * Panel heading for a receipt. An observed denial is still a deny, but the
+ * call ran, so it must not read as a block.
+ */
+export function receiptHeadline(payload: Pick<VerifiedReceipt, 'outcome' | 'action' | 'enforced'>): string {
+  if (payload.outcome === 'allow') return `✅ ALLOW · ${payload.action}`;
+  if (payload.enforced === false) return `👁️ OBSERVED DENY (not enforced) · ${payload.action}`;
+  return `🚫 DENY · ${payload.action}`;
+}
 
 export type ReceiptRow = {
   line: number;
@@ -2308,9 +2320,15 @@ function ReceiptMode() {
             {rows.map((row) => (
               <div key={row.line} className="panel">
                 <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>
-                  {row.payload.outcome === 'allow' ? '✅ ALLOW' : '🚫 DENY'} · {row.payload.action}
+                  {receiptHeadline(row.payload)}
                 </h2>
                 <ReceiptField label="request" value={row.payload.request_id} />
+                {row.payload.enforced === false && (
+                  <ReceiptField
+                    label="enforcement"
+                    value="⚠️ observed, not enforced: the policy denied this call, but the enforcement point was in observe mode and let it run"
+                  />
+                )}
                 {row.signerRecognized !== undefined && (
                   <ReceiptField
                     label="authorizer"

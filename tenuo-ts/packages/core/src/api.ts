@@ -618,6 +618,8 @@ export type ReceiptInfo = {
   readonly policyDefinitionHash?: string;
   readonly prevReceiptHash?: string;
   readonly trustedRootsHash?: string;
+  /** False on a denial recorded in observe mode: the call ran anyway. */
+  readonly enforced: boolean;
 };
 
 /** Root-anchored receipt check: the embedded chain against trusted roots at decision time. */
