@@ -106,7 +106,8 @@ jobs:
             mcp)
               # 1.9.4: first release whose streamable-HTTP transport yields the
               # (read, write, get_session_id) triple tenuo.mcp unpacks
-              pip install "mcp==1.9.4"
+              # pydantic 2.14 removed a private helper mcp 1.9.4 imports
+              pip install "mcp==1.9.4" "pydantic<2.14"
               ;;
             fastmcp)
               # Explicit dual-line floors: FastMCP 3 + MCP 1.x
