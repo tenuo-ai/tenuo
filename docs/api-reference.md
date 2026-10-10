@@ -166,7 +166,7 @@ auto_configure()
 Get the current configuration.
 
 ```python
-from tenuo import get_config
+from tenuo.config import get_config
 
 config = get_config()
 print(f"TTL: {config.default_ttl}")
@@ -351,7 +351,8 @@ child = (parent.grant_builder()
 For improved DX, use the fluent builder pattern:
 
 ```python
-from tenuo import Warrant, Pattern, Range, Clearance
+from tenuo import Warrant, Range, Subpath
+from tenuo_core import Clearance
 
 # Execution warrant with builder
 warrant = (Warrant.mint_builder()
@@ -447,26 +448,38 @@ The Python and Rust APIs use different names for the same operations to match ea
 #### Logic Checks & Debugging Methods
 
 ```python
-from tenuo import Warrant, WhyDenied, DenyCode
+from tenuo.warrant_ext import WhyDenied, DenyCode
 
 # Logic Check (UX-only, no crypto)
 # "Does the warrant allow this?"
-if warrant.allows("read_file", args={"path": "/data/report.txt"}):
+if warrant.allows("read_file", {"path": "/data/report.txt"}):
     print("Allowed by logic")
 else:
-    print(f"Would be denied")
+    print("Would be denied")
 
 # Why denied (for debugging)
-reason = warrant.why_denied("write_file", path="/etc/passwd")
-# WhyDenied(deny_code=DenyCode.TOOL_NOT_ALLOWED, tool='write_file', ...)
+reason = warrant.why_denied("write_file", {"path": "/etc/passwd"})
+# <WhyDenied TOOL_NOT_FOUND tool='write_file' field=None>
 
-if reason.deny_code == DenyCode.TOOL_NOT_ALLOWED:
+if reason.deny_code == DenyCode.TOOL_NOT_FOUND:
     print("Tool not in warrant")
+
+# Explorer link pre-filled with the warrant and these arguments.
+# Open it locally; never log it (it carries argument values).
+print(reason.explorer_url)
 
 # Generate HTTP headers
 headers = warrant.headers(keypair, "read_file", {"path": "/data/x.txt"})
 # {'X-Tenuo-Warrant': '<base64>', 'X-Tenuo-PoP': '<signature>'}
+
+# A delegated warrant sends its parents too, so a verifier that trusts
+# only the root can check the whole chain (root-first, excluding the leaf)
+headers = child.headers(child_key, "read_file", {"path": "/data/x.txt"},
+                        warrant_chain=[root_warrant])
+# {'X-Tenuo-Warrant': '<base64 WarrantStack>', 'X-Tenuo-PoP': '<signature>'}
 ```
+
+`warrant_chain` defaults to the ambient `chain_scope()` when the warrant is delegated, so inside `grant()` or `chain_scope([...])` the stack is sent automatically. A delegated warrant sent alone is denied under root-only trust (`chain_missing`).
 
 #### HTTP Transport Headers
 
@@ -486,8 +499,10 @@ The gateway auto-detects the format (Warrant vs WarrantStack), so `X-Tenuo-Warra
 | Class | Description |
 |-------|-------------|
 | `PreviewResult` | Result with `.allowed`, `.reason`, `.tool` |
-| `WhyDenied` | Denial info with `.deny_code`, `.tool`, `.field`, `.constraint`, `.value` |
-| `DenyCode` | Enum: `ALLOWED`, `TOOL_NOT_ALLOWED`, `CONSTRAINT_VIOLATED`, `EXPIRED` |
+| `WhyDenied` | Denial info with `.deny_code`, `.tool`, `.field`, `.suggestion`, `.explorer_url` |
+| `DenyCode` | Constants: `ALLOWED`, `TOOL_NOT_FOUND`, `WARRANT_EXPIRED`, `CONSTRAINT_MISMATCH`, `CLEARANCE_INSUFFICIENT` |
+
+`WhyDenied` and `DenyCode` live in `tenuo.warrant_ext`. `suggestion` is safe to log: it links only to the bare Explorer. `explorer_url` is pre-filled with the warrant and the call arguments, so keep it out of logs and error messages.
 
 #### Repr (Safe Logging)
 
@@ -794,7 +809,8 @@ Authorizer(
 The Authorizer can *optionally* enforce minimum clearance levels per tool as defense in depth. Clearance is a coarse-grained policy overlay - **not a security boundary**. Capabilities and monotonicity provide the cryptographic guarantees; clearance adds organizational convenience.
 
 ```python
-from tenuo import Authorizer, Clearance
+from tenuo import Authorizer
+from tenuo_core import Clearance
 
 authorizer = Authorizer(trusted_roots=[root_key])
 
@@ -804,7 +820,7 @@ authorizer.require_clearance("delete_*", Clearance.PRIVILEGED)  # Prefix pattern
 authorizer.require_clearance("admin_reset", Clearance.SYSTEM)   # Exact match
 
 # Check what's required for a tool
-print(authorizer.get_required_clearance("delete_file"))  # Clearance.PRIVILEGED
+print(authorizer.get_required_clearance("delete_file"))  # Privileged
 ```
 
 **Pattern types:**
@@ -1485,12 +1501,8 @@ def read_file(path: str) -> str:
 ### Context Functions
 
 ```python
-from tenuo import (
-    warrant_scope,
-    get_warrant_context,
-    key_scope,
-    get_signing_key_context,
-)
+from tenuo import warrant_scope, key_scope
+from tenuo.decorators import get_warrant_context, get_signing_key_context
 ```
 
 | Function | Returns | Description |
@@ -1988,6 +2000,11 @@ configured sink warns once and emits nothing.
 Receipts cover decisions made over **presented, parseable authority**. A call
 with no warrant, or bytes that would not decode, stays in the audit stream.
 
+In observe mode a would-be denial is still signed as a **deny** receipt, with
+`enforced=false` (receipt key 16) because the call ran anyway. Enforced
+decisions omit the field. Verifiers on tenuo 0.3.2 or older reject receipts
+that carry it.
+
 Inspect artifacts with `tenuo receipt verify` and `tenuo receipt chain`.
 Byte-exact vectors live in [test-vectors A.30](./spec/test-vectors.md#a30-authorization-receipts).
 
@@ -2010,9 +2027,15 @@ TenuoError (base)
 │   └── ...
 ├── ChainError
 │   └── UntrustedRoot       # error_type="untrusted_issuer", wire 1406 / untrusted-root
-├── ConstraintError         # Invalid constraint definition
-└── ConfigurationError      # Invalid configuration
+├── ConstraintSyntaxError   # Invalid constraint definition
+├── ConfigurationError      # Invalid configuration
+├── ApprovalRequired        # tenuo.approval: approval gate needs a human decision
+├── ApprovalDenied          # tenuo.approval: approver said no
+│   └── ApprovalTimeout     # no decision before the deadline
+└── ApprovalVerificationError  # tenuo.approval: approval signature or binding failed
 ```
+
+The approval outcomes in `tenuo.approval` subclass `TenuoError`, so `except TenuoError` catches them along with every other denial. Integrations that surface approvals in their own way (MCP `-32002`, FastAPI 409, Temporal `ApplicationError`) still do so.
 
 `UntrustedRoot` is not a signature failure. Hosts that previously caught
 `SignatureInvalid` for a foreign issuer, or correlated receipts on
@@ -2045,7 +2068,7 @@ from tenuo import AuthorizationDenied
 ## Audit Logging
 
 ```python
-from tenuo import audit_logger, AuditEventType
+from tenuo.audit import audit_logger, AuditEventType
 ```
 
 ### Methods
@@ -2076,7 +2099,7 @@ audit_logger.authorization_success(
 For type hinting generic warrant operations:
 
 ```python
-from tenuo import ReadableWarrant, SignableWarrant, AnyWarrant
+from tenuo.warrant_ext import ReadableWarrant, SignableWarrant, AnyWarrant
 ```
 
 ### `ReadableWarrant`
