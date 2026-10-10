@@ -6,7 +6,7 @@ import logging
 import threading
 import warnings
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Tuple
 
 from tenuo.temporal._observability import TemporalAuditEvent, TenuoMetrics
 from tenuo.temporal._resolvers import KeyResolver
@@ -121,6 +121,45 @@ class TenuoPluginConfig:
     PoP so verification matches the activity inbound interceptor.
     """
 
+    pop_exclude_args: FrozenSet[str] = field(default_factory=frozenset)
+    """
+    Argument names dropped from PoP signing and verification, globally,
+    for every activity this worker dispatches or executes.
+
+    Use this for arguments that carry no authority and cannot be normalized
+    for PoP (e.g. a framework-injected context object such as a harness
+    ``tool_ctx: AgentToolContext``), not for values a warrant should ever
+    constrain. An excluded argument can never appear in a warrant capability
+    constraint — the plugin never sees it.
+
+    **Applied symmetrically.** The outbound workflow interceptor drops these
+    names from the args dict before ``warrant.sign()``; the inbound activity
+    interceptor drops them the same way before verification. Both sides must
+    set the same value — set it once, on the shared ``TenuoPluginConfig``
+    (or via a preset like ``tenuo.temporal.harness.harness_plugin_config``)
+    used to build both the workflow-worker and activity-worker config so
+    they can't drift.
+
+    **Fails closed on asymmetry.** If only one side excludes a name, the
+    excluded value is missing from — or present in — one side's signed
+    payload but not the other's, so the recomputed PoP bytes differ from
+    what was signed and verification denies with ``PopVerificationError``.
+    It never silently authorizes with the excluded argument unchecked.
+
+    Matching an excluded name to a positional activity argument requires
+    resolving the activity function's parameter names (the same requirement
+    as named warrant constraints — see ``activity_fns``). If a name in this
+    set can't be resolved for a given activity, that activity's PoP
+    computation fails closed with ``TenuoContextError`` rather than silently
+    leaving the un-normalizable value in the signed payload.
+
+    The excluded argument is still delivered to the activity implementation
+    normally — exclusion only affects the PoP-signed / warrant-checked view.
+
+    Empty by default: no arguments are excluded, and wire format / PoP bytes
+    are unchanged from configs that never set this field.
+    """
+
     unwarranted_activities: Tuple[str, ...] = field(default_factory=tuple)
     """
     Activity-type name patterns exempt from warrant requirements — skipped by
@@ -162,6 +201,42 @@ class TenuoPluginConfig:
 
     Empty by default: no activity is exempt, and behavior is unchanged from
     configs that never set this field.
+    """
+
+    mcp_call_tool_activities: Tuple[str, ...] = field(default_factory=tuple)
+    """
+    Activity-type name patterns identifying an MCP "call one tool" wrapper
+    activity — one activity per MCP server that takes a single argument
+    shaped like ``{tool_name: str, arguments: dict | None, meta: ...}`` (the
+    Temporal Agent Harness's ``<server>[-stateless|-stateful]-call-tool-v2``
+    activities; see ``tenuo.temporal.harness``).
+
+    Matching is the same anchored whole-string glob as
+    ``unwarranted_activities``. These activities ARE effects and stay
+    protected — they are never also listed in ``unwarranted_activities`` —
+    but the warrant should name and constrain the *inner* MCP tool the model
+    asked for (``scale_cluster``), not the per-server wrapper activity or
+    its opaque wrapper argument. When an activity type matches, both the
+    outbound signer and the inbound verifier unwrap the single wrapper
+    argument: its ``tool_name`` field becomes the signed/verified tool name
+    and its ``arguments`` field becomes the signed/verified argument dict.
+    ``meta`` is never read for this — it is transport metadata, not
+    authority, and never influences the authorization decision.
+
+    **Applied symmetrically**, like ``pop_exclude_args``: set the same value
+    on both the workflow-worker and activity-worker config, or verification
+    denies (the recomputed PoP won't match what was signed).
+
+    Fails closed on a malformed wrapper: an activity matching this list that
+    does not receive exactly one argument, or whose argument has a missing
+    or non-string ``tool_name``, or a non-dict/non-``None`` ``arguments``,
+    is denied (``TenuoActivityMappingError``) rather than falling back to
+    signing/verifying the wrapper activity as a whole — which would let a
+    malformed or spoofed wrapper dodge the inner tool's argument-level
+    constraints entirely.
+
+    Empty by default: no activity is unwrapped, and behavior is unchanged
+    from configs that never set this field.
     """
 
     audit_callback: Optional[Callable[[TemporalAuditEvent], None]] = None
@@ -582,10 +657,15 @@ class TenuoPluginConfig:
                 stacklevel=2,
             )
 
-        # Normalize to a tuple whatever iterable the caller passed (list,
-        # set, generator, ...), then validate before anything else touches
-        # it. Runs even for the empty default so the field is always a tuple.
+        # Normalize the three activity-pattern / exclusion fields to their
+        # declared collection types regardless of what iterable the caller
+        # passed (list, set, generator, ...), then validate
+        # ``unwarranted_activities`` before anything else touches it — this
+        # must run even for an empty/default config so the field is always
+        # the frozenset/tuple type its docstring promises.
+        self.pop_exclude_args = frozenset(self.pop_exclude_args)
         self.unwarranted_activities = tuple(self.unwarranted_activities)
+        self.mcp_call_tool_activities = tuple(self.mcp_call_tool_activities)
 
         if self.unwarranted_activities:
             from tenuo.temporal._activity_patterns import validate_unwarranted_activities
