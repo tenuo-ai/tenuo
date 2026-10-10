@@ -367,6 +367,10 @@ except ToolDenied as e:
 | `"log"` | Remove denied tool call + log warning | Development/testing |
 | `"skip"` | Silently remove the denied tool call | Legacy compatibility |
 
+### Observe mode
+
+To see what a policy would deny without changing what your agent does, run with `tenuo.configure(mode="observe")`. Tool calls the policy would deny are kept in the response. Each one is logged as `OBSERVE: would deny <tool>: <reason>` and audited as a `DENY` with `observed=True`. This covers chat completions (including streaming), the Responses API, and the Agents SDK guardrail, where the tripwire stays untriggered. `on_denial="log"` is different: it still removes denied calls.
+
 
 ---
 
@@ -518,6 +522,7 @@ client = guard(
 | `tier` | "tier1" or "tier2" |
 | `constraint_hash` | Hash of Tier 1 config |
 | `warrant_id` | Warrant ID (Tier 2 only) |
+| `observed` | True for a `DENY` that observe mode let through |
 
 ---
 

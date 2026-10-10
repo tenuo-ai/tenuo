@@ -3377,3 +3377,217 @@ class TestShlexOpenAIIntegration:
             constraints={"run_command": {"cmd": Shlex(allow=["ls"])}},
         )
         assert result is None
+
+
+# =============================================================================
+# Observe Mode (tenuo.configure(mode="observe"))
+# =============================================================================
+
+
+class TestObserveMode:
+    """In observe mode, Tier 1 would-deny calls are logged and audited, then kept."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_config(self):
+        from tenuo.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+
+    @staticmethod
+    def _observe():
+        from tenuo.config import configure
+
+        configure(trusted_roots=[SigningKey.generate().public_key], mode="observe")
+
+    @staticmethod
+    def _observed(caplog):
+        return [r for r in caplog.records if r.getMessage().startswith("OBSERVE: would deny")]
+
+    @staticmethod
+    def _stream_chunks(name, arguments):
+        return [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0, id="call_0", function=MockFunction(name=name, arguments=arguments)
+                                )
+                            ]
+                        ),
+                    )
+                ],
+            ),
+            MockStreamChunk(
+                id="chunk_1", choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")]
+            ),
+        ]
+
+    def test_tier2_observed_denial_is_audited_as_observed_deny(self, caplog):
+        """A Tier 2 denial that observe mode lets through is audited as DENY, not ALLOW."""
+        from tenuo.config import configure
+
+        issuer_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("ok*"))
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(issuer_key)
+        )
+        configure(trusted_roots=[issuer_key.public_key], mode="observe")
+        events: list = []
+        response = make_response([("search", {"query": "nope"})])
+        client = guard(make_mock_client(response), warrant=warrant, signing_key=agent_key, audit_callback=events.append)
+
+        with caplog.at_level("WARNING"):
+            result = client.chat.completions.create(model="gpt-4o", messages=[])
+
+        assert [tc.function.name for tc in result.choices[0].message.tool_calls] == ["search"]
+        assert [(e.decision, e.tier, e.observed) for e in events] == [("DENY", "tier2", True)]
+        assert len(self._observed(caplog)) == 1
+
+    def test_tool_not_allowed_is_kept_and_logged(self, caplog):
+        self._observe()
+        events: list = []
+        response = make_response([("delete_file", {"path": "/etc/passwd"})])
+        client = guard(
+            make_mock_client(response), allow_tools=["search"], on_denial="raise", audit_callback=events.append
+        )
+
+        with caplog.at_level("WARNING"):
+            result = client.chat.completions.create(model="gpt-4o", messages=[])
+
+        assert [tc.function.name for tc in result.choices[0].message.tool_calls] == ["delete_file"]
+        [record] = self._observed(caplog)
+        assert record.tool == "delete_file"
+        assert record.constraint_violated == "tool"
+        assert record.error_type == "t1_001"
+        assert record.args_keys == ["path"]
+        assert "/etc/passwd" not in record.getMessage()
+        assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+
+    def test_constraint_violation_is_kept(self, caplog):
+        self._observe()
+        events: list = []
+        response = make_response([("read_file", {"path": "/etc/passwd"})])
+        client = guard(
+            make_mock_client(response),
+            constraints={"read_file": {"path": Subpath("/data")}},
+            on_denial="skip",
+            audit_callback=events.append,
+        )
+
+        with caplog.at_level("WARNING"):
+            result = client.chat.completions.create(model="gpt-4o", messages=[])
+
+        assert len(result.choices[0].message.tool_calls) == 1
+        [record] = self._observed(caplog)
+        assert record.constraint_violated == "path"
+        assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+
+    @pytest.mark.parametrize("on_denial", ["raise", "skip", "log"])
+    def test_enforce_mode_unchanged(self, on_denial, caplog):
+        events: list = []
+        response = make_response([("delete_file", {"path": "/data/x"})])
+        client = guard(
+            make_mock_client(response), allow_tools=["search"], on_denial=on_denial, audit_callback=events.append
+        )
+
+        with caplog.at_level("WARNING"):
+            if on_denial == "raise":
+                with pytest.raises(ToolDenied):
+                    client.chat.completions.create(model="gpt-4o", messages=[])
+            else:
+                result = client.chat.completions.create(model="gpt-4o", messages=[])
+                assert result.choices[0].message.tool_calls is None
+
+        assert self._observed(caplog) == []
+        assert [(e.decision, e.observed) for e in events] == [("DENY", False)]
+
+    def test_stream_keeps_tool_call(self, caplog):
+        self._observe()
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = iter(self._stream_chunks("delete_file", '{"path": "/"}'))
+        client = guard(mock_client, allow_tools=["search"], on_denial="raise")
+
+        with caplog.at_level("WARNING"):
+            chunks = list(client.chat.completions.create(model="gpt-4o", messages=[], stream=True))
+
+        assert chunks[0].choices[0].delta.tool_calls[0].function.name == "delete_file"
+        assert [r.tool for r in self._observed(caplog)] == ["delete_file"]
+
+    def test_async_stream_keeps_tool_call(self, caplog):
+        import asyncio
+
+        self._observe()
+        chunks_in = self._stream_chunks("delete_file", '{"path": "/"}')
+
+        async def agen():
+            for c in chunks_in:
+                yield c
+
+        async def create(*args, **kwargs):
+            return agen()
+
+        mock_client = Mock()
+        mock_client.chat.completions.create = create
+        client = guard(mock_client, allow_tools=["search"], on_denial="raise")
+
+        async def run():
+            stream = await client.chat.completions.acreate(model="gpt-4o", messages=[], stream=True)
+            return [c async for c in stream]
+
+        with caplog.at_level("WARNING"):
+            chunks = asyncio.run(run())
+
+        assert chunks[0].choices[0].delta.tool_calls[0].function.name == "delete_file"
+        assert [r.tool for r in self._observed(caplog)] == ["delete_file"]
+
+    def test_responses_keeps_function_call(self, caplog):
+        self._observe()
+        events: list = []
+
+        class FunctionCall:
+            type = "function_call"
+            name = "delete_file"
+            arguments = json.dumps({"path": "/etc/passwd"})
+
+        class ResponsesResult:
+            output = [FunctionCall()]
+
+        mock_client = Mock()
+        mock_client.responses.create.return_value = ResponsesResult()
+        client = guard(mock_client, allow_tools=["search"], on_denial="raise", audit_callback=events.append)
+
+        with caplog.at_level("WARNING"):
+            result = client.responses.create(model="gpt-4o", input="hi")
+
+        assert [item.name for item in result.output] == ["delete_file"]
+        assert [r.tool for r in self._observed(caplog)] == ["delete_file"]
+        assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+
+    def test_guardrail_tripwire_not_triggered(self, caplog):
+        import asyncio
+
+        from tenuo.openai import create_tier1_guardrail
+
+        self._observe()
+        events: list = []
+        guardrail = create_tier1_guardrail(
+            constraints={"send_email": {"to": Pattern("*@company.com")}}, audit_callback=events.append
+        )
+        input_data = [{"function": {"name": "send_email", "arguments": '{"to": "attacker@evil.com"}'}}]
+
+        with caplog.at_level("WARNING"):
+            result = asyncio.run(guardrail(None, None, input_data))
+
+        assert result.tripwire_triggered is False
+        assert [r.tool for r in self._observed(caplog)] == ["send_email"]
+        assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
