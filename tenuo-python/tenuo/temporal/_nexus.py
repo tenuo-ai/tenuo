@@ -32,7 +32,7 @@ from tenuo.temporal._headers import (
     _validate_chain_ends_with_warrant,
     tenuo_headers,
 )
-from tenuo.temporal._interceptors import _build_authorizer
+from tenuo.temporal._interceptors import _build_authorizer, _is_observing
 from tenuo.temporal._pop import _normalize_args_for_pop
 from tenuo.temporal._state import (
     _current_run_key,
@@ -266,11 +266,10 @@ def verify_nexus_operation(
     request_id = getattr(ctx, "request_id", None)
     cached_request_id = _nexus_verified_request_id.get()
     cached_warrant = _nexus_verified_warrant.get()
-    if (
-        request_id is not None
-        and cached_request_id == str(request_id)
-        and cached_warrant is not None
-    ):
+    # The inbound interceptor only caches after verification returned. In
+    # observe mode that can be an observed denial with no warrant, so a
+    # matching request id (not a non-None warrant) marks a completed check.
+    if request_id is not None and cached_request_id == str(request_id):
         try:
             tool_name = _ctx_tool_name(ctx, endpoint, service, operation)
             args = nexus_input_args(input)
@@ -1197,6 +1196,10 @@ def _verify_nexus_operation(
     raw_headers = _decode_nexus_headers(getattr(ctx, "headers", {}) or {})
     args = nexus_input_args(input)
     start_ns = time.perf_counter_ns()
+    # Observe mode (global) or plugin dry_run: every would-deny below is
+    # still emitted and audited (marked observed), logged once, and the
+    # operation proceeds instead of raising.
+    observing = _is_observing(config)
     try:
         tool_name = _ctx_tool_name(ctx, endpoint, service, operation)
     except _NexusEndpointMismatch as exc:
@@ -1217,7 +1220,10 @@ def _verify_nexus_operation(
             args,
             start_ns=start_ns,
             exc=endpoint_denial,
+            observed=observing,
         )
+        if observing:
+            return warrant
         raise
     warrant = _extract_warrant_from_headers(raw_headers)
     if warrant is None:
@@ -1236,7 +1242,10 @@ def _verify_nexus_operation(
             args,
             start_ns=start_ns,
             exc=missing_warrant,
+            observed=observing,
         )
+        if observing:
+            return None
         raise missing_warrant
     _validate_nexus_tool_header(raw_headers, tool_name)
     _validate_nexus_arg_keys_header(raw_headers, args, tool_name)
@@ -1267,7 +1276,10 @@ def _verify_nexus_operation(
                 args,
                 start_ns=start_ns,
                 exc=chain_exc,
+                observed=observing,
             )
+            if observing:
+                return warrant
             raise chain_exc from exc
 
     pop_header = raw_headers.get(TENUO_POP_HEADER)
@@ -1285,7 +1297,10 @@ def _verify_nexus_operation(
             args,
             start_ns=start_ns,
             exc=missing_pop,
+            observed=observing,
         )
+        if observing:
+            return warrant
         raise missing_pop
     try:
         pop_bytes = base64.b64decode(pop_header, validate=True)
@@ -1303,10 +1318,14 @@ def _verify_nexus_operation(
             args,
             start_ns=start_ns,
             exc=pop_exc,
+            observed=observing,
         )
+        if observing:
+            return warrant
         raise pop_exc from exc
 
     authorizer = None
+    already_logged = False
     try:
         from tenuo_core import Authorizer
 
@@ -1332,6 +1351,12 @@ def _verify_nexus_operation(
                 warrant_chain=parents_from_presented_chain(chain, warrant),
                 approvals=approvals,
             )
+        if enforcement.observed:
+            # Global observe mode already logged the would-deny and flipped
+            # the result to allowed. Undo the flip so the denial is emitted
+            # as a DENY (marked observed) below, the same as dry_run.
+            already_logged = True
+            enforcement.allowed = False
         if not enforcement.allowed:
             enforcement.raise_if_denied()
         chain_result = enforcement.chain_result
@@ -1360,7 +1385,11 @@ def _verify_nexus_operation(
             exc=exc,
             authorizer=authorizer,
             verified_pop=pop_bytes,
+            observed=observing,
+            log_observed=not already_logged,
         )
+        if observing:
+            return warrant
         raise
     except Exception as exc:
         raise TenuoContextError(
@@ -1399,12 +1428,21 @@ def _emit_nexus_control_plane_event(
     exc: Optional[BaseException] = None,
     authorizer: Optional[Any] = None,
     verified_pop: Optional[bytes] = None,
+    observed: bool = False,
+    log_observed: bool = True,
 ) -> None:
+    """Emit metrics, audit event, receipt and control-plane event for a decision.
+
+    ``observed`` marks a denial that is recorded but not enforced (observe
+    mode / dry_run); ``log_observed`` logs it as ``OBSERVE: would deny``
+    unless the shared enforcement path already did.
+    """
     latency_s = (time.perf_counter_ns() - start_ns) / 1e9
     redacted_args = _redact_nexus_args(config, args)
     request_id = getattr(ctx, "request_id", None)
+    observed = observed and exc is not None
     _record_nexus_metrics(config, tool_name, latency_s, exc)
-    _emit_nexus_audit_event(config, ctx, warrant, tool_name, redacted_args, exc)
+    _emit_nexus_audit_event(config, ctx, warrant, tool_name, redacted_args, exc, observed=observed)
 
     control_plane = getattr(config, "control_plane", None)
     try:
@@ -1447,6 +1485,12 @@ def _emit_nexus_control_plane_event(
             presented_chain=presented_chain,
             verified_pop=verified_pop,
         )
+        if observed:
+            from tenuo._enforcement import _log_observed_denial
+
+            result.observed = True
+            if log_observed:
+                _log_observed_denial(result)
         collect_enforcement_receipt(
             result, runtime=getattr(config, "runtime", None)
         )
@@ -1507,6 +1551,8 @@ def _emit_nexus_audit_event(
     tool_name: str,
     redacted_args: Dict[str, Any],
     exc: Optional[BaseException],
+    *,
+    observed: bool = False,
 ) -> None:
     callback = getattr(config, "audit_callback", None)
     if not callback:
@@ -1562,6 +1608,7 @@ def _emit_nexus_audit_event(
             getattr(exc, "constraint", None) if exc is not None else None
         ),
         tenuo_version=tenuo_version,
+        observed=observed,
     )
     try:
         callback(event)
