@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP client tools deny calls with no warrant in scope.** Calling a
+  `SecureMCPClient.tools[...]` wrapper (and the LangChain tools built from
+  it) with neither a warrant nor a signing key in scope logged a warning and
+  called the server anyway. It now raises `ConfigurationError` and the server
+  is not called, matching `call_tool(warrant_context=True)`. To keep the old
+  behavior in development, configure `dev_mode=True, allow_passthrough=True`.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed

@@ -17,7 +17,7 @@ from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
 from ..meta import argument_json, signed_arguments
 from ..approval import ApprovalHandler
-from ..config import is_configured
+from ..config import allow_passthrough, is_configured
 from ..decorators import key_scope, warrant_scope
 from ..exceptions import (
     RevokedError,
@@ -934,10 +934,16 @@ class SecureMCPClient:
                     f"signing_key={'set' if k else 'missing'}. "
                     f"Both must be provided via warrant_scope/key_scope."
                 )
-            else:
+            elif allow_passthrough():
                 logger.warning(
-                    "MCP tool '%s' executed without authorization context "
-                    "(no warrant/key in scope)", tool_name,
+                    "PASSTHROUGH: MCP tool '%s' executed without authorization context (no warrant/key in scope)",
+                    tool_name,
+                )
+            else:
+                raise ConfigurationError(
+                    f"No authorization context for MCP tool '{tool_name}': "
+                    "no warrant or signing key in scope. Wrap the call in "
+                    "`mint(...)`/`grant(...)` or `with warrant_scope(w), key_scope(k):`."
                 )
 
             if allowed_keys is not None:
