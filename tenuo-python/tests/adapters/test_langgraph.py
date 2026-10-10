@@ -233,6 +233,69 @@ class TestTenuoNode:
 
         assert auth_result
 
+    def test_signature_exposes_config_for_langgraph(self):
+        """LangGraph injects ``config`` only if the node signature declares it.
+
+        ``@wraps`` alone would make inspect.signature() report the decorated
+        function's ``(state, bound_warrant)``, so LangGraph never passed config.
+        """
+        import inspect
+
+        @tenuo_node
+        def my_node(state: MockState, bound_warrant: BoundWarrant) -> dict:
+            return {}
+
+        params = inspect.signature(my_node).parameters
+        assert list(params) == ["state", "config"]
+        assert "bound_warrant" not in params
+        # State annotation is kept so LangGraph can still infer the input schema.
+        assert params["state"].annotation is MockState
+
+    def test_compiled_graph_honors_tenuo_key_id(self, registry):
+        """Through compile().invoke(), the key comes from config, not 'default'."""
+        pytest.importorskip("langgraph.graph")
+        from langgraph.graph import END, START, StateGraph
+
+        warrant, key = Warrant.quick_mint(tools=["search"], ttl=3600)
+        registry.register("graph-key", key)  # deliberately no "default" key
+
+        seen = {}
+
+        @tenuo_node
+        def my_node(state: MockState, bound_warrant: BoundWarrant) -> dict:
+            seen["id"] = bound_warrant.id
+            return {"result": "ok"}
+
+        graph = StateGraph(MockState)
+        graph.add_node("node", my_node)
+        graph.add_edge(START, "node")
+        graph.add_edge("node", END)
+
+        out = graph.compile().invoke({"warrant": warrant}, config=make_config("graph-key"))
+
+        assert out["result"] == "ok"
+        assert seen["id"] == warrant.id
+
+    def test_config_forwarded_when_node_accepts_it(self, warrant_and_key, registry):
+        """Nodes that declare ``config`` still receive it; others do not."""
+        warrant, key_id = warrant_and_key
+        received = {}
+
+        @tenuo_node
+        def wants_config(state, bound_warrant: BoundWarrant, config=None):
+            received["config"] = config
+            return {}
+
+        @tenuo_node
+        def no_config(state, bound_warrant: BoundWarrant):
+            return {}
+
+        config = make_config(key_id)
+        wants_config({"warrant": warrant}, config=config)
+        no_config({"warrant": warrant}, config=config)  # must not raise TypeError
+
+        assert received["config"] is config
+
 
 class TestAutoLoadKeys:
     """Tests for load_tenuo_keys()."""
