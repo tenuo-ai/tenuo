@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from tenuo.temporal.exceptions import (
     TenuoArgNormalizationError,
+    TenuoContextError,
     TenuoPreValidationError,
 )
 
@@ -261,6 +262,47 @@ def _prevalidate_args_against_warrant(
         "Wildcard() for fields that don't need structural constraints. "
         "See docs/temporal.md: 'Zero-trust closed-world rule'."
     )
+
+
+# ---------------------------------------------------------------------------
+# PoP argument exclusion (pop_exclude_args) — non-authority args (tool_ctx)
+# ---------------------------------------------------------------------------
+# Excluded names are dropped by *name*, from a name-keyed args dict, never by
+# position. Positional dropping would silently misalign every later
+# positional argument in an activity signature that puts the excluded
+# parameter anywhere but last. Both call sites (outbound signing, inbound
+# verification) resolve the args dict by the same route — activity function
+# introspection — before this filter runs, so a name excluded here was a
+# real parameter name on both sides or this never gets called at all.
+
+
+def _apply_pop_exclusions(
+    args_dict: Dict[str, Any],
+    exclude_args: "frozenset[str] | set[str]",
+    *,
+    activity_fn_resolved: bool,
+    tool_name: str,
+) -> Dict[str, Any]:
+    """Drop ``exclude_args`` names from *args_dict* for PoP signing/verification.
+
+    Raises ``TenuoContextError`` (fail-closed) rather than silently signing
+    or verifying with the excluded value still present when the activity
+    function couldn't be resolved — without it, an excluded name can't be
+    reliably matched against the dict's keys (see
+    ``TenuoPluginConfig.pop_exclude_args``: exclusion is by parameter name,
+    which requires resolving the function's signature).
+    """
+    if not exclude_args:
+        return args_dict
+    if not activity_fn_resolved:
+        raise TenuoContextError(
+            f"TenuoPluginConfig.pop_exclude_args={sorted(exclude_args)!r} is "
+            f"set but the activity function for {tool_name!r} could not be "
+            "resolved, so excluded parameter names can't be matched safely. "
+            "Pass activity_fns=<same list as Worker(activities=...)> in "
+            "TenuoPluginConfig on both the workflow and activity worker."
+        )
+    return {k: v for k, v in args_dict.items() if k not in exclude_args}
 
 
 def _positional_pop_mismatch_message(
