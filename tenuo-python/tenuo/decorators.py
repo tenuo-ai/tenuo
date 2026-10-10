@@ -61,7 +61,7 @@ from .exceptions import (
     ScopeViolation,
     ToolNotAuthorized,
 )
-from ._enforcement import EnforcementResult, enforce_tool_call
+from ._enforcement import _CHAIN_MISSING_HINT, EnforcementResult, enforce_tool_call
 from .bound_warrant import BoundWarrant
 
 logger = logging.getLogger("tenuo.decorators")
@@ -534,10 +534,10 @@ def _reraise_if_crypto(
             expired_at=str(expires_at),
         )
 
-    if et == "untrusted_issuer":
+    if et in ("untrusted_issuer", "chain_missing"):
         from tenuo.exceptions import UntrustedRoot as _UntrustedRoot
 
-        raise _UntrustedRoot()
+        raise _UntrustedRoot(hint=_CHAIN_MISSING_HINT if et == "chain_missing" else None)
 
     # enforce_tool_call labels crypto failures "tenuo_error" (sign path)
     # or "authorization_failed" (verify path).  Inspect the denial_reason
