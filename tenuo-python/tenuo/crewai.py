@@ -395,6 +395,27 @@ class InvalidPoP(TenuoCrewAIError):
         super().__init__(f"Invalid Proof-of-Possession: {reason}\n  Docs: https://tenuo.ai/docs/tier2#pop")
 
 
+class UntrustedWarrant(InvalidPoP):
+    """Raised when the warrant does not chain to a trusted root.
+
+    This indicates either:
+    - The root issuer is not in ``trusted_roots``
+    - A delegated warrant was presented without its parent chain
+
+    Subclasses ``InvalidPoP`` so existing ``except InvalidPoP`` handlers
+    keep catching it; the signature itself may be fine.
+    """
+
+    error_code = "UNTRUSTED_WARRANT"
+
+    def __init__(self, reason: str = "Warrant does not chain to a trusted root", error_type: Optional[str] = None):
+        self.reason = reason
+        self.error_type = error_type
+        TenuoCrewAIError.__init__(
+            self, f"Untrusted warrant: {reason}\n  Docs: https://tenuo.ai/docs/tier2#trusted-roots"
+        )
+
+
 class WarrantToolDenied(TenuoCrewAIError):
     """Raised when a warrant doesn't authorize a specific tool.
 
@@ -1240,11 +1261,14 @@ class CrewAIGuard:
             )
         elif enforcement.error_type in ("invalid_pop", "signature_invalid", "missing_signature"):
             return InvalidPoP(reason=reason)
+        elif enforcement.error_type in ("untrusted_issuer", "chain_missing"):
+            return UntrustedWarrant(
+                reason=f"{reason} (error_type={enforcement.error_type})", error_type=enforcement.error_type
+            )
         else:
-            # Chain trust (untrusted_issuer, chain_missing), configuration and
-            # internal failures have no dedicated CrewAI exception. InvalidPoP
-            # keeps the fail-closed type, but name the real cause so it isn't
-            # mistaken for a signature failure.
+            # Configuration and internal failures have no dedicated CrewAI
+            # exception. InvalidPoP keeps the fail-closed type, but name the
+            # real cause so it isn't mistaken for a signature failure.
             if enforcement.error_type not in ("authorization_failed", "configuration_error"):
                 logger.debug(
                     "Unhandled enforcement error_type %r for tool %r, defaulting to InvalidPoP",
@@ -2435,6 +2459,7 @@ __all__ = [
     # Tier 2 exceptions (Phase 3)
     "WarrantExpired",
     "InvalidPoP",
+    "UntrustedWarrant",
     "WarrantToolDenied",
     # Result types
     "DenialResult",
