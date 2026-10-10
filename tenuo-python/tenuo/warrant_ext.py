@@ -346,6 +346,8 @@ def _warrant_headers(
     key: SigningKey,
     tool: str,
     args: dict,
+    *,
+    warrant_chain: Optional[List[Any]] = None,
 ) -> Dict[str, str]:
     """
     Generate HTTP authorization headers.
@@ -357,6 +359,10 @@ def _warrant_headers(
         key: Signing key (must match warrant's authorized_holder)
         tool: Tool name being called
         args: Tool arguments
+        warrant_chain: Parent warrants in root-first order, excluding this
+            warrant. Sent with it as a WarrantStack so a verifier that trusts
+            only the root can check the full chain. Defaults to the ambient
+            ``chain_scope()`` when this warrant is delegated.
 
     Returns:
         Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
@@ -375,7 +381,15 @@ def _warrant_headers(
     pop_sig = self.sign(key, tool, args, int(_time.time()))
     pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-    return {_WARRANT_HEADER: self.to_base64(), "X-Tenuo-PoP": pop_b64}
+    from .bound_warrant import _header_parents
+
+    warrant_token = self.to_base64()
+    parents = _header_parents(self, warrant_chain)
+    if parents:
+        from tenuo_core import encode_warrant_stack
+
+        warrant_token = encode_warrant_stack(parents + [self])
+    return {_WARRANT_HEADER: warrant_token, "X-Tenuo-PoP": pop_b64}
 
 
 if not hasattr(Warrant, "headers"):
