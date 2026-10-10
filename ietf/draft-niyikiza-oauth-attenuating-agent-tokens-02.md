@@ -3002,56 +3002,53 @@ publication.
 
 RFC Editor Note: This section is to be removed before publication.
 
-This revision is reorganized and makes thirteen normative changes,
-which are breaking for implementations of -01. The test vectors in
-Appendix E encode most of the verifier-side changes.
+This revision is reorganized, and its normative changes break
+implementations of -01. The test vectors in Appendix E encode most of
+the verifier-side changes.
 
-Normative changes:
+Closing JWT attack classes ({{RFC8725}}):
 
-- `typ` is required: `aat+jwt` for AATs and `aat-pop+jwt` for PoP JWTs
-  (Section 3.5; steps 3a, 4a, and 7a).
-- Ed25519 signatures use the `alg` value `"Ed25519"`; `"EdDSA"` is not
-  used ({{RFC9864}}; Section 9.12).
-- A root token's `iss` must match the issuer of the trust anchor that
-  verified it (step 3k).
-- PoP JWTs carry `aat_hash`, which binds the proof to the exact leaf
-  token (Section 7.2; step 7c).
-- Audience and replay: `aat_aud` names the party a proof is presented
-  to, AATs may carry `aud`, and PoP JWTs may carry an enforcement-point
-  `nonce`; deployments in which several enforcement points accept one
-  chain use at least one of these or share `jti` state; tools returning sensitive data
-  SHOULD also get replay protection (Sections 7.2, 7.3, and 9.5; steps
-  6c, 7d, 7h, and 7i).
-- Optional and unnamed arguments: the `optional` member and the
-  reserved `"*"` entry, with their attenuation rules (Sections 3.3, 4.5,
-  and 9.13; steps 4p and 6b).
-- One derived `all` clause may satisfy several parent clauses (Section
-  4.5).
-- Empty `all` and `any` are invalid in any position (Section 4.5; steps
-  3n and 4o).
-- Validation: constraint types and well-formedness are checked
-  throughout the chain, and a constraint with a member its type does
-  not define is rejected; claim types are checked and `hta` is required;
-  integers have no fraction or exponent; audiences compare by exact
-  string; `contains` and `subset` use set semantics; constraint depth
-  counting is defined; numbers must survive the JCS round trip;
-  duplicate JSON members are rejected; `crit` is processed; `tools` is
-  required; and MAX_DELEGATION_DEPTH is at least 8 (Sections
-  3.2, 3.4, 3.5, and 4.3; steps 3, 4, 6b, and 7a-7c).
-- Keys: verification keys come only from trust anchors or `cnf.jwk`,
-  never from header parameters; a child sent across a process or trust
-  boundary is not bound to its parent's key; and entries other than the
-  AAT entry carry no authority in derived tokens (Sections 3.3, 3.5,
-  and 6.2).
+- `typ` is required: `aat+jwt` and `aat-pop+jwt` (Section 3.5).
+- `alg` is `"Ed25519"`, not `"EdDSA"` ({{RFC9864}}; Section 9.12).
+- Verification keys come only from trust anchors or `cnf.jwk`, never
+  from header parameters, and a root's `iss` must match its trust
+  anchor (Section 3.5; step 3k).
+- Duplicate JSON members are rejected and `crit` is processed.
+- PoP JWTs carry `aat_hash`, binding the proof to the exact leaf token
+  (Section 7.2).
+
+Removing ambiguity between implementations:
+
+- Constraints: types and well-formedness are checked throughout the
+  chain, and members a type does not define are rejected; `contains`
+  and `subset` use set semantics; numbers must survive the JCS round
+  trip; constraint depth counting is defined; empty `all` and `any` are
+  invalid; one derived `all` clause may satisfy several parent clauses
+  (Sections 3.4 and 4.5).
+- Claims: types are checked, integers have no fraction or exponent,
+  `hta` and `tools` are required, audiences compare by exact string,
+  and MAX_DELEGATION_DEPTH is at least 8 (Sections 3.2 and 4.3).
+- A child sent across a process or trust boundary is not bound to its
+  parent's key, and entries other than the AAT entry carry no authority
+  in derived tokens (Sections 3.3 and 6.2).
 - Root issuance: the granted authorization details attenuate the
   request, and a request with nothing grantable fails with
   `invalid_authorization_details` (Section 6.1.3).
+- Extension registrations: subsumption runs in polynomial time,
+  registrations state their cost and list only valid cross-type pairs,
+  a parent `wildcard` subsumes every type, and evaluating an
+  unregistered type is non-conforming (Section 5).
+
+New expressiveness:
+
+- Optional and unnamed arguments: the `optional` member and the
+  reserved `"*"` entry (Sections 3.3, 4.5, and 9.13).
+- Audience and replay: AATs may carry `aud`, PoP JWTs may carry
+  `aat_aud` and an enforcement-point `nonce`, and deployments in which
+  several enforcement points accept one chain use at least one of these
+  or share `jti` state; tools returning sensitive data SHOULD get replay
+  protection (Sections 7.2 and 9.5).
 - The presentation object, `aat_chain` and `aat_pop` (Section 7.4).
-- Registration: subsumption procedures run in polynomial time (with a
-  conservative fallback for expressive languages), registrations state
-  their cost and list only valid cross-type pairs, a parent `wildcard`
-  subsumes every type, and evaluating an unregistered type is
-  non-conforming (Section 5).
 
 Structure and editorial changes, with no change to verifier behavior:
 
