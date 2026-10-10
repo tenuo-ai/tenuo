@@ -107,6 +107,8 @@ For hierarchical crews with cryptographic authorization:
 from tenuo import Pattern, SigningKey, Warrant
 from tenuo.crewai import GuardBuilder, Subpath
 
+control_plane_key = SigningKey.generate()  # in production: your issuer's key
+
 # Agent holds warrant and signing key
 agent_key = SigningKey.generate()
 warrant = (Warrant.mint_builder()
@@ -121,11 +123,14 @@ guard = (GuardBuilder()
     .allow("read_file", path=Subpath("/data"))
     .allow("search", query=Pattern("*"))
     .with_warrant(warrant, agent_key)
+    .with_trusted_roots([control_plane_key.public_key])
     .build())
 
 # Register — each tool call is now cryptographically authorized
 guard.register()
 ```
+
+Tier 2 fails closed without a trust anchor: every call is denied until trusted roots are set, with `.with_trusted_roots([...])` on the builder or `tenuo.configure(trusted_roots=[...])` at startup. Trusted roots are the issuer's public keys only. For a delegated warrant, see [Delegation](#delegation-hierarchical-crews).
 
 ### Human Approval
 
@@ -133,7 +138,7 @@ Define gates and approvers on the warrant, then pass `.on_approval()`. See [Huma
 
 ```python
 from tenuo.approval import cli_prompt
-from tenuo.crewai import GuardBuilder
+from tenuo.crewai import GuardBuilder, Range
 
 guard = (GuardBuilder()
     .allow("transfer_funds", amount=Range(0, 100_000))
@@ -300,7 +305,9 @@ researcher_guard = (GuardBuilder()
 researcher_guard.authorize("search", {"query": "arxiv:safety"})  # allowed
 ```
 
-`chain_scope([manager_warrant])` still supplies those parents when `warrant_chain` is omitted. Put the chain on the guard that verifies the call.
+`chain_scope([manager_warrant])` still supplies those parents when `warrant_chain` is omitted. Put the chain on the guard that verifies the call. You can also pass the whole chain as the warrant: `.with_warrant([manager_warrant, researcher_warrant], researcher_key)` (root-first, leaf last) or an encoded WarrantStack string.
+
+Do not add the delegator's key (`manager_key`) to `trusted_roots` to make a delegated warrant pass. That trusts anything the delegator signs, beyond the scope the root granted it.
 
 ### Escalation Prevention
 
@@ -438,7 +445,8 @@ result = crew.kickoff(inputs={"topic": "AI safety"})
 |--------|-------------|
 | `.policy({})` | Map agent role to allowed tools |
 | `.constraints({})` | Map agent role to tool to constraints |
-| `.with_issuer(warrant, key)` | Set warrant issuer for Tier 2 |
+| `.with_issuer(warrant, key, warrant_chain=None)` | Set warrant issuer for Tier 2. Each agent warrant carries the issuer warrant (and its parents) as its chain. If the issuer warrant was itself delegated, pass its parents as `warrant_chain` |
+| `.with_trusted_roots(roots)` | Trusted root public keys for every agent guard (falls back to `tenuo.configure(trusted_roots=...)`) |
 | `.on_denial(mode)` | Denial handling mode |
 | `.audit(callback)` | Audit callback for all agents |
 | `.strict()` | Enable strict mode |
@@ -530,6 +538,9 @@ guard.register()
 | `error_code` | Machine-readable error code (if denied) |
 | `agent_role` | Agent role (if set) |
 | `timestamp` | ISO 8601 timestamp |
+| `observed` | `True` for a `DENY` that observe mode let through |
+| `warrant_id` | ID of the bound warrant (denials only) |
+| `constraint_violated` | For a `DENY`: the failing argument, or `"tool"` when the tool itself was not authorized |
 
 ---
 
@@ -576,14 +587,14 @@ Robust agents should handle authorization failures gracefully.
 
 ```python
 from tenuo.crewai import (
-    ToolDenied, CrewAIConstraintViolation, UnlistedArgument,
+    ToolDenied, WarrantToolDenied, CrewAIConstraintViolation, UnlistedArgument,
     WarrantExpired, InvalidPoP,
 )
 
 try:
     result = guard.authorize("read_file", {"path": "/data/report.txt"})
-except ToolDenied:
-    # The tool is not in the guard. Pick a different tool.
+except (ToolDenied, WarrantToolDenied):
+    # The tool is not in the guard or not in the warrant. Pick a different tool.
     ...
 except CrewAIConstraintViolation as e:
     # The arguments failed a constraint. Retry with values inside it.
@@ -611,9 +622,14 @@ Check the result explicitly:
 | `PatternExpanded` | Delegation | The child `Pattern` is wider than the parent's |
 | `ConstraintViolation` | Delegation | The child `Subpath` is not inside the parent's root |
 | `UnguardedToolError` | 1+ | (Strict Mode) Fix configuration |
+| `WarrantToolDenied` | 2 | The warrant does not include this tool. Request a warrant that does |
 | `WarrantExpired` | 2 | Refresh warrant |
-| `InvalidPoP` | 2 | Check signing key configuration |
+| `InsufficientApprovalsDenied` | 2 | An approval gate needs more approvals. Collect them and retry |
+| `InvalidPoP` | 2 | Holder proof failed. Check the signing key matches the warrant holder |
+| `InvalidPoP` (trust failure in the reason) | 2 | Trust failure: no trusted roots, an untrusted issuer, or a delegated warrant without its chain. Set `.with_trusted_roots()` to the issuer and pass `warrant_chain=` |
 | `MissingSigningKey` | 2 | Provide signing key |
+
+CrewAI has no dedicated exception for trust failures. They raise `InvalidPoP` so they still fail closed, and the reason names the cause: `requires trusted_roots` when none are set, or `Root warrant issuer is not trusted (error_type=untrusted_issuer)` for an untrusted issuer or a missing chain.
 
 ---
 
@@ -772,7 +788,7 @@ crew = Crew(
 
 Moving from unprotected CrewAI to Tenuo GuardedCrew:
 
-1. **Audit Phase**: Run with `tenuo.configure(mode="observe")` and add `.audit(callback)`. Calls the policy would deny still run; each one is logged as `OBSERVE: would deny <tool>: <reason>` and audited as a `DENY` with `observed=True`. `.on_denial("log")` is not an audit mode: in enforce mode a CrewAI hook blocks denied calls whatever `on_denial` is set to. Use `guard.explain(tool, args)` to check one call without running the crew.
+1. **Observe Phase**: Run with `tenuo.configure(trusted_roots=[issuer_public_key], mode="observe")` (`configure()` requires `trusted_roots` or `dev_mode=True` in any mode) and add `.audit(callback)`. `"audit"` and `"permissive"` are accepted as aliases for `"observe"`. Calls the policy would deny still run, for Tier 1 and Tier 2 checks; each one is logged as `OBSERVE: would deny <tool>: <reason>`, audited as a `DENY` with `observed=True`, and, with receipt signing configured, recorded with `enforced=false` on the receipt. `.on_denial("log")` is not an observe mode: in enforce mode a CrewAI hook blocks denied calls whatever `on_denial` is set to. Use `guard.explain(tool, args)` to check one call without running the crew.
 2. **Policy Generation**: Map the audit logs to agent roles. Identify which tools are actually used by each agent.
 3. **Constraint Hardening**: Replace `Wildcard()` with `Pattern` or `Subpath` based on observed data (e.g., if agent only reads `/tmp`, restrict to `/tmp`).
 4. **Enforcement**: Remove `mode="observe"` (enforce is the default), keep `.on_denial("raise")`, and enable `.strict()` to prevent future drift.
