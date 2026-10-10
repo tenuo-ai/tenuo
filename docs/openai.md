@@ -578,7 +578,7 @@ except TenuoOpenAIError as e:
 | `OpenAIConstraintViolation` | 1+ | T1_002 | Argument fails constraint |
 | `WarrantDenied` | 2 | T2_001 | Warrant doesn't allow tool/args |
 | `MissingSigningKey` | 2 | T2_002 | Warrant provided without signing_key |
-| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, C1_003 | Invalid guard() configuration |
+| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, CFG_004, C1_003 | Invalid guard() configuration |
 | `MalformedToolCall` | 1+ | T1_003 | Invalid JSON in tool arguments |
 | `BufferOverflow` | 1+ | T1_004 | Streaming buffer limit exceeded |
 
@@ -598,6 +598,9 @@ client = guard(openai.OpenAI(), allow_tools=["search"])
 # Works with Responses API
 response = client.responses.create(...)
 ```
+
+> [!NOTE]
+> Streaming Responses (`responses.create(..., stream=True)`) isn't supported under guard yet. The call raises `OpenAIConfigurationError` (`CFG_004`) before any request is sent, so you never get an unverified stream.
 
 ---
 

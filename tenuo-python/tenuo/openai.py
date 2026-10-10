@@ -63,7 +63,7 @@ Async Support:
     Async streaming has the same TOCTOU protections.
 
     async_client = guard(openai.AsyncOpenAI(), warrant=w, signing_key=k)
-    response = await async_client.chat.completions.acreate(...)
+    response = await async_client.chat.completions.create(...)
 
 OpenAI Agents SDK Integration:
     Tenuo integrates with the OpenAI Agents SDK (openai-agents) via guardrails:
@@ -86,6 +86,7 @@ OpenAI Agents SDK Integration:
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import time
@@ -835,17 +836,30 @@ class GuardedCompletions:
         self._control_plane = get_or_create()
 
     def create(self, *args, **kwargs) -> Any:
-        """Wrapped create method with guardrails."""
-        stream = kwargs.get("stream", False)
+        """Wrapped create method with guardrails.
 
+        Works with both sync and async clients. On an async client the
+        underlying create() returns an awaitable; we return a coroutine that
+        awaits it and verifies the result, so the raw (unverified) awaitable
+        never reaches the caller.
+        """
+        stream = kwargs.get("stream", False)
+        result = self._original.create(*args, **kwargs)
+
+        if inspect.isawaitable(result):
+            return self._guard_awaitable(result, stream)
         if stream:
             # Return guarded stream
-            original_stream = self._original.create(*args, **kwargs)
-            return self._guard_stream(original_stream)
-        else:
-            # Non-streaming: verify after response
-            response = self._original.create(*args, **kwargs)
-            return self._guard_response(response)
+            return self._guard_stream(result)
+        # Non-streaming: verify after response
+        return self._guard_response(result)
+
+    async def _guard_awaitable(self, awaitable: Any, stream: bool) -> Any:
+        """Await an async client result, then apply the async guards."""
+        result = await awaitable
+        if stream:
+            return self._guard_stream_async(result)
+        return self._guard_response(result)
 
     def _guard_response(self, response: Any) -> Any:
         """Verify tool calls in a non-streaming response."""
@@ -1146,15 +1160,12 @@ class GuardedCompletions:
         handle_denial(pseudo_result, policy)
 
     async def acreate(self, *args, **kwargs) -> Any:
-        """Async wrapped create method with guardrails."""
-        stream = kwargs.get("stream", False)
+        """Async wrapped create method with guardrails.
 
-        if stream:
-            original_stream = await self._original.create(*args, **kwargs)
-            return self._guard_stream_async(original_stream)
-        else:
-            response = await self._original.create(*args, **kwargs)
-            return self._guard_response(response)
+        Equivalent to ``await create(...)`` on an async client.
+        """
+        stream = kwargs.get("stream", False)
+        return await self._guard_awaitable(self._original.create(*args, **kwargs), stream)
 
     async def _guard_stream_async(self, stream: AsyncIterator) -> AsyncIterator:
         """Async buffer-verify-emit pattern for streaming responses.
@@ -1272,11 +1283,25 @@ class GuardedResponses:
     def create(self, *args, **kwargs) -> Any:
         """Wrapped create method with guardrails.
 
-        Note: Responses API streaming uses a different pattern than chat.completions.
-        Currently only non-streaming is fully supported.
+        Works with both sync and async clients. Streaming (``stream=True``) is
+        not supported under guard yet and raises OpenAIConfigurationError
+        before any request is sent, rather than returning an unverified stream.
         """
+        if kwargs.get("stream", False):
+            raise OpenAIConfigurationError(
+                "Streaming is not supported for responses.create() under Tenuo guard: "
+                "function calls in a Responses stream cannot be verified yet. "
+                "Use stream=False, or chat.completions.create(stream=True).",
+                "CFG_004",
+            )
         response = self._original.create(*args, **kwargs)
+        if inspect.isawaitable(response):
+            return self._guard_response_async(response)
         return self._guard_response(response)
+
+    async def _guard_response_async(self, awaitable: Any) -> Any:
+        """Await an async client result, then verify it."""
+        return self._guard_response(await awaitable)
 
     def _guard_response(self, response: Any) -> Any:
         """Verify tool calls in a Responses API response."""
