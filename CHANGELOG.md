@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FastAPI `configure_tenuo(strict=True)` now does something.** It was
+  accepted since v0.1.0-beta.1 but never read. The app now refuses to start
+  while any route lacks a `TenuoGuard`, listing each one. `exempt=` names
+  public paths; docs routes are always exempt. `error_handler`, also never
+  called before, now receives each `TenuoError` and can return the response.
+
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,

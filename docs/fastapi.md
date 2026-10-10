@@ -150,6 +150,28 @@ configure_tenuo(
 | `app` | `FastAPI` | *required* | FastAPI application instance |
 | `trusted_issuers` | `List[PublicKey]` | `None` | Trusted warrant issuers (**required in production**) |
 | `expose_error_details` | `bool` | `False` | Include detailed errors in response |
+| `strict` | `bool` | `False` | Refuse to start while any route has no `TenuoGuard` |
+| `exempt` | `Iterable[str]` | `()` | Paths `strict` skips (docs routes are always exempt) |
+| `error_handler` | `Callable[[Exception], Any]` | `None` | Called with each `TenuoError`; a returned `Response` replaces the default |
+
+#### Strict mode
+
+Every route opts in to Tenuo, so a route added without a guard is open. With `strict=True` the app checks its routes when it starts and raises `ConfigurationError` listing each route that has no `TenuoGuard`:
+
+```python
+configure_tenuo(
+    app,
+    trusted_issuers=[issuer_pubkey],
+    strict=True,
+    exempt=["/health"],  # public by design
+)
+```
+
+- A route counts as guarded when `TenuoGuard` is anywhere in its dependency tree: on the route, through `SecureAPIRouter`, or in router or app `dependencies=`.
+- `require_warrant` only checks that the headers are present, so it does not count.
+- Plain Starlette routes, mounts (`StaticFiles`, sub-apps) and websocket routes without a guard fail too; list their paths in `exempt` if they are public.
+- The OpenAPI and docs routes (`/openapi.json`, `/docs`, `/docs/oauth2-redirect`, `/redoc`) are always exempt.
+- The check runs once at startup, so routes added after the app starts are not checked.
 
 ### `TenuoGuard`
 
