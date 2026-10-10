@@ -18,6 +18,7 @@ from tenuo.temporal._headers import (
     _current_workflow_headers,
     _extract_key_id_from_headers,
     _extract_warrant_from_headers,
+    _normalize_parent_chain,
     _validate_chain_ends_with_warrant,
     tenuo_headers,
 )
@@ -265,8 +266,10 @@ async def tenuo_execute_activity(
         args: Arguments to pass to the activity
         warrant: Optional warrant for this Activity dispatch only.
         key_id: Holder key ID for ``warrant``. Required with ``warrant``.
-        warrant_chain: Optional full root-to-leaf chain. When omitted, the
-            active workflow chain is extended with ``warrant``.
+        warrant_chain: Optional parent warrants of ``warrant``, root-first,
+            excluding the leaf (a legacy list ending with ``warrant`` is also
+            accepted). When omitted, the active workflow chain is extended
+            with ``warrant``.
         compress: Whether to compress the per-dispatch warrant header.
         start_to_close_timeout: Timeout for activity execution
         schedule_to_close_timeout: Timeout from schedule to completion
@@ -324,7 +327,10 @@ async def tenuo_execute_activity(
         override_headers = tenuo_headers(warrant, key_id, compress=compress)
 
         if warrant_chain is not None:
-            chain = list(warrant_chain)
+            chain = [
+                *_normalize_parent_chain(warrant, warrant_chain, operation="tenuo_execute_activity"),
+                warrant,
+            ]
         elif getattr(warrant, "parent_hash", None) is None:
             chain = [warrant]
         else:
@@ -1281,8 +1287,9 @@ async def tenuo_complete_async_activity(
     ``task_queue`` selects the exact worker config so multi-worker processes
     cannot select another tenant's key resolver. For compatibility, omission
     is temporarily accepted only when exactly one config is registered and
-    emits a deprecation warning. Supply ``warrant_chain`` for delegated
-    warrants; root warrants default to a one-element chain.
+    emits a deprecation warning. Supply ``warrant_chain`` (parent warrants,
+    root-first, excluding the leaf; a legacy list ending with ``warrant`` is
+    also accepted) for delegated warrants; root warrants need none.
 
     No completion PoP is returned or attached: Temporal's async-completion RPC
     has no user-header field. Older versions computed a signature and discarded
@@ -1377,7 +1384,10 @@ async def tenuo_complete_async_activity(
             )
         chain = [warrant]
     else:
-        chain = list(warrant_chain)
+        chain = [
+            *_normalize_parent_chain(warrant, warrant_chain, operation="tenuo_complete_async_activity"),
+            warrant,
+        ]
     # Authorizer validates signatures, linkage, attenuation, and policy. This
     # separate check binds the caller's ``warrant`` argument (used below for
     # holder-key verification) to the verified chain leaf.

@@ -12,7 +12,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
-from tenuo.temporal._headers import tenuo_headers
+from tenuo.temporal._headers import _normalize_parent_chain, tenuo_headers
 from tenuo.temporal._state import _active_tenuo_warrant
 from tenuo.temporal.exceptions import TenuoContextError
 
@@ -323,7 +323,8 @@ async def tenuo_warrant_context(
             ``WarrantSource`` with an async ``resolve()`` method.
         key_id: The holder key identifier to embed in headers.
         warrant_chain: Parent warrants of a delegated warrant, root-first,
-            excluding the leaf. Sent as ``x-tenuo-warrant-chain``; see
+            excluding the leaf (a legacy list ending with the leaf is also
+            accepted). Sent as ``x-tenuo-warrant-chain``; see
             :func:`~tenuo.temporal.tenuo_headers`.
 
     Yields:
@@ -339,6 +340,8 @@ async def tenuo_warrant_context(
     from tenuo._enforcement import split_presented_warrant
 
     warrant, parents = split_presented_warrant(warrant, warrant_chain)
+    if parents:
+        parents = _normalize_parent_chain(warrant, parents, operation="tenuo_warrant_context")
     propagator = TenuoWarrantContextPropagator()
     # tenuo_headers() accepts a root-first [*parents, leaf] list as the warrant.
     token = propagator.set([*parents, warrant] if parents else warrant, key_id)
