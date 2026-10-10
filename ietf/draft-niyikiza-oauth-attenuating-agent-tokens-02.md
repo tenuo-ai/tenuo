@@ -2382,6 +2382,13 @@ corresponding holder private key, but it can disclose authorization
 scope and delegation structure. Token encryption is outside the scope of
 this specification.
 
+A PoP JWT's `hta` carries the invocation's argument values, which may
+be personal data, to every enforcement point that verifies it.
+Enforcement points SHOULD retain `jti` state and logged PoP JWTs no
+longer than replay protection and audit require. A holder key reused
+across tasks appears in each derived `iss` and links those tasks; fresh
+holder keys per task prevent this.
+
 # IANA Considerations
 
 ## JWT Claims Registry
@@ -3089,14 +3096,13 @@ Normative changes:
 - Ed25519 signatures use the `alg` value `"Ed25519"`; `"EdDSA"` is not
   used ({{RFC9864}}; Section 9.12).
 - A root token's `iss` must match the issuer of the trust anchor that
-  verified it (Section 2; step 3k).
+  verified it (step 3k).
 - PoP JWTs carry `aat_hash`, which binds the proof to the exact leaf
   token (Section 7.2; step 7c).
 - Audience and replay: `aat_aud` names the party a proof is presented
   to, AATs may carry `aud`, and PoP JWTs may carry an enforcement-point
   `nonce`; deployments in which several enforcement points accept one
-  chain use at least one of these or share `jti` state, which replicas
-  of one enforcement point always share; tools returning sensitive data
+  chain use at least one of these or share `jti` state; tools returning sensitive data
   SHOULD also get replay protection (Sections 7.2, 7.3, and 9.5; steps
   6c, 7d, 7h, and 7i).
 - Optional and unnamed arguments: the `optional` member and the
