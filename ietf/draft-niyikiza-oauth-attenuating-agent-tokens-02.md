@@ -564,16 +564,16 @@ their absence carries the semantics described in the table.
 
 | Claim | Type | Required | Description |
 |---|---|---|---|
-| `jti` | string | REQUIRED | Unique token identifier. SHOULD be a UUIDv7 value. When a UUID is used, it MUST be encoded as a lowercase hyphenated string in the form `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` per {{RFC9562}}. |
-| `iss` | string | REQUIRED | Identifier of the entity that signed this token. For root tokens, MUST be a URI identifying the root issuer. For derived tokens, MUST be a JWK Thumbprint URI ({{RFC9278}}) over the signing key using SHA-256; the exact URI form is given after this table. |
-| `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a derived token's `iat` MUST NOT be earlier than its parent's `iat`. |
-| `exp` | NumericDate | REQUIRED | Time at which the token expires. MUST be greater than `iat`. MUST NOT exceed `iat` plus MAX_TOKEN_LIFETIME (see Section 4.4). |
-| `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}}. MUST contain `jwk` with the holder's public key. The `jwk` value MUST be a public key; private key material MUST NOT appear in this field. |
-| `aud` | string or array of strings | OPTIONAL | Audience, with the semantics of {{RFC7519}} Section 4.1.3: the enforcement points at which this token, and every token derived from it, may be presented. A holder that knows where a token will be presented SHOULD set `aud` when deriving it, in the manner of a contextual caveat {{MACAROONS}} or a resource indicator {{RFC8707}}; a holder that does not know leaves `aud` unset, since a wrong value makes the token and every token derived from it unusable where it is actually presented. Every token in a chain that carries `aud` is checked against the enforcement point (Section 8, step 6c), so a derived token can add or narrow an audience restriction but cannot remove one. |
-| `del_depth` | integer | REQUIRED | Delegation depth. 0 for root tokens. Incremented by exactly 1 at each derivation step (see Section 4.3). |
-| `del_max_depth` | integer | REQUIRED | Maximum delegation depth permitted in this chain. MUST be a non-negative integer not exceeding the implementation's MAX_DELEGATION_DEPTH (Section 4.3). |
-| `par_hash` | string | MUST (derived) / MUST NOT (root) | Base64url-encoded SHA-256 digest of the parent token signing input, using base64url encoding without padding as defined in {{RFC7515}} Appendix C. For JWT/JWS AATs, the parent token signing input is the JWS Signing Input. MUST be absent in root tokens. MUST be present in all derived tokens. |
-| `authorization_details` | array | REQUIRED | Tool capability claims. Format defined in Section 3.3. |
+| `jti` | string | REQUIRED | Unique token identifier. SHOULD be a UUIDv7; a UUID MUST be encoded as a lowercase hyphenated string {{RFC9562}}. |
+| `iss` | string | REQUIRED | The signer: the root issuer's URI, or for a derived token a JWK Thumbprint URI of the signing key (below). |
+| `iat` | NumericDate | REQUIRED | Issuance time (Section 4.4). |
+| `exp` | NumericDate | REQUIRED | Expiration time (Section 4.4). |
+| `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}} whose `jwk` member is the holder's public key. Private key members MUST NOT appear. |
+| `aud` | string or array of strings | OPTIONAL | Enforcement points at which this token and its descendants may be presented (below). |
+| `del_depth` | integer | REQUIRED | Delegation depth: 0 for root tokens, parent's plus 1 otherwise (Section 4.3). |
+| `del_max_depth` | integer | REQUIRED | Maximum delegation depth permitted in this chain (Section 4.3). |
+| `par_hash` | string | MUST (derived) / MUST NOT (root) | Digest of the parent token's signing input (Section 4.6). |
+| `authorization_details` | array | REQUIRED | Tool capability claims (Section 3.3). |
 
 Implementations MUST support Ed25519 {{RFC8032}}, JWS `alg` value
 `"Ed25519"` ({{RFC9864}}), for token signing and verification.
@@ -586,6 +586,14 @@ exponent part. An `aud` value, or a PoP JWT's `aat_aud` (Section 7.2),
 identifies an enforcement
 point when it is identical, by exact string comparison, to an audience
 identifier configured at that enforcement point.
+
+`aud` has the semantics of {{RFC7519}} Section 4.1.3. A holder that
+knows where a token will be presented SHOULD set `aud` when deriving it,
+like a contextual caveat {{MACAROONS}} or a resource indicator
+{{RFC8707}}; a holder that does not know leaves it unset, since a wrong
+value makes the token unusable where it is presented. Every `aud` in a
+chain is checked (Section 8, step 6c), so derivation can add or narrow
+an audience restriction but cannot remove one.
 
 In both root and derived tokens, `iss` is a URI. For root tokens,
 `iss` is a URI identifying the root issuer, consistent with
@@ -647,11 +655,9 @@ Enforcement points check every invocation against its tool's constraint
 map in closed-world mode (Section 8, step 6b): an argument the map does
 not name MUST be rejected unless the map carries the `"*"` entry
 described below, and a named argument absent from the invocation MUST be
-rejected unless its constraint is optional. An empty map is shorthand
-for `"*"`, so it admits any argument. The presence of a constraint
-asserts that the issuer has reasoned about that argument; an invocation
-that omits a required one has not been validated against that reasoning.
-To authorize an argument without restricting its value while keeping the
+rejected unless its constraint is optional. Named arguments are
+required by default, so an invocation cannot evade a constraint by
+omitting its argument. To authorize an argument without restricting its value while keeping the
 map closed, the issuer names it with a `wildcard` constraint (Section
 3.4).
 
@@ -1118,14 +1124,10 @@ MAX_TOKEN_LIFETIME. A value of 90 days is RECOMMENDED as an upper bound;
 deployments SHOULD use significantly shorter lifetimes in practice (see
 Appendix B.7).
 
-A derived token cannot outlive its parent. Authority cannot extend
-beyond the lifetime of the token that granted it. A derived token's
-issuance time MUST NOT precede its parent's issuance time; a deriver
-whose clock lags the parent's issuer sets `iat` to `parent.iat`
-(Section 6.2, step 2). Tokens
-with `iat` more than MAX_IAT_SKEW in the future relative to the
-enforcement point's clock MUST be rejected. A token's lifetime
-MUST NOT exceed MAX_TOKEN_LIFETIME.
+A root token satisfies the relations that do not mention `parent`,
+with `root` in place of `derived`. A token that violates these relations MUST be rejected; a
+derived token cannot outlive its parent. A deriver whose clock lags the parent's
+issuer sets `iat` to `parent.iat` (Section 6.2, step 2).
 
 ## I4: Capability Monotonicity
 
@@ -1271,7 +1273,8 @@ by committing the child to exactly one parent token's signing input.
 
 Each derived token is cryptographically bound to its parent by including
 the SHA-256 digest of the parent token's signing input in the
-`par_hash` claim. For JWT/JWS AATs, the parent token signing input is
+`par_hash` claim, base64url-encoded without padding ({{RFC7515}}
+Appendix C). For JWT/JWS AATs, the parent token signing input is
 the JWS Signing Input: the ASCII string
 `BASE64URL(JWS Protected Header) || '.' || BASE64URL(JWS Payload)` as
 defined in {{RFC7515}} Section 5.1.
@@ -1541,10 +1544,7 @@ A holder of any AAT whose `del_depth` is strictly less than
    to the parent's ceiling. Both bounds are inclusive; the upper
    bound enforces I2.
 
-7. Set `par_hash` to `base64url(SHA-256(parent token signing
-   input))`, using base64url encoding without padding
-   ({{RFC7515}} Appendix C). For JWT/JWS AATs, the parent
-   token signing input is the JWS Signing Input.
+7. Set `par_hash` as defined in Section 4.6.
 
 8. Set `cnf.jwk` to the intended holder's public key. The
    value MUST be a public key; private key material MUST NOT
@@ -1553,16 +1553,12 @@ A holder of any AAT whose `del_depth` is strictly less than
    key: a recipient holding the parent's key could also present
    the parent's token (Section 9.1.1).
 
-9. If the holder knows where the derived token will be presented,
-   set `aud` to restrict it and its descendants to those
-   enforcement points (Section 3.2). A parent's `aud` need not be
-   copied; every `aud` in the chain is checked (Section 8, step 6c).
+9. Set `aud` if the holder knows where the token will be presented
+   (Section 3.2). A parent's `aud` need not be copied.
 
 10. Sign the token with the private key corresponding to the
     parent token's `cnf.jwk`, using the JWS Protected Header
-    defined in Section 3.5. The `iss` claim MUST be set to the
-    JWK Thumbprint URI {{RFC9278}} of that signing key, using the
-    SHA-256 hash algorithm.
+    defined in Section 3.5, and set `iss` as defined in Section 3.2.
 
 Derivation is performed locally by the token holder. No authorization
 server communication is required.
@@ -2176,8 +2172,8 @@ verification.
 
 ## Replay Attacks
 
-The `iat` window alone is a probabilistic control: a captured PoP JWT
-can be replayed for up to about twice the clock tolerance, roughly 60
+The `iat` window alone bounds replay in time but does not prevent it: a
+captured PoP JWT can be replayed for up to about twice the clock tolerance, roughly 60
 seconds at the RECOMMENDED setting (Section 9.10). Section 7.3
 therefore requires `jti` tracking for tool invocations that have side
 effects or are not idempotent, such as financial transactions, data
@@ -2191,15 +2187,11 @@ further binding, a PoP JWT captured at one enforcement point may be
 replayable at another enforcement point that accepts the same chain,
 tool identifier, and argument map within the timestamp window. This
 specification provides three bindings against that replay, each
-borrowed from an existing mechanism, and requires deployments to use
-at least one where the exposure exists:
+borrowed from an existing mechanism:
 
-- **Chain audience.** A holder that knows where a token will be
-  presented sets `aud` when deriving it (Section 3.2), as with Macaroon
-  caveats {{MACAROONS}} and resource indicators {{RFC8707}}. Every
-  enforcement point checks every `aud` in the chain against itself
-  (Section 8, step 6c), so holders further down the chain need not know
-  the target.
+- **Chain audience.** `aud` (Section 3.2). Because every `aud` in the
+  chain is checked, holders further down the chain need not know the
+  target.
 - **Presentation audience.** `aat_aud` names the party the holder
   hands the PoP JWT to, like DPoP `htu` {{RFC9449}}: the next hop,
   never a resource behind it. The holder always
@@ -2680,10 +2672,7 @@ without changes to token structure.
 
 ## Recognizing Derived Token `iss` Values in Middleware
 
-In both root and derived AATs, `iss` is a URI. For root tokens it
-is a conventional issuer URI. For derived tokens it is a JWK
-Thumbprint URI ({{RFC9278}}) with the
-`urn:ietf:params:oauth:jwk-thumbprint:sha-256:` prefix.
+A derived token's `iss` is a JWK Thumbprint URI (Section 3.2).
 Middleware that routes or policy-evaluates based on `iss` should
 recognize the JWK Thumbprint URI scheme and apply chain-aware
 processing rather than attempting to resolve the URI as an issuer
