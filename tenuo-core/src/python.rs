@@ -5394,8 +5394,17 @@ impl PyReceiptPayload {
         self.inner.trusted_roots_hash.map(hex::encode)
     }
 
-    /// Raise if a conditionally-required field is missing: `decision_code` on a
-    /// denial, `pop_signature` on an allow.
+    /// Whether the decision was enforced (key 16). `False` means a denial
+    /// recorded in observe mode: the policy said deny and the call ran anyway.
+    /// Receipts without key 16 read as `True`.
+    #[getter]
+    fn enforced(&self) -> bool {
+        self.inner.enforced
+    }
+
+    /// Raise if a conditionally-required field is missing or contradictory:
+    /// `decision_code` on a denial, `pop_signature` on an allow, and
+    /// `enforced = False` only on a denial.
     fn check_conditional_requirements(&self) -> PyResult<()> {
         self.inner
             .check_conditional_requirements()
@@ -5404,9 +5413,10 @@ impl PyReceiptPayload {
 
     fn __repr__(&self) -> String {
         format!(
-            "ReceiptPayload(action='{}', outcome='{}', request_id='{}')",
+            "ReceiptPayload(action='{}', outcome='{}', enforced={}, request_id='{}')",
             self.inner.action,
             self.inner.outcome.as_str(),
+            if self.inner.enforced { "True" } else { "False" },
             self.inner.request_id
         )
     }

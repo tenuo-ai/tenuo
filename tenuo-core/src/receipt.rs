@@ -236,6 +236,21 @@ pub struct ReceiptPayload {
     /// was operating in: which roots it honoured and which revocations it knew.
     /// See [`trusted_roots_digest`].
     pub trusted_roots_hash: Option<[u8; 32]>,
+
+    /// Key 16. Whether the decision was enforced.
+    ///
+    /// `false` records a denial that the enforcement point did not enforce: it
+    /// was running in observe mode, so the policy said deny and the call ran
+    /// anyway. Without this a reader of a deny receipt cannot tell "refused"
+    /// from "would have been refused", and would wrongly conclude the action
+    /// was blocked.
+    ///
+    /// Encoded only when `false`; absent means `true`. Receipts produced
+    /// before this key existed therefore read as enforced and keep their exact
+    /// bytes. An explicit `true` is rejected on decode so a logical receipt
+    /// has one encoding. Only a denial may carry `false` — see
+    /// [`Self::check_conditional_requirements`].
+    pub enforced: bool,
 }
 
 impl ReceiptPayload {
@@ -274,6 +289,7 @@ impl ReceiptPayload {
             srl_hash: None,
             prev_receipt_hash: None,
             trusted_roots_hash: None,
+            enforced: true,
         }
     }
 
@@ -313,6 +329,7 @@ impl ReceiptPayload {
             srl_hash: None,
             prev_receipt_hash: None,
             trusted_roots_hash: None,
+            enforced: true,
         }
     }
 
@@ -352,6 +369,7 @@ impl ReceiptPayload {
             srl_hash: None,
             prev_receipt_hash: None,
             trusted_roots_hash: None,
+            enforced: true,
         }
     }
 
@@ -381,6 +399,13 @@ impl ReceiptPayload {
                 "pop_signature is required when outcome is \"allow\"".to_string(),
             ));
         }
+        // An allow that "was not enforced" has no meaning: the call ran either
+        // way. Only a denial can be observed rather than enforced.
+        if !self.enforced && self.outcome != Outcome::Deny {
+            return Err(Error::InvalidReceipt(
+                "enforced = false is only valid when outcome is \"deny\"".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -407,6 +432,7 @@ impl Serialize for ReceiptPayload {
             self.srl_hash.is_some(),
             self.prev_receipt_hash.is_some(),
             self.trusted_roots_hash.is_some(),
+            !self.enforced,
         ]
         .iter()
         .filter(|present| **present)
@@ -450,6 +476,9 @@ impl Serialize for ReceiptPayload {
         }
         if let Some(trusted_roots_hash) = &self.trusted_roots_hash {
             map.serialize_entry(&15u8, serde_bytes::Bytes::new(trusted_roots_hash))?;
+        }
+        if !self.enforced {
+            map.serialize_entry(&16u8, &false)?;
         }
         map.end()
     }
@@ -498,6 +527,7 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                 let mut srl_hash = None;
                 let mut prev_receipt_hash = None;
                 let mut trusted_roots_hash = None;
+                let mut enforced = true;
 
                 while let Some(key) = map.next_key::<u8>()? {
                     if !seen.insert(key) {
@@ -543,6 +573,15 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                             trusted_roots_hash =
                                 Some(fixed(bytes.into_vec(), "trusted_roots_hash")?);
                         }
+                        16 => {
+                            // Absent means true, so an explicit true is a second
+                            // encoding of the same receipt. Reject it.
+                            let value: bool = map.next_value()?;
+                            if value {
+                                return Err(A::Error::custom("enforced must be omitted when true"));
+                            }
+                            enforced = false;
+                        }
                         _ => {
                             return Err(A::Error::custom(format!(
                                 "unknown receipt payload key {}",
@@ -570,6 +609,7 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                     srl_hash,
                     prev_receipt_hash,
                     trusted_roots_hash,
+                    enforced,
                 })
             }
         }
@@ -806,6 +846,7 @@ mod tests {
             srl_hash: Some([5u8; 32]),
             prev_receipt_hash: Some([6u8; 32]),
             trusted_roots_hash: Some([8u8; 32]),
+            enforced: true,
         }
     }
 
@@ -1309,5 +1350,184 @@ mod tests {
 
         assert!(denied.pop_signature.is_none());
         assert!(denied.check_conditional_requirements().is_ok());
+    }
+
+    // --- Key 16: enforced -------------------------------------------------
+
+    fn observed_denial() -> ReceiptPayload {
+        let mut observed = ReceiptPayload::deny(
+            vec![0xA1, 0x01, 0x02],
+            "tool:delete_file",
+            1_700_000_000,
+            "req-observed",
+            "constraint-violation",
+            [9u8; 64],
+        );
+        observed.enforced = false;
+        observed
+    }
+
+    fn payload_keys(bytes: &[u8]) -> Vec<(u64, ciborium::Value)> {
+        let value: ciborium::Value = ciborium::from_reader(bytes).unwrap();
+        value
+            .into_map()
+            .unwrap()
+            .into_iter()
+            .map(|(k, v)| {
+                let key: u64 = k.into_integer().unwrap().try_into().unwrap();
+                (key, v)
+            })
+            .collect()
+    }
+
+    /// A minimal deny payload as a raw CBOR map, with key 16 set to `value`
+    /// when one is given.
+    fn minimal_deny_map_with_key_16(value: Option<ciborium::Value>) -> Vec<u8> {
+        let mut entries = vec![
+            (
+                ciborium::Value::Integer(0.into()),
+                ciborium::Value::Integer(1.into()),
+            ),
+            (
+                ciborium::Value::Integer(2.into()),
+                ciborium::Value::Bytes(vec![0xA1]),
+            ),
+            (
+                ciborium::Value::Integer(3.into()),
+                ciborium::Value::Text("tool:read".into()),
+            ),
+            (
+                ciborium::Value::Integer(4.into()),
+                ciborium::Value::Text("deny".into()),
+            ),
+            (
+                ciborium::Value::Integer(5.into()),
+                ciborium::Value::Integer(1.into()),
+            ),
+            (
+                ciborium::Value::Integer(9.into()),
+                ciborium::Value::Text("req".into()),
+            ),
+            (
+                ciborium::Value::Integer(10.into()),
+                ciborium::Value::Text("constraint-violation".into()),
+            ),
+        ];
+        if let Some(value) = value {
+            entries.push((ciborium::Value::Integer(16.into()), value));
+        }
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&ciborium::Value::Map(entries), &mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn constructors_default_to_enforced() {
+        assert!(payload().enforced);
+        assert!(
+            ReceiptPayload::deny(
+                vec![0xA1],
+                "tool:x",
+                1,
+                "r",
+                "constraint-violation",
+                [1u8; 64]
+            )
+            .enforced
+        );
+        assert!(ReceiptPayload::deny_before_pop(vec![0xA1], "tool:x", 1, "r", "expired").enforced);
+    }
+
+    #[test]
+    fn an_enforced_receipt_omits_key_16() {
+        let bytes = full_payload().to_cbor().unwrap();
+        assert!(
+            payload_keys(&bytes).iter().all(|(k, _)| *k != 16),
+            "enforced = true must not be encoded, so pre-key-16 bytes are unchanged"
+        );
+    }
+
+    #[test]
+    fn an_observed_denial_round_trips_with_key_16_false() {
+        let original = observed_denial();
+        let bytes = original.to_cbor().unwrap();
+
+        let keys = payload_keys(&bytes);
+        let last = keys.last().unwrap();
+        assert_eq!(last.0, 16, "key 16 sorts last");
+        assert_eq!(last.1, ciborium::Value::Bool(false));
+
+        let decoded: ReceiptPayload = ciborium::from_reader(&bytes[..]).unwrap();
+        assert_eq!(decoded, original);
+        assert!(!decoded.enforced);
+        assert!(decoded.check_conditional_requirements().is_ok());
+    }
+
+    #[test]
+    fn a_payload_without_key_16_reads_as_enforced() {
+        let bytes = minimal_deny_map_with_key_16(None);
+        let decoded: ReceiptPayload = ciborium::from_reader(&bytes[..]).unwrap();
+        assert!(decoded.enforced);
+    }
+
+    #[test]
+    fn rejects_an_explicit_enforced_true() {
+        let bytes = minimal_deny_map_with_key_16(Some(ciborium::Value::Bool(true)));
+        let decoded: std::result::Result<ReceiptPayload, _> = ciborium::from_reader(&bytes[..]);
+        assert!(
+            decoded.is_err(),
+            "an explicit true is a second encoding of the same receipt"
+        );
+    }
+
+    #[test]
+    fn rejects_a_non_boolean_enforced() {
+        let bytes = minimal_deny_map_with_key_16(Some(ciborium::Value::Integer(0.into())));
+        let decoded: std::result::Result<ReceiptPayload, _> = ciborium::from_reader(&bytes[..]);
+        assert!(decoded.is_err());
+    }
+
+    #[test]
+    fn an_allow_cannot_be_unenforced() {
+        let mut invalid = payload();
+        invalid.enforced = false;
+        assert!(invalid.check_conditional_requirements().is_err());
+
+        let signer = SigningKey::generate();
+        let receipt = Receipt::create(&invalid, &signer).unwrap();
+        let err = receipt.verify_signature().unwrap_err();
+        assert!(
+            err.to_string().contains("enforced = false"),
+            "verification must reject an unenforced allow, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_signed_observed_denial_verifies() {
+        let signer = SigningKey::generate();
+        let receipt = Receipt::create(&observed_denial(), &signer).unwrap();
+        let verified = receipt.verify_signature().unwrap();
+        assert_eq!(verified.outcome, Outcome::Deny);
+        assert!(!verified.enforced);
+    }
+
+    #[test]
+    fn a_receipt_signed_before_key_16_still_verifies_as_enforced() {
+        // Bytes built by hand without key 16, exactly as a pre-key-16 producer
+        // would have signed them. Re-encoding through the current type must
+        // reproduce them, or old signatures would stop matching.
+        let signer = SigningKey::generate();
+        let legacy_payload = minimal_deny_map_with_key_16(None);
+        let preimage = Receipt::signing_preimage(RECEIPT_VERSION, &legacy_payload);
+        let receipt = Receipt {
+            receipt_version: RECEIPT_VERSION,
+            payload: legacy_payload.clone(),
+            signer_key: signer.public_key(),
+            signature: signer.sign(&preimage),
+        };
+
+        let verified = receipt.verify_signature().unwrap();
+        assert!(verified.enforced);
+        assert_eq!(verified.to_cbor().unwrap(), legacy_payload);
     }
 }

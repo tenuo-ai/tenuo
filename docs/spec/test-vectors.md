@@ -2128,6 +2128,13 @@ Keys 12 and 13 commit to the revocation list in force. Absent means no
 list was loaded, which is a different claim from a loaded list that
 revoked nothing.
 
+Key 16 `enforced` is optional and is encoded only as `false`; absent
+means `true`. `false` marks a denial that was recorded but not enforced
+(observe mode: the policy said deny and the call ran anyway), and is
+valid only when key 4 is `deny`. An explicit `true` MUST be rejected so
+a receipt has one encoding. Verifiers that predate key 16 (Tenuo
+0.3.2 and earlier) reject unknown keys, so they reject A.30.6.
+
 ### A.30.1 Allow, No Revocation Data
 
 Keys 12 and 13 are both absent: the enforcement point never consulted revocation. A verifier cannot conclude the warrant was unrevoked.
@@ -2331,6 +2338,47 @@ f3c97e6a7369676e65725f6b6579820158201ba4075b77c9e3fb3ecde15cdaf5
 221f3c10373e623f7b0e1ef76366b0af7137697369676e617475726582015840
 2abc6b9738d742aa79294b6db464e67495c9fd4ba2ab22b5696119cd82f8eba9
 3227249df96b603a23b8cb92409868f5eb5d91275bd5568ae6cad567a76c8e03
+
+### A.30.6 Observed Denial (Not Enforced)
+
+Key 16 is `false`: the enforcement point decided deny but was in observe mode, so the call ran. A reader must not conclude the action was blocked. Key 16 sorts last and is the only key absent from enforced receipts.
+
+| Field | Value |
+| --- | --- |
+| Key 0 version | `1` |
+| Key 3 action | `read_file` |
+| Key 4 outcome | `deny` |
+| Key 5 timestamp | `1704067200` |
+| Key 9 request_id | `req-a30-observed` |
+| Key 8 pop_signature | present |
+| Key 10 decision_code | `constraint-violation` |
+| Key 12 srl_version | absent |
+| Key 11 policy_definition_hash | absent |
+| Key 14 prev_receipt_hash | absent |
+| Key 15 trusted_roots_hash | `34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e` |
+| Key 13 srl_hash | absent |
+| Key 16 enforced | `false` |
+
+**Receipt (hex):**
+
+a46f726563656970745f76657273696f6e01677061796c6f6164590199aa0001
+0258ec81830158a3aa00010150019471f8000070008000000000003000020003
+a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202
+a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9
+0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74
+09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200
+80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce
+f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac
+51a36b53e547545338aba0c1cb83020369726561645f66696c65046464656e79
+051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56eea
+f051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a28
+0200962fe537c39a0909707265712d6133302d6f627365727665640a74636f6e
+73747261696e742d76696f6c6174696f6e0f582034750f98bd59fcfc946da45a
+aabe933be154a4b5094e1c4abf42866505f3c97e10f46a7369676e65725f6b65
+79820158201ba4075b77c9e3fb3ecde15cdaf5221f3c10373e623f7b0e1ef763
+66b0af7137697369676e61747572658201584025b88e81530b09403f341d8184
+19c5235d808f6910d01013920bfd749a11dc2a09f676fdbbb2862756c5030947
+62ab5c0acee62533e9cb7aacf19a4033cae701
 
 
 ---

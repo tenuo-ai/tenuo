@@ -3789,6 +3789,27 @@ const RECEIPT_A30_5: &str = concat!(
     "3227249df96b603a23b8cb92409868f5eb5d91275bd5568ae6cad567a76c8e03",
 );
 
+const RECEIPT_A30_6: &str = concat!(
+    "a46f726563656970745f76657273696f6e01677061796c6f6164590199aa0001",
+    "0258ec81830158a3aa00010150019471f8000070008000000000003000020003",
+    "a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202",
+    "a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9",
+    "0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74",
+    "09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200",
+    "80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce",
+    "f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac",
+    "51a36b53e547545338aba0c1cb83020369726561645f66696c65046464656e79",
+    "051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56eea",
+    "f051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a28",
+    "0200962fe537c39a0909707265712d6133302d6f627365727665640a74636f6e",
+    "73747261696e742d76696f6c6174696f6e0f582034750f98bd59fcfc946da45a",
+    "aabe933be154a4b5094e1c4abf42866505f3c97e10f46a7369676e65725f6b65",
+    "79820158201ba4075b77c9e3fb3ecde15cdaf5221f3c10373e623f7b0e1ef763",
+    "66b0af7137697369676e61747572658201584025b88e81530b09403f341d8184",
+    "19c5235d808f6910d01013920bfd749a11dc2a09f676fdbbb2862756c5030947",
+    "62ab5c0acee62533e9cb7aacf19a4033cae701",
+);
+
 /// Fixed policy input A.30.3 commits to at key 11.
 const A30_POLICY_INPUT: &[u8] = b"tenuo-test-vector-a30-policy";
 
@@ -4038,4 +4059,43 @@ fn a31_2_a_different_policy_commits_differently() {
         tenuo::policy_commitment_digest(&tight_bytes),
         tenuo::policy_commitment_digest(&open_bytes)
     );
+}
+
+#[test]
+fn a30_6_records_an_observed_denial_as_not_enforced() {
+    let payload = decode_receipt(RECEIPT_A30_6);
+
+    assert_eq!(payload.outcome, tenuo::receipt::Outcome::Deny);
+    assert_eq!(
+        payload.decision_code.as_deref(),
+        Some("constraint-violation")
+    );
+    assert!(
+        !payload.enforced,
+        "an observed denial let the call run; the receipt must say so"
+    );
+    // Re-encoding reproduces the signed bytes, so key 16 = false is the one
+    // canonical encoding of this receipt.
+    let bytes = hex::decode(RECEIPT_A30_6).unwrap();
+    let receipt: tenuo::receipt::Receipt = ciborium::from_reader(bytes.as_slice()).unwrap();
+    assert_eq!(payload.to_cbor().unwrap(), receipt.payload);
+}
+
+#[test]
+fn a30_receipts_without_key_16_read_as_enforced() {
+    // These vectors predate key 16. They must still verify, read as enforced,
+    // and re-encode to the exact bytes that were signed.
+    for wire in [
+        RECEIPT_A30_1,
+        RECEIPT_A30_2,
+        RECEIPT_A30_3,
+        RECEIPT_A30_4,
+        RECEIPT_A30_5,
+    ] {
+        let payload = decode_receipt(wire);
+        assert!(payload.enforced, "absent key 16 means enforced");
+        let bytes = hex::decode(wire).unwrap();
+        let receipt: tenuo::receipt::Receipt = ciborium::from_reader(bytes.as_slice()).unwrap();
+        assert_eq!(payload.to_cbor().unwrap(), receipt.payload);
+    }
 }

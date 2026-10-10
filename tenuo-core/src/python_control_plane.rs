@@ -179,7 +179,8 @@ impl PyReceiptIssuer {
 
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
-        warrants, tool, args, timestamp, request_id, decision_code, verified_pop=None
+        warrants, tool, args, timestamp, request_id, decision_code, verified_pop=None,
+        enforced=true
     ))]
     fn issue_denial_receipt(
         &self,
@@ -190,6 +191,7 @@ impl PyReceiptIssuer {
         request_id: &str,
         decision_code: &str,
         verified_pop: Option<&[u8]>,
+        enforced: bool,
     ) -> PyResult<Option<String>> {
         issue_deny_receipt(
             &self.receipt_signer,
@@ -202,6 +204,7 @@ impl PyReceiptIssuer {
             request_id,
             decision_code,
             verified_pop,
+            enforced,
         )
     }
 }
@@ -326,6 +329,7 @@ fn issue_deny_receipt(
     request_id: &str,
     decision_code: &str,
     verified_pop: Option<&[u8]>,
+    enforced: bool,
 ) -> PyResult<Option<String>> {
     let trust = match read_trust(trust)? {
         Some(t) => t,
@@ -380,6 +384,7 @@ fn issue_deny_receipt(
         Some(leaf.authorized_holder()),
     ));
     payload.root_principal = chain.first().map(|w| hex::encode(w.issuer().to_bytes()));
+    payload.enforced = enforced;
     payload.trusted_roots_hash = Some(trust.trusted_roots_hash);
     if let Some((version, digest)) = trust.srl_commitment {
         payload.srl_version = version;
@@ -713,13 +718,18 @@ impl PyControlPlaneClient {
     /// never checked and denying one that was are both false claims, so the
     /// caller says which happened by supplying the signature or omitting it.
     ///
+    /// `enforced=False` records a denial that was not enforced — observe mode
+    /// let the call run — as receipt key 16. Leave it at the default for an
+    /// enforced denial.
+    ///
     /// Returns None when the client is not bound to an authorizer, or when no
     /// chain was presented at all — a request that carried no authority was
     /// refused at the door rather than authorized against anything, and there
     /// is no chain for a receipt to commit to.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
-        warrants, tool, args, timestamp, request_id, decision_code, verified_pop=None
+        warrants, tool, args, timestamp, request_id, decision_code, verified_pop=None,
+        enforced=true
     ))]
     fn issue_denial_receipt(
         &self,
@@ -730,6 +740,7 @@ impl PyControlPlaneClient {
         request_id: &str,
         decision_code: &str,
         verified_pop: Option<&[u8]>,
+        enforced: bool,
     ) -> PyResult<Option<String>> {
         issue_deny_receipt(
             &self.receipt_signer,
@@ -742,6 +753,7 @@ impl PyControlPlaneClient {
             request_id,
             decision_code,
             verified_pop,
+            enforced,
         )
     }
 

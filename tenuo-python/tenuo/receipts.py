@@ -86,6 +86,7 @@ class _ReceiptIssuer(Protocol):
     def issue_denial_receipt(
         self, chain: object, tool: object, args: object, ts: object,
         request_id: object, decision_code: object, verified_pop: object,
+        enforced: bool = True,
     ) -> Optional[str]: ...
 
 
@@ -334,8 +335,8 @@ class DeferredEmitter:
     def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code) -> None:
         self._enqueue(("allow", chain_result, tool, allowed, ts, request_id, decision_code))
 
-    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
-        self._enqueue(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop))
+    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop, enforced=True) -> None:
+        self._enqueue(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop, enforced))
 
     def _enqueue(self, item: Any) -> None:
         try:
@@ -379,10 +380,8 @@ class DeferredEmitter:
                         chain_result, tool, allowed, ts, request_id, code
                     )
                 else:
-                    _, chain, tool, args, ts, request_id, code, pop = item
-                    wire = inner.issue_denial_receipt(
-                        chain, tool, args, ts, request_id, code, pop
-                    )
+                    _, chain, tool, args, ts, request_id, code, pop, enforced = item
+                    wire = inner.issue_denial_receipt(chain, tool, args, ts, request_id, code, pop, enforced=enforced)
                 if not deliver(self._sink, wire, self._on_error):
                     delay = 0.05
                     delivered = False
@@ -515,13 +514,14 @@ class JournalEmitter:
             chain_result, tool, allowed, ts, request_id, decision_code
         ))
 
-    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
+    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop, enforced=True) -> None:
         inner = self._inner
         if inner is None:
             raise RuntimeError("JournalEmitter is not attached")
-        self._append(inner.issue_denial_receipt(
-            chain, tool, args, ts, request_id, decision_code, verified_pop
-        ))
+        wire = inner.issue_denial_receipt(
+            chain, tool, args, ts, request_id, decision_code, verified_pop, enforced=enforced
+        )
+        self._append(wire)
 
     def flush(self, timeout: float = 10.0) -> bool:  # noqa: ARG002 — nothing pending
         os.fsync(self._fd)

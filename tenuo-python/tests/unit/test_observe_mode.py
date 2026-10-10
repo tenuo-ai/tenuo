@@ -146,16 +146,71 @@ def test_observe_does_not_touch_real_allows():
     assert result.error_type is None
 
 
-def test_receipt_collected_as_denial(monkeypatch):
-    """The runtime receipt sees the denial, not the observe-mode allow."""
+def test_receipt_collected_after_observe_is_applied(monkeypatch):
+    """The runtime receipt sees the observed result, so it can mark it not enforced."""
     import tenuo.receipts as receipts
 
     seen: List[Any] = []
-    monkeypatch.setattr(receipts, "collect_enforcement_receipt", lambda r, c=None, runtime=None: seen.append(r.allowed))
+    monkeypatch.setattr(
+        receipts,
+        "collect_enforcement_receipt",
+        lambda r, c=None, runtime=None: seen.append((r.allowed, r.observed)),
+    )
     _observe()
     result = enforce_tool_call("issue_payout", BAD_ARGS, BOUND, trusted_roots=ROOTS)
-    assert seen == [False]
+    assert seen == [(True, True)]
     assert result.allowed
+
+
+def _runtime_receipt(mode: str, args: dict, *, use_async: bool = False):
+    """Run one call through a collecting Runtime and return (result, verified receipt)."""
+    from tenuo_core import verify_receipt
+
+    from tenuo import HolderIdentity, Runtime
+
+    configure(trusted_roots=ROOTS, mode=mode)  # type: ignore[arg-type]
+    holder = HolderIdentity.generate()
+    warrant = (
+        Warrant.mint_builder()
+        .capability("issue_payout", payee=Exact("ACCT-CLAIMANT"), amount=Range(0, 5000))
+        .holder(holder.public_key)
+        .ttl(3600)
+        .mint(ISSUER)
+    )
+    runtime = Runtime(identity=holder, trusted_roots=ROOTS, receipts="collect")
+    session = runtime.session_from_wire(warrant)
+    with runtime.session_scope(session):
+        if use_async:
+            result = asyncio.run(enforce_tool_call_async("issue_payout", args, session.bound))
+        else:
+            result = enforce_tool_call("issue_payout", args, session.bound)
+    wires = runtime.peek_receipts()
+    assert len(wires) == 1
+    return result, verify_receipt(wires[0])
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_observed_denial_receipt_is_deny_not_enforced(use_async):
+    result, receipt = _runtime_receipt("observe", BAD_ARGS, use_async=use_async)
+    assert result.allowed and result.observed
+    assert receipt.outcome == "deny"
+    assert receipt.decision_code
+    assert receipt.enforced is False
+
+
+def test_enforced_denial_receipt_is_enforced():
+    result, receipt = _runtime_receipt("enforce", BAD_ARGS)
+    assert not result.allowed and not result.observed
+    assert receipt.outcome == "deny"
+    assert receipt.enforced is True
+
+
+@pytest.mark.parametrize("mode", ["enforce", "observe"])
+def test_allow_receipt_is_enforced(mode):
+    result, receipt = _runtime_receipt(mode, {"payee": "ACCT-CLAIMANT", "amount": 10})
+    assert result.allowed and not result.observed
+    assert receipt.outcome == "allow"
+    assert receipt.enforced is True
 
 
 # -- verify path --------------------------------------------------------------

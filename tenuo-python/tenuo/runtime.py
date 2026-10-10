@@ -326,7 +326,9 @@ class Runtime:
         request_id = getattr(result, "request_id", None) or str(uuid.uuid4())
         tool = getattr(result, "tool", "") or ""
         # An observed denial was let through, but the decision was still a deny.
-        allowed = bool(getattr(result, "allowed", False)) and not getattr(result, "observed", False)
+        # The receipt records it as a deny that was not enforced (key 16).
+        observed = bool(getattr(result, "observed", False))
+        allowed = bool(getattr(result, "allowed", False)) and not observed
         ts = int(time.time())
         try:
             if allowed:
@@ -362,7 +364,7 @@ class Runtime:
                     else None
                 )
                 wire = self._issuer.issue_denial_receipt(
-                    list(chain), tool, args, ts, request_id, code, pop
+                    list(chain), tool, args, ts, request_id, code, pop, enforced=not observed
                 )
         except Exception as exc:  # noqa: BLE001 — must not fail the tool call
             logger.warning("runtime receipt signing failed for %r", tool, exc_info=exc)
