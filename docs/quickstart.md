@@ -27,11 +27,15 @@ Tenuo adds a **delegation layer** on top of your existing IAM. If an LLM is prom
 
 ## Install
 
+Install the SDK for your language:
+
 ```bash
-uv pip install tenuo
+uv pip install tenuo              # Python
+npm install @tenuo/core@beta      # TypeScript (Node 20+)
+cargo add tenuo --features sdk    # Rust
 ```
 
-With framework support (quotes required in zsh):
+Python framework extras (quotes required in zsh):
 
 ```bash
 uv pip install "tenuo[openai]"      # OpenAI Agents SDK
@@ -79,22 +83,25 @@ with mint_sync(Capability("read_file", path=Subpath("/data"))):
 
 ## Choose Your Integration
 
-**What framework are you using?**
+**What framework or SDK are you using?**
 
-| Framework | Integration | Getting Started |
-|-----------|-------------|-----------------|
-| **OpenAI SDK** | `from tenuo.openai import guard` | [OpenAI Guide](/openai) |
-| **Temporal** | `from tenuo.temporal import TenuoTemporalPlugin` | [Temporal Guide](/temporal) |
-| **LangChain** | `from tenuo.langchain import auto_protect` | [LangChain Guide](/langchain) |
-| **LangGraph** | `from tenuo.langgraph import guard_node` | [LangGraph Guide](/langgraph) |
-| **CrewAI** | `from tenuo.crewai import ...` | [CrewAI Guide](/crewai) |
-| **Google ADK** | `from tenuo.google_adk import TenuoGuard` | [ADK Guide](/google-adk) |
-| **MCP** | `from tenuo.mcp import SecureMCPClient` | [MCP Guide](/mcp) |
-| **FastAPI** | `from tenuo.fastapi import SecureAPIRouter` | [FastAPI Guide](/fastapi) |
-| **AutoGen** | `from tenuo.autogen import ...` | [AutoGen Guide](/autogen) |
-| **Hermes Agent** | `hermes plugins install hermes-tenuo` | [Hermes Guide](/hermes) |
-| **A2A** | `from tenuo.a2a import ...` | [A2A Guide](/a2a) |
-| **Custom** | `from tenuo import Warrant, SigningKey` | [API Reference](/api-reference) |
+| Framework / SDK | Language | Integration | Getting Started |
+|-----------------|----------|-------------|-----------------|
+| **Python SDK** | Python | `uv pip install tenuo` | [Python API](/api-reference) |
+| **TypeScript SDK** | TypeScript | `npm install @tenuo/core@beta` | [TypeScript Guide](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts) |
+| **Rust SDK** | Rust | `cargo add tenuo --features sdk` | [Rust API](https://docs.rs/tenuo) |
+| **OpenAI SDK** | Python | `from tenuo.openai import guard` | [OpenAI Guide](/openai) |
+| **Temporal** | Python | `from tenuo.temporal import TenuoTemporalPlugin` | [Temporal Guide](/temporal) |
+| **LangChain** | Python | `from tenuo.langchain import auto_protect` | [LangChain Guide](/langchain) |
+| **LangGraph** | Python | `from tenuo.langgraph import guard_node` | [LangGraph Guide](/langgraph) |
+| **CrewAI** | Python | `from tenuo.crewai import ...` | [CrewAI Guide](/crewai) |
+| **Google ADK** | Python | `from tenuo.google_adk import TenuoGuard` | [ADK Guide](/google-adk) |
+| **MCP** | Python | `from tenuo.mcp import SecureMCPClient` | [MCP Guide](/mcp) |
+| **FastAPI** | Python | `from tenuo.fastapi import SecureAPIRouter` | [FastAPI Guide](/fastapi) |
+| **AutoGen** | Python | `from tenuo.autogen import ...` | [AutoGen Guide](/autogen) |
+| **Hermes Agent** | Python | `hermes plugins install hermes-tenuo` | [Hermes Guide](/hermes) |
+| **A2A** | Python | `from tenuo.a2a import ...` | [A2A Guide](/a2a) |
+| **Custom** | Python | `from tenuo import Warrant, SigningKey` | [API Reference](/api-reference) |
 
 **Do you have agents communicating across processes?** Add [A2A](/a2a) alongside your runtime integration.
 
