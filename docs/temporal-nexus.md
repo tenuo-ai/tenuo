@@ -78,7 +78,7 @@ boundary, even though the Nexus endpoint itself is reachable.
 
 - read the current workflow warrant, or accept a per-call `warrant=`;
 - require `key_id=` when a per-call warrant is supplied;
-- include the full delegated `warrant_chain`;
+- carry a delegated warrant's parents as `warrant_chain=[root, ...]` (root-first, excluding the leaf; a legacy list ending with the leaf is still accepted);
 - optionally carry pre-collected `SignedApproval` objects with `approvals=`;
 - sign proof-of-possession over Nexus-specific context; and
 - pass Tenuo material through the Nexus operation `headers=` argument.

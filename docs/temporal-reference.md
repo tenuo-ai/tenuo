@@ -932,7 +932,7 @@ Constraint keys must already exist in the parent warrant.
 The per-Activity override is held in a workflow task-local `ContextVar`, so
 parallel workflow tasks cannot consume one another's warrant. When
 `warrant_chain=` is omitted, Tenuo extends the active workflow chain with the
-override warrant automatically.
+override warrant automatically. If you pass `warrant_chain=`, list the parents only (root-first, excluding the leaf); a legacy list ending with the leaf is still accepted.
 
 ### Scheduled Workflows
 
@@ -959,7 +959,7 @@ field, so the helper validates locally before releasing the completion:
 This is warrant liveness, not capability scope: the helper does not check
 whether the warrant authorizes completing this Activity.
 
-Delegated warrants must include `warrant_chain=[root, ..., leaf]`. Validation is
+Delegated warrants must include their parents as `warrant_chain=[root, ...]` (root-first, excluding the leaf; a legacy list ending with the leaf is still accepted). Validation is
 performed before this helper calls the completion handle; it never falls back
 to an unverified completion. This is a caller-side preflight, not a Temporal
 enforcement boundary: code that directly invokes `AsyncActivityHandle.complete()`

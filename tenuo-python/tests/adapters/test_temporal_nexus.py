@@ -15,7 +15,14 @@ pytest.importorskip("nexusrpc")
 import nexusrpc  # noqa: E402
 import tenuo  # noqa: F401, E402 - installs Warrant.mint_builder()
 from tenuo.approval import ApprovalRequest, sign_approval  # noqa: E402
-from tenuo_core import Exact, Range, SigningKey, Warrant, py_compute_request_hash  # noqa: E402
+from tenuo_core import (  # noqa: E402
+    Exact,
+    Range,
+    SigningKey,
+    Warrant,
+    decode_warrant_stack_base64,
+    py_compute_request_hash,
+)
 
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
 from tenuo.temporal._client import TenuoClientInterceptor  # noqa: E402
@@ -25,6 +32,7 @@ from tenuo.temporal._interceptors import (  # noqa: E402
 )
 from tenuo.temporal._constants import (  # noqa: E402
     TENUO_ARG_KEYS_HEADER,
+    TENUO_CHAIN_HEADER,
     TENUO_KEY_ID_HEADER,
 )
 from tenuo.temporal._dedup import _default_pop_dedup_store, _pop_dedup_cache  # noqa: E402
@@ -2329,3 +2337,166 @@ def test_bootstrap_nexus_workflow_requires_worker_config(
 
     with pytest.raises(TenuoContextError, match="requires TenuoWorkerInterceptor"):
         tenuo_bootstrap_nexus_workflow(envelope)
+
+
+# ---------------------------------------------------------------------------
+# warrant_chain: parents-only (canonical) and leaf-terminated (legacy) forms
+# ---------------------------------------------------------------------------
+
+
+def _refund_delegated_chain(root_key: Any, agent_key: Any) -> tuple[Any, Any]:
+    orch_key = SigningKey.generate()
+    tool = nexus_tool_name("billing-prod", "refund", service="BillingService")
+    root = (
+        Warrant.mint_builder()
+        .holder(orch_key.public_key)
+        .capability(tool, order_id=Exact("ord_123"), amount_cents=Range(0, 5000))
+        .ttl(3600)
+        .mint(root_key)
+    )
+    leaf = (
+        root.grant_builder()
+        .holder(agent_key.public_key)
+        .capability(tool, order_id=Exact("ord_123"), amount_cents=Range(0, 5000))
+        .ttl(1800)
+        .grant(orch_key)
+    )
+    return root, leaf
+
+
+def _chain_for(form: str, root: Any, leaf: Any) -> list[Any]:
+    return [root] if form == "parents" else [root, leaf]
+
+
+def _sent_chain(headers: dict[str, str]) -> list[bytes]:
+    stack = decode_warrant_stack_base64(base64.b64decode(headers[TENUO_CHAIN_HEADER]).decode("utf-8"))
+    return [w.to_bytes() for w in stack]
+
+
+@pytest.mark.parametrize("form", ["parents", "legacy"])
+def test_tenuo_nexus_headers_accepts_both_chain_forms(form: str, nexus_keys: tuple[Any, Any]) -> None:
+    root_key, agent_key = nexus_keys
+    root, leaf = _refund_delegated_chain(root_key, agent_key)
+    input = RefundInput("ord_123", 2500)
+    headers = tenuo_nexus_headers(
+        leaf,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=input,
+        warrant_chain=_chain_for(form, root, leaf),
+    )
+
+    assert _sent_chain(headers) == [root.to_bytes(), leaf.to_bytes()]
+    ctx = SimpleNamespace(request_id="req-default", service="BillingService", operation="refund", headers=headers)
+    config = TenuoPluginConfig(key_resolver=StaticResolver(agent_key), trusted_roots=[root_key.public_key])
+    verified = verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    assert verified.to_bytes() == leaf.to_bytes()
+
+
+@pytest.mark.parametrize("form", ["parents", "legacy"])
+async def test_tenuo_execute_nexus_operation_accepts_both_chain_forms(
+    form: str,
+    monkeypatch: pytest.MonkeyPatch,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    root, leaf = _refund_delegated_chain(root_key, agent_key)
+    run_key = f"run-nexus-chain-{form}"
+    config = TenuoPluginConfig(key_resolver=StaticResolver(agent_key), trusted_roots=[root_key.public_key])
+    with _store_lock:
+        _workflow_headers_store[run_key] = tenuo_headers(nexus_warrant, "agent-key")
+        _workflow_config_store[run_key] = config
+    monkeypatch.setattr("tenuo.temporal._nexus._current_run_key", lambda: run_key)
+
+    client = FakeNexusClient()
+    input = RefundInput("ord_123", 2500)
+    await tenuo_execute_nexus_operation(
+        client,
+        "refund",
+        input,
+        warrant=leaf,
+        key_id="agent-key",
+        warrant_chain=_chain_for(form, root, leaf),
+    )
+
+    assert client.execute_call is not None
+    headers = client.execute_call[2]["headers"]
+    assert _sent_chain(headers) == [root.to_bytes(), leaf.to_bytes()]
+    ctx = SimpleNamespace(request_id="req-default", service="BillingService", operation="refund", headers=headers)
+    verified = verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    assert verified.to_bytes() == leaf.to_bytes()
+
+
+@pytest.mark.parametrize("form", ["parents", "legacy"])
+def test_create_nexus_workflow_envelope_accepts_both_chain_forms(form: str, nexus_keys: tuple[Any, Any]) -> None:
+    root_key, agent_key = nexus_keys
+    root, leaf = _refund_delegated_chain(root_key, agent_key)
+    envelope = tenuo_create_nexus_workflow_envelope(
+        leaf,
+        "agent-key",
+        workflow_id="refund-wf-chain",
+        warrant_chain=_chain_for(form, root, leaf),
+    )
+    assert _sent_chain(envelope.headers) == [root.to_bytes(), leaf.to_bytes()]
+
+
+@pytest.mark.parametrize("form", ["parents", "legacy"])
+async def test_start_nexus_workflow_accepts_both_chain_forms(
+    form: str,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    handler_key = SigningKey.generate()
+    orch_key = SigningKey.generate()
+    wf_root = (
+        Warrant.mint_builder()
+        .holder(orch_key.public_key)
+        .capability("RefundWorkflow", order_id=Exact("ord_123"))
+        .ttl(3600)
+        .mint(root_key)
+    )
+    wf_leaf = (
+        wf_root.grant_builder()
+        .holder(handler_key.public_key)
+        .capability("RefundWorkflow", order_id=Exact("ord_123"))
+        .ttl(1800)
+        .grant(orch_key)
+    )
+    client_interceptor = TenuoClientInterceptor()
+    bound: dict[str, Any] = {}
+    ctx = FakeNexusWorkflowRunContext(
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+        on_start=lambda: bound.update(client_interceptor._headers_by_workflow_id["refund-wf-chain"][0]),
+    )
+    ctx.consume_interceptor = client_interceptor
+    config = TenuoPluginConfig(key_resolver=StaticResolver(agent_key), trusted_roots=[root_key.public_key])
+
+    await tenuo_start_nexus_workflow(
+        ctx,
+        input,
+        config,
+        client_interceptor,
+        "RefundWorkflow.run",
+        workflow_id="refund-wf-chain",
+        workflow_warrant=wf_leaf,
+        workflow_key_id="handler-key",
+        workflow_warrant_chain=_chain_for(form, wf_root, wf_leaf),
+        endpoint="billing-prod",
+    )
+
+    stack = decode_warrant_stack_base64(bound[TENUO_CHAIN_HEADER].decode("utf-8"))
+    assert [w.to_bytes() for w in stack] == [wf_root.to_bytes(), wf_leaf.to_bytes()]

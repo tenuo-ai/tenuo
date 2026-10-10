@@ -5,7 +5,8 @@ from __future__ import annotations
 import binascii
 import gzip
 import logging
-from typing import Any, Dict, List, Optional
+import warnings
+from typing import Any, Dict, List, Optional, Sequence
 
 from tenuo.temporal._constants import (
     TENUO_CHAIN_HEADER,
@@ -82,11 +83,9 @@ def tenuo_headers(
     from tenuo._enforcement import split_presented_warrant
 
     warrant, parents = split_presented_warrant(warrant, warrant_chain)
+    if parents:
+        parents = _normalize_parent_chain(warrant, parents, operation="tenuo_headers")
     warrant_bytes = bytes(warrant.to_bytes())
-    if parents and bytes(parents[-1].to_bytes()) == warrant_bytes:
-        raise TenuoContextError(
-            "tenuo_headers: warrant_chain lists parent warrants only; do not include the leaf warrant."
-        )
 
     headers: Dict[str, bytes] = {
         TENUO_KEY_ID_HEADER: key_id.encode("utf-8"),
@@ -107,6 +106,45 @@ def tenuo_headers(
         headers[TENUO_CHAIN_HEADER] = encode_warrant_stack([*parents, warrant]).encode("utf-8")
 
     return headers
+
+
+def _normalize_parent_chain(
+    warrant: Any,
+    warrant_chain: Sequence[Any],
+    *,
+    operation: str,
+) -> List[Any]:
+    """Return ``warrant_chain`` as parents only: root-first, excluding the leaf.
+
+    ``warrant_chain`` means parent warrants across the SDK. Older Temporal
+    helpers took the full chain ending with ``warrant``; that legacy form is
+    still accepted: a trailing element equal to ``warrant`` is dropped (a
+    warrant cannot be its own parent). Wire headers are unchanged and still
+    carry ``[*parents, leaf]``.
+    """
+    parents = list(warrant_chain)
+    if parents and bytes(parents[-1].to_bytes()) == bytes(warrant.to_bytes()):
+        _warn_legacy_chain(operation)
+        parents.pop()
+    return parents
+
+
+def _warn_legacy_chain(operation: str) -> None:
+    # Never warn inside workflow code: it would repeat on every run and replay,
+    # and under warnings-as-errors it would fail the workflow task.
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]
+
+        if workflow.in_workflow():
+            return
+    except Exception:
+        pass
+    warnings.warn(
+        f"{operation}: warrant_chain ending with the leaf warrant is deprecated; "
+        "pass parent warrants only (root-first, excluding the leaf).",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 def _validate_chain_ends_with_warrant(

@@ -2116,12 +2116,38 @@ def test_tenuo_headers_without_chain_sends_leaf_only():
     assert TENUO_CHAIN_HEADER not in tenuo_headers(leaf, "agent1")
 
 
-def test_tenuo_headers_rejects_leaf_inside_warrant_chain():
-    from tenuo.temporal.exceptions import TenuoContextError
+def test_tenuo_headers_accepts_legacy_leaf_terminated_chain():
+    from tenuo.temporal._constants import TENUO_CHAIN_HEADER
 
     root, leaf = _delegated_start_chain()
-    with pytest.raises(TenuoContextError, match="parent warrants only"):
-        tenuo_headers(leaf, "agent1", warrant_chain=[root, leaf])
+    expected = tenuo_headers(leaf, "agent1", warrant_chain=[root])
+    with pytest.warns(DeprecationWarning, match="parent warrants only"):
+        legacy = tenuo_headers(leaf, "agent1", warrant_chain=[root, leaf])
+    assert legacy[TENUO_CHAIN_HEADER] == expected[TENUO_CHAIN_HEADER]
+
+
+@pytest.mark.parametrize("form", ["parents", "legacy"])
+def test_tenuo_warrant_context_accepts_both_chain_forms(form):
+    from types import SimpleNamespace
+
+    from tenuo.temporal._client import TenuoClientInterceptor, tenuo_warrant_context
+    from tenuo.temporal._constants import TENUO_CHAIN_HEADER
+
+    root, leaf = _delegated_start_chain()
+    chain = [root] if form == "parents" else [root, leaf]
+    nxt = MagicMock()
+    nxt.start_workflow = AsyncMock(return_value="handle")
+    outbound = TenuoClientInterceptor().intercept_client(nxt)
+    start_input = SimpleNamespace(id="wf-ctx", headers={})
+
+    async def run():
+        async with tenuo_warrant_context(leaf, "agent1", warrant_chain=chain):
+            await outbound.start_workflow(start_input)
+
+    asyncio.run(run())
+
+    raw = start_input.headers[TENUO_CHAIN_HEADER].data
+    assert _decoded_chain_header(raw) == [bytes(root.to_bytes()), bytes(leaf.to_bytes())]
 
 
 def test_start_workflow_authorized_binds_warrant_chain():
@@ -2584,6 +2610,33 @@ async def test_async_activity_completion_requires_chain_for_delegated_warrant():
         "leaf-key",
         task_queue="async-completion-delegated",
         warrant_chain=[root, leaf],
+    )
+    handle.complete.assert_awaited_once_with("result")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["parents", "legacy"])
+async def test_async_activity_completion_accepts_both_chain_forms(form):
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    leaf_key = SigningKey.generate()
+    root = Warrant.issue(root_key, capabilities={"external_job": {}}, holder=root_key.public_key)
+    leaf = root.attenuate(signing_key=root_key, holder=leaf_key.public_key, capabilities={"external_job": {}})
+    _set_worker_config(
+        TenuoPluginConfig(key_resolver=AsyncMock(), trusted_roots=[root_key.public_key]),
+        task_queue="async-completion-chain-forms",
+    )
+    handle = AsyncMock()
+
+    await tenuo_complete_async_activity(
+        handle,
+        "result",
+        leaf,
+        task_queue="async-completion-chain-forms",
+        warrant_chain=[root] if form == "parents" else [root, leaf],
     )
     handle.complete.assert_awaited_once_with("result")
 
@@ -3129,6 +3182,61 @@ async def test_per_activity_override_reaches_interceptor_and_extends_chain():
     assert TENUO_POP_HEADER in result.headers
     resolver.resolve_sync.assert_called_once_with("holder-key")
     assert _activity_warrant_override.get() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["parents", "legacy"])
+async def test_per_activity_override_accepts_both_chain_forms(form):
+    from types import SimpleNamespace
+
+    from temporalio import workflow
+    from tenuo_core import SigningKey, Warrant, decode_warrant_stack_base64
+    from tenuo.temporal import tenuo_execute_activity
+    from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
+    from tenuo.temporal._state import _store_lock, _workflow_headers_store
+
+    holder = SigningKey.generate()
+    root = Warrant.issue(holder, capabilities={"read_file": {}}, holder=holder.public_key)
+    leaf = root.attenuate(signing_key=holder, holder=holder.public_key, capabilities={"read_file": {}})
+    resolver = MagicMock()
+    resolver.resolve_sync.return_value = holder
+    config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[holder.public_key])
+    next_interceptor = MagicMock()
+    next_interceptor.start_activity.side_effect = lambda value: value
+    outbound = _TenuoWorkflowOutboundInterceptor(next_interceptor, config)
+
+    def read_file(path):
+        return path
+
+    async def execute_through_outbound(activity, **kwargs):
+        return outbound.start_activity(
+            SimpleNamespace(fn=activity, activity="read_file", args=tuple(kwargs["args"]), headers={})
+        )
+
+    base_headers = tenuo_headers(root, "holder-key")
+    info = MagicMock(run_id=f"run-chain-{form}", workflow_id=f"wf-chain-{form}", headers=base_headers)
+    with _store_lock:
+        _workflow_headers_store[info.run_id] = base_headers
+    try:
+        with (
+            patch.object(workflow, "info", return_value=info),
+            patch.object(workflow, "now", return_value=datetime.now(timezone.utc)),
+            patch.object(workflow, "execute_activity", side_effect=execute_through_outbound),
+        ):
+            result = await tenuo_execute_activity(
+                read_file,
+                args=["/data/report.txt"],
+                warrant=leaf,
+                key_id="holder-key",
+                warrant_chain=[root] if form == "parents" else [root, leaf],
+                start_to_close_timeout=1,
+            )
+    finally:
+        with _store_lock:
+            _workflow_headers_store.pop(info.run_id, None)
+
+    sent_chain = decode_warrant_stack_base64(result.headers[TENUO_CHAIN_HEADER].data.decode("utf-8"))
+    assert [w.to_bytes() for w in sent_chain] == [root.to_bytes(), leaf.to_bytes()]
 
 
 @pytest.mark.asyncio

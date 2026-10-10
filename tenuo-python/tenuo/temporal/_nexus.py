@@ -29,6 +29,7 @@ from tenuo.temporal._dedup import _default_pop_dedup_store
 from tenuo.temporal._headers import (
     _extract_key_id_from_headers,
     _extract_warrant_from_headers,
+    _normalize_parent_chain,
     _validate_chain_ends_with_warrant,
     tenuo_headers,
 )
@@ -139,9 +140,14 @@ def tenuo_nexus_headers(
     code usually wants :func:`tenuo_execute_nexus_operation` or
     :func:`tenuo_start_nexus_operation`, which resolve the signer from the
     active ``TenuoPluginConfig``.
+
+    ``warrant_chain`` lists the parent warrants, root-first, excluding the
+    leaf. A legacy list ending with ``warrant`` is still accepted.
     """
     raw_headers = tenuo_headers(warrant, key_id, compress=compress)
-    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
+    chain = [warrant]
+    if warrant_chain is not None:
+        chain = [*_normalize_parent_chain(warrant, warrant_chain, operation="tenuo_nexus_headers"), warrant]
     _validate_chain_ends_with_warrant(
         chain,
         warrant,
@@ -182,7 +188,11 @@ async def tenuo_execute_nexus_operation(
     headers: Optional[Mapping[str, str]] = None,
     summary: Optional[str] = None,
 ) -> Any:
-    """Execute a Nexus operation with Tenuo authorization headers."""
+    """Execute a Nexus operation with Tenuo authorization headers.
+
+    ``warrant_chain`` lists the parent warrants, root-first, excluding the
+    leaf. A legacy list ending with ``warrant`` is still accepted.
+    """
     call_headers = _authorized_nexus_headers(
         nexus_client,
         operation,
@@ -224,7 +234,11 @@ async def tenuo_start_nexus_operation(
     headers: Optional[Mapping[str, str]] = None,
     summary: Optional[str] = None,
 ) -> Any:
-    """Start a Nexus operation with Tenuo authorization headers."""
+    """Start a Nexus operation with Tenuo authorization headers.
+
+    ``warrant_chain`` lists the parent warrants, root-first, excluding the
+    leaf. A legacy list ending with ``warrant`` is still accepted.
+    """
     call_headers = _authorized_nexus_headers(
         nexus_client,
         operation,
@@ -580,6 +594,9 @@ def tenuo_create_nexus_workflow_envelope(
     ``TenuoClientInterceptor`` installed. Use this explicit envelope path for
     manual transports, migration, or workflows that intentionally want
     bootstrap data visible in ordinary workflow input.
+
+    ``warrant_chain`` lists the parent warrants, root-first, excluding the
+    leaf. A legacy list ending with ``warrant`` is still accepted.
     """
     if not workflow_id:
         raise TenuoContextError(
@@ -631,6 +648,10 @@ async def tenuo_start_nexus_workflow(
     warrant to the exact backing ``workflow_id`` through
     ``TenuoClientInterceptor.set_headers_for_workflow()``, then starts the
     workflow through the normal Temporal Nexus context.
+
+    ``workflow_warrant_chain`` lists the parent warrants of
+    ``workflow_warrant``, root-first, excluding the leaf. A legacy list ending
+    with ``workflow_warrant`` is still accepted.
     """
     if not workflow_id:
         raise TenuoContextError(
@@ -938,7 +959,10 @@ def _resolve_workflow_nexus_authority(
 
     assert key_id is not None
     if warrant_chain is not None:
-        chain = list(warrant_chain)
+        chain = [
+            *_normalize_parent_chain(warrant, warrant_chain, operation="tenuo_execute_nexus_operation"),
+            warrant,
+        ]
     elif getattr(warrant, "parent_hash", None) is None:
         chain = [warrant]
     else:
@@ -1155,7 +1179,9 @@ def _workflow_headers_for_warrant(
     operation: str,
 ) -> Dict[str, bytes]:
     raw_headers = tenuo_headers(warrant, key_id, compress=compress)
-    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
+    chain = [warrant]
+    if warrant_chain is not None:
+        chain = [*_normalize_parent_chain(warrant, warrant_chain, operation=operation), warrant]
     _validate_chain_ends_with_warrant(chain, warrant, operation=operation)
     if len(chain) > 1:
         from tenuo_core import encode_warrant_stack
