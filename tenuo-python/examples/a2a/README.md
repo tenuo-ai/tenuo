@@ -240,7 +240,7 @@ server = (A2AServerBuilder()
     .accept_warrants_from(orchestrator_key.public_key)
     .build())
 
-@server.skill("search", constraints={"url": UrlSafe})
+@server.skill("search", constraints={"url": UrlSafe()})
 async def search(query: str, url: str) -> dict:
     # Only allowed URLs pass through
     return await fetch_papers(query, url)

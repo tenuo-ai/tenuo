@@ -46,9 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Constraints declared with `@server.skill(..., constraints=...)` were only
   checked when `require_pop=False`, so with the default `require_pop=True` a
   server-level `Subpath("/data")` did not stop `path="/etc/passwd"` when the
-  warrant allowed it. They are now checked on every call. A bare constraint
-  class such as `constraints={"path": Subpath}` has no bounds and stays
-  declarative when proof of possession is on, as before.
+  warrant allowed it. They are now checked on every call.
+- **Bare A2A skill constraint classes no longer reject every call.** A class
+  such as `constraints={"path": Subpath}` has no bounds. With
+  `require_pop=False` it was checked as `isinstance(value, Subpath)`, which
+  rejected every call. It now only advertises the parameter's constraint type
+  in the AgentCard (which reported it as `type` before) and warns at
+  registration; pass an instance such as `Subpath("/data")` to enforce a bound.
 
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the

@@ -495,7 +495,7 @@ server = (A2AServerBuilder()
     .registration_handler(my_handler) # Enable CSR handshake
     .build())
 
-@server.skill("search_papers", constraints={"sources": UrlSafe})
+@server.skill("search_papers", constraints={"sources": UrlSafe()})
 async def search_papers(query: str, sources: list[str]) -> list[dict]:
     return await do_search(query, sources)
 

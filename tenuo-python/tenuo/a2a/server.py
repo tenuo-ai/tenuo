@@ -56,6 +56,7 @@ import os
 import sys
 import time
 import uuid
+import warnings
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, List, Optional, Protocol, runtime_checkable
 
@@ -341,7 +342,8 @@ class SkillDefinition:
 
         constraint_infos = {}
         for key, constraint in self.constraints.items():
-            type_name = type(constraint).__name__
+            # A class (bare marker or plain type) advertises its own name.
+            type_name = constraint.__name__ if isinstance(constraint, type) else type(constraint).__name__
             constraint_infos[key] = ConstraintInfo(type=type_name, required=True)
 
         return SkillInfo(
@@ -1020,11 +1022,15 @@ class A2AServer:
 
         Args:
             skill_id: Unique identifier for this skill
-            constraints: Map of parameter names to constraint types
+            constraints: Map of parameter names to constraint instances, enforced
+                on every call in addition to the warrant. A bare constraint class
+                (``Subpath`` rather than ``Subpath("/data")``) only advertises the
+                parameter's constraint type in the AgentCard, enforces nothing,
+                and emits a ``UserWarning``.
             name: Display name (defaults to skill_id)
 
         Example:
-            @server.skill("read_file", constraints={"path": Subpath})
+            @server.skill("read_file", constraints={"path": Subpath("/data")})
             async def read_file(path: str) -> str:
                 ...
         """
@@ -1038,6 +1044,16 @@ class A2AServer:
                 constraints=constraints,
                 name=name,
             )
+            for param, constraint in constraints.items():
+                if _is_constraint_class_marker(constraint):
+                    cls = constraint.__name__
+                    warnings.warn(
+                        f"Skill '{skill_id}': constraint for '{param}' is the class {cls}, which only "
+                        f"advertises the type in the AgentCard and enforces no bound. Use an instance "
+                        f"like {cls}(...) to enforce it.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
             self._skills[skill_id] = skill_def
 
             # Return original function - constraint enforcement happens in validate_warrant()
@@ -1333,10 +1349,9 @@ class A2AServer:
             for param, server_constraint in skill_def.constraints.items():
                 # A bare constraint class (e.g. ``Subpath`` rather than
                 # ``Subpath("/data")``) carries no bounds; it only declares the
-                # parameter's constraint type for the AgentCard. With PoP the
-                # warrant's own constraint is enforced by the Authorizer, so skip
-                # such markers there, as before. The no-PoP path is unchanged.
-                if self.require_pop and _is_constraint_class_marker(server_constraint):
+                # parameter's constraint type for the AgentCard (and warns at
+                # registration). The warrant still governs the argument.
+                if _is_constraint_class_marker(server_constraint):
                     continue
                 if param in arguments:
                     value = arguments[param]

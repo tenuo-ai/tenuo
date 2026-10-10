@@ -498,6 +498,11 @@ async def read_file(path: str) -> str:
     ...
 ```
 
+Pass constraint instances such as `Subpath("/data")`: the server checks them on
+every call, on top of the warrant. A bare class such as `Subpath` only advertises
+the parameter's constraint type in the AgentCard, enforces no bound, and emits a
+`UserWarning` at registration.
+
 **Constraint binding validation** happens at startup:
 
 ```python

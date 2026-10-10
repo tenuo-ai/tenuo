@@ -92,7 +92,7 @@ def create_analyst_server(key: SigningKey, trusted: list, port: int) -> A2AServe
         audit_log=io.StringIO(),
     )
 
-    @server.skill("read_logs", constraints={"path": Subpath})
+    @server.skill("read_logs", constraints={"path": Subpath("/var/log")})
     async def read_logs(path: str) -> dict:
         """Read log files from allowed paths."""
         # Simulate log reading
@@ -106,7 +106,7 @@ def create_analyst_server(key: SigningKey, trusted: list, port: int) -> A2AServe
             "suspicious_ips": ["203.0.113.5"],
         }
 
-    @server.skill("query_threat_db", constraints={"query": Wildcard, "table": Wildcard})
+    @server.skill("query_threat_db", constraints={"query": Wildcard(), "table": Wildcard()})
     async def query_threat_db(query: str, table: str) -> dict:
         """Query threat intelligence database."""
         # Simulate DB query
@@ -141,7 +141,7 @@ def create_responder_server(key: SigningKey, trusted: list, port: int) -> A2ASer
         audit_log=io.StringIO(),
     )
 
-    @server.skill("block_ip", constraints={"ip": Cidr, "duration": Wildcard})
+    @server.skill("block_ip", constraints={"ip": Cidr("0.0.0.0/0"), "duration": Wildcard()})
     async def block_ip(ip: str, duration: int) -> dict:
         """Block an IP address in the firewall."""
         # Simulate firewall update
@@ -155,7 +155,7 @@ def create_responder_server(key: SigningKey, trusted: list, port: int) -> A2ASer
             "firewall": "cloudflare",
         }
 
-    @server.skill("quarantine_user", constraints={"user_id": Wildcard})
+    @server.skill("quarantine_user", constraints={"user_id": Wildcard()})
     async def quarantine_user(user_id: str) -> dict:
         """Quarantine a user account."""
         await asyncio.sleep(0.3)
