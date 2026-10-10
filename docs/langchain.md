@@ -129,19 +129,22 @@ A runnable version with a scripted model (no API key) is [`create_agent_middlewa
 The unified `guard()` function wraps any LangChain tools:
 
 ```python
-from tenuo import Warrant, SigningKey, Pattern
+from tenuo import Warrant, SigningKey, Pattern, configure
 from tenuo.langchain import guard
 from langchain_community.tools import DuckDuckGoSearchRun
 
 # 1. Create warrant and bind key
-key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+issuer_key = SigningKey.generate()  # the trusted root
+agent_key = SigningKey.generate()   # In production: SigningKey.from_env("MY_KEY")
+configure(trusted_roots=[issuer_key.public_key])
+
 warrant = (Warrant.mint_builder()
     .capability("duckduckgo_search", query=Pattern("*"))
-    .holder(key.public_key)
+    .holder(agent_key.public_key)
     .ttl(3600)
-    .mint(key))
+    .mint(issuer_key))
 
-bound = warrant.bind(key)
+bound = warrant.bind(agent_key)
 
 # 2. Protect tools
 protected_tools = guard([DuckDuckGoSearchRun()], bound)
@@ -162,6 +165,8 @@ executor = AgentExecutor(agent=agent, tools=protected_tools)
 
 result = executor.invoke({"input": "Search for AI news"})
 ```
+
+Guarded tools verify the warrant back to a trusted root on every call. Configure the roots once with `configure(trusted_roots=[...])` (root issuer keys only), or pass `trusted_roots=` to `TenuoTool`. Without them every call fails closed with `ToolNotAuthorized`.
 
 ### Using `@guard` Decorator
 
@@ -208,6 +213,9 @@ protected = guard([my_func, other_func], bw)
 | `tools` | `List[Any]` | List of `BaseTool` or callable |
 | `bound` | `BoundWarrant` | Bound warrant (positional, optional) |
 | `strict` | `bool` | Require constraints on critical tools |
+| `approval_handler` | callable | Called when an approval gate fires |
+| `approvals` | `List[SignedApproval]` | Pre-collected approvals |
+| `warrant_chain` | `List[Warrant]` | Parents of a delegated `bound` warrant, root first (see [Delegation Chains](#delegation-chains)) |
 
 **Returns:**
 - For `BaseTool` inputs: `List[TenuoTool]`
@@ -395,6 +403,7 @@ except TenuoError as e:
 | `ToolNotAuthorized` | 1500 | Tool not in warrant | Add tool to warrant |
 | `ConstraintViolation` | 1501 | Argument violates constraint | Request within bounds |
 | `ConfigurationError` | 1201 | Missing context/warrant | Use `warrant_scope()` or pass to `guard()` |
+| `ToolNotAuthorized` | 1500 | No trusted roots configured, or no warrant in scope | `configure(trusted_roots=[...])`; run inside `mint()` / `with bound:` |
 | `ExpiredError` | 1300 | TTL exceeded | Request fresh warrant |
 | `SignatureInvalid` | 1100 | Bad PoP signature | Check signing key |
 | `RevokedError` | 1800 | Warrant revoked | Request new warrant |
@@ -426,19 +435,22 @@ Constraints restrict tool arguments:
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from tenuo import SigningKey, Warrant, Pattern, Subpath, guard
-from tenuo.langchain import guard_tools
+from tenuo import SigningKey, Warrant, Pattern, Subpath, configure, guard
+from tenuo.langchain import guard as guard_list
 
-# 1. Create key and warrant
-key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+# 1. Create keys and warrant
+issuer_key = SigningKey.generate()  # trusted root
+agent_key = SigningKey.generate()   # In production: SigningKey.from_env("MY_KEY")
+configure(trusted_roots=[issuer_key.public_key])
+
 warrant = (Warrant.mint_builder()
-    .tool("search")  # No constraints
+    .capability("duckduckgo_search", query=Pattern("*"))
     .capability("read_file", path=Subpath("/tmp"))  # With path constraint
-    .holder(key.public_key)
+    .holder(agent_key.public_key)
     .ttl(3600)
-    .mint(key))
+    .mint(issuer_key))
 
-bound = warrant.bind(key)
+bound = warrant.bind(agent_key)
 
 # 2. Define tools
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -448,8 +460,8 @@ def read_file(path: str) -> str:
     with open(path) as f:
         return f.read()
 
-# 3. Protect tools
-protected_tools = guard_tools([DuckDuckGoSearchRun(), read_file], bound)
+# 3. Protect tools (guard_tools() takes no BoundWarrant; use the list guard)
+protected_tools = guard_list([DuckDuckGoSearchRun(), read_file], bound)
 
 # 4. Create agent
 llm = ChatOpenAI(model="gpt-4")
@@ -471,25 +483,32 @@ result = executor.invoke({"input": "Read /tmp/test.txt"})
 
 ### `auto_protect()` (Zero Config)
 
-The fastest way to add protection - defaults to **audit mode** so you can deploy without breaking anything:
+Wraps an executor, a list of tools or a single tool with `TenuoTool`, and sets the **process-wide** enforcement mode:
 
 ```python
+from tenuo import mint, Capability
 from tenuo.langchain import auto_protect
 
-# Wrap your executor - logs all tool calls, doesn't block
-protected_executor = auto_protect(executor)
-result = protected_executor.invoke({"input": "Search for AI news"})
+protected_executor = auto_protect(executor)  # mode="audit", an alias of "observe"
 
-# After analyzing logs, switch to enforce mode
+# Tool calls still need a warrant in scope
+async with mint(Capability("search")):
+    result = await protected_executor.ainvoke({"input": "Search for AI news"})
+
+# After analyzing the OBSERVE log lines, enforce
 protected_executor = auto_protect(executor, mode="enforce")
 ```
+
+In observe mode a call that the warrant would deny runs anyway and is logged as `OBSERVE: would deny <tool>: <reason>`. A call with **no** warrant in scope is still blocked with `ToolNotAuthorized`, so run the agent inside `mint(...)` / `grant(...)` or `with bound:` even while observing.
+
+If Tenuo is not configured yet, `auto_protect()` calls `configure(dev_mode=True)` with a freshly generated issuer key, which suits local experiments only. Call `configure(trusted_roots=[...])` yourself first in anything real. Because the mode is global, `auto_protect(..., mode="observe")` also switches every other guarded call in the process to observe.
 
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `agent_or_tools` | `Any` | required | AgentExecutor, list of tools, or single tool |
-| `mode` | `str` | `"audit"` | `"audit"` (log only), `"enforce"` (block), `"permissive"` (warn) |
+| `mode` | `str` | `"audit"` | `"observe"` (`"audit"` and `"permissive"` are aliases): log would-deny calls and let them run. `"enforce"`: block them |
 
 ### `SecureAgentExecutor` (Drop-in Replacement)
 
@@ -533,7 +552,7 @@ from tenuo.langchain import guard_tools
 from tenuo import configure, mint_sync, Capability, SigningKey
 
 kp = SigningKey.generate()
-configure(issuer_key=kp, dev_mode=True)
+configure(issuer_key=kp, dev_mode=True)  # production: configure(issuer_key=kp, trusted_roots=[kp.public_key])
 
 # Wrap tools
 protected_tools = guard_tools([search_tool, calculator], issuer_key=kp)
@@ -624,7 +643,7 @@ from tenuo.langchain import guard_tools
 issuer = SigningKey.generate()
 orchestrator = SigningKey.generate()
 worker = SigningKey.generate()
-configure(issuer_key=issuer, dev_mode=True)
+configure(trusted_roots=[issuer.public_key])  # the root only
 
 # Root warrant: orchestrator can search, read_file, delete_file
 root = (Warrant.mint_builder()
@@ -653,7 +672,24 @@ with chain_scope([root]):
             # tools[2].invoke({"path": "/x"})            # delete_file: DENIED
 ```
 
-`chain_scope` provides parent warrants to `enforce_tool_call` so that `Authorizer.check_chain` can walk the delegation chain back to a trusted root. Without it, delegated warrants fail because the child's issuer (the orchestrator) isn't itself a trusted root — the chain is needed to prove that authority was properly delegated from the issuer.
+`chain_scope` provides parent warrants to `enforce_tool_call` so that `Authorizer.check_chain` can walk the delegation chain back to a trusted root. Without it, delegated warrants fail (`Root warrant issuer is not trusted`) because the child's issuer (the orchestrator) isn't itself a trusted root — the chain is needed to prove that authority was properly delegated from the issuer. Don't work around this by adding the orchestrator's key to `trusted_roots`: that makes it a root and skips the attenuation checks against the real issuer.
+
+With an explicit `BoundWarrant`, pass the parents instead: `guard(tools, child.bind(worker), warrant_chain=[root])`.
+
+---
+
+## Observe Mode
+
+To learn what policy an agent needs before enforcing it, run in observe mode:
+
+```python
+from tenuo import configure
+
+configure(trusted_roots=[issuer_key.public_key], mode="observe")
+# or TENUO_MODE=observe via tenuo.auto_configure(); "audit" and "permissive" are aliases
+```
+
+Guarded tools and `@guard` functions still run every check. A call that would be denied runs anyway, and the process logs `OBSERVE: would deny <tool>: <reason>` at warning level. Observe mode lets every would-deny through, including chain and signature failures, so use it only while discovering policy. Calls with no warrant in scope are still blocked.
 
 ---
 
