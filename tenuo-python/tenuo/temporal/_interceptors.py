@@ -1394,9 +1394,13 @@ class TenuoActivityInboundInterceptor:
             try:
                 from tenuo.exceptions import TenuoError as _TenuoError
                 from tenuo.exceptions import ExpiredError as _ExpiredError
+                from tenuo.exceptions import MissingSignature as _MissingSignature
+                from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
             except ImportError:
                 _TenuoError = TenuoTemporalError  # type: ignore[assignment, misc]
                 _ExpiredError = type(None)  # type: ignore[assignment, misc]
+                _MissingSignature = type(None)  # type: ignore[assignment, misc]
+                _SignatureInvalid = type(None)  # type: ignore[assignment, misc]
 
             if isinstance(e, (_TenuoError, TenuoTemporalError)):
                 self._emit_denial_event(
@@ -1428,6 +1432,13 @@ class TenuoActivityInboundInterceptor:
                         raise self._wrap_as_non_retryable(WarrantExpired(
                             warrant_id=getattr(warrant, "id", ""),
                             expired_at=datetime.fromisoformat(expired_at) if expired_at else datetime.now(timezone.utc),
+                        )) from e
+                    if isinstance(e, (_MissingSignature, _SignatureInvalid)):
+                        # A missing or wrong PoP is a PoP failure on the wire,
+                        # the same as a malformed or replayed one.
+                        raise self._wrap_as_non_retryable(PopVerificationError(
+                            reason=str(e),
+                            activity_name=tool_name,
                         )) from e
                     raise self._wrap_as_non_retryable(TemporalConstraintViolation(
                         tool=tool_name,
