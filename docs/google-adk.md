@@ -91,6 +91,9 @@ from tenuo.google_adk import GuardBuilder
 from tenuo import SigningKey, Warrant
 from tenuo.constraints import Subpath
 
+# Issuer key (in production this lives in your control plane)
+control_plane_key = SigningKey.generate()
+
 # Agent's signing key (proves possession)
 agent_key = SigningKey.generate()
 
@@ -102,9 +105,10 @@ warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(control_plane_key))
 
-# Build guard from warrant
+# Build guard from warrant, trusting only the issuer's public key
 guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
+    .with_trusted_roots([control_plane_key.public_key])
     .build())
 
 agent = Agent(
@@ -113,6 +117,8 @@ agent = Agent(
     before_tool_callback=guard.before_tool,
 )
 ```
+
+Tier 2 fails closed without a trust anchor. Pass `.with_trusted_roots([...])` (or `trusted_roots=` on `TenuoGuard` / `TenuoPlugin`), or call `tenuo.configure(trusted_roots=[...])` once at startup. With neither, every Tier 2 call is denied. Trust only root issuers. A delegated warrant verifies by presenting its chain back to a root (see [Delegated warrants](#delegated-warrants)), never by adding the delegator's key to `trusted_roots`.
 
 **Why Tier 2?** The issuer signs the authority envelope, and delegation can only narrow it. An independent verifier rejects a widened warrant. Your own issuer or a control plane can mint it. Changing the agent's Python cannot produce a broader warrant that verifier will accept. Run the verifier in the component that holds the resource.
 
@@ -127,6 +133,7 @@ from tenuo.approval import cli_prompt
 
 guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
+    .with_trusted_roots([control_plane_key.public_key])
     .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 ```
@@ -187,21 +194,27 @@ If your tool function name differs from the warrant skill name:
 # Warrant has skill "read_file", but your function is named "read_file_tool"
 guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
+    .with_trusted_roots([control_plane_key.public_key])
     .map_skill("read_file_tool", "read_file")  # tool name -> warrant skill
     .build())
 ```
 
-**Helpful error messages:** When a tool isn't found, Tenuo suggests fixes:
+**Recovery hints:** With `on_denial("return")` (the default), a denial for a tool the warrant does not grant carries `hints` listing the warrant's skills. When the name is within a few edits of a granted skill, the hints also suggest the mapping:
 
+```python
+{
+    "error": "authorization_denied",
+    "message": "Authorization denied: ...",
+    "details": "...",
+    "hints": [
+        "Warrant has skills: ['read_file', 'web_search']",
+        "Did you mean 'read_file'?",
+        "Fix: .map_skill(\"read_files\", \"read_file\")",
+    ],
+}
 ```
-ToolAuthorizationError: Tool 'read_file_tool' not found in warrant
 
-Warrant has skills: ['read_file', 'web_search']
-Did you mean 'read_file'?
-
-Fix: Add skill mapping to your GuardBuilder:
-  .map_skill("read_file_tool", "read_file")
-```
+`on_denial("raise")` raises `ToolAuthorizationError` with the denial reason only; hints are not part of the exception.
 
 ---
 
@@ -269,8 +282,11 @@ A warrant is proof of the scope that was issued. A signed receipt is proof of wh
 # Tier 1
 guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
-# Tier 2 (add warrant + signing key)
-guard = GuardBuilder().with_warrant(warrant, signing_key).build()
+# Tier 2 (add warrant + signing key + the issuer you trust)
+guard = (GuardBuilder()
+    .with_warrant(warrant, signing_key)
+    .with_trusted_roots([issuer_key.public_key])
+    .build())
 ```
 
 ### Bottom Line
@@ -498,6 +514,8 @@ guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("retu
 # }
 ```
 
+`denial_detail` on `TenuoGuard` controls the text: `"full"` (default) as above, `"minimal"` returns `"Authorization denied."` and `"silent"` returns `"Access denied."`, both with `details: None`. A call that needs more approvals returns `{"error": "insufficient_approvals", "message": ..., "got": N, "need": M, "details": ...}`, or raises `InsufficientApprovals` with `on_denial("raise")`.
+
 **Note**: This integration uses ADK-specific errors. For Tenuo's canonical wire codes (1000-2199), use the `tenuo.langchain` integration or `Warrant` authorization directly.
 
 ---
@@ -517,8 +535,9 @@ guard = (GuardBuilder()
 - `event`: `"tool_allowed"`, `"tool_denied"`, or `"tool_dry_run_denied"`
 - `observed`: `true` on `tool_dry_run_denied` events, which a dry run or observe mode let through
 - `tool`: Name of the tool
-- `args`: Tool arguments (values truncated to 100 chars)
-- `warrant`: Warrant ID and issuer (if available)
+- `args`: Argument keys with values replaced by `"[REDACTED]"`. With `TenuoGuard(redact_args_in_logs=False)`, values are logged, truncated to 100 chars
+- `reason`: Denial reason, on `tool_denied` and `tool_dry_run_denied` events
+- `warrant`: Warrant `id` and `iss`, on `tool_allowed` events when a warrant is in use
 - `timestamp`: ISO 8601 timestamp
 
 ---
@@ -536,15 +555,20 @@ guard = (GuardBuilder()
     .build())
 ```
 
-### `.with_warrant(warrant, signing_key)`
+### `.with_warrant(warrant, signing_key, *, warrant_chain=None)`
 
-Use cryptographic warrant (Tier 2):
+Use cryptographic warrant (Tier 2). For a delegated warrant, pass its parents as `warrant_chain` (root first, excluding the leaf), or pass the whole chain as `warrant` (a WarrantStack string or a root-first list):
 
 ```python
 guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
+    .with_trusted_roots([control_plane_key.public_key])
     .build())
 ```
+
+### `.with_trusted_roots(roots)`
+
+Public keys of the root issuers Tier 2 verification trusts. Falls back to `tenuo.configure(trusted_roots=[...])`. With neither, Tier 2 calls are denied.
 
 ### `.map_skill(tool_name, skill_name, **arg_mappings)`
 
@@ -573,6 +597,10 @@ Set audit log destination (file path or file-like object):
 guard = GuardBuilder().allow("read_file").audit_log("audit.jsonl").build()
 ```
 
+### `.dry_run(enabled=True)`
+
+Observe mode for this guard only: denials are logged and audited but never block. See [Development Modes](#development-modes).
+
 ---
 
 ## Advanced: Dynamic Warrants
@@ -580,19 +608,24 @@ guard = GuardBuilder().allow("read_file").audit_log("audit.jsonl").build()
 For per-request warrants (e.g., user-specific capabilities):
 
 ```python
-# Configure guard to look up warrant from session state
-guard = (GuardBuilder()
-    .with_warrant_key("user_warrant")  # Key in ToolContext.session_state
-    .build())
+from tenuo.google_adk import TenuoGuard
 
-# At runtime, inject user-specific warrant
-def handle_request(user_id):
-    warrant = issue_warrant_for_user(user_id)
-    session_state["user_warrant"] = warrant
-    
-    # Agent uses the injected warrant
-    agent.run(...)
+# Look the warrant up in session state on every tool call
+guard = TenuoGuard(
+    warrant_key="user_warrant",  # Key in ToolContext.state
+    signing_key=agent_key,       # Holder key of the per-user warrants
+    trusted_roots=[issuer_key.public_key],
+)
+
+# At runtime, put the user-specific warrant in the session state
+session = await runner.session_service.create_session(
+    app_name="assistant",
+    user_id=user_id,
+    state={"user_warrant": issue_warrant_for_user(user_id)},
+)
 ```
+
+The state value may also be a WarrantStack string, which carries a delegated warrant's chain in one token.
 
 ---
 
@@ -674,7 +707,7 @@ from tenuo import configure, mint, Capability, Subpath, SigningKey
 
 # Configure Tenuo
 key = SigningKey.generate()
-configure(issuer_key=key)
+configure(issuer_key=key, trusted_roots=[key.public_key])
 
 # Connect to MCP server with automatic tool discovery
 async with SecureMCPClient("python", ["mcp_server.py"], register_config=True) as mcp:
@@ -773,8 +806,12 @@ from google.adk.agents import Agent
 from tenuo.google_adk import GuardBuilder
 from tenuo.a2a import A2AClient
 
-# Guard for orchestrator's own tools
-guard = GuardBuilder().with_warrant(orchestrator_warrant, key).build()
+# Guard for orchestrator's own tools. orchestrator_warrant is minted by the
+# control plane, whose public key is the only trusted root.
+guard = (GuardBuilder()
+    .with_warrant(orchestrator_warrant, key)
+    .with_trusted_roots([control_plane_key.public_key])
+    .build())
 
 orchestrator = Agent(
     name="orchestrator",
@@ -795,11 +832,14 @@ async def delegate_to_worker(task):
     client = A2AClient("https://worker.example.com")
     return await client.send_task(
         warrant=task_warrant,
+        warrant_chain=[orchestrator_warrant],  # parents, root first
         skill="analyze",
         arguments={"data": task},
         signing_key=key,
     )
 ```
+
+The worker trusts only the control plane key. `task_warrant` was signed by the orchestrator, so it verifies only with its parent presented alongside it.
 
 ---
 
@@ -812,7 +852,10 @@ Tenuo provides debugging and visualization utilities in `tenuo.google_adk`.
 ```python
 from tenuo.google_adk import GuardBuilder, explain_denial
 
-guard = GuardBuilder().with_warrant(warrant, signing_key).build()
+guard = (GuardBuilder()
+    .with_warrant(warrant, signing_key)
+    .with_trusted_roots([issuer_key.public_key])
+    .build())
 
 result = guard.before_tool(tool, args, tool_context)
 if result:
@@ -872,6 +915,7 @@ default_guard = GuardBuilder().on_denial("return").build()
 test_guard = TenuoGuard(
     warrant=warrant,
     signing_key=key,
+    trusted_roots=[issuer_key.public_key],
     dry_run=True,  # Logs "OBSERVE: would deny ...", never blocks
 )
 ```
