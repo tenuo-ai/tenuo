@@ -316,6 +316,8 @@ class AuditEvent:
     constraints_checked: Dict[str, Any] = field(default_factory=dict)
     latency_ms: int = 0
     reason: Optional[str] = None
+    # True for a denial that observe mode let through (outcome "denied")
+    observed: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize for JSON audit log."""
@@ -335,6 +337,7 @@ class AuditEvent:
             "constraints_checked": self.constraints_checked,
             "latency_ms": self.latency_ms,
             "reason": self.reason,
+            "observed": self.observed,
         }
 
 
