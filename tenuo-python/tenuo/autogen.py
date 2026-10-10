@@ -302,41 +302,27 @@ class _Guard:
         """
         Buffer-verify-emit streaming defense (TOCTOU safe).
         Expects chunks with .choices[].delta.tool_calls[].function.arguments (string).
+
+        Buffered tool calls are verified whenever a choice finishes (any
+        finish_reason) and again at end of stream, so tool-call deltas are
+        never emitted unverified. Each allowed call carries its verified
+        arguments exactly once (on its first delta); later deltas for the
+        same call have their argument fragment cleared.
         """
         pending_chunks: list[Any] = []
         arg_buffers: Dict[str, list[str]] = {}
         tool_names: Dict[str, str] = {}
 
         def _call_id(tc: Any) -> str:
-            return str(getattr(tc, "id", None) or getattr(tc, "index", "0"))
+            # OpenAI sends ``id`` only on the first delta of a tool call, while
+            # ``index`` is present on every delta, so key on index first.
+            index = getattr(tc, "index", None)
+            if index is not None:
+                return f"index:{index}"
+            call_id = getattr(tc, "id", None)
+            return f"id:{call_id}" if call_id else "index:0"
 
-        for chunk in stream:
-            pending_chunks.append(chunk)
-
-            # Collect tool call deltas
-            for choice in getattr(chunk, "choices", []) or []:
-                delta = getattr(choice, "delta", None)
-                if delta is None:
-                    continue
-                for tc in getattr(delta, "tool_calls", []) or []:
-                    cid = _call_id(tc)
-                    func = getattr(tc, "function", None)
-                    name = getattr(func, "name", None) if func else None
-                    args_piece = getattr(func, "arguments", "") if func else ""
-                    if name:
-                        tool_names[cid] = name
-                    if cid not in arg_buffers:
-                        arg_buffers[cid] = []
-                    if args_piece:
-                        arg_buffers[cid].append(args_piece)
-
-            finished = any(
-                getattr(choice, "finish_reason", None) == "tool_calls" for choice in getattr(chunk, "choices", []) or []
-            )
-
-            if not finished:
-                continue
-
+        def _verify_and_emit() -> Iterable[Any]:
             # Validate complete args for each buffered tool call
             invalid_ids: set[str] = set()
             final_args: Dict[str, Dict[str, Any]] = {}
@@ -376,7 +362,9 @@ class _Guard:
                         logger.warning("Denied tool call %s (%s): %s", cid, name, e)
                     invalid_ids.add(cid)
 
-            # Mutate buffered chunks: drop invalid tool calls on skip/log, set full args on valid ones
+            # Mutate buffered chunks: drop invalid tool calls on skip/log; put the
+            # verified args on the first delta of each valid call and clear the rest
+            emitted_args: set[str] = set()
             for buffered in pending_chunks:
                 for choice in getattr(buffered, "choices", []) or []:
                     delta = getattr(choice, "delta", None)
@@ -393,7 +381,11 @@ class _Guard:
                         if cid in final_args:
                             func = getattr(tc, "function", None)
                             if func is not None:
-                                full = json.dumps(final_args[cid]["args"])
+                                if cid in emitted_args:
+                                    full = ""
+                                else:
+                                    full = json.dumps(final_args[cid]["args"])
+                                    emitted_args.add(cid)
                                 try:
                                     func.arguments = full
                                 except Exception:
@@ -401,17 +393,48 @@ class _Guard:
                         kept_calls.append(tc)
                     delta.tool_calls = kept_calls
 
-            # Emit buffered chunks and reset
+            # Emit buffered chunks
             for buffered in pending_chunks:
                 yield buffered
+
+        for chunk in stream:
+            pending_chunks.append(chunk)
+
+            # Collect tool call deltas
+            for choice in getattr(chunk, "choices", []) or []:
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
+                for tc in getattr(delta, "tool_calls", []) or []:
+                    cid = _call_id(tc)
+                    func = getattr(tc, "function", None)
+                    name = getattr(func, "name", None) if func else None
+                    args_piece = getattr(func, "arguments", "") if func else ""
+                    if name:
+                        tool_names[cid] = name
+                    if cid not in arg_buffers:
+                        arg_buffers[cid] = []
+                    if args_piece:
+                        arg_buffers[cid].append(args_piece)
+
+            # Any finish_reason ("tool_calls", "stop", "length", ...) ends the turn;
+            # buffered tool calls must be verified before anything is emitted.
+            finished = any(
+                getattr(choice, "finish_reason", None) is not None for choice in getattr(chunk, "choices", []) or []
+            )
+
+            if not finished:
+                continue
+
+            yield from _verify_and_emit()
 
             pending_chunks = []
             arg_buffers = {}
             tool_names = {}
 
-        # Emit any remaining buffered chunks (non-tool content)
-        for buffered in pending_chunks:
-            yield buffered
+        # Stream ended without a finish_reason: still verify anything buffered
+        # rather than emitting tool-call deltas unverified.
+        yield from _verify_and_emit()
 
     # ------------------------------------------------------------------ #
     # Internal helpers

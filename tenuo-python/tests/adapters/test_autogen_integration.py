@@ -12,6 +12,7 @@ Covers:
 - Integration invariants from integration guide
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -464,8 +465,12 @@ class TestStreamingTOCTOUProtection:
 
         guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
 
-        with pytest.raises(ConstraintViolation):
+        # Deltas share index 0 but only the first carries id; they must be
+        # reassembled into one call and denied on the constraint, not on a
+        # bogus "Invalid JSON" from splitting the call into two buffers.
+        with pytest.raises(ConstraintViolation) as exc_info:
             list(guard.guard_stream(iter(chunks)))
+        assert "Invalid JSON" not in str(exc_info.value)
 
     def test_streaming_invalid_json_raises(self):
         """Invalid JSON in tool args should be rejected."""
@@ -629,6 +634,93 @@ class TestStreamingTOCTOUProtection:
 
         result_chunks = list(guard.guard_stream(iter(chunks)))
         assert len(result_chunks) == 2
+
+    @staticmethod
+    def _split_tool_call_chunks(
+        name: str, pieces: List[str], finish_reason: Optional[str], id_on_all: bool = False
+    ) -> List[Any]:
+        """OpenAI-shaped stream: id and name only on the first delta (unless id_on_all), index on all."""
+        chunks: List[Any] = []
+        for i, piece in enumerate(pieces):
+            first = i == 0
+            chunks.append(
+                MockStreamChunk(
+                    id=f"chunk_{i}",
+                    choices=[
+                        MockStreamChoice(
+                            index=0,
+                            delta=MockStreamDelta(
+                                tool_calls=[
+                                    MockToolCallDelta(
+                                        index=0,
+                                        id="call_0" if first or id_on_all else None,
+                                        function=MockFunction(name=name if first else "", arguments=piece),
+                                    )
+                                ]
+                            ),
+                            finish_reason=None,
+                        )
+                    ],
+                )
+            )
+        chunks.append(
+            MockStreamChunk(
+                id=f"chunk_{len(pieces)}",
+                choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason=finish_reason)],
+            )
+        )
+        return chunks
+
+    @staticmethod
+    def _emitted_tool_calls(result_chunks: List[Any]) -> List[Any]:
+        return [tc for chunk in result_chunks for choice in chunk.choices for tc in (choice.delta.tool_calls or [])]
+
+    @pytest.mark.parametrize("finish_reason", ["stop", "length", None])
+    def test_streaming_verifies_tool_calls_without_tool_calls_finish(self, finish_reason):
+        """Tool-call deltas must be verified even if the stream never says finish_reason="tool_calls"."""
+        chunks = self._split_tool_call_chunks("unauthorized", ['{"query": ', '"x"}'], finish_reason)
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+
+        with pytest.raises(ToolNotAuthorized):
+            list(guard.guard_stream(iter(chunks)))
+
+    @pytest.mark.parametrize("finish_reason", ["stop", None])
+    def test_streaming_skip_filters_tool_calls_without_tool_calls_finish(self, finish_reason):
+        """Skip mode drops a denied call even when the stream ends with "stop" or no finish_reason."""
+        chunks = self._split_tool_call_chunks("unauthorized", ['{"query": ', '"x"}'], finish_reason)
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).on_denial("skip").build()
+
+        result_chunks = list(guard.guard_stream(iter(chunks)))
+
+        assert len(result_chunks) == len(chunks)
+        assert self._emitted_tool_calls(result_chunks) == []
+
+    def test_streaming_allows_multi_delta_call_with_id_on_first_delta_only(self):
+        """A valid call split across deltas (id only on the first) is allowed and reassembled."""
+        original = '{"query": "ok", "limit": 3}'
+        pieces = ['{"que', 'ry": "o', 'k", "lim', 'it": 3}']
+        chunks = self._split_tool_call_chunks("search", pieces, "tool_calls")
+        guard = GuardBuilder().allow("search", query=Pattern("ok*"), limit=Wildcard()).build()
+
+        result_chunks = list(guard.guard_stream(iter(chunks)))
+
+        emitted = self._emitted_tool_calls(result_chunks)
+        assert len(emitted) == len(pieces)
+        assert emitted[0].id == "call_0"
+        assert emitted[0].function.name == "search"
+        assert json.loads("".join(tc.function.arguments for tc in emitted)) == json.loads(original)
+
+    @pytest.mark.parametrize("id_on_all", [False, True])
+    def test_streaming_concatenated_argument_deltas_yield_json_once(self, id_on_all):
+        """Consumers concatenating argument deltas must get the verified JSON exactly once."""
+        original = '{"query": "ok"}'
+        chunks = self._split_tool_call_chunks("search", ['{"query"', ': "ok"}'], "tool_calls", id_on_all)
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+
+        result_chunks = list(guard.guard_stream(iter(chunks)))
+
+        joined = "".join(tc.function.arguments for tc in self._emitted_tool_calls(result_chunks))
+        assert joined == original
 
 
 # =============================================================================
