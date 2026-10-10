@@ -37,7 +37,6 @@ normative:
 informative:
   RFC2693:   # SPKI Certificate Theory
   RFC8259:   # The JavaScript Object Notation (JSON) Data Interchange Format
-  RFC8792:   # Handling Long Lines in Content of Internet-Drafts and RFCs
   RFC7942:   # Improving Awareness of Running Code: The Implementation Status Section
   RFC8949:   # Concise Binary Object Representation (CBOR)
   RFC8392:   # CBOR Web Token (CWT)
@@ -2105,7 +2104,7 @@ reduction, and this document defines typed subsumption rules over tool
 arguments that make it checkable offline. Implementers are encouraged to
 publish independent analyses of both the core subsumption rules and any
 extension constraint types they deploy. Implementation and formal
-verification status is described in Appendix F.
+verification status is described in Appendix E.
 
 ## Root Key Compromise
 
@@ -2798,158 +2797,6 @@ define a CWT serialization, CWT claim-key mapping, COSE algorithm
 profile, or CWT `par_hash` signing input. Those details are deferred to
 a companion document.
 
-# Test Vectors (Non-Normative)
-Byte-exact JWS test vectors for the Section 8 algorithm are published in
-the reference implementation's repository: a machine-readable suite
-{{AAT-VECTORS}} and a readable companion with its generator
-{{AAT-VECTOR-GEN}}. Expected verdicts are computed, not hand-written:
-the generator runs every vector through its own implementation of the
-Section 8 checks the vectors exercise, which shares no code with Tenuo.
-The suite covers the happy-path chains, each attenuation invariant (I1
-through I6), closed-world leaf checks, explicit typing, required PoP
-audience, composite `all` / `any` subsumption including clause reuse,
-optional and unnamed arguments and their attenuation, the remaining core
-constraint types (`not_one_of`, `contains`, `subset`, range
-inclusivity), and the structural root checks in Section 8 steps 3c, 3d,
-3f, 3h, 3k, 3l, 3m, and 3n. Implementers targeting the -01 text should
-not treat that suite as a -01 conformance pack: it encodes the -02
-changes listed in Appendix G.
-
-This appendix reproduces a minimal subset so that the encoding rules of
-Section 3.5, Section 4.6, and Section 7.2 can be checked without
-external material. Long lines are folded per {{RFC8792}}. Vector
-identifiers (J.1, J.3, J.12) are those of the published suite. Each
-vector's expected verdict is what this specification requires; the
-failing step it names
-follows the order of Section 8 and can differ where that section
-permits reordering, so test harnesses compare verdicts.
-
-## Parameters
-
-Each role's Ed25519 key is derived from a 32-byte seed of one repeated
-byte: 0x01 for control_plane, 0x02 for orchestrator, 0x03 for worker,
-and 0x04 for worker2. Verification time
-is 1704067500 (2024-01-01T00:05:00Z). MAX_IAT_SKEW is 30 seconds. The
-enforcement point audience is `https://tools.example.com`. The only
-trust anchor is the root issuer's key (`control_plane` in the suite),
-bound to the issuer
-`https://auth.example.com`.
-
-| Role | JWK `x` |
-|---|---|
-| control_plane | `iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w` |
-| orchestrator | `gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q` |
-| worker | `7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E` |
-| worker2 | `ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw` |
-
-The RFC 7638 thumbprint of the Orchestrator key, computed over its JCS
-form (first line), is the second line:
-
-~~~
-========== NOTE: '\' line wrapping per RFC 8792 ==========
-
-{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiX\
-fYPW4_Js5Q"}
-aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU
-~~~
-
-## Single-Token Chain (Vector J.1)
-
-Root token issued by the root issuer to the Orchestrator, presented
-alone (root = leaf) with a PoP from the Orchestrator. Expected: PERMIT.
-
-AAT Protected Header (JCS):
-
-~~~
-========== NOTE: '\' line wrapping per RFC 8792 ==========
-
-{"alg":"Ed25519","typ":"aat+jwt"}
-~~~
-AAT Payload (JCS; this exact byte string is base64url-encoded):
-
-~~~
-========== NOTE: '\' line wrapping per RFC 8792 ==========
-
-{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_\
-type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{\
-"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYP\
-W4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":170\
-4067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-80\
-00-000000000001"}
-~~~
-AAT compact serialization:
-
-~~~
-========== NOTE: '\' line wrapping per RFC 8792 ==========
-
-eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2Rl\
-dGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfd\
-HlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn\
-1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1R\
-sM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2Rl\
-cHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwN\
-DA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5ND\
-cxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAxIn0.G2ZIeMAY5H1nbG0j2f6R9hW\
-8WsP98CC8ZA9-dLpNATy-i7DMR6iAHzgSrAhpdTVt1Y5urMK9iE0ZXMcLHzrHBg
-~~~
-PoP Payload (JCS):
-
-~~~
-========== NOTE: '\' line wrapping per RFC 8792 ==========
-
-{"aat_aud":"https://tools.example.com","aat_hash":"qz05CjO1S-iTk93CGK\
-miB8y7bRUdUAe67kXzUwyMzUU","aat_id":"019471f8-0000-7000-8000-00000000\
-0001","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"ia\
-t":1704067500,"jti":"019471f8-0000-7000-8000-000000000a01"}
-~~~
-PoP compact serialization:
-
-~~~
-========== NOTE: '\' line wrapping per RFC 8792 ==========
-
-eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaH\
-R0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicXowNUNqTzFTLWlUazk\
-zQ0dLbWlCOHk3YlJVZFVBZTY3a1h6VXd5TXpVVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAw\
-MDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImFhdF90b29sIjoicmVhZF9maWxlIiwia\
-HRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMC\
-wianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAxIn0.Dod0rnn\
-_6OlvM2upQlbY0trWOJPM80GEuZn6gUJr0vOmWrjdWEg_voQT-f-iKsgqGJ1KRdQqisbN\
-gaNJ5OBOAQ
-~~~
-
-## Three-Level Chain Linkage (Vector J.3)
-
-Root (root issuer to Orchestrator, `del_max_depth` 3), L1
-(Orchestrator to Worker, `del_max_depth` 2), L2 (Worker to Worker2,
-terminal). Expected: PERMIT. The linkage values below are sufficient to
-check Section 4.6 against an independent implementation; the full
-tokens are in the published suite. The `jti` values of root, L1, and L2
-are `019471f8-0000-7000-8000-000000000010`, `...011`, and `...012`.
-
-| Token | SHA-256 of JWS Signing Input (base64url) |
-|---|---|
-| root | `BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g` |
-| L1 | `3kFpxq53WreeYGKbIxNqnCqjRSmVjwNoHjjZKIuqRw0` |
-| L2 | `6JQpH_zCOFYgK-F4EjOrO9yssdlA24Ygm3JRH6stIdk` |
-
-L1 carries `par_hash` equal to the root row above, and L2 carries
-`par_hash` equal to the L1 row. L1's `iss` is:
-
-~~~
-urn:ietf:params:oauth:jwk-thumbprint:sha-256:
-  aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU
-~~~
-
-(one string, shown on two lines).
-
-## Chain Splice (Vector J.12)
-
-The same root and holders as J.3, with an L1 that has its own `jti`
-and a `par_hash` of `qz05CjO1S-iTk93CGKmiB8y7bRUdUAe67kXzUwyMzUU`, the
-digest of a different root token held by the same key. Signature
-verification and I1 both pass; the chain is denied at Section 8 step
-4q.
-
 # Implementation Status (Non-Normative)
 
 This appendix describes the implementation status of this specification
@@ -2971,8 +2818,13 @@ attenuation invariants under arbitrary sequences, normalization
 idempotence across encode/decode round-trips, and agreement between
 in-memory and deserialized constraint evaluation.
 
-JWS test vectors for the algorithm in Section 8 are published as
-described in Appendix E.
+Byte-exact JWS test vectors for Section 8 are published as a
+machine-readable suite {{AAT-VECTORS}} and a readable companion with its
+generator {{AAT-VECTOR-GEN}}. Expected verdicts are computed by the
+generator's own implementation of Section 8, which shares no code with
+Tenuo. The suite encodes the -02 changes (Appendix F); test harnesses
+compare verdicts, since the failing step a vector names can differ
+where Section 8 permits reordering.
 
 RFC Editor Note: This section will be updated or removed before
 publication.
@@ -2997,8 +2849,8 @@ publication.
 RFC Editor Note: This section is to be removed before publication.
 
 This revision is reorganized, and its normative changes break
-implementations of -01. The test vectors in Appendix E encode most of
-the verifier-side changes.
+implementations of -01. The published test vectors (Appendix E) encode
+most of the verifier-side changes.
 
 Closing JWT attack classes ({{RFC8725}}):
 
@@ -3046,17 +2898,17 @@ New expressiveness:
 
 Structure and editorial changes, with no change to verifier behavior:
 
-- Sections follow a token's lifecycle. The extension registry moved
-  from 3.5 to 5, root issuance from 3.7 to 6.1, derivation from 6 to
-  6.2, proof of possession from 5 to 7, and verification from 7 to 8;
+- Sections follow a token's lifecycle. The extension registry moved from
+  3.5 to 5, root issuance from 3.7 to 6.1, derivation from 6 to 6.2,
+  proof of possession from 5 to 7, and verification from 7 to 8;
   Security Considerations and later sections moved down by one. Within
   Security Considerations, -01's Unknown Constraint Types subsection is
-  folded into Sections 3.4 and 9.6, so the subsections after it move
-  up by one. The JWS Protected Header requirements are collected in a
-  new Section 3.5, and Implementation Status is now Appendix F, after
-  the new Test Vectors appendix. Algorithm steps keep their -01 labels;
-  steps 6c, 7h, and 7i are new, and the substeps of step 4p are
-  restructured for optional and unnamed arguments.
+  folded into Sections 3.4 and 9.6, so the subsections after it move up
+  by one. The JWS Protected Header requirements are collected in a new
+  Section 3.5. Algorithm
+  steps keep their -01 labels; steps 6c, 7h, and 7i are new, and the
+  substeps of step 4p are restructured for optional and unnamed
+  arguments.
 - The Introduction sets out the mechanism and scope. Repeated
   statements of rules are consolidated, and verification checks are
   listed only in Section 8.
@@ -3074,4 +2926,4 @@ Structure and editorial changes, with no change to verifier behavior:
   9.1.1 covers replay of parent and intermediate tokens, and Section 9.4
   covers re-keying and how destroying the parent's holder key
   approximates it.
-- Byte-exact JWS test vectors are published (Appendix E).
+- Byte-exact JWS test vectors are published ({{AAT-VECTORS}}).
