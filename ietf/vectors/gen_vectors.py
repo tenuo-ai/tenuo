@@ -271,6 +271,10 @@ def _aat_entry(claims: dict, step: str, exactly_one: bool):
 
 
 CORE_TYPES = ("exact", "range", "one_of", "not_one_of", "contains", "subset", "wildcard", "all", "any")
+# §3.4: the members each core type may carry besides constraint_type and optional.
+MEMBERS = {"exact": {"value"}, "range": {"min", "max", "min_inclusive", "max_inclusive"},
+           "one_of": {"values"}, "not_one_of": {"excluded"}, "contains": {"required"},
+           "subset": {"allowed"}, "wildcard": set(), "all": {"constraints"}, "any": {"constraints"}}
 MAX_SAFE_INT = 2**53 - 1
 
 
@@ -355,6 +359,8 @@ def _cdepth(c, d=1):
         raise Deny("3n/4o", "optional appears inside all/any")
     if c.get("constraint_type") not in CORE_TYPES:
         raise Deny("3n/4o", f"unrecognized constraint_type {c.get('constraint_type')!r} (fail-closed)")
+    if set(c) - {"constraint_type", "optional"} - MEMBERS[c["constraint_type"]]:
+        raise Deny("3n/4o", "constraint has a member its type does not define")
     if not _well_formed(c):
         raise Deny("3n/4o", "constraint not well-formed")
     if c.get("constraint_type") in ("all", "any") and not isinstance(c.get("constraints"), list):
@@ -1367,6 +1373,14 @@ add("J.21.11", "all whose constraints member is not an array", None,
     "The constraints member of all is an object, not an array; the constraint is not well-formed (step 3n).",
     [bad_all], pop_sign(pop_claims(uuid7ish(0xE8C), bad_all, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3n/4o")
+typo_range = jws_sign(root_claims(uuid7ish(0xE7B), {"read_file": {
+    "path": WILD, "limit": {"constraint_type": "range", "maximum": 10}}}, ORCH), CP)
+add("J.21.12", "range with an undefined member", None,
+    "limit is constrained by a range whose bound is spelled maximum instead of max. Read as a range with "
+    "no bounds, it would admit limit 1000; a member its type does not define makes the constraint not "
+    "well-formed (step 3n).",
+    [typo_range], pop_sign(pop_claims(uuid7ish(0xE8B), typo_range, "read_file", {"path": Q3, "limit": 1000}), ORCH),
+    "read_file", {"path": Q3, "limit": 1000}, "DENY", "3n/4o")
 bool_depth = jws_sign(root_claims(uuid7ish(0xE7E), {"read_file": {"path": WILD}}, ORCH, del_depth=False), CP)
 add("J.21.9", "Root del_depth is false rather than the integer 0", None,
     "del_depth must be an integer (Section 3.2); false is not 0 (step 3c).",

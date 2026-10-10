@@ -14162,6 +14162,104 @@
       }
     },
     {
+      "id": "J.21.12",
+      "title": "range with an undefined member",
+      "cbor_twin": null,
+      "description": "limit is constrained by a range whose bound is spelled maximum instead of max. Read as a range with no bounds, it would admit limit 1000; a member its type does not define makes the constraint not well-formed (step 3n).",
+      "notes": [],
+      "now": 1704067500,
+      "tool": "read_file",
+      "args": {
+        "path": "/data/q3-report.pdf",
+        "limit": 1000
+      },
+      "policy": {},
+      "chain": [
+        {
+          "header": {
+            "alg": "Ed25519",
+            "typ": "aat+jwt"
+          },
+          "payload": {
+            "jti": "019471f8-0000-7000-8000-000000000e7b",
+            "iss": "https://auth.example.com",
+            "iat": 1704067200,
+            "exp": 1704070800,
+            "del_depth": 0,
+            "del_max_depth": 3,
+            "cnf": {
+              "jwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+              }
+            },
+            "authorization_details": [
+              {
+                "type": "attenuating_agent_token",
+                "tools": {
+                  "read_file": {
+                    "path": {
+                      "constraint_type": "wildcard"
+                    },
+                    "limit": {
+                      "constraint_type": "range",
+                      "maximum": 10
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "header_b64": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9",
+          "payload_b64": "eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heGltdW0iOjEwfSwicGF0aCI6eyJjb25zdHJhaW50X3R5cGUiOiJ3aWxkY2FyZCJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiJ9",
+          "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heGltdW0iOjEwfSwicGF0aCI6eyJjb25zdHJhaW50X3R5cGUiOiJ3aWxkY2FyZCJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiJ9",
+          "signing_input_sha256_b64u": "SKXQKs90XXeBOJ8KUpzr2CYBDkojnj1h1QHzY8dG8TU",
+          "signature_b64": "ZD673V1x6ewlQrKFQzjB7wy2ID_qDueWniYGNe3ZL5QsrT6LNUNEXLbpzdCIDYHHXlGZZVvjmOr4cmDPOIHkCA",
+          "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heGltdW0iOjEwfSwicGF0aCI6eyJjb25zdHJhaW50X3R5cGUiOiJ3aWxkY2FyZCJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiJ9.ZD673V1x6ewlQrKFQzjB7wy2ID_qDueWniYGNe3ZL5QsrT6LNUNEXLbpzdCIDYHHXlGZZVvjmOr4cmDPOIHkCA",
+          "signer": "control_plane"
+        }
+      ],
+      "chain_compact": [
+        "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heGltdW0iOjEwfSwicGF0aCI6eyJjb25zdHJhaW50X3R5cGUiOiJ3aWxkY2FyZCJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiJ9.ZD673V1x6ewlQrKFQzjB7wy2ID_qDueWniYGNe3ZL5QsrT6LNUNEXLbpzdCIDYHHXlGZZVvjmOr4cmDPOIHkCA"
+      ],
+      "pop": {
+        "header": {
+          "alg": "Ed25519",
+          "typ": "aat-pop+jwt"
+        },
+        "payload": {
+          "jti": "019471f8-0000-7000-8000-000000000e8b",
+          "iat": 1704067500,
+          "aat_id": "019471f8-0000-7000-8000-000000000e7b",
+          "aat_hash": "SKXQKs90XXeBOJ8KUpzr2CYBDkojnj1h1QHzY8dG8TU",
+          "aat_tool": "read_file",
+          "hta": {
+            "path": "/data/q3-report.pdf",
+            "limit": 1000
+          },
+          "aat_aud": "https://tools.example.com"
+        },
+        "header_b64": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ",
+        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiU0tYUUtzOTBYWGVCT0o4S1VwenIyQ1lCRGtvam5qMWgxUUh6WThkRzhUVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7ImxpbWl0IjoxMDAwLCJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU4YiJ9",
+        "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiU0tYUUtzOTBYWGVCT0o4S1VwenIyQ1lCRGtvam5qMWgxUUh6WThkRzhUVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7ImxpbWl0IjoxMDAwLCJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU4YiJ9",
+        "signing_input_sha256_b64u": "r4WYqBzj1EZPCARi5smtBAKEvpmReQzT-vWD0MMaeS0",
+        "signature_b64": "aDXBtYCdcvPuiCC9d2Hz1vhtIIx3tWI1KIqRbOIARm6DFY9D2djzTawfr5QoM0CpbHhCE23i9bnb9KhB-WGlBw",
+        "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiU0tYUUtzOTBYWGVCT0o4S1VwenIyQ1lCRGtvam5qMWgxUUh6WThkRzhUVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7ImxpbWl0IjoxMDAwLCJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU4YiJ9.aDXBtYCdcvPuiCC9d2Hz1vhtIIx3tWI1KIqRbOIARm6DFY9D2djzTawfr5QoM0CpbHhCE23i9bnb9KhB-WGlBw",
+        "signer": "orchestrator"
+      },
+      "presentation": {
+        "aat_chain": [
+          "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heGltdW0iOjEwfSwicGF0aCI6eyJjb25zdHJhaW50X3R5cGUiOiJ3aWxkY2FyZCJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiJ9.ZD673V1x6ewlQrKFQzjB7wy2ID_qDueWniYGNe3ZL5QsrT6LNUNEXLbpzdCIDYHHXlGZZVvjmOr4cmDPOIHkCA"
+        ],
+        "aat_pop": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiU0tYUUtzOTBYWGVCT0o4S1VwenIyQ1lCRGtvam5qMWgxUUh6WThkRzhUVSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU3YiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7ImxpbWl0IjoxMDAwLCJwYXRoIjoiL2RhdGEvcTMtcmVwb3J0LnBkZiJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGU4YiJ9.aDXBtYCdcvPuiCC9d2Hz1vhtIIx3tWI1KIqRbOIARm6DFY9D2djzTawfr5QoM0CpbHhCE23i9bnb9KhB-WGlBw"
+      },
+      "expected": {
+        "verdict": "DENY",
+        "step": "3n/4o"
+      }
+    },
+    {
       "id": "J.21.9",
       "title": "Root del_depth is false rather than the integer 0",
       "cbor_twin": null,

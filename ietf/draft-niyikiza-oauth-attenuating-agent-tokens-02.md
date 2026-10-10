@@ -798,6 +798,9 @@ strings.
 
 A constraint is well-formed when:
 
+- it has no members other than `constraint_type`, `optional`, and the
+  members its type defines (the table above, or the type's registration
+  for an extension type);
 - `exact.value` is a string, number, boolean, or null, and the
   `constraints` member of `all` and `any` is an array;
 - `one_of.values` is a non-empty array, and `excluded`, `required`, and
@@ -928,7 +931,7 @@ Payload:
 ~~~json
 {
   "jti": "01957a41-0081-7c20-bf3a-00a0c91e1234",
-  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:KAKn...",
+  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:kPrK_qmxVWaYV...",
   "iat": 1741600120,
   "exp": 1741601920,
   "del_depth": 1,
@@ -3101,7 +3104,8 @@ Normative changes:
 - Empty `all` and `any` are invalid in any position (Section 4.5; steps
   3n and 4o).
 - Validation: constraint types and well-formedness are checked
-  throughout the chain; claim types are checked and `hta` is required;
+  throughout the chain, and a constraint with a member its type does
+  not define is rejected; claim types are checked and `hta` is required;
   integers have no fraction or exponent; audiences compare by exact
   string; `contains` and `subset` use set semantics; constraint depth
   counting is defined; numbers must survive the JCS round trip;
