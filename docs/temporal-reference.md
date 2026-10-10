@@ -421,7 +421,7 @@ from tenuo.temporal import TenuoPluginConfig
 config = TenuoPluginConfig(
     signing_key=holder_signing_key,            # In-memory holder key. See Key Management.
     on_denial="raise",                         # "raise" | "log" | "skip"
-    dry_run=False,                             # Shadow mode only; never for production
+    dry_run=False,                             # Observe mode for this plugin only; never for production
     trusted_roots=[control_key.public_key],
     strict_mode=True,                          # Fail-fast on ambiguous PoP with named constraints
     require_warrant=True,                      # Fail-closed: deny if no warrant
@@ -440,7 +440,8 @@ config = TenuoPluginConfig(
 ### Denial Handling
 
 ```python
-# "raise" (default): raise TemporalConstraintViolation
+# "raise" (default): raise a non-retryable ApplicationError whose type is the
+#                    denial's error code (see Failure Semantics)
 # "log":             log denial and block (return None)
 # "skip":            silently block (return None)
 config = TenuoPluginConfig(
@@ -450,11 +451,11 @@ config = TenuoPluginConfig(
 )
 ```
 
-### Dry run (staging only)
+### Dry run (observe mode, staging only)
 
-`dry_run=True` records authorization denials but still executes activities. Use only for rollout validation.
+`dry_run=True` records authorization denials but still executes activities. Use it to learn what a policy needs before enforcing it.
 
-`dry_run` is observe mode scoped to this plugin; `tenuo.configure(mode="observe")` turns it on everywhere. Either way, each would-deny is logged as `OBSERVE: would deny <activity>: <reason>` and emitted as a `DENY` audit event with `observed=True`, and the signed receipt records it as not enforced. Activities, signals, updates and Nexus operations all honor it. A signal or update outside `authorized_signals` / `authorized_updates` is logged and delivered (workflow handlers have no audit callback, so there is no audit event for these). Nexus denials, including PoP and chain integrity failures, are audited as observed with their original error type.
+`dry_run` is observe mode scoped to this plugin; `tenuo.configure(mode="observe")` turns it on everywhere. Either way, each would-deny is logged as `OBSERVE: would deny <activity>: <reason>` and emitted as a `DENY` audit event with `observed=True`, and the signed receipt records it as not enforced. Activities, signals, updates and Nexus operations all honor it. A signal or update outside `authorized_signals` / `authorized_updates` is logged and delivered (workflow handlers have no audit callback, so there is no audit event for these). Nexus denials, including PoP and chain integrity failures, are audited as observed with their original error type. Failures outside the authorization checks are not observed: an unexpected error during Nexus verification (for example a `pop_dedup_store` without `check_pop_replay_for_owner`) still fails the operation with `TenuoContextError`, and a missing `trusted_roots` still raises `ConfigurationError` when the config is built.
 
 ```python
 config = TenuoPluginConfig(
@@ -733,8 +734,11 @@ Operational guidance:
 |-------|-------------------|------------------|
 | Warrant header | Missing | Denied when `require_warrant=True` |
 | Warrant expired | Expired | `WarrantExpired` |
-| Tool / constraints | Not allowed | `TemporalConstraintViolation` |
-| PoP signature | Missing or invalid | `PopVerificationError` |
+| Tool | Not in the warrant | `ToolNotAuthorized` (`tool_not_authorized`) |
+| Constraints | Argument not allowed | `ConstraintViolation` (`constraint_violation`) |
+| Trust chain | Issuer not a trusted root, or a delegated warrant sent without its chain | `TemporalConstraintViolation` (`CONSTRAINT_VIOLATED`) |
+| PoP signature | Malformed or replayed | `PopVerificationError` |
+| PoP signature | Missing, or does not verify | `TemporalConstraintViolation` (`CONSTRAINT_VIOLATED`) |
 | Protected local activity | Not `@unprotected` | `LocalActivityError` |
 
 ---
@@ -986,7 +990,7 @@ the worker-boundary PoP authorization.
 
 Every authorization decision emits a `TemporalAuditEvent`. Supports SOC 2 CC6.8, PCI DSS 10.2, and HIPAA audit controls.
 
-Each event captures: `warrant_id`, `workflow_id`, `workflow_run_id`, `tool`, `arguments` (redacted by default), `timestamp`, `decision` (`ALLOW`/`DENY`), `denial_reason`.
+Each event captures: `warrant_id`, `workflow_id`, `workflow_run_id`, `tool`, `arguments` (redacted by default), `timestamp`, `decision` (`ALLOW`/`DENY`), `denial_reason`, `constraint_violated`, and `observed`. A denial that `dry_run` or observe mode let through is emitted with `decision="DENY"` and `observed=True`, never as an `ALLOW`.
 
 ```python
 from tenuo.temporal import TemporalAuditEvent
@@ -1077,9 +1081,15 @@ from tenuo.temporal import (
 )
 ```
 
-Approval denials surface as `ApplicationError(non_retryable=True)` with `type`:
+Denials from the shared authorization check keep the core exception's code as `ApplicationError.type` instead of collapsing into `CONSTRAINT_VIOLATED`:
+- `"tool_not_authorized"` — the warrant does not grant the activity
+- `"constraint_violation"` — an argument violates a warrant constraint
+- `"revoked"` — the warrant or issuer is revoked
 - `"approval_required"` — gate fired, resubmit with approvals
 - `"insufficient_approvals"` — partial multi-sig, collect more signatures
+- `"invalid_approval"` / `"approval_expired"` — a supplied approval is malformed or stale
+
+An untrusted issuer, a delegated warrant sent without its `x-tenuo-warrant-chain`, and a missing or non-verifying PoP signature all surface as `CONSTRAINT_VIOLATED`, with the reason in the message.
 
 See [Human Approval](#human-approval) and [Human Approvals](approvals.md#signals-by-integration).
 
@@ -1089,8 +1099,10 @@ Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to 
 
 | Failure Type | Typical Exception | Retryable? |
 |--------------|-------------------|------------|
-| Missing/invalid warrant | `TemporalConstraintViolation` / `ChainValidationError` | **No** |
-| Invalid PoP or replay | `PopVerificationError` | **No** |
+| Missing/invalid warrant, untrusted issuer, missing chain | `TemporalConstraintViolation` / `ChainValidationError` | **No** |
+| Tool not granted / argument outside constraints | `ToolNotAuthorized` / `ConstraintViolation` (`tool_not_authorized` / `constraint_violation`) | **No** |
+| Malformed or replayed PoP | `PopVerificationError` | **No** |
+| Missing PoP, or PoP signature does not verify | `TemporalConstraintViolation` | **No** |
 | Expired warrant | `WarrantExpired` | **No** — mint a new warrant |
 | Approval gate / partial multi-sig | `ApplicationError` (`approval_required` / `insufficient_approvals`) | **No** — workflow must collect signatures and retry |
 | Local activity without `@unprotected` | `LocalActivityError` | **No** |
