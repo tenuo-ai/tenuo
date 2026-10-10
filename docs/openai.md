@@ -108,8 +108,15 @@ client = protect(openai.OpenAI(), tools=["search", "read_file"])
 ### Tier 2: Warrants (verifiable authority)
 
 ```python
+import openai
+import tenuo
 from tenuo.openai import GuardBuilder
 from tenuo import SigningKey, Warrant, Subpath
+
+control_plane_key = SigningKey.generate()  # in production: your issuer's key
+
+# The verifier trusts only the issuer's public key
+tenuo.configure(trusted_roots=[control_plane_key.public_key])
 
 # Agent holds warrant and signing key
 agent_key = SigningKey.generate()
@@ -127,6 +134,8 @@ client = (GuardBuilder(openai.OpenAI())
 # Each tool call is now cryptographically authorized
 response = client.chat.completions.create(...)
 ```
+
+Tier 2 fails closed without a trust anchor: every tool call is denied until trusted roots are set. Set them once with `tenuo.configure(trusted_roots=[...])`, or per client with `guard(..., trusted_roots=[...])`, `GuardBuilder(...).with_trusted_roots([...])`, or `create_tier2_guardrail(..., trusted_roots=[...])`. Trusted roots are the issuer's public keys only. See [Delegation](#delegation) for warrants that are not minted by a root.
 
 ### Human Approval
 
@@ -211,8 +220,13 @@ In the OpenAI adapter, warrant constraints replace the inline argument constrain
 # Tier 1
 client = guard(openai.OpenAI(), allow_tools=[...], constraints={...})
 
-# Tier 2 (add warrant + signing key)
-client = guard(openai.OpenAI(), warrant=my_warrant, signing_key=agent_key)
+# Tier 2 (add warrant + signing key + the issuer's public key)
+client = guard(
+    openai.OpenAI(),
+    warrant=my_warrant,
+    signing_key=agent_key,
+    trusted_roots=[issuer_public_key],
+)
 ```
 
 ### Bottom Line
@@ -337,9 +351,9 @@ client = guard(
     on_denial="log"  # Remove denied tool calls + log warning
 )
 
-# Denied tool calls are removed; warnings logged to stderr
+# Denied tool calls are removed; a warning is logged
 response = client.chat.completions.create(...)
-# WARNING: Tool 'delete_file' not in allowlist - removed from response
+# WARNING:tenuo.enforcement:Authorization denied for 'delete_file': Tool 'delete_file' denied: Tool not in allowlist
 ```
 
 ### Production: Raise exceptions
@@ -369,7 +383,24 @@ except ToolDenied as e:
 
 ### Observe mode
 
-To see what a policy would deny without changing what your agent does, run with `tenuo.configure(mode="observe")`. Tool calls the policy would deny are kept in the response. Each one is logged as `OBSERVE: would deny <tool>: <reason>` and audited as a `DENY` with `observed=True`. This covers chat completions (including streaming), the Responses API, and the Agents SDK guardrail, where the tripwire stays untriggered. `on_denial="log"` is different: it still removes denied calls.
+To see what a policy would deny without changing what your agent does, turn on observe mode at startup:
+
+```python
+import tenuo
+
+tenuo.configure(trusted_roots=[issuer_public_key], mode="observe")
+# or set TENUO_MODE=observe (with TENUO_TRUSTED_ROOTS) and call tenuo.auto_configure()
+```
+
+`configure()` requires `trusted_roots` (or `dev_mode=True`) whatever the mode. The default is `mode="enforce"`. The older names `"audit"` and `"permissive"` are accepted as aliases for `"observe"`.
+
+In observe mode, tool calls the policy would deny are kept in the response and the call proceeds. Each one is:
+
+- logged as `OBSERVE: would deny <tool>: <reason>` (argument keys and types only, never values)
+- audited as a `DENY` with `observed=True`, with the same `error_type` and `constraint_violated` an enforced denial would carry
+- recorded with `enforced=false` on the signed receipt, when receipt signing is configured
+
+This covers Tier 1 and Tier 2 checks on chat completions (including streaming), the Responses API, and the Agents SDK guardrail, where the tripwire stays untriggered. Malformed tool calls (`T1_003`) are still blocked. `on_denial="log"` is different: it still removes denied calls.
 
 
 ---
@@ -385,6 +416,7 @@ client = guard(
     openai.OpenAI(),
     warrant=warrant,
     signing_key=agent_key,
+    trusted_roots=[control_plane_key.public_key],
 )
 
 # Pre-flight check - catch config errors before production
@@ -468,6 +500,7 @@ warrant = (Warrant.mint_builder()
 guardrail = create_tier2_guardrail(
     warrant=warrant,
     signing_key=agent_key,
+    trusted_roots=[control_plane_key.public_key],
 )
 
 agent = Agent(
@@ -483,8 +516,10 @@ agent = Agent(
 | `allow_tools` | Allowlist of permitted tool names |
 | `deny_tools` | Denylist of forbidden tool names |
 | `constraints` | Per-tool argument constraints |
-| `warrant` | Tier 2 warrant (optional) |
+| `warrant` | Tier 2 warrant (`create_tier2_guardrail` only) |
 | `signing_key` | Required if warrant provided |
+| `trusted_roots` | Issuer public keys the warrant must chain to (Tier 2; falls back to `tenuo.configure(trusted_roots=...)`) |
+| `warrant_chain` | Parent warrants of a delegated `warrant`, root-first, excluding the leaf (Tier 2) |
 | `tripwire` | If True, halt agent on violation (default: True) |
 | `audit_callback` | Optional callback for audit events |
 
@@ -523,6 +558,8 @@ client = guard(
 | `constraint_hash` | Hash of Tier 1 config |
 | `warrant_id` | Warrant ID (Tier 2 only) |
 | `observed` | True for a `DENY` that observe mode let through |
+| `constraint_violated` | For a `DENY`: `"tool"` or the name of the failing argument |
+| `error_type` | For a `DENY`: canonical category, e.g. `"tool_not_allowed"`, `"constraint_violation"`, `"expired"` |
 
 ---
 
@@ -583,15 +620,17 @@ except TenuoOpenAIError as e:
 | `OpenAIConstraintViolation` | 1+ | T1_002 | Argument fails constraint |
 | `WarrantDenied` | 2 | T2_001 | Warrant doesn't allow tool/args |
 | `MissingSigningKey` | 2 | T2_002 | Warrant provided without signing_key |
-| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, C1_003 | Invalid guard() configuration |
+| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, C1_003 | Invalid guard() configuration (expired warrant, key/holder mismatch, constraint validation) |
+| `OpenAIConfigurationError` | 1+ | CFG_004 | `responses.create(stream=True)` under guard (not supported yet) |
 | `MalformedToolCall` | 1+ | T1_003 | Invalid JSON in tool arguments |
 | `BufferOverflow` | 1+ | T1_004 | Streaming buffer limit exceeded |
+| `InsufficientApprovals` | 2 | — | An approval gate needs more approvals than were presented (`tenuo.exceptions`) |
 
-### Wire Code Support
+`WarrantDenied` covers every Tier 2 denial, including a missing trust anchor and an untrusted or missing delegation chain. Its `reason` says which, and its `param` names the failing argument for constraint violations.
 
-The OpenAI integration uses its own error codes (T1_001, T2_001, etc.) for API consistency with OpenAI's patterns. However, the underlying authorization logic uses Tenuo's canonical wire codes (1000-2199) internally.
+### Adapter codes and canonical categories
 
-**Note**: For direct access to canonical wire codes, use `tenuo.langchain` or raw `Warrant.authorize()` calls. The OpenAI integration prioritizes OpenAI-style error handling for better developer experience.
+Exceptions carry OpenAI-adapter codes (`T1_001`, `T2_001`, ...) on `e.code`. Audit events carry Tenuo's canonical `error_type` (`tool_not_allowed`, `constraint_violation`, `expired`, `invalid_pop`, ...), the same strings every other integration reports, so you can aggregate denials across frameworks without mapping adapter codes.
 
 ---
 
@@ -603,6 +642,8 @@ client = guard(openai.OpenAI(), allow_tools=["search"])
 # Works with Responses API
 response = client.responses.create(...)
 ```
+
+Streaming Responses (`responses.create(stream=True)`) is not supported under guard yet and raises `OpenAIConfigurationError` (`CFG_004`), because function calls in a Responses stream cannot be verified before they are emitted. Use `stream=False`, or `chat.completions.create(stream=True)`, which buffers and verifies each tool call.
 
 ---
 
@@ -648,11 +689,12 @@ warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(control_plane_key))
 
-# Agent uses warrant
+# Agent uses warrant; the verifier trusts only the control plane's key
 client_secure = guard(
     openai.OpenAI(),
     warrant=warrant,
     signing_key=agent_key,
+    trusted_roots=[control_plane_key.public_key],
 )
 
 # Use exactly like Tier 1
@@ -667,7 +709,9 @@ response = client_secure.chat.completions.create(
 
 ## Delegation
 
-Warrants can be attenuated (narrowed) and delegated to downstream agents. The child warrant can only contain a subset of the parent's capabilities:
+Warrants can be attenuated (narrowed) and delegated to downstream agents. The child warrant can only contain a subset of the parent's capabilities.
+
+The verifier trusts only the root issuer's key. A delegated warrant verifies only when its path back to that root is presented with it, so pass the parent warrants as `warrant_chain` (root-first, excluding the leaf):
 
 ```python
 from tenuo import SigningKey, Warrant
@@ -686,9 +730,17 @@ child = (root.grant_builder()
     .capability("search")
     .holder(worker.public_key).ttl(1800).grant(orchestrator))
 
-# Use child warrant with worker's key
-client = guard(openai.OpenAI(), warrant=child, signing_key=worker)
+# Use child warrant with worker's key, presenting the chain back to the root
+client = guard(
+    openai.OpenAI(),
+    warrant=child,
+    signing_key=worker,
+    warrant_chain=[root],
+    trusted_roots=[issuer.public_key],
+)
 ```
+
+Without `warrant_chain`, every call is denied: the child's issuer (the orchestrator) is not a trusted root. Do not add intermediate keys such as the orchestrator's to `trusted_roots` to make it pass; that trusts anything the intermediate signs, beyond the scope the root granted it. Instead of `warrant_chain`, you can also pass the whole chain as `warrant`: an encoded WarrantStack string or a root-first list of warrants (leaf last). `GuardBuilder.with_warrant(child, worker, warrant_chain=[root])` and `create_tier2_guardrail(..., warrant_chain=[root])` take the same argument.
 
 ---
 
