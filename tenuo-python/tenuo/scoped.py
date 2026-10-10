@@ -34,6 +34,7 @@ from .config import ConfigurationError, get_config
 from .constraints import Capability
 from .decorators import (
     _allowed_tools_context,
+    _chain_context,
     _keypair_context,
     _warrant_context,
     key_scope,
@@ -476,6 +477,7 @@ class GrantScope:
         self.ttl = ttl
         self._warrant_token: Optional[Token] = None
         self._allowed_tools_token: Optional[Token] = None
+        self._chain_token: Optional[Token] = None
 
     def preview(self) -> ScopePreview:
         """Preview the derived scope without executing."""
@@ -626,7 +628,9 @@ class GrantScope:
         except Exception as e:
             raise MonotonicityError(f"Failed to attenuate warrant: {e}") from e
 
-        # Set in context and save token for restoration
+        # Set in context and save token for restoration. The parent joins the
+        # ambient chain so the child stays verifiable against the root alone.
+        self._chain_token = _chain_context.set(list(_chain_context.get() or []) + [parent])
         self._warrant_token = _warrant_context.set(child)
         self._allowed_tools_token = _allowed_tools_context.set(target_tools)
 
@@ -641,6 +645,10 @@ class GrantScope:
         if self._allowed_tools_token:
             _allowed_tools_context.reset(self._allowed_tools_token)
             self._allowed_tools_token = None
+
+        if self._chain_token:
+            _chain_context.reset(self._chain_token)
+            self._chain_token = None
 
 
 def grant(

@@ -905,3 +905,66 @@ class TestGrantWithAllConstraints:
                     }
 
         asyncio.run(_test())
+
+
+class TestGrantChainPropagation:
+    """grant() must carry its parent on chain_scope() so only the root needs trust.
+
+    The holder is a separate key, so every granted child is issued by a key
+    that is NOT in trusted_roots; it verifies only if the root travels with it.
+    """
+
+    @pytest.fixture
+    def worker_key(self):
+        return SigningKey.generate()
+
+    @pytest.fixture
+    def root_only_trust(self, keypair):
+        reset_config()
+        configure(issuer_key=keypair, trusted_roots=[keypair.public_key])
+        yield
+        reset_config()
+
+    def test_nested_grants_verify_against_root_only(self, root_only_trust, worker_key):
+        from tenuo_core import Pattern
+
+        from tenuo import Capability, chain_scope
+
+        @guard(tool="read_file")
+        async def read_file(path: str) -> str:
+            return f"content of {path}"
+
+        async def _test():
+            assert chain_scope() is None
+            async with mint(Capability("read_file", path=Pattern("/data/*")), holder_key=worker_key) as root:
+                async with grant(Capability("read_file", path=Pattern("/data/reports/*"))) as child:
+                    assert [w.id for w in chain_scope()] == [root.id]
+                    assert await read_file(path="/data/reports/q1.csv") == "content of /data/reports/q1.csv"
+
+                    async with grant(Capability("read_file", path=Pattern("/data/reports/q1*"))):
+                        assert [w.id for w in chain_scope()] == [root.id, child.id]
+                        assert await read_file(path="/data/reports/q1.csv") == "content of /data/reports/q1.csv"
+
+                    assert [w.id for w in chain_scope()] == [root.id]
+                assert chain_scope() is None
+            assert chain_scope() is None
+
+        asyncio.run(_test())
+
+    def test_sync_grant_enforce_tool_call_against_root_only(self, root_only_trust, keypair, worker_key):
+        from tenuo_core import Pattern
+
+        from tenuo import Capability, chain_scope, enforce_tool_call
+        from tenuo.scoped import mint_sync
+
+        with mint_sync(Capability("read_file", path=Pattern("/data/*")), holder_key=worker_key) as root:
+            with grant(Capability("read_file", path=Pattern("/data/reports/*"))) as child:
+                assert [w.id for w in chain_scope()] == [root.id]
+                result = enforce_tool_call(
+                    "read_file",
+                    {"path": "/data/reports/q1.csv"},
+                    child.bind(worker_key),
+                    trusted_roots=[keypair.public_key],
+                )
+                assert result.allowed, result.denial_reason
+            assert chain_scope() is None
