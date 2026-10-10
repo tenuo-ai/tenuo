@@ -249,7 +249,7 @@ warrant = (
 )
 ```
 
-If an activity argument is not listed in the capability, the interceptor rejects the call with `TemporalConstraintViolation` — even if the value would otherwise be valid. This prevents accidental exposure of undeclared parameters.
+If an activity argument is not listed in the capability, the interceptor rejects the call with `ConstraintViolation` (`ApplicationError.type` `constraint_violation`) — even if the value would otherwise be valid. This prevents accidental exposure of undeclared parameters.
 
 > **Common mistake:** listing only the constrained fields. If your activity has parameters `path` and `encoding`, the capability needs both — e.g. `.capability("read_file", path=Subpath("/data"), encoding=Wildcard())`.
 
@@ -350,8 +350,11 @@ Temporal topology.
 |-------|-------------------|------------------|
 | Warrant header | Missing | Denied (`require_warrant=True`) |
 | Warrant expired | Expired | `WarrantExpired` |
-| Tool / constraints | Args outside scope | `TemporalConstraintViolation` |
-| PoP signature | Missing or invalid | `PopVerificationError` |
+| Tool | Not in the warrant | `ToolNotAuthorized` (`tool_not_authorized`) |
+| Constraints | Args outside scope | `ConstraintViolation` (`constraint_violation`) |
+| Trust chain | Untrusted issuer, or delegated warrant without its chain | `TemporalConstraintViolation` (`CONSTRAINT_VIOLATED`) |
+| PoP signature | Missing or does not verify | `TemporalConstraintViolation` (`CONSTRAINT_VIOLATED`) |
+| PoP signature | Malformed or replayed | `PopVerificationError` |
 
 Authorization failures are wrapped in Temporal's `ApplicationError(non_retryable=True)` to prevent retrying permanent denials.
 
