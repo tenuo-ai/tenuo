@@ -607,7 +607,7 @@ child = UrlSafe(block_private=False)  # FAILS
 > [!NOTE]
 > **DNS Resolution**
 >
-> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). For DNS-aware validation, use `url_jail` at the execution layer.
+> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). `UrlSafe` protects literal IPs and URL/host policy, but the HTTP execution layer must still validate every resolved address (including redirects) and connect to that validated address without resolving the hostname again. For Python, `url_jail` is one execution-layer option.
 
 > [!IMPORTANT]
 > **IPv6 Address Handling**
