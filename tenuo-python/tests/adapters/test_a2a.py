@@ -1898,6 +1898,71 @@ class TestAdversarialConstraintBypass:
             pytest.skip("tenuo_core not available")
 
 
+class TestServerConstraintsWithPoP:
+    """Server-level skill constraints are enforced when require_pop=True (the default)."""
+
+    @staticmethod
+    def _server_and_warrant():
+        core = pytest.importorskip("tenuo_core")
+        key = core.SigningKey.generate()
+        # Warrant allows any path; only the server-level constraint narrows it.
+        warrant = core.Warrant.mint(
+            keypair=key,
+            holder=key.public_key,
+            capabilities={"read_file": {"path": core.Subpath("/")}},
+            ttl_seconds=300,
+        )
+        server = A2AServer(
+            name="PoP Constraint Agent",
+            url="https://pop-constraints.example.com",
+            public_key="z6MkServer",
+            trusted_issuers=[key.public_key.to_bytes().hex()],
+            require_warrant=True,
+            require_audience=False,
+            require_pop=True,
+            check_replay=False,
+            audit_log=None,
+        )
+        return core, server, warrant, key
+
+    @staticmethod
+    async def _call(server, warrant, key, args):
+        pop = warrant.sign(key, "read_file", args, int(time.time()))
+        return await server.validate_warrant(warrant.to_base64(), "read_file", args, pop_signature=bytes(pop))
+
+    @pytest.mark.asyncio
+    async def test_server_constraint_rejects_out_of_bounds_path(self):
+        core, server, warrant, key = self._server_and_warrant()
+
+        @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+        async def read_file(path: str) -> str:
+            return path
+
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"path": "/etc/passwd"})
+
+    @pytest.mark.asyncio
+    async def test_server_constraint_allows_in_bounds_path(self):
+        core, server, warrant, key = self._server_and_warrant()
+
+        @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+        async def read_file(path: str) -> str:
+            return path
+
+        assert await self._call(server, warrant, key, {"path": "/data/report.txt"}) is not None
+
+    @pytest.mark.asyncio
+    async def test_bare_constraint_class_is_declarative_with_pop(self):
+        """``constraints={"path": Subpath}`` (no bounds) keeps working with PoP."""
+        core, server, warrant, key = self._server_and_warrant()
+
+        @server.skill("read_file", constraints={"path": core.Subpath})
+        async def read_file(path: str) -> str:
+            return path
+
+        assert await self._call(server, warrant, key, {"path": "/etc/hosts"}) is not None
+
+
 class TestAdversarialPoP:
     """Tests for Proof-of-Possession attacks."""
 
