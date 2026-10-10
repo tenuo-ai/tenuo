@@ -21,8 +21,11 @@ Usage:
 """
 
 import base64
+import functools
 import inspect
 import logging
+import types
+import typing
 import uuid
 
 from dataclasses import dataclass
@@ -459,9 +462,8 @@ class TenuoGuard:
                     },
                 )
         else:
-            # Default: combine path params + query params
-            query_params = dict(request.query_params)
-            auth_args = {**request.path_params, **query_params}
+            # Default: path params + query params, typed from the endpoint signature
+            auth_args = _default_extract_args(request)
 
         return self._authorize(request, warrant, x_tenuo_pop, x_tenuo_approvals, auth_args)
 
@@ -676,6 +678,80 @@ class TenuoGuard:
             args=auth_args,
             tool=self.tool,
         )
+
+
+_JSON_SCALARS = (bool, int, float, str)
+
+
+def _is_list_annotation(annotation: Any) -> bool:
+    """True for ``list[X]`` / ``List[X]``, optionally wrapped in ``Optional``."""
+    origin = typing.get_origin(annotation)
+    if origin is Union or origin is getattr(types, "UnionType", None):
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        return len(args) == 1 and _is_list_annotation(args[0])
+    return annotation is list or origin is list
+
+
+@functools.lru_cache(maxsize=512)
+def _type_adapter(annotation: Any) -> Any:
+    from pydantic import TypeAdapter
+
+    return TypeAdapter(annotation)
+
+
+def _coerce(annotation: Any, raw: Any) -> Any:
+    """Validate ``raw`` against ``annotation`` the way FastAPI would.
+
+    Returns ``raw`` unchanged when validation fails (the request is then
+    authorized against the untyped string, which fails closed on numeric
+    constraints, and FastAPI rejects it with 422 after the guard), or when
+    the result is not a plain JSON value that a client can sign.
+    """
+    try:
+        value = _type_adapter(annotation).validate_python(raw)
+    except TypeError:  # unhashable annotation: skip the cache
+        try:
+            from pydantic import TypeAdapter
+
+            value = TypeAdapter(annotation).validate_python(raw)
+        except Exception:
+            return raw
+    except Exception:
+        return raw
+    if type(value) in _JSON_SCALARS:
+        return value
+    if type(value) is list and all(type(v) in _JSON_SCALARS for v in value):
+        return value
+    return raw
+
+
+def _default_extract_args(request: Request) -> Dict[str, Any]:
+    """Path + query params, typed from the matched endpoint's own signature.
+
+    The guard should authorize exactly what the handler receives, and PoP
+    signs typed values, so ``?limit=5`` for ``limit: int`` is checked as
+    ``5``, not ``"5"``. Params the endpoint does not declare stay strings.
+    """
+    args: Dict[str, Any] = {**request.path_params, **dict(request.query_params)}
+    dependant = getattr(request.scope.get("route"), "dependant", None)
+    if dependant is None:
+        return args
+
+    for field in getattr(dependant, "path_params", []):
+        key = field.alias
+        if key in args:
+            args[key] = _coerce(field.field_info.annotation, args[key])
+
+    for field in getattr(dependant, "query_params", []):
+        key = field.alias
+        if key not in request.query_params:
+            continue
+        annotation = field.field_info.annotation
+        if _is_list_annotation(annotation):
+            args[key] = _coerce(annotation, request.query_params.getlist(key))
+        else:
+            args[key] = _coerce(annotation, args[key])
+    return args
 
 
 def _is_async_callable(fn: Any) -> bool:

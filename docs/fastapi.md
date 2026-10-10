@@ -173,6 +173,7 @@ async def read_file(
 **Argument extraction (default):**
 - Path parameters: Extracted from URL
 - Query parameters: Extracted from query string
+- Values are typed from the endpoint signature: with `limit: int`, `?limit=5` is authorized as the integer `5` (so `Range` and other numeric constraints work). Parameters the endpoint doesn't declare stay strings. Clients must sign the same typed values, e.g. `bound.headers("list_items", {"limit": 5})`, not `{"limit": "5"}`. Custom `extract_args` results are used as-is.
 
 > **Note:** JSON body fields are **not** extracted by default. To include body fields, provide a custom `extract_args` function to `TenuoGuard`.
 
