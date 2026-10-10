@@ -2087,6 +2087,37 @@ def test_env_warrant_source_missing_var():
         asyncio.run(source.resolve())
 
 
+def test_env_warrant_source_resolves_valid_warrant(monkeypatch):
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal._warrant_source import EnvWarrantSource
+
+    key = SigningKey.generate()
+    warrant = Warrant.issue(key, capabilities={"read_file": {}}, holder=key.public_key, ttl_seconds=3600)
+    monkeypatch.setenv("TENUO_TEST_WARRANT_VALID", base64.b64encode(warrant.to_bytes()).decode("ascii"))
+
+    resolved, key_id = asyncio.run(EnvWarrantSource("TENUO_TEST_WARRANT_VALID", "k1").resolve())
+
+    assert resolved.to_bytes() == warrant.to_bytes()
+    assert key_id == "k1"
+
+
+def test_env_warrant_source_rejects_expired_warrant(monkeypatch):
+    import time
+
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal._warrant_source import EnvWarrantSource
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    key = SigningKey.generate()
+    # ttl=0 is rejected at decode time; use the shortest valid TTL and wait it out.
+    warrant = Warrant.issue(key, capabilities={"read_file": {}}, holder=key.public_key, ttl_seconds=1)
+    time.sleep(1.1)
+    monkeypatch.setenv("TENUO_TEST_WARRANT_EXPIRED", base64.b64encode(warrant.to_bytes()).decode("ascii"))
+
+    with pytest.raises(TenuoContextError, match="has expired"):
+        asyncio.run(EnvWarrantSource("TENUO_TEST_WARRANT_EXPIRED", "k1").resolve())
+
+
 def test_warrant_source_and_literal_mutually_exclusive():
     """Passing both warrant= and warrant_source= to execute_workflow_authorized must raise."""
     from tenuo.temporal._workflow import execute_workflow_authorized
@@ -2124,6 +2155,39 @@ def test_cloud_trigger_warrant_source_uses_event_mapper():
     )
     # We can't call resolve() without an httpx mock, but verify event_mapper is stored
     assert source._event_mapper is mapper
+
+
+def test_cloud_trigger_warrant_source_checks_expiry(monkeypatch):
+    import time
+
+    httpx = pytest.importorskip("httpx")
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal._warrant_source import CloudTriggerWarrantSource
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    key = SigningKey.generate()
+    fired = {}
+
+    def handler(request):
+        return httpx.Response(200, json={"warrant": fired["b64"]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    source = CloudTriggerWarrantSource(
+        base_url="https://example.com", trigger_id="trig_123", api_key="key", key_id="agent1"
+    )
+
+    valid = Warrant.issue(key, capabilities={"read_file": {}}, holder=key.public_key, ttl_seconds=3600)
+    fired["b64"] = base64.b64encode(valid.to_bytes()).decode("ascii")
+    resolved, key_id = asyncio.run(source.resolve())
+    assert resolved.to_bytes() == valid.to_bytes()
+    assert key_id == "agent1"
+
+    expired = Warrant.issue(key, capabilities={"read_file": {}}, holder=key.public_key, ttl_seconds=1)
+    time.sleep(1.1)
+    fired["b64"] = base64.b64encode(expired.to_bytes()).decode("ascii")
+    with pytest.raises(TenuoContextError, match="already expired"):
+        asyncio.run(source.resolve())
 
 
 # =============================================================================
