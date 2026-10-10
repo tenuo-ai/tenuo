@@ -555,8 +555,9 @@ describe("receipts", () => {
     expect(allow).toMatchObject({ authentic: true, outcome: "allow", action: "read_file", requestId: "req-1" });
     expect(allow.signerKey).toMatch(hex64);
     expect(allow.trustedRootsHash).toMatch(hex64);
+    expect(allow.enforced).toBe(true);
     const deny = createTenuo.verifyReceipt(receipts[1]!);
-    expect(deny).toMatchObject({ outcome: "deny", decisionCode: expect.any(String) });
+    expect(deny).toMatchObject({ outcome: "deny", decisionCode: expect.any(String), enforced: true });
 
     const chain = createTenuo.verifyReceiptChain(receipts[0]!, [tenuo.issuerPublicKey()]);
     expect(chain).toMatchObject({ chainValid: true, outcome: "allow", rootIssuer: tenuo.issuerPublicKey().hex });

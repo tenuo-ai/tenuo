@@ -1129,6 +1129,7 @@ export function verifyReceipt(wire: string | Uint8Array): ReceiptInfo {
     outcome: raw.outcome,
     action: raw.action,
     requestId: raw.request_id,
+    enforced: raw.enforced,
   };
   if (raw.decision_code !== undefined) out.decisionCode = raw.decision_code;
   if (raw.srl_version !== undefined) out.srlVersion = raw.srl_version;
