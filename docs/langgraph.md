@@ -20,20 +20,24 @@ Without Tenuo, you'd hardcode limits in your tools or add if-statements. But whe
 With Tenuo, the constraint is cryptographically enforced:
 
 ```python
+from typing import Annotated, Any, TypedDict
+
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
-from langgraph.graph import StateGraph, MessagesState
-from tenuo import SigningKey, Warrant, Range
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
+from tenuo import KeyRegistry, Pattern, SigningKey, Warrant, Range
 from tenuo.langgraph import TenuoToolNode
 
 # Keys: control plane issues warrants, agents hold them
 control_plane_key = SigningKey.generate()
 tier1_agent_key = SigningKey.generate()
+KeyRegistry.get_instance().register("default", tier1_agent_key)  # never in state
 
 # Tier 1 agent: can only refund up to $50
 tier1_warrant = (Warrant.mint_builder()
     .capability("lookup_order")
-    .capability("process_refund", amount=Range(min=0, max=50))
+    .capability("process_refund", order_id=Pattern("*"), amount=Range(min=0, max=50))
     .holder(tier1_agent_key.public_key)
     .ttl(3600)
     .mint(control_plane_key))
@@ -49,10 +53,17 @@ def process_refund(order_id: str, amount: float) -> str:
     """Process a refund for an order."""
     return f"Refunded ${amount} for order {order_id}"
 
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    warrant: Any  # MessagesState has no warrant field, so declare one
+
 # Build graph with TenuoToolNode (drop-in replacement for ToolNode)
-graph_builder = StateGraph(MessagesState)
+graph_builder = StateGraph(State)
 # ... add your agent node here ...
-graph_builder.add_node("tools", TenuoToolNode([lookup_order, process_refund]))
+graph_builder.add_node("tools", TenuoToolNode(
+    [lookup_order, process_refund],
+    trusted_roots=[control_plane_key.public_key],  # only the root
+))
 graph = graph_builder.compile()
 
 # Run with warrant in state
@@ -71,7 +82,8 @@ result = graph.invoke({
          ↓
 3. Extracts warrant from state, binds signing key from KeyRegistry
          ↓
-4. Checks: Is process_refund in warrant? Does amount=75 satisfy Range(min=0, max=50)?
+4. Checks: Does the warrant chain to a trusted root? Is process_refund in it?
+   Does amount=75 satisfy Range(min=0, max=50)?
          ↓
 5. NO → Returns error ToolMessage. The refund never executes.
 ```
@@ -85,17 +97,20 @@ The warrant is the authority, not the LLM's judgment. Even if the model is trick
 For a LangGraph `StateGraph`, use `TenuoToolNode` as a drop-in replacement for `ToolNode`. For LangChain 1.x `create_agent()`, use `TenuoMiddleware` below.
 
 ```python
-from langgraph.graph import StateGraph, MessagesState
+from typing import Annotated, Any, TypedDict
+
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
-from tenuo import SigningKey, Warrant
-from tenuo.langgraph import TenuoToolNode, load_tenuo_keys
+from tenuo import KeyRegistry, Pattern, SigningKey, Subpath, Warrant
+from tenuo.langgraph import TenuoToolNode
 
-# 1. Load keys from environment
-load_tenuo_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER_1, etc.
-
+# 1. Keys: the issuer is the trusted root; the agent key signs PoP.
+#    In production, load agent keys with load_tenuo_keys() (TENUO_KEY_*).
 issuer = SigningKey.generate()
 agent_key = SigningKey.generate()
+KeyRegistry.get_instance().register("default", agent_key)
 
 # 2. Define tools
 @tool
@@ -108,16 +123,21 @@ def read_file(path: str) -> str:
     """Read a file."""
     return open(path).read()
 
-# 3. Build graph with TenuoToolNode (replaces ToolNode)
-graph_builder = StateGraph(MessagesState)
+# 3. Build graph with TenuoToolNode (replaces ToolNode).
+#    The state must declare a `warrant` field.
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    warrant: Any
+
+graph_builder = StateGraph(State)
 # ... add your agent node here ...
-graph_builder.add_node("tools", TenuoToolNode([search, read_file]))
+graph_builder.add_node("tools", TenuoToolNode([search, read_file], trusted_roots=[issuer.public_key]))
 graph = graph_builder.compile()
 
 # 4. Mint a warrant and invoke
 warrant = (Warrant.mint_builder()
-    .capability("search")
-    .capability("read_file")
+    .capability("search", query=Pattern("*"))
+    .capability("read_file", path=Subpath("/data"))
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(issuer))
@@ -127,6 +147,10 @@ result = graph.invoke({
     "warrant": str(warrant),
 })
 ```
+
+> **Declare `warrant` in your state.** LangGraph drops input keys that are not in the state schema, and `MessagesState` has no `warrant` field. With `StateGraph(MessagesState)`, every tool call comes back as `Security configuration error (ref: ...)` and the log says `State is missing 'warrant' field`.
+
+> **Trusted roots are required.** Pass `trusted_roots=[...]` (root issuer keys only) or call `tenuo.configure(trusted_roots=[...])` at startup. Without either, every call is denied.
 
 ### TenuoToolNode vs TenuoMiddleware
 
@@ -300,12 +324,15 @@ graph.add_node("tools", tool_node)
 |-----------|------|---------|-------------|
 | `tools` | `List[BaseTool]` | required | Tools to make available |
 | `require_constraints` | `bool` | `False` | Require constraints for sensitive tools |
-| `trusted_roots` | `List[PublicKey]` | `None` | Trusted issuer keys to anchor verification on |
+| `trusted_roots` | `List[PublicKey]` | `None` | Root issuer keys to anchor verification on (falls back to `tenuo.configure`) |
 | `warrant_chain` | `List[Warrant]` | `None` | Default parents for graphs without a `warrant_chain` state field |
 | `key_id` | `str` | `None` | Signing key to use, overriding the config value |
+| `approval_handler` | callable | `None` | Called when an approval gate fires (see [Human Approval](#human-approval)) |
+| `approvals` | `List[SignedApproval]` | `None` | Pre-collected approvals |
+| `control_plane` | `ControlPlaneClient` | `None` | Where to send authorization events |
 
 **How it works:**
-1. Extracts warrant from state, plus any parents in `warrant_chain`
+1. Extracts warrant from state (a single warrant, or a WarrantStack token / root-first list), plus any parents in `warrant_chain`
 2. Gets key from registry (via `key_id` in config or "default")
 3. Authorizes each tool call via shared enforcement logic
 4. Returns error ToolMessage if authorization fails
@@ -317,11 +344,12 @@ Recommended for LangChain 1.x `create_agent()`. Requires `langchain>=1.0`.
 ```python
 from tenuo.langgraph import TenuoMiddleware
 
-# Basic usage
+# Basic usage (roots from tenuo.configure(trusted_roots=[...]))
 middleware = TenuoMiddleware()
 
 # With configuration
 middleware = TenuoMiddleware(
+    trusted_roots=[issuer_key.public_key],
     key_id="worker",      # Explicit key (default: from config or "default")
     filter_tools=True,    # Hide unauthorized tools from LLM (default: True)
     require_constraints=False,  # Require constraints for sensitive tools
@@ -344,6 +372,11 @@ agent = create_agent(
 | `key_id` | `str` | `None` | Key ID to use (overrides config) |
 | `filter_tools` | `bool` | `True` | Filter tools shown to LLM based on warrant |
 | `require_constraints` | `bool` | `False` | Require constraints for sensitive tools |
+| `trusted_roots` | `List[PublicKey]` | `None` | Root issuer keys (falls back to `tenuo.configure`) |
+| `warrant_chain` | `List[Warrant]` | `None` | Default parents when state has no `warrant_chain` |
+| `approval_handler` | callable | `None` | Called when an approval gate fires |
+| `approvals` | `List[SignedApproval]` | `None` | Pre-collected approvals |
+| `debug` | `bool` | `False` | Verbose logging |
 
 **Hooks:**
 
@@ -389,9 +422,9 @@ registry.register("worker", key2, namespace="tenant-b")
 
 > See [API Reference](./api-reference#keyregistry) for full method documentation.
 
-### `guard_node(node, key_id=None, inject_warrant=False)`
+### `guard_node(node, key_id=None, inject_warrant=False, required_tools=None, trusted_roots=None)`
 
-Wrap a pure node function with Tenuo authorization.
+Wrap a pure node function with a warrant check. By default it only checks that state carries a warrant and that a key is registered for it; it does **not** authorize anything the node does. Per-call authorization happens in `TenuoToolNode` / `TenuoMiddleware`. Pass `required_tools=[...]` to fail fast when the warrant does not grant those tools.
 
 ```python
 from tenuo.langgraph import guard_node
@@ -423,6 +456,8 @@ graph.add_node("checker", guard_node(node_with_warrant, inject_warrant=True))
 | `node` | `Callable` | The node function to wrap |
 | `key_id` | `str` | Key ID to use (default: from config or "default") |
 | `inject_warrant` | `bool` | If True, inject `bound_warrant` parameter |
+| `required_tools` | `List[str]` | Tools the warrant must grant, verified against the trusted roots before the node runs; raises `ConfigurationError` otherwise |
+| `trusted_roots` | `List[PublicKey]` | Roots for the `required_tools` check |
 
 ### `@tenuo_node`
 
@@ -438,13 +473,17 @@ def my_agent(state, bound_warrant):
         # ...
         pass
 
-    # Delegate to sub-agent
+    # Delegate to sub-agent, and carry the chain (see Pattern 4)
     child = bound_warrant.grant(
         to=worker_pubkey,
         allow=["search"],
         ttl=60
     )
-    return {"messages": [...], "warrant": str(child)}
+    return {
+        "messages": [...],
+        "warrant": str(child),
+        "warrant_chain": [*state.get("warrant_chain", []), bound_warrant.warrant],
+    }
 
 graph.add_node("agent", my_agent)
 ```
@@ -458,16 +497,22 @@ graph.add_node("agent", my_agent)
 The cleanest integration for any LangGraph graph:
 
 ```python
-from langgraph.graph import StateGraph, MessagesState
+from typing import Annotated, Any, TypedDict
+
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
-from tenuo import SigningKey, Warrant, Range
-from tenuo.langgraph import TenuoToolNode, load_tenuo_keys
-
-load_tenuo_keys()
+from tenuo import KeyRegistry, SigningKey, Subpath, Pattern, Warrant
+from tenuo.langgraph import TenuoToolNode
 
 issuer = SigningKey.generate()
 agent_key = SigningKey.generate()
+KeyRegistry.get_instance().register("default", agent_key)
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    warrant: Any
 
 @tool
 def search(query: str) -> str:
@@ -486,23 +531,26 @@ def write_file(path: str, content: str) -> str:
     return f"Wrote {path}"
 
 # Build graph with TenuoToolNode
-graph_builder = StateGraph(MessagesState)
+graph_builder = StateGraph(State)
 # ... add your agent node here ...
-graph_builder.add_node("tools", TenuoToolNode([search, read_file, write_file]))
+graph_builder.add_node("tools", TenuoToolNode(
+    [search, read_file, write_file],
+    trusted_roots=[issuer.public_key],
+))
 graph = graph_builder.compile()
 
 # Run with different warrants for different access levels
 readonly_warrant = (Warrant.mint_builder()
-    .capability("search")
-    .capability("read_file")
+    .capability("search", query=Pattern("*"))
+    .capability("read_file", path=Subpath("/data"))
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(issuer))
 
 readwrite_warrant = (Warrant.mint_builder()
-    .capability("search")
-    .capability("read_file")
-    .capability("write_file")
+    .capability("search", query=Pattern("*"))
+    .capability("read_file", path=Subpath("/data"))
+    .capability("write_file", path=Subpath("/tmp"), content=Pattern("*"))
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(issuer))
@@ -538,9 +586,11 @@ def writer(state):
 # graph.py - Wire up with security
 from tenuo.langgraph import guard_node
 
-graph.add_node("researcher", guard_node(researcher, key_id="worker"))
+graph.add_node("researcher", guard_node(researcher, key_id="worker", required_tools=["web_search"]))
 graph.add_node("writer", guard_node(writer, key_id="worker"))
 ```
+
+`guard_node` refuses to run the node when state has no warrant or no key is registered, and, with `required_tools`, when the warrant does not grant those tools. Calls the node makes itself (like `web_search` above) are **not** authorized by `guard_node`; route tool calls through `TenuoToolNode` to enforce arguments.
 
 ### Pattern 3: Nodes that Need Warrant Access
 
@@ -604,7 +654,12 @@ def orchestrator(state, bound_warrant):
 ```
 
 `TenuoToolNode` and `TenuoMiddleware` read the field automatically and verify
-the full chain. Entries may be `Warrant` objects or base64 tokens. A chain that
+the full chain. Entries may be `Warrant` objects or base64 tokens.
+
+Alternatively, put the whole chain in `warrant` itself, as a WarrantStack token
+(`encode_warrant_stack([root, ..., leaf])`) or a root-first list ending in the
+leaf. Use one form or the other: a stack in `warrant` together with a
+`warrant_chain` is rejected as a configuration error. A chain that
 does not hash-link to the leaf, or that does not root in one of
 `trusted_roots`, is denied: supplying a chain cannot widen authority, only
 prove it.
@@ -662,58 +717,55 @@ registry.register("worker", tenant_a_key, namespace="tenant-a")
 registry.register("worker", tenant_b_key, namespace="tenant-b")
 
 # In your node, determine namespace from state/context
-def tenant_aware_node(state, bound_warrant):
+def tenant_aware_node(state):
     tenant_id = state.get("tenant_id", "default")
     key = registry.get("worker", namespace=tenant_id)
     # ...
 ```
 
+`TenuoToolNode`, `TenuoMiddleware` and `guard_node` look keys up by `key_id` only and do not apply a namespace. Namespaced keys are reachable only from your own code, as above; to give each tenant its own key in a tool node, register it under a distinct `key_id` and pass that ID in config.
+
 ---
 
 ## Error Handling
 
-Authorization errors return `ToolMessage` with `status="error"` and canonical wire codes:
+`TenuoToolNode` and `TenuoMiddleware` do not raise on a denial. The tool body does not run, and the model gets a `ToolMessage` with `status="error"` and an opaque message carrying a reference ID. The reason is logged under the same ID:
 
 ```python
-# TenuoToolNode returns error messages, not exceptions
 result = graph.invoke(state)
 
 for msg in result["messages"]:
-    if hasattr(msg, "status") and msg.status == "error":
-        print(f"Authorization denied: {msg.content}")
-        # Content includes request_id for log correlation
-        # Parse wire code from content if needed for programmatic handling
+    if getattr(msg, "status", None) == "error":
+        print(msg.content)  # "Authorization denied (ref: c5d12bc0-...)"
 ```
 
-### Wire Code Support
+| `ToolMessage` content | Logged reason (same ref) | Fix |
+|-----------------------|--------------------------|-----|
+| `Security configuration error (ref: ...)` | `State is missing 'warrant' field` | Declare `warrant` in the state schema and pass it in (see [Quick Start](#quick-start)) |
+| `Security configuration error (ref: ...)` | `Key '<id>' not found in KeyRegistry` | Register the key or use `load_tenuo_keys()` |
+| `Security configuration error (ref: ...)` | `State has both a multi-warrant stack in 'warrant' and an explicit 'warrant_chain'` | Send the chain one way only |
+| `Authorization denied (ref: ...)` | `enforce_tool_call requires trusted_roots ...` | Pass `trusted_roots=[...]` or call `tenuo.configure(trusted_roots=[...])` |
+| `Authorization denied (ref: ...)` | `Root warrant issuer is not trusted` | Delegated warrant sent without its parents: add `warrant_chain` (see [Pattern 4](#pattern-4-delegation)) |
+| `Authorization denied (ref: ...)` | `chain broken: child parent_hash mismatch` | Present the real parents, root-first, excluding the leaf |
+| `Authorization denied (ref: ...)` | `Constraint '<field>' not satisfied: ...` | Request within bounds, or check the warrant with `why_denied()` |
+| `Authorization denied (ref: ...)` | tool not in warrant | Grant the tool, or let `TenuoMiddleware(filter_tools=True)` hide it |
 
-For programmatic error handling, all `TenuoError` exceptions include canonical wire codes:
+`guard_node` is the exception: it raises `ConfigurationError` before the node runs.
+
+---
+
+## Observe Mode
+
+To learn what a graph needs before enforcing it, run in observe mode:
 
 ```python
-from tenuo.exceptions import TenuoError, ConstraintViolation
+from tenuo import configure
 
-try:
-    result = graph.invoke(state)
-except ConstraintViolation as e:
-    print(f"Wire code: {e.get_wire_code()}")  # 1501
-    print(f"Wire name: {e.get_wire_name()}")  # "constraint-violation"
-    print(f"HTTP status: {e.get_http_status()}")  # 403
+configure(trusted_roots=[issuer.public_key], mode="observe")
+# or TENUO_MODE=observe via tenuo.auto_configure(); "audit" and "permissive" are aliases
 ```
 
-### Common Errors
-
-| Error | Wire Code | Cause | Fix |
-|-------|-----------|-------|-----|
-| `ConfigurationError` | 1201 | Missing 'warrant' field in state | Add warrant to state: `{"warrant": str(warrant), ...}` |
-| `ConfigurationError` | 1201 | Key not registered | Register key or use `load_tenuo_keys()` |
-| `ConfigurationError` | 1201 | No trusted roots configured | Pass `trusted_roots=[...]` or call `tenuo.configure(trusted_roots=[...])` |
-| `ToolNotAuthorized` | 1500 | Tool not in warrant | Check warrant constraints with `why_denied()` |
-| Denied: `Root warrant issuer is not trusted` | 1400 | Delegated warrant presented without its parents | Add `warrant_chain` to state (see [Pattern 4](#pattern-4-delegation)) |
-| Denied: `chain broken: child parent_hash mismatch` | 1405 | `warrant_chain` does not hash-link to the leaf | Present the real parents, root-first, excluding the leaf |
-| `ConstraintViolation` | 1501 | Argument violates constraint | Request within bounds |
-| `ExpiredError` | 1300 | TTL exceeded | Request fresh warrant |
-
-See [wire format specification](./spec/wire-format-v1#appendix-a-error-code-reference) for the complete list.
+`TenuoToolNode` and `TenuoMiddleware` still run every check. A call that would be denied runs anyway, and the process logs `OBSERVE: would deny <tool>: <reason>` at warning level. Observe mode lets every would-deny through, including chain and signature failures, so use it only while discovering policy. Configuration errors (no `warrant` in state, no key) still return an error `ToolMessage`.
 
 ---
 
@@ -724,8 +776,8 @@ See [wire format specification](./spec/wire-format-v1#appendix-a-error-code-refe
 By default, authorization errors don't reveal constraint details:
 
 ```python
-# Client sees: "Authorization denied (ref: abc123)"
-# Logs show: "[abc123] Tool 'search' denied: query=/etc/passwd, expected=Pattern(/data/*)"
+# Model sees: "Authorization denied (ref: c5d12bc0-...)"
+# Logs show:  "[c5d12bc0-...] Tool 'process_refund' denied: Constraint 'amount' not satisfied: ..."
 ```
 
 This prevents attackers from learning your constraint boundaries.
