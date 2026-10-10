@@ -454,7 +454,7 @@ config = TenuoPluginConfig(
 
 `dry_run=True` records authorization denials but still executes activities. Use only for rollout validation.
 
-`dry_run` is observe mode scoped to this plugin; `tenuo.configure(mode="observe")` turns it on everywhere. Either way, each would-deny is logged as `OBSERVE: would deny <activity>: <reason>` and emitted as a `DENY` audit event with `observed=True`, and the signed receipt records it as not enforced. Activity calls only; Nexus operations and signals still enforce.
+`dry_run` is observe mode scoped to this plugin; `tenuo.configure(mode="observe")` turns it on everywhere. Either way, each would-deny is logged as `OBSERVE: would deny <activity>: <reason>` and emitted as a `DENY` audit event with `observed=True`, and the signed receipt records it as not enforced. Activities, signals, updates and Nexus operations all honor it. A signal or update outside `authorized_signals` / `authorized_updates` is logged and delivered (workflow handlers have no audit callback, so there is no audit event for these). Nexus denials, including PoP and chain integrity failures, are audited as observed with their original error type.
 
 ```python
 config = TenuoPluginConfig(

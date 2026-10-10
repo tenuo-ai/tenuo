@@ -2329,3 +2329,195 @@ def test_bootstrap_nexus_workflow_requires_worker_config(
 
     with pytest.raises(TenuoContextError, match="requires TenuoWorkerInterceptor"):
         tenuo_bootstrap_nexus_workflow(envelope)
+
+
+# =============================================================================
+# Observe mode / dry_run on the Nexus path
+# =============================================================================
+
+
+@pytest.fixture
+def _reset_tenuo_config() -> Any:
+    from tenuo.config import reset_config
+
+    reset_config()
+    yield
+    reset_config()
+
+
+def _observe_ctx_and_config(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+    input: RefundInput,
+    *,
+    drop_header: Optional[str] = None,
+    **cfg_kwargs: Any,
+) -> tuple[Any, Any, list[Any], RecordingControlPlane]:
+    root_key, agent_key = nexus_keys
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=input,
+    )
+    if drop_header is not None:
+        headers.pop(drop_header)
+    ctx = SimpleNamespace(
+        request_id="req-observe",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+    if cfg_kwargs.pop("global_observe", False):
+        from tenuo.config import configure
+
+        configure(trusted_roots=[root_key.public_key], mode="observe")
+    events: list[Any] = []
+    control_plane = RecordingControlPlane()
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        audit_callback=events.append,
+        control_plane=control_plane,
+        nexus_endpoint="billing-prod",
+        **cfg_kwargs,
+    )
+    return ctx, config, events, control_plane
+
+
+def _observe_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("OBSERVE: would deny")]
+
+
+def test_nexus_enforce_mode_constraint_denial_raises_and_is_not_observed(
+    _reset_tenuo_config: Any,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    bad_input = RefundInput("ord_999", 2500)
+    ctx, config, events, control_plane = _observe_ctx_and_config(nexus_keys, nexus_warrant, bad_input)
+    with pytest.raises(ConstraintViolation):
+        verify_nexus_operation(ctx, bad_input, config, endpoint="billing-prod")
+    assert [(e.decision, e.observed) for e in events] == [("DENY", False)]
+    assert control_plane.deny_events[0]["result"].observed is False
+
+
+@pytest.mark.parametrize("mode", ["dry_run", "global_observe"])
+def test_nexus_observe_constraint_denial_proceeds_and_audits_observed(
+    _reset_tenuo_config: Any,
+    caplog: pytest.LogCaptureFixture,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+    mode: str,
+) -> None:
+    bad_input = RefundInput("ord_999", 2500)
+    ctx, config, events, control_plane = _observe_ctx_and_config(nexus_keys, nexus_warrant, bad_input, **{mode: True})
+    with caplog.at_level("WARNING"):
+        warrant = verify_nexus_operation(ctx, bad_input, config, endpoint="billing-prod", raise_nexus_error=True)
+
+    assert warrant.id == nexus_warrant.id
+    assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+    assert not control_plane.allow_events
+    denial = control_plane.deny_events[0]["result"]
+    assert denial.observed is True
+    assert denial.error_type == "constraint_violation"
+    lines = _observe_lines(caplog)
+    assert len(lines) == 1
+    assert lines[0].startswith("OBSERVE: would deny nexus:billing-prod:BillingService:refund")
+    assert "ord_999" not in lines[0]
+
+
+@pytest.mark.parametrize("mode", ["dry_run", "global_observe"])
+def test_nexus_observe_integrity_failure_keeps_error_type(
+    _reset_tenuo_config: Any,
+    caplog: pytest.LogCaptureFixture,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+    mode: str,
+) -> None:
+    input = RefundInput("ord_123", 2500)
+    ctx, config, events, control_plane = _observe_ctx_and_config(
+        nexus_keys, nexus_warrant, input, drop_header="x-tenuo-pop", **{mode: True}
+    )
+    with caplog.at_level("WARNING"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod", raise_nexus_error=True)
+
+    assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+    denial = control_plane.deny_events[0]["result"]
+    assert denial.observed is True
+    assert denial.error_type == "invalid_pop"
+    assert len(_observe_lines(caplog)) == 1
+
+
+def test_nexus_observe_missing_warrant_proceeds(
+    _reset_tenuo_config: Any,
+    caplog: pytest.LogCaptureFixture,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    input = RefundInput("ord_123", 2500)
+    ctx, config, events, _cp = _observe_ctx_and_config(nexus_keys, nexus_warrant, input, dry_run=True)
+    ctx.headers = {}
+    with caplog.at_level("WARNING"):
+        assert verify_nexus_operation(ctx, input, config, endpoint="billing-prod", raise_nexus_error=True) is None
+    assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+    assert len(_observe_lines(caplog)) == 1
+
+
+async def test_nexus_inbound_interceptor_enforce_mode_blocks_handler(
+    _reset_tenuo_config: Any,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    bad_input = RefundInput("ord_999", 2500)
+    ctx, config, events, _cp = _observe_ctx_and_config(nexus_keys, nexus_warrant, bad_input)
+    started: list[Any] = []
+
+    class _Next:
+        async def execute_nexus_operation_start(self, inbound_input: Any) -> str:
+            started.append(inbound_input)
+            return "ok"
+
+    inbound = TenuoNexusOperationInboundInterceptor(_Next(), config)
+    with pytest.raises(nexusrpc.HandlerError):
+        await inbound.execute_nexus_operation_start(SimpleNamespace(ctx=ctx, input=bad_input))
+    assert started == []
+
+
+@pytest.mark.parametrize("mode", ["dry_run", "global_observe"])
+async def test_nexus_inbound_interceptor_observe_runs_handler_once_logged(
+    _reset_tenuo_config: Any,
+    caplog: pytest.LogCaptureFixture,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+    mode: str,
+) -> None:
+    bad_input = RefundInput("ord_999", 2500)
+    ctx, config, events, _cp = _observe_ctx_and_config(nexus_keys, nexus_warrant, bad_input, **{mode: True})
+    started: list[Any] = []
+
+    class _Next:
+        async def execute_nexus_operation_start(self, inbound_input: Any) -> str:
+            # Handler helpers re-verify; the interceptor cache must not
+            # record or log the observed denial a second time.
+            verify_nexus_operation(
+                inbound_input.ctx,
+                inbound_input.input,
+                config,
+                endpoint="billing-prod",
+                raise_nexus_error=True,
+            )
+            started.append(inbound_input)
+            return "ok"
+
+    inbound = TenuoNexusOperationInboundInterceptor(_Next(), config)
+    with caplog.at_level("WARNING"):
+        result = await inbound.execute_nexus_operation_start(SimpleNamespace(ctx=ctx, input=bad_input))
+
+    assert result == "ok"
+    assert len(started) == 1
+    assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+    assert len(_observe_lines(caplog)) == 1

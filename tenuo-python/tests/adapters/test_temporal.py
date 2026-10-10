@@ -5583,3 +5583,119 @@ class TestActivityObserveMode:
         result, events, nxt = self._run("/tmp/safe/a.txt", global_observe=True)
         assert result == "ok"
         assert [(e.decision, e.observed) for e in events] == [("ALLOW", False)]
+
+
+# =============================================================================
+# Observe mode / dry_run on signals and updates
+# =============================================================================
+
+
+class TestSignalUpdateObserveMode:
+    """dry_run and global observe mode log signal/update would-denies and deliver them."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        from tenuo.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+        from tenuo.temporal._state import _store_lock, _workflow_config_store
+
+        with _store_lock:
+            _workflow_config_store.pop("wf-sig-observe", None)
+
+    def _inbound(self, *, global_observe=False, **cfg_kwargs):
+        from tenuo.temporal._interceptors import _TenuoWorkflowInboundInterceptor
+        from tenuo.temporal._state import _store_lock, _workflow_config_store
+
+        if global_observe:
+            from tenuo.config import configure
+
+            configure(trusted_roots=_TEMPORAL_TRUST_ROOTS, mode="observe")
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            authorized_signals=["add"],
+            authorized_updates=["retry"],
+            **cfg_kwargs,
+        )
+        nxt = MagicMock()
+        nxt.handle_signal = AsyncMock(return_value=None)
+        nxt.handle_update_validator = MagicMock(return_value=None)
+        nxt.handle_update_handler = AsyncMock(return_value="updated")
+        inbound = _TenuoWorkflowInboundInterceptor(next_interceptor=nxt)
+        with _store_lock:
+            _workflow_config_store["wf-sig-observe"] = cfg
+        info = MagicMock()
+        info.workflow_id = "wf-sig-observe"
+        info.run_id = "wf-sig-observe"
+        return inbound, nxt, info
+
+    @staticmethod
+    def _observe_lines(caplog):
+        return [r.getMessage() for r in caplog.records if r.getMessage().startswith("OBSERVE: would deny")]
+
+    def _signal(self, inbound, info, name):
+        sig = MagicMock(signal=name)
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.workflow.info", return_value=info):
+                loop.run_until_complete(inbound.handle_signal(sig))
+        finally:
+            loop.close()
+        return sig
+
+    def _update(self, inbound, info, name, *, validator=True):
+        upd = MagicMock(update=name, id="upd-1")
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.workflow.info", return_value=info):
+                if validator:
+                    inbound.handle_update_validator(upd)
+                result = loop.run_until_complete(inbound.handle_update_handler(upd))
+        finally:
+            loop.close()
+        return upd, result
+
+    def test_enforce_mode_signal_still_denied(self):
+        inbound, nxt, info = self._inbound()
+        with pytest.raises(TemporalConstraintViolation):
+            self._signal(inbound, info, "drop_tables")
+        nxt.handle_signal.assert_not_called()
+
+    def test_enforce_mode_update_still_denied(self):
+        inbound, nxt, info = self._inbound()
+        with pytest.raises(TemporalConstraintViolation):
+            self._update(inbound, info, "wipe")
+        nxt.handle_update_validator.assert_not_called()
+        nxt.handle_update_handler.assert_not_called()
+
+    @pytest.mark.parametrize("mode", ["dry_run", "global_observe"])
+    def test_observe_signal_delivered_and_logged(self, caplog, mode):
+        inbound, nxt, info = self._inbound(**{mode: True})
+        with caplog.at_level("WARNING"):
+            sig = self._signal(inbound, info, "drop_tables")
+        nxt.handle_signal.assert_called_once_with(sig)
+        assert self._observe_lines(caplog) == [
+            "OBSERVE: would deny signal:drop_tables: Signal not authorized: drop_tables"
+        ]
+
+    @pytest.mark.parametrize("mode", ["dry_run", "global_observe"])
+    @pytest.mark.parametrize("validator", [True, False])
+    def test_observe_update_delivered_and_logged_once(self, caplog, mode, validator):
+        inbound, nxt, info = self._inbound(**{mode: True})
+        with caplog.at_level("WARNING"):
+            upd, result = self._update(inbound, info, "wipe", validator=validator)
+        assert result == "updated"
+        nxt.handle_update_handler.assert_called_once_with(upd)
+        if validator:
+            nxt.handle_update_validator.assert_called_once_with(upd)
+        assert self._observe_lines(caplog) == ["OBSERVE: would deny update:wipe: Update not authorized: wipe"]
+
+    def test_observe_allowed_signal_is_not_logged(self, caplog):
+        inbound, nxt, info = self._inbound(dry_run=True)
+        with caplog.at_level("WARNING"):
+            self._signal(inbound, info, "add")
+        nxt.handle_signal.assert_called_once()
+        assert self._observe_lines(caplog) == []

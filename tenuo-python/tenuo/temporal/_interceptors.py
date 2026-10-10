@@ -162,6 +162,41 @@ def _raise_non_retryable(violation: BaseException) -> None:
         raise violation
 
 
+def _is_observing(config: Any) -> bool:
+    """True when Tenuo denials are recorded but not enforced for ``config``.
+
+    ``dry_run`` is observe mode scoped to this plugin; global observe mode
+    (``tenuo.configure(mode="observe")``) applies everywhere.
+    """
+    from tenuo.config import should_block_violation
+
+    return bool(getattr(config, "dry_run", False)) or not should_block_violation()
+
+
+def _log_observed(
+    tool: str,
+    reason: str,
+    *,
+    constraint: Optional[str] = None,
+    error_type: Optional[str] = None,
+    warrant_id: Optional[str] = None,
+) -> None:
+    """Log one ``OBSERVE: would deny`` line via the shared enforcement helper."""
+    from tenuo._enforcement import EnforcementResult, _log_observed_denial
+
+    _log_observed_denial(
+        EnforcementResult(
+            allowed=False,
+            tool=tool,
+            arguments={},
+            denial_reason=reason,
+            constraint_violated=constraint,
+            error_type=error_type,
+            warrant_id=warrant_id,
+        )
+    )
+
+
 class _ApprovalHandlerRetry(Exception):
     """An approval handler raised a retryable Temporal application error."""
 
@@ -397,6 +432,9 @@ class _TenuoWorkflowInboundInterceptor:
         self._early_handlers = 0
         self._early_owned_config = False
         self._early_owned_headers = False
+        # Update ids already logged as observed by the validator, so the
+        # handler does not log the same would-deny a second time.
+        self._observed_update_ids: set = set()
 
     def init(self, outbound: Any) -> None:
         self.next.init(_TenuoWorkflowOutboundInterceptor(outbound, self._config))
@@ -532,6 +570,15 @@ class _TenuoWorkflowInboundInterceptor:
             signal_name = getattr(input, "signal", None)
             if signal_name not in config.authorized_signals:
                 warrant_id = self._resolve_warrant_id()
+                if _is_observing(config):
+                    _log_observed(
+                        f"signal:{signal_name}",
+                        f"Signal not authorized: {signal_name}",
+                        constraint=f"Signal not authorized: {signal_name}",
+                        error_type="constraint_violation",
+                        warrant_id=warrant_id,
+                    )
+                    return await self.next.handle_signal(input)
                 logger.warning(
                     "Signal '%s' denied (warrant_id=%s): not in authorized_signals",
                     signal_name,
@@ -558,6 +605,9 @@ class _TenuoWorkflowInboundInterceptor:
             update_name = getattr(input, "update", None)
             if update_name not in config.authorized_updates:
                 warrant_id = self._resolve_warrant_id()
+                if _is_observing(config):
+                    self._log_observed_update(input, update_name, warrant_id)
+                    return self.next.handle_update_validator(input)
                 logger.warning(
                     "Update '%s' rejected at validation (warrant_id=%s): "
                     "not in authorized_updates",
@@ -581,6 +631,10 @@ class _TenuoWorkflowInboundInterceptor:
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)
             if update_name not in config.authorized_updates:
+                if _is_observing(config):
+                    self._log_observed_update(input, update_name, self._resolve_warrant_id())
+                    self._observed_update_ids.discard(getattr(input, "id", None))
+                    return await self.next.handle_update_handler(input)
                 raise TemporalConstraintViolation(
                     tool=f"update:{update_name}",
                     arguments={},
@@ -588,6 +642,21 @@ class _TenuoWorkflowInboundInterceptor:
                     warrant_id=self._resolve_warrant_id(),
                 )
         return await self.next.handle_update_handler(input)
+
+    def _log_observed_update(self, input: Any, update_name: Any, warrant_id: str) -> None:
+        """Log an observed update denial once across validator and handler."""
+        update_id = getattr(input, "id", None)
+        if update_id is not None and update_id in self._observed_update_ids:
+            return
+        if update_id is not None:
+            self._observed_update_ids.add(update_id)
+        _log_observed(
+            f"update:{update_name}",
+            f"Update not authorized: {update_name}",
+            constraint=f"Update not authorized: {update_name}",
+            error_type="constraint_violation",
+            warrant_id=warrant_id,
+        )
 
 
 # ── TenuoWorkerInterceptor (worker interceptor) ─────────────────────────
@@ -1551,9 +1620,7 @@ class TenuoActivityInboundInterceptor:
         ``dry_run`` is observe mode scoped to this plugin; global observe mode
         (``tenuo.configure(mode="observe")``) applies everywhere.
         """
-        from tenuo.config import should_block_violation
-
-        return bool(self._config.dry_run) or not should_block_violation()
+        return _is_observing(self._config)
 
     def _emit_allow_event(
         self,
