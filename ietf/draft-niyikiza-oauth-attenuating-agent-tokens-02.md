@@ -2442,111 +2442,39 @@ Specification Required {{RFC8126}}.
 
 ### Designated Expert Instructions
 
-Designated experts MUST verify that each submitted registration
-satisfies all of the following criteria before approving it:
+Designated experts MUST verify that a registration:
 
-1. The type name is a lowercase string containing only letters,
-   digits, and underscores, and does not conflict with an
-   existing registered type name.
-
-2. The `check` predicate is fully specified: given any argument
-   value, an independent implementer can determine without
-   ambiguity whether the predicate returns true or false.
-
-3. The `subsumes` verification procedure satisfies the decidable,
-   sound, and deterministic properties defined in Section 5.1,
-   including its polynomial time bound. If full containment for the
-   constraint language is more expensive than that, the
-   registration prescribes a conservative syntactic strategy that
-   meets the bound and formally justifies its soundness. The
-   registration states its worst-case cost and defines no member
-   named `optional`.
-
-4. The cross-type subsumption rules enumerate every (parent
-   type, child type) pair involving the new type and a core
-   type or previously registered extension type that the
-   registration declares valid, with explicit conditions.
-   Unlisted pairs are invalid. A
-   parent `wildcard` subsumes every type and need not be listed.
-
-5. The reference is a stable, publicly accessible specification
-   suitable for interoperable implementation.
+1. has a type name that is a lowercase string of letters, digits, and
+   underscores and does not conflict with a registered name;
+2. specifies its members and its `check` predicate precisely enough
+   that independent implementations agree on every argument value;
+3. meets the requirements of Section 5.1; and
+4. has a stable, publicly accessible reference.
 
 Designated experts SHOULD request clarification when cross-type rules
-are incomplete, when the subsumption procedure's soundness is not
-formally justified, or when the check predicate leaves ambiguous cases
-unresolved.
+are incomplete, when soundness is not formally justified, or when the
+`check` predicate leaves cases unresolved.
 
 ### Registration Template
 
-Registration requests MUST use the following template:
-
 ~~~
 Type name:
-  (A lowercase string. Example: "path_containment")
-
-Additional members:
-  (List each JSON member name, its JSON type, whether it is required
-  or optional, its default value if optional, and its semantics.
-  Example: "root (string, required): An absolute path root.")
-
+Additional members:   (name, JSON type, required or optional,
+                       default, semantics)
 check predicate:
-  (A complete, unambiguous specification of the boolean predicate
-  evaluated against an argument value at invocation time. Must
-  cover all edge cases including null, empty, and out-of-range
-  inputs.)
-
-subsumes verification procedure:
-  (A complete formal definition of what it means for one instance
-  of this constraint type to be at least as restrictive as another.
-  Must state whether the procedure is conservative and, if so, which
-  semantically subsuming pairs it rejects. Must include a soundness
-  argument: if the procedure returns true for (C_parent, C_child),
-  then for all values v: C_child.check(v) implies C_parent.check(v).)
-
-cross-type subsumption rules:
-  (An explicit enumeration of every (parent type, child type) pair
-  involving this type that is a valid attenuation, and the conditions
-  under which it is valid. List both directions: this type as parent
-  and this type as child. All unlisted pairs are invalid, except that
-  (wildcard, this_type) is always valid and need not be listed.
-  Example:
-    - (this_type, exact): valid if the exact value satisfies this
-      type's check predicate.
-    - (this_type, this_type): valid if [condition].)
-
-cost:
-  (The worst-case cost of the check predicate and the subsumes
-  procedure in terms of input size, and any resource limits
-  implementations should enforce.)
-
+subsumes procedure:   (Section 5.1, including whether it is
+                       conservative and its soundness argument)
+cross-type rules:     (Section 5.1)
+cost:                 (Section 5.1)
 security considerations:
-  (Any security properties, limitations, or attack surfaces specific
-  to this constraint type, including known cases where the check
-  predicate or subsumption procedure can be bypassed or confused.)
-
 reference:
-  (A stable, publicly accessible document defining all of the above.)
 ~~~
 
 ### Initial Registry Entries
 
-The core constraint types defined in Section 3.4 of this document
-constitute the initial registry entries. For each type, the check
-predicate and additional members are defined in Section 3.4, and the
-subsumption rules and cross-type pairs are defined in Section 4.5.
-
-| Type Name | Reference |
-|---|---|
-| `exact` | This document (Sections 3.4, 4.5) |
-| `range` | This document (Sections 3.4, 4.5) |
-| `one_of` | This document (Sections 3.4, 4.5) |
-| `not_one_of` | This document (Sections 3.4, 4.5) |
-| `contains` | This document (Sections 3.4, 4.5) |
-| `subset` | This document (Sections 3.4, 4.5) |
-| `wildcard` | This document (Sections 3.4, 4.5) |
-| `all` | This document (Sections 3.4, 4.5) |
-| `any` | This document (Sections 3.4, 4.5) |
+The initial entries are the core types `exact`, `range`, `one_of`,
+`not_one_of`, `contains`, `subset`, `wildcard`, `all`, and `any`, each
+with reference "This document (Sections 3.4 and 4.5)".
 
 ## OAuth Authorization Server Metadata Registry
 
