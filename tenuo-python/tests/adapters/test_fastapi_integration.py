@@ -175,6 +175,89 @@ class TestFastAPIIntegration:
         resp = client.get("/custom", headers=headers)
         assert resp.status_code == 200
 
+    def _transfer_app(self, app, key, extract_args):
+        """POST /transfer guarded by a warrant constraining body field `amount` <= 100."""
+        from tenuo import Range
+
+        @app.post("/transfer")
+        async def transfer(ctx: SecurityContext = Depends(TenuoGuard("transfer", extract_args=extract_args))):
+            return {"args": ctx.args}
+
+        return Warrant.mint_builder().capability("transfer", amount=Range.max_value(100)).mint(key)
+
+    def _post_transfer(self, client, key, warrant, body):
+        pop_sig = warrant.sign(key, "transfer", body, int(time.time()))
+        headers = {
+            X_TENUO_WARRANT: warrant.to_base64(),
+            X_TENUO_POP: base64.b64encode(pop_sig).decode("ascii"),
+        }
+        return client.post("/transfer", json=body, headers=headers)
+
+    def test_async_extractor_enforces_body_constraint(self, app, client, key):
+        """An async extract_args reading the JSON body is awaited and its fields enforced."""
+
+        async def extract_body(request: Request) -> Dict[str, Any]:
+            return await request.json()
+
+        warrant = self._transfer_app(app, key, extract_body)
+
+        resp = self._post_transfer(client, key, warrant, {"amount": 50})
+        assert resp.status_code == 200
+        assert resp.json()["args"] == {"amount": 50}
+
+        resp = self._post_transfer(client, key, warrant, {"amount": 5000})
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error"] == "authorization_denied"
+
+    def test_extract_body_args_helper_works_as_extractor(self, app, client, key):
+        """The documented extract_body_args helper can be passed directly."""
+        from tenuo.fastapi import extract_body_args
+
+        warrant = self._transfer_app(app, key, extract_body_args)
+
+        assert self._post_transfer(client, key, warrant, {"amount": 100}).status_code == 200
+        assert self._post_transfer(client, key, warrant, {"amount": 101}).status_code == 403
+
+    def test_async_extractor_still_checks_headers_first(self, app, client, key):
+        """Missing credentials are rejected with 401 before the body extractor runs."""
+        called = []
+
+        async def extract_body(request: Request) -> Dict[str, Any]:
+            called.append(True)
+            return await request.json()
+
+        self._transfer_app(app, key, extract_body)
+        resp = client.post("/transfer", json={"amount": 1})
+        assert resp.status_code == 401
+        assert called == []
+
+    def test_sync_extractor_returning_awaitable_fails_closed(self, app, client, key):
+        """A sync callable that returns a coroutine must not be authorized against."""
+
+        async def _read(request: Request) -> Dict[str, Any]:
+            return await request.json()
+
+        warrant = self._transfer_app(app, key, lambda request: _read(request))
+        resp = self._post_transfer(client, key, warrant, {"amount": 50})
+        assert resp.status_code == 500
+        assert resp.json()["detail"]["error"] == "configuration_error"
+
+    def test_sync_extractor_guard_stays_directly_callable(self):
+        """Guards with sync extractors keep a sync __call__ (no coroutine returned)."""
+        import inspect as _inspect
+
+        sync_guard = TenuoGuard("search", extract_args=lambda r: {})
+        assert isinstance(sync_guard, TenuoGuard)
+        assert not _inspect.iscoroutinefunction(type(sync_guard).__call__)
+        assert not _inspect.iscoroutinefunction(type(TenuoGuard("search")).__call__)
+
+        async def extract(request: Request) -> Dict[str, Any]:
+            return {}
+
+        async_guard = TenuoGuard("search", extract_args=extract)
+        assert isinstance(async_guard, TenuoGuard)
+        assert _inspect.iscoroutinefunction(type(async_guard).__call__)
+
     def test_expired_warrant_returns_401(self, app, client, key):
         @app.get("/search")
         def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
