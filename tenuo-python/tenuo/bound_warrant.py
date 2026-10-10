@@ -25,6 +25,41 @@ from tenuo_core import PublicKey, SigningKey, Warrant  # type: ignore[import-unt
 
 from .validation import ValidationResult
 
+
+_APPROVALS_HEADER = "X-Tenuo-Approvals"
+
+
+def _header_parents(warrant: Any, warrant_chain: Optional[List[Any]]) -> Optional[List[Any]]:
+    """Parents to send with ``warrant`` in outbound headers.
+
+    An explicit ``warrant_chain`` wins. Otherwise a delegated warrant picks up
+    the ambient ``chain_scope()`` (set by ``grant()`` and ``session_scope``), so
+    a verifier that trusts only the root receives the full root-to-leaf stack.
+    Depth-0 warrants never consult the ambient chain.
+    """
+    if warrant_chain is not None:
+        return list(warrant_chain)
+    depth = getattr(warrant, "depth", 0)
+    if not (isinstance(depth, int) and depth > 0):
+        return None
+    from .decorators import chain_scope
+
+    ambient = chain_scope()
+    return list(ambient) if ambient else None
+
+
+def _encode_approvals_header(approvals: List[Any]) -> str:
+    """Encode approvals as FastAPI's TenuoGuard reads ``X-Tenuo-Approvals``.
+
+    Base64 of a JSON array of base64 CBOR-encoded ``SignedApproval`` values.
+    """
+    import base64
+    import json
+
+    items = [base64.b64encode(a.to_bytes()).decode("ascii") for a in approvals]
+    return base64.b64encode(json.dumps(items).encode("utf-8")).decode("ascii")
+
+
 try:
     from tenuo_core import WARRANT_HEADER as _WARRANT_HEADER  # type: ignore[attr-defined]
 except ImportError:
@@ -249,19 +284,24 @@ class BoundWarrant:
             tool: Tool name
             args: Tool arguments
             approvals: Optional list of SignedApproval objects. Required when the
-                warrant has a guard on this tool — pass the verified approvals so
-                the guard is satisfied during PoP validation on the server side.
+                warrant has a guard on this tool. They are checked in the local
+                pre-flight and sent as ``X-Tenuo-Approvals`` so the server-side
+                guard is satisfied too.
             trusted_roots: Trusted issuer public keys for the pre-flight check.
                 Forwarded to :meth:`validate`.
             warrant_chain: Parent warrants in root-first order, excluding this
-                warrant. Required for delegated warrants; validated locally
-                and encoded with this warrant as a WarrantStack for transport.
+                warrant. Validated locally and encoded with this warrant as a
+                WarrantStack for transport. Defaults to the ambient
+                ``chain_scope()`` when this warrant is delegated.
 
         Returns:
-            Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
+            Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers, plus
+            X-Tenuo-Approvals when approvals are given
         """
         import base64
         import time
+
+        warrant_chain = _header_parents(self._warrant, warrant_chain)
 
         # Validate before signing for better error messages.
         # Pass approvals so guarded tools don't fail here.
@@ -289,10 +329,13 @@ class BoundWarrant:
             warrant_token = encode_warrant_stack(
                 list(warrant_chain) + [self._warrant]
             )
-        return {
+        headers = {
             _WARRANT_HEADER: warrant_token,
             "X-Tenuo-PoP": pop_b64,
         }
+        if approvals:
+            headers[_APPROVALS_HEADER] = _encode_approvals_header(approvals)
+        return headers
 
     def _resolve_validation_roots(self, explicit: Optional[List[Any]]) -> List[Any]:
         """Resolve trusted roots the same way ``enforce_tool_call`` does.
