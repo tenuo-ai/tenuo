@@ -920,6 +920,82 @@ class TestWarrantStackEndToEnd:
         assert validated is not None
 
 
+class TestTrustDelegatedWarrantStack:
+    """trust_delegated=False rejects a delegated chain sent as a WarrantStack."""
+
+    @staticmethod
+    def _chain_and_server(trust_delegated):
+        core = pytest.importorskip("tenuo_core")
+        root_key = core.SigningKey.generate()
+        mid_key = core.SigningKey.generate()
+        leaf_key = core.SigningKey.generate()
+        root_w = core.Warrant.issue(
+            keypair=root_key,
+            holder=root_key.public_key,
+            capabilities={"ping": {}},
+            ttl_seconds=3600,
+        )
+        mid_w = root_w.attenuate(
+            capabilities={"ping": {}},
+            signing_key=root_key,
+            holder=mid_key.public_key,
+            ttl_seconds=1800,
+        )
+        # Leaf is issued by mid_key, which is not a trusted root, so it is only
+        # acceptable as a delegated warrant.
+        leaf_w = mid_w.attenuate(
+            capabilities={"ping": {}},
+            signing_key=mid_key,
+            holder=leaf_key.public_key,
+            ttl_seconds=900,
+        )
+        server = A2AServer(
+            name="Trust Test",
+            url="https://trust.example.com",
+            public_key="server_key",
+            trusted_issuers=[root_key.public_key.to_bytes().hex()],
+            trust_delegated=trust_delegated,
+            require_warrant=True,
+            check_replay=False,
+            require_audience=False,
+            require_pop=True,
+            audit_log=None,
+        )
+
+        @server.skill("ping")
+        async def ping():
+            return "pong"
+
+        pop = bytes(leaf_w.sign(leaf_key, "ping", {}, int(time.time())))
+        return server, [root_w, mid_w], leaf_w, pop
+
+    @pytest.mark.asyncio
+    async def test_stack_rejected_when_trust_delegated_false(self):
+        server, parents, leaf_w, pop = self._chain_and_server(trust_delegated=False)
+        with pytest.raises(UntrustedIssuerError):
+            await server.validate_warrant(leaf_w.to_base64(), "ping", {}, _preloaded_parents=parents, pop_signature=pop)
+
+    @pytest.mark.asyncio
+    async def test_legacy_chain_rejected_when_trust_delegated_false(self):
+        server, parents, leaf_w, pop = self._chain_and_server(trust_delegated=False)
+        with pytest.raises(UntrustedIssuerError):
+            await server.validate_warrant(
+                leaf_w.to_base64(),
+                "ping",
+                {},
+                warrant_chain=";".join(p.to_base64() for p in parents),
+                pop_signature=pop,
+            )
+
+    @pytest.mark.asyncio
+    async def test_stack_accepted_when_trust_delegated_true(self):
+        server, parents, leaf_w, pop = self._chain_and_server(trust_delegated=True)
+        validated = await server.validate_warrant(
+            leaf_w.to_base64(), "ping", {}, _preloaded_parents=parents, pop_signature=pop
+        )
+        assert validated is not None
+
+
 class TestClientSignedTask:
     """A2AClient signs PoP with plain arguments and a real warrant chain."""
 
