@@ -926,13 +926,7 @@ Payload:
 
 ### Derived Token
 
-Protected header:
-
-~~~json
-{"alg":"Ed25519","typ":"aat+jwt"}
-~~~
-
-Payload:
+The protected header is the same as the root token's. Payload:
 
 ~~~json
 {
