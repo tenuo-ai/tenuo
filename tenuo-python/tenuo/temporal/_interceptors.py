@@ -183,6 +183,35 @@ def _replace_field(obj: Any, field: str, value: Any) -> Any:
     return obj
 
 
+_CHILD_POLICY_KEYS = frozenset({"tools", "constraints", "ttl_seconds", "child_key_id"})
+
+
+def _workflow_type_name(workflow_ref: Any) -> str:
+    """Resolve a child-workflow reference to its registered Temporal workflow
+    type name.
+
+    In practice ``StartChildWorkflowInput.workflow`` (what interceptors see)
+    is already a plain string by the time it reaches any interceptor — the
+    Temporal SDK itself resolves a ``@workflow.defn`` class / run-method
+    reference to its registered name before building that input (see
+    ``_WorkflowInstanceImpl.workflow_start_child_workflow``). The non-string
+    branch below is a defensive fallback for direct/manual interceptor use
+    (e.g. tests), not a path real ``workflow.start_child_workflow()`` calls
+    exercise.
+    """
+    if isinstance(workflow_ref, str):
+        return workflow_ref
+    try:
+        from temporalio import workflow as _workflow
+
+        defn = _workflow._Definition.from_class(workflow_ref)  # type: ignore[attr-defined]
+        if defn is not None and defn.name:
+            return str(defn.name)
+    except Exception:
+        pass
+    return getattr(workflow_ref, "__name__", str(workflow_ref))
+
+
 # ── Outbound Workflow Interceptor ────────────────────────────────────────
 
 class _TenuoWorkflowOutboundInterceptor:
@@ -324,16 +353,40 @@ class _TenuoWorkflowOutboundInterceptor:
 
         return self._next.start_activity(input)
 
-    def start_child_workflow(self, input: Any) -> Any:
-        """Inject Tenuo headers into child workflow starts."""
+    async def start_child_workflow(self, input: Any) -> Any:
+        """Inject Tenuo headers into child workflow starts.
+
+        Two independent paths attach a child warrant, checked in order:
+
+        1. **Pre-queued** via ``tenuo_execute_child_workflow()`` —
+           ``_pending_child_headers`` already holds headers for this
+           ``child_id``; attach them verbatim (unchanged from before
+           ``child_warrant_policy`` existed).
+        2. **``child_warrant_policy``** — for a *plain*
+           ``workflow.start_child_workflow()`` / ``execute_child_workflow()``
+           call (no explicit Tenuo call queued anything), when the parent
+           workflow itself carries a warrant and a policy is configured, ask
+           the policy how to narrow it for this child. If the policy mints
+           no narrower warrant, the child is not started. See
+           :attr:`TenuoPluginConfig.child_warrant_policy`.
+
+        Declared ``async`` (unlike ``start_activity``) because path 2 must
+        ``await`` a local activity to mint the child warrant —
+        ``WorkflowOutboundInterceptor.start_child_workflow`` is itself an
+        async method on the Temporal SDK, so overriding it as a coroutine
+        function is well within contract.
+        """
         try:
             from temporalio.api.common.v1 import Payload  # type: ignore
         except ImportError:
-            return self._next.start_child_workflow(input)
+            return await self._next.start_child_workflow(input)
 
         child_id = input.id
         with _store_lock:
             raw_headers = _pending_child_headers.pop(child_id, None)
+
+        if raw_headers is None:
+            raw_headers = await self._maybe_policy_child_headers(input)
 
         if raw_headers:
             child_headers = dict(input.headers or {})
@@ -341,7 +394,89 @@ class _TenuoWorkflowOutboundInterceptor:
                 child_headers[k] = Payload(data=v)
             input = _replace_field(input, "headers", child_headers)
 
-        return self._next.start_child_workflow(input)
+        return await self._next.start_child_workflow(input)
+
+    async def _maybe_policy_child_headers(self, input: Any) -> Optional[Dict[str, bytes]]:
+        """Apply ``child_warrant_policy`` to a plain child-workflow start, if configured."""
+        policy = getattr(self._config, "child_warrant_policy", None) if self._config else None
+        if policy is None:
+            return None
+
+        run_key = _current_run_key()
+        with _store_lock:
+            parent_raw_headers = dict(_workflow_headers_store.get(run_key, {}))
+        if not parent_raw_headers:
+            # No warrant on the parent at all -> nothing to narrow from. The
+            # child simply starts unwarranted, same as without this feature.
+            return None
+
+        from tenuo.temporal._workflow import _fail_workflow_non_retryable
+
+        child_workflow_type = _workflow_type_name(getattr(input, "workflow", None))
+        parent_warrant = _extract_warrant_from_headers(parent_raw_headers)
+        if parent_warrant is None:
+            # The parent carries Tenuo headers but no usable warrant. Starting
+            # the child unwarranted would let it escape the parent's authority.
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy could not read the parent's warrant, so "
+                f"child workflow {child_workflow_type!r} (id={input.id!r}) was "
+                "not started."
+            ))
+
+        try:
+            decision = policy(
+                parent_warrant,
+                child_workflow_type,
+                input.id,
+                getattr(input, "args", ()),
+            )
+        except Exception as exc:
+            raise TenuoContextError(
+                f"child_warrant_policy raised for child workflow "
+                f"{child_workflow_type!r} (id={input.id!r}): {exc}"
+            ) from exc
+
+        if decision is None:
+            # A configured policy that mints no narrower warrant means the
+            # child does not start: never unwarranted, never the parent's
+            # warrant verbatim.
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy returned None for child workflow "
+                f"{child_workflow_type!r} (id={input.id!r}), so it was not "
+                "started. Return tools=[...] to start it with a narrower warrant."
+            ))
+        if not isinstance(decision, dict):
+            raise TenuoContextError(
+                "child_warrant_policy must return None or a dict of "
+                "tenuo_execute_child_workflow()-style kwargs (tools=, "
+                "constraints=, ttl_seconds=, child_key_id=); got "
+                f"{type(decision).__name__}."
+            )
+        # Unlike tenuo_execute_child_workflow(), omitting tools= here must not
+        # mean "all of the parent's tools": a policy returning {} (or a typo'd
+        # key) would otherwise hand the child the parent's full authority.
+        unknown = set(decision) - _CHILD_POLICY_KEYS
+        if unknown:
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy returned unknown keys {sorted(unknown)} for "
+                f"child workflow {child_workflow_type!r}; allowed: "
+                f"{sorted(_CHILD_POLICY_KEYS)}."
+            ))
+        tools = decision.get("tools")
+        if not isinstance(tools, (list, tuple)) or not tools:
+            raise _fail_workflow_non_retryable(TenuoContextError(
+                f"child_warrant_policy must name the child's tools explicitly "
+                f"(non-empty tools=[...]) for child workflow {child_workflow_type!r}."
+            ))
+
+        from tenuo.temporal._workflow import _attenuated_headers
+
+        return await _attenuated_headers(
+            tools=list(tools),
+            constraints=decision.get("constraints"),
+            ttl_seconds=decision.get("ttl_seconds"),
+            child_key_id=decision.get("child_key_id"),
+        )
 
     def continue_as_new(self, input: Any) -> None:
         """Re-inject Tenuo headers so the next run keeps its warrant."""
