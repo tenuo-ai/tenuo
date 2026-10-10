@@ -5464,3 +5464,122 @@ class TestInMemoryPopDedupStoreWarning:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# =============================================================================
+# Observe mode / dry_run on the activity path
+# =============================================================================
+
+
+class TestActivityObserveMode:
+    """dry_run and global observe mode record would-deny decisions as observed denials."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        from tenuo.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+
+    def _run(self, path, **cfg_kwargs):
+        import time as _time
+
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Subpath
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
+        from tenuo.temporal._headers import tenuo_headers
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
+        from tenuo.temporal._resolvers import EnvKeyResolver
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("read_file", path=Subpath("/tmp/safe"))
+            .ttl(3600)
+            .mint(control_key)
+        )
+        if cfg_kwargs.pop("global_observe", False):
+            from tenuo.config import configure
+
+            configure(trusted_roots=[control_key.public_key], mode="observe")
+
+        events: list = []
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            audit_callback=events.append,
+            **cfg_kwargs,
+        )
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.init = MagicMock()
+        ai = TenuoWorkerInterceptor(cfg).intercept_activity(nxt)
+
+        pop = warrant.sign(agent_key, "read_file", {"path": path}, int(_time.time()))
+        act_headers: dict = {}
+        for k, v in tenuo_headers(warrant, "agent1").items():
+            if k.startswith("x-tenuo-"):
+                act_headers[k] = v if isinstance(v, bytes) else str(v).encode("utf-8")
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        act_headers[TENUO_ARG_KEYS_HEADER] = b"path"
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        info = MagicMock()
+        info.activity_type = "read_file"
+        info.activity_id = "1"
+        info.workflow_id = "wf-observe"
+        info.workflow_run_id = "run-1"
+        info.workflow_type = "ObserveWF"
+        info.task_queue = "test-q"
+        info.attempt = 1
+        info.is_local = False
+
+        inp = MagicMock()
+        inp.fn = None
+        inp.args = (path,)
+        inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=info):
+                try:
+                    result = loop.run_until_complete(ai.execute_activity(inp))
+                except Exception as exc:  # noqa: BLE001 - enforce-mode denial
+                    result = exc
+        finally:
+            loop.close()
+        return result, events, nxt
+
+    def test_enforce_mode_denies_and_audits_enforced_denial(self):
+        result, events, nxt = self._run("/etc/passwd")
+        assert isinstance(result, Exception)
+        nxt.execute_activity.assert_not_called()
+        assert [(e.decision, e.observed) for e in events] == [("DENY", False)]
+
+    def test_dry_run_executes_and_audits_observed_denial(self, caplog):
+        with caplog.at_level("WARNING"):
+            result, events, nxt = self._run("/etc/passwd", dry_run=True)
+        assert result == "ok"
+        nxt.execute_activity.assert_called_once()
+        assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+        assert any(r.getMessage().startswith("OBSERVE: would deny read_file") for r in caplog.records)
+        assert not any("DRY-RUN" in r.getMessage() for r in caplog.records)
+
+    def test_global_observe_mode_audits_observed_denial_not_allow(self):
+        result, events, nxt = self._run("/etc/passwd", global_observe=True)
+        assert result == "ok"
+        nxt.execute_activity.assert_called_once()
+        assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+        assert events[0].constraint_violated
+
+    def test_global_observe_mode_allowed_call_is_plain_allow(self):
+        result, events, nxt = self._run("/tmp/safe/a.txt", global_observe=True)
+        assert result == "ok"
+        assert [(e.decision, e.observed) for e in events] == [("ALLOW", False)]

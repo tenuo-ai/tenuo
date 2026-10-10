@@ -1020,18 +1020,16 @@ class TenuoActivityInboundInterceptor:
         import time
         start_ns = time.perf_counter_ns()
         chain_result = None
+        observed_enforcement = None
         activity_fn = getattr(input, "fn", None)
 
         # -- Helper: shared denial branch (used by phases 4 and 6) --
         async def _deny_or_continue(tool: str, reason: str) -> Optional[Any]:
-            if self._config.dry_run:
-                logger.warning(
-                    "DRY-RUN mode: would deny activity %s in workflow %s (%s); "
-                    "executing anyway. Not for production.",
-                    tool,
-                    info.workflow_id,
-                    reason,
-                )
+            if self._observing():
+                # Observe mode (global) or dry_run: record and execute anyway.
+                from tenuo._enforcement import EnforcementResult, _log_observed_denial
+
+                _log_observed_denial(EnforcementResult(allowed=False, tool=tool, arguments={}, denial_reason=reason))
                 return await self._next.execute_activity(input)
 
             if self._config.on_denial == "log":
@@ -1083,7 +1081,7 @@ class TenuoActivityInboundInterceptor:
         if warrant is None:
             if self._config.require_warrant:
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
-                if self._config.on_denial == "raise" and not self._config.dry_run:
+                if self._config.on_denial == "raise" and not self._observing():
                     raise self._wrap_as_non_retryable(TemporalConstraintViolation(
                         tool=info.activity_type,
                         arguments={},
@@ -1125,7 +1123,7 @@ class TenuoActivityInboundInterceptor:
                 presented_chain=[warrant],
                 pop_auth_args=args,
             )
-            if self._config.on_denial == "raise" and not self._config.dry_run:
+            if self._config.on_denial == "raise" and not self._observing():
                 raise self._wrap_as_non_retryable(ChainValidationError(
                     reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
                     depth=chain_depth,
@@ -1162,7 +1160,7 @@ class TenuoActivityInboundInterceptor:
                     presented_chain=[warrant],
                     pop_auth_args=args,
                 )
-                if self._config.on_denial == "raise" and not self._config.dry_run:
+                if self._config.on_denial == "raise" and not self._observing():
                     raise self._wrap_as_non_retryable(ChainValidationError(
                         reason=reason,
                         depth=0,
@@ -1252,6 +1250,8 @@ class TenuoActivityInboundInterceptor:
             if not enforcement.allowed:
                 enforcement.raise_if_denied()
             chain_result = enforcement.chain_result
+            if getattr(enforcement, "observed", False):
+                observed_enforcement = enforcement
 
             # -- 13. Replay Deduplication --
             if info.attempt <= 1:
@@ -1313,7 +1313,7 @@ class TenuoActivityInboundInterceptor:
             # ``ApplicationError.type`` rather than a generic
             # ``TemporalConstraintViolation``. In dry-run mode the activity still
             # executes (shadow); in ``log`` mode it is denied without raising.
-            if self._config.on_denial == "raise" and not self._config.dry_run:
+            if self._config.on_denial == "raise" and not self._observing():
                 raise self._wrap_as_non_retryable(auth_exc) from auth_exc
             return await _deny_or_continue(tool=tool_name, reason=str(auth_exc))
         except _ApprovalHandlerRetry as retry:
@@ -1353,7 +1353,7 @@ class TenuoActivityInboundInterceptor:
                     if _span_ctx is not None:
                         _span_ctx.__exit__(None, None, None)
                         _span_ctx = None
-                if self._config.on_denial == "raise" and not self._config.dry_run:
+                if self._config.on_denial == "raise" and not self._observing():
                     if isinstance(e, _ExpiredError):
                         expired_at = getattr(e, "details", {}).get("expired_at")
                         raise self._wrap_as_non_retryable(WarrantExpired(
@@ -1400,6 +1400,25 @@ class TenuoActivityInboundInterceptor:
                 _span_ctx.__exit__(None, None, None)
 
         # -- 15. Emit Allow + Dispatch Activity --
+        if observed_enforcement is not None:
+            # Observe mode let a denial through: record it as the denial it
+            # was (observed), then dispatch.
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=observed_enforcement.denial_reason or "",
+                constraint=observed_enforcement.constraint_violated,
+                start_ns=start_ns,
+                authorizer=authorizer,
+                presented_chain=list(chain) if chain else [warrant],
+                verified_pop=pop_bytes,
+                pop_auth_args=args,
+                error_type=observed_enforcement.error_type,
+                observed=True,
+            )
+            return await self._next.execute_activity(input)
         self._emit_allow_event(
             info=info,
             warrant=warrant,
@@ -1525,6 +1544,16 @@ class TenuoActivityInboundInterceptor:
         if not self._config.redact_args_in_logs:
             return args
         return {k: "[REDACTED]" for k in args.keys()}
+
+    def _observing(self) -> bool:
+        """True when activity denials are recorded but not enforced.
+
+        ``dry_run`` is observe mode scoped to this plugin; global observe mode
+        (``tenuo.configure(mode="observe")``) applies everywhere.
+        """
+        from tenuo.config import should_block_violation
+
+        return bool(self._config.dry_run) or not should_block_violation()
 
     def _emit_allow_event(
         self,
@@ -1685,8 +1714,14 @@ class TenuoActivityInboundInterceptor:
         pop_auth_args: Optional[Dict[str, Any]] = None,
         exc: Optional[BaseException] = None,
         error_type: Optional[str] = None,
+        observed: bool = False,
     ) -> None:
-        """Emit audit event for denied action."""
+        """Emit audit event for denied action.
+
+        ``observed`` (or observe mode / dry_run being active) marks a denial
+        that is recorded but not enforced: the activity still runs.
+        """
+        observed = observed or self._observing()
         import time
         latency_s = (time.perf_counter_ns() - start_ns) / 1e9 if start_ns else 0.0
 
@@ -1718,6 +1753,7 @@ class TenuoActivityInboundInterceptor:
             error_type=_activity_denial_error_type(
                 exc=exc, constraint=constraint, error_type=error_type
             ),
+            observed=observed,
         )
         try:
             from tenuo.receipts import collect_enforcement_receipt
@@ -1764,6 +1800,7 @@ class TenuoActivityInboundInterceptor:
             warrant_capabilities=list(warrant.tools or []),
             denial_reason=reason,
             constraint_violated=constraint,
+            observed=observed,
             tenuo_version=self._version,
         )
 
