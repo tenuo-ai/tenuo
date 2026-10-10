@@ -291,7 +291,7 @@ Tenuo uses the same warrant format and attenuation rules everywhere. Pick the en
 
 | Enforcement point | Use it when | Integrations | Start here |
 |-------------------|-------------|--------------|------------|
-| **Inside the agent runtime** | You own the application and want the shortest path to enforcement | Python functions, OpenAI, LangChain, LangGraph, Google ADK, CrewAI, AutoGen, Rust `Guard` | [`@guard`](./docs/quickstart.md), [OpenAI](./docs/openai.md), [Rust](#rust), [framework guides](#documentation) |
+| **Inside the agent runtime** | You own the application and want the shortest path to enforcement | Python functions, OpenAI, LangChain, LangGraph, Google ADK, CrewAI, AutoGen, Hermes Agent, Rust `Guard` | [`@guard`](./docs/quickstart.md), [OpenAI](./docs/openai.md), [Hermes](./docs/hermes.md), [Rust](#rust), [framework guides](#documentation) |
 | **At the MCP tool server** | Agents call tools across a process or vendor boundary | FastMCP, official MCP SDK, custom MCP servers | [MCP guide](./docs/mcp.md) |
 | **At an API or service edge** | Multiple agent runtimes share the same downstream services | FastAPI, authorizer sidecar, gateway, Kubernetes | [FastAPI](./docs/fastapi.md), [Kubernetes](./docs/kubernetes.md) |
 | **Inside a durable workflow** | Authority must survive retries, queues, and long-running execution | Temporal | [Temporal guide](./docs/temporal-reference.md) |
@@ -313,6 +313,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 | **[OpenAI](https://tenuo.ai/openai)** | Direct API protection with streaming |
 | **[Google ADK](https://tenuo.ai/google-adk)** | ADK agent tool protection |
 | **[AutoGen](https://tenuo.ai/autogen)** | AgentChat tool protection |
+| **[Hermes Agent](https://tenuo.ai/hermes)** | Official Hermes plugin for signed, expiring tool authorization |
 | **[A2A](https://tenuo.ai/a2a)** | Inter-agent delegation |
 | **[FastAPI](https://tenuo.ai/fastapi)** | Protect FastAPI routes |
 | **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
