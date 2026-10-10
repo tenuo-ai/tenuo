@@ -5,7 +5,7 @@ This module provides a singleton configuration that controls:
 - Issuer keypair (for minting warrants)
 - Trusted roots (for verification)
 - Default TTL
-- Enforcement mode (enforce, audit, permissive)
+- Enforcement mode (enforce, observe)
 - Development mode settings
 
 Usage:
@@ -27,10 +27,10 @@ Usage:
     # Environment-based configuration (12-factor apps)
     auto_configure()  # Reads TENUO_* environment variables
 
-    # Gradual adoption with audit mode
+    # Gradual adoption with observe mode
     configure(
         issuer_key=my_keypair,
-        mode="audit",  # Logs violations but doesn't block
+        mode="observe",  # Logs violations but doesn't block
     )
 """
 
@@ -59,13 +59,26 @@ class EnforcementMode(str, Enum):
     """Enforcement mode for authorization checks.
 
     - ENFORCE: Block unauthorized requests (production default)
-    - AUDIT: Log violations but allow execution (for gradual adoption)
-    - PERMISSIVE: Log violations and add warning header, but allow execution
+    - OBSERVE: Run the full decision, log what would have been denied, but
+      allow execution (for gradual adoption)
+
+    ``AUDIT`` and ``PERMISSIVE`` are permanent aliases of ``OBSERVE``, and the
+    strings ``"audit"`` / ``"permissive"`` resolve to it.
     """
 
     ENFORCE = "enforce"
-    AUDIT = "audit"
-    PERMISSIVE = "permissive"
+    OBSERVE = "observe"
+    AUDIT = "observe"  # alias
+    PERMISSIVE = "observe"  # alias
+
+    @classmethod
+    def _missing_(cls, value: object) -> Optional["EnforcementMode"]:
+        if isinstance(value, str) and value.lower() in _MODE_ALIASES:
+            return cls(_MODE_ALIASES[value.lower()])
+        return None
+
+
+_MODE_ALIASES = {"enforce": "enforce", "observe": "observe", "audit": "observe", "permissive": "observe"}
 
 
 @dataclass
@@ -91,7 +104,7 @@ class TenuoConfig:
     pop_window_secs: int = DEFAULT_POP_WINDOW_SECS
     pop_max_windows: int = DEFAULT_POP_MAX_WINDOWS
 
-    # Enforcement mode: enforce (block), audit (log only), permissive (log + warn header)
+    # Enforcement mode: enforce (block) or observe (log would-deny, allow)
     mode: EnforcementMode = EnforcementMode.ENFORCE
 
     # Development mode flags
@@ -159,7 +172,7 @@ def configure(
     pop_window_secs: int = DEFAULT_POP_WINDOW_SECS,
     pop_max_windows: int = DEFAULT_POP_MAX_WINDOWS,
     mcp_config: Optional[Any] = None,
-    mode: Literal["enforce", "audit", "permissive"] = "enforce",
+    mode: Literal["enforce", "observe", "audit", "permissive"] = "enforce",
     dev_mode: bool = False,
     allow_passthrough: bool = False,
     allow_self_signed: bool = False,
@@ -183,7 +196,8 @@ def configure(
         pop_window_secs: PoP window size in seconds (default: 30)
         pop_max_windows: Number of PoP windows to accept (default: 4)
         mcp_config: CompiledMcpConfig for MCP tool authorization (optional)
-        mode: Enforcement mode - "enforce" (block), "audit" (log only), "permissive" (log + warn)
+        mode: Enforcement mode - "enforce" (block) or "observe" (log would-deny, allow).
+            "audit" and "permissive" are accepted aliases of "observe".
         dev_mode: Enable development mode (relaxed security)
         allow_passthrough: Allow tool calls without warrants (dev_mode only)
         allow_self_signed: Trust self-signed warrants (dev_mode only)
@@ -215,11 +229,11 @@ def configure(
             allow_self_signed=True,
         )
 
-        # Gradual adoption (audit mode)
+        # Gradual adoption (observe mode)
         configure(
             issuer_key=my_keypair,
             trusted_roots=[control_plane_key],
-            mode="audit",  # Log violations but don't block
+            mode="observe",  # Log violations but don't block
         )
     """
     global _config
@@ -250,8 +264,11 @@ def configure(
             "Strict mode enforces warrant presence; passthrough allows missing warrants."
         )
 
-    # Parse mode
-    enforcement_mode = EnforcementMode(mode)
+    # Parse mode ("audit"/"permissive" resolve to OBSERVE)
+    try:
+        enforcement_mode = EnforcementMode(mode)
+    except ValueError:
+        raise ConfigurationError(f"Invalid mode {mode!r}: expected 'enforce' or 'observe'")
 
     # Update global config
     _config = TenuoConfig(
@@ -274,7 +291,7 @@ def configure(
 
     if enforcement_mode != EnforcementMode.ENFORCE:
         logger.warning(
-            f"Tenuo configured in {enforcement_mode.value} mode. "
+            "Tenuo configured in observe mode. "
             "Authorization violations will be logged but NOT blocked. "
             "Set mode='enforce' for production."
         )
@@ -343,9 +360,14 @@ def allow_passthrough() -> bool:
     return config.dev_mode and config.allow_passthrough
 
 
+def is_observe_mode() -> bool:
+    """Check if running in observe mode (log violations, don't block)."""
+    return get_config().mode == EnforcementMode.OBSERVE
+
+
 def is_audit_mode() -> bool:
-    """Check if running in audit mode (log violations, don't block)."""
-    return get_config().mode == EnforcementMode.AUDIT
+    """Alias of :func:`is_observe_mode`."""
+    return is_observe_mode()
 
 
 def is_enforce_mode() -> bool:
@@ -370,7 +392,7 @@ def auto_configure(
         TENUO_ISSUER_KEY: Base64-encoded signing key (or hex)
         TENUO_TRUSTED_ROOTS: Comma-separated base64 public keys
         TENUO_DEFAULT_TTL: Default TTL in seconds (default: 300)
-        TENUO_MODE: Enforcement mode - enforce, audit, permissive (default: enforce)
+        TENUO_MODE: Enforcement mode - enforce or observe (aliases: audit, permissive; default: enforce)
         TENUO_DEV_MODE: Enable dev mode if "1" or "true"
         TENUO_CLOCK_TOLERANCE: Clock tolerance in seconds (default: 30)
 
@@ -455,11 +477,12 @@ def auto_configure(
     mode_str = os.getenv(f"{prefix}MODE")
     if mode_str:
         found_any = True
-        mode = mode_str.lower()
-        if mode not in ("enforce", "audit", "permissive"):
+        mode = mode_str.strip().lower()
+        if mode not in _MODE_ALIASES:
             raise ConfigurationError(
-                f"Invalid {prefix}MODE: expected 'enforce', 'audit', or 'permissive', got '{mode_str}'"
+                f"Invalid {prefix}MODE: expected 'enforce' or 'observe' (aliases: 'audit', 'permissive'), got '{mode_str}'"
             )
+        mode = _MODE_ALIASES[mode]
 
     # Parse dev mode
     dev_mode_str = os.getenv(f"{prefix}DEV_MODE", "").lower()
@@ -507,6 +530,7 @@ __all__ = [
     "get_config",
     "reset_config",
     "is_configured",
+    "is_observe_mode",
     "is_audit_mode",
     "is_enforce_mode",
     "should_block_violation",

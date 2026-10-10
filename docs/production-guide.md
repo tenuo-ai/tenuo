@@ -9,20 +9,23 @@ This guide covers moving from `dev_mode=True` to a production deployment. If you
 
 ## Enforcement Modes
 
-Tenuo supports three modes for gradual adoption:
+Tenuo has two modes:
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `enforce` | Block unauthorized requests | Production (default) |
-| `audit` | Log violations but allow execution | Discovery, gradual adoption |
-| `permissive` | Log + warn header, allow execution | Development, testing |
+| `observe` | Run the full check, log what would be denied, allow execution | Discovery, gradual adoption |
+
+`audit` and `permissive` are accepted aliases of `observe`.
+
+In observe mode every denial, including a bad signature or untrusted root, is logged as one `WARNING` (`OBSERVE: would deny <tool>: <reason>`) with structured fields: `tool`, `args_keys`, `arg_types` (value type names, never values), `error_type`, `constraint_violated`, `denial_reason`, `warrant_id`. The result is returned as allowed with `observed=True` and the denial details kept, and receipts still record it as a denial. Approval gates are not prompted; the call is recorded with `error_type="approval_required"` and proceeds.
 
 ```python
 from tenuo import configure, SigningKey
 
 configure(
     issuer_key=SigningKey.from_env("ISSUER_KEY"),
-    mode="audit",  # Start here
+    mode="observe",  # Start here
     trusted_roots=[control_plane_pubkey],
 )
 ```
@@ -30,18 +33,18 @@ configure(
 Check the current mode programmatically:
 
 ```python
-from tenuo import is_audit_mode, is_enforce_mode, should_block_violation
+from tenuo import is_observe_mode, is_enforce_mode, should_block_violation
 
-if is_audit_mode():
+if is_observe_mode():
     print("Violations logged but not blocked")
 ```
 
 ## Gradual Rollout
 
-**Step 1: Deploy in audit mode.** All tool calls are logged but never blocked. Analyze logs to see what would be denied.
+**Step 1: Deploy in observe mode.** All tool calls are logged but never blocked. Analyze logs to see what would be denied.
 
 ```python
-configure(issuer_key=SigningKey.generate(), mode="audit", dev_mode=True)
+configure(issuer_key=SigningKey.generate(), mode="observe", dev_mode=True)
 ```
 
 **Step 2: Add `@guard` to critical tools.**
@@ -51,7 +54,7 @@ configure(issuer_key=SigningKey.generate(), mode="audit", dev_mode=True)
 def delete_file(path: str): ...
 ```
 
-In audit mode, this still allows execution but logs authorization checks.
+In observe mode, this still allows execution but logs what would have been denied.
 
 **Step 3: Test with scoped warrants.**
 
@@ -105,7 +108,7 @@ auto_configure()  # Reads TENUO_* environment variables
 | Variable | Description |
 |----------|-------------|
 | `TENUO_ISSUER_KEY` | Base64-encoded signing key |
-| `TENUO_MODE` | `enforce` (default), `audit`, or `permissive` |
+| `TENUO_MODE` | `enforce` (default) or `observe` (`audit` and `permissive` are aliases) |
 | `TENUO_TRUSTED_ROOTS` | Comma-separated public keys |
 | `TENUO_DEV_MODE` | `1` for development mode |
 
