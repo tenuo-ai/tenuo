@@ -481,7 +481,7 @@ class A2AServerBuilder:
         return self
 
     def require_audience(self, enabled: bool = True) -> "A2AServerBuilder":
-        """Require aud claim matches our URL (default: True via env)."""
+        """Require aud claim matches our URL (default: False, env: TENUO_A2A_REQUIRE_AUDIENCE)."""
         self._require_audience = enabled
         return self
 
@@ -704,7 +704,9 @@ class A2AServer:
                 (accepts PublicKey objects, multibase strings, or DIDs)
             trust_delegated: Accept warrants attenuated from trusted issuers
             require_warrant: Reject tasks without warrant (env: TENUO_A2A_REQUIRE_WARRANT)
-            require_audience: Require aud claim matches our URL (env: TENUO_A2A_REQUIRE_AUDIENCE)
+            require_audience: Require aud claim matches our URL (env: TENUO_A2A_REQUIRE_AUDIENCE).
+                Default False: tenuo-core warrants carry no audience claim, so enabling
+                this rejects them unless the warrant object exposes ``aud``/``audience``.
             require_pop: Require Proof-of-Possession signature (env: TENUO_A2A_REQUIRE_POP)
             check_replay: Enforce jti uniqueness (env: TENUO_A2A_CHECK_REPLAY)
             replay_window: Seconds to remember jti values (env: TENUO_A2A_REPLAY_WINDOW)
@@ -739,7 +741,7 @@ class A2AServer:
         # Apply environment variable defaults
         # Explicit args take precedence over env vars
         self.require_warrant = self._get_bool_config(require_warrant, "TENUO_A2A_REQUIRE_WARRANT", default=True)
-        self.require_audience = self._get_bool_config(require_audience, "TENUO_A2A_REQUIRE_AUDIENCE", default=True)
+        self.require_audience = self._get_bool_config(require_audience, "TENUO_A2A_REQUIRE_AUDIENCE", default=False)
         self.require_pop = self._get_bool_config(require_pop, "TENUO_A2A_REQUIRE_POP", default=True)
         self.check_replay = self._get_bool_config(check_replay, "TENUO_A2A_CHECK_REPLAY", default=True)
         self.replay_window = self._get_int_config(replay_window, "TENUO_A2A_REPLAY_WINDOW", default=3600)
