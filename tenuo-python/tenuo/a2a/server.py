@@ -136,7 +136,7 @@ def _raise_a2a_from_enforcement(enforcement: Any, skill_id: str, arguments: Dict
         raise InvalidApprovalError(reason)
     if error_type == "invalid_pop":
         raise PopVerificationError(reason)
-    if error_type == "untrusted_issuer":
+    if error_type in ("untrusted_issuer", "chain_missing"):
         raise UntrustedIssuerError(reason)
     if error_type == "expired":
         raise WarrantExpiredError()
