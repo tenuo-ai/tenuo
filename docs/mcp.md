@@ -113,12 +113,14 @@ if __name__ == "__main__":
 
 ```python
 # client.py
-import asyncio
+import asyncio, os
 from tenuo import SigningKey, configure, mint, Capability, Subpath
 from tenuo.mcp import SecureMCPClient
 
 key = SigningKey.generate()
-configure(issuer_key=key)
+# The issuer key mints warrants; trusted_roots is what the client-side check
+# verifies against. Here the same key is both (a single-process demo).
+configure(issuer_key=key, trusted_roots=[key.public_key])
 
 # Print the public key for the server
 print("TENUO_ISSUER_PUB=" + bytes(key.public_key_bytes()).hex())
@@ -127,7 +129,7 @@ async def main():
     async with SecureMCPClient(
         "python", ["server.py"],
         inject_warrant=True,
-        env={"TENUO_ISSUER_PUB": bytes(key.public_key_bytes()).hex()},
+        env={**os.environ, "TENUO_ISSUER_PUB": bytes(key.public_key_bytes()).hex()},
     ) as client:
         # This succeeds — path is under /data/
         async with mint(Capability("read_file", path=Subpath("/data"))):
@@ -143,6 +145,10 @@ async def main():
 
 asyncio.run(main())
 ```
+
+`configure()` needs `trusted_roots` (or `dev_mode=True`); `issuer_key` alone raises `ConfigurationError`. The denied call fails on the client before anything is sent: `client.tools[...]` runs the same check the server will, and raises `ConstraintViolation`.
+
+Calls through `client.tools[...]` **fail closed**. With no warrant and key in scope (no `mint(...)`, `grant(...)` or `warrant_scope`/`key_scope`), they raise `ConfigurationError` instead of calling the server unauthenticated. For local development only, `configure(dev_mode=True, allow_passthrough=True, ...)` lets such calls through and logs `PASSTHROUGH: MCP tool '<name>' executed without authorization context`.
 
 ### What Happens on the Wire
 
@@ -220,7 +226,7 @@ from tenuo.mcp import SecureMCPClient
 from tenuo import configure, mint, Capability, Subpath, SigningKey
 
 key = SigningKey.generate()
-configure(issuer_key=key)
+configure(issuer_key=key, trusted_roots=[key.public_key])
 
 # Stdio (local subprocess)
 async with SecureMCPClient("python", ["server.py"], inject_warrant=True) as client:
@@ -328,13 +334,20 @@ If you're already using `langchain-mcp-adapters`, wrap its tools with `guard_too
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from tenuo.langchain import guard_tools
 
-async with MultiServerMCPClient({
+from tenuo import mint, Capability, Subpath
+
+client = MultiServerMCPClient({
     "fs": {"transport": "stdio", "command": "python", "args": ["server.py"]}
-}) as client:
-    mcp_tools = await client.get_tools()
-    secure_tools = guard_tools(mcp_tools)
-    # Use secure_tools in your LangChain agent
+})
+mcp_tools = await client.get_tools()
+secure_tools = guard_tools(mcp_tools)
+
+# Run the agent inside a warrant scope; guarded tools check every call
+async with mint(Capability("read_file", path=Subpath("/data"))):
+    ...  # invoke your LangChain agent with secure_tools
 ```
+
+`guard_tools()` checks calls locally against the warrant in scope. It does not send the warrant to the MCP server, so a server running `TenuoMiddleware` with `require_warrant=True` rejects these calls. Use `SecureMCPClient` with `inject_warrant=True` when the server verifies warrants.
 
 > **Note**: `SecureMCPClient` is Tenuo's own MCP client (Pattern 2).
 > It is _not_ interchangeable with LangChain's `MultiServerMCPClient`.
@@ -523,6 +536,22 @@ For gateways that strip `_meta`, set `inject_warrant="argument"`. This sends
 the envelope as the reserved `arguments._tenuo` field instead. The server
 removes `_tenuo` before verification and dispatch, and the PoP covers the tool
 arguments without that field.
+
+---
+
+## Observe Mode
+
+To find out what policy a workload needs before enforcing it, run in observe mode. Each process configures its own mode, so set it in the client and in the server:
+
+```python
+from tenuo import configure
+
+configure(trusted_roots=[root_public_key], mode="observe")
+# "audit" and "permissive" are accepted aliases. TENUO_MODE=observe is read by
+# tenuo.auto_configure(), not on its own.
+```
+
+The checks still run. A call that would be denied goes through, and the process logs `OBSERVE: would deny <tool>: <reason>` at warning level: on the client from `client.tools[...]`, and on the server from `MCPVerifier` / `TenuoMiddleware`. Observe mode lets every would-deny through, including signature and chain failures, so use it only while discovering policy. A call with no warrant in scope still fails closed on the client (see above).
 
 ---
 
@@ -764,7 +793,7 @@ On the wire, the worker sends `stack_b64` in `_meta.tenuo.warrant`. `Authorizer.
 
 > **Important:** An orphaned child warrant (sent without its parent chain) will be rejected — the server cannot verify the delegation path. Always send the full `WarrantStack` containing every warrant from root to leaf.
 
-**Client-side with `chain_scope`:** When using `SecureMCPClient` with `inject_warrant=True`, set the parent chain via `chain_scope` so the client encodes the full `WarrantStack` automatically:
+**Client-side with `chain_scope`:** When using `SecureMCPClient` with `inject_warrant=True`, set the parent chain via `chain_scope` so the client encodes the full `WarrantStack` automatically. The server needs only `control_key.public_key` in `trusted_roots`; never add the orchestrator's key to make a bare worker warrant verify, because that promotes it to a root and skips the attenuation checks:
 
 ```python
 from tenuo import chain_scope, warrant_scope, key_scope
