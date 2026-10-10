@@ -55,6 +55,7 @@ the refund:
 ```python
 config = TenuoPluginConfig(
     ...,
+    trusted_roots=[control_key.public_key],  # root issuers only
     nexus_endpoint="billing-prod",
 )
 
@@ -126,7 +127,30 @@ The handler-side surface verifies `ctx.headers` before user code runs:
   raise_nexus_error=True)` behavior.
 
 Authorization failures should raise Nexus-native non-retryable errors so
-Temporal does not retry permanent denials.
+Temporal does not retry permanent denials. The inbound interceptor and
+`raise_nexus_error=True` both surface a denial as a `nexusrpc.HandlerError` of
+type `UNAUTHORIZED`, with the denial reason as its message.
+
+The handler trusts only root issuers (`trusted_roots`). A delegated warrant
+verifies when its parents travel with it in `x-tenuo-warrant-chain`, which the
+caller helpers send from the workflow's chain or from `warrant_chain=`. Never
+add an intermediate delegator's key to `trusted_roots` to make a leaf verify.
+
+### Observe mode
+
+`TenuoPluginConfig(dry_run=True)` (this worker) or
+`tenuo.configure(mode="observe")` (process-wide) turns Nexus denials into
+observed denials: each is logged once as
+`OBSERVE: would deny <tool>: <reason>`, emitted as a `DENY` audit and
+control-plane event marked observed, with its original error type, and the
+operation proceeds. That covers chain, signature, PoP, replay, approval,
+binding and constraint denials. Two things still fail in observe mode: an
+unexpected error during verification (raised as `TenuoContextError`) and a
+config without `trusted_roots` (`ConfigurationError` when it is built).
+
+In observe mode `verify_nexus_operation(...)` returns `None` when the call
+carried no usable warrant, so handler code that reads the returned warrant must
+handle `None`.
 
 Set `TenuoPluginConfig.nexus_endpoint` (and pass the same value as
 `endpoint=` on helpers) so the signed tool string is stable. When the
@@ -416,6 +440,10 @@ warrant. For example, the payments handler can verify that the agent may ask
 for a refund, then mint a narrower warrant allowing compliance to screen only
 that refund record. After approval, payments can mint a separate warrant for
 fulfillment to release only the resulting credit.
+
+Each narrower warrant travels with its parents (pass them as
+`warrant_chain=` on the next hop's caller helper), so every handler still
+verifies back to the same root without trusting the hop before it.
 
 That keeps the chain auditable and prevents a warrant intended for one team or
 resource from becoming ambient authority across the whole platform.
