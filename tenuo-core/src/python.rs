@@ -1807,7 +1807,9 @@ impl PyUrlSafe {
     ///     url: URL string to check.
     ///
     /// Returns:
-    ///     True if the URL passes all SSRF checks, False otherwise.
+    ///     True if the URL passes stateless URL and literal-IP checks, False
+    ///     otherwise. Hostname DNS results must also be validated and pinned
+    ///     by the HTTP execution layer to prevent DNS rebinding.
     fn is_safe(&self, url: &str) -> PyResult<bool> {
         self.inner.is_safe(url).map_err(to_py_err)
     }
@@ -1818,7 +1820,8 @@ impl PyUrlSafe {
     ///     url: URL string to check.
     ///
     /// Returns:
-    ///     True if the URL passes all SSRF checks, False otherwise.
+    ///     True if the URL passes stateless URL and literal-IP checks, False
+    ///     otherwise. See ``is_safe`` for the DNS-rebinding limitation.
     fn matches(&self, url: &str) -> PyResult<bool> {
         self.is_safe(url)
     }
