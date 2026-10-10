@@ -1017,6 +1017,150 @@ class TestGuardBuilderTier2:
 
 
 # =============================================================================
+# Denial records (on_denial="log"/"skip")
+# =============================================================================
+
+
+@pytest.fixture
+def denial_records(monkeypatch):
+    """Capture the EnforcementResult each denial hands to the shared handle_denial."""
+    import tenuo.autogen as autogen_mod
+
+    records: list[Any] = []
+    real_handle_denial = autogen_mod.handle_denial
+
+    def capturing(result, policy, exception_factory=None):
+        records.append(result)
+        return real_handle_denial(result, policy, exception_factory=exception_factory)
+
+    monkeypatch.setattr(autogen_mod, "handle_denial", capturing)
+    return records
+
+
+class TestDenialRecords:
+    """Denial records carry the same fields as the shared enforcement path."""
+
+    def _tier2_guard(self, on_denial: str = "log"):
+        key = SigningKey.generate()
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
+        guard = (
+            GuardBuilder().with_warrant(warrant, key).with_trusted_roots([key.public_key]).on_denial(on_denial).build()
+        )
+        return guard, warrant
+
+    def test_tier2_constraint_violation_record(self, denial_records):
+        """Tier 2 record uses the resolved tool name, checked args, and warrant id."""
+
+        def tracking_tool(query: str) -> str:
+            return query
+
+        guard, warrant = self._tier2_guard()
+        guarded = guard.guard_tool(tracking_tool, tool_name="search")
+
+        assert guarded("nope") is None
+
+        assert len(denial_records) == 1
+        record = denial_records[0]
+        assert record.tool == "search"
+        assert record.arguments == {"query": "nope"}
+        assert record.error_type == "constraint_violation"
+        assert record.constraint_violated == "query"
+        assert record.warrant_id == warrant.id
+
+    def test_tier2_tool_not_in_warrant_record(self, denial_records):
+        """Tier 2 tool-scope denial reports the canonical error type."""
+        guard, warrant = self._tier2_guard(on_denial="skip")
+        guarded = guard.guard_tool(read_file, tool_name="read_file")
+
+        assert guarded(path="/etc/passwd") is None
+
+        record = denial_records[0]
+        assert record.tool == "read_file"
+        assert record.error_type == "tool_not_allowed"
+        assert record.constraint_violated == "tool"
+        assert record.warrant_id == warrant.id
+
+    def test_proxied_tool_record_uses_resolved_name(self, denial_records):
+        """A tool object (wrapped in _ToolProxy) reports its resolved name."""
+
+        class NamedTool:
+            name = "search"
+
+            def __call__(self, query: str) -> str:
+                return query
+
+        guard, _ = self._tier2_guard()
+        guarded = guard.guard_tool(NamedTool())
+
+        assert guarded(query="nope") is None
+
+        record = denial_records[0]
+        assert record.tool == "search"
+        assert record.error_type == "constraint_violation"
+        assert record.constraint_violated == "query"
+
+    @pytest.mark.asyncio
+    async def test_tier2_async_record(self, denial_records):
+        """Async Tier 2 denials carry the same record."""
+
+        async def async_search(query: str) -> str:
+            return query
+
+        guard, warrant = self._tier2_guard()
+        guarded = guard.guard_tool(async_search, tool_name="search")
+
+        assert await guarded(query="nope") is None
+
+        record = denial_records[0]
+        assert record.tool == "search"
+        assert record.error_type == "constraint_violation"
+        assert record.constraint_violated == "query"
+        assert record.warrant_id == warrant.id
+
+    def test_tier1_constraint_violation_record(self, denial_records):
+        """Tier 1 records use the canonical error type and the failing param."""
+
+        def tracking_tool(query: str) -> str:
+            return query
+
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).on_denial("log").build()
+        guarded = guard.guard_tool(tracking_tool, tool_name="search")
+
+        assert guarded("nope") is None
+
+        record = denial_records[0]
+        assert record.tool == "search"
+        assert record.arguments == {"query": "nope"}
+        assert record.error_type == "constraint_violation"
+        assert record.constraint_violated == "query"
+
+    def test_tier1_unlisted_tool_record(self, denial_records):
+        """Tier 1 tool-scope denial reports tool_not_allowed."""
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).on_denial("skip").build()
+        guarded = guard.guard_tool(read_file)
+
+        assert guarded(path="/etc/passwd") is None
+
+        record = denial_records[0]
+        assert record.tool == "read_file"
+        assert record.error_type == "tool_not_allowed"
+        assert record.constraint_violated == "tool"
+
+    def test_tier2_raised_exception_names_real_constraint(self):
+        """The raised AuthorizationDenied shows the warrant constraint, not a placeholder."""
+        guard, _ = self._tier2_guard(on_denial="raise")
+        guarded = guard.guard_tool(search, tool_name="search")
+
+        with pytest.raises(AuthorizationDenied) as exc_info:
+            guarded(query="nope")
+
+        [cr] = exc_info.value.constraint_results
+        assert cr.name == "query"
+        assert cr.value == "nope"
+        assert "ok*" in cr.constraint_repr
+
+
+# =============================================================================
 # Zero-config protect()
 # =============================================================================
 
