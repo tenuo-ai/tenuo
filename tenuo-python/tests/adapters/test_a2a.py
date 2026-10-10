@@ -9,6 +9,7 @@ Tests cover:
 """
 
 import time
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1902,7 +1903,7 @@ class TestServerConstraintsWithPoP:
     """Server-level skill constraints are enforced when require_pop=True (the default)."""
 
     @staticmethod
-    def _server_and_warrant():
+    def _server_and_warrant(require_pop=True):
         core = pytest.importorskip("tenuo_core")
         key = core.SigningKey.generate()
         # Warrant allows any path; only the server-level constraint narrows it.
@@ -1919,7 +1920,7 @@ class TestServerConstraintsWithPoP:
             trusted_issuers=[key.public_key.to_bytes().hex()],
             require_warrant=True,
             require_audience=False,
-            require_pop=True,
+            require_pop=require_pop,
             check_replay=False,
             audit_log=None,
         )
@@ -1956,11 +1957,93 @@ class TestServerConstraintsWithPoP:
         """``constraints={"path": Subpath}`` (no bounds) keeps working with PoP."""
         core, server, warrant, key = self._server_and_warrant()
 
-        @server.skill("read_file", constraints={"path": core.Subpath})
-        async def read_file(path: str) -> str:
-            return path
+        with pytest.warns(UserWarning):
+
+            @server.skill("read_file", constraints={"path": core.Subpath})
+            async def read_file(path: str) -> str:
+                return path
 
         assert await self._call(server, warrant, key, {"path": "/etc/hosts"}) is not None
+
+
+class TestBareConstraintMarkers:
+    """A bare constraint class is advertise-only in both modes; instances are enforced."""
+
+    _setup = staticmethod(TestServerConstraintsWithPoP._server_and_warrant)
+    _call = staticmethod(TestServerConstraintsWithPoP._call)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("require_pop", [True, False])
+    async def test_bare_marker_does_not_reject(self, require_pop):
+        """The warrant (Subpath("/")) governs; the bare marker adds no bound."""
+        core, server, warrant, key = self._setup(require_pop)
+
+        with pytest.warns(UserWarning):
+
+            @server.skill("read_file", constraints={"path": core.Subpath})
+            async def read_file(path: str) -> str:
+                return path
+
+        assert await self._call(server, warrant, key, {"path": "/etc/hosts"}) is not None
+
+    def test_bare_marker_warns_at_registration(self):
+        core, server, _, _ = self._setup()
+
+        with pytest.warns(UserWarning, match=r"Skill 'read_file': constraint for 'path' is the class Subpath") as rec:
+
+            @server.skill("read_file", constraints={"path": core.Subpath})
+            async def read_file(path: str) -> str:
+                return path
+
+        assert len(rec) == 1
+        assert rec[0].filename == __file__
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("require_pop", [True, False])
+    async def test_instance_does_not_warn_and_is_enforced(self, require_pop):
+        core, server, warrant, key = self._setup(require_pop)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+
+            @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+            async def read_file(path: str) -> str:
+                return path
+
+        assert await self._call(server, warrant, key, {"path": "/data/a.txt"}) is not None
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"path": "/etc/passwd"})
+
+    @pytest.mark.asyncio
+    async def test_plain_type_is_still_an_isinstance_check(self):
+        core, server, warrant, key = self._setup(require_pop=False)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+
+            @server.skill("read_file", constraints={"path": int})
+            async def read_file(path: int) -> int:
+                return path
+
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"path": "/data/a.txt"})
+
+    def test_agent_card_advertises_type_for_both_forms(self, server):
+        from tenuo_core import Subpath
+
+        with pytest.warns(UserWarning):
+
+            @server.skill("bare", constraints={"path": Subpath})
+            async def bare(path: str) -> str:
+                return path
+
+        @server.skill("inst", constraints={"path": Subpath("/data")})
+        async def inst(path: str) -> str:
+            return path
+
+        skills = {s["id"]: s for s in server.get_agent_card_dict()["skills"]}
+        assert skills["bare"]["x-tenuo-constraints"]["path"]["type"] == "Subpath"
+        assert skills["inst"]["x-tenuo-constraints"]["path"]["type"] == "Subpath"
 
 
 class TestAdversarialPoP:
