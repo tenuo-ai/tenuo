@@ -40,6 +40,8 @@ class TemporalAuditEvent:
     # Denial details (populated if denied)
     denial_reason: Optional[str] = None
     constraint_violated: Optional[str] = None
+    # True for a DENY that observe mode or dry_run let through
+    observed: bool = False
 
     # Metadata
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
