@@ -21,11 +21,12 @@ Usage:
 """
 
 import base64
+import inspect
 import logging
 import uuid
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
@@ -331,17 +332,27 @@ class TenuoGuard:
 
     Args:
         tool: Tool name to authorize
-        extract_args: Optional custom arg extraction function. It receives
-            the request after the framework has parsed it, so a repeated JSON
-            key is not visible. When the handler still has the raw body, parse
-            it with :func:`tenuo.parse_strict_json` first.
+        extract_args: Optional custom arg extraction function. It may be a
+            plain function or an ``async def`` (needed to read a JSON body via
+            ``await request.json()``). It receives the request after the
+            framework has parsed it, so a repeated JSON key is not visible.
+            When the handler still has the raw body, parse it with
+            :func:`tenuo.parse_strict_json` first.
     """
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "TenuoGuard":
+        # FastAPI decides sync vs async from the type's ``__call__``, so an
+        # async extractor gets a subclass whose ``__call__`` is a coroutine.
+        # Guards with sync (or no) extractors keep the sync ``__call__``.
+        if cls is TenuoGuard and _is_async_callable(kwargs.get("extract_args")):
+            cls = _AsyncTenuoGuard
+        return super().__new__(cls)
 
     def __init__(
         self,
         tool: str,
         *,
-        extract_args: Optional[Callable[[Request], Dict[str, Any]]] = None,
+        extract_args: Optional[Callable[[Request], Union[Dict[str, Any], Awaitable[Dict[str, Any]]]]] = None,
         approval_handler: Optional[Any] = None,
     ) -> None:
         self.tool = tool
@@ -430,6 +441,32 @@ class TenuoGuard:
         """
         Verify authorization and return SecurityContext.
         """
+        warrant, x_tenuo_pop = self._check_credentials(warrant, x_tenuo_pop)
+
+        # 3. Extract Args
+        if self.extract_args:
+            auth_args = self.extract_args(request)
+            if inspect.isawaitable(auth_args):
+                # An awaitable reached the sync path (e.g. a sync wrapper that
+                # returns a coroutine). Fail closed rather than authorize junk.
+                if inspect.iscoroutine(auth_args):
+                    auth_args.close()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "error": "configuration_error",
+                        "message": "extract_args returned an awaitable; define it with async def",
+                    },
+                )
+        else:
+            # Default: combine path params + query params
+            query_params = dict(request.query_params)
+            auth_args = {**request.path_params, **query_params}
+
+        return self._authorize(request, warrant, x_tenuo_pop, x_tenuo_approvals, auth_args)
+
+    def _check_credentials(self, warrant: Optional[Warrant], x_tenuo_pop: Optional[str]) -> Tuple[Warrant, str]:
+        """Steps 1-2: reject missing headers or an expired warrant before extracting args."""
         # 1. Check Headers - 401 for missing auth
         if not warrant:
             raise HTTPException(
@@ -461,15 +498,17 @@ class TenuoGuard:
                 },
                 headers={"WWW-Authenticate": "Tenuo"},
             )
+        return warrant, x_tenuo_pop
 
-        # 3. Extract Args
-        if self.extract_args:
-            auth_args = self.extract_args(request)
-        else:
-            # Default: combine path params + query params
-            query_params = dict(request.query_params)
-            auth_args = {**request.path_params, **query_params}
-
+    def _authorize(
+        self,
+        request: Request,
+        warrant: Warrant,
+        x_tenuo_pop: str,
+        x_tenuo_approvals: Optional[str],
+        auth_args: Dict[str, Any],
+    ) -> SecurityContext:
+        """Steps 4-5: decode PoP/approvals, enforce, and map the result to HTTP."""
         # 4. Decode PoP Signature
         try:
             pop_sig_bytes = base64.b64decode(x_tenuo_pop)
@@ -637,6 +676,29 @@ class TenuoGuard:
             args=auth_args,
             tool=self.tool,
         )
+
+
+def _is_async_callable(fn: Any) -> bool:
+    if fn is None:
+        return False
+    return inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(getattr(fn, "__call__", None))
+
+
+class _AsyncTenuoGuard(TenuoGuard):
+    """TenuoGuard variant used when ``extract_args`` is async (see ``TenuoGuard.__new__``)."""
+
+    async def __call__(  # type: ignore[override]
+        self,
+        request: Request,
+        warrant: Optional[Warrant] = Depends(get_warrant_header),
+        x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
+        x_tenuo_approvals: Optional[str] = Header(None, alias=X_TENUO_APPROVALS),
+    ) -> SecurityContext:
+        warrant, x_tenuo_pop = self._check_credentials(warrant, x_tenuo_pop)
+        assert self.extract_args is not None
+        result = self.extract_args(request)
+        auth_args = await result if inspect.isawaitable(result) else result
+        return self._authorize(request, warrant, x_tenuo_pop, x_tenuo_approvals, auth_args)
 
 
 # Backwards compatibility alias
