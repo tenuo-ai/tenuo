@@ -96,6 +96,7 @@ This demo shows Tenuo's key capabilities:
 - **[decorator_example.py](decorator_example.py)**: Demonstrates the `@guard` decorator pattern for protecting functions with minimal boilerplate.
 - **[context_pattern.py](context_pattern.py)**: Shows how to use `warrant_scope` for thread-safe/async-safe warrant passing (essential for web frameworks like FastAPI).
 - **[chain_demo.py](chain_demo.py)**: Demonstrates warrant chaining and delegation depth.
+- **[testing/](testing/)**: Pytest recipe for protected application code. Shows real authorization checks, stable denial assertions, delegation assertions, and deterministic headers.
 
 ### Multi-Agent Delegation
 - **[orchestrator_worker.py](orchestrator_worker.py)**: **Core delegation pattern** - Shows how orchestrators attenuate warrants for workers. Demonstrates Tenuo's key value: authority that shrinks as it flows through the system. Essential for understanding multi-agent workflows.
