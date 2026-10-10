@@ -39,8 +39,9 @@ checks of §8 steps 3c, 3d, 3f, 3h, 3k, 3l, 3m, 3n.
 
 - AAT payloads are JCS-canonical so the signing input is reproducible; a
   verifier must verify the presented bytes and never re-canonicalize.
-- No floats and no non-ASCII strings appear anywhere. Numeric canonicalization
-  and Unicode tool-name matching need their own vector sets once the -02 text
-  on those points is final.
+- No floats and no non-ASCII strings appear anywhere. Number admissibility
+  (§3.4) is covered by `J.8.7`-`J.8.9`; a harness must read those numbers as
+  written, since a parser that converts them to doubles cannot detect the lost
+  digits. Unicode tool-name matching needs its own vector set.
 - Draft-01 implementations will disagree on `typ`, audience mismatch handling, and the
   two `all` clause-reuse cases (`J.15.3`, `J.15.4`). Those encode -02 changes.

@@ -931,7 +931,7 @@ Payload:
 ~~~json
 {
   "jti": "01957a41-0081-7c20-bf3a-00a0c91e1234",
-  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:kPrK_qmxVWaYV...",
+  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:kPrK...",
   "iat": 1741600120,
   "exp": 1741601920,
   "del_depth": 1,
@@ -1493,9 +1493,13 @@ The AS returns the token in a standard OAuth 2.0 token endpoint response
 {
   "access_token": "<compact-serialized AAT JWT>",
   "token_type": "aat",
-  "expires_in": <seconds until exp>
+  "expires_in": <seconds until exp>,
+  "authorization_details": [<the granted entries>]
 }
 ~~~
+
+As {{RFC9396}} Section 7 requires, the response carries the granted
+`authorization_details`, which equal those in the token.
 
 The `token_type` value `"aat"` is registered in Section 11.5. This
 specification uses the token endpoint so that existing OAuth 2.0
@@ -2415,14 +2419,13 @@ The `aud` claim on AATs (Section 3.2) and the `nonce` claim on PoP JWTs
 {{OIDC.Core}} (as updated by {{RFC9449}}) respectively, and are not
 re-registered.
 
-## OAuth Authorization Details Types Registry
+## Authorization Details Type
 
-This document requests registration of the following type in the IANA
-OAuth Authorization Details Types Registry established by {{RFC9396}}.
-
-| Type Name | Reference |
-|---|---|
-| `attenuating_agent_token` | This document |
+{{RFC9396}} does not establish a registry of authorization details
+types. This document uses the type `attenuating_agent_token`; whether to
+create such a registry, with this type as an entry, or to use a
+collision-resistant URI instead ({{RFC9396}} Section 2) is an open issue
+for the working group.
 
 ## AAT Constraint Type Registry
 
@@ -2556,7 +2559,7 @@ issuance.
 ## OAuth Token Type Registration
 
 This document requests registration of the following token type in the
-OAuth Token Type Registry ({{RFC6749}} Section 11.1):
+OAuth Access Token Types registry ({{RFC6749}} Section 11.1):
 
 - Type name: `aat`
 - Additional Token Endpoint Response Parameters: (none)
@@ -3077,7 +3080,7 @@ RFC Editor Note: This section is to be removed before publication.
 
 This revision is reorganized and makes thirteen normative changes,
 which are breaking for implementations of -01. The test vectors in
-Appendix E encode the verifier-side changes.
+Appendix E encode most of the verifier-side changes.
 
 Normative changes:
 
@@ -3138,9 +3141,11 @@ Structure and editorial changes, with no change to verifier behavior:
   up by one. The JWS Protected Header requirements are collected in a
   new Section 3.5, and Implementation Status is now Appendix F, after
   the new Test Vectors appendix. Algorithm steps keep their -01 labels;
-  steps 6c, 7h, and 7i are new.
-- The Introduction sets out the mechanism and scope. Each rule is now
-  stated once, and verification checks are listed only in Section 8.
+  steps 6c, 7h, and 7i are new, and the substeps of step 4p are
+  restructured for optional and unnamed arguments.
+- The Introduction sets out the mechanism and scope. Repeated
+  statements of rules are consolidated, and verification checks are
+  listed only in Section 8.
   Section 4.5 gives its pairs as a table and uses one subsumption
   direction. The comparison appendix covers only DPoP.
 - -01 required chain verification through step 6 before the PoP JWT

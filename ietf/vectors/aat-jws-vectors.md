@@ -12,7 +12,7 @@
 - `par_hash` = base64url-nopad(SHA-256(parent JWS Signing Input)), where the signing input is the ASCII string `BASE64URL(header) || '.' || BASE64URL(payload)` (§4.6). J.12.b shows the wrong (payload-only) form.
 - Derived `iss` = `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<RFC 7638 thumbprint of the signing key>`.
 - `jti` values follow the CBOR vector IDs: `tnu_wrt_019471f8...0001` becomes `019471f8-0000-7000-8000-000000000001`.
-- No floats, no non-ASCII strings, no escaped characters appear anywhere. That keeps JCS trivially portable and sidesteps the binary64 canonicalization issue (Warden NOTES entry 7), which needs its own vectors.
+- No floats, no non-ASCII strings, no escaped characters appear anywhere. That keeps JCS trivially portable. Number admissibility (Section 3.4) is covered by J.8.7-J.8.9; a harness must read those numbers as written, since a parser that converts them to doubles cannot detect the lost digits.
 
 ## Verification parameters
 
@@ -3395,7 +3395,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.7.5 AAT with the deprecated polymorphic alg EdDSA
 
-Root is typed aat+jwt and signed with the Control Plane Ed25519 key, but its header names alg EdDSA, which RFC 9864 deprecates in favour of Ed25519 (Section 9.13).
+Root is typed aat+jwt and signed with the Control Plane Ed25519 key, but its header names alg EdDSA, which RFC 9864 deprecates in favour of Ed25519 (Section 9.12).
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
 **Expected:** **DENY** at step 3a
@@ -5144,7 +5144,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 ## J.11.c I4 violation: constraint key dropped from a closed-world map
 
 CBOR twin: A.11.  
-L1 drops search_index.limit. §4.5 requires the exact same key set when the parent map is non-empty.
+L1 drops search_index.limit, which the parent requires; a required key stays required (§4.5, step 4p2).
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
 **Expected:** **DENY** at step 4p2
@@ -6310,7 +6310,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 ## J.14.b alg: none rejected unconditionally
 
 CBOR twin: A.14.  
-Same payload as the J.3 root with header {"alg":"none"} and an empty signature (§9.13).
+Same payload as the J.3 root with header {"alg":"none"} and an empty signature (§9.12).
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`  
 **Expected:** **DENY** at step 3a
@@ -11836,7 +11836,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.8.2 Empty tool map at the leaf: extra arguments are permitted
 
-Root = leaf, read_file has an empty constraint map. Closed-world mode is off, so extra args PERMIT.
+Root = leaf, read_file has an empty constraint map. An empty map is {"*": wildcard}, so extra args PERMIT.
 
 **Invocation:** tool `read_file`, args `{"mode":"r","path":"/data/q3-report.pdf"}`, now = `1704067500`  
 **Expected:** **PERMIT**

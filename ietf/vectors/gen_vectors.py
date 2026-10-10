@@ -854,7 +854,7 @@ add("J.7.4", "AAT missing typ", None,
 j75_root = jws_sign(root_claims(uuid7ish(0x80), ROOT_TOOLS, ORCH), CP, header={"alg": "EdDSA", "typ": "aat+jwt"})
 add("J.7.5", "AAT with the deprecated polymorphic alg EdDSA", None,
     "Root is typed aat+jwt and signed with the Control Plane Ed25519 key, but its header names "
-    "alg EdDSA, which RFC 9864 deprecates in favour of Ed25519 (Section 9.13).",
+    "alg EdDSA, which RFC 9864 deprecates in favour of Ed25519 (Section 9.12).",
     [j75_root],
     pop_sign(pop_claims(uuid7ish(0xAE5), j75_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3a")
@@ -922,7 +922,7 @@ add("J.11.b", "I4 violation: tool not present in parent", "A.11",
 dropkey = {**L1_TOOLS, "search_index": {"query": {"constraint_type": "exact", "value": "public filings"}}}
 w3 = jws_sign(derived_claims(uuid7ish(0x73), L0, ORCH, WK, dropkey, IAT_ROOT + 60, 1704069000, 2), ORCH)
 add("J.11.c", "I4 violation: constraint key dropped from a closed-world map", "A.11",
-    "L1 drops search_index.limit. §4.5 requires the exact same key set when the parent map is non-empty.",
+    "L1 drops search_index.limit, which the parent requires; a required key stays required (§4.5, step 4p2).",
     [L0, w3], pop_sign(pop_claims(uuid7ish(0xA73), w3, "read_file", {"path": Q3}), WK),
     "read_file", {"path": Q3}, "DENY", "4p2")
 towild = {**L1_TOOLS, "read_file": {"path": {"constraint_type": "wildcard"}}}
@@ -975,7 +975,7 @@ none_root.update({"header": {"alg": "none"}, "header_b64": none_hdr, "signature_
                   "signing_input_sha256_b64u": b64u(hashlib.sha256(f"{none_hdr}.{L0['payload_b64']}".encode()).digest()),
                   "signer": "(unsigned)"})
 add("J.14.b", "alg: none rejected unconditionally", "A.14",
-    "Same payload as the J.3 root with header {\"alg\":\"none\"} and an empty signature (§9.13).",
+    "Same payload as the J.3 root with header {\"alg\":\"none\"} and an empty signature (§9.12).",
     [none_root], pop_sign(pop_claims(uuid7ish(0xAA2), none_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3a")
 crit_root = jws_sign(root_claims(uuid7ish(0x82), ROOT_TOOLS, ORCH), CP,
@@ -1152,7 +1152,7 @@ add("J.8.1", "Empty parent map: derived introduces constraint keys (step 4p2)", 
     [EMPTY_ROOT, empty_child], pop_sign(pop_claims(uuid7ish(0xB01), empty_child, "read_file", {"path": Q3}), WK),
     "read_file", {"path": Q3}, "PERMIT")
 add("J.8.2", "Empty tool map at the leaf: extra arguments are permitted", None,
-    "Root = leaf, read_file has an empty constraint map. Closed-world mode is off, so extra args PERMIT.",
+    "Root = leaf, read_file has an empty constraint map. An empty map is {\"*\": wildcard}, so extra args PERMIT.",
     [EMPTY_ROOT], pop_sign(pop_claims(uuid7ish(0xB02), EMPTY_ROOT, "read_file", {"path": Q3, "mode": "r"}), ORCH),
     "read_file", {"path": Q3, "mode": "r"}, "PERMIT")
 unk_root = jws_sign(root_claims(uuid7ish(0xB13), {"read_file": {"path": {"constraint_type": "no_such_type"}}}, ORCH), CP)
@@ -1561,8 +1561,9 @@ md.append("- `par_hash` = base64url-nopad(SHA-256(parent JWS Signing Input)), wh
           "string `BASE64URL(header) || '.' || BASE64URL(payload)` (§4.6). J.12.b shows the wrong (payload-only) form.")
 md.append("- Derived `iss` = `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<RFC 7638 thumbprint of the signing key>`.")
 md.append("- `jti` values follow the CBOR vector IDs: `tnu_wrt_019471f8...0001` becomes `019471f8-0000-7000-8000-000000000001`.")
-md.append("- No floats, no non-ASCII strings, no escaped characters appear anywhere. That keeps JCS trivially portable "
-          "and sidesteps the binary64 canonicalization issue (Warden NOTES entry 7), which needs its own vectors.")
+md.append("- No floats, no non-ASCII strings, no escaped characters appear anywhere. That keeps JCS trivially portable. "
+          "Number admissibility (Section 3.4) is covered by J.8.7-J.8.9; a harness must read those numbers as written, "
+          "since a parser that converts them to doubles cannot detect the lost digits.")
 md.append("")
 md.append("## Verification parameters\n")
 md.append("| Parameter | Value |\n|---|---|")
