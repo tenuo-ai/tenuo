@@ -1037,6 +1037,7 @@ class CrewAIGuard:
                 return self._handle_denial(error, tool_name, args, agent_role)
 
         # Step 4: Tier 2 - Warrant authorization with PoP (Unified Enforcement)
+        observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
 
@@ -1060,6 +1061,8 @@ class CrewAIGuard:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
+            if enforcement.observed:
+                observed_result = enforcement
 
         elif self._warrant is not None:
             raise CrewAIConfigurationError(
@@ -1069,8 +1072,19 @@ class CrewAIGuard:
                 f"or remove the warrant to use Tier 1 only."
             )
 
-        # Authorization granted
-        self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
+        # Authorization granted. Observe mode may have let a Tier 2 denial
+        # through; audit that as the observed DENY it was, not as an ALLOW.
+        if observed_result is not None:
+            self._emit_audit(
+                tool_name,
+                args,
+                "DENY",
+                observed_result.denial_reason or "Authorization denied",
+                agent_role=agent_role,
+                observed=True,
+            )
+        else:
+            self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized {tool_name}")
         return None
 
@@ -1129,6 +1143,7 @@ class CrewAIGuard:
                 return self._handle_denial(error, tool_name, args, agent_role)
 
         # Step 4: Tier 2 — async warrant authorization with PoP
+        observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
 
@@ -1152,6 +1167,8 @@ class CrewAIGuard:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
+            if enforcement.observed:
+                observed_result = enforcement
 
         elif self._warrant is not None:
             raise CrewAIConfigurationError(
@@ -1161,8 +1178,19 @@ class CrewAIGuard:
                 f"or remove the warrant to use Tier 1 only."
             )
 
-        # Authorization granted
-        self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
+        # Authorization granted. Observe mode may have let a Tier 2 denial
+        # through; audit that as the observed DENY it was, not as an ALLOW.
+        if observed_result is not None:
+            self._emit_audit(
+                tool_name,
+                args,
+                "DENY",
+                observed_result.denial_reason or "Authorization denied",
+                agent_role=agent_role,
+                observed=True,
+            )
+        else:
+            self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized (async) {tool_name}")
         return None
 

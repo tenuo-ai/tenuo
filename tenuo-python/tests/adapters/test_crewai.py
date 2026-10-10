@@ -1490,11 +1490,13 @@ class TestObserveMode:
             .holder(agent_key.public_key)
             .mint(root_key)
         )
+        events: list = []
         guard = (
             GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(warrant, agent_key)
             .with_trusted_roots([root_key.public_key])
+            .audit(events.append)
             .build()
         )
         ctx = self._ctx("read", {"path": "/data/private/x"})
@@ -1505,6 +1507,8 @@ class TestObserveMode:
         with caplog.at_level("WARNING"):
             assert guard.authorize_hook(ctx) is None
         assert [r.tool for r in self._observed(caplog)] == ["read"]
+        # Audited as the observed denial it was, not as an ALLOW.
+        assert (events[-1].decision, events[-1].observed) == ("DENY", True)
 
 
 if __name__ == "__main__":
