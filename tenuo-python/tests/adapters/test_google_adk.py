@@ -1731,3 +1731,82 @@ class TestInvariantWireAuthorization:
         )
 
         assert result is None  # Allowed
+
+
+class TestObserveMode:
+    """dry_run and global observe mode report would-deny decisions the same way."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        from tenuo.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+
+    def _guard(self, warrant, keys, trusted_roots, log_file, **kwargs):
+        return TenuoGuard(
+            warrant=warrant,
+            signing_key=keys,
+            trusted_roots=trusted_roots,
+            audit_log=log_file,
+            **kwargs,
+        )
+
+    def _observe_records(self, caplog):
+        return [r for r in caplog.records if r.getMessage().startswith("OBSERVE: would deny")]
+
+    def test_dry_run_uses_shared_observe_log(self, warrant, keys, trusted_roots, caplog):
+        log_file = io.StringIO()
+        guard = self._guard(warrant, keys, trusted_roots, log_file, dry_run=True)
+        with caplog.at_level("WARNING"):
+            result = guard.before_tool(MockBaseTool("shell_tool"), {"cmd": "ls"}, MockToolContext())
+        assert result is None
+        (record,) = self._observe_records(caplog)
+        assert record.tool == "shell_tool"
+        assert record.args_keys == ["cmd"]
+        assert "ls" not in record.getMessage()
+        event = json.loads(log_file.getvalue().strip().split("\n")[-1])
+        assert event["event"] == "tool_dry_run_denied"
+        assert event["observed"] is True
+
+    def test_global_observe_mode_allows_tier1_denial(self, warrant, keys, trusted_roots, caplog):
+        from tenuo.config import configure
+
+        configure(trusted_roots=trusted_roots, mode="observe")
+        log_file = io.StringIO()
+        guard = self._guard(warrant, keys, trusted_roots, log_file)
+        with caplog.at_level("WARNING"):
+            result = guard.before_tool(MockBaseTool("shell_tool"), {"cmd": "ls"}, MockToolContext())
+        assert result is None
+        assert len(self._observe_records(caplog)) == 1
+        event = json.loads(log_file.getvalue().strip().split("\n")[-1])
+        assert event["observed"] is True
+
+    def test_global_observe_mode_allows_constraint_violation(self, warrant, keys, trusted_roots, caplog):
+        from tenuo.config import configure
+
+        configure(trusted_roots=trusted_roots, mode="observe")
+        guard = self._guard(
+            warrant,
+            keys,
+            trusted_roots,
+            io.StringIO(),
+            skill_map={"read_file_tool": "read_file"},
+            arg_map={"read_file": {"file_path": "path"}},
+        )
+        with caplog.at_level("WARNING"):
+            result = guard.before_tool(MockBaseTool("read_file_tool"), {"file_path": "/etc/passwd"}, MockToolContext())
+        assert result is None
+        assert len(self._observe_records(caplog)) == 1
+
+    def test_enforce_mode_still_denies(self, warrant, keys, trusted_roots, caplog):
+        log_file = io.StringIO()
+        guard = self._guard(warrant, keys, trusted_roots, log_file, on_denial="return")
+        with caplog.at_level("WARNING"):
+            result = guard.before_tool(MockBaseTool("shell_tool"), {"cmd": "ls"}, MockToolContext())
+        assert result is not None and result["error"] == "authorization_denied"
+        assert self._observe_records(caplog) == []
+        event = json.loads(log_file.getvalue().strip().split("\n")[-1])
+        assert event["event"] == "tool_denied"
+        assert "observed" not in event
