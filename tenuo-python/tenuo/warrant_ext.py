@@ -145,6 +145,10 @@ class WhyDenied:
     constraint: Any = None
     value: Any = None
     suggestion: str = ""
+    # Explorer link pre-filled with the warrant and the request arguments.
+    # It carries argument values, so it is kept out of ``suggestion`` (which
+    # flows into exceptions, logs and audit events); open it locally only.
+    explorer_url: str = ""
 
     def __repr__(self) -> str:
         if not self.denied:
@@ -514,8 +518,10 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     - Debug constraint configuration issues
     - Power interactive debugging UIs
 
-    The returned object includes a `suggestion` with a link to the Tenuo Explorer,
-    pre-filled with the warrant and request details for interactive debugging.
+    The returned object's `explorer_url` links to the Tenuo Explorer pre-filled
+    with the warrant and request arguments. `suggestion` only links to the bare
+    Explorer, because it ends up in exception messages, logs and audit events,
+    which must not carry argument values.
 
     Args:
         tool: Tool name to check
@@ -535,6 +541,8 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     import json
 
     playground_url = "https://tenuo.ai/explorer/"
+    playground_hint = f" Debug at: {playground_url}"
+    explorer_url = playground_url
     try:
         # Construct state object matching App.tsx expectation
         state = {
@@ -545,10 +553,10 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
         # Encode state: JSON -> Bytes -> Base64
         state_json = json.dumps(state)
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("ascii")
-        playground_hint = f" Debug at: {playground_url}?s={state_b64}"
+        explorer_url = f"{playground_url}?s={state_b64}"
     except Exception:
-        # Fallback if encoding fails
-        playground_hint = f" Debug at: {playground_url}"
+        # Fallback if encoding fails: keep the bare Explorer link
+        pass
 
     # Check if warrant is expired
     if self.is_expired():
@@ -558,6 +566,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             deny_path="warrant.expired",
             tool=tool,
             suggestion=f"Warrant expired at {self.expires_at()}. Request a fresh warrant.{playground_hint}",
+            explorer_url=explorer_url,
         )
 
     # Check if tool is in warrant
@@ -569,6 +578,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             deny_path="tool.not_found",
             tool=tool,
             suggestion=f"Tool '{tool}' not in warrant. Available: {available}.{playground_hint}",
+            explorer_url=explorer_url,
         )
 
     # Check if warrant is terminal (can't delegate)
@@ -603,6 +613,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
                 tool=tool,
                 field=failed_field,
                 suggestion=f"{enhanced_suggestion}{playground_hint}",
+                explorer_url=explorer_url,
             )
     except Exception as e:
         # Fallback if check_constraints fails unexpectedly
@@ -612,6 +623,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             deny_path="constraints.error",
             tool=tool,
             suggestion=f"Could not check constraints: {e}.{playground_hint}",
+            explorer_url=explorer_url,
         )
 
     # If we got here, authorization would likely succeed
