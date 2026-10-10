@@ -169,6 +169,8 @@ result = await execute_workflow_authorized(
 )
 ```
 
+If `warrant` is delegated, pass its parents root-first (excluding the leaf) as `warrant_chain=[root, ...]` so a worker that trusts only the root can verify it; without it, activities are denied as untrusted.
+
 ### Long-running workflows: `start_workflow_authorized(...)`
 
 For workflows where you need a handle to signal, query, or await later (human-in-the-loop gates, multi-day pipelines):
@@ -189,7 +191,7 @@ await handle.signal(ApprovalWorkflow.approve, decision)
 result = await handle.result()
 ```
 
-Same header binding as `execute_workflow_authorized()` — but returns a `WorkflowHandle` immediately instead of blocking on the result.
+Same header binding as `execute_workflow_authorized()`, including `warrant_chain=` for delegated warrants, but returns a `WorkflowHandle` immediately instead of blocking on the result.
 
 ### Advanced: `set_headers_for_workflow(...)` + `client.execute_workflow(...)`
 
@@ -207,6 +209,8 @@ result = await client.execute_workflow(
     task_queue="data-processing",
 )
 ```
+
+`tenuo_headers(warrant, key_id, warrant_chain=[root, ...])` adds the `x-tenuo-warrant-chain` header for a delegated warrant; `warrant` may also be the whole root-first list or an encoded WarrantStack.
 
 ### Deprecated: `set_headers(...)`
 
@@ -756,7 +760,7 @@ result = await tenuo_execute_child_workflow(
 
 ### Delegation Chain Verification
 
-When warrants are attenuated, the full chain is propagated via `x-tenuo-warrant-chain`. The activity interceptor calls `Authorizer.check_chain()` to verify every link back to a trusted root.
+When warrants are attenuated, in the workflow or before start (`warrant_chain=` on the start helpers), the full chain is propagated via `x-tenuo-warrant-chain`. The activity interceptor calls `Authorizer.check_chain()` to verify every link back to a trusted root.
 
 ---
 
@@ -901,6 +905,8 @@ async with tenuo_warrant_context(warrant, key_id="agent1"):
     )
 ```
 
+For a delegated warrant, add `warrant_chain=[root, ...]` (parents, root-first, excluding the leaf).
+
 ### workflow_grant() - Scoped In-Workflow Grants
 
 ```python
@@ -938,7 +944,7 @@ Schedule lifetime or use an issuer warrant plus per-Activity execution warrants.
 Temporal action settings such as `execution_timeout` belong in
 `action_options=`. The legacy `workflow_kwargs=` alias remains temporarily
 supported with a deprecation warning; workflow input remains positional via
-`workflow_args=`.
+`workflow_args=`. For a delegated warrant, pass its parents as `warrant_chain=`.
 
 ### Async Activity Completion
 
