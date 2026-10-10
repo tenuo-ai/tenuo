@@ -1,6 +1,6 @@
 # Integration Compatibility Matrix
 
-**Last Updated**: 2026-09-11
+**Last Updated**: 2026-10-10
 
 Tracks compatibility between Tenuo artifacts and upstream integration libraries.
 
@@ -30,12 +30,13 @@ with the same `MAJOR.MINOR.PATCH`.
 | **Hermes Agent** | 0.20 (plugin floor) | latest | upstream `main` (nightly) | Supported | Official plugin package, `hermes-tenuo` 0.1.3. Requires `tenuo>=0.3.2`. |
 | **AutoGen** | 0.7.0 | 0.7+ latest | 0.7.5 | Stable | Use `autogen-agentchat` / `autogen-ext` (not stale `0.0.x` squat packages). |
 | **LangChain** | 0.2.0 | 1.x latest | 1.3.18 / core 1.6.1 | Stable | |
-| **LangGraph** | 0.2.0 | 1.x latest | 1.2.11 | Stable | Requires `langchain-core>=0.2.27`. |
+| **LangGraph** | 0.2.0 | 1.x latest | 1.2.11 | Stable | Requires `langchain-core>=0.2.27`. `TenuoToolNode` needs `langgraph-prebuilt>=1.0.2` (LangGraph 1.x), the first release with the `ToolNode(wrap_tool_call=)` hook; on older lines it raises `RuntimeError` at construction. |
 | **MCP** | 1.9.4 | 1.x or 2.x | 1.28.1 and 2.1.1 | Stable | Python `tenuo.mcp` supports MCP SDK 1.9.4+ and 2.x (streamable-HTTP transport shape settled in 1.9.4). |
 | **FastMCP** | 3.2.1 | 3.x or 4.x | 3.4.7 and 4.0.1 | Stable | FastMCP 4 requires MCP SDK 2.x. Denials are a real `ToolResult` subclass (`isError=True` on the wire) on every line. |
 | **Google ADK** | 0.1.0 | latest | 2.8.0 | Stable | GuardBuilder / before_tool covered in CI. |
-| **Temporal** | 1.23.0 | 1.x latest | 1.32.0 | Stable | `SimplePlugin` required for `TenuoTemporalPlugin`; replay + live jobs in matrix. |
+| **Temporal** | 1.33.0 | 1.x latest | 1.32.0 | Stable | The `temporal` extra floors at 1.33.0. `SimplePlugin` (needed by `TenuoTemporalPlugin`) exists from 1.23.0, which the weekly matrix still tests. |
 | **FastAPI** | 0.100.0 | latest | 0.141.1 | Stable | Works with Starlette 1.6.0. |
+| **A2A** | Starlette 0.27 / httpx 0.24 | latest | Starlette 1.7.0 / httpx 0.28.1 | Stable | No upstream A2A SDK dependency. The `a2a` extra installs Starlette (`A2AServer`) and httpx (`A2AClient`). Covered by the main CI suite, not the weekly matrix. |
 | **Starlette** | (via fastapi/a2a) | latest | 1.6.0 | Stable | Pulled by FastAPI / A2A. |
 
 > **Version Philosophy**: Tenuo uses **permissive constraints** in `pyproject.toml` to maximize compatibility. We **warn at runtime** (not fail) if you have a version with known issues. This lets you try Tenuo without upgrading your entire stack.
@@ -84,6 +85,7 @@ with the same `MAJOR.MINOR.PATCH`.
 
 **Version Notes**:
 - **langchain-core 0.2.0-0.2.26**: Incompatible with `langgraph>=0.2` (runtime warning).
+- **`TenuoToolNode`**: needs `langgraph-prebuilt>=1.0.2`. Earlier prebuilt releases (including every LangGraph 0.x line) have no `ToolNode(wrap_tool_call=)` hook, so `TenuoToolNode` raises `RuntimeError` and its tests skip on the 0.2.0 floor. `guard_node`, `tenuo_node` and the `@guard` path work from 0.2.0. Check `tenuo.langgraph.WRAP_TOOL_CALL_SUPPORTED` at runtime.
 - LangChain / LangGraph 1.x validated locally on 2026-09-02.
 
 ### MCP / FastMCP
@@ -105,7 +107,8 @@ with the same `MAJOR.MINOR.PATCH`.
 **Current Status**: Stable
 
 **Version Notes**:
-- **1.23.0**: Minimum for `TenuoTemporalPlugin` (`SimplePlugin`).
+- **1.33.0**: Floor of the `temporal` extra (raised from 1.23.0 in #739).
+- **1.23.0**: First release with `SimplePlugin`, which `TenuoTemporalPlugin` needs. The weekly matrix minimum job still installs this version.
 - Replay safety and live Temporal jobs run in the weekly compatibility matrix.
 
 ### Hermes Agent
@@ -115,6 +118,13 @@ with the same `MAJOR.MINOR.PATCH`.
 - **0.20**: Declared package floor for the `hermes-tenuo` plugin.
 - Dedicated CI in [hermes-tenuo](https://github.com/tenuo-ai/hermes-tenuo) loads the plugin through upstream Hermes `main`'s plugin loader every night.
 - Calls a plugin makes through `ctx.dispatch_tool()` do not pass through `pre_tool_call`. See [Coverage](./hermes#coverage).
+
+### A2A
+**Current Status**: Stable
+
+**Version Notes**:
+- Tenuo implements the A2A wire protocol itself. There is no upstream A2A SDK to pin.
+- **Starlette 0.27 / httpx 0.24**: floors of the `a2a` extra. The A2A adapter suites pass at both the floors and at Starlette 1.7.0 / httpx 0.28.1 (local probe, 2026-10-10).
 
 ### FastAPI
 **Current Status**: Stable
@@ -136,12 +146,13 @@ Last local probe: 2026-09-02 (adapter suites + expanded smoke tests)
 | AutoGen | Pass (0.7.0) | Pass (0.7.5) | Not tested |
 | Hermes Agent | Not pinned (floor: 0.20) | — | Pass (upstream `main`, nightly) |
 | LangChain | Pass (0.2.x) | Pass (1.3.18) | Not tested |
-| LangGraph | Pass (0.2.0) | Pass (1.2.11) | Not tested |
+| LangGraph | Pass (0.2.0; `TenuoToolNode` tests skip) | Pass (1.2.11) | Not tested |
 | MCP | Pass (1.9.4) | Pass (2.1.1) | Not tested |
 | FastMCP | Pass (3.2.1) | Pass (3.4.7 / 4.0.1) | Not tested |
 | Google ADK | Pass (0.1+) | Pass (2.8.0) | Not tested |
-| Temporal | Pass (1.23.0) | Pass (1.32.0) | Not tested |
+| Temporal | Pass (1.23.0; extra floor is 1.33.0) | Pass (1.32.0) | Not tested |
 | FastAPI | Pass (0.100+) | Pass (0.141.1) | Not tested |
+| A2A | Pass (Starlette 0.27 / httpx 0.24) | Pass (Starlette 1.7.0 / httpx 0.28.1) | Not tested |
 
 **Testing Cadence**:
 - Main CI: installs OpenAI, Agents SDK, AutoGen, Google ADK, LangChain/LangGraph, FastAPI, CrewAI, MCP, Temporal (where Python allows)
