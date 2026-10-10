@@ -22,6 +22,7 @@ from tenuo.crewai import (
     CrewAIGuard,
     DenialResult,
     GuardBuilder,
+    InvalidPoP,
     MissingSigningKey,
     Pattern,
     Range,
@@ -1509,6 +1510,103 @@ class TestObserveMode:
         assert [r.tool for r in self._observed(caplog)] == ["read"]
         # Audited as the observed denial it was, not as an ALLOW.
         assert (events[-1].decision, events[-1].observed) == ("DENY", True)
+
+
+
+class TestDenialRecord:
+    """Tier 2 denials keep the real enforcement fields in exceptions, records and audit."""
+
+    @staticmethod
+    def _tier2_guard(on_denial="raise", events=None, delegated=False):
+        from tenuo import SigningKey, Warrant
+
+        root_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        if delegated:
+            mid_key = SigningKey.generate()
+            parent = (
+                Warrant.mint_builder()
+                .capability("read", path=Subpath("/data"))
+                .holder(mid_key.public_key)
+                .mint(root_key)
+            )
+            warrant = (
+                parent.grant_builder()
+                .capability("read", path=Subpath("/data/public"))
+                .holder(agent_key.public_key)
+                .grant(mid_key)
+            )
+        else:
+            warrant = (
+                Warrant.mint_builder()
+                .capability("read", path=Subpath("/data/public"))
+                .holder(agent_key.public_key)
+                .mint(root_key)
+            )
+        builder = (
+            GuardBuilder()
+            .allow("read", path=Subpath("/data"))
+            # Leaf only, no warrant_chain: the root-only trust set cannot anchor it.
+            .with_warrant(warrant, agent_key)
+            .with_trusted_roots([root_key.public_key])
+            .on_denial(on_denial)
+        )
+        if events is not None:
+            builder = builder.audit(events.append)
+        return builder.build(), warrant
+
+    def test_tier2_constraint_violation_names_real_constraint(self):
+        guard, _ = self._tier2_guard()
+        with pytest.raises(CrewAIConstraintViolation) as exc_info:
+            guard._authorize("read", {"path": "/data/private/x"})
+        err = exc_info.value
+        assert err.argument == "path"
+        assert "Subpath('/data/public')" in str(err)
+        assert "Wildcard" not in str(err)
+
+    def test_tier2_constraint_violation_denial_record(self):
+        events: list = []
+        guard, warrant = self._tier2_guard(on_denial="log", events=events)
+
+        result = guard._authorize("read", {"path": "/data/private/x"})
+
+        assert isinstance(result, DenialResult)
+        assert result.error_type == "constraint_violation"
+        assert result.error_code == "CONSTRAINT_VIOLATION"
+        assert result.warrant_id == warrant.id
+        [event] = events
+        assert event.decision == "DENY"
+        assert event.warrant_id == warrant.id
+        assert event.constraint_violated == "path"
+
+    def test_tier1_denial_audit_carries_warrant_and_field(self):
+        events: list = []
+        guard, warrant = self._tier2_guard(on_denial="log", events=events)
+
+        result = guard._authorize("read", {"path": "/etc/passwd"})  # Tier 1 Subpath("/data") fails
+
+        assert isinstance(result, DenialResult)
+        assert result.warrant_id == warrant.id
+        assert (events[-1].warrant_id, events[-1].constraint_violated) == (warrant.id, "path")
+
+    def test_untrusted_chain_reports_chain_problem(self):
+        guard, _ = self._tier2_guard(delegated=True)
+        with pytest.raises(InvalidPoP) as exc_info:
+            guard._authorize("read", {"path": "/data/public/x"})
+        msg = str(exc_info.value)
+        assert "not trusted" in msg
+        assert "untrusted_issuer" in msg
+
+    def test_untrusted_chain_denial_record_has_canonical_error_type(self):
+        events: list = []
+        guard, warrant = self._tier2_guard(on_denial="log", events=events, delegated=True)
+
+        result = guard._authorize("read", {"path": "/data/public/x"})
+
+        assert isinstance(result, DenialResult)
+        assert result.error_type == "untrusted_issuer"
+        assert result.warrant_id == warrant.id
+        assert events[-1].warrant_id == warrant.id
 
 
 if __name__ == "__main__":
