@@ -325,7 +325,8 @@ class Runtime:
 
         request_id = getattr(result, "request_id", None) or str(uuid.uuid4())
         tool = getattr(result, "tool", "") or ""
-        allowed = bool(getattr(result, "allowed", False))
+        # An observed denial was let through, but the decision was still a deny.
+        allowed = bool(getattr(result, "allowed", False)) and not getattr(result, "observed", False)
         ts = int(time.time())
         try:
             if allowed:
