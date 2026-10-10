@@ -1257,6 +1257,55 @@ def test_verify_nexus_operation_accepts_pre_supplied_approvals(
     assert verified.to_bytes() == warrant.to_bytes()
 
 
+def test_verify_nexus_operation_approval_verification_error_stays_context_error(
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    """ApprovalVerificationError keeps its pre-TenuoError handling: wrapped in
+    TenuoContextError, not re-raised raw as an auth denial."""
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    tool_name = nexus_tool_name("billing-prod", "refund", service="BillingService")
+    args = nexus_input_args(input)
+    warrant = Warrant.issue(
+        keypair=root_key,
+        capabilities={tool_name: {"order_id": Exact("ord_123"), "amount_cents": Range(0, 5000)}},
+        ttl_seconds=3600,
+        holder=agent_key.public_key,
+        required_approvers=[root_key.public_key],
+        min_approvals=1,
+        approval_gates={tool_name: None},
+    )
+    request_hash = py_compute_request_hash(warrant.id, tool_name, args, agent_key.public_key)
+    request = ApprovalRequest(tool=tool_name, arguments=args, warrant_id=warrant.id, request_hash=request_hash)
+    # More than 2x required_approvers: the core rejects the batch outright.
+    approvals = [sign_approval(request, root_key) for _ in range(3)]
+    control_plane = RecordingControlPlane()
+    ctx = SimpleNamespace(
+        request_id="req-too-many-approvals",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+            approvals=approvals,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=control_plane,
+    )
+
+    with pytest.raises(TenuoContextError, match="Approval verification failed"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    assert control_plane.deny_events == []
+
+
 async def test_tenuo_execute_nexus_operation_merges_headers_and_calls_client(
     monkeypatch: pytest.MonkeyPatch,
     nexus_keys: tuple[Any, Any],

@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, List, Optional
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
 from tenuo._enforcement import EnforcementResult
-from tenuo.approval import ApprovalRequired
+from tenuo.approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 from tenuo.exceptions import (
     ApprovalGateTriggered,
     DeserializationError,
@@ -149,6 +149,9 @@ def configure_tenuo(
     @app.exception_handler(TenuoError)
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""
+        if isinstance(exc, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
+            # Approval outcomes have no wire code; leave them to the app as before.
+            raise exc
         wire_code = exc.get_wire_code()
         if wire_code in (ErrorCode.INSUFFICIENT_APPROVALS, ErrorCode.APPROVAL_GATE_TRIGGERED):
             http_status = status.HTTP_409_CONFLICT
