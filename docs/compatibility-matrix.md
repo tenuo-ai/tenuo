@@ -1,3 +1,8 @@
+---
+title: "Integration Compatibility Matrix"
+description: "Supported versions of Tenuo packages and upstream libraries."
+---
+
 # Integration Compatibility Matrix
 
 **Last Updated**: 2026-09-11

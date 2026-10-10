@@ -1,3 +1,8 @@
+---
+title: "Tenuo Wire Format Specification"
+description: "How Tenuo warrants are encoded on the wire, for interoperable implementations."
+---
+
 # Tenuo Wire Format Specification
 
 **Version:** 1.0  

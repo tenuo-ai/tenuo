@@ -171,7 +171,7 @@ See integration docs ([OpenAI](./openai.md#tier-1-security-model), [ADK](./googl
 
 ## Security Invariants
 
-All Tenuo integrations enforce these invariants (see [Integration Guide](../tenuo-python/docs/integration-guide.md#invariant-testing)):
+All Tenuo integrations enforce these invariants (see [Integration Guide](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/docs/integration-guide.md#invariant-testing)):
 
 1. **Monotonic Attenuation** - Authority only decreases
 2. **Fail-Closed** - Unknown parameters rejected

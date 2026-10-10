@@ -86,6 +86,12 @@ fn main() {
     let worker2 = SigningKey::from_bytes(&worker2_seed);
     let attacker = SigningKey::from_bytes(&attacker_seed);
 
+    // Front matter for the docs site, which renders docs/ directly.
+    println!("---");
+    println!("title: \"Tenuo Protocol Test Vectors\"");
+    println!("description: \"Test vectors for building interoperable implementations of the Tenuo warrant protocol.\"");
+    println!("---");
+    println!();
     println!("# Tenuo Protocol Test Vectors");
     println!();
     println!("**Version:** 1.0");
