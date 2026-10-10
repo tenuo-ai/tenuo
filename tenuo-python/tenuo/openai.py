@@ -528,6 +528,23 @@ def _observe_tier1_denial(error: Exception, arguments: Dict[str, Any], warrant_i
     return True
 
 
+def _record_allowed_call(
+    owner: Any, tool_name: str, arguments: Dict[str, Any], tier2_result: Optional[EnforcementResult]
+) -> None:
+    """Audit a call that verification let through.
+
+    Observe mode returns ``allowed=True, observed=True`` for a Tier 2 denial;
+    record that as the observed DENY it was, not as an ALLOW.
+    """
+    if tier2_result is not None and getattr(tier2_result, "observed", False):
+        reason = tier2_result.denial_reason or tier2_result.error_type or "observed denial"
+        owner._emit_audit(tool_name, arguments, "DENY", reason, tier="tier2", observed=True)
+        owner._emit_cp(tool_name, arguments, allowed=False, denial_reason=reason)
+    else:
+        owner._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+        owner._emit_cp(tool_name, arguments, allowed=True)
+
+
 def verify_tool_call(
     tool_name: str,
     arguments: Dict[str, Any],
@@ -541,7 +558,7 @@ def verify_tool_call(
     approvals: Optional[list] = None,
     *,
     warrant_chain: Optional[List[Warrant]] = None,
-) -> None:
+) -> Optional[EnforcementResult]:
     """Verify a tool call against guardrails and/or warrant.
 
     Tier 1 (guardrails): Uses allow_tools, deny_tools, constraints
@@ -584,6 +601,7 @@ def verify_tool_call(
     # Tier 2: Warrant-based authorization (cryptographic)
     # ==========================================================================
     warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
+    tier2_result: Optional[EnforcementResult] = None
     if warrant is not None:
         logger.debug(f"Tier 2: Verifying tool '{tool_name}' with warrant")
 
@@ -610,6 +628,7 @@ def verify_tool_call(
             _raise_for_enforcement_denial(tool_name, result)
         else:
             logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
+        tier2_result = result
 
     # ==========================================================================
     # Tier 1: Guardrail-based authorization (runtime checks)
@@ -671,6 +690,8 @@ def verify_tool_call(
                     tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
                 )
 
+    return tier2_result
+
 
 async def verify_tool_call_async(
     tool_name: str,
@@ -685,13 +706,14 @@ async def verify_tool_call_async(
     approvals: Optional[list] = None,
     *,
     warrant_chain: Optional[List[Warrant]] = None,
-) -> None:
+) -> Optional[EnforcementResult]:
     """Async variant of verify_tool_call — uses enforce_tool_call_async for Tier 2.
 
     Required for async streaming paths so approval handlers can be awaited.
     See verify_tool_call for full documentation.
     """
     warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
+    tier2_result: Optional[EnforcementResult] = None
     if warrant is not None:
         if signing_key is None:
             raise MissingSigningKey()
@@ -710,6 +732,7 @@ async def verify_tool_call_async(
 
         if not result.allowed:
             _raise_for_enforcement_denial(tool_name, result)
+        tier2_result = result
 
     if deny_tools and tool_name in deny_tools:
         raise ToolDenied(tool_name, "Tool is in denylist")
@@ -746,6 +769,8 @@ async def verify_tool_call_async(
                 raise OpenAIConstraintViolation(
                     tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
                 )
+
+    return tier2_result
 
 
 def _check_type_compatibility(constraint: Constraint, value: Any) -> tuple:
@@ -921,7 +946,7 @@ class GuardedCompletions:
             raise MalformedToolCall(tool_name, str(e))
 
         try:
-            verify_tool_call(
+            tier2_result = verify_tool_call(
                 tool_name,
                 arguments,
                 self._allow_tools,
@@ -934,8 +959,7 @@ class GuardedCompletions:
                 self._approvals,
                 warrant_chain=self._warrant_chain,
             )
-            self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-            self._emit_cp(tool_name, arguments, allowed=True)
+            _record_allowed_call(self, tool_name, arguments, tier2_result)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             observed = _observe_tier1_denial(e, arguments, self._warrant_id)
@@ -1359,7 +1383,7 @@ class GuardedResponses:
             raise MalformedToolCall(tool_name, str(e))
 
         try:
-            verify_tool_call(
+            tier2_result = verify_tool_call(
                 tool_name,
                 arguments,
                 self._allow_tools,
@@ -1372,8 +1396,7 @@ class GuardedResponses:
                 self._approvals,
                 warrant_chain=self._warrant_chain,
             )
-            self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-            self._emit_cp(tool_name, arguments, allowed=True)
+            _record_allowed_call(self, tool_name, arguments, tier2_result)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             observed = _observe_tier1_denial(e, arguments, self._warrant_id)
@@ -2379,7 +2402,7 @@ class TenuoToolGuardrail:
         violations = []
         for tool_name, arguments in tool_calls:
             try:
-                await verify_tool_call_async(
+                tier2_result = await verify_tool_call_async(
                     tool_name,
                     arguments,
                     self.allow_tools,
@@ -2392,8 +2415,7 @@ class TenuoToolGuardrail:
                     self.approvals,
                     warrant_chain=self.warrant_chain,
                 )
-                self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-                self._emit_cp(tool_name, arguments, allowed=True)
+                _record_allowed_call(self, tool_name, arguments, tier2_result)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
                 observed = _observe_tier1_denial(e, arguments, self._warrant_id)

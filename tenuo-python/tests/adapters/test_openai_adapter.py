@@ -3428,6 +3428,31 @@ class TestObserveMode:
             ),
         ]
 
+    def test_tier2_observed_denial_is_audited_as_observed_deny(self, caplog):
+        """A Tier 2 denial that observe mode lets through is audited as DENY, not ALLOW."""
+        from tenuo.config import configure
+
+        issuer_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("ok*"))
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(issuer_key)
+        )
+        configure(trusted_roots=[issuer_key.public_key], mode="observe")
+        events: list = []
+        response = make_response([("search", {"query": "nope"})])
+        client = guard(make_mock_client(response), warrant=warrant, signing_key=agent_key, audit_callback=events.append)
+
+        with caplog.at_level("WARNING"):
+            result = client.chat.completions.create(model="gpt-4o", messages=[])
+
+        assert [tc.function.name for tc in result.choices[0].message.tool_calls] == ["search"]
+        assert [(e.decision, e.tier, e.observed) for e in events] == [("DENY", "tier2", True)]
+        assert len(self._observed(caplog)) == 1
+
     def test_tool_not_allowed_is_kept_and_logged(self, caplog):
         self._observe()
         events: list = []
