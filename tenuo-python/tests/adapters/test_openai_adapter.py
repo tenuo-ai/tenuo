@@ -3468,7 +3468,7 @@ class TestObserveMode:
         [record] = self._observed(caplog)
         assert record.tool == "delete_file"
         assert record.constraint_violated == "tool"
-        assert record.error_type == "t1_001"
+        assert record.error_type == "tool_not_allowed"
         assert record.args_keys == ["path"]
         assert "/etc/passwd" not in record.getMessage()
         assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
@@ -3591,3 +3591,139 @@ class TestObserveMode:
         assert result.tripwire_triggered is False
         assert [r.tool for r in self._observed(caplog)] == ["send_email"]
         assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+
+
+# =============================================================================
+# Denial records carry canonical error_type / constraint_violated / warrant_id
+# =============================================================================
+
+
+class TestDenialRecord:
+    """Denials reach handle_denial and audit with the structured fields, not free text."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_config(self):
+        from tenuo.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+
+    @pytest.fixture
+    def tier2(self):
+        from tenuo.config import configure
+
+        issuer_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("ok*"))
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(issuer_key)
+        )
+        configure(trusted_roots=[issuer_key.public_key])
+        return warrant, agent_key
+
+    def test_tier2_constraint_violation_names_param(self, tier2):
+        warrant, agent_key = tier2
+        response = make_response([("search", {"query": "nope"})])
+        client = guard(make_mock_client(response), warrant=warrant, signing_key=agent_key, on_denial="raise")
+
+        with pytest.raises(WarrantDenied) as exc_info:
+            client.chat.completions.create(model="gpt-4o", messages=[])
+
+        assert exc_info.value.param == "query"
+        assert exc_info.value.code == "T2_001"
+
+    def test_tier2_log_denial_passes_real_result(self, tier2):
+        warrant, agent_key = tier2
+        events: list = []
+        response = make_response([("search", {"query": "nope"})])
+        client = guard(
+            make_mock_client(response),
+            warrant=warrant,
+            signing_key=agent_key,
+            on_denial="log",
+            audit_callback=events.append,
+        )
+
+        with patch("tenuo.openai.handle_denial") as handled:
+            client.chat.completions.create(model="gpt-4o", messages=[])
+
+        [(result, _policy)] = [c.args for c in handled.call_args_list]
+        assert result.error_type == "constraint_violation"
+        assert result.constraint_violated == "query"
+        assert result.warrant_id == warrant.id
+        [event] = events
+        assert (event.decision, event.tier) == ("DENY", "tier2")
+        assert (event.error_type, event.constraint_violated) == ("constraint_violation", "query")
+
+    def test_tier1_log_denial_has_canonical_error_type(self):
+        events: list = []
+        response = make_response([("delete_file", {"path": "/x"})])
+        client = guard(
+            make_mock_client(response), allow_tools=["search"], on_denial="log", audit_callback=events.append
+        )
+
+        with patch("tenuo.openai.handle_denial") as handled:
+            client.chat.completions.create(model="gpt-4o", messages=[])
+
+        [(result, _policy)] = [c.args for c in handled.call_args_list]
+        assert (result.error_type, result.constraint_violated) == ("tool_not_allowed", "tool")
+        [event] = events
+        assert (event.error_type, event.constraint_violated) == ("tool_not_allowed", "tool")
+
+    def test_tier1_constraint_denial_record(self):
+        events: list = []
+        response = make_response([("read_file", {"path": "/etc/passwd"})])
+        client = guard(
+            make_mock_client(response),
+            constraints={"read_file": {"path": Subpath("/data")}},
+            on_denial="skip",
+            audit_callback=events.append,
+        )
+
+        with patch("tenuo.openai.handle_denial") as handled:
+            client.chat.completions.create(model="gpt-4o", messages=[])
+
+        [(result, _policy)] = [c.args for c in handled.call_args_list]
+        assert (result.error_type, result.constraint_violated) == ("constraint_violation", "path")
+        [event] = events
+        assert (event.error_type, event.constraint_violated) == ("constraint_violation", "path")
+
+    def test_tier2_observed_deny_audit_has_fields(self, tier2):
+        from tenuo.config import configure
+
+        warrant, agent_key = tier2
+        configure(trusted_roots=[warrant.issuer], mode="observe")
+        events: list = []
+        response = make_response([("search", {"query": "nope"})])
+        client = guard(make_mock_client(response), warrant=warrant, signing_key=agent_key, audit_callback=events.append)
+
+        client.chat.completions.create(model="gpt-4o", messages=[])
+
+        [event] = events
+        assert (event.decision, event.observed) == ("DENY", True)
+        assert (event.error_type, event.constraint_violated) == ("constraint_violation", "query")
+
+    def test_responses_log_denial_passes_real_result(self, tier2):
+        warrant, agent_key = tier2
+
+        class FunctionCall:
+            type = "function_call"
+            name = "search"
+            arguments = json.dumps({"query": "nope"})
+
+        resp = Mock()
+        resp.output = [FunctionCall()]
+        mock_client = Mock()
+        mock_client.responses.create.return_value = resp
+        client = guard(mock_client, warrant=warrant, signing_key=agent_key, on_denial="log")
+
+        with patch("tenuo.openai.handle_denial") as handled:
+            client.responses.create(model="gpt-4o", input="hi")
+
+        [(result, _policy)] = [c.args for c in handled.call_args_list]
+        assert (result.error_type, result.constraint_violated) == ("constraint_violation", "query")
+        assert result.warrant_id == warrant.id

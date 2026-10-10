@@ -149,9 +149,12 @@ logger = logging.getLogger("tenuo.openai")
 
 
 def _raise_for_enforcement_denial(tool_name: str, result: EnforcementResult) -> None:
-    """Map an ``EnforcementResult`` denial to a typed OpenAI adapter exception."""
-    if result.error_type == "expired":
-        raise WarrantDenied(tool_name, "warrant expired")
+    """Map an ``EnforcementResult`` denial to a typed OpenAI adapter exception.
+
+    The ``WarrantDenied`` carries the violated argument as ``param`` and keeps
+    the real result as ``_tenuo_enforcement_result`` so denial handling and
+    audit can report the canonical ``error_type`` / ``constraint_violated``.
+    """
     if result.error_type == "insufficient_approvals":
         meta = result.approval_metadata or {}
         raise InsufficientApprovals(
@@ -159,13 +162,20 @@ def _raise_for_enforcement_denial(tool_name: str, result: EnforcementResult) -> 
             received=meta.get("got", 0),
             detail=result.denial_reason or "",
         )
-    if result.error_type == "constraint_violation":
-        raise WarrantDenied(tool_name, result.denial_reason or "constraint violation")
-    if result.error_type == "tool_not_allowed":
-        raise WarrantDenied(tool_name, result.denial_reason or "tool not in warrant")
-    if result.error_type == "invalid_pop":
-        raise WarrantDenied(tool_name, result.denial_reason or "invalid proof-of-possession")
-    raise WarrantDenied(tool_name, result.denial_reason or "not authorized by warrant")
+    if result.error_type == "expired":
+        reason = "warrant expired"
+    elif result.error_type == "constraint_violation":
+        reason = result.denial_reason or "constraint violation"
+    elif result.error_type == "tool_not_allowed":
+        reason = result.denial_reason or "tool not in warrant"
+    elif result.error_type == "invalid_pop":
+        reason = result.denial_reason or "invalid proof-of-possession"
+    else:
+        reason = result.denial_reason or "not authorized by warrant"
+    param = result.constraint_violated if result.error_type == "constraint_violation" else None
+    error = WarrantDenied(tool_name, reason, param=param)
+    error._tenuo_enforcement_result = result  # type: ignore[attr-defined]
+    raise error
 
 
 def enable_debug(handler: Optional[logging.Handler] = None) -> None:
@@ -363,6 +373,9 @@ class AuditEvent:
         constraint_hash: Hash of Tier 1 constraints for tamper detection
         warrant_id: Warrant ID if Tier 2 is active (for audit correlation)
         observed: True for a DENY that observe mode let proceed
+        constraint_violated: For a DENY, what failed ("tool" or the argument name)
+        error_type: For a DENY, canonical category (e.g. "tool_not_allowed",
+            "constraint_violation", "expired")
     """
 
     session_id: str
@@ -375,6 +388,8 @@ class AuditEvent:
     constraint_hash: Optional[str] = None
     warrant_id: Optional[str] = None
     observed: bool = False
+    constraint_violated: Optional[str] = None
+    error_type: Optional[str] = None
 
 
 # Type alias for audit callback
@@ -504,6 +519,35 @@ class BufferOverflow(TenuoOpenAIError):
 from tenuo.core import check_constraint  # noqa: E402
 
 
+def _denial_result(error: Exception, arguments: Dict[str, Any], warrant_id: Optional[str]) -> EnforcementResult:
+    """Return the ``EnforcementResult`` describing an adapter denial.
+
+    Tier 2 denials carry the real result from ``enforce_tool_call``. Tier 1
+    denials get one built with the canonical ``error_type`` strings the shared
+    enforcement path emits; the adapter ``code`` (``T1_001`` ...) stays on the
+    exception and in its message.
+    """
+    real = getattr(error, "_tenuo_enforcement_result", None)
+    if isinstance(real, EnforcementResult):
+        return real
+    if isinstance(error, ToolDenied):
+        error_type: Optional[str] = "tool_not_allowed"
+        constraint_violated: Optional[str] = "tool"
+    elif isinstance(error, OpenAIConstraintViolation):
+        error_type, constraint_violated = "constraint_violation", error.param
+    else:
+        error_type, constraint_violated = "authorization_failed", None
+    return EnforcementResult(
+        allowed=False,
+        tool=getattr(error, "tool_name", "unknown"),
+        arguments=arguments,
+        denial_reason=str(error),
+        constraint_violated=constraint_violated,
+        error_type=error_type,
+        warrant_id=warrant_id,
+    )
+
+
 def _observe_tier1_denial(error: Exception, arguments: Dict[str, Any], warrant_id: Optional[str]) -> bool:
     """Observe mode for Tier 1 denials (allow/deny lists and Tier 1 constraints).
 
@@ -515,15 +559,7 @@ def _observe_tier1_denial(error: Exception, arguments: Dict[str, Any], warrant_i
     """
     if should_block_violation() or not isinstance(error, (ToolDenied, OpenAIConstraintViolation)):
         return False
-    result = EnforcementResult(
-        allowed=False,
-        tool=error.tool_name,
-        arguments=arguments,
-        denial_reason=str(error),
-        constraint_violated="tool" if isinstance(error, ToolDenied) else error.param,
-        error_type=error.code.lower(),
-        warrant_id=warrant_id,
-    )
+    result = _denial_result(error, arguments, warrant_id)
     _apply_observe_mode(result)  # logs the shared OBSERVE warning
     return True
 
@@ -538,7 +574,16 @@ def _record_allowed_call(
     """
     if tier2_result is not None and getattr(tier2_result, "observed", False):
         reason = tier2_result.denial_reason or tier2_result.error_type or "observed denial"
-        owner._emit_audit(tool_name, arguments, "DENY", reason, tier="tier2", observed=True)
+        owner._emit_audit(
+            tool_name,
+            arguments,
+            "DENY",
+            reason,
+            tier="tier2",
+            observed=True,
+            constraint_violated=tier2_result.constraint_violated,
+            error_type=tier2_result.error_type,
+        )
         owner._emit_cp(tool_name, arguments, allowed=False, denial_reason=reason)
     else:
         owner._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
@@ -963,7 +1008,17 @@ class GuardedCompletions:
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             observed = _observe_tier1_denial(e, arguments, self._warrant_id)
-            self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier, observed=observed)
+            denial = _denial_result(e, arguments, self._warrant_id)
+            self._emit_audit(
+                tool_name,
+                arguments,
+                "DENY",
+                str(e),
+                tier=tier,
+                observed=observed,
+                constraint_violated=denial.constraint_violated,
+                error_type=denial.error_type,
+            )
             self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
             if observed:
                 return  # observe mode: keep the tool call
@@ -977,6 +1032,8 @@ class GuardedCompletions:
         reason: str,
         tier: str = "tier1",
         observed: bool = False,
+        constraint_violated: Optional[str] = None,
+        error_type: Optional[str] = None,
     ) -> None:
         """Emit an audit event if callback is configured."""
         if self._audit_callback is None:
@@ -993,6 +1050,8 @@ class GuardedCompletions:
             constraint_hash=self._constraint_hash,
             warrant_id=self._warrant_id,  # Frozen at init time
             observed=observed,
+            constraint_violated=constraint_violated,
+            error_type=error_type,
         )
 
         try:
@@ -1193,16 +1252,10 @@ class GuardedCompletions:
     def _handle_denial(self, error: TenuoOpenAIError) -> None:
         """Handle a denial according to mode using shared handler."""
         # Note: OpenAI handles "raise" mode separately, so we only handle log/skip here
-        pseudo_result = EnforcementResult(
-            allowed=False,
-            tool=getattr(error, "tool_name", "unknown"),
-            arguments={},
-            denial_reason=str(error),
-            error_type=error.code if hasattr(error, "code") else None,
-        )
+        result = _denial_result(error, {}, self._warrant_id)
         # Use LOG or SKIP - raise is handled elsewhere in OpenAI flow
         policy = DenialPolicy.LOG if self._on_denial == "log" else DenialPolicy.SKIP
-        handle_denial(pseudo_result, policy)
+        handle_denial(result, policy)
 
     async def acreate(self, *args, **kwargs) -> Any:
         """Async wrapped create method with guardrails."""
@@ -1400,7 +1453,17 @@ class GuardedResponses:
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             observed = _observe_tier1_denial(e, arguments, self._warrant_id)
-            self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier, observed=observed)
+            denial = _denial_result(e, arguments, self._warrant_id)
+            self._emit_audit(
+                tool_name,
+                arguments,
+                "DENY",
+                str(e),
+                tier=tier,
+                observed=observed,
+                constraint_violated=denial.constraint_violated,
+                error_type=denial.error_type,
+            )
             self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
             if observed:
                 return  # observe mode: keep the tool call
@@ -1436,6 +1499,8 @@ class GuardedResponses:
         reason: str,
         tier: str = "tier1",
         observed: bool = False,
+        constraint_violated: Optional[str] = None,
+        error_type: Optional[str] = None,
     ) -> None:
         """Emit an audit event if callback is configured."""
         if self._audit_callback is None:
@@ -1452,6 +1517,8 @@ class GuardedResponses:
             constraint_hash=self._constraint_hash,
             warrant_id=self._warrant_id,  # Frozen at init time
             observed=observed,
+            constraint_violated=constraint_violated,
+            error_type=error_type,
         )
 
         try:
@@ -1463,15 +1530,9 @@ class GuardedResponses:
 
     def _handle_denial(self, error: Exception) -> None:
         """Handle a denial based on on_denial mode using shared handler."""
-        pseudo_result = EnforcementResult(
-            allowed=False,
-            tool=getattr(error, "tool_name", "unknown"),
-            arguments={},
-            denial_reason=str(error),
-            error_type=getattr(error, "code", None),
-        )
+        result = _denial_result(error, {}, self._warrant_id)
         policy = DenialPolicy.LOG if self._on_denial == "log" else DenialPolicy.SKIP
-        handle_denial(pseudo_result, policy)
+        handle_denial(result, policy)
 
 
 class GuardedClient:
@@ -2419,7 +2480,17 @@ class TenuoToolGuardrail:
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
                 observed = _observe_tier1_denial(e, arguments, self._warrant_id)
-                self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier, observed=observed)
+                denial = _denial_result(e, arguments, self._warrant_id)
+                self._emit_audit(
+                    tool_name,
+                    arguments,
+                    "DENY",
+                    str(e),
+                    tier=tier,
+                    observed=observed,
+                    constraint_violated=denial.constraint_violated,
+                    error_type=denial.error_type,
+                )
                 self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
                 if observed:
                     continue  # observe mode: don't trip the wire
@@ -2447,6 +2518,8 @@ class TenuoToolGuardrail:
         reason: str,
         tier: str = "tier1",
         observed: bool = False,
+        constraint_violated: Optional[str] = None,
+        error_type: Optional[str] = None,
     ) -> None:
         """Emit an audit event if callback is configured."""
         if self.audit_callback is None:
@@ -2463,6 +2536,8 @@ class TenuoToolGuardrail:
             constraint_hash=self._constraint_hash,
             warrant_id=self._warrant_id,
             observed=observed,
+            constraint_violated=constraint_violated,
+            error_type=error_type,
         )
 
         try:
