@@ -1079,6 +1079,69 @@ class A2AServer:
         """
         Validate a warrant for a skill invocation.
 
+        Every rejection is written to ``audit_log`` as ``warrant_rejected``
+        before the error propagates; successful validations are audited by
+        ``_validate_warrant``.
+
+        Args:
+            warrant_token: Base64-encoded leaf warrant token
+            skill_id: Requested skill
+            arguments: Skill arguments to check against constraints
+            warrant_chain: Optional semicolon-separated parent warrants (legacy)
+            _preloaded_parents: Already-decoded parent warrants from a WarrantStack
+            pop_signature: Optional Proof-of-Possession signature bytes
+            approvals: Optional list of decoded SignedApproval objects for multi-sig
+
+        Returns:
+            Validated Warrant object
+
+        Raises:
+            Various A2AErrors for validation failures
+        """
+        start_time = time.time()
+        try:
+            return await self._validate_warrant(
+                warrant_token,
+                skill_id,
+                arguments,
+                warrant_chain=warrant_chain,
+                _preloaded_parents=_preloaded_parents,
+                pop_signature=pop_signature,
+                approvals=approvals,
+            )
+        except A2AError as e:
+            await self._audit(
+                AuditEvent(
+                    timestamp=datetime.now(timezone.utc),
+                    event=AuditEventType.WARRANT_REJECTED,
+                    task_id="",
+                    skill=skill_id,
+                    warrant_jti="",
+                    warrant_iss="",
+                    warrant_sub="",
+                    outcome="denied",
+                    latency_ms=int((time.time() - start_time) * 1000),
+                    # The message names the failed check, not argument values
+                    # (those stay in the error's ``data``).
+                    reason=f"{type(e).__name__}: {e.message}",
+                )
+            )
+            raise
+
+    async def _validate_warrant(
+        self,
+        warrant_token: str,
+        skill_id: str,
+        arguments: Dict[str, Any],
+        *,
+        warrant_chain: Optional[str] = None,
+        _preloaded_parents: Optional[List[Any]] = None,
+        pop_signature: Optional[bytes] = None,
+        approvals: Optional[List[Any]] = None,
+    ) -> "Warrant":
+        """
+        Run the checks behind :meth:`validate_warrant`.
+
         Args:
             warrant_token: Base64-encoded leaf warrant token
             skill_id: Requested skill
