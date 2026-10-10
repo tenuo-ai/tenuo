@@ -634,16 +634,29 @@ def guard_tool(
     *,
     tool_name: Optional[str] = None,
     warrant_chain: Optional[Sequence[Any]] = None,
+    trusted_roots: Optional[Sequence[Any]] = None,
+    approval_handler: Any = None,
+    approvals: Any = None,
 ) -> Any:
     """
     Guard a single tool/callable with Tenuo authorization using an explicit BoundWarrant.
 
     For a delegated warrant, pass its parents (root-first, excluding the leaf)
     as ``warrant_chain``, or pass ``bound`` as a root-first list whose last
-    element is the BoundWarrant leaf.
+    element is the BoundWarrant leaf. ``trusted_roots`` defaults to
+    ``tenuo.configure(trusted_roots=...)``; ``approval_handler`` and
+    ``approvals`` serve warrant approval gates, as on GuardBuilder.
     """
     leaf, parents = _split_bound(bound, warrant_chain)
-    guard = _Guard(constraints={}, bound=leaf, warrant_chain=parents, on_denial="raise")
+    guard = _Guard(
+        constraints={},
+        bound=leaf,
+        warrant_chain=parents,
+        trusted_roots=trusted_roots,
+        on_denial="raise",
+        approval_handler=approval_handler,
+        approvals=approvals,
+    )
     return guard.guard_tool(fn_or_tool, tool_name=tool_name)
 
 
@@ -653,14 +666,26 @@ def guard_tools(
     *,
     tool_name_fn: Optional[Callable[[Any], str]] = None,
     warrant_chain: Optional[Sequence[Any]] = None,
+    trusted_roots: Optional[Sequence[Any]] = None,
+    approval_handler: Any = None,
+    approvals: Any = None,
 ) -> Union[list[Any], dict[str, Any]]:
     """
     Guard a collection of tools using a BoundWarrant (Tier 2).
 
-    ``bound`` and ``warrant_chain`` accept the same chain forms as guard_tool().
+    ``bound``, ``warrant_chain``, ``trusted_roots``, ``approval_handler`` and
+    ``approvals`` behave as in guard_tool().
     """
     leaf, parents = _split_bound(bound, warrant_chain)
-    guard = _Guard(constraints={}, bound=leaf, warrant_chain=parents, on_denial="raise")
+    guard = _Guard(
+        constraints={},
+        bound=leaf,
+        warrant_chain=parents,
+        trusted_roots=trusted_roots,
+        on_denial="raise",
+        approval_handler=approval_handler,
+        approvals=approvals,
+    )
     return guard.guard_tools(tools, tool_name_fn=tool_name_fn)
 
 
