@@ -283,10 +283,41 @@ class TestServerValidation:
         assert server.require_warrant is True
 
     @pytest.mark.asyncio
-    async def test_audience_validation_enabled(self, server):
-        """Audience validation is on by default."""
-        assert server.require_audience is True
+    async def test_audience_validation_off_by_default(self, monkeypatch, server):
+        """Audience validation is off by default: core warrants carry no aud claim."""
+        monkeypatch.delenv("TENUO_A2A_REQUIRE_AUDIENCE", raising=False)
+        assert server.require_audience is False
         assert server.url == "https://test.example.com"
+
+    def test_audience_validation_opt_in(self, mock_key, trusted_issuer, monkeypatch):
+        """Explicit True and the env var still turn audience validation on."""
+        kwargs = dict(name="A", url="https://a.example.com", public_key=mock_key, trusted_issuers=[trusted_issuer])
+        assert A2AServer(**kwargs, require_audience=True).require_audience is True
+        monkeypatch.setenv("TENUO_A2A_REQUIRE_AUDIENCE", "true")
+        assert A2AServer(**kwargs).require_audience is True
+        assert A2AServer(**kwargs, require_audience=False).require_audience is False
+
+    @pytest.mark.asyncio
+    async def test_default_server_accepts_real_warrant(self, monkeypatch):
+        """A real warrant (no aud claim) passes a server built with default settings."""
+        monkeypatch.delenv("TENUO_A2A_REQUIRE_AUDIENCE", raising=False)
+        core = pytest.importorskip("tenuo_core")
+        key = core.SigningKey.generate()
+        warrant = core.Warrant.mint(keypair=key, holder=key.public_key, capabilities={"ping": {}}, ttl_seconds=300)
+        server = A2AServer(
+            name="Default Agent",
+            url="https://default.example.com",
+            public_key="z6MkServer",
+            trusted_issuers=[key.public_key.to_bytes().hex()],
+            audit_log=None,
+        )
+
+        @server.skill("ping")
+        async def ping() -> str:
+            return "pong"
+
+        pop = warrant.sign(key, "ping", {}, int(time.time()))
+        assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=bytes(pop)) is not None
 
 
 # =============================================================================
@@ -764,9 +795,10 @@ class TestA2AInvariants:
     # Invariant: Audience Binding
     # -------------------------------------------------------------------------
 
-    def test_invariant_audience_binding_default(self, server):
-        """Invariant: Audience binding is enabled by default."""
-        assert server.require_audience is True
+    def test_invariant_audience_binding_default(self, monkeypatch, server):
+        """Audience binding is opt-in: core warrants carry no aud claim."""
+        monkeypatch.delenv("TENUO_A2A_REQUIRE_AUDIENCE", raising=False)
+        assert server.require_audience is False
 
     def test_invariant_audience_mismatch_error(self):
         """Invariant: Audience mismatch raises specific error."""

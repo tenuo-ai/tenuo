@@ -451,7 +451,7 @@ server = A2AServer(
     # Optional (shown with defaults)
     trust_delegated=True,                 # Accept warrants delegated from trusted issuers
     require_warrant=True,                 # Reject tasks without warrants
-    require_audience=True,                # Require warrant audience matches our URL
+    require_audience=False,               # Require warrant `aud` to match our URL (core warrants have no `aud`)
     check_replay=True,                    # Enforce jti uniqueness
     replay_window=3600,                   # Seconds to remember jti values
     max_chain_depth=10,                   # Maximum delegation chain length
