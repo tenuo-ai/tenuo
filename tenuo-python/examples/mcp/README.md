@@ -319,8 +319,10 @@ Note: the `create_react_agent` import path varies by LangChain version (older ve
 
 MCP tools exposed through A2A protocol for multi-agent systems.
 
+The worker trusts only the **root** issuer: the key that mints the root warrant (for example your control plane), not the orchestrator or any other intermediate. The orchestrator holds a warrant delegated from that root and sends it with its parent chain. The worker verifies the chain back to the root, so it never needs an intermediate's key. Adding one to the trusted issuers would let anything that intermediate signs skip the root's limits.
+
 ```python
-from tenuo.a2a import A2AServerBuilder
+from tenuo.a2a import A2AClient, A2AServerBuilder
 from tenuo.mcp import SecureMCPClient
 
 # Worker agent exposes MCP tools via A2A
@@ -328,8 +330,22 @@ server = (A2AServerBuilder()
     .name("Worker Agent")
     .url("http://localhost:8000")
     .key(worker_key)
-    .accept_warrants_from(orchestrator_key.public_key)
+    .accept_warrants_from(root_key.public_key)  # the root issuer only, never an intermediate
+    .trust_delegated(True)                      # accept warrants attenuated from that root (default)
     .build())
+
+# Orchestrator side: send the warrant it holds plus its parent chain
+# (root-first, excluding the leaf) so the worker can verify it to the root.
+# root_warrant: minted by root_key, held by the planner
+# orchestrator_warrant: granted by the planner from root_warrant, held by the orchestrator
+result = await A2AClient("http://localhost:8000").send_task(
+    "find config files",
+    orchestrator_warrant,
+    skill="search_files",
+    arguments={"path": "/data", "pattern": "*.yaml"},
+    warrant_chain=[root_warrant],
+    signing_key=orchestrator_key,  # PoP is signed by the leaf's holder
+)
 
 @server.skill("search_files")
 async def search_files(path: str, pattern: str):
