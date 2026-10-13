@@ -1163,8 +1163,9 @@ class A2AServer:
         _resolved_chain_parents: Optional[List[Any]] = None
 
         if issuer_normalized and issuer_normalized not in self.trusted_issuers:
-            if _preloaded_parents is not None and len(_preloaded_parents) > 0:
+            if self.trust_delegated and _preloaded_parents is not None and len(_preloaded_parents) > 0:
                 # WarrantStack path: parents already decoded by the HTTP handler.
+                # Gated on trust_delegated exactly like the legacy path below.
                 # Verify chain structure now; PoP (if required) is done below
                 # via check_chain so the full chain is validated atomically.
                 if not self.require_pop:

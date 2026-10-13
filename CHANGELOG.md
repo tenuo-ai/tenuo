@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A2A `trust_delegated=False` also rejects WarrantStack chains.** The
+  setting was only honored for the legacy `X-Tenuo-Warrant-Chain` header. A
+  delegated chain packed into `X-Tenuo-Warrant` as a WarrantStack was accepted
+  regardless. Both transports now raise `UntrustedIssuerError` when the leaf's
+  issuer is not a trusted root and `trust_delegated=False`.
+
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
