@@ -299,6 +299,18 @@ ReplayCache = InMemoryReplayBackend
 # =============================================================================
 
 
+def _is_constraint_class_marker(constraint: Any) -> bool:
+    """True for an uninstantiated constraint class such as ``Subpath``.
+
+    Plain Python types (``str``, ``int``) are not markers: they are real
+    isinstance checks. Constraint classes are recognised by the same duck-typed
+    methods ``A2AServer._check_constraint`` dispatches on.
+    """
+    return isinstance(constraint, type) and any(
+        hasattr(constraint, m) for m in ("contains", "is_safe", "matches", "matches_url", "allows")
+    )
+
+
 class SkillDefinition:
     """Internal representation of a registered skill."""
 
@@ -1312,21 +1324,29 @@ class A2AServer:
                 if skill_id not in granted_skills:
                     raise SkillNotGrantedError(skill_id, granted_skills)
 
-            # Always check server-level constraints (declared on SkillDefinition).
-            # These represent the skill's own input requirements and are NOT encoded
-            # in the warrant — why_denied() cannot see them.
-            skill_def = self._skills.get(skill_id)
-            if skill_def:
-                for param, server_constraint in skill_def.constraints.items():
-                    if param in arguments:
-                        value = arguments[param]
-                        if not self._check_constraint(server_constraint, value, param):
-                            raise ConstraintViolationError(
-                                param=param,
-                                constraint_type=type(server_constraint).__name__,
-                                value=value,
-                                reason="Value does not satisfy server constraint",
-                            )
+        # Always check server-level constraints (declared on SkillDefinition),
+        # regardless of require_pop. These represent the skill's own input
+        # requirements and are NOT encoded in the warrant, so neither
+        # why_denied() nor the Authorizer above can see them.
+        skill_def = self._skills.get(skill_id)
+        if skill_def:
+            for param, server_constraint in skill_def.constraints.items():
+                # A bare constraint class (e.g. ``Subpath`` rather than
+                # ``Subpath("/data")``) carries no bounds; it only declares the
+                # parameter's constraint type for the AgentCard. With PoP the
+                # warrant's own constraint is enforced by the Authorizer, so skip
+                # such markers there, as before. The no-PoP path is unchanged.
+                if self.require_pop and _is_constraint_class_marker(server_constraint):
+                    continue
+                if param in arguments:
+                    value = arguments[param]
+                    if not self._check_constraint(server_constraint, value, param):
+                        raise ConstraintViolationError(
+                            param=param,
+                            constraint_type=type(server_constraint).__name__,
+                            value=value,
+                            reason="Value does not satisfy server constraint",
+                        )
 
         # Log audit event
         latency_ms = int((time.time() - start_time) * 1000)
