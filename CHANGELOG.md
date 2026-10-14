@@ -105,6 +105,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extension does not export, so every signed request failed before it was
   sent. Arguments are now passed to `Warrant.sign`, which already
   canonicalizes plain values.
+- **CrewAI hooks block every call they cannot authorize.** CrewAI runs the
+  tool when a `before_tool_call` hook raises, so a refused approval, a missing
+  `on_approval` handler, an approval that failed to verify, or an unexpected
+  error let the call through. The hook now returns `False` for all of them,
+  and approval failures are audited as `DENY` with `APPROVAL_DENIED`,
+  `APPROVAL_REQUIRED` or `APPROVAL_VERIFICATION_FAILED`.
+  `CrewAIGuard.as_async_hook()` returned a coroutine function that CrewAI
+  never awaits, which counted as allow; it now returns the synchronous hook
+  and is deprecated. `@guarded_step` on an `async def` Flow step removed the
+  guard before the step ran; it now stays registered until the step finishes.
+- **CrewAI Tier 1 requires constrained arguments and matches roles
+  case-insensitively.** A call that left out a constrained argument ran with
+  the tool's default value unchecked; it is now denied, matching the core.
+  `role::tool` policy keys match the agent role ignoring case and whitespace,
+  so `researcher::search` applies to role `Researcher` instead of falling back
+  to the global `search` policy. Two keys for the same role that differ only
+  in case raise `CrewAIConfigurationError`.
 
 ## [0.3.2] - 2026-10-02
 

@@ -144,6 +144,8 @@ guard = (GuardBuilder()
 guard.register()
 ```
 
+If the approver refuses, no handler is configured, or the approval does not verify, the hook blocks the call and the audit callback records a `DENY` with `APPROVAL_DENIED`, `APPROVAL_REQUIRED` or `APPROVAL_VERIFICATION_FAILED`. CrewAI calls hooks synchronously, also under `kickoff_async()`, so register `guard.register()` or `guard.as_hook()`; the synchronous hook runs async approval handlers to completion. `as_async_hook()` is deprecated and returns the same synchronous hook.
+
 ---
 
 ## Warrant Lifecycle
@@ -209,7 +211,7 @@ guard.register()
 ```
 
 **Resolution order:**
-1. `agent_role::tool_name` (exact match)
+1. `agent_role::tool_name` (the role matches ignoring case and extra whitespace, so `researcher::` applies to an agent with role `Researcher`)
 2. `tool_name` (global fallback)
 3. Reject if neither exists
 
@@ -254,6 +256,8 @@ guard = GuardBuilder().allow("api_call", url=UrlSafe()).build()
 # Explicitly allow unknown args
 guard = GuardBuilder().allow("api_call", url=UrlSafe(), timeout=Wildcard()).build()
 ```
+
+Every listed argument is also required. CrewAI passes only the arguments the model sent, so a call that leaves out `path` from `.allow("read_file", path=Subpath("/data"))` is denied instead of running with the tool's default value.
 
 ---
 
@@ -377,6 +381,8 @@ class ResearchFlow(Flow):
     def notify_step(self, state):
         return self.email_agent.execute(state)
 ```
+
+`@guarded_step` also works on `async def` steps; the guard stays registered until the step's coroutine finishes.
 
 ### Decorator Parameters
 
