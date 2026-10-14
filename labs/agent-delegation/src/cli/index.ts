@@ -8,7 +8,6 @@
  *   npm run audit      what every agent can currently do
  *   npm run next       move to the next stage
  *   npm run share      submit a redacted scorecard (optionally add --username)
- *   npm run star       optionally star Tenuo without leaving the terminal
  *   npm run reset      back to stage 1
  */
 process.env.NODE_ENV ??= "development";
@@ -27,7 +26,6 @@ import { AGENTS } from "../mission.ts";
 import { LAB_HOME, loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
 import { recordAttempt, snapshot } from "../telemetry.ts";
-import { starRepository } from "../star.ts";
 import { buildShareReport, submitShareReport } from "../share.ts";
 
 const SITE = "https://tenuo.ai";
@@ -225,7 +223,6 @@ function printChallengeComplete(): void {
   console.log(green("  Challenge complete."));
   console.log(dim(`  Wrap up: ${wrapUpUrl()}`));
   console.log(`  ${bold("npm run share")}   submit your redacted Stage 5 learning signal`);
-  console.log(`  ${bold("npm run star")}    support Tenuo from this terminal (optional)`);
   console.log("");
 }
 
@@ -376,21 +373,11 @@ async function cmdAttack(def: StageDef): Promise<void> {
     console.log(centralCallsLine(built));
     console.log("");
   }
-  if (def.starAsk === true) {
+  if (def.repoNote === true) {
     console.log(dim("  That check ran locally, in the agent's own process, with no server to ask."));
     console.log(dim("  The code that did it is open source: github.com/tenuo-ai/tenuo"));
-    console.log(dim("  If this changed how you think about agent permissions, you can star Tenuo without leaving the terminal:"));
-    console.log(`  ${bold("npm run star")} ${dim("(optional; works locally and in Codespaces)")}`);
     console.log("");
   }
-}
-
-function cmdStar(): void {
-  const result = starRepository();
-  console.log("");
-  console.log(result.ok ? green(`  ${result.message}`) : yellow(`  ${result.message}`));
-  console.log("");
-  if (!result.ok) process.exitCode = 1;
 }
 
 async function evaluateStage(def: StageDef): Promise<{ runs: Evaluated[]; functionality: Functionality; probes: ProbeResult[]; margin: Margin; score: Score } | undefined> {
@@ -466,7 +453,12 @@ async function cmdScore(def: StageDef): Promise<void> {
     }
     console.log("");
   }
-  if (functionality.ok && markComplete(def.n)) {
+  const contained = def.containment !== true || s.stars.some((star) => star.id === "rogue-stopped" && star.earned);
+  if (functionality.ok && !contained) {
+    console.log(yellow(`  The trip works, but ${s.blocked.total - s.blocked.passed} rogue attempt${s.blocked.total - s.blocked.passed === 1 ? "" : "s"} still land.`) + dim(` Stage ${def.n} is done when every one is blocked.`));
+    console.log("");
+  }
+  if (functionality.ok && contained && markComplete(def.n)) {
     if (def.n < STAGES.length) {
       console.log(green(`  Stage ${def.n} done.`) + dim(`  Next: npm run next, then ${guideUrl(def.n + 1)}`));
       console.log("");
@@ -526,8 +518,6 @@ async function cmdShare(def: StageDef): Promise<void> {
     console.log(dim("  Want a display name on future challenge leaderboards?"));
     console.log(`  ${bold("npm run share -- --username YOUR_GITHUB_USERNAME")} ${dim("(optional; not identity-verified)")}`);
   }
-  console.log(dim("  If the lab was useful, you can support the project without leaving this terminal:"));
-  console.log(`  ${bold("npm run star")} ${dim("(optional; works locally and in Codespaces)")}`);
   console.log("");
 }
 
@@ -549,7 +539,14 @@ async function cmdNext(): Promise<void> {
   const state = loadState();
   const to = flag("stage") !== undefined ? Number(flag("stage")) : state.stage + 1;
   if (flag("stage") === undefined && state.stage === STAGES.length && to === STAGES.length + 1) {
-    printChallengeComplete();
+    if (state.completed.includes(STAGES.length)) {
+      printChallengeComplete();
+    } else {
+      console.log(`  That was the last stage. Stage ${STAGES.length} is not contained yet; npm run score shows what still lands.`);
+      console.log(dim(`  Wrap up: ${wrapUpUrl()}`));
+      console.log(`  ${bold("npm run share")}   submit your redacted Stage 5 learning signal`);
+      console.log("");
+    }
     if (args.includes("--open")) openInBrowser(wrapUpUrl());
     return;
   }
@@ -644,13 +641,12 @@ async function main(): Promise<void> {
     case "attack": return cmdAttack(def);
     case "score": return cmdScore(def);
     case "share": return cmdShare(def);
-    case "star": return cmdStar();
     case "audit": return cmdAudit(def);
     case "next": return cmdNext();
     case "reset": return cmdReset();
     case "ambassador": return cmdAmbassador();
     default:
-      console.log(`unknown command ${command}. Try: lab, trace, attack, score, share, star, audit, next, reset, ambassador`);
+      console.log(`unknown command ${command}. Try: lab, trace, attack, score, share, audit, next, reset, ambassador`);
   }
 }
 

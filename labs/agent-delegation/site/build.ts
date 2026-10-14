@@ -218,9 +218,8 @@ function indexPage(): string {
 <pre class="lab-cmd"><code>git clone ${REPO_URL}
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Every challenge check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> uses the network. Every challenge check and score is real.</p>
 </div>
 <details class="lab-reveal lab-expect">
 <summary>What to expect <span>5 stages · about 90 min · 2 optional bosses</span></summary>
@@ -236,8 +235,7 @@ npm run lab</code></pre>
 <p>The same lab runs in GitHub Codespaces with no install. It needs a free GitHub account and no payment method. GitHub includes 120 core-hours a month on personal accounts, and the lab is pinned to the smallest 2-core machine, so a full session uses about 3 of them.</p>
 <a class="lab-button" href="${CODESPACES_URL}">Open in GitHub Codespaces</a>
 <p>At the Codespaces terminal:</p>
-<pre class="lab-cmd"><code>npm run star       # optional
-npm run lab</code></pre>
+<pre class="lab-cmd"><code>npm run lab</code></pre>
 <p class="lab-muted">Create it from the link so it counts against your own free hours. A codespace created inside an organization is billed to that organization. Stop the codespace when you are done.</p>
 </div>
 </details>
@@ -331,9 +329,8 @@ function wrapUpPage(): string {
 <table class="lab-terms"><thead><tr><th>Term</th><th>Where you met it</th></tr></thead><tbody>${terms.map(([t, d]) => `<tr><td><strong>${esc(t)}</strong></td><td>${esc(d)}</td></tr>`).join("")}</tbody></table>
 <aside class="lab-callout question"><div class="lab-callout-title">One last look</div><p>No one told any agent in this lab to misbehave. Find where the instruction came from, in <code>src/services/flights.ts</code>. It has been sitting there since stage 1, on a departure board your check-in agent reads every time it does its job.</p></aside>
 <h2>Going further</h2>
-<p>The authorization system you used in stages 5 to 7 is open source at <a href="${REPO_URL}">github.com/tenuo-ai/tenuo</a>. The delegation rules behind it are being standardized in the public <a href="${IETF_DRAFT_URL}">IETF draft on attenuating agent tokens</a>. A star on the repository is the main way maintainers find out anyone is using their work.</p>
-<pre class="lab-cmd"><code>npm run star       # optional: support the project without changing screens
-npm run share      # send Tenuo a redacted scorecard
+<p>The authorization system you used in stages 5 to 7 is open source at <a href="${REPO_URL}">github.com/tenuo-ai/tenuo</a>. The delegation rules behind it are being standardized in the public <a href="${IETF_DRAFT_URL}">IETF draft on attenuating agent tokens</a>.</p>
+<pre class="lab-cmd"><code>npm run share      # send Tenuo a redacted scorecard
 npm run share -- --username YOUR_GITHUB_USERNAME
                    # optional: use this unverified name on future leaderboards</code></pre>
 <p class="lab-muted">Sharing is explicit. Tenuo receives the star results, attempt count, redacted first-attempt and first-green summaries, a random local challenge-session ID, and runtime versions. It never receives source, keys, argument values, filesystem paths, or client timestamps. The same scorecard is saved locally, and a failed delivery is clearly reported.</p>
@@ -346,7 +343,6 @@ function contributePage(): string {
   const body = `${stepper("contribute")}
 <header class="lab-hero"><div class="lab-kicker">Optional epilogue · no score</div><h1>${esc(EPILOGUE.title)}</h1><p class="lab-goal"><strong>Goal.</strong> Take the TypeScript SDK you just spent ninety minutes inside and land one small change in it.</p></header>
 <p class="lab-intro">You have been working in a real open-source security project, in the same SDK its maintainers use every day. Most people never get that far before a first contribution. The optional goal is to open one.</p>
-<aside class="lab-callout question"><div class="lab-callout-title">If the lab was useful</div><p><code>npm run star</code> supports the project from this terminal before you start contributing. It is optional.</p></aside>
 <h2>Do this</h2>
 <ol class="lab-steps">
 <li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="contribute:0"><span>1</span></label><div class="lab-step-body"><p>Pick an issue labeled <strong>good first issue</strong>. Most are TypeScript: a runnable example, a test recipe, a clearer error, a cookbook for the constraint helpers you used in stage 5. Each says what done looks like.</p><a class="lab-button" href="${GOOD_FIRST_ISSUES_URL}">Browse good first issues</a></div></li>

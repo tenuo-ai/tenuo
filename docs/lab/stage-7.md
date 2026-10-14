@@ -191,7 +191,7 @@ INCIDENT
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:2"><span>3</span></label>
-<div class="lab-step-body"><p>Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>Full marks <span>npm run score · 22 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>Full marks <span>npm run score · 21 lines</span></summary><pre><code>
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
@@ -211,8 +211,7 @@ STARS   ★★★★
 
   Challenge complete.
   Wrap up: https://tenuo.ai/lab/wrap-up?done=7
-  npm run share   submit your redacted Stage 5 learning signal
-  npm run star    support Tenuo from this terminal (optional)</code></pre></details></div>
+  npm run share   submit your redacted Stage 5 learning signal</code></pre></details></div>
 </li>
 </ol>
 
