@@ -140,7 +140,7 @@ result = graph.invoke({
 | **Use when** | Existing `StateGraph` / `ToolNode` | LangChain 1.x `create_agent()` |
 | **Status** | Stable | Stable |
 | **Integration** | Drop-in replacement for `ToolNode` | Native LangChain middleware API |
-| **Tool filtering** | No | Auto-hides unauthorized tools from LLM |
+| **Tool filtering** | No | Hides tools the warrant doesn't grant (`filter_tools=True`, default). Calls are checked either way |
 | **Requires** | langgraph | `langchain>=1.0` |
 
 Both use the same `enforce_tool_call` path.
@@ -149,82 +149,12 @@ Both use the same `enforce_tool_call` path.
 
 ## TenuoMiddleware (LangChain 1.x `create_agent()`)
 
-> Recommended for `create_agent()`. Requires `langchain>=1.0`. For a custom `StateGraph`, use `TenuoToolNode`.
+For agents built with `create_agent()`, start with the [LangChain guide](./langchain): a one-command demo, a full `TenuoMiddleware` example, and how its two `filter_tools` modes differ. LangChain's `create_agent()` runs on LangGraph, so the middleware lives in `tenuo.langgraph` and enforces the same checks as `TenuoToolNode`.
 
-A runnable example is [`create_agent_middleware.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/langchain/create_agent_middleware.py).
-
-```python
-from typing import Any
-
-from langchain.agents import create_agent
-from langchain.agents.middleware import AgentState
-from langchain_core.messages import HumanMessage
-from langchain_core.tools import tool
-from tenuo import HolderIdentity, Pattern, Runtime, SigningKey, Warrant
-from tenuo.keys import KeyRegistry
-from tenuo.langgraph import TenuoMiddleware
-
-
-@tool
-def search(query: str) -> str:
-    """Search customer records. Use the query format ``customers:<term>``."""
-    return f"3 records match {query!r}"
-
-
-@tool
-def delete_record(record_id: str) -> str:
-    """Delete a customer record."""
-    return f"record {record_id} deleted"
-
-
-class TenuoAgentState(AgentState):
-    warrant: Any  # TenuoMiddleware reads the warrant from agent state
-
-
-issuer_key = SigningKey.generate()  # issues warrants
-holder = HolderIdentity.generate()  # the agent's key, used for proof of possession
-KeyRegistry.get_instance().register("support-agent", holder.signing_key)
-
-# Collect signed receipts for authorization decisions made over the warrant.
-runtime = Runtime(
-    identity=holder,
-    trusted_roots=[issuer_key.public_key],
-    receipts="collect",
-)
-
-agent = create_agent(
-    model="openai:gpt-4.1",
-    tools=[search, delete_record],
-    state_schema=TenuoAgentState,
-    middleware=[
-        TenuoMiddleware(
-            key_id="support-agent",
-            trusted_roots=[issuer_key.public_key],  # only accept warrants from this issuer
-        )
-    ],
-)
-
-# search is allowed only for customer queries; delete_record is not granted
-warrant = (
-    Warrant.mint_builder()
-    .holder(holder.public_key)
-    .capability("search", query=Pattern("customers:*"))
-    .ttl(3600)
-    .mint(issuer_key)
-)
-
-with runtime.bind():
-    result = agent.invoke({
-        "messages": [HumanMessage("Search customer records for customers:acme")],
-        "warrant": str(warrant),  # base64 token; safe to checkpoint
-    })
-
-signed_receipts = runtime.peek_receipts()
-```
-
-Calls outside the warrant (an ungranted tool, or `search` with a query that does not match `customers:*`) come back to the model as an error `ToolMessage`, and the tool body never runs. The linked example is the deterministic run: it allows `search("customers:acme")`, denies `delete_record`, and verifies the signed allow and deny receipts. This snippet calls a live model, which may choose a different tool call, so `signed_receipts` can be empty.
+The runnable [`create_agent_middleware.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/langchain/create_agent_middleware.py) example also collects and verifies a signed receipt for each decision. Parameters are in the [API reference](#tenuomiddleware) below.
 
 ---
+
 
 ## Key Concepts
 
@@ -322,22 +252,19 @@ Recommended for LangChain 1.x `create_agent()`. Requires `langchain>=1.0`.
 ```python
 from tenuo.langgraph import TenuoMiddleware
 
-# Basic usage
-middleware = TenuoMiddleware()
-
-# With configuration
 middleware = TenuoMiddleware(
-    key_id="worker",      # Explicit key (default: from config or "default")
-    filter_tools=True,    # Hide unauthorized tools from LLM (default: True)
-    require_constraints=False,  # Require constraints for sensitive tools
+    key_id="worker",                        # holder key in KeyRegistry (default: from config or "default")
+    trusted_roots=[issuer_key.public_key],  # accept only warrants from these issuers
+    filter_tools=True,                      # hide tools the warrant doesn't grant (default: True)
 )
 
-# Use with create_agent()
+# Use with create_agent(); the warrant goes in agent state
 from langchain.agents import create_agent
 
 agent = create_agent(
-    model="gpt-4.1",
+    model="openai:gpt-4.1",
     tools=[search, calculator],
+    state_schema=TenuoAgentState,  # an AgentState with a `warrant` field
     middleware=[middleware],
 )
 ```
@@ -347,14 +274,18 @@ agent = create_agent(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `key_id` | `str` | `None` | Key ID to use (overrides config) |
-| `filter_tools` | `bool` | `True` | Filter tools shown to LLM based on warrant |
+| `trusted_roots` | `List[PublicKey]` | `None` | Issuer keys warrants must chain to. Without these or `tenuo.configure(trusted_roots=[...])`, every call is denied |
+| `filter_tools` | `bool` | `True` | Hide tools the warrant doesn't grant from the model. With `False`, the model sees every tool and ungranted calls are denied when made. Argument constraints are enforced in both modes |
 | `require_constraints` | `bool` | `False` | Require constraints for sensitive tools |
+| `warrant_chain` | `List[Warrant]` | `None` | Default parent warrants (root first) when state has no `warrant_chain` field |
+| `approval_handler` | handler | `None` | Handler for approval gates in the warrant (e.g. `cli_prompt`) |
+| `debug` | `bool` | `False` | Return detailed denial reasons to the model. Development only |
 
 **Hooks:**
 
 | Hook | Purpose |
 |------|---------|
-| `wrap_model_call` | Filters tools to only those in warrant |
+| `wrap_model_call` | Hides tools the warrant doesn't grant (when `filter_tools=True`) |
 | `wrap_tool_call` | Authorizes each tool call with PoP |
 
 ### `load_tenuo_keys()`
