@@ -1216,13 +1216,6 @@ class A2AServer:
         # Extract JTI once — reused for replay check and audit event
         jti = self._get_warrant_prop(warrant, "jti", "id")
 
-        # Check replay
-        if self.check_replay:
-            if jti:
-                is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
-                if not is_new:
-                    raise ReplayDetectedError(jti)
-
         # Verify Proof-of-Possession (I6)
         if self.require_pop:
             if pop_signature is None:
@@ -1362,6 +1355,16 @@ class A2AServer:
                             value=value,
                             reason="Value does not satisfy server constraint",
                         )
+
+        # Check replay last, once the call is authorized to run. Recording the
+        # jti earlier let a denied attempt consume it: an approval-required
+        # response burned the warrant the approved retry needed, and a caller
+        # without the holder key could burn a copied warrant with a bad PoP.
+        if self.check_replay:
+            if jti:
+                is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
+                if not is_new:
+                    raise ReplayDetectedError(jti)
 
         # Log audit event
         latency_ms = int((time.time() - start_time) * 1000)
