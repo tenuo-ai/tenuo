@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from tenuo_core import PublicKey, SigningKey, Warrant  # type: ignore[import-untyped]
 
+from ._native_patch import patch_native
 from .validation import ValidationResult
 
 try:
@@ -565,5 +566,4 @@ def _warrant_bind(self: Warrant, key: SigningKey) -> BoundWarrant:
 
 
 # Attach to Warrant class
-if not hasattr(Warrant, "bind"):
-    Warrant.bind = _warrant_bind  # type: ignore[attr-defined]
+patch_native(Warrant, "bind", _warrant_bind, if_missing=True)

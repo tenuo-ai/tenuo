@@ -42,6 +42,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Temporal: a plain worker no longer breaks Tenuo-protected activities in
+  the same process.** A worker without the Tenuo plugin re-imports `tenuo`
+  inside its workflow sandbox, and that copy re-installed `Warrant.bind` and
+  the other Python extension methods on the shared `tenuo_core` classes.
+  Afterwards `Warrant.bind` returned the sandbox copy of `BoundWarrant`, so
+  every authorized activity was denied with `Expected BoundWarrant, got
+  BoundWarrant`. A copy of `tenuo` imported inside a Temporal workflow sandbox
+  no longer replaces extension methods that are already installed.
+- **Temporal: `Replayer` works with `EnvKeyResolver`.** Keys were preloaded only
+  in the worker's activities hook, which `Replayer` never calls, so replaying
+  any workflow that scheduled an authorized activity reported a
+  nondeterminism error. `TenuoTemporalPlugin` now preloads keys when it
+  configures a `Replayer`.
+- **Temporal docs.** `workflow_grant()` and `workflow_issue_execution()`
+  examples pass constraint objects (`Exact`, `Range`) instead of raw values,
+  which are rejected. The documented `temporalio` floor is now 1.33.0,
+  matching the `temporal` extra.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed

@@ -119,6 +119,7 @@ from tenuo_core import (
     encode_warrant_stack,
 )
 
+from ._native_patch import patch_native as _patch_native
 from .arguments import parse_strict_json
 
 # Wildcard: allow any value for a field in a closed-world constraint set.
@@ -227,7 +228,7 @@ from .langchain import (
 # Validation result
 from .validation import ValidationResult
 
-Warrant.bind = BoundWarrant.bind_warrant
+_patch_native(Warrant, "bind", BoundWarrant.bind_warrant)
 
 # Ensure guard refers to the decorator function, not the guard module
 # The guard module is available as auto_guard

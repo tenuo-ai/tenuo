@@ -31,6 +31,7 @@ from typing import Dict, List, Optional
 
 from tenuo_core import PublicKey, SigningKey  # type: ignore[import-untyped]
 
+from ._native_patch import patch_native
 from .exceptions import ConfigurationError
 
 # ============================================================================
@@ -459,11 +460,9 @@ def _signing_key_from_file(path: str) -> SigningKey:
 
 
 # Add class methods to SigningKey
-if not hasattr(SigningKey, "from_env"):
-    SigningKey.from_env = staticmethod(_signing_key_from_env)  # type: ignore[attr-defined]
+patch_native(SigningKey, "from_env", staticmethod(_signing_key_from_env), if_missing=True)
 
-if not hasattr(SigningKey, "from_file"):
-    SigningKey.from_file = staticmethod(_signing_key_from_file)  # type: ignore[attr-defined]
+patch_native(SigningKey, "from_file", staticmethod(_signing_key_from_file), if_missing=True)
 
 
 # ============================================================================
@@ -477,5 +476,4 @@ def _public_key_from_env(name: str) -> PublicKey:
 
 
 # Add class methods to PublicKey
-if not hasattr(PublicKey, "from_env"):
-    PublicKey.from_env = staticmethod(_public_key_from_env)  # type: ignore[attr-defined]
+patch_native(PublicKey, "from_env", staticmethod(_public_key_from_env), if_missing=True)

@@ -534,7 +534,7 @@ The worker **appears healthy** while workflow executions are dead. Diagnose via 
 
 | Component | Supported | Notes |
 |-----------|-----------|-------|
-| Temporal Python SDK | `temporalio>=1.23.0` | `TenuoTemporalPlugin` needs `SimplePlugin` (1.23+) |
+| Temporal Python SDK | `temporalio>=1.33.0` | Floor of the `tenuo[temporal]` extra; `TenuoTemporalPlugin` uses `SimplePlugin` |
 | Python | 3.10 – 3.14 | `temporalio` itself requires 3.10+, so the Temporal integration does too |
 | Runtime mode | Single-process and distributed | Both supported |
 
@@ -904,11 +904,12 @@ async with tenuo_warrant_context(warrant, key_id="agent1"):
 ### workflow_grant() - Scoped In-Workflow Grants
 
 ```python
+from tenuo import Exact
 from tenuo.temporal import workflow_grant
 
 file_warrant = await workflow_grant(
     "read_file",
-    constraints={"path": path},
+    constraints={"path": Exact(path)},
     ttl_seconds=60,
 )
 
@@ -921,7 +922,7 @@ contents = await tenuo_execute_activity(
 )
 ```
 
-Constraint keys must already exist in the parent warrant.
+Constraint values must be constraint objects (`Exact`, `Subpath`, `Range`, ...); raw strings and numbers are rejected. Constraint keys must already exist in the parent warrant.
 
 The per-Activity override is held in a workflow task-local `ContextVar`, so
 parallel workflow tasks cannot consume one another's warrant. When

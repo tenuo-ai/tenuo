@@ -27,6 +27,8 @@ from tenuo_core import (
     DelegationDiff as RustDelegationDiff,
 )
 
+from ._native_patch import patch_native
+
 
 class MintBuilder:
     """Fluent builder for creating new root warrants.
@@ -387,10 +389,8 @@ def _mint_builder_impl() -> "MintBuilder":
 
 def _add_builder_to_warrant():
     """Add the mint_builder() class method to Warrant."""
-    # Only add if not already present
-    if not hasattr(Warrant, "mint_builder"):
-        # Use staticmethod since we don't need cls
-        Warrant.mint_builder = staticmethod(_mint_builder_impl)
+    # Only add if not already present. Use staticmethod since we don't need cls.
+    patch_native(Warrant, "mint_builder", staticmethod(_mint_builder_impl), if_missing=True)
 
 
 # Initialize on module load
