@@ -39,9 +39,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and TypeScript callers are unchanged; Python still checks a path with
   `path_jail` and then reads it, on every platform, which is not a
   kernel-enforced open.
+- **One-use approvals for in-process TypeScript tools.**
+  `tenuo.tool(raw, { allow, nonceStore })` records each approval that an
+  allowed call carried, keyed on signed approval fields, before the tool body
+  runs; a second use is denied with `TENUO_INSUFFICIENT_APPROVALS`. The
+  `NonceStore` shape and the "Replay store unavailable" failure match the MCP
+  verify path, and `onNonceStoreError` is accepted as there.
+- **`Session.toWireString()` (TypeScript).** The whole warrant chain as one
+  string, the same CBOR stack encoding as `present().warrant`, for places
+  where only a single string fits. `sessionFromWire()` imports it.
+
+### Changed
+
+- **TypeScript: stricter inputs (beta API).** `tenuo.session({ tools })`
+  refuses a tool whose `allow` is `{}` unless the session's own `allow` names
+  that capability, because an empty capability in a warrant accepts any
+  arguments. `tenuo.tool()` requires `allow` and rejects unknown policy keys;
+  `session()` and `issue()` reject unknown keys; `execute()` rejects option
+  keys that look like a misspelled Tenuo option (other keys still pass through
+  to the wrapped tool); `narrow()` rejects a `minApprovals` below the parent's
+  instead of ignoring it; `session({ ttlSeconds: 0 })` throws instead of
+  using the default lifetime; `sessionFromWire()` rejects a string that looks
+  like joined tokens with a pointer to `toWireString()`.
+- **TypeScript MCP verify consumes approvals.** With a `nonceStore`,
+  `mcp.verify()`, `mcp.handler()`, and `@tenuo/mcp` also record the approvals
+  an allowed call carried, so a freshly signed PoP cannot reuse them.
 
 ### Fixed
 
+- **TypeScript `revoke()` errors carry a code.** An untrusted issuer reports
+  `TENUO_UNTRUSTED_ROOT`, a bad signature `TENUO_SIGNATURE_INVALID`, and a
+  malformed or rolled-back list `TENUO_CONFIGURATION`.
+- **TypeScript docs match behavior.** `narrow()` clamps a longer `ttlSeconds`
+  to the parent's expiry rather than rejecting it; `guardHandler()` enforces
+  the name it is given, not the name it is registered under; the npm package
+  READMEs no longer link to files outside the package.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed

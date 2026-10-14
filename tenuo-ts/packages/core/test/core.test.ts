@@ -325,7 +325,9 @@ describe("createTenuo", () => {
       { allow: {} },
     );
 
-    expect(tenuo.session({ tools: [named, identified] }).inspect().tools).toEqual([
+    expect(
+      tenuo.session({ tools: [named, identified], allow: { read_file: {}, search: {} } }).inspect().tools,
+    ).toEqual([
       "read_file",
       "search",
     ]);
@@ -806,7 +808,7 @@ describe("tool allow and session({ tools })", () => {
       { execute: async (_args: Record<string, never>) => "pong" },
       { capability: "ping", allow: {} },
     );
-    const session = tenuo.session({ tools: [ping] });
+    const session = tenuo.session({ tools: [ping], allow: { ping: {} } });
     await expect(tenuo.withSession(session, () => ping.execute({} as Record<string, never>))).resolves.toBe(
       "pong",
     );

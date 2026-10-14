@@ -454,9 +454,10 @@ describe("approvals end to end", () => {
     });
     expect(stricter.inspect().requiredApprovers).toHaveLength(2);
     expect(stricter.inspect().minApprovals).toBe(2);
-    // The threshold only rises: asking for less leaves it where it was.
-    const attempt = tenuo.narrow(stricter, { path: under("/data") }, { minApprovals: 1 });
-    expect(attempt.inspect().minApprovals).toBe(2);
+    // The threshold only rises: asking for less is refused, not ignored.
+    expect(() => tenuo.narrow(stricter, { path: under("/data") }, { minApprovals: 1 })).toThrow(
+      /below the parent's 2/,
+    );
   });
 
   it("produces the control-plane v1 body Python emits, with an attestation the holder signed", () => {
