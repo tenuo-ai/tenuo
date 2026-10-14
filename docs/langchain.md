@@ -1,6 +1,6 @@
 ---
 title: "LangChain agent authorization and tool security"
-description: "Authorize every LangChain tool call with task-scoped warrants: argument constraints, holder binding and delegation that only narrows. Open-source AI agent authorization."
+description: "Task-scoped authorization for LangChain and LangGraph agents: each task gets only the tools, argument values and time it needs, checked before every call."
 og_image: /images/og/guide-langchain.png
 og_image_alt: "Tenuo for LangChain"
 guide_name: "LangChain"
@@ -8,32 +8,135 @@ guide_logo: langchain
 guide_install: 'uv pip install "tenuo[langchain]"'
 ---
 
-# Tenuo LangChain Integration
+# Task-scoped authorization for LangChain and LangGraph agents
 
-> **Note on examples.** Snippets on this page use `configure(..., dev_mode=True)` for brevity. `dev_mode=True` relaxes several safety checks and is not suitable for production. Switch to a real signing key, disable `dev_mode`, and follow the [Production Guide](./production-guide) before deploying.
+Give each task only the tools, argument values, and time it needs. Tenuo enforces those limits before execution, and delegated authority can only narrow.
 
-## Overview
-
-Tenuo integrates with LangChain using a **zero-intrusion** pattern:
-
-1. Tools remain pure business logic - no security imports
-2. Security is applied at composition time via `guard()` or decorators
-3. Warrants are passed through context or explicit `BoundWarrant`
-4. Fail-closed: missing or invalid warrants block execution
-
----
-
-## Installation
-
-```bash
-uv pip install "tenuo[langchain]"
+```text
+✓ search("customers:acme")       allowed
+✗ search("customers:globex")     denied
+✗ search("customers:*")          denied
 ```
 
+Same tool, three calls. The task was to answer one customer's ticket, so only that customer's lookup runs. Install with `uv pip install "tenuo[langchain]"`.
+
 ---
 
-## 30-Second Demo
+## Run the 30-second demo
 
-Copy-paste this to see Tenuo in action. No setup required beyond the install.
+A support agent answers a ticket from Acme. Hidden in the ticket is an instruction to look up another customer, then every customer. No API key, account or setup:
+
+```bash
+uv run https://raw.githubusercontent.com/tenuo-ai/tenuo-demos/main/langchain-task-authority/demo.py
+```
+
+```text
+  Task authority   search(query="customers:acme")  expires in 10 min
+
+  Agent calls  search("customers:acme")
+  ✓ ALLOWED    customers:acme: last order #1042 shipped Oct 12
+
+  Agent calls  search("customers:globex")
+  ✗ DENIED     tool body never ran
+  Model sees   Authorization denied (ref: bca07bbc-…)
+  Tenuo log    Tool 'search' denied: Constraint 'query' not satisfied: value does not match constraint
+
+  Agent calls  search("customers:*")
+  ✗ DENIED     tool body never ran
+  ...
+
+  Tool bodies that ran: search("customers:acme")
+```
+
+The agent can call `search`. That doesn't mean this task can search for anything: Tenuo checks the actual call, arguments included, right before the tool runs. The model only learns that a call was denied; the reason goes to your logs. Source and a `--model` option for running it with a real model: [`tenuo-demos/langchain-task-authority`](https://github.com/tenuo-ai/tenuo-demos/tree/main/langchain-task-authority).
+
+---
+
+## Add it to your agent
+
+Put `TenuoMiddleware` on `create_agent()` and pass the task's authority in agent state. Requires `langchain>=1.0`.
+
+LangChain's `create_agent()` runs on LangGraph. Tenuo's middleware integrates at that runtime layer, which is why it's imported from `tenuo.langgraph`, and the same task-scoped authorization works for custom LangGraph workflows ([LangGraph guide](./langgraph)).
+
+```python
+# mdpytest:skip
+from typing import Any
+
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentState
+from langchain_core.tools import tool
+from tenuo import Exact, SigningKey, Warrant
+from tenuo.keys import KeyRegistry
+from tenuo.langgraph import TenuoMiddleware
+
+
+@tool
+def search(query: str) -> str:
+    """Search customer records. Queries look like customers:<name>."""
+    return f"{query}: last order #1042 shipped Oct 12"
+
+
+class TenuoAgentState(AgentState):
+    warrant: Any  # TenuoMiddleware reads the task's authority from here
+
+
+issuer_key = SigningKey.generate()  # issues authority for tasks
+agent_key = SigningKey.generate()   # the agent's own key
+KeyRegistry.get_instance().register("support-agent", agent_key)
+
+agent = create_agent(
+    model="openai:gpt-4.1",
+    tools=[search],
+    state_schema=TenuoAgentState,
+    middleware=[
+        TenuoMiddleware(
+            key_id="support-agent",
+            trusted_roots=[issuer_key.public_key],  # only accept authority from this issuer
+        )
+    ],
+)
+
+# Authority for this ticket: Acme's records only, for 10 minutes.
+task_authority = (
+    Warrant.mint_builder()
+    .holder(agent_key.public_key)
+    .capability("search", query=Exact("customers:acme"))
+    .ttl(600)
+    .mint(issuer_key)
+)
+
+agent.invoke({
+    "messages": [("human", "Answer this support ticket from Acme: ...")],
+    "warrant": str(task_authority),  # base64 token; safe to checkpoint
+})
+```
+
+The authority object is a *warrant*: a signed token naming the tools, the allowed argument values, who may use it and when it expires. The agent's key is looked up by id and never goes into agent state. In production the issuer key lives in your control plane, not next to the agent; see the [Production Guide](./production-guide).
+
+### What the model sees
+
+`TenuoMiddleware` has two modes for tools the task doesn't cover:
+
+| | `filter_tools=True` (default) | `filter_tools=False` |
+|---|---|---|
+| Tools not in the warrant | Hidden from the model, and denied if called anyway | Shown to the model, denied when called |
+| Arguments outside the warrant | Denied before the tool runs | Denied before the tool runs |
+
+Filtering keeps the model from planning around tools it can't use. Either way, the check that matters happens on the actual call: a tool the model can see, called with an argument the task doesn't allow, is still denied. Denied calls come back to the model as an error `ToolMessage` with an opaque reference; the full reason is logged under the same reference.
+
+The [`create_agent_middleware.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/langchain/create_agent_middleware.py) example adds signed receipts for each decision. For approvals, delegation and the full `TenuoMiddleware` API, see the [LangGraph guide](./langgraph#tenuomiddleware).
+
+---
+
+## Protect individual tools and older agents
+
+`create_agent()` with `TenuoMiddleware` is the recommended path on LangChain 1.x. To protect individual tools, plain Python functions or older `AgentExecutor` agents, use `guard()` and `@guard`. Tools stay plain business logic, protection is applied when you compose the agent, and a missing or invalid warrant blocks execution.
+
+> **Note on examples.** Snippets below use `configure(..., dev_mode=True)` for brevity. `dev_mode=True` relaxes several safety checks and is not suitable for production. Switch to a real signing key, disable `dev_mode`, and follow the [Production Guide](./production-guide) before deploying.
+
+### Quick example
+
+`@guard` on a tool you define, with authority scoped by `mint()`:
 
 ```python
 # mdpytest:skip
@@ -72,62 +175,6 @@ asyncio.run(main())
 Even if an LLM is prompt-injected to call `search("hack commands")`, **the constraint still blocks it**.
 
 <a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_integrations.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Try in Colab"></a>
-
----
-
-## LangChain 1.x `create_agent()`
-
-If you are on LangChain 1.x, put `TenuoMiddleware` on `create_agent()`. The warrant lives in agent state; the holder key is looked up by id. Requires `langchain>=1.0`.
-
-```python
-# mdpytest:skip
-from langchain.agents import create_agent
-from langchain.agents.middleware import AgentState
-from langchain_core.tools import tool
-from tenuo import Pattern, SigningKey, Warrant
-from tenuo.keys import KeyRegistry
-from tenuo.langgraph import TenuoMiddleware
-
-@tool
-def search(query: str) -> str:
-    """Search customer records."""
-    return f"matches for {query}"
-
-class TenuoAgentState(AgentState):
-    warrant: object
-
-issuer_key = SigningKey.generate()
-holder_key = SigningKey.generate()
-KeyRegistry.get_instance().register("support-agent", holder_key)
-
-warrant = (
-    Warrant.mint_builder()
-    .holder(holder_key.public_key)
-    .capability("search", query=Pattern("customers:*"))
-    .ttl(3600)
-    .mint(issuer_key)
-)
-
-agent = create_agent(
-    model="openai:gpt-4.1",
-    tools=[search],
-    state_schema=TenuoAgentState,
-    middleware=[
-        TenuoMiddleware(
-            key_id="support-agent",
-            trusted_roots=[issuer_key.public_key],
-        )
-    ],
-)
-
-agent.invoke({"messages": [("human", "Look up Acme")], "warrant": warrant})
-```
-
-A runnable version with a scripted model (no API key) is [`create_agent_middleware.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/langchain/create_agent_middleware.py). For wrapping individual tools or older `AgentExecutor` agents, use `@guard` below.
-
----
-
-## Quick Start
 
 ### Using `guard()` (tools and older agents)
 
