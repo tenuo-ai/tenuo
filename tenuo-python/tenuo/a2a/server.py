@@ -59,6 +59,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, List, Optional, Protocol, runtime_checkable
 
+from ..optional_deps import missing_optional_dependency
 from .errors import (
     A2AError,
     A2AErrorCode,
@@ -2006,7 +2007,7 @@ class A2AServer:
             from starlette.responses import JSONResponse
             from starlette.routing import Route
         except ImportError:
-            raise ImportError("starlette is required for A2A server. Install with: uv pip install tenuo[a2a]")
+            raise ImportError(missing_optional_dependency("starlette (A2A server)", "a2a"))
 
         async def handle_a2a(request: Request) -> JSONResponse:
             """Handle JSON-RPC A2A requests."""

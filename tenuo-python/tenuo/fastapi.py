@@ -38,6 +38,7 @@ from tenuo.exceptions import (
     InsufficientApprovals,
     TenuoError,
 )
+from tenuo.optional_deps import missing_optional_dependency
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -53,10 +54,16 @@ except ImportError:
     # Allow import for type checking if needed, but raise at runtime use
     FastAPI = Any  # type: ignore
     APIRouter = object  # type: ignore  # SecureAPIRouter raises ImportError at construction
-    Header = Any  # type: ignore
     HTTPException = Any  # type: ignore
+
+    # Header()/Depends() are evaluated as default arguments when this module is
+    # imported, so they must be callable stubs rather than typing.Any.
+    def Header(default: Any = None, **_kwargs: Any) -> Any:  # type: ignore  # noqa: E301
+        return default
+
     def Depends(dep):  # type: ignore  # noqa: E301
         return None
+
     Request = Any  # type: ignore
     status = Any  # type: ignore
     JSONResponse = Any  # type: ignore
@@ -303,10 +310,10 @@ else:
     # These stubs have different signatures because they only raise ImportError.
     # This is the standard pattern for optional dependencies.
     def get_warrant_header(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
-        raise ImportError("FastAPI is not installed. Install with: uv pip install fastapi")
+        raise ImportError(missing_optional_dependency("FastAPI", "fastapi"))
 
     def require_warrant(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
-        raise ImportError("FastAPI is not installed. Install with: uv pip install fastapi")
+        raise ImportError(missing_optional_dependency("FastAPI", "fastapi"))
 
 
 # =============================================================================
@@ -698,7 +705,7 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
 
     def __init__(self, *args: Any, tool_prefix: Optional[str] = None, require_pop: bool = True, **kwargs: Any) -> None:
         if not FASTAPI_AVAILABLE:
-            raise ImportError("FastAPI is required for SecureAPIRouter")
+            raise ImportError(missing_optional_dependency("FastAPI", "fastapi"))
 
         super().__init__(*args, **kwargs)
         self.tool_prefix = tool_prefix

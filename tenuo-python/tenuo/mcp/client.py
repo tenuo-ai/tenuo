@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union, cast
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
+from ..optional_deps import missing_optional_dependency
 from ..meta import argument_json, signed_arguments
 from ..approval import ApprovalHandler
 from ..config import is_configured
@@ -235,7 +236,7 @@ class SecureMCPClient:
                 (``warrant_context=True``).
         """
         if not MCP_AVAILABLE:
-            raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
+            raise ImportError(missing_optional_dependency("MCP", "mcp"))
 
         from tenuo._extension import require_extension
         require_extension("SecureMCPClient")
