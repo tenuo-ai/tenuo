@@ -73,6 +73,7 @@ from tenuo._enforcement import (
     enforce_tool_call_async,
     split_presented_warrant,
 )
+from tenuo.approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 from tenuo.config import resolve_trusted_roots, should_block_violation
 from tenuo.exceptions import ConfigurationError, InsufficientApprovals
 
@@ -102,6 +103,15 @@ class MissingSigningKeyError(Exception):
             "pass signing_key= to TenuoGuard. For Tier 1 (guardrails only), use "
             "require_pop=False."
         )
+
+
+def _approval_denial_reason(error: BaseException) -> str:
+    """Denial text for an approval failure raised by the shared path."""
+    if isinstance(error, ApprovalDenied):
+        return "Approval denied"
+    if isinstance(error, ApprovalRequired):
+        return "Approval required: no approval handler or approvals were provided"
+    return "Approval failed verification"
 
 
 class TenuoGuard:
@@ -416,15 +426,21 @@ class TenuoGuard:
 
                 # Use shared enforcement logic for PoP authorization
                 # This verifies: signature, skill grant, expiry, AND constraint satisfaction
-                result = enforce_tool_call(
-                    tool_name=skill_name,
-                    tool_args=validation_args,
-                    bound_warrant=bound_warrant,
-                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                    approval_handler=self._approval_handler,
-                    approvals=self._approvals,
-                    warrant_chain=warrant_chain,
-                )
+                try:
+                    result = enforce_tool_call(
+                        tool_name=skill_name,
+                        tool_args=validation_args,
+                        bound_warrant=bound_warrant,
+                        trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                        approval_handler=self._approval_handler,
+                        approvals=self._approvals,
+                        warrant_chain=warrant_chain,
+                    )
+                except (ApprovalDenied, ApprovalRequired, ApprovalVerificationError) as e:
+                    # The shared path raises approval failures instead of
+                    # returning a denial. Deny the call the same way as any
+                    # other, instead of letting the exception end the run.
+                    return self._deny(_approval_denial_reason(e), tool.name, args, start_ns=start_ns)
 
                 if self._control_plane is not None:
                     latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -519,43 +535,55 @@ class TenuoGuard:
         # =======================================================================
         # ZERO TRUST: Check ALL arguments against constraints
         # =======================================================================
-        # If we have ANY constraints for this skill, we enforce zero-trust:
-        # - Arguments matching constraints must pass
-        # - Arguments NOT in constraints are REJECTED (unless Wildcard present)
+        # Same rules as the Rust core's ConstraintSet when the skill has any
+        # constraints (no constraints means any arguments, as in the core):
+        # - Every argument needs its own constraint. Wildcard() covers only
+        #   its own argument; "_allow_unknown" is the only opt-out.
+        # - Every constrained argument must be present: ADK passes only the
+        #   arguments the model sent, so an omitted one would run with the
+        #   tool's default unchecked.
+        # - Argument names are not special: a "_"-prefixed argument is a real
+        #   tool argument and is checked like any other.
         if constraints:
-            has_wildcard = any(type(c).__name__ == "Wildcard" for c in constraints.values())
-            allows_unknown = constraints.get("_allow_unknown", False)
+            allows_unknown = constraints.get("_allow_unknown", False) is True
+            checked = {k: c for k, c in constraints.items() if k != "_allow_unknown"}
 
-            for arg_name, value in validation_args.items():
-                if arg_name.startswith("_"):
-                    continue  # Skip internal args like _allow_unknown
+            for arg_name in validation_args:
+                if arg_name not in checked and not allows_unknown:
+                    return self._deny(
+                        f"Unknown argument '{arg_name}' - not in constraints",
+                        tool.name,
+                        args,
+                        start_ns=start_ns,
+                    )
 
+            for arg_name, constraint in checked.items():
+                if arg_name not in validation_args:
+                    return self._deny(
+                        f"Missing required argument '{arg_name}'",
+                        tool.name,
+                        args,
+                        constraint_param=arg_name,
+                        constraint=constraint,
+                        start_ns=start_ns,
+                    )
                 try:
-                    if arg_name in constraints:
-                        constraint = constraints[arg_name]
-                        if not self._check_constraint(constraint, value):
-                            return self._deny(
-                                f"Argument '{arg_name}' violates constraint",
-                                tool.name,
-                                args,
-                                constraint_param=arg_name,
-                                constraint=constraint,
-                                start_ns=start_ns,
-                            )
-                    elif not has_wildcard and not allows_unknown:
-                        # Zero-trust: unknown argument rejected
-                        return self._deny(
-                            f"Unknown argument '{arg_name}' - not in constraints",
-                            tool.name,
-                            args,
-                            start_ns=start_ns,
-                        )
+                    satisfied = self._check_constraint(constraint, validation_args[arg_name])
                 except Exception as e:
                     logger.warning(f"Constraint implementation bug causing denial for '{arg_name}': {e}")
                     return self._deny(
                         f"Argument '{arg_name}' violates constraint (internal validation error)",
                         tool.name,
                         args,
+                        start_ns=start_ns,
+                    )
+                if not satisfied:
+                    return self._deny(
+                        f"Argument '{arg_name}' violates constraint",
+                        tool.name,
+                        args,
+                        constraint_param=arg_name,
+                        constraint=constraint,
                         start_ns=start_ns,
                     )
 
@@ -620,15 +648,21 @@ class TenuoGuard:
             try:
                 bound_warrant = warrant.bind(self._signing_key)
 
-                result = await enforce_tool_call_async(
-                    tool_name=skill_name,
-                    tool_args=validation_args,
-                    bound_warrant=bound_warrant,
-                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                    approval_handler=self._approval_handler,
-                    approvals=self._approvals,
-                    warrant_chain=warrant_chain,
-                )
+                try:
+                    result = await enforce_tool_call_async(
+                        tool_name=skill_name,
+                        tool_args=validation_args,
+                        bound_warrant=bound_warrant,
+                        trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                        approval_handler=self._approval_handler,
+                        approvals=self._approvals,
+                        warrant_chain=warrant_chain,
+                    )
+                except (ApprovalDenied, ApprovalRequired, ApprovalVerificationError) as e:
+                    # The shared path raises approval failures instead of
+                    # returning a denial. Deny the call the same way as any
+                    # other, instead of letting the exception end the run.
+                    return self._deny(_approval_denial_reason(e), tool.name, args, start_ns=start_ns)
 
                 if self._control_plane is not None:
                     latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -732,7 +766,8 @@ class TenuoGuard:
         any, leaving any ambient ``chain_scope()`` in effect.
 
         Raises:
-            ConfigurationError: If a state token does not decode.
+            ConfigurationError: If a state token does not decode, or a
+                ScopedWarrant in state belongs to a different agent.
         """
         if self._warrant is not None:
             return self._warrant, self._warrant_chain
@@ -745,12 +780,18 @@ class TenuoGuard:
                 value = tool_context.state.get(self._warrant_key)
         if value is None:
             return None, None
-        # A ScopedWarrant around a stack token or list: unwrap it (the plugin
-        # already checked the agent scope). A ScopedWarrant around a Warrant
-        # stays as is, since it delegates attribute access to the warrant.
-        inner = getattr(value, "warrant", None) if hasattr(value, "valid_for_agent") else None
-        if isinstance(inner, (str, list, tuple)):
-            value = inner
+        if hasattr(value, "valid_for_agent"):
+            # A ScopedWarrant is only valid for its agent. Check it here too,
+            # not only in TenuoPlugin, so a guard used as an agent's
+            # before_tool_callback never runs on another agent's warrant.
+            agent_name = getattr(tool_context, "agent_name", None)
+            if not agent_name or not value.valid_for_agent(agent_name):
+                raise ConfigurationError("the session warrant is scoped to a different agent")
+            # Unwrap a ScopedWarrant around a stack token or list. One around
+            # a Warrant stays as is, since it delegates attribute access.
+            inner = getattr(value, "warrant", None)
+            if isinstance(inner, (str, list, tuple)):
+                value = inner
         leaf, parents = split_presented_warrant(value)
         return leaf, (parents if parents is not None else self._warrant_chain)
 

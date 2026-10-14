@@ -131,6 +131,8 @@ guard = (GuardBuilder()
     .build())
 ```
 
+A refused approval, a missing handler, or an approval that fails verification denies the call with an `authorization_denied` result; the run continues. `TenuoPlugin` takes the same handler as `approval_handler=`.
+
 ### Delegated warrants
 
 A leaf minted by a delegator is denied when the guard trusts only the original issuer. Pass the parents as `warrant_chain` (root first, excluding the leaf) and set `with_trusted_roots` to that issuer.
@@ -303,6 +305,8 @@ guard = GuardBuilder().with_warrant(warrant, signing_key).build()
 > from tenuo.constraints import Wildcard
 > guard = GuardBuilder().allow("api_call", url=UrlSafe(), timeout=Wildcard()).build()
 > ```
+>
+> `Wildcard()` covers only its own argument. Every listed argument is also required, as in the core: ADK passes only the arguments the model sent, so a call that leaves one out is denied instead of running with the tool's default. Argument names starting with `_` are checked like any other.
 
 ---
 
@@ -430,7 +434,7 @@ session = await runner.session_service.create_session(
 )
 ```
 
-Register `TenuoPlugin` on the Runner. Assigning `before_agent_callback` on the `Agent` does not install the plugin. The plugin drops a `ScopedWarrant` when `callback_context.agent_name` does not match.
+Register `TenuoPlugin` on the Runner. Assigning `before_agent_callback` on the `Agent` does not install the plugin. The plugin drops a `ScopedWarrant` when `callback_context.agent_name` does not match, and a `TenuoGuard` used as an agent's `before_tool_callback` denies a `ScopedWarrant` scoped to another agent. ADK copies session state, so a `ScopedWarrant` is copied around the warrant's base64 form; store a bare warrant as `warrant.to_base64()`.
 
 ### Argument Remapping
 
@@ -581,14 +585,16 @@ For per-request warrants (e.g., user-specific capabilities):
 
 ```python
 # Configure guard to look up warrant from session state
-guard = (GuardBuilder()
-    .with_warrant_key("user_warrant")  # Key in ToolContext.session_state
-    .build())
+guard = TenuoGuard(
+    signing_key=agent_key,
+    trusted_roots=[issuer_key.public_key],
+    warrant_key="user_warrant",  # Key in session state
+)
 
 # At runtime, inject user-specific warrant
 def handle_request(user_id):
     warrant = issue_warrant_for_user(user_id)
-    session_state["user_warrant"] = warrant
+    session_state["user_warrant"] = warrant.to_base64()  # ADK copies state; Warrant objects can't be copied
     
     # Agent uses the injected warrant
     agent.run(...)

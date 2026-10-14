@@ -105,6 +105,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extension does not export, so every signed request failed before it was
   sent. Arguments are now passed to `Warrant.sign`, which already
   canonicalizes plain values.
+- **Google ADK Tier 1 checks follow the core's closed-world rules.** A
+  `Wildcard()` on one argument admitted every unlisted argument, a call that
+  left out a constrained argument ran with the tool's default unchecked, and
+  arguments whose names start with `_` skipped their constraints. `Wildcard()`
+  now covers only its own argument, every constrained argument is required,
+  and `_`-prefixed arguments are checked; `_allow_unknown=True` remains the
+  opt-out for unlisted arguments. This applies to `GuardBuilder.allow()`,
+  `GuardBuilder.from_tools()` and `TenuoGuard(require_pop=False)`.
+- **Google ADK enforces `ScopedWarrant` in the guard and keeps session state
+  copyable.** A `TenuoGuard` used as an agent's `before_tool_callback` ran on a
+  `ScopedWarrant` scoped to another agent; only `TenuoPlugin` checked the
+  scope. The guard now denies it. A `ScopedWarrant` around a `Warrant` made
+  `InMemoryRunner` fail with `TypeError: cannot pickle`; it now copies and
+  pickles as the warrant's base64 form. `scoped_warrant()` uses the
+  `__tenuo_warrant__` key the guard and plugin read (it used
+  `tenuo_warrant`), stores `Warrant` objects encoded, and clears an ADK
+  `State`, which has no `pop()`.
+- **Google ADK denies approval failures instead of ending the run.** A
+  refused approval, a missing approval handler, or an approval that failed
+  verification raised out of `before_tool_callback` and stopped the Runner.
+  The call is now denied with an `authorization_denied` result. `TenuoPlugin`
+  accepts `approval_handler=` and `approvals=`.
 
 ## [0.3.2] - 2026-10-02
 

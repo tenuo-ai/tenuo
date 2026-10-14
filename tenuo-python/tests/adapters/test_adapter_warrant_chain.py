@@ -714,7 +714,15 @@ class TestGoogleAdkSessionState:
 
         guard = self._guard(chain)
         ctx = self._ctx(ScopedWarrant(chain["stack"], "researcher"))
+        ctx.agent_name = "researcher"
         assert guard.before_tool(SimpleNamespace(name="search"), {"query": IN_SCOPE}, ctx) is None
+
+        # The guard enforces the scope itself, not only TenuoPlugin
+        ctx.agent_name = "writer"
+        self._assert_denied(
+            guard.before_tool(SimpleNamespace(name="search"), {"query": IN_SCOPE}, ctx),
+            message_prefix="Authorization denied: Invalid warrant:",
+        )
 
     def test_malformed_state_token_denied(self, chain):
         guard = self._guard(chain)

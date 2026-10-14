@@ -199,7 +199,6 @@ class TestTier2Authorization:
 
     def test_exempt_gate_allowed_and_denied(self, keys):
         from tenuo_core import Exact
-        from tenuo.approval import ApprovalRequired
 
         warrant = (
             Warrant.mint_builder()
@@ -230,13 +229,16 @@ class TestTier2Authorization:
         )
         assert result is None  # Allowed
 
-        # Non-exempt argument value requires approval, invoking the rule
-        with pytest.raises(ApprovalRequired):
-            guard.before_tool(
-                tool=tool,
-                args={"file_path": "/tmp/safe/private.txt"},
-                tool_context=context,
-            )
+        # Non-exempt argument value requires approval; with no handler the
+        # call is denied with a result instead of raising ApprovalRequired
+        result = guard.before_tool(
+            tool=tool,
+            args={"file_path": "/tmp/safe/private.txt"},
+            tool_context=context,
+        )
+        assert result is not None
+        assert result["error"] == "authorization_denied"
+        assert "Approval required" in result["message"]
 
 
 class TestTier1Authorization:
@@ -847,7 +849,8 @@ class TestScopedWarrantContext:
 
         with scoped_warrant(state, warrant, key="test_warrant"):
             assert "test_warrant" in state
-            assert state["test_warrant"] is warrant
+            # Stored encoded: ADK copies session state, Warrant objects cannot be copied
+            assert state["test_warrant"] == warrant.to_base64()
 
         assert "test_warrant" not in state
 
