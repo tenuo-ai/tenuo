@@ -391,7 +391,7 @@ registry.register("worker", key2, namespace="tenant-b")
 
 ### `guard_node(node, key_id=None, inject_warrant=False)`
 
-Wrap a pure node function with Tenuo authorization.
+Wrap a pure node function with Tenuo authorization. Before the node runs, the warrant in state must chain to a trusted root (`trusted_roots=[...]` or `tenuo.configure(trusted_roots=[...])`), be unexpired, and be held by the bound key; otherwise `ConfigurationError` is raised. Calls the node makes itself are not authorized here; use `TenuoToolNode` for those.
 
 ```python
 from tenuo.langgraph import guard_node

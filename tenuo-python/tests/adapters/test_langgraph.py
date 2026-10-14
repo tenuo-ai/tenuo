@@ -78,7 +78,7 @@ class TestGuardWrapper:
         def my_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             return {"result": "done"}
 
-        wrapped = guard_node(my_agent)
+        wrapped = guard_node(my_agent, trusted_roots=[warrant.issuer])
 
         state = {"warrant": warrant}
         config = make_config(key_id)
@@ -94,7 +94,7 @@ class TestGuardWrapper:
             return {"result": "done"}
 
         # Explicit key_id in wrapper
-        wrapped = guard_node(my_agent, key_id=key_id)
+        wrapped = guard_node(my_agent, key_id=key_id, trusted_roots=[warrant.issuer])
 
         state = {"warrant": warrant}
         # No config needed - key_id is explicit
@@ -112,7 +112,7 @@ class TestGuardWrapper:
             received_bw = bound_warrant
             return {"result": "done"}
 
-        wrapped = guard_node(my_agent, inject_warrant=True)
+        wrapped = guard_node(my_agent, inject_warrant=True, trusted_roots=[warrant.issuer])
 
         state = {"warrant": warrant}
         config = make_config(key_id)
@@ -145,7 +145,7 @@ class TestGuardWrapper:
         def my_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             return {"result": "done"}
 
-        wrapped = guard_node(my_agent)
+        wrapped = guard_node(my_agent, trusted_roots=[warrant.issuer])
 
         state = {"warrant": warrant}
         # No config - should use "default"

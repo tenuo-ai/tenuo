@@ -75,6 +75,46 @@ except (ImportError, TypeError):
 logger = logging.getLogger("tenuo.langchain")
 
 
+def _agent_executor_classes() -> List[type]:
+    """AgentExecutor classes that are importable, preferred first.
+
+    LangChain 1.x moved ``AgentExecutor`` to the ``langchain-classic`` package;
+    0.x ships it as ``langchain.agents.AgentExecutor``. Both may be installed.
+    """
+    classes: List[type] = []
+    try:
+        from langchain_classic.agents import AgentExecutor as _Classic  # type: ignore[import-not-found]
+
+        classes.append(_Classic)
+    except ImportError:
+        pass
+    try:
+        from langchain.agents import AgentExecutor as _Legacy  # type: ignore[import-not-found,attr-defined]
+
+        if _Legacy not in classes:
+            classes.append(_Legacy)
+    except ImportError:
+        pass
+    return classes
+
+
+_AGENT_EXECUTOR_MISSING = (
+    "AgentExecutor is not installed. On LangChain 1.x it lives in the "
+    "langchain-classic package (uv pip install langchain-classic). For agents "
+    "built with langchain.agents.create_agent, use "
+    "create_agent(..., middleware=[tenuo.langgraph.TenuoMiddleware()]) instead."
+)
+
+
+def _is_compiled_graph(obj: Any) -> bool:
+    """True for a compiled LangGraph graph, including create_agent() agents."""
+    try:
+        from langgraph.pregel import Pregel  # type: ignore[import-not-found]
+    except ImportError:
+        return False
+    return isinstance(obj, Pregel)
+
+
 # =============================================================================
 # Core: TenuoTool wrapper
 # =============================================================================
@@ -166,10 +206,11 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         if hasattr(wrapped, "args_schema"):
             object.__setattr__(self, "args_schema", wrapped.args_schema)
 
-    def _resolve_bound_warrant(self) -> BoundWarrant | None:
+    def _resolve_bound_warrant(self, tool_input: Optional[Dict[str, Any]] = None) -> BoundWarrant | None:
         """Resolve a BoundWarrant from explicit binding, context, or key scope.
 
-        Raises ToolNotAuthorized if no warrant is available and passthrough is off.
+        Raises ToolNotAuthorized if no warrant is available, unless passthrough
+        is on or observe mode records the call and lets it run (returns None).
         """
         from .bound_warrant import BoundWarrant as _BoundWarrant
 
@@ -194,6 +235,8 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             if allow_passthrough():
                 logger.warning(f"PASSTHROUGH: Tool '{self.name}' executed without warrant")
                 return None  # type: ignore[return-value]
+            if self._observe_unauthorized("no warrant in scope", tool_input):
+                return None  # type: ignore[return-value]
             raise ToolNotAuthorized(tool=self.name)
 
         if isinstance(warrant, _BoundWarrant):
@@ -203,7 +246,36 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         if signing_key:
             return warrant.bind(signing_key)
 
+        if self._observe_unauthorized("no signing key in scope to bind the warrant", tool_input):
+            return None  # type: ignore[return-value]
         raise ToolNotAuthorized(tool=self.name)
+
+    def _observe_unauthorized(self, reason: str, tool_input: Optional[Dict[str, Any]]) -> bool:
+        """Observe mode: record a call with no usable warrant and let it run.
+
+        Returns False in enforce mode, so the caller raises as before.
+        """
+        from ._enforcement import EnforcementResult, _apply_observe_mode
+        from .config import should_block_violation
+
+        if should_block_violation():
+            return False
+        result = _apply_observe_mode(
+            EnforcementResult(
+                allowed=False,
+                tool=self.name,
+                arguments=dict(tool_input or {}),
+                denial_reason=reason,
+                error_type="tool_not_authorized",
+            )
+        )
+        _cp = getattr(self, "_control_plane", None)
+        if _cp is not None:
+            try:
+                _cp.emit_for_enforcement(result)
+            except Exception:
+                logger.warning("Control plane emission failed for '%s'; audit event lost", self.name, exc_info=True)
+        return True
 
     def _run_enforcement(self, tool_input: Dict[str, Any], bound_warrant: "BoundWarrant") -> None:
         """Run enforce_tool_call and handle the result (sync)."""
@@ -258,9 +330,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
 
     def _check_authorization(self, tool_input: Dict[str, Any]) -> None:
         """Synchronous authorization check before tool execution."""
-        bw = self._resolve_bound_warrant()
+        bw = self._resolve_bound_warrant(tool_input)
         if bw is None:
-            return  # passthrough mode
+            return  # passthrough or observe mode
         try:
             self._run_enforcement(tool_input, bw)
         except (
@@ -284,9 +356,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
 
     async def _acheck_authorization(self, tool_input: Dict[str, Any]) -> None:
         """Asynchronous authorization check — uses enforce_tool_call_async."""
-        bw = self._resolve_bound_warrant()
+        bw = self._resolve_bound_warrant(tool_input)
         if bw is None:
-            return  # passthrough mode
+            return  # passthrough or observe mode
         try:
             await self._run_enforcement_async(tool_input, bw)
         except (
@@ -534,14 +606,21 @@ def guard_agent(
     4. Optionally scopes to specific capabilities (built-in context)
 
     Args:
-        agent_or_executor: AgentExecutor, RunnableAgent, or agent with tools
+        agent_or_executor: An ``AgentExecutor`` (``langchain_classic.agents``
+            on LangChain 1.x, ``langchain.agents`` on 0.x)
         issuer_key: SigningKey for issuing warrants (optional, auto dev_mode)
         capabilities: List of Capability objects to scope the agent to (optional)
         strict: If True, require constraints for critical tools
         warn_on_missing: If True, log warnings for missing warrants
 
     Returns:
-        A wrapped agent/executor that enforces authorization
+        A wrapped executor whose tool calls all go through TenuoTool
+
+    Raises:
+        ConfigurationError: If the agent is not an AgentExecutor, including a
+            ``create_agent()`` graph (use ``TenuoMiddleware``), so an agent is
+            never returned looking protected while its original tools run.
+        ImportError: If AgentExecutor is not installed.
 
     Example:
         from tenuo.langchain import guard_agent
@@ -575,10 +654,14 @@ def guard_agent(
         guard_tools: Wraps individual tools (you manage context)
 
     Advanced: Wrapping LangGraph agents
-        For LangGraph StateGraph agents, use tenuo.langgraph.TenuoToolNode instead.
+        For ``create_agent()`` agents, pass ``middleware=[TenuoMiddleware()]``.
+        For StateGraph agents, use tenuo.langgraph.TenuoToolNode instead.
     """
     if not LANGCHAIN_AVAILABLE:
         raise ImportError("LangChain is required for guard_agent(). Install with: uv pip install langchain-core")
+
+    # Refuse anything we cannot rebuild around the guarded tools
+    executor_cls = _matching_agent_executor(agent_or_executor)
 
     # Configure if key provided
     if issuer_key is not None:
@@ -593,63 +676,46 @@ def guard_agent(
                 warn_on_missing_warrant=warn_on_missing,
             )
 
-    # Extract tools from agent
-    tools = _extract_tools(agent_or_executor)
-    if not tools:
-        logger.warning("guard_agent: No tools found in agent. Make sure agent has 'tools' attribute.")
-        return agent_or_executor
-
     # Wrap tools
-    protected_tools = [TenuoTool(t, strict=strict) for t in tools]
+    protected_tools = [TenuoTool(t, strict=strict) for t in agent_or_executor.tools]
 
-    # Create protected executor
-    return _rebuild_executor(agent_or_executor, protected_tools, capabilities)
-
-
-def _extract_tools(agent_or_executor: Any) -> List[Any]:
-    """Extract tools from various agent types."""
-    # AgentExecutor
-    if hasattr(agent_or_executor, "tools"):
-        return list(agent_or_executor.tools)
-
-    # RunnableAgent or similar
-    if hasattr(agent_or_executor, "agent") and hasattr(agent_or_executor.agent, "tools"):
-        return list(agent_or_executor.agent.tools)
-
-    # Tool list directly
-    if isinstance(agent_or_executor, list):
-        return agent_or_executor
-
-    return []
+    # Rebuild the executor so it can only dispatch to the protected tools
+    return _TenuoAgentExecutor(
+        agent=agent_or_executor.agent,
+        tools=protected_tools,
+        capabilities=capabilities,
+        executor_cls=executor_cls,
+        # Copy settings from original
+        verbose=getattr(agent_or_executor, "verbose", False),
+        max_iterations=getattr(agent_or_executor, "max_iterations", 15),
+        handle_parsing_errors=getattr(agent_or_executor, "handle_parsing_errors", True),
+    )
 
 
-def _rebuild_executor(
-    original: Any,
-    protected_tools: List[Any],
-    capabilities: Optional[List[Any]] = None,
-) -> Any:
-    """Rebuild the executor with protected tools."""
-    try:
-        from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
-    except ImportError:
-        # Fallback: just return a simple wrapper
-        return _SimpleProtectedAgent(original, protected_tools, capabilities)
+def _matching_agent_executor(agent_or_executor: Any) -> type:
+    """The AgentExecutor class ``agent_or_executor`` is an instance of.
 
-    # If it's an AgentExecutor, create a new one with protected tools
-    if isinstance(original, AgentExecutor):
-        # Create wrapper that sets up context before each invoke
-        return _TenuoAgentExecutor(
-            agent=original.agent,
-            tools=protected_tools,
-            capabilities=capabilities,
-            # Copy settings from original
-            verbose=getattr(original, "verbose", False),
-            max_iterations=getattr(original, "max_iterations", 15),
-            handle_parsing_errors=getattr(original, "handle_parsing_errors", True),
+    Raises instead of returning a wrapper that cannot route tool calls through
+    TenuoTool: such a wrapper would report protected tools while the agent
+    keeps running its original ones.
+    """
+    if _is_compiled_graph(agent_or_executor):
+        raise ConfigurationError(
+            "guard_agent() cannot add authorization to a compiled LangGraph graph "
+            "such as a create_agent() agent. Pass "
+            "middleware=[tenuo.langgraph.TenuoMiddleware()] to create_agent(), or "
+            "use tenuo.langgraph.TenuoToolNode in a StateGraph."
         )
-
-    # For other types, return a simple wrapper
-    return _SimpleProtectedAgent(original, protected_tools, capabilities)
+    classes = _agent_executor_classes()
+    for cls in classes:
+        if isinstance(agent_or_executor, cls):
+            return cls
+    if not classes:
+        raise ImportError(_AGENT_EXECUTOR_MISSING)
+    raise ConfigurationError(
+        f"guard_agent() expects an AgentExecutor, got {type(agent_or_executor).__name__}. "
+        "Wrap the tools with guard_tools() or guard() before building the agent."
+    )
 
 
 class _TenuoAgentExecutor:
@@ -665,14 +731,16 @@ class _TenuoAgentExecutor:
         agent: Any,
         tools: List[Any],
         capabilities: Optional[List[Any]] = None,
+        executor_cls: Optional[type] = None,
         **kwargs: Any,
     ):
-        try:
-            from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
-        except ImportError:
-            raise ImportError("langchain is required for _TenuoAgentExecutor")
+        if executor_cls is None:
+            classes = _agent_executor_classes()
+            if not classes:
+                raise ImportError(_AGENT_EXECUTOR_MISSING)
+            executor_cls = classes[0]
 
-        self._inner = AgentExecutor(agent=agent, tools=tools, **kwargs)
+        self._inner = executor_cls(agent=agent, tools=tools, **kwargs)
         self._capabilities = capabilities
         self._tools = tools
 
@@ -703,45 +771,6 @@ class _TenuoAgentExecutor:
     def __getattr__(self, name: str) -> Any:
         """Delegate to inner executor."""
         return getattr(self._inner, name)
-
-
-class _SimpleProtectedAgent:
-    """Simple wrapper for non-AgentExecutor agents."""
-
-    def __init__(
-        self,
-        original: Any,
-        tools: List[Any],
-        capabilities: Optional[List[Any]] = None,
-    ):
-        self._original = original
-        self._tools = tools
-        self._capabilities = capabilities
-
-    @property
-    def tools(self) -> List[Any]:
-        return self._tools
-
-    def invoke(self, input_data: Any, **kwargs: Any) -> Any:
-        if self._capabilities:
-            from .scoped import mint_sync
-
-            with mint_sync(*self._capabilities):
-                return self._original.invoke(input_data, **kwargs)
-        else:
-            return self._original.invoke(input_data, **kwargs)
-
-    async def ainvoke(self, input_data: Any, **kwargs: Any) -> Any:
-        if self._capabilities:
-            from .scoped import mint
-
-            async with mint(*self._capabilities):
-                return await self._original.ainvoke(input_data, **kwargs)
-        else:
-            return await self._original.ainvoke(input_data, **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._original, name)
 
 
 # =============================================================================
@@ -809,7 +838,15 @@ def auto_protect(
     if get_config().mode == EnforcementMode.OBSERVE:
         logger.warning("auto_protect: observe mode is active process-wide; tool calls are logged, not blocked")
 
-    # Detect type and protect
+    # Detect type and protect. A compiled graph (create_agent) also has
+    # .name and .invoke; refuse it rather than wrapping it as a single tool.
+    if _is_compiled_graph(agent_or_tools):
+        raise ConfigurationError(
+            "auto_protect() cannot add authorization to a compiled LangGraph graph "
+            "such as a create_agent() agent. Pass "
+            "middleware=[tenuo.langgraph.TenuoMiddleware()] to create_agent(), or "
+            "call auto_protect() on the tool list before building the agent."
+        )
     if hasattr(agent_or_tools, "invoke") and hasattr(agent_or_tools, "tools"):
         # AgentExecutor-like
         return guard_agent(agent_or_tools)
@@ -858,7 +895,10 @@ class SecureAgentExecutor:
         if not LANGCHAIN_AVAILABLE:
             raise ImportError("LangChain not installed. Run: uv pip install langchain-core")
 
-        from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
+        classes = _agent_executor_classes()
+        if not classes:
+            raise ImportError(_AGENT_EXECUTOR_MISSING)
+        AgentExecutor = classes[0]
 
         # Wrap tools with Tenuo configuration
         protected_tools = guard_tools(

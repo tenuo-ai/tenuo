@@ -42,6 +42,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`guard_agent()` and `auto_protect()` route LangChain 1.x executors
+  through the guarded tools.** `AgentExecutor` moved to `langchain_classic`
+  in LangChain 1.x, so the wrapper fell back to one that reported
+  `TenuoTool`s while the executor kept running the original tools. Both
+  locations are now supported, and an agent that cannot be rebuilt around
+  the guarded tools, including a `create_agent()` graph, raises
+  `ConfigurationError` pointing to `TenuoMiddleware`. `SecureAgentExecutor`
+  also works with `langchain_classic`.
+- **LangGraph `guard_node()` verifies the warrant before the node runs.**
+  It previously only bound the warrant, so an untrusted, expired or
+  wrong-holder warrant let the node run. The warrant must now chain to a
+  trusted root, be unexpired and be held by the bound key. `required_tools`
+  checks that the warrant grants each tool instead of authorizing a call
+  with empty arguments, which denied tools with constrained arguments.
+- **Observe mode lets LangChain and LangGraph calls without a warrant run.**
+  `TenuoTool` and the `TenuoToolNode` / `TenuoMiddleware` tool-call check denied a call
+  with no usable warrant even in observe mode; they now log it as an
+  `OBSERVE: would deny` and run it. Enforce mode is unchanged.
+- **`TenuoToolNode` sends authorization events to the control plane.** The
+  enforcement hooks captured the control plane before it was resolved, so
+  no events were sent unless one was passed explicitly.
+- **The `langgraph` extra installs a `TenuoToolNode`-capable LangGraph.** On
+  Python 3.10+ it now requires `langgraph>=1.0` and
+  `langgraph-prebuilt>=1.0.2`, the first release with the tool-call hooks
+  `TenuoToolNode` needs.
+
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed

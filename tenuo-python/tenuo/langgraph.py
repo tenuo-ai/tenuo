@@ -187,6 +187,41 @@ def _warrant_stack_from_bound(bw: "BoundWarrant") -> Optional[str]:
 # =============================================================================
 
 
+def _observe_unresolved(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    error: Exception,
+    control_plane: Optional[Any],
+    request_id: str,
+) -> bool:
+    """Observe mode: record a call whose warrant could not be resolved.
+
+    A missing or undecodable warrant is a denial like any other, so observe
+    mode logs the would-deny and lets the call run. Returns False in enforce
+    mode, so the caller denies as before.
+    """
+    from ._enforcement import EnforcementResult, _apply_observe_mode
+    from .config import should_block_violation
+
+    if should_block_violation():
+        return False
+    result = _apply_observe_mode(
+        EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=dict(tool_args or {}),
+            denial_reason=f"warrant could not be resolved: {error}",
+            error_type="configuration_error",
+        )
+    )
+    if control_plane:
+        try:
+            control_plane.emit_for_enforcement(result, request_id=request_id)
+        except Exception:
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+    return True
+
+
 def _authorize_tool_request(
     request: Any,
     handler: Callable[..., Any],
@@ -227,6 +262,8 @@ def _authorize_tool_request(
         bw = bw_factory(request)
         warrant_chain = chain_factory(request) if chain_factory is not None else None
     except Exception as e:
+        if _observe_unresolved(tool_name, tool_args, e, control_plane, request_id):
+            return handler(request)
         logger.warning(f"[{request_id}] Failed to resolve warrant authority from state: {e}")
         error_msg = (
             f"Configuration error: {e}" if debug
@@ -312,6 +349,8 @@ async def _authorize_tool_request_async(
         bw = bw_factory(request)
         warrant_chain = chain_factory(request) if chain_factory is not None else None
     except Exception as e:
+        if _observe_unresolved(tool_name, tool_args, e, control_plane, request_id):
+            return await handler(request)
         logger.warning(f"[{request_id}] Failed to resolve warrant authority from state: {e}")
         error_msg = (
             f"Configuration error: {e}" if debug
@@ -799,6 +838,72 @@ def _get_bound_warrant(
     raise ConfigurationError(f"Invalid warrant type in state: {type(warrant)}")
 
 
+def _verify_node_warrant(
+    node_name: str,
+    bw: BoundWarrant,
+    warrant_chain: Optional[List[Any]],
+    trusted_roots: Optional[List[Any]],
+    required_tools: Optional[List[str]],
+) -> None:
+    """Verify the warrant in state before a guarded node runs.
+
+    Checks the chain back to a trusted root (signatures, linkage, expiry,
+    revocation), that the bound key is the warrant's holder, and that the
+    warrant grants every tool in ``required_tools``. Tool arguments are not
+    checked here; ``TenuoToolNode`` checks each call's arguments.
+
+    Raises ConfigurationError on a denial, unless observe mode logs it.
+    """
+    from tenuo_core import Authorizer
+
+    from ._enforcement import EnforcementResult, _apply_observe_mode, _get_allowed_tools
+    from .decorators import chain_scope
+    from .runtime import apply_runtime_revocation, get_runtime
+
+    roots = resolve_trusted_roots(trusted_roots)
+    if roots is None:
+        runtime = get_runtime()
+        if runtime is not None:
+            roots = list(runtime.trusted_roots)
+    if not roots:
+        raise ConfigurationError(
+            f"Node '{node_name}': no trusted roots to verify the warrant against. "
+            "Pass guard_node(..., trusted_roots=[...]) or call "
+            "tenuo.configure(trusted_roots=[...])."
+        )
+
+    parents = warrant_chain if warrant_chain is not None else (chain_scope() or [])
+    reason: Optional[str] = None
+    try:
+        # Same strict leaf expiry as enforce_tool_call, before the chain check
+        # (which allows clock tolerance).
+        if bw.warrant.is_expired():
+            raise ConfigurationError("warrant has expired")
+        authorizer = Authorizer(trusted_roots=roots)
+        apply_runtime_revocation(authorizer)
+        authorizer.verify_chain([*parents, bw.warrant])
+    except Exception as e:
+        reason = f"warrant verification failed: {e}"
+    else:
+        if bw.warrant.authorized_holder.to_bytes() != bw.holder_key.to_bytes():
+            reason = "the bound signing key is not the warrant holder"
+        elif required_tools:
+            allowed = _get_allowed_tools(bw)
+            if allowed is None or "*" in allowed:
+                allowed = list(required_tools)
+            missing = [t for t in required_tools if t not in allowed]
+            if missing:
+                reason = f"warrant does not grant required tool(s): {', '.join(missing)}"
+    if reason is None:
+        return
+
+    result = _apply_observe_mode(
+        EnforcementResult(allowed=False, tool=node_name, arguments={}, denial_reason=reason)
+    )
+    if not result.allowed:
+        raise ConfigurationError(f"Authorization failed in node '{node_name}': {reason}")
+
+
 # =============================================================================
 # guard_node() - Wrapper for Pure Nodes
 # =============================================================================
@@ -815,23 +920,30 @@ def guard_node(
     """
     Wrap a LangGraph node with Tenuo authorization.
 
-    Validates that:
+    Validates, before the node runs, that:
     1. The ``warrant`` field is present in state and can be bound to a key.
-    2. If ``required_tools`` is provided, the warrant covers *all* of those
+    2. The warrant chains to a trusted root (with ``warrant_chain`` from
+       state for delegated warrants), has not expired or been revoked, and
+       the bound key is its holder.
+    3. If ``required_tools`` is provided, the warrant grants *all* of those
        tools — use this on supervisor nodes to fail fast before any sub-graph
        work begins, rather than discovering a missing capability mid-execution.
 
     Per-argument constraint enforcement (e.g. checking ``query`` matches a
-    pattern) happens at ``TenuoToolNode`` time, not here.  This wrapper is
-    the warrant-presence and key-binding check only.
+    pattern) happens at ``TenuoToolNode`` time, not here.
 
     Args:
         node: The node function (state) -> dict
         key_id: Explicit key_id (default: from config or "default")
         inject_warrant: If True, pass bound_warrant as kwarg to the node
-        required_tools: Optional list of tool names the warrant must cover.
-            Raises ConfigurationError if the warrant does not grant all of
-            them, blocking the node from running at all.
+        required_tools: Optional list of tool names the warrant must grant.
+        trusted_roots: Trusted issuer public keys. Defaults to the configured
+            ``trusted_roots``.
+
+    Raises:
+        ConfigurationError: If the warrant is missing, cannot be bound, or
+            fails verification. In observe mode a verification failure is
+            logged and the node runs.
 
     Returns:
         Wrapped node function
@@ -862,17 +974,9 @@ def guard_node(
         except Exception as e:
             raise ConfigurationError(f"Authorization failed in node '{node.__name__}': {e}") from e
 
-        # Optional: check that the warrant covers all required tools up-front
-        # so the node fails fast instead of discovering missing capabilities later.
-        if required_tools:
-            from ._enforcement import enforce_tool_call
-            for tool_name in required_tools:
-                result = enforce_tool_call(tool_name=tool_name, tool_args={}, bound_warrant=bw, trusted_roots=trusted_roots, warrant_chain=warrant_chain)
-                if not result.allowed:
-                    raise ConfigurationError(
-                        f"Node '{node.__name__}': warrant does not cover required tool "
-                        f"'{tool_name}': {result.denial_reason}"
-                    )
+        # Verify the warrant (trusted root, expiry, holder, required tools)
+        # before the node runs, not only that it binds.
+        _verify_node_warrant(node.__name__, bw, warrant_chain, trusted_roots, required_tools)
 
         if inject_warrant:
             kwargs["bound_warrant"] = bw
@@ -1057,6 +1161,9 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         _warrant_chain = warrant_chain
         _approval_handler = approval_handler
         _approvals = approvals
+        if control_plane is None:
+            from .control_plane import get_or_create
+            control_plane = get_or_create()
         _control_plane = control_plane
         _key_id = key_id
 
@@ -1114,9 +1221,6 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         self._warrant_chain = warrant_chain
         self._approval_handler = approval_handler
         self._approvals = approvals
-        if control_plane is None:
-            from .control_plane import get_or_create
-            control_plane = get_or_create()
         self._control_plane = control_plane
         self._key_id = key_id
 
