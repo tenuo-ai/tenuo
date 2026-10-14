@@ -24,6 +24,7 @@ import base64
 import contextlib
 import inspect
 import logging
+import threading
 import uuid
 
 from dataclasses import dataclass
@@ -781,20 +782,133 @@ async def extract_body_args(request: Request) -> Dict[str, Any]:
 # =============================================================================
 
 
+_METHOD_SUFFIX = {"GET": "read", "POST": "create", "PUT": "update", "DELETE": "delete", "PATCH": "update"}
+
+
+def _calls_tenuo_guard(path: str, call: Any) -> bool:
+    """True if ``call`` is a TenuoGuard or depends on one anywhere in its tree."""
+    if isinstance(call, TenuoGuard):
+        return True
+    if not callable(call):
+        return False
+    try:
+        from fastapi.dependencies.utils import get_dependant
+
+        return _has_tenuo_guard(get_dependant(path=path, call=call))
+    except Exception:
+        # Unknown shape: report unguarded so the caller adds a guard.
+        return False
+
+
+def _lazy_include_supported() -> bool:
+    """FastAPI 0.120+ includes routers by reference instead of copying routes."""
+    try:
+        from fastapi.routing import iter_route_contexts  # type: ignore[attr-defined]  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+class _IncludedRoutesGuard(TenuoGuard):
+    """Guards the routes of a router included into a ``SecureAPIRouter``.
+
+    FastAPI 0.120+ includes routers by reference, so their routes never pass
+    through ``SecureAPIRouter.add_api_route``. This guard is attached as an
+    include-level dependency and authorizes each request under the tool name
+    the route would get if it were declared on the ``SecureAPIRouter``
+    (include prefix + route path). Routes that already carry a ``TenuoGuard``
+    are left to it. A route the guard cannot name is denied.
+    """
+
+    def __init__(self, owner: "SecureAPIRouter", router: Any, prefix: str) -> None:
+        super().__init__("")
+        self._owner = owner
+        self._included = router
+        self._prefix = prefix
+        # id(route) -> (route, tool); tool is None when the route guards itself.
+        self._tools: Dict[int, Tuple[Any, Optional[str]]] = {}
+        self._guards: Dict[str, TenuoGuard] = {}
+        self._lock = threading.Lock()
+
+    def refresh(self, *, at_include: bool) -> None:
+        """Name every route the included router serves (it may have changed since)."""
+        from fastapi.routing import APIRoute, iter_route_contexts  # type: ignore[attr-defined]
+
+        tools: Dict[int, Tuple[Any, Optional[str]]] = {}
+        for context in iter_route_contexts(self._included.routes):
+            route = context.original_route
+            if not isinstance(route, APIRoute):
+                if at_include:
+                    raise ConfigurationError(
+                        "SecureAPIRouter cannot guard websocket, mount, frontend or plain "
+                        f"Starlette routes ({getattr(route, 'path', route)!r}); "
+                        "serve them from a separate router"
+                    )
+                continue
+            if _has_tenuo_guard(route.dependant):
+                tools[id(route)] = (route, None)
+                continue
+            path = self._prefix + (context.path or "")
+            tool = self._owner._infer_tool(path, context.methods or ["GET"])
+            tools[id(route)] = (route, tool)
+        self._tools = tools
+
+    def __call__(  # type: ignore[override]
+        self,
+        request: Request,
+        warrant: Optional[Warrant] = Depends(get_warrant_header),
+        x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
+        x_tenuo_approvals: Optional[str] = Header(None, alias=X_TENUO_APPROVALS),
+    ) -> Optional[SecurityContext]:
+        route = request.scope.get("route")
+        entry = self._tools.get(id(route))
+        if entry is None or entry[0] is not route:
+            # Route added to the included router after include_router().
+            try:
+                with self._lock:
+                    self.refresh(at_include=False)
+            except ConfigurationError:
+                logger.error("SecureAPIRouter could not name an included route", exc_info=True)
+                entry = None
+            else:
+                entry = self._tools.get(id(route))
+        if entry is None or entry[0] is not route:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "authorization_denied", "message": "Authorization denied"},
+            )
+        tool = entry[1]
+        if tool is None:
+            return None  # The route's own TenuoGuard authorizes it.
+        guard = self._guards.get(tool)
+        if guard is None:
+            guard = self._guards.setdefault(tool, TenuoGuard(tool, approval_handler=self._approval_handler))
+        return guard(request, warrant, x_tenuo_pop, x_tenuo_approvals)
+
+
 class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
     """
     Drop-in replacement for FastAPI APIRouter with automatic Tenuo protection.
 
-    Routes added to this router are automatically protected by Tenuo.
-    The tool name is inferred from the route path or operation name.
+    Every HTTP route this router serves is protected by Tenuo: routes added
+    with the decorators, with ``add_api_route()``, and the routes of routers
+    passed to ``include_router()``. The tool name is inferred from the route
+    path and method unless ``tool=`` is given.
 
     Usage:
         router = SecureAPIRouter()
 
-        @router.get("/users/{user_id}")  # Auto-protected as "users_read" (or similar)
+        @router.get("/users/{user_id}")  # Auto-protected as "users_user_id_read"
         def get_user(user_id: str): ...
 
         app.include_router(router)
+
+    A route that already depends on a ``TenuoGuard`` keeps that guard and gets
+    no second one, except through the decorators, which always add theirs.
+    Websocket routes, mounts, frontends and plain Starlette routes cannot carry
+    a ``TenuoGuard``, so adding one raises ``ConfigurationError``. Two routes
+    whose inferred tool names collide (``/admin_users`` and ``/admin/users``)
+    also raise; pass ``tool=`` for one of them.
 
     This is a real ``APIRouter`` subclass, so ``app.include_router(router)``
     and nested ``router.include_router(...)`` work on every supported FastAPI
@@ -809,6 +923,14 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
         super().__init__(*args, **kwargs)
         self.tool_prefix = tool_prefix
         self.require_pop = require_pop
+        # Inferred tool name -> route path it was inferred from.
+        self._inferred_tools: Dict[str, str] = {}
+        self._inferred_lock = threading.Lock()
+        if self.routes:
+            raise ConfigurationError(
+                "SecureAPIRouter(routes=...) would serve those routes unguarded; "
+                "add them with the router's decorators or add_api_route()"
+            )
 
     @property
     def _router(self) -> "SecureAPIRouter":
@@ -829,10 +951,88 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
         prefix = f"{self.tool_prefix}_" if self.tool_prefix else ""
 
         # Method suffix
-        method_map = {"GET": "read", "POST": "create", "PUT": "update", "DELETE": "delete", "PATCH": "update"}
-        suffix = method_map.get(method.upper(), method.lower())
+        suffix = _METHOD_SUFFIX.get(method.upper(), method.lower())
 
         return f"{prefix}{clean_path}_{suffix}"
+
+    def _infer_tool(self, path: str, methods: Iterable[str], name: Optional[str] = None) -> str:
+        """Infer one tool name for a route and reject names another path already uses."""
+        if name:
+            return name
+        requested = {m.upper() for m in methods} or {"GET"}
+        # HEAD and OPTIONS ride along with the route's main method.
+        considered = (requested - {"HEAD", "OPTIONS"}) or requested
+        names = {self._get_tool_name(path, method) for method in considered}
+        if len(names) != 1:
+            raise ConfigurationError(
+                f"SecureAPIRouter cannot infer one tool name for {path!r} with methods "
+                f"{sorted(considered)}: pass tool= explicitly"
+            )
+        tool = names.pop()
+        with self._inferred_lock:
+            other = self._inferred_tools.setdefault(tool, path)
+        if other != path:
+            raise ConfigurationError(
+                f"SecureAPIRouter inferred the tool name {tool!r} for both {other!r} and "
+                f"{path!r}; pass tool= explicitly for one of them"
+            )
+        return tool
+
+    def _is_guarded(self, path: str, endpoint: Callable, dependencies: Iterable[Any]) -> bool:
+        calls: List[Any] = [endpoint]
+        calls.extend(getattr(dep, "dependency", None) for dep in (*self.dependencies, *dependencies))
+        return any(_calls_tenuo_guard(path, call) for call in calls)
+
+    def add_api_route(  # type: ignore[override]
+        self,
+        path: str,
+        endpoint: Callable[..., Any],
+        *args: Any,
+        tool: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Add a route, adding a ``TenuoGuard`` unless one already protects it."""
+        dependencies = list(kwargs.pop("dependencies", None) or [])
+        if tool is not None or not self._is_guarded(path, endpoint, dependencies):
+            actual_tool = tool or self._infer_tool(path, kwargs.get("methods") or ["GET"])
+            dependencies.append(Depends(TenuoGuard(actual_tool)))
+        super().add_api_route(path, endpoint, *args, dependencies=dependencies, **kwargs)
+
+    def include_router(self, router: Any, *args: Any, prefix: str = "", **kwargs: Any) -> None:  # type: ignore[override]
+        """Include ``router`` with every one of its HTTP routes guarded.
+
+        Before FastAPI 0.120 the routes are copied through ``add_api_route``.
+        From 0.120 they stay on ``router``, so an include-level guard names and
+        authorizes each one, including routes added to ``router`` later.
+        """
+        if _lazy_include_supported():
+            guard = _IncludedRoutesGuard(self, router, prefix)
+            guard.refresh(at_include=True)
+            kwargs["dependencies"] = [*(kwargs.get("dependencies") or []), Depends(guard)]
+        super().include_router(router, *args, prefix=prefix, **kwargs)
+
+    def _refuse(self, kind: str, path: Any) -> None:
+        raise ConfigurationError(
+            f"SecureAPIRouter cannot guard {kind} ({path!r}); serve it from a separate router"
+        )
+
+    def add_route(self, path: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("plain Starlette routes", path)
+
+    def add_websocket_route(self, path: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("websocket routes", path)
+
+    def add_api_websocket_route(self, path: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("websocket routes", path)
+
+    def mount(self, path: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("mounts", path)
+
+    def host(self, host: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("host routes", host)
+
+    def frontend(self, path: str, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        self._refuse("frontends", path)
 
     def get(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:  # type: ignore[override]
         kwargs.pop("methods", None)  # Remove if present to avoid duplicate
@@ -868,7 +1068,7 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
 
         def decorator(func: Callable) -> Callable:
             # Determine tool name
-            actual_tool = tool or self._get_tool_name(path, methods[0], kwargs.get("name"))
+            actual_tool = tool or self._infer_tool(path, methods, kwargs.get("name"))
 
             # The guard runs as a dependency, before the handler. The handler
             # does not have to accept the SecurityContext for it to execute.

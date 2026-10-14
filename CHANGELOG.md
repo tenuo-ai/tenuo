@@ -48,6 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FastAPI: `SecureAPIRouter` guards every route it serves.** Routes added
+  with `add_api_route()` and the routes of routers passed to
+  `include_router()` ran with no warrant. They now get a `TenuoGuard` named
+  from the include prefix, path and method, including routes added to an
+  included router later; a route that already has a `TenuoGuard` keeps it.
+  Websocket routes, mounts, frontends and plain Starlette routes cannot carry
+  a guard, so adding one raises `ConfigurationError`.
+- **FastAPI: inferred tool names no longer collide.** `/admin_users` and
+  `/admin/users` both inferred `api_admin_users_read`, so one warrant covered
+  both. `SecureAPIRouter` now raises `ConfigurationError` on such a collision,
+  and on a route whose methods infer different names (`GET` and `POST`);
+  pass `tool=` explicitly.
+
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
