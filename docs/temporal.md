@@ -23,7 +23,7 @@ a durable service contract through a named Endpoint; Tenuo carries delegated
 warrants across that Endpoint so the handler can verify the exact operation,
 input, holder key, expiry, approvals, and revocation state instead of relying
 only on namespace-level access. For customer-facing scenarios, see
-[Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md).
+[Tenuo for Temporal Nexus](https://tenuo.ai/solutions/temporal-nexus/).
 
 ## Prerequisites
 
@@ -334,7 +334,7 @@ organizations, the remaining challenge is operational control: issuer
 ownership, trusted-root distribution, revocation rollout, approvals, key
 rotation, and audit search across the fleet. Tenuo can be self-hosted for those
 pieces; teams that want that control plane operated centrally can use a managed
-Tenuo deployment. See [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md#enterprise-scale-control-across-teams),
+Tenuo deployment. See [Tenuo for Temporal Nexus](https://tenuo.ai/solutions/temporal-nexus/#enterprise-scale-control-across-teams),
 or [schedule a demo](https://tenuo.ai/early-access.html) to map this onto your
 Temporal topology.
 
@@ -404,7 +404,7 @@ These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo
 - **[Temporal Quickstart](./temporal-quickstart.md)** — copy-paste local
   workflow with one allowed Activity and one denied Activity.
 - **[Temporal Integration Reference](./temporal-reference.md)** — production checklist, key management (Vault, AWS, GCP), sandbox details, PoP mechanics, configuration reference, constraint types, troubleshooting, and the full threat model.
-- **[Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md)** — practical cross-team, multi-hop, and cross-organization examples.
+- **[Tenuo for Temporal Nexus](https://tenuo.ai/solutions/temporal-nexus/)** — practical cross-team, multi-hop, and cross-organization examples.
 - **[Temporal Nexus Authorization](./temporal-nexus.md)** — cross-namespace authorization for Nexus operations and workflow-backed handlers.
 - [Tenuo Core Concepts](./concepts.md)
 - [Security Model](./security.md)
