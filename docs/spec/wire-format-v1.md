@@ -4,7 +4,7 @@
 **Status:** Normative  
 **Date:** 2026-01-01  
 
-**Documentation Revision:** 4 (2026-03-06)
+**Documentation Revision:** 5 (2026-10-14)
 
 **Related Documents:**
 - [protocol-spec-v1.md](protocol-spec-v1.md) - Protocol Specification (concepts, invariants, algorithms)
@@ -14,6 +14,7 @@
 
 ## Revision History
 
+- **Rev 5** (2026-10-14): Assigned constraint type ID 22 to `Optional` (`{inner: Constraint}`), with attenuation matrix rows and test vector A.19.4.
 - **Rev 4** (2026-03-06): Added MCP JSON-RPC error code mappings and `params._meta` warrant transport to §A.2. Clarified `PopExpired` description.
 - **Rev 3** (2026-01-21): Verification and enforcement. Fixed `MAX_CONSTRAINT_DEPTH` (16-->32), added Size Limits table, and added test vector cross-references.
 - **Rev 2** (2026-01-10): Normative specification updates.
@@ -490,7 +491,9 @@ pub enum ConstraintType {
     Wildcard = 16,
     Subpath = 17,
     UrlSafe = 18,
-    // Future standard types: 19-127
+    // 19-21: earmarked (TimeWindow, GeoFence, RateLimit)
+    Optional = 22,
+    // Future standard types: 23-127
     
     // Experimental / extension constraints (128-255)
     // See "Constraint Type Ranges" below
@@ -568,6 +571,13 @@ pub enum Constraint {
         block_internal_tlds: bool,      // Default: false
     },
 
+    /// Optional top-level argument: absent or null is satisfied; a present
+    /// value must satisfy `inner`. Only valid as the outermost constraint of
+    /// an argument (never inside All, Any, Not or another Optional).
+    Optional {
+        inner: Box<Constraint>,
+    },
+
     /// Shell command safety -- extension constraint (conservative approximation)
     Shlex {
         allow: Vec<String>,             // Allowed binary names or paths (literal, no globs)
@@ -605,6 +615,7 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 | 16 | Wildcard | `null` | Matches anything |
 | 17 | Subpath | `{root: string, case_sensitive?: bool, allow_equal?: bool}` | Path containment |
 | 18 | UrlSafe | `{schemes?: [string], allow_domains?: [string], deny_domains?: [string], ...}` | SSRF protection |
+| 22 | Optional | `{inner: Constraint}` | Argument may be absent (or null); if present must satisfy `inner`. Top level only. See protocol-spec-v1.md §3.6 |
 
 **Extension constraints (128-255):**
 
@@ -624,6 +635,7 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 - `Any`: child may remove clauses; remaining clauses must not be weakened.
 - `Not`: direction is inverted. `Not(child_inner)` is stricter than `Not(parent_inner)` only when the child inner is **at least as permissive** as the parent inner (wider inner produces a narrower outer, because `Not` flips accepted/rejected sets).
 - `Cel`: child must conjoin with parent (logical AND); never replace/loosen parent expression.
+- `Optional`: child may keep it optional with a narrower inner constraint, or replace it with a required constraint that narrows the inner; a required constraint (including `Wildcard`) can never become `Optional`.
 
 ### Constraint Attenuation Matrix (Normative)
 
@@ -633,7 +645,10 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 
 | Parent | Child | Valid | Rule |
 |--------|-------|-------|------|
-| **Wildcard** | Any | YES | Universal superset; any constraint is stricter |
+| **Optional** | Optional | IFF | `child.inner` is a valid attenuation of `parent.inner` |
+| **Optional** | Other | IFF | `child` is a valid attenuation of `parent.inner` (the child stops admitting absence) |
+| Any non-Optional | **Optional** | NO | Would admit calls that omit the argument. Applies to `Wildcard` parents too |
+| **Wildcard** | Any except Optional | YES | Universal superset of required constraints; any constraint is stricter |
 | Any | **Wildcard** | NO | Would expand permissions |
 | **Exact** | Exact | IFF | `child.value == parent.value` |
 | **Exact** | Other | NO | Exact is terminal; cannot attenuate further |
@@ -834,8 +849,8 @@ Implementations MUST evaluate UrlSafe fields in this order:
 | Range | Purpose |
 |-------|---------|
 | 0 | Reserved (invalid) |
-| 1–18 | Core constraints (implemented) |
-| 19–32 | Reserved for common patterns |
+| 1–18, 22 | Core constraints (implemented) |
+| 19–32 | Reserved for common patterns (22 assigned) |
 | 33–127 | Future standard constraints |
 | 128–255 | Extension / experimental constraints |
 
@@ -846,7 +861,8 @@ Implementations MUST evaluate UrlSafe fields in this order:
 | 19 | TimeWindow | Planned: day/hour-of-week constraints |
 | 20 | GeoFence | Planned: lat/lon bounding box |
 | 21 | RateLimit | Planned: call frequency limits |
-| 22-32 | Future patterns | Unassigned |
+| 22 | Optional | Assigned (Rev 5): optional top-level argument |
+| 23-32 | Future patterns | Unassigned |
 
 **Standard range (1–127):** Constraints defined in this specification and future Tenuo releases. All compliant verifiers MUST implement these.
 
@@ -869,6 +885,8 @@ When a verifier encounters an unrecognized constraint type ID, it must:
 1. **Deserialize** into `Constraint::Unknown { type_id, payload }`
 2. **Preserve** the data (don't strip it)
 3. **Fail authorization** - `Unknown.check()` always returns `false`
+
+An argument constrained by `Unknown` is also required: a verifier that does not recognize `Optional` (22) denies the call whether the argument is absent or present. Reference verifiers released before Rev 5 decode `Unknown` only from a byte-string payload and reject a map payload such as `Optional`'s at decode time; that also fails closed.
 
 ```rust
 impl Constraint {
@@ -1990,7 +2008,7 @@ Implementations MUST pass all test vectors defined in [test-vectors.md](test-vec
 - [ ] I5: Reject if `child.parent_hash != SHA256(parent.payload)`
 - [ ] I6: Verify PoP signature with holder key (not issuer key)
 
-#### 21.5 Constraint Types (All Standard Types 1-18)
+#### 21.5 Constraint Types (All Standard Types 1-18, 22)
 For each constraint type, test:
 - [ ] Valid constraint passes
 - [ ] Invalid constraint fails
@@ -2017,6 +2035,7 @@ For each constraint type, test:
 16. Wildcard: Always matches
 17. Subpath: Within, outside, traversal attempt
 18. UrlSafe: Valid URL, private IP, metadata endpoint, deny_domains
+22. Optional: Absent, null, present valid, present invalid; required-to-Optional attenuation rejected; nested Optional rejected
 128. Shlex (extension): Allowed binary, rejected metacharacter, roundtrip
 
 #### 21.6 Edge Cases

@@ -112,6 +112,7 @@ fn constraint_to_readable(constraint: &Constraint) -> JsonValue {
         Constraint::Shlex(sh) => {
             json!({ "shlex": { "allow": &sh.allow } })
         }
+        Constraint::Optional(o) => json!({ "optional": constraint_to_readable(&o.inner) }),
         Constraint::Unknown { type_id, .. } => json!({ "unknown": format!("type_id={}", type_id) }),
         _ => json!({ "unknown": "future_variant" }),
     }
@@ -264,6 +265,11 @@ fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
     if let Some(inner) = obj.get("not") {
         return json_to_constraint(inner)
             .map(|c| Constraint::Not(Not { constraint: Box::new(c) }));
+    }
+    if let Some(inner) = obj.get("optional") {
+        return json_to_constraint(inner)
+            .and_then(|c| tenuo::constraints::Optional::new(c).ok())
+            .map(Constraint::Optional);
     }
     // Range: stored as bare {"min": f64, "max": f64} (no type-discriminator key).
     if obj.contains_key("min") || obj.contains_key("max") {

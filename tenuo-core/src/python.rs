@@ -12,7 +12,8 @@ use crate::approval::{
 };
 use crate::constraints::{
     All, Any, CelConstraint, Cidr, Constraint, ConstraintValue, Contains, Exact, Not, NotOneOf,
-    OneOf, Pattern, Range, RegexConstraint, Subpath, Subset, UrlPattern, UrlSafe, Wildcard,
+    OneOf, Optional, Pattern, Range, RegexConstraint, Subpath, Subset, UrlPattern, UrlSafe,
+    Wildcard,
 };
 use crate::crypto::{
     PublicKey as RustPublicKey, Signature as RustSignature, SigningKey as RustSigningKey,
@@ -953,9 +954,11 @@ impl PyAll {
             }
             Ok(vec)
         })?;
-        Ok(Self {
-            inner: All::new(rust_constraints),
-        })
+        let inner = All::new(rust_constraints);
+        Constraint::All(inner.clone())
+            .validate_optional_placement()
+            .map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Validate that another All is a valid attenuation (narrowing) of this one.
@@ -1011,9 +1014,11 @@ impl PyAnyOf {
             }
             Ok(vec)
         })?;
-        Ok(Self {
-            inner: Any::new(rust_constraints),
-        })
+        let inner = Any::new(rust_constraints);
+        Constraint::Any(inner.clone())
+            .validate_optional_placement()
+            .map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Check if a value matches ANY constraint in this set.
@@ -1056,9 +1061,11 @@ impl PyNot {
             let bound = constraint.into_bound(py);
             py_to_constraint(&bound)
         })?;
-        Ok(Self {
-            inner: Not::new(rust_constraint),
-        })
+        let inner = Not::new(rust_constraint);
+        Constraint::Not(inner.clone())
+            .validate_optional_placement()
+            .map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Check if a value does NOT match the inner constraint.
@@ -1083,6 +1090,72 @@ impl PyNot {
 
     fn __repr__(&self) -> String {
         "Not(...)".to_string()
+    }
+}
+
+/// Optional top-level argument.
+///
+/// The argument may be omitted (or passed as ``None``); when present, its
+/// value must satisfy ``inner``. The key still counts as listed for
+/// closed-world checks. Only valid as the outermost constraint of an
+/// argument; it cannot be nested inside ``All``, ``AnyOf``, ``Not`` or
+/// another ``Optional``.
+///
+/// Example (Python):
+///
+/// ```text
+/// from tenuo import Optional, Range
+/// Capability("search", query=Pattern("*"), limit=Optional(Range(max=50)))
+/// ```
+#[pyclass(name = "Optional")]
+#[derive(Clone)]
+pub struct PyOptional {
+    inner: Optional,
+}
+
+#[pymethods]
+impl PyOptional {
+    #[new]
+    fn new(inner: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let constraint = py_to_constraint(inner)?;
+        Ok(Self {
+            inner: Optional::new(constraint).map_err(to_py_err)?,
+        })
+    }
+
+    /// The constraint a present value must satisfy.
+    #[getter]
+    fn inner(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        constraint_to_py(py, &self.inner.inner)
+    }
+
+    /// Check a single value: ``None`` counts as absent and is satisfied;
+    /// any other value must satisfy the inner constraint.
+    fn matches(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Validate that ``child`` is a valid narrowing of this constraint.
+    ///
+    /// ``Optional(c)`` may narrow to ``Optional(c')`` or to a required ``c'``
+    /// when ``c'`` narrows ``c``.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        let child_constraint = py_to_constraint(child)?;
+        Constraint::Optional(self.inner.clone())
+            .validate_attenuation(&child_constraint)
+            .map_err(to_py_err)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let inner = constraint_to_py(py, &self.inner.inner)?;
+        Ok(format!("Optional({})", inner.bind(py).repr()?))
     }
 }
 
@@ -2300,6 +2373,13 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAn
                 .into_py_any(py)
                 .map_err(|e| py_validation_err(e.to_string()))?)
         }
+        Constraint::Optional(o) =>
+        {
+            #[allow(deprecated)]
+            Ok(PyOptional { inner: o.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
+        }
     }
 }
 
@@ -2363,8 +2443,11 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
     if let Ok(b) = obj.cast::<PyShlex>() {
         return Ok(Constraint::Shlex(b.borrow().inner.clone()));
     }
+    if let Ok(b) = obj.cast::<PyOptional>() {
+        return Ok(Constraint::Optional(b.borrow().inner.clone()));
+    }
     Err(py_validation_err(
-        "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, UrlSafe, or Shlex",
+        "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, UrlSafe, Shlex, or Optional",
     ))
 }
 
@@ -2528,6 +2611,12 @@ fn py_to_arg_approval_gate(
 
     // Any typed constraint object → Constraint gate.
     let constraint = py_to_constraint(av)?;
+    if matches!(constraint, Constraint::Optional(_)) {
+        return Err(py_validation_err(format!(
+            "arg gate '{}': Optional applies only to capability arguments, not approval gates",
+            arg_name
+        )));
+    }
     Ok(ArgApprovalGate::Constraint(constraint))
 }
 
@@ -6968,6 +7057,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAll>()?;
     m.add_class::<PyAnyOf>()?;
     m.add_class::<PyNot>()?;
+    m.add_class::<PyOptional>()?;
     // Core types
     m.add_class::<PySigningKey>()?;
     m.add_class::<PyPublicKey>()?;

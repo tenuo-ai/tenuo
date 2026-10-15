@@ -195,6 +195,9 @@ impl ArgApprovalGate {
             Constraint::Unknown { .. } => Err(ApprovalGateError::ExemptInnerConstraintInvalid {
                 reason: "unknown constraint type; semantics are undefined inside Exempt",
             }),
+            Constraint::Optional(_) => Err(ApprovalGateError::ExemptInnerConstraintInvalid {
+                reason: "optional applies only to capability arguments, not approval gates",
+            }),
             _ => Ok(ArgApprovalGate::Exempt(c)),
         }
     }
@@ -345,6 +348,11 @@ impl<'de> Deserialize<'de> for ArgApprovalGate {
             {
                 let constraint =
                     Constraint::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
+                if matches!(constraint, Constraint::Optional(_)) {
+                    return Err(de::Error::custom(
+                        "optional applies only to capability arguments, not approval gates",
+                    ));
+                }
                 Ok(ArgApprovalGate::Constraint(constraint))
             }
 
@@ -1639,6 +1647,19 @@ mod tests {
             result,
             Err(ApprovalGateError::ExemptInnerConstraintInvalid { .. })
         ));
+    }
+
+    #[test]
+    fn test_optional_rejected_in_approval_gates() {
+        use crate::constraints::{Exact, Optional};
+        let opt: Constraint = Optional::new(Exact::new("a")).unwrap().into();
+        assert!(matches!(
+            ArgApprovalGate::exempt(opt.clone()),
+            Err(ApprovalGateError::ExemptInnerConstraintInvalid { .. })
+        ));
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&opt, &mut bytes).unwrap();
+        assert!(ciborium::de::from_reader::<ArgApprovalGate, _>(&bytes[..]).is_err());
     }
 
     #[test]

@@ -108,6 +108,24 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     parent_type = type(parent_value).__name__
 
     # =========================================================================
+    # Optional - checked before Wildcard: a required argument (Wildcard
+    # included) cannot become optional, since that admits omitted arguments.
+    # =========================================================================
+    if child_type == "Optional" and parent_type != "Optional":
+        return False
+    if parent_type == "Optional":
+        parent_inner = getattr(parent_value, "inner", None)
+        if parent_inner is None:
+            return False
+        if child_type == "Optional":
+            child_inner = getattr(child_value, "inner", None)
+            if child_inner is None:
+                return False
+            return _is_constraint_contained(child_inner, parent_inner)
+        # Optional(c) -> c' (required): c' must narrow c
+        return _is_constraint_contained(child_value, parent_inner)
+
+    # =========================================================================
     # Wildcard - Universal superset (must check FIRST)
     # =========================================================================
     # Wildcard parent contains ANYTHING

@@ -107,6 +107,45 @@ api_call(url="https://api.example.com/v1", timeout=30)
 api_call(url="https://api.example.com/v1", timeout=30, retries=3)
 ```
 
+### Optional Arguments
+
+Every argument you list is required: a call that omits it is denied, even when its constraint is `Wildcard()`. For arguments that a tool accepts but callers often leave out, wrap the constraint in `Optional`:
+
+```python
+from tenuo import Warrant, Pattern, Range, Exact
+from tenuo import Optional  # or OptionalArg, if the module also uses typing.Optional
+
+warrant = (Warrant.mint_builder()
+    .capability("search",
+        query=Pattern("customers:*"),
+        limit=Optional(Range(min=1, max=50)))   # may be omitted; if sent, 1..50
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key))
+
+search(query="customers:acme")              # ALLOWED - limit omitted
+search(query="customers:acme", limit=None)  # ALLOWED - None counts as omitted
+search(query="customers:acme", limit=10)    # ALLOWED
+search(query="customers:acme", limit=500)   # BLOCKED - outside the range
+search(query="customers:acme", page=2)      # BLOCKED - 'page' is unknown
+```
+
+`Optional(inner)` is satisfied when the argument is absent and otherwise checks the value against `inner`. The argument still counts as listed, so the capability stays closed to arguments it does not name. `Optional` is only valid as the outermost constraint of an argument; nesting it inside `All`, `AnyOf`, `Not` or another `Optional` raises an error.
+
+**Null is absent.** A top-level argument whose value is `None` (JSON `null`) is treated exactly as if it had been omitted:
+
+| Argument | Sent as `None` |
+|----------|----------------|
+| Listed, required (any constraint, including `Wildcard`) | Denied as a missing argument |
+| Listed as `Optional(...)` | Allowed |
+| Not listed (closed world) | Allowed: it is not an unknown argument |
+
+**Delegation.** A child warrant can keep an argument optional with a narrower inner constraint (`Optional(Range(max=50))` to `Optional(Range(max=10))`) or make it required (`Optional(Range(max=50))` to `Range(max=10)`). It cannot make a required argument optional, `Wildcard()` included, because that would admit calls that omit it. Adding a new optional argument follows the usual rule for new keys: allowed only when the parent capability lists no arguments.
+
+`tenuo.Optional` shares its name with `typing.Optional`. It is not in `tenuo.__all__`, so `from tenuo import *` leaves `typing.Optional` alone; import it explicitly or use the `OptionalArg` alias.
+
+`Optional` applies to capability arguments only. Approval gates reject it.
+
 > [!IMPORTANT]
 > **`_allow_unknown` is NOT inherited during attenuation.**
 >

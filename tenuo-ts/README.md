@@ -470,10 +470,33 @@ Every constraint is evaluated in the Rust core and attenuates monotonically.
 | `contains(values)`, `subset(values)` | List arguments |
 | `anyOf([...])`, `all([...])`, `not(c)` | Composition; `not` cannot be narrowed further, prefer `notOneOf` |
 | `wildcard()` | Any value; names an argument in a zero-trust policy without constraining it |
+| `optional(c)` | The argument may be omitted (or `null`); when present it must satisfy `c` |
 | `cel("value < 10000")` | Common Expression Language over the value |
 
 Every named field is required. `wildcard()` admits any value, not the absence
-of one.
+of one. To let a call omit an argument while still checking it when it is
+sent, wrap the constraint in `optional()`:
+
+```ts
+const session = tenuo.session({
+  allow: {
+    search: { query: pattern("customers:*"), limit: optional(range({ min: 1, max: 50 })) },
+  },
+});
+// { query: "customers:acme" }              allowed
+// { query: "customers:acme", limit: null } allowed: null counts as omitted
+// { query: "customers:acme", limit: 500 }  denied
+// { query: "customers:acme", page: 2 }     denied: page is not named
+```
+
+A top-level `null` is treated as an omitted argument everywhere: a required
+argument sent as `null` is missing, and an unnamed argument sent as `null` is
+not an unknown field. `optional()` must be the outermost constraint of an
+argument; nesting it inside `all`, `anyOf`, `not`, or another `optional` throws
+when the policy compiles. `narrow()` can tighten the inner constraint or make
+the argument required, but cannot make a required argument optional.
+`explain()` reports an omitted optional argument as satisfied, with
+`reasonCode: "argument_absent"`.
 
 Builders check their own input when you call them. A relative `under()` root,
 an empty `oneOf()` list, or a `range()` whose minimum exceeds its maximum

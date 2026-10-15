@@ -1404,6 +1404,47 @@ ac8737d105820158208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d9412
 
 **Expected:** Valid input MUST succeed, invalid input MUST fail with constraint violation.
 
+### A.19.4 Optional Constraint
+
+`limit` is `Optional(Range(1, 50))` (type ID 22, wire value `{"inner": [3, {...}]}`); `query` is a required `Wildcard`.
+
+**A.19.4 Optional**
+
+| Field | Value |
+|-------|-------|
+| ID | `tnu_wrt_019471f8000070008000000000001904` |
+| Type | Execution |
+| Depth | 0 |
+| Max Depth | 3 |
+| Issued At | `1704067200` |
+| Expires At | `1704070800` |
+| Holder | `ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1` |
+| Issuer | `8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c` |
+
+**Payload CBOR (207 bytes):**
+```
+aa00010150019471f8000070008000000000001904020003a166736561726368
+a16b636f6e73747261696e7473a2656c696d69748216a165696e6e65728203a4
+636d696ef93c00636d6178f952406d6d696e5f696e636c7573697665f56d6d61
+785f696e636c7573697665f56571756572798210f60482015820ed4928c628d1
+c2c6eae90338905995612959273a5c63f93636c14614ac8737d105820158208a
+88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c06
+1a65920080071a65920e9008031200
+```
+
+**Signature (64 bytes):**
+```
+7089dbaa6ab6c0419b7df9dee30d0b1098e00c8096abdd2c751f4661ab51a7eec33979121419a3ac3cd34e0189664cafaf6c37d6a976e0a4a66efa76be32c105
+```
+
+| Valid Input | `query = "q"` (limit absent) |
+| Valid Input | `query = "q", limit = null` |
+| Valid Input | `query = "q", limit = 10` |
+| Invalid Input | `query = "q", limit = 500` |
+| Invalid Input | `query = null` (required argument treated as absent) |
+
+**Expected:** Valid inputs MUST succeed, invalid inputs MUST fail with constraint violation. A verifier that does not implement type ID 22 MUST NOT authorize any call under this warrant (fail closed).
+
 ---
 
 ## A.20 Proof-of-Possession Failures

@@ -173,6 +173,7 @@ def _is_tenuo_constraint(obj: Any) -> bool:
         "UrlSafe",
         "Shlex",
         "Wildcard",
+        "Optional",
     }
     return type(obj).__name__ in constraint_types
 

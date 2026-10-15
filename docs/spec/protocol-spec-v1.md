@@ -4,7 +4,7 @@
 **Status:** Normative  
 **Date:** 2026-01-01  
 
-**Documentation Revision:** 4 (2026-03-06)
+**Documentation Revision:** 5 (2026-10-14)
 
 **Authors:** Niki Aimable Niyikiza
 
@@ -16,6 +16,7 @@
 
 ## Revision History
 
+- **Rev 5** (2026-10-14): Added the `Optional` constraint (type ID 22). Specified argument matching (§3.6): closed world, required arguments, and top-level `null` treated as absent. Specified CEL variable binding (§3.7). Added `Optional` attenuation rules (§4.7).
 - **Rev 4** (2026-03-06): Clarified `pop_failed` error description to "outside replay window".
 - **Rev 3** (2026-01-21): Verification and enforcement. Confirmed normative invariants (I1-I6) against codebase and test vectors.
 - **Rev 2** (2026-01-10): Reconciled with v1.0 wire format.
@@ -225,6 +226,7 @@ can only issue execution warrants where `path` is *narrower* than `/data/*`:
 | Wildcard | 16 | `null` | Any value | `Wildcard()` |
 | Subpath | 17 | `{root: string, ...}` | Path containment | `Subpath("/data")` |
 | UrlSafe | 18 | `{schemes: ["https"], ...}` | SSRF protection | `UrlSafe()` |
+| Optional | 22 | `{inner: C}` | Argument may be absent; if present must satisfy `inner` (§3.6) | `Optional(Range(max=50))` |
 
 **Extension constraints (128-255):**
 
@@ -254,6 +256,8 @@ Constraints form a partial order. Attenuation moves toward more restrictive type
 
 **Validity rule:** A child constraint C_child is valid iff for all v: C_child(v) implies C_parent(v)
 
+`Optional` extends the value domain with *absent*. `Optional(C)` accepts absent plus everything `C` accepts, so `C ⊆ Optional(C)` and `Optional(C') ⊆ Optional(C)` iff `C' ⊆ C`. No non-`Optional` constraint, `Wildcard` included, accepts absent (§3.6), so `Wildcard` is the top of the lattice only among required constraints. See §4.7.
+
 ### 3.3 Serialization
 
 Constraints are CBOR arrays: `[type_id, value]`
@@ -268,6 +272,7 @@ OneOf(4):     [4, {"values": ["dev", "staging"]}]
 Wildcard(16): [16, null]                    // No value needed
 Subpath(17):  [17, {"root": "/data"}]
 UrlSafe(18):  [18, {"schemes": ["https"], "block_private": true}]
+Optional(22): [22, {"inner": [3, {"max": 50.0, ...}]}]  // Wraps any non-Optional constraint
 Shlex(128):   [128, {"allow": ["npm", "docker"]}]  // Extension constraint
 ```
 
@@ -284,13 +289,60 @@ If a constraint wire value is not of the expected CBOR type, it MUST be rejected
 
 Unknown constraints participate in attenuation checks as opaque values and MUST NOT be removed or weakened.
 
+> **Note (non-normative):** Reference verifiers released before Rev 5 capture an unrecognized constraint as `Unknown` only when its wire value is a CBOR byte string. A map-valued type such as `Optional` (22) is instead rejected when the warrant is decoded. Both outcomes fail closed: a warrant that uses `Optional` authorizes nothing on such a verifier.
+
 ### 3.5 Constraint Type Registry
 
 | Range | Allocation |
 |-------|------------|
 | 1-18 | Core (this spec) |
-| 19-127 | Reserved (future specs) |
+| 19-21 | Reserved (earmarked in wire-format-v1.md §6) |
+| 22 | Core (this spec): Optional |
+| 23-127 | Reserved (future specs) |
 | 128-255 | Experimental (fail closed) |
+
+### 3.6 Argument Matching
+
+A capability maps argument names to constraints (a constraint set) plus an `allow_unknown` flag. Matching a call's top-level arguments against it:
+
+1. **Null is absent.** A top-level argument whose value is `null` MUST be treated exactly as if it were not present. This applies in every rule below.
+2. **Closed world.** If the constraint set is non-empty and `allow_unknown` is false, every present argument MUST be listed in the set; otherwise the call is denied. An argument listed as `Optional(...)` counts as listed.
+3. **Required arguments.** Every listed argument whose constraint is not `Optional` MUST be present; an absent one is denied as missing. This includes `Wildcard`, which admits any value but not absence.
+4. **Optional arguments.** An argument listed as `Optional(inner)` that is absent is satisfied. When present, its value MUST satisfy `inner`.
+5. **Values.** Every present listed argument MUST satisfy its constraint.
+6. **Empty set.** An empty constraint set admits any arguments.
+
+```python
+def matches(constraint_set, args):
+    present = {k: v for k, v in args.items() if v is not None}   # rule 1
+    if constraint_set.constraints and not constraint_set.allow_unknown:
+        for name in present:
+            if name not in constraint_set.constraints:
+                raise ConstraintNotSatisfied(name, "unknown field")   # rule 2
+    for name, c in constraint_set.constraints.items():
+        if name not in present:
+            if c.type == OPTIONAL:
+                continue                                              # rule 4
+            raise ConstraintNotSatisfied(name, "missing required argument")  # rule 3
+        inner = c.inner if c.type == OPTIONAL else c
+        if not inner.satisfied_by(present[name]):
+            raise ConstraintNotSatisfied(name, "value does not match")       # rule 5
+```
+
+**Scope of `Optional`.** `Optional` is valid only as the outermost constraint of a listed argument. It MUST NOT appear inside `All`, `Any`, `Not`, or another `Optional`; issuers MUST NOT produce such a constraint and verifiers MUST reject it when decoding. Approval gates MUST reject `Optional`. Nested fields of object arguments are not arguments: use CEL (§3.7) to test them.
+
+The null rule is top-level only. A `null` nested inside a list or object value is part of that value.
+
+### 3.7 CEL Variable Binding
+
+A `Cel` constraint (type 15) evaluates its expression against the value of the argument it constrains. Variables are bound as follows:
+
+| Argument value | Bindings |
+|----------------|----------|
+| Object (map) | Each field is bound as a top-level variable of the same name. The whole object is also bound as `value`, unless the object has a field named `value`, in which case that field's binding takes precedence. |
+| Any other value | The value is bound as `value`. |
+
+Referencing a variable or field that does not exist is an evaluation error, and an evaluation error denies the call. To test a field that may be missing, use `has()`, for example `!has(value.approve) || value.approve == false`. The expression MUST evaluate to a boolean; any other result denies the call.
 
 ---
 
@@ -360,6 +412,18 @@ child.parent_hash == SHA256(parent.payload_bytes)
 ```
 
 Every child warrant is cryptographically bound to its parent via hash of the parent's payload. This prevents **chain splicing attacks**, where an attacker attempts to "reparent" a valid child warrant to a different, less restrictive parent warrant (e.g., swapping a production parent for a staging parent) to bypass attenuation or context restrictions.
+
+### 4.7 Optional Attenuation
+
+For an argument constrained by the parent as `P` and by the child as `C`:
+
+| Parent | Child | Valid |
+|--------|-------|-------|
+| `Optional(p)` | `Optional(c)` | iff `c` is a valid attenuation of `p` |
+| `Optional(p)` | `c` (required) | iff `c` is a valid attenuation of `p` (the child also stops admitting absence) |
+| `p` (required, including `Wildcard`) | `Optional(c)` | **No**: the child would admit calls that omit the argument |
+
+Adding an argument the parent does not list follows the constraint-set keyset rule: allowed only when the parent's constraint set for that tool is empty, whether or not the new constraint is `Optional`. A child MUST keep every argument the parent lists, `Optional` ones included.
 
 ---
 
@@ -464,11 +528,8 @@ def authorize(warrant, tool, args, pop_signature, approvals=[], tool_reqs={}):
     if warrant.clearance() < required_clearance:
         raise InsufficientClearance(f"Have {warrant.clearance()}, need {required_clearance}")
     
-    # 3. Check constraints are satisfied
-    for arg_name, arg_value in args.items():
-        constraint = warrant.constraint_for(tool, arg_name)
-        if not constraint.satisfied_by(arg_value):
-            raise ConstraintNotSatisfied(arg_name, arg_value, constraint)
+    # 3. Check constraints are satisfied (argument matching, §3.6)
+    matches(warrant.constraint_set_for(tool), args)
     
     # 4. Check warrant not expired
     if now() > warrant.expires_at():

@@ -125,9 +125,14 @@ def _check_constraints(
     """
     Tier 1 constraint enforcement (closed-world).
     Unknown args are rejected; missing required args are rejected.
+    A top-level ``None`` counts as absent, and an argument constrained by
+    ``Optional`` may be absent.
     """
     if constraints is None:
         raise ToolNotAuthorized(tool=tool_name)
+
+    # A top-level None is treated as absent (same rule as the Rust core).
+    auth_args = {k: v for k, v in auth_args.items() if v is not None}
 
     if not constraints:
         if auth_args:
@@ -147,6 +152,8 @@ def _check_constraints(
     # Required arguments + constraint checks
     for key, constraint in constraints.items():
         if key not in auth_args:
+            if type(constraint).__name__ == "Optional":
+                continue
             raise ConstraintViolation(field=key, reason="Missing required argument")
         value = auth_args[key]
         if not hasattr(constraint, "satisfies") or not callable(getattr(constraint, "satisfies")):
