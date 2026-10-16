@@ -2523,7 +2523,11 @@ impl From<Subpath> for Constraint {
 /// 2. Attacker-controlled domains can resolve to internal IPs (DNS rebinding)
 /// 3. Stateless validation enables caching and cross-language compatibility
 ///
-/// For DNS-aware validation, use `url_jail` at the execution layer.
+/// `UrlSafe` therefore protects literal IPs and URL/host policy, but is not by
+/// itself a complete defense against DNS rebinding. The HTTP execution layer
+/// must validate every resolved address (including redirects) and connect to
+/// that validated address without resolving the hostname again. For Python,
+/// `url_jail` is one execution-layer option.
 ///
 /// # Example
 ///
@@ -2662,6 +2666,77 @@ const INTERNAL_TLDS: &[&str] = &[
 ];
 
 impl UrlSafe {
+    fn canonical_domain_pattern(pattern: &str) -> Result<String> {
+        use url::Host;
+
+        if pattern.is_empty() {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must not be empty".to_string(),
+            });
+        }
+
+        let (wildcard, host_pattern) = match pattern.strip_prefix("*.") {
+            Some(suffix) => (true, suffix),
+            None => (false, pattern),
+        };
+        if host_pattern.is_empty() || host_pattern.contains('*') {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must be a host name or *.host name".to_string(),
+            });
+        }
+
+        let host = Host::parse(host_pattern).map_err(|error| Error::InvalidUrl {
+            url: pattern.to_string(),
+            reason: format!("invalid domain pattern: {error}"),
+        })?;
+        let canonical = match host {
+            Host::Domain(domain) if !wildcard || !domain.starts_with('.') => domain,
+            _ if wildcard => {
+                return Err(Error::InvalidUrl {
+                    url: pattern.to_string(),
+                    reason: "wildcards require a domain name suffix".to_string(),
+                });
+            }
+            host => host.to_string(),
+        }
+        .to_lowercase();
+        Ok(if wildcard {
+            format!("*.{canonical}")
+        } else {
+            canonical
+        })
+    }
+
+    /// Return whether every host matched by `candidate` is also matched by
+    /// `covering`. Both patterns are canonicalized before comparison.
+    fn domain_pattern_covers(covering: &str, candidate: &str) -> Result<bool> {
+        let covering = Self::canonical_domain_pattern(covering)?;
+        let candidate = Self::canonical_domain_pattern(candidate)?;
+
+        let Some(covering_suffix) = covering.strip_prefix("*.") else {
+            return Ok(covering == candidate);
+        };
+        let candidate_suffix = candidate.strip_prefix("*.").unwrap_or(&candidate);
+
+        Ok(candidate_suffix == covering_suffix
+            || candidate_suffix.ends_with(&format!(".{covering_suffix}")))
+    }
+
+    /// Validate domain allow- and deny-list configuration.
+    pub fn validate(&self) -> Result<()> {
+        for pattern in self
+            .allow_domains
+            .iter()
+            .flatten()
+            .chain(self.deny_domains.iter().flatten())
+        {
+            Self::canonical_domain_pattern(pattern)?;
+        }
+        Ok(())
+    }
+
     /// Create a new UrlSafe constraint with secure defaults.
     ///
     /// Blocks private IPs, loopback, metadata endpoints, and dangerous schemes.
@@ -2704,6 +2779,8 @@ impl UrlSafe {
     /// into a policy oracle.
     pub fn rejection_reason(&self, url: &str) -> Result<Option<UrlSafeRejection>> {
         use url::Url;
+
+        self.validate()?;
 
         // Reject null bytes
         if url.contains('\0') {
@@ -2779,12 +2856,12 @@ impl UrlSafe {
             if self.looks_like_ambiguous_ip(&host) {
                 return Ok(Some(UrlSafeRejection::AmbiguousIp));
             }
+        }
 
-            // Check domain allowlist (hostnames only — IPs use block_* flags)
-            if let Some(ref domains) = self.allow_domains {
-                if !self.check_domain_allowed(&host, domains) {
-                    return Ok(Some(UrlSafeRejection::DomainAllowList));
-                }
+        // An allowlist constrains every host, including public IP literals.
+        if let Some(ref domains) = self.allow_domains {
+            if !self.check_domain_allowed(&host, domains) {
+                return Ok(Some(UrlSafeRejection::DomainAllowList));
             }
         }
 
@@ -3019,7 +3096,9 @@ impl UrlSafe {
     /// Check if hostname matches domain allowlist.
     fn check_domain_allowed(&self, host: &str, domains: &[String]) -> bool {
         for pattern in domains {
-            let pattern = pattern.to_lowercase();
+            let Ok(pattern) = Self::canonical_domain_pattern(pattern) else {
+                continue;
+            };
             if pattern.starts_with("*.") {
                 // Wildcard subdomain: *.example.com matches sub.example.com
                 let suffix = &pattern[1..]; // .example.com
@@ -3085,6 +3164,12 @@ impl UrlSafe {
     ///
     /// A child UrlSafe is valid if it is at least as restrictive as the parent.
     pub fn validate_attenuation(&self, child: &UrlSafe) -> Result<()> {
+        // Attenuation is only meaningful for well-formed policies. Validate
+        // here as well as at authorization time so malformed wire-decoded Rust
+        // values cannot be delegated and fail later in a surprising place.
+        self.validate()?;
+        child.validate()?;
+
         // Child schemes must be subset of parent
         for scheme in &child.schemes {
             if !self
@@ -3160,19 +3245,10 @@ impl UrlSafe {
                 Some(child_domains) => {
                     // Each child domain must be covered by a parent domain pattern
                     for cd in child_domains {
-                        if !parent_domains.iter().any(|pd| {
-                            let pd = pd.to_lowercase();
-                            let cd = cd.to_lowercase();
-                            // Exact match
-                            if pd == cd {
-                                return true;
-                            }
-                            // Parent wildcard covers child exact
-                            if pd.starts_with("*.") && cd.ends_with(&pd[1..]) {
-                                return true;
-                            }
-                            false
-                        }) {
+                        let covered = parent_domains.iter().try_fold(false, |covered, pd| {
+                            Ok::<_, Error>(covered || Self::domain_pattern_covers(pd, cd)?)
+                        })?;
+                        if !covered {
                             return Err(Error::MonotonicityViolation(format!(
                                 "child domain '{}' not covered by parent allowlist",
                                 cd
@@ -3193,8 +3269,12 @@ impl UrlSafe {
                 }
                 Some(child_denied) => {
                     for pd in parent_denied {
-                        let pd_lower = pd.to_lowercase();
-                        if !child_denied.iter().any(|cd| cd.to_lowercase() == pd_lower) {
+                        // A child may preserve a parent denial with an equivalent
+                        // canonical spelling or a broader wildcard denial.
+                        let preserved = child_denied.iter().try_fold(false, |preserved, cd| {
+                            Ok::<_, Error>(preserved || Self::domain_pattern_covers(cd, pd)?)
+                        })?;
+                        if !preserved {
                             return Err(Error::MonotonicityViolation(format!(
                                 "child removes denied domain '{}' from parent",
                                 pd
@@ -5831,6 +5911,40 @@ mod tests {
         assert!(us.is_safe("https://api.github.com/repos").unwrap());
         assert!(us.is_safe("https://sub.example.com/path").unwrap());
         assert!(!us.is_safe("https://other.com/").unwrap());
+        assert!(!us.is_safe("https://8.8.8.8/").unwrap());
+
+        let exact_ip = UrlSafe::with_domains(vec!["8.8.8.8"]);
+        assert!(exact_ip.is_safe("https://8.8.8.8/").unwrap());
+        assert!(!exact_ip.is_safe("https://1.1.1.1/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_rejects_invalid_domain_patterns() {
+        for pattern in [
+            "",
+            "*",
+            "*.",
+            "*..example.com",
+            "foo.*.com",
+            "https://example.com",
+        ] {
+            let us = UrlSafe::with_domains(vec![pattern]);
+            assert!(
+                us.validate().is_err(),
+                "accepted invalid pattern {pattern:?}"
+            );
+            assert!(
+                us.is_safe("https://example.com/").is_err(),
+                "evaluated invalid pattern {pattern:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_url_safe_accepts_hosts_supported_by_url_parser() {
+        let us = UrlSafe::with_domains(vec!["_service.internal"]);
+        assert!(us.validate().is_ok());
+        assert!(us.is_safe("https://_service.internal/").unwrap());
     }
 
     #[test]
@@ -5994,6 +6108,61 @@ mod tests {
             ..UrlSafe::new()
         };
         assert!(parent.validate_attenuation(&child_bad2).is_err());
+    }
+
+    #[test]
+    fn test_url_safe_attenuation_canonicalizes_domain_patterns() {
+        let parent = UrlSafe::with_domains(vec!["bücher.example", "*.example.com"]);
+
+        // IDNs are compared using the same canonical form as URL matching.
+        let idn_child = UrlSafe::with_domains(vec!["xn--bcher-kva.example"]);
+        assert!(parent.validate_attenuation(&idn_child).is_ok());
+
+        // Runtime wildcard semantics include both the base domain and nested
+        // wildcard policies, so attenuation must recognize both as subsets.
+        let base_child = UrlSafe::with_domains(vec!["example.com"]);
+        assert!(parent.validate_attenuation(&base_child).is_ok());
+        let nested_child = UrlSafe::with_domains(vec!["*.api.example.com"]);
+        assert!(parent.validate_attenuation(&nested_child).is_ok());
+    }
+
+    #[test]
+    fn test_url_safe_attenuation_rejects_malformed_policies() {
+        let malformed_parent = UrlSafe::with_domains(vec!["foo.*.example.com"]);
+        let valid = UrlSafe::with_domains(vec!["api.example.com"]);
+        assert!(malformed_parent.validate_attenuation(&valid).is_err());
+
+        let malformed_child = UrlSafe::with_domains(vec!["https://example.com"]);
+        assert!(valid.validate_attenuation(&malformed_child).is_err());
+    }
+
+    #[test]
+    fn test_url_safe_deny_attenuation_uses_semantic_coverage() {
+        let idn_parent = UrlSafe {
+            deny_domains: Some(vec!["bücher.example".to_string()]),
+            ..UrlSafe::new()
+        };
+        let idn_child = UrlSafe {
+            deny_domains: Some(vec!["xn--bcher-kva.example".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(idn_parent.validate_attenuation(&idn_child).is_ok());
+
+        let parent = UrlSafe {
+            deny_domains: Some(vec!["*.api.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        let broader_child = UrlSafe {
+            deny_domains: Some(vec!["*.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&broader_child).is_ok());
+
+        let narrower_child = UrlSafe {
+            deny_domains: Some(vec!["*.v1.api.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&narrower_child).is_err());
     }
 
     // ========================================================================

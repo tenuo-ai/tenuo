@@ -159,7 +159,7 @@ Tenuo is most differentiated at the argument layer. RBAC and tool-list approache
 Five examples illustrate the principle:
 
 - `Subpath(...)`: path containment with normalization for traversal and encoding edge cases.
-- `UrlSafe(...)`: SSRF protection covering IPv6, link-local, and DNS rebinding.
+- `UrlSafe(...)`: stateless SSRF protection covering IPv6, link-local, encoded IPs, and domain policy. DNS rebinding additionally requires resolved-address validation and connection pinning at the HTTP execution layer.
 - `Shlex(...)`: shell-aware argument parsing for command strings, with conservative rejection of shell metacharacter patterns.
 - `Range(...)`: numeric bounds.
 - `Pattern(...)`: glob matching with consistent escape rules.
