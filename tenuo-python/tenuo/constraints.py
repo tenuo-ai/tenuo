@@ -429,6 +429,12 @@ class Shlex:
         ")",  # Subshells
     }
 
+    # shlex with punctuation_chars=True emits every unquoted run of these
+    # characters as one token, so "|&", ">|", "&>", "<>", ">&" and other
+    # combinations never equal a single entry in DANGEROUS_TOKENS. Any token
+    # made only of these characters is a shell operator and is rejected.
+    OPERATOR_CHARS: frozenset = frozenset("();<>|&")
+
     # Characters that trigger shell expansion (checked in raw string)
     # These are dangerous even inside double quotes ("$VAR" expands)
     EXPANSION_CHARS: Set[str] = {"$", "`"}
@@ -464,6 +470,13 @@ class Shlex:
             raise ValueError("Shlex requires at least one allowed binary")
 
         self.allowed_bins: Set[str] = set(allow)
+
+    @classmethod
+    def is_operator_token(cls, token: str) -> bool:
+        """True if a parsed token is a shell operator (any run of OPERATOR_CHARS)."""
+        return token in cls.DANGEROUS_TOKENS or (
+            bool(token) and all(ch in cls.OPERATOR_CHARS for ch in token)
+        )
 
     def matches(self, value: Any) -> bool:
         """Check if command string is safe to execute.
@@ -530,9 +543,10 @@ class Shlex:
 
         # R3: Dangerous token check
         # Because we used punctuation_chars=True, any unquoted operator
-        # is guaranteed to be its own token.
+        # is guaranteed to be its own token, possibly merged with adjacent
+        # operator characters (see OPERATOR_CHARS).
         for token in tokens:
-            if token in self.DANGEROUS_TOKENS:
+            if self.is_operator_token(token):
                 logger.debug(f"Shlex rejected operator token '{token}' in: {value!r}")
                 return False
 

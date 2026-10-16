@@ -368,7 +368,9 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
     binary_allowed = binary in constraint.allowed_bins or bin_name in constraint.allowed_bins
 
     # Check for dangerous tokens
-    dangerous_tokens_found = [t for t in tokens if t in constraint.DANGEROUS_TOKENS]
+    from tenuo.constraints import Shlex
+
+    dangerous_tokens_found = [t for t in tokens if Shlex.is_operator_token(t)]
 
     # Determine safety
     safe = True
