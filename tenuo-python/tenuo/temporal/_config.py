@@ -296,6 +296,53 @@ class TenuoPluginConfig:
     list across every workflow it runs.
     """
 
+    child_warrant_policy: Optional[
+        Callable[[Any, str, str, Any], Optional[Dict[str, Any]]]
+    ] = None
+    """
+    Optional policy that mints a narrower child-workflow warrant for a
+    **plain** ``workflow.start_child_workflow()`` / ``execute_child_workflow()``
+    call — one that did not go through ``tenuo_execute_child_workflow()`` and
+    so would otherwise start the child with no warrant at all.
+
+    Called (only when the *parent* workflow itself carries a warrant) with
+    ``(parent_warrant, child_workflow_type, child_workflow_id, child_input)``
+    — ``child_workflow_type`` is the child's registered Temporal workflow
+    type name (resolved from a string or a ``@workflow.defn`` class/run
+    method, whichever the caller passed), ``child_input`` is the child's
+    positional start args. Must be a **pure, replay-deterministic** function
+    of those four arguments — same rules as any other workflow-code
+    decision: no I/O, no randomness, no wall-clock reads. (The actual
+    minting *does* cross an activity boundary — the same
+    ``_tenuo_internal_mint_activity`` local activity
+    ``tenuo_execute_child_workflow()`` uses — so its result, not the policy
+    function, is what gets recorded in workflow history and replayed.)
+
+    Once a policy is configured and the parent carries a warrant, every
+    plain child start must mint a narrower warrant or the child **does not
+    start**: returning ``None`` fails the workflow (non-retryable) rather
+    than starting the child unwarranted, and so does a parent whose Tenuo
+    headers carry no readable warrant. **The child never runs unwarranted
+    and never inherits the parent's warrant verbatim.** A parent with no
+    Tenuo headers at all has no authority to narrow; its children start as
+    they would without this field. When this field is unset, plain child
+    starts carry no warrant, as before.
+
+    Return a dict of ``tenuo_execute_child_workflow()``-style keyword
+    arguments to mint a warrant for the child: ``tools`` (a non-empty list,
+    **required**), and optionally ``constraints`` (dict), ``ttl_seconds``
+    (int), ``child_key_id`` (str). Unlike ``tenuo_execute_child_workflow()``,
+    omitting ``tools`` is an error rather than "all of the parent's tools",
+    and unknown keys are rejected, so a policy returning ``{}`` or a typo
+    fails the workflow instead of handing the child the parent's authority.
+    Minting reuses ``tenuo_execute_child_workflow()``'s own attenuation
+    path: the child can only **narrow** the parent (requesting a tool
+    outside the parent's, introducing a constraint key the parent capability
+    doesn't already have, or widening a ``Subpath`` all raise
+    ``TemporalConstraintViolation``, non-retryable) — this policy is a
+    *trigger*, not a second authority.
+    """
+
     activity_fns: Optional[List[Callable]] = None
     """
     Activity functions registered with the Worker.  When provided,
