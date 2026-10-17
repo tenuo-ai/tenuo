@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-10-17T16:41:32.820401+00:00",
+  "kind": "deterministic core example, not coding-agent evaluation",
+  "script": "tenuo-python/examples/task_authority.py",
+  "script_sha256": "ab2bec8c4b54bbb6022bd9a519611ffc9be5a002544e5473ea099f92a93e55bd",
+  "test": "tenuo-python/tests/examples/test_task_authority.py",
+  "test_sha256": "4e3ce1117ff0867cdcf8ad26ca23e8db8d257971526d8cf44ed501e99413a8ad",
+  "lanes": [
+    {
+      "python": "3.12.11",
+      "tenuo": "0.3.2",
+      "module": "/private/tmp/tenuo-local-agent-evals/framework-openai/.venv/lib/python3.12/site-packages/tenuo/__init__.py",
+      "native_sha256": "cdab4164312a1a59f0f4978f9cc3c600b3dc575b39728a14656219873e3ce379",
+      "lane": "release",
+      "returncode": 0,
+      "tests": 11,
+      "output": "...........                                                              [100%]\n11 passed in 0.07s\n"
+    },
+    {
+      "python": "3.12.11",
+      "tenuo": "0.3.2",
+      "module": "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python/tenuo/__init__.py",
+      "native_sha256": "b619ec542fd7497f3bfc690ffd4b025769809b071238ce263dfc189ad7385742",
+      "lane": "checkout",
+      "returncode": 0,
+      "tests": 11,
+      "output": "...........                                                              [100%]\n11 passed in 0.12s\n"
+    }
+  ],
+  "one_command": {
+    "command": "uv run --no-project tenuo-python/examples/task_authority.py",
+    "returncode": 0,
+    "output": "Task: pay INV-123 to verified-bank. Parent <= $500; specialist <= $250, 60s.\nALLOWED Chosen payment: $200 to verified-bank -> payment effects=1\nDENIED  Injected bank change: $200 to attacker-bank -> payment effects=0\nDENIED  Worker tries $400 (parent allows it; child does not) -> payment effects=0\nDENIED  Worker tries a different invoice -> payment effects=0\nDevelopment demo: per-call limits; no total-budget, replay or idempotency guarantee.\n",
+    "notes": "PEP 723 metadata pins released tenuo==0.3.2 and Python 3.12; no provider/model credentials."
+  },
+  "validation_history": [
+    "Initial demo failed on both runtimes because MintBuilder does not export max_depth. Removed unsupported call; retained default parent depth and terminal child. Initial skill validation rejected immutable main/draft blob links under release-pin rules; core anchors changed to matching release tag and pending draft linked via PR #667."
+  ],
+  "example_api_checks": {
+    "command": "python -m pytest -q tenuo-python/tests/examples/test_examples.py -k task_authority",
+    "returncode": 0,
+    "output": ".....                                                                    [100%]\n5 passed, 465 deselected in 0.14s\n"
+  },
+  "structural_checks": {
+    "script_tests": 62,
+    "script_tests_output": "..............................................................\n----------------------------------------------------------------------\nRan 62 tests in 0.494s\n\nOK\nValidated 4 skills, 64 portable links, and release contract v0.3.2.\n",
+    "skill_validation_returncode": 0,
+    "creator_frontmatter_validation_returncode": 0,
+    "notes": "quick_validate required the existing environment with PyYAML; system Python lacked that dependency. Readiness remains NOT READY for prose review and stale model evidence."
+  }
+}
