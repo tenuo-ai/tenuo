@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`python -m tenuo.mcp.wrap`.** Runs an existing FastMCP server, unmodified,
+  with `TenuoMiddleware` checking every tool call:
+  `TENUO_TRUSTED_ROOT=<hex> python -m tenuo.mcp.wrap mcp-atlassian`. Takes the
+  server's console script or a `module:function` entrypoint and passes the
+  remaining arguments through. The check is installed where every MCP session
+  starts, over stdio and HTTP. A server not built on FastMCP is refused rather
+  than started unguarded.
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,

@@ -14,7 +14,7 @@ will use everything those settings allow.
 If the server is built on [FastMCP](https://gofastmcp.com), you can give each
 call a warrant that says exactly what this task may do, and have the server
 refuse anything else before the tool runs. You don't need to fork it or wait
-for an upstream change: it's a ten-line launcher.
+for an upstream change: you put one command in front of the server's own.
 
 Here's mcp-atlassian already pinned to one project and three tools, with an
 agent asked to close out OPS-12:
@@ -34,14 +34,54 @@ same + Tenuo (the agent's warrant: read, comment on and close OPS-12):
 The full runnable version is in
 [tenuo-demos/jira-mcp-scoped-triage](https://github.com/tenuo-ai/tenuo-demos/tree/main/jira-mcp-scoped-triage).
 
-## The launcher
+## Run it
 
 ```bash
 uv pip install "tenuo[fastmcp]" mcp-atlassian
+TENUO_TRUSTED_ROOT=<hex public key> python -m tenuo.mcp.wrap mcp-atlassian
 ```
 
+`tenuo.mcp.wrap` takes the server's console script (or a `module:function`
+entrypoint) and passes everything after it to the server unchanged: same
+environment variables, same flags
+(`python -m tenuo.mcp.wrap mcp-atlassian --transport streamable-http`), same
+tools. Install it in the same environment as the server.
+
+With `TENUO_TRUSTED_ROOT` set to the public key you issue warrants from
+(comma-separated, or repeat `--trusted-root`, for more than one), every
+`tools/call` must carry a warrant chain that leads back to that key, plus a
+signature from the key the warrant was issued to. The check covers the tool
+name and every argument; refused calls return an error result and the tool
+function never runs.
+
+The wrapper puts `TenuoMiddleware` at the front of the server's FastMCP
+middleware when each MCP session starts, over stdio and HTTP alike. Tenuo has
+to run first: some servers rewrite arguments in their own middleware
+(Workspace MCP converts camelCase to snake_case), and the signature covers the
+arguments exactly as the client sent them. If the server turns out not to be
+built on FastMCP, the wrapper refuses to start it rather than run it
+unchecked.
+
+Servers we've run this way:
+
+| Server | Command | Example |
+|---|---|---|
+| [mcp-atlassian](https://github.com/sooperset/mcp-atlassian) 0.23 | `python -m tenuo.mcp.wrap mcp-atlassian` | [jira-mcp-scoped-triage](https://github.com/tenuo-ai/tenuo-demos/tree/main/jira-mcp-scoped-triage) |
+| [Workspace MCP](https://github.com/taylorwilsdon/google_workspace_mcp) 2.1 | `python -m tenuo.mcp.wrap workspace-mcp --tools gmail` | [workspace-mcp-scoped-email](https://github.com/tenuo-ai/tenuo-demos/tree/main/workspace-mcp-scoped-email) |
+| [alpaca-mcp-server](https://github.com/alpacahq/alpaca-mcp-server) 2.4 | `python -m tenuo.mcp.wrap alpaca-mcp-server` | [alpaca-mcp-scoped-trading](https://github.com/tenuo-ai/tenuo-demos/tree/main/alpaca-mcp-scoped-trading) |
+
+Workspace MCP's code lives in top-level modules such as `main`, so run it from
+a directory that doesn't have its own `main.py`; `python -m` puts the current
+directory first on the import path.
+
+### In your own launcher
+
+If you'd rather not patch at session start, add the middleware to the
+server's FastMCP object yourself and call its entrypoint. This needs a
+module-level server object; servers that build theirs at startup (Alpaca's
+`build_server()`) need the wrapper.
+
 ```python
-# tenuo_atlassian.py: run this instead of the server's own command
 import os
 
 from tenuo import Authorizer, PublicKey
@@ -58,42 +98,7 @@ if __name__ == "__main__":
     main()
 ```
 
-Everything else stays the same: same environment variables, same CLI flags
-(`python tenuo_atlassian.py --transport streamable-http ...`), same tools.
-
-With `TENUO_TRUSTED_ROOT` set to the public key you issue warrants from, every
-`tools/call` must carry a warrant chain that leads back to that key, plus a
-signature from the key the warrant was issued to. The middleware checks the
-tool name and every argument; refused calls return an error result and the
-tool function never runs.
-
-Use `insert(0, ...)`, not `add_middleware`, so Tenuo runs first. Some servers
-rewrite arguments in their own middleware (Workspace MCP converts camelCase
-to snake_case), and the signature covers the arguments exactly as the client
-sent them.
-
-## Finding the two imports
-
-You need the FastMCP object the server runs, and the function its console
-script calls. Search the package for where the server is started, then read
-its entry points:
-
-```bash
-PKG=$(python -c "import mcp_atlassian, os; print(os.path.dirname(mcp_atlassian.__file__))")
-grep -rnE "[a-z_]+\.run(_async)?\(" "$PKG" | grep -v asyncio.run
-# mcp_atlassian/__init__.py:89:    server_task = asyncio.create_task(main_mcp.run_async(**run_kwargs))
-
-python -c "import importlib.metadata as m; print(m.distribution('mcp-atlassian').read_text('entry_points.txt'))"
-# mcp-atlassian = mcp_atlassian:main
-```
-
-Import any modules that register tools before the entrypoint runs, if the
-server registers them lazily. Servers we've run this way:
-
-| Server | FastMCP object | Entrypoint | Example |
-|---|---|---|---|
-| [mcp-atlassian](https://github.com/sooperset/mcp-atlassian) 0.23 | `mcp_atlassian.servers.main_mcp` | `mcp_atlassian.main` | [jira-mcp-scoped-triage](https://github.com/tenuo-ai/tenuo-demos/tree/main/jira-mcp-scoped-triage) |
-| [Workspace MCP](https://github.com/taylorwilsdon/google_workspace_mcp) 2.1 | `core.server.server` | `main.main` | [workspace-mcp-scoped-email](https://github.com/tenuo-ai/tenuo-demos/tree/main/workspace-mcp-scoped-email) |
+Use `insert(0, ...)`, not `add_middleware`, so Tenuo runs first.
 
 ## Writing the warrant
 
@@ -150,7 +155,7 @@ configure(issuer_key=key, trusted_roots=[key.public_key])
 
 async def main():
     async with SecureMCPClient(
-        "python", ["tenuo_atlassian.py"],
+        "python", ["-m", "tenuo.mcp.wrap", "mcp-atlassian"],
         inject_warrant=True,
         env={"TENUO_TRUSTED_ROOT": bytes(key.public_key_bytes()).hex(), "JIRA_URL": "...", "JIRA_PERSONAL_TOKEN": "..."},
     ) as client:
