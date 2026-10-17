@@ -40,6 +40,12 @@ the full root-first chain. Inspect with `warrant show`; verify with `warrant
 verify`. Reissue produces a new ID and leaves the old warrant valid until expiry
 or revocation. Never silently select the newest stored warrant for an agent.
 
+For a held call, use `tenuo-cli approval show --file REQUEST.yaml` and send the
+file to an external approver. Approve or deny with their key and independent
+trust data. Never grant a signing agent the approver key to answer its own
+request. Approval cannot widen scope or extend the warrant. Local approvals are
+reusable for an identical call until expiry, not one-use execution tokens.
+
 ### Phase 1: Discover Context
 
 Before asking questions, scan the codebase:
