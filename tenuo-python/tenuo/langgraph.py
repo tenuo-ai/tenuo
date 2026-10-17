@@ -106,7 +106,12 @@ from tenuo_core import Warrant
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langgraph_compat  # noqa: E402
 
-from ._enforcement import enforce_tool_call, enforce_tool_call_async, filter_tools_by_warrant
+from ._enforcement import (
+    enforce_tool_call,
+    enforce_tool_call_async,
+    filter_tools_by_warrant,
+    split_presented_warrant,
+)
 from .bound_warrant import BoundWarrant
 from .config import resolve_trusted_roots
 from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
@@ -692,8 +697,17 @@ def _get_warrant_chain(
     silently degrading to a leaf-only check.
     """
     chain = state.get("warrant_chain")
+    embedded = _stack_parents(state.get("warrant"))
     if chain is None or (isinstance(chain, (list, tuple)) and not chain):
+        if embedded:
+            return embedded
         chain = fallback
+    elif embedded:
+        raise ConfigurationError(
+            "State has both a multi-warrant stack in 'warrant' and an explicit "
+            "'warrant_chain'. Present the chain one way: either the stack as the "
+            "warrant, or the leaf plus warrant_chain."
+        )
     if chain is None or (isinstance(chain, (list, tuple)) and not chain):
         return None
     if isinstance(chain, (str, bytes)) or not isinstance(chain, (list, tuple)):
@@ -724,6 +738,26 @@ def _get_warrant_chain(
                 f"got {type(parent).__name__}."
             )
     return parents
+
+
+def _stack_parents(warrant: Any) -> Optional[List[Any]]:
+    """Parents carried inside ``state["warrant"]`` when it holds a whole chain.
+
+    ``warrant`` may be an encoded WarrantStack or a root-first list, the same
+    forms every other adapter accepts through ``split_presented_warrant``.
+    Returns ``None`` for a single warrant. Decode errors are left to
+    ``_get_bound_warrant``, which reports them.
+    """
+    if isinstance(warrant, str):
+        if len(warrant) > _MAX_WARRANT_B64:
+            return None
+    elif not isinstance(warrant, (list, tuple)):
+        return None
+    try:
+        _, parents = split_presented_warrant(warrant)
+    except Exception:
+        return None
+    return parents or None
 
 
 def _get_bound_warrant(
@@ -758,15 +792,18 @@ def _get_bound_warrant(
             "State is missing 'warrant' field. Ensure your State TypedDict includes 'warrant: Warrant'."
         )
 
-    # Auto-inflate from string (Base64) if needed (for serialization safety)
+    # Auto-inflate from a string token (single warrant or WarrantStack) or a
+    # root-first list, for serialization safety. The leaf is bound here; any
+    # parents in a stack are read by _get_warrant_chain.
     if isinstance(warrant, str):
         if len(warrant) > _MAX_WARRANT_B64:
             raise ConfigurationError(
                 f"Warrant string is {len(warrant)} bytes, exceeding the "
                 f"{_MAX_WARRANT_B64} byte safety limit. Possible corruption or attack."
             )
+    if isinstance(warrant, (str, list, tuple)):
         try:
-            warrant = Warrant.from_base64(warrant)
+            warrant, _ = split_presented_warrant(warrant)
         except Exception as e:
             raise ConfigurationError(f"Failed to decode warrant from string token: {e}")
 

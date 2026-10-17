@@ -2201,3 +2201,89 @@ class TestDelegatedWarrantChain:
         )
         assert not contained.allowed
         assert "not trusted" in (contained.denial_reason or "")
+
+    # C8 ---------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_warrant_stack_token_in_state_authorizes(self, delegation, search_tool):
+        """C8: state["warrant"] may hold the whole chain as one WarrantStack token."""
+        from tenuo_core import encode_warrant_stack
+
+        node = self._node(search_tool, delegation["root_key"])
+        token = encode_warrant_stack([delegation["task"], delegation["child"]])
+        message = self._run(node, {"warrant": token})
+        assert "Authorization denied" not in message.content
+        assert "results: papers" in message.content
+
+    # C9 ---------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_root_first_list_in_state_authorizes(self, delegation, search_tool):
+        """C9: state["warrant"] may hold the chain as a root-first list."""
+        node = self._node(search_tool, delegation["root_key"])
+        message = self._run(node, {"warrant": [delegation["task"], delegation["child"]]})
+        assert "Authorization denied" not in message.content
+        assert "results: papers" in message.content
+
+    # C10 --------------------------------------------------------------
+
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    def test_stack_plus_explicit_chain_fails_closed(self, delegation, search_tool):
+        """C10: a stack and an explicit warrant_chain together are ambiguous."""
+        from tenuo_core import encode_warrant_stack
+
+        node = self._node(search_tool, delegation["root_key"])
+        token = encode_warrant_stack([delegation["task"], delegation["child"]])
+        message = self._run(node, {"warrant": token, "warrant_chain": [delegation["task"]]})
+        assert message.status == "error"
+        assert "results: papers" not in message.content
+
+
+class TestWarrantStackStateHelpers:
+    """State helpers read a WarrantStack or root-first list from 'warrant'."""
+
+    @pytest.fixture
+    def chain(self):
+        root_key, mid_key = SigningKey.generate(), SigningKey.generate()
+        task = Warrant.issue(root_key, capabilities={"search": {}}, ttl_seconds=3600, holder=mid_key.public_key)
+        child = task.attenuate(
+            signing_key=mid_key, holder=SigningKey.generate().public_key, capabilities={"search": {}}, ttl_seconds=300
+        )
+        return task, child
+
+    def test_stack_token_gives_leaf_and_parents(self, chain, registry):
+        from tenuo_core import encode_warrant_stack
+
+        from tenuo.langgraph import _get_bound_warrant, _get_warrant_chain
+
+        task, child = chain
+        registry.register("default", SigningKey.generate())
+        state = {"warrant": encode_warrant_stack([task, child])}
+        assert _get_bound_warrant(state).warrant.to_bytes() == child.to_bytes()
+        assert [w.to_bytes() for w in _get_warrant_chain(state)] == [task.to_bytes()]
+
+    def test_single_token_has_no_embedded_parents(self, chain):
+        from tenuo.langgraph import _get_warrant_chain
+
+        task, child = chain
+        assert _get_warrant_chain({"warrant": child.to_base64()}) is None
+        assert _get_warrant_chain({"warrant": child.to_base64()}, [task]) == [task]
+
+    def test_stack_beats_constructor_default(self, chain):
+        from tenuo_core import encode_warrant_stack
+
+        from tenuo.langgraph import _get_warrant_chain
+
+        task, child = chain
+        other = Warrant.issue(SigningKey.generate(), capabilities={"search": {}}, ttl_seconds=60)
+        state = {"warrant": encode_warrant_stack([task, child])}
+        assert [w.to_bytes() for w in _get_warrant_chain(state, [other])] == [task.to_bytes()]
+
+    def test_stack_and_explicit_chain_is_rejected(self, chain):
+        from tenuo_core import encode_warrant_stack
+
+        from tenuo.langgraph import _get_warrant_chain
+
+        task, child = chain
+        with pytest.raises(ConfigurationError, match="both a multi-warrant stack"):
+            _get_warrant_chain({"warrant": encode_warrant_stack([task, child]), "warrant_chain": [task]})
