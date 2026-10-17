@@ -6,7 +6,17 @@ import logging
 import threading
 import warnings
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from tenuo.temporal._observability import TemporalAuditEvent, TenuoMetrics
 from tenuo.temporal._resolvers import KeyResolver
@@ -328,6 +338,29 @@ class TenuoPluginConfig:
     Pass the **same** list you give to ``Worker(activities=...)``.
     """
 
+    unchecked_args: Iterable[str] = frozenset()
+    """
+    Activity parameter names left out of authorization.
+
+    Some frameworks pass every activity an extra argument of their own, such
+    as a context object that tells the activity where to publish its events.
+    That argument carries no authority: a warrant shouldn't have to name it,
+    and it may not be a type proof-of-possession can sign. Arguments named
+    here are dropped before PoP signing on the workflow side and before the
+    warrant check on the activity worker, so they are neither signed nor
+    constrained. Example: ``unchecked_args={"tool_ctx"}``.
+
+    **Only list arguments that grant nothing.** An unchecked argument can be
+    changed without invalidating the PoP. So that this can't be used to hide
+    a real argument, a worker with ``unchecked_args`` set names arguments from
+    the activity function's own signature and denies a call whose
+    ``x-tenuo-arg-keys`` header disagrees with it, or whose activity function
+    isn't available to check against.
+
+    Needs parameter names on both sides: on the workflow side, register the
+    activities through ``activity_fns`` when you dispatch them by name.
+    """
+
     approval_handler: Optional[Callable] = None
     """
     Callback invoked when an approval gate fires and no pre-supplied
@@ -514,6 +547,17 @@ class TenuoPluginConfig:
             )
 
     def __post_init__(self) -> None:
+        if isinstance(self.unchecked_args, str):
+            raise ValueError(
+                "TenuoPluginConfig: unchecked_args takes a collection of parameter "
+                f"names, not a string; did you mean {{{self.unchecked_args!r}}}?"
+            )
+        unchecked = frozenset(self.unchecked_args)
+        if any(not isinstance(n, str) or not n for n in unchecked):
+            raise ValueError(
+                "TenuoPluginConfig: unchecked_args must be non-empty parameter names"
+            )
+        self.unchecked_args = unchecked
         if self.dry_run:
             logger.warning(
                 "TenuoPluginConfig: dry_run=True enables shadow mode and "

@@ -255,6 +255,12 @@ class _TenuoWorkflowOutboundInterceptor:
 
                     raw_args = getattr(input, "args", ()) or ()
                     args_dict = _args_to_dict_by_fn(raw_args, activity_fn)
+                    # The header names every positional argument, unchecked ones
+                    # included, so the worker can map them back by position.
+                    arg_keys = list(args_dict.keys())
+                    unchecked = self._config.unchecked_args if self._config else frozenset()
+                    if unchecked:
+                        args_dict = {k: v for k, v in args_dict.items() if k not in unchecked}
 
                     pop_tool_name = _warrant_tool_name_for_activity_type(
                         self._config, activity_type, activity_fn
@@ -287,7 +293,7 @@ class _TenuoWorkflowOutboundInterceptor:
                         activity_headers[k] = Payload(data=v)
                     activity_headers[TENUO_POP_HEADER] = Payload(data=pop_encoded)
 
-                    arg_keys_csv = ",".join(args_dict.keys())
+                    arg_keys_csv = ",".join(arg_keys)
                     activity_headers[TENUO_ARG_KEYS_HEADER] = Payload(
                         data=arg_keys_csv.encode("utf-8")
                     )
@@ -1106,6 +1112,33 @@ class TenuoActivityInboundInterceptor:
 
         args = self._extract_arguments(input, headers)
 
+        # -- 5b. Unchecked arguments --
+        if self._config.unchecked_args:
+            mismatch = self._unchecked_args_mismatch(input, headers, activity_fn)
+            if mismatch is not None:
+                reason = f"Cannot exclude unchecked arguments: {mismatch}"
+                self._emit_denial_event(
+                    info=info,
+                    warrant=warrant,
+                    tool=tool_name,
+                    args=args,
+                    reason=reason,
+                    constraint="unchecked_args_unverifiable",
+                    start_ns=start_ns,
+                    authorizer=self._authorizer,
+                    presented_chain=[warrant],
+                    pop_auth_args=args,
+                )
+                if self._config.on_denial == "raise" and not self._config.dry_run:
+                    raise self._wrap_as_non_retryable(TemporalConstraintViolation(
+                        tool=tool_name,
+                        arguments=self._redact_args(args),
+                        constraint=reason,
+                        warrant_id=getattr(warrant, "id", ""),
+                    ))
+                return await _deny_or_continue(tool=tool_name, reason=reason)
+            args = {k: v for k, v in args.items() if k not in self._config.unchecked_args}
+
         # -- 6. Delegation Depth Limit --
         chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
         if chain_depth > self._config.max_chain_depth:
@@ -1515,6 +1548,32 @@ class TenuoActivityInboundInterceptor:
             return args[0]
 
         return {f"arg{i}": arg for i, arg in enumerate(args)}
+
+    def _unchecked_args_mismatch(
+        self,
+        input: Any,
+        headers: Optional[Dict[str, bytes]],
+        activity_fn: Optional[Any],
+    ) -> Optional[str]:
+        """Why the unchecked arguments can't be safely identified, or None.
+
+        The ``x-tenuo-arg-keys`` header isn't covered by the PoP. Trusting it to
+        say which positional argument is unchecked would let a tampered header
+        relabel a real argument as unchecked and skip its check, so the names
+        must come from the activity function's own signature.
+        """
+        if activity_fn is None:
+            return "the activity function isn't available to name its arguments"
+        args = getattr(input, "args", ()) or ()
+        fn_keys = list(_args_to_dict_by_fn(args, activity_fn).keys())
+        if headers and TENUO_ARG_KEYS_HEADER in headers:
+            header_keys = headers[TENUO_ARG_KEYS_HEADER].decode("utf-8").split(",")
+            if header_keys != fn_keys:
+                return (
+                    "the argument names in the request don't match the activity's "
+                    f"signature ({','.join(header_keys)} vs {','.join(fn_keys)})"
+                )
+        return None
 
     def _redact_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Redact argument values for logging."""

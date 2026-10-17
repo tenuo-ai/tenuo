@@ -513,6 +513,20 @@ async with Worker(
 
 ---
 
+### Framework arguments (`unchecked_args`)
+
+Some frameworks pass every activity an extra argument of their own, such as a context object that tells the activity where to publish its events, and dispatch activities by name. That argument grants nothing, but by default Tenuo treats it like any other: it has to be a type PoP can sign, and under closed-world constraints the warrant has to name it. Name it in `unchecked_args` and Tenuo leaves it out of PoP signing and the warrant check, while every other argument is checked as usual:
+
+```python
+TenuoPluginConfig(
+    ...,
+    activity_fns=[refund],          # names arguments for by-name dispatch
+    unchecked_args={"tool_ctx"},
+)
+```
+
+Only list arguments that grant nothing. An unchecked argument isn't covered by the PoP signature, so it can be changed without the check noticing. With `unchecked_args` set, the worker names each argument from the activity function's own signature and denies a call whose `x-tenuo-arg-keys` header disagrees, so a real argument can't be relabelled as an unchecked one. Use the same setting on the workflow worker and the activity worker.
+
 ## Sandbox passthrough explained
 
 Temporal's Python SDK re-imports workflow code in an isolated sandbox on every task. Tenuo signs PoP inside the sandbox at `execute_activity()` dispatch time using `tenuo_core` (a PyO3 Rust extension). Both `tenuo` and `tenuo_core` must be declared passthrough.
