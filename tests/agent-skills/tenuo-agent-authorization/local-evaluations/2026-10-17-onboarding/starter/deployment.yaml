@@ -1,0 +1,12 @@
+# Two separately owned processes; this file documents the intended deployment.
+agent:
+  code: agent.py
+  credentials: worker-network-access-only
+  allows_arbitrary_python: true
+payment_worker:
+  code: worker.py
+  credentials: payment-provider-secret-reference
+  owner: trusted-payments-team
+issuer:
+  owner: trusted-invoice-approval-service
+  trusted_records: approved_invoices.json

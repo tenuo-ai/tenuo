@@ -83,9 +83,10 @@ that parent ceiling as one. Additional transport/type negative tests use the
 actual receiver and check denial reasons, with valid positive controls.
 
 Tests/command outputs and runtime provenance are recorded in
-`onboarding-quickstart-results.json`. These checks do not certify the revised
-onboarding/deployment prose: a fresh blind project-onboarding evaluation remains
-necessary, including an absent-template-parser case and deployment/key-ownership
-choices. Per-framework short canonical examples are still a distribution gap;
+`onboarding-quickstart-results.json`. These deterministic checks do not certify revised prose. A subsequent fresh
+blind project-onboarding diagnostic, including absent-template-parser fallback
+and deployment/key-ownership choices, passes 23 independent HTTP tests; see
+project-onboarding-result.python.json. Further framework/Cloud/CLI and routing
+coverage remains necessary before broader promotion. Per-framework short canonical examples are still a distribution gap;
 the existing four framework diagnostics and demo topology references remain
 distinct from this core first-run example.

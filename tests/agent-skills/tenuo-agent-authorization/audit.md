@@ -70,3 +70,15 @@ Use `python3 scripts/validate_agent_skills.py --readiness --summary
 structural/advisory. The separate manual/weekly workflow checks the live horizon
 and real dispatch without invoking a hosted model. A future release or changed
 SDK/PR source requires source review and refreshed evidence before promotion.
+
+The project-onboarding follow-up adds explicit deployment/issuance choices,
+grounded source review including Cloud and the pending IETF -02 draft, and a
+one-command released-SDK payment-autonomy example. Eleven example receiver tests
+pass on release/main, and five existing example API checks pass. A separate
+fresh blind onboarding run passes 23 independent real-HTTP tests; its first
+proposal and accurate development-loop limits are preserved in
+[the new artifacts](local-evaluations/2026-10-17-onboarding/README.md).
+This is additional evidence, not renewal of historical payment/framework inputs
+or promotion approval. Short canonical examples for every integration and
+discovery/marketplace packaging remain distribution work after correctness and
+manual testing; no PR or marketplace submission has been opened.

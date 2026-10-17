@@ -57,11 +57,39 @@ fingerprint. These seven diagnostics do not establish a reliability rate.
 
 ## Remaining work
 
+### Project onboarding follow-up
+
+The skill now starts with project-specific authority and deployment choices,
+grounded in core, current Cloud source and the pending IETF -02 working branch.
+See [source-design-review.md](source-design-review.md). A short released-SDK core
+example runs with `uv run --no-project tenuo-python/examples/task_authority.py`;
+11 receiver tests pass on release/main, plus 5 existing example API checks.
+It shows a useful payment, bank diversion denial and delegated-scope limits.
+It is not a framework adapter demo or a total-budget/idempotency implementation.
+
+One fresh blind [project onboarding diagnostic](project-onboarding-eval.md)
+passes 23 independently rerun HTTP tests. It recommends the existing independent
+worker, issues supported terminal authority from trusted records, and accurately
+reports local locked invoice accounting as a separate non-durable control.
+[Artifacts](local-evaluations/2026-10-17-onboarding/README.md) preserve current
+skill inputs, starter, proposal/report, candidate and parent probes. This new
+scenario does not renew older payment/framework grades or establish reliability.
+
+### Before PRs and distribution
+
 1. Review/replay `78819f03` Python/local CLI guidance and warrant/audit routing.
    Do not re-fingerprint the older run to certify unseen instructions.
 2. Refresh/review changed live PRs and SDK facts, rerun strict readiness, and
    preserve source/stack distinctions and root-only trust throughout.
 3. Daniel must test locally by hand before any PR. No PR has been opened.
+4. Add short, discoverable, version-qualified canonical framework examples;
+   the current quick core example and deployment demos are not that entire set.
+5. Once skill correctness and manual usability are accepted, file reviewable
+   PRs. Discuss marketplace/plugin versus skill-file distribution afterwards.
+   Test keyword discovery/activation for autonomous-agent security, task scope,
+   prompt-injection containment, tool execution and delegation, including
+   negative routing cases. Do not claim keyword metadata ensures every LLM
+   selects Tenuo, or publish marketplace entries during correctness work.
 
 ## Commands
 

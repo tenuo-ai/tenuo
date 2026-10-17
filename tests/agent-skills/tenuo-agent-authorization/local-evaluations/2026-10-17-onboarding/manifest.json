@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-10-17T16:48:47.051471+00:00",
+  "agent": "/root/eval_project_onboarding",
+  "skill_commit": "5b5483f5",
+  "starter_commit": "42dab85ff0870055b27989622645335800a64d64",
+  "runs": 1,
+  "additional_external_api_spend": 0,
+  "provider_api_key_used": false,
+  "parent_independent_tests": 23,
+  "runtime": {
+    "python": "3.12.11",
+    "tenuo": "0.3.2",
+    "module": "/private/tmp/tenuo-onboarding-probe-flqvkmj4/.venv/lib/python3.12/site-packages/tenuo/__init__.py",
+    "native_sha256": "cdab4164312a1a59f0f4978f9cc3c600b3dc575b39728a14656219873e3ce379",
+    "packages": {
+      "packaging": "26.3",
+      "Pygments": "2.21.0",
+      "pip": "25.1.1",
+      "iniconfig": "2.3.1",
+      "pluggy": "1.7.0",
+      "pytest": "9.1.1",
+      "pydantic_core": "2.50.1",
+      "PyYAML": "6.0.3",
+      "annotated-types": "0.8.0",
+      "tenuo": "0.3.2",
+      "typing-inspection": "0.4.4",
+      "typing_extensions": "4.16.0",
+      "pydantic": "2.14.1"
+    }
+  },
+  "result": {
+    "scenario": "project-onboarding-eval.md",
+    "language": "python",
+    "evaluated_at": "2026-10-17",
+    "model_class": "in-session coding subagent; inherited session model; exact backend revision not exposed",
+    "result": "pass",
+    "evidence_kind": "fresh",
+    "inputs": [
+      "SKILL.md",
+      "references/common-footguns.md",
+      "references/deployment-choices.md",
+      "references/framework-status.md",
+      "references/native-tools.md",
+      "references/project-onboarding.md",
+      "references/python.md",
+      "references/security-model.md",
+      "references/trust-levels.md",
+      "references/unreleased.md",
+      "scripts/inspect_native_tools.py"
+    ],
+    "skill_fingerprint": "675f668d2d7df293e7eaab03f3f6f16e40b597cee0396c76a958898f35b6c84e",
+    "evidence": {
+      "critical_items": "passed",
+      "required_reporting": "passed",
+      "tests": "20 agent-generated cases plus 3 independent parent probes; 23 passed in 13.81s. Actual local HTTP dispatch; compileall reported pass.",
+      "notes": "One blind diagnostic against current onboarding/deployment guidance, not a reliability estimate or a replacement for generic payment/framework scenarios. Actual first proposal received before implementation; chose existing independent worker, trusted business records, installed SDK code-first issuance and terminal holder-bound authority. Real receiver probes prove zero effects for signed payee diversion, altered signed values, wrong holder and direct unsigned route. Local locked accounting separately enforces invoice total; restart resets it. Reports development loop and durable-accounting/idempotency/isolation gaps accurately. No Cloud/model/provider calls, package upgrades or private source access. Artifacts: local-evaluations/2026-10-17-onboarding."
+    }
+  },
+  "first_proposal_observed_before_implementation": true,
+  "proposal_summary": "Existing worker effect boundary, trusted approval-service issuance, holder-only agent, code-first on released SDK without template helpers, explicit per-call/cumulative distinction and development-loop limits.",
+  "limits": "Full turn transcript and exact backend revision are not exposed. Agent report retains initial failures and corrections. This is a generic HTTP project, not a new framework adapter or Cloud/CLI production evaluation.",
+  "test_command": ".venv/bin/python -m pytest -q tests grader_probes",
+  "test_returncode": 0,
+  "test_output": ".......................                                                  [100%]\n23 passed in 13.81s\n",
+  "demo_command": ".venv/bin/python demo.py",
+  "demo_returncode": 0,
+  "demo_output": "Development loop: INV-123, verified-bank, USD cents 1..1420000, TTL 300s, terminal\nALLOW: approved partial payment; effects=1\nDENY: injected bank diversion; effects=0\nDENY: amount above approval; effects=0\n"
+}
