@@ -16,7 +16,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 from tenuo.exceptions import (
     ApprovalGateTriggered,
@@ -35,9 +35,14 @@ from tenuo.temporal._constants import (
     TENUO_POP_HEADER,
     TENUO_TEMPORAL_PLUGIN_ID,
 )
+from tenuo.temporal._activity_patterns import (
+    is_mcp_call_tool_activity,
+    unwrap_mcp_call_tool,
+)
 from tenuo.temporal._decorators import (
     _warrant_tool_name_for_activity_type,
     is_unprotected,
+    is_unwarranted_activity,
 )
 from tenuo.temporal._headers import (
     _extract_warrant_from_headers,
@@ -47,6 +52,7 @@ from tenuo.temporal._observability import TemporalAuditEvent
 from tenuo.temporal._pop import (
     _args_dict_uses_only_positional_fallback_keys,
     _args_to_dict_by_fn,
+    _apply_pop_exclusions,
     _normalize_args_for_pop,
     _positional_pop_mismatch_message,
     _prevalidate_args_against_warrant,
@@ -218,6 +224,14 @@ class _TenuoWorkflowOutboundInterceptor:
             run_key = _current_run_key()
             activity_type = input.activity
 
+            # unwarranted_activities: dispatch exactly as if no Tenuo headers
+            # were configured for this workflow at all — no warrant/PoP
+            # headers attached. Checked first and unconditionally so it can
+            # never be short-circuited by other outbound state (pending
+            # approvals, overrides, ...).
+            if is_unwarranted_activity(activity_type, self._config):
+                return self._next.start_activity(input)
+
             with _store_lock:
                 pending_approvals = _pending_activity_approvals.pop(run_key, None)
 
@@ -259,6 +273,26 @@ class _TenuoWorkflowOutboundInterceptor:
                     pop_tool_name = _warrant_tool_name_for_activity_type(
                         self._config, activity_type, activity_fn
                     )
+
+                    # mcp_call_tool_activities: unwrap the wrapper's single
+                    # argument into the inner MCP tool name/arguments before
+                    # pop_exclude_args / normalization, so the mapped tool's
+                    # own args go through the same pipeline as any other
+                    # activity's.
+                    if self._config and is_mcp_call_tool_activity(
+                        activity_type, self._config.mcp_call_tool_activities
+                    ):
+                        pop_tool_name, args_dict = unwrap_mcp_call_tool(
+                            activity_type, args_dict
+                        )
+
+                    if self._config and self._config.pop_exclude_args:
+                        args_dict = _apply_pop_exclusions(
+                            args_dict,
+                            self._config.pop_exclude_args,
+                            activity_fn_resolved=activity_fn is not None,
+                            tool_name=pop_tool_name,
+                        )
 
                     if raw_args and _args_dict_uses_only_positional_fallback_keys(
                         args_dict
@@ -1082,6 +1116,18 @@ class TenuoActivityInboundInterceptor:
         # -- 4. Unauthenticated Execution Handling --
         if warrant is None:
             if self._config.require_warrant:
+                if is_unwarranted_activity(info.activity_type, self._config):
+                    # unwarranted_activities allowlist: internal plumbing
+                    # this worker chose to run without a warrant. Only
+                    # reached with warrant is None — an activity in this
+                    # list that DOES present a warrant falls through to
+                    # normal verification below, unaffected.
+                    logger.debug(
+                        "Activity %s allowed without a warrant "
+                        "(unwarranted_activities allowlist)",
+                        info.activity_type,
+                    )
+                    return await self._next.execute_activity(input)
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
                 if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise self._wrap_as_non_retryable(TemporalConstraintViolation(
@@ -1104,11 +1150,23 @@ class TenuoActivityInboundInterceptor:
                 return await self._next.execute_activity(input)
 
         # -- 5. Tool Resolution & Argument Extraction --
-        tool_name = _warrant_tool_name_for_activity_type(
+        default_tool_name = _warrant_tool_name_for_activity_type(
             self._config, info.activity_type, activity_fn
         )
-
-        args = self._extract_arguments(input, headers)
+        try:
+            tool_name, args = self._resolve_tool_and_args(
+                input, headers, info.activity_type, activity_fn, default_tool_name,
+            )
+        except TenuoContextError as extract_exc:
+            # pop_exclude_args / mcp_call_tool_activities fail-closed cases
+            # (unresolvable activity function, malformed wrapper payload)
+            # surface here, before PoP/chain verification even starts.
+            self._emit_malformed_warrant_denial_event(
+                info=info,
+                reason=str(extract_exc),
+                start_ns=start_ns,
+            )
+            raise self._wrap_as_non_retryable(extract_exc) from extract_exc
 
         # -- 6. Delegation Depth Limit --
         chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
@@ -1497,6 +1555,66 @@ class TenuoActivityInboundInterceptor:
                 "TenuoPluginConfig or supply x-tenuo-approvals header"
             ),
         )
+
+    def _resolve_tool_and_args(
+        self,
+        input: Any,
+        headers: Optional[Dict[str, bytes]],
+        activity_type: str,
+        activity_fn: Any,
+        default_tool_name: str,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Resolve the warrant tool name and args dict for inbound authorization.
+
+        With neither ``pop_exclude_args`` nor ``mcp_call_tool_activities``
+        configured, this is exactly ``(default_tool_name,
+        self._extract_arguments(input, headers))`` — unchanged default
+        behavior.
+
+        With either configured, extraction switches to resolving the args
+        dict from the activity function's own parameter names
+        (``_args_to_dict_by_fn``) instead of the ``TENUO_ARG_KEYS_HEADER``
+        positional shortcut: that header reflects whatever the *outbound*
+        side already excluded/unwrapped before computing it, so it cannot be
+        trusted to reconstruct the pre-exclusion, pre-unwrap dict this side
+        needs to independently exclude/unwrap from. Both interceptors then
+        apply the exact same routine (``unwrap_mcp_call_tool`` /
+        ``_apply_pop_exclusions``) the outbound interceptor applies before
+        signing, so the two sides agree on ``(tool_name, args)`` whenever
+        their configs agree — and fail closed (PoP mismatch, or an explicit
+        ``TenuoContextError``/``TenuoActivityMappingError`` here) when they
+        don't.
+        """
+        exclude_args = self._config.pop_exclude_args if self._config else frozenset()
+        mcp_patterns = (
+            self._config.mcp_call_tool_activities if self._config else ()
+        )
+
+        if mcp_patterns or exclude_args:
+            if activity_fn is None:
+                raise TenuoContextError(
+                    "TenuoPluginConfig.pop_exclude_args/mcp_call_tool_activities "
+                    f"is configured but the activity function for "
+                    f"{activity_type!r} could not be resolved (input.fn is "
+                    "None), so inbound argument extraction can't safely match "
+                    "parameter names."
+                )
+            args = _args_to_dict_by_fn(getattr(input, "args", ()) or (), activity_fn)
+        else:
+            args = self._extract_arguments(input, headers)
+
+        tool_name = default_tool_name
+        if mcp_patterns and is_mcp_call_tool_activity(activity_type, mcp_patterns):
+            tool_name, args = unwrap_mcp_call_tool(activity_type, args)
+
+        if exclude_args:
+            args = _apply_pop_exclusions(
+                args,
+                exclude_args,
+                activity_fn_resolved=activity_fn is not None,
+                tool_name=tool_name,
+            )
+        return tool_name, args
 
     def _extract_arguments(
         self, input: Any, headers: Optional[Dict[str, bytes]] = None,

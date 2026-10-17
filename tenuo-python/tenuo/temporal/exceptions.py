@@ -121,6 +121,24 @@ class TenuoArgNormalizationError(TypeError):
     error_code = "ARG_NORMALIZATION_FAILED"
 
 
+class TenuoActivityMappingError(TenuoContextError):
+    """Raised when ``TenuoPluginConfig.mcp_call_tool_activities`` unwrapping fails.
+
+    The activity type matched ``mcp_call_tool_activities`` (e.g. an MCP
+    ``<server>-call-tool-v2`` wrapper) but its payload did not have the
+    expected shape — not exactly one argument, a missing/non-string
+    ``tool_name``, or a non-dict/non-``None`` ``arguments``. Fails closed:
+    the activity is never dispatched (outbound) or authorized (inbound)
+    with a best-effort guess at its real tool/arguments.
+
+    Inherits from ``TenuoContextError`` so it is raised as non-retryable by
+    the outbound interceptor's existing error handler, the same path as
+    other PoP signing failures.
+    """
+
+    error_code = "ACTIVITY_MAPPING_FAILED"
+
+
 class TenuoPreValidationError(TenuoContextError):
     """Raised when an activity's args don't match the warrant before PoP signing.
 
