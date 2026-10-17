@@ -1,0 +1,9 @@
+version: 2
+name: order-diagnostics
+ttl: 30m
+capabilities:
+  get_order:
+    order_id: A-1001
+  refund:
+    order_id: A-1001
+    amount_cents: 1..12000

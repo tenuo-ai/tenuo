@@ -8,6 +8,7 @@ description: Prepare local identities, trust, and signed revocation lists
 The Python package includes `tenuo-cli` alongside the existing `tenuo` command.
 No account or running service is required. From an unreleased source checkout,
 use `PYTHONPATH=tenuo-python python -m tenuo.local_cli` instead of `tenuo-cli`.
+Controller file locking currently supports macOS and Linux.
 
 ```bash
 pip install tenuo
@@ -69,3 +70,58 @@ not distribute files to other machines.
 Global `--json` emits one JSON object to stdout; human output uses stderr.
 `doctor` checks trust, signed revocation data and private-key permissions and
 explains development isolation limits. Errors return a nonzero exit status.
+
+## YAML templates and one-off requests
+
+```bash
+tenuo-cli template new --out orders.yaml
+tenuo-cli template validate --file orders.yaml
+tenuo-cli template show --file orders.yaml --expanded
+```
+
+The [example template](../tenuo-python/examples/local_cli/orders.yaml) describes
+one order and a bounded refund. Use real registered tool and argument names.
+Loading a template does not grant any authority. Changing it does not change
+previously issued warrants.
+
+```yaml
+version: 2
+name: refunds
+ttl: 30m
+capabilities:
+  refund: {order_id: A-1001, amount_cents: 1..12000}
+approvals:
+  keys: [.tenuo/keys/approver.pub]
+  required:
+    refund: {unless: {amount_cents: 1..5000}}
+```
+
+The signed warrant allows refunds through 12000 cents, but requires one listed
+approver for amounts outside the exempt range of 1–5000. An approval cannot
+permit a call outside the warrant's capabilities. `required: {refund: always}`
+gates every refund. Approver paths are relative to the YAML file. Local key
+names are convenience labels, not verified identities.
+
+For a standalone request, add `kind: warrant-request` and `holder: agent` (or a
+public key path). An optional `reason` helps review. No registered policy is
+required. Requests are unsigned proposals, not warrants.
+
+Constraints support `any`, strings for exact matching, string lists for one-of,
+and numeric ranges such as `1..12000`, `..5000`, or `1..`. Explicit forms include
+`{exact: any}` for the literal string `any`, `{range: {min: 1, max: 5000}}`,
+`{subpath: /data}`, `{pattern: '*.txt'}`, `{regex: '^order-'}`, and
+`{url_pattern: 'https://api.example.com/*'}`. Numeric limits use ranges; booleans,
+nulls, unknown fields, duplicate keys, YAML anchors and aliases are rejected.
+URL matching alone does not provide SSRF protection.
+
+Python code uses the same parser and native SDK builders:
+
+```python
+from tenuo import WarrantTemplate
+
+template = WarrantTemplate.load("orders.yaml")
+warrant = template.mint(controller_key, agent_public_key)
+```
+
+Issuance needs only the recipient's public key. Gates and approvers are embedded
+in the signed warrant; verifiers do not trust the YAML file at runtime.

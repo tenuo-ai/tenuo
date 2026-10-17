@@ -7,7 +7,6 @@ publish atomically; SRL readers also accept its legacy base64 encoding.
 from __future__ import annotations
 
 import base64
-import fcntl
 import os
 import re
 import tempfile
@@ -160,6 +159,10 @@ def read_revocation_list(path):
 @contextmanager
 def operator_lock(directory):
     """Serialize read/modify/publish operations by local controllers."""
+    if os.name != "posix":
+        raise DocumentError("local controller updates currently require macOS or Linux")
+    import fcntl
+
     directory = Path(directory)
     fd = os.open(directory / ".controller.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "a") as stream:

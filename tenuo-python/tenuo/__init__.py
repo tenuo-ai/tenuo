@@ -31,6 +31,8 @@ For advanced usage, import from submodules:
 # =============================================================================
 import warnings
 
+from tenuo.warrant_template import WarrantTemplate
+
 from tenuo._extension import EXTENSION_AVAILABLE as _EXTENSION_AVAILABLE  # noqa: F401
 
 
@@ -262,6 +264,7 @@ from tenuo.cp_transport import (  # noqa: E402
 # 80% API Exports
 # =============================================================================
 __all__ = [
+    "WarrantTemplate",
     # Authority (the core primitives)
     "mint",
     "mint_sync",
