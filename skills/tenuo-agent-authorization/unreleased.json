@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-17T14:19:09.763226+00:00",
+  "generated_at": "2026-10-17T16:16:52.113800+00:00",
   "main_sha": "ba1efb55bb0548fdbd584b4653cdd6454b645193",
   "repository": "tenuo-ai/tenuo",
   "authors": [
@@ -9,7 +9,7 @@
   ],
   "complete": true,
   "counts": {
-    "d8joseph": 94,
+    "d8joseph": 104,
     "aimable100": 16
   },
   "categories": {
@@ -5498,6 +5498,605 @@
       "depends_on": [],
       "supersedes": [],
       "related": []
+    },
+    {
+      "number": 942,
+      "author": "d8joseph",
+      "title": "local-cli: initialize local identities, trust and revocations",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/942",
+      "body": "Add `tenuo-cli init --dev`, key/trust helpers, local signed revocation files and doctor. Development setup needs no account; controller and holder keys remain separate.\n\nStack 1/10; base: `main`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nWorkspace and key/SRL tests; README, local guide and agent guidance included.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "main",
+      "head": "feat/local-cli-init",
+      "head_sha": "d9f91764424e17b93da72728e6666612395a02ef",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-warrant/SKILL.md",
+        "tenuo-python/pyproject.toml",
+        "tenuo-python/tenuo/local_cli/__init__.py",
+        "tenuo-python/tenuo/local_cli/__main__.py",
+        "tenuo-python/tenuo/local_cli/commands.py",
+        "tenuo-python/tenuo/local_cli/files.py",
+        "tenuo-python/tenuo/local_cli/workspace.py",
+        "tenuo-python/tests/test_local_cli_workspace.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "5e53890c0589c7613e93e45c0eea7f920d9d7e88411ce34b6edc5ffaadad0812",
+      "affected_surfaces": [],
+      "mentioned_local_numbers": [],
+      "stack_parent": null,
+      "review": {
+        "source_fingerprint": "5e53890c0589c7613e93e45c0eea7f920d9d7e88411ce34b6edc5ffaadad0812",
+        "category": [
+          "A",
+          "B",
+          "D",
+          "E",
+          "G"
+        ],
+        "summary": "Development workspace, separate issuer/holder keys, public trust and signed revocations plus CLI entrypoint/dependency changes. Local setup is unreleased; exports do not establish hardened behavior.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 943,
+      "author": "d8joseph",
+      "title": "local-cli: parse YAML warrant templates and ad-hoc requests",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/943",
+      "body": "Add one shared SDK parser for versioned YAML capabilities, TTL and approval gates, plus template creation, validation and inspection. Templates and requests propose authority; runtime trusts the signed warrant.\n\nStack 2/10; base: `feat/local-cli-init`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nTemplate validation tests cover constraints and malformed YAML; README, example YAML and skill guidance included.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/942.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "feat/local-cli-init",
+      "head": "feat/local-cli-templates",
+      "head_sha": "89fcde40bed9fab2321cda655203efb4d8567fe7",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-warrant/SKILL.md",
+        "tenuo-python/examples/local_cli/orders.yaml",
+        "tenuo-python/tenuo/__init__.py",
+        "tenuo-python/tenuo/local_cli/commands.py",
+        "tenuo-python/tenuo/local_cli/files.py",
+        "tenuo-python/tenuo/warrant_template.py",
+        "tenuo-python/tests/test_warrant_template.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "6adb6dca0aeeacb5b4a9e1e2d64b1cdc54ec61389a51964bac7e03b66c0b61f1",
+      "affected_surfaces": [
+        "core/constraints"
+      ],
+      "mentioned_local_numbers": [],
+      "stack_parent": 942,
+      "review": {
+        "source_fingerprint": "6adb6dca0aeeacb5b4a9e1e2d64b1cdc54ec61389a51964bac7e03b66c0b61f1",
+        "category": [
+          "A",
+          "B",
+          "F",
+          "G"
+        ],
+        "summary": "Shared version-2 YAML parser introduces constrained issuance requests and approval gates. Use only matching installed parser forms; YAML proposes authority and does not alter signed warrants.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          942
+        ],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        942
+      ],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 944,
+      "author": "d8joseph",
+      "title": "local-cli: issue, inspect and reissue native warrant chains",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/944",
+      "body": "Issue to a holder public key from a template or one-off request. Add native full-chain storage, show/list/verify, constrained delegation and explicit reissuance with a new ID.\n\nStack 3/10; base: `feat/local-cli-templates`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nIssuance, scope, delegation and inspection tests; lifecycle docs and agent guidance included. Reissuing leaves the old grant valid until expiry or revocation.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/943.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "feat/local-cli-templates",
+      "head": "feat/local-cli-warrants",
+      "head_sha": "088adb07b48141a24add0b90dbf621cba4ddf037",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-warrant/SKILL.md",
+        "tenuo-python/tenuo/local_cli/commands.py",
+        "tenuo-python/tenuo/local_cli/warrants.py",
+        "tenuo-python/tenuo/local_cli/workspace.py",
+        "tenuo-python/tests/test_local_cli_warrants.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "8c6e09ad3dc90517f6f498466ea65c4b7944aced5872b72798d2ebcbb2a990bf",
+      "affected_surfaces": [],
+      "mentioned_local_numbers": [],
+      "stack_parent": 943,
+      "review": {
+        "source_fingerprint": "8c6e09ad3dc90517f6f498466ea65c4b7944aced5872b72798d2ebcbb2a990bf",
+        "category": [
+          "A",
+          "B",
+          "E",
+          "G"
+        ],
+        "summary": "Local issuance/delegation stores complete chains and reissues grants with new IDs. Root-only trust and full parent transport remain required; reissue does not revoke old authority.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          943
+        ],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        943
+      ],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 945,
+      "author": "d8joseph",
+      "title": "local-cli: exchange signed approval requests and responses",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/945",
+      "body": "Write portable exact-call approval requests and let an external approver inspect, approve or refuse them with their own key. Eligibility comes from the signed warrant and independently configured trust.\n\nStack 4/10; base: `feat/local-cli-warrants`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nApproval/hash/scope/signature tests; README, file-exchange docs and skill updates included. Approval does not widen scope and is reusable for the identical call until expiry.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/944.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "feat/local-cli-warrants",
+      "head": "feat/local-cli-approvals",
+      "head_sha": "72e409bb3a20f79338a138bb53ce038244d9a4cd",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-warrant/SKILL.md",
+        "tenuo-python/tenuo/local_cli/approvals.py",
+        "tenuo-python/tenuo/local_cli/commands.py",
+        "tenuo-python/tenuo/local_cli/files.py",
+        "tenuo-python/tests/test_local_cli_approvals.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "e6196d86b7e8768ca9b4dd5446dfbf008f669376971f875fa2618ea9e96140fc",
+      "affected_surfaces": [],
+      "mentioned_local_numbers": [],
+      "stack_parent": 944,
+      "review": {
+        "source_fingerprint": "e6196d86b7e8768ca9b4dd5446dfbf008f669376971f875fa2618ea9e96140fc",
+        "category": [
+          "A",
+          "B",
+          "E",
+          "F",
+          "G"
+        ],
+        "summary": "Exact-call approval file exchange uses independently trusted approvers and warrant eligibility. Approval is reusable for the identical call until expiry, not a one-use token or scope expansion.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          944
+        ],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        944
+      ],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 946,
+      "author": "d8joseph",
+      "title": "local-cli: load authority for LangChain and LangGraph tools",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/946",
+      "body": "Add an explicit local-authority tool factory that reloads verification files for each protected call and supports file approvals and native receipts.\n\nStack 5/10; base: `feat/local-cli-approvals`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nReal LangChain dispatch and LangGraph ToolNode allow/deny tests; README, integration recipe and skills included. This remains an in-process guardrail if raw resources are reachable.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/945.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "feat/local-cli-approvals",
+      "head": "feat/local-cli-integrations",
+      "head_sha": "97c3502345f583d09e39a8e9ec960426ddf493ae",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-agent-authorization/SKILL.md",
+        "tenuo-python/tenuo/langchain.py",
+        "tenuo-python/tenuo/local_cli/integrations.py",
+        "tenuo-python/tenuo/local_cli/runtime.py",
+        "tenuo-python/tests/adapters/test_local_langchain.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "9ce152a86250dd7ddec8dc56dfc31dd40a20c74a7c7504d801e62a439f0b2fcf",
+      "affected_surfaces": [
+        "LangChain",
+        "LangGraph"
+      ],
+      "mentioned_local_numbers": [],
+      "stack_parent": 945,
+      "review": {
+        "source_fingerprint": "9ce152a86250dd7ddec8dc56dfc31dd40a20c74a7c7504d801e62a439f0b2fcf",
+        "category": [
+          "A",
+          "B",
+          "C",
+          "E",
+          "G"
+        ],
+        "summary": "TenuoTool.local reloads local verification state for LangChain/LangGraph calls and adds approvals/receipts. This pending factory is not released functionality or proof that raw handlers are covered.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          945
+        ],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        945
+      ],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 947,
+      "author": "d8joseph",
+      "title": "local-cli: connect local MCP clients and public-only verifiers",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/947",
+      "body": "Add local MCP factories using the shared authority files, exact-call approvals and existing server middleware. A verifier needs public trust and revocation data, not the agent private key.\n\nStack 6/10; base: `feat/local-cli-integrations`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nReal FastMCP middleware and stdio tests with effect counters; README, MCP recipe and skills included. Required later stack hardening fixes ambient trust selection and delegated local checks.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/946.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "feat/local-cli-integrations",
+      "head": "feat/local-cli-mcp",
+      "head_sha": "4b25457cbaa854b8bbbc2f95fca95366e527b440",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-agent-authorization/SKILL.md",
+        "tenuo-python/tenuo/local_cli/integrations.py",
+        "tenuo-python/tenuo/mcp/client.py",
+        "tenuo-python/tenuo/mcp/server.py",
+        "tenuo-python/tests/adapters/test_local_mcp.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "4023c82f0bfd67387029b9c8a26995e112cf069d5517cf834ef61fbf59a238f6",
+      "affected_surfaces": [
+        "MCP"
+      ],
+      "mentioned_local_numbers": [],
+      "stack_parent": 946,
+      "review": {
+        "source_fingerprint": "4023c82f0bfd67387029b9c8a26995e112cf069d5517cf834ef61fbf59a238f6",
+        "category": [
+          "A",
+          "B",
+          "C",
+          "E",
+          "G"
+        ],
+        "summary": "Local MCP client/public verifier factories use shared authority files and real middleware. Intermediate stack has ambient trust/parent-chain defects fixed only in final hardening; do not recommend factory presence as safety evidence.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          946
+        ],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        946
+      ],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 948,
+      "author": "d8joseph",
+      "title": "local-cli: refresh local authority at Temporal activity ingress",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/948",
+      "body": "Add `TenuoPluginConfig.local`, per-activity trust/revocation refresh and complete warrant-stack start headers. Verification-only workers can operate without a private key.\n\nStack 7/10; base: `feat/local-cli-mcp`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nReal local Temporal server allow/deny/revocation test; README, Temporal recipe and skills included. This does not replace warrants in running workflows, refresh Nexus trust or port the parallel durable-approval CLI.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/947.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "feat/local-cli-mcp",
+      "head": "feat/local-cli-temporal",
+      "head_sha": "ec932aeb0b97183f49dfb1c63c10591b7fe19d87",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-agent-authorization/SKILL.md",
+        "tenuo-python/tenuo/local.py",
+        "tenuo-python/tenuo/local_cli/runtime.py",
+        "tenuo-python/tenuo/temporal/_config.py",
+        "tenuo-python/tenuo/temporal/_headers.py",
+        "tenuo-python/tenuo/temporal/_interceptors.py",
+        "tenuo-python/tests/e2e/test_local_cli_temporal.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "bb65f26d6729b188d2afe6a713ac722d5d4d410cc43152916fa923037bb1e86c",
+      "affected_surfaces": [
+        "MCP",
+        "Temporal"
+      ],
+      "mentioned_local_numbers": [],
+      "stack_parent": 947,
+      "review": {
+        "source_fingerprint": "bb65f26d6729b188d2afe6a713ac722d5d4d410cc43152916fa923037bb1e86c",
+        "category": [
+          "A",
+          "B",
+          "C",
+          "E",
+          "G"
+        ],
+        "summary": "Temporal local configuration refreshes trust/revocation at activity ingress and sends full warrant stacks. Does not replace running-workflow warrants or dynamically refresh Nexus trust; requires exact-stack live tests.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          947
+        ],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        947
+      ],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 949,
+      "author": "d8joseph",
+      "title": "local-cli: attach signed grants to explicit sessions",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/949",
+      "body": "Add operator-controlled session manifests with attach/show/list/detach. Attaching routes existing signed authority; it does not activate it, and multiple grants are never unioned for one call.\n\nStack 8/10; base: `feat/local-cli-temporal`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nSession isolation, holder/chain and attachment tests; README, session lifecycle docs and skills included.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/948.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "feat/local-cli-temporal",
+      "head": "feat/local-cli-sessions",
+      "head_sha": "6af3268caf83de44dc0bd423765b19e5c67d2e0a",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-warrant/SKILL.md",
+        "tenuo-python/tenuo/local.py",
+        "tenuo-python/tenuo/local_cli/commands.py",
+        "tenuo-python/tenuo/local_cli/runtime.py",
+        "tenuo-python/tenuo/local_cli/sessions.py",
+        "tenuo-python/tenuo/local_cli/workspace.py",
+        "tenuo-python/tests/test_local_cli_sessions.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "b84dc001476de1dcdc26212203999ea7605da1bcc1397ee465bfe774df97c5c7",
+      "affected_surfaces": [
+        "Temporal"
+      ],
+      "mentioned_local_numbers": [],
+      "stack_parent": 948,
+      "review": {
+        "source_fingerprint": "b84dc001476de1dcdc26212203999ea7605da1bcc1397ee465bfe774df97c5c7",
+        "category": [
+          "A",
+          "B",
+          "E",
+          "G"
+        ],
+        "summary": "Explicit session attachments route existing signed grants without activating authority or unioning grants. Child sessions need their own attachment; detach is not revocation.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          948
+        ],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        948
+      ],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 950,
+      "author": "d8joseph",
+      "title": "local-cli: inspect and verify native decision receipts",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/950",
+      "body": "Add local decision filtering and verification using existing native receipt signatures and SDK link verification. No new receipt format or cryptography.\n\nStack 9/10; base: `feat/local-cli-sessions`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nReceipt validation/filter tests; README, audit docs and skill updates included. Link verification does not prove complete history or successful effects.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/949.\n\nRequired final hardening: https://github.com/tenuo-ai/tenuo/pull/951.\n",
+      "base": "feat/local-cli-sessions",
+      "head": "feat/local-cli-audit",
+      "head_sha": "a79058a4e6aa50cba3e3975666b4b179c1e52106",
+      "files": [
+        "README.md",
+        "docs/llms.txt",
+        "docs/local-cli.md",
+        "skills/tenuo-audit/SKILL.md",
+        "tenuo-python/tenuo/local_cli/audit.py",
+        "tenuo-python/tenuo/local_cli/commands.py",
+        "tenuo-python/tests/test_local_cli_audit.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "825c619c69a16ee8ccad5f878d245650e8ff84d92f907c96e54b057d9d3c1479",
+      "affected_surfaces": [],
+      "mentioned_local_numbers": [],
+      "stack_parent": 949,
+      "review": {
+        "source_fingerprint": "825c619c69a16ee8ccad5f878d245650e8ff84d92f907c96e54b057d9d3c1479",
+        "category": [
+          "A",
+          "B",
+          "E",
+          "G"
+        ],
+        "summary": "Local audit commands inspect/filter/verify existing native receipt signatures and links. No new cryptography; receipt validity does not establish complete history or completed effects.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          949
+        ],
+        "related": [
+          951
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        949
+      ],
+      "supersedes": [],
+      "related": [
+        951
+      ]
+    },
+    {
+      "number": 951,
+      "author": "d8joseph",
+      "title": "local-cli: harden key inputs and finish integration review",
+      "url": "https://github.com/tenuo-ai/tenuo/pull/951",
+      "body": "Apply required review fixes: reject private-key paths/aliases as public inputs, prevent issuance from publishing its own signing seed, preserve SRL floors across issuer rotation, fix local MCP trust/parent-chain handling and tighten enforcement settings. Improve doctor, human approval review and portable lifecycle guidance.\n\nStack 10/10; base: `feat/local-cli-audit`. Review and merge in dependency order; the final hardening PR is required before release. Integration tests were run at the complete reviewed stack head (`ebdfb291`), not every intermediate branch independently.\n\nFinal focused stack: 90 passed; real local Temporal test passed; Ruff and mypy passed. Full SDK: 4,204 passed, 10 failures reproduced on the unchanged baseline. Cargo audit reports 9 existing lockfile advisories. These remaining issues are not reported as green. README, lifecycle/rotation docs, regression tests and skill corrections are included. Skills corrections were also pushed to `skill/authorization-readiness`; reconcile overlapping guidance when merging that branch.\n\nDepends on https://github.com/tenuo-ai/tenuo/pull/950.\n",
+      "base": "feat/local-cli-audit",
+      "head": "feat/local-cli-review",
+      "head_sha": "ebdfb291cbfd968cc31fd262d552c8e61c0a93ce",
+      "files": [
+        "README.md",
+        "docs/local-cli.md",
+        "skills/tenuo-agent-authorization/SKILL.md",
+        "skills/tenuo-agent-authorization/references/local-cli.md",
+        "skills/tenuo-audit/SKILL.md",
+        "skills/tenuo-warrant/SKILL.md",
+        "tenuo-python/tenuo/local.py",
+        "tenuo-python/tenuo/local_cli/approvals.py",
+        "tenuo-python/tenuo/local_cli/commands.py",
+        "tenuo-python/tenuo/local_cli/files.py",
+        "tenuo-python/tenuo/local_cli/integrations.py",
+        "tenuo-python/tenuo/local_cli/runtime.py",
+        "tenuo-python/tenuo/local_cli/warrants.py",
+        "tenuo-python/tenuo/local_cli/workspace.py",
+        "tenuo-python/tenuo/mcp/client.py",
+        "tenuo-python/tenuo/temporal/_config.py",
+        "tenuo-python/tenuo/temporal/_interceptors.py",
+        "tenuo-python/tenuo/warrant_ext.py",
+        "tenuo-python/tenuo/warrant_template.py",
+        "tenuo-python/tests/adapters/test_local_mcp.py",
+        "tenuo-python/tests/contracts/test_integration_error_contract.py",
+        "tenuo-python/tests/test_local_cli_approvals.py",
+        "tenuo-python/tests/test_local_cli_workspace.py",
+        "tenuo-python/tests/test_local_key_roles.py",
+        "tenuo-python/tests/test_warrant_template.py"
+      ],
+      "status": "open",
+      "source_fingerprint": "e54e48ca718149208466c888ccd5706d21b5428376a80a47b4c6e35df71ce522",
+      "affected_surfaces": [
+        "MCP",
+        "Temporal"
+      ],
+      "mentioned_local_numbers": [],
+      "stack_parent": 950,
+      "review": {
+        "source_fingerprint": "e54e48ca718149208466c888ccd5706d21b5428376a80a47b4c6e35df71ce522",
+        "category": [
+          "A",
+          "B",
+          "C",
+          "E",
+          "F",
+          "G"
+        ],
+        "summary": "Required stack hardening rejects private-key public inputs and signer-seed publication, preserves SRL floors through rotation, repairs local MCP Runtime trust/parent transport and tightens enforcement. Partial local CLI stack is unsafe to endorse before these fixes.",
+        "security_relevance": true,
+        "api_relevance": true,
+        "docs_relevance": true,
+        "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+        "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+        "depends_on": [
+          950
+        ],
+        "related": [
+          942,
+          943,
+          944,
+          945,
+          946,
+          947,
+          948,
+          949,
+          950
+        ]
+      },
+      "review_status": "reviewed",
+      "depends_on": [
+        950
+      ],
+      "supersedes": [],
+      "related": [
+        942,
+        943,
+        944,
+        945,
+        946,
+        947,
+        948,
+        949,
+        950
+      ]
     }
   ],
   "main_source_fingerprint": "fa340e4a8c415b8bd85cb07bce83d9914aff666a9993fd996eb562d1e1d0d868"

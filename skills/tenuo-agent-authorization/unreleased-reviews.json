@@ -1555,5 +1555,228 @@
     "api_relevance": true,
     "docs_relevance": false,
     "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "942": {
+    "source_fingerprint": "5e53890c0589c7613e93e45c0eea7f920d9d7e88411ce34b6edc5ffaadad0812",
+    "category": [
+      "A",
+      "B",
+      "D",
+      "E",
+      "G"
+    ],
+    "summary": "Development workspace, separate issuer/holder keys, public trust and signed revocations plus CLI entrypoint/dependency changes. Local setup is unreleased; exports do not establish hardened behavior.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [],
+    "related": [
+      951
+    ]
+  },
+  "943": {
+    "source_fingerprint": "6adb6dca0aeeacb5b4a9e1e2d64b1cdc54ec61389a51964bac7e03b66c0b61f1",
+    "category": [
+      "A",
+      "B",
+      "F",
+      "G"
+    ],
+    "summary": "Shared version-2 YAML parser introduces constrained issuance requests and approval gates. Use only matching installed parser forms; YAML proposes authority and does not alter signed warrants.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      942
+    ],
+    "related": [
+      951
+    ]
+  },
+  "944": {
+    "source_fingerprint": "8c6e09ad3dc90517f6f498466ea65c4b7944aced5872b72798d2ebcbb2a990bf",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "G"
+    ],
+    "summary": "Local issuance/delegation stores complete chains and reissues grants with new IDs. Root-only trust and full parent transport remain required; reissue does not revoke old authority.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      943
+    ],
+    "related": [
+      951
+    ]
+  },
+  "945": {
+    "source_fingerprint": "e6196d86b7e8768ca9b4dd5446dfbf008f669376971f875fa2618ea9e96140fc",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "F",
+      "G"
+    ],
+    "summary": "Exact-call approval file exchange uses independently trusted approvers and warrant eligibility. Approval is reusable for the identical call until expiry, not a one-use token or scope expansion.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      944
+    ],
+    "related": [
+      951
+    ]
+  },
+  "946": {
+    "source_fingerprint": "9ce152a86250dd7ddec8dc56dfc31dd40a20c74a7c7504d801e62a439f0b2fcf",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "TenuoTool.local reloads local verification state for LangChain/LangGraph calls and adds approvals/receipts. This pending factory is not released functionality or proof that raw handlers are covered.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      945
+    ],
+    "related": [
+      951
+    ]
+  },
+  "947": {
+    "source_fingerprint": "4023c82f0bfd67387029b9c8a26995e112cf069d5517cf834ef61fbf59a238f6",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "Local MCP client/public verifier factories use shared authority files and real middleware. Intermediate stack has ambient trust/parent-chain defects fixed only in final hardening; do not recommend factory presence as safety evidence.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      946
+    ],
+    "related": [
+      951
+    ]
+  },
+  "948": {
+    "source_fingerprint": "bb65f26d6729b188d2afe6a713ac722d5d4d410cc43152916fa923037bb1e86c",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "Temporal local configuration refreshes trust/revocation at activity ingress and sends full warrant stacks. Does not replace running-workflow warrants or dynamically refresh Nexus trust; requires exact-stack live tests.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      947
+    ],
+    "related": [
+      951
+    ]
+  },
+  "949": {
+    "source_fingerprint": "b84dc001476de1dcdc26212203999ea7605da1bcc1397ee465bfe774df97c5c7",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "G"
+    ],
+    "summary": "Explicit session attachments route existing signed grants without activating authority or unioning grants. Child sessions need their own attachment; detach is not revocation.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      948
+    ],
+    "related": [
+      951
+    ]
+  },
+  "950": {
+    "source_fingerprint": "825c619c69a16ee8ccad5f878d245650e8ff84d92f907c96e54b057d9d3c1479",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "G"
+    ],
+    "summary": "Local audit commands inspect/filter/verify existing native receipt signatures and links. No new cryptography; receipt validity does not establish complete history or completed effects.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      949
+    ],
+    "related": [
+      951
+    ]
+  },
+  "951": {
+    "source_fingerprint": "e54e48ca718149208466c888ccd5706d21b5428376a80a47b4c6e35df71ce522",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "F",
+      "G"
+    ],
+    "summary": "Required stack hardening rejects private-key public inputs and signer-seed publication, preserves SRL floors through rotation, repairs local MCP Runtime trust/parent transport and tightens enforcement. Partial local CLI stack is unsafe to endorse before these fixes.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      950
+    ],
+    "related": [
+      942,
+      943,
+      944,
+      945,
+      946,
+      947,
+      948,
+      949,
+      950
+    ]
   }
 }

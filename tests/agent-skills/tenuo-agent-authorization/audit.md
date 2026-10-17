@@ -3,14 +3,16 @@
 The skill now separates imported runtime source, matching release, merged main,
 and the open-PR horizon. **Promotion remains blocked.** Seven local coding-agent
 diagnostics now have preserved source/reports and independent probes; the
-additional Temporal live replay probe and evaluation of subsequent guidance
-changes remain pending. Daniel’s local manual testing is also required.
+Temporal live replay probe now passes; evaluation of subsequent guidance
+changes remains pending. Daniel’s local manual testing is also required.
 
 The audit started at main `28305436`. The final live snapshot records main
 `ba1efb55`; intervening TypeScript examples do not change the reviewed SDK source
-fingerprint. All **110** open PRs from the required authors were classified:
-94 `d8joseph`, 16 `aimable100`, including seven explicitly reviewed no-impact
-entries. Bodies, files, head commits, base/head branches, dependency edges, alternatives,
+fingerprint. The initial **110** open PRs were classified (94 `d8joseph`, 16 `aimable100`,
+including seven reviewed no-impact entries). A final live check found ten new
+local CLI PRs #942–#951; all were reviewed/classified, bringing the current
+inventory to **120** (104 Daniel, 16 Niki). Their full stack order and mandatory
+final hardening are recorded without adopting pending factories. Bodies, files, head commits, base/head branches, dependency edges, alternatives,
 supersedes and external merge order are retained in the overlay/reviews.
 Changed PR content invalidates its assessment; refresh never grants readiness.
 
@@ -46,16 +48,19 @@ review; historical failures remain archived. OpenAI: 40 pass; LangGraph: 21 pass
 MCP: 27 pass on each major. These framework candidates chose direct effect
 handlers/services; they do not replace adapter regression coverage.
 
-Temporal's agent reports 25 live tests passing. Independent source review and a
-receiver probe pass, but the additional live workflow/retry/resume/Replayer probe
-could not start: automatic approval review failed due to account usage limits.
-It is preserved as unrun, and no aggregate framework coding-agent pass is emitted.
+Temporal's agent reports 25 live tests passing. The independent full rerun now
+passes 27 cases, including real workflow retry/resume with zero activity-body
+entries on denial and history Replayer without additional effects. The first
+attempt could not start because automatic approval review hit an account usage
+limit; review later responded and a normally approved invocation passed. The
+framework aggregate is now recorded against the actual evaluated skill inputs.
 No separate OpenAI API key or paid external API was used. One run per starter is
 a diagnostic sample, not a reliability estimate or controlled comparison.
 
 The branch advanced with local CLI guidance in `78819f03` during these runs.
-The runs used the copied skill at `abe73aab`; fingerprints are preserved, so the
-Python guidance evidence is visibly stale rather than silently renewed. New
+The runs used the copied skill at `abe73aab`; fingerprints are preserved. The
+Python/local CLI edit and later refreshed horizon now make affected evidence
+visibly stale rather than silently renewed. New
 local CLI and warrant/audit routing behavior still needs review/replay. Scanner
 self-matches and the packaged TypeScript WASM's imperfect build provenance are
 recorded findings. Daniel's manual testing remains pending. No PR is open.

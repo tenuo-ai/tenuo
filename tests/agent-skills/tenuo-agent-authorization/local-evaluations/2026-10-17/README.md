@@ -29,7 +29,7 @@ Agents reported truncated initial combined reference output where applicable.
 | Rust payment | crates.io 0.3.2 | 11 behavioral + 2 compile-fail pass; check/fmt pass | Implementation/reporting pass; development example |
 | OpenAI Agents | PyPI 0.3.2; Agents 0.22.0 | 40 pass | Direct service enforcement; no unavailable guard_agent API |
 | LangGraph | Editable main SDK; LangGraph 1.2.11 | 21 pass | Compiled ToolNode with guarded handler and public chain/proof transport |
-| Temporal | Editable main SDK; Temporal 1.34.0 | 1 independent receiver probe pass | Agent reports 25 live tests pass; additional independent live/replay probe pending |
+| Temporal | Editable main SDK; Temporal 1.34.0 | 27 pass, including live server and Replayer | Denied authority yields zero body entries/effects; retry/resume and replay pass |
 | MCP | Editable main SDK; MCP 1.30.0 / 2.3.0 | 27 pass on each major | Actual stdio metadata, root-only chain, zero journal writes on denials |
 
 Parent review inspected verification/effect ordering, final argument identity,
@@ -63,10 +63,11 @@ budget, revocation, idempotency or exactly-once behavior is established here.
   candidate authorization code was unchanged. OpenAI wraps service denials in
   Runner `UserError`; the corrected assertion checks the constraint reason.
 - The Temporal live workflow/retry/resume/Replayer probe is preserved as
-  `framework-temporal/candidate/grader_probes/test_independent.py` but **NOT RUN**.
-  Automatic approval review could not complete due to an account usage limit;
-  this was not a safety finding. The additional receiver-only test ran normally.
-  Its pass is not a substitute for independent live dispatch evidence.
+  `framework-temporal/candidate/grader_probes/test_independent.py`. Its first
+  invocation was **NOT RUN** because automatic approval review could not complete
+  at an account usage limit, not a safety finding. When review later responded
+  again, a new normally approved invocation ran all 27 tests successfully,
+  including live dispatch and replay. Both probe files and logs are retained.
 - MCP agent completion was interrupted by the same usage limit after its report
   and final logs were written. Both parent reruns completed successfully.
 - TypeScript's actual packaged WASM reports `sourceClean:false` and
@@ -82,9 +83,12 @@ budget, revocation, idempotency or exactly-once behavior is established here.
   `78819f03`. That commit was fast-forwarded after these runs. Fingerprints remain
   those actually evaluated; Python evidence is therefore visibly stale. The
   new local CLI and warrant/audit routing guidance were **not evaluated** here.
+  The final live check then found ten new PRs #942–#951. They were classified
+  and the horizon refreshed to 120 open PRs. This also marks affected reference
+  inputs stale in all recorded runs; their fingerprints are not renewed.
 - Earlier failed payment results are preserved in `historical/`, unchanged.
-  New canonical payment results point to these fresh runs. No aggregate framework
-  pass is emitted until the pending independent Temporal probe completes.
+  New canonical payment results and the framework aggregate point to these
+  fresh runs, with unchanged evaluated input fingerprints.
 
 ## Reproduce and finish
 
@@ -102,8 +106,8 @@ Python runs `python -m pytest -q tests grader_probes`; MCP needs separate MCP1
 and MCP2 environments. Temporal additionally needs permission to launch the
 local server; its pending replay probe should be included when available.
 
-Next: finish that Temporal probe, review/replay the changed Python/local CLI and
-warrant/audit routing guidance, refresh live PR inventory, rerun readiness, and
+Next: review/replay the changed Python/local CLI and warrant/audit routing
+guidance, refresh live PR inventory, rerun readiness, and
 allow Daniel's local manual testing. No PR until testing and manual review are
 finished. `sha256.json` records file digests for detecting accidental changes; it is not
 a signed attestation.

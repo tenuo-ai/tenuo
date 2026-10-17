@@ -1,0 +1,28 @@
+{
+  "scenario": "framework-boundary-eval.md",
+  "language": "python",
+  "evaluated_at": "2026-10-17",
+  "model_class": "in-session coding subagent; inherited session model; exact backend revision not exposed",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md",
+    "references/common-footguns.md",
+    "references/framework-status.md",
+    "references/mcp.md",
+    "references/native-tools.md",
+    "references/python.md",
+    "references/security-model.md",
+    "references/trust-levels.md",
+    "references/unreleased.md",
+    "scripts/inspect_mcp_project.py",
+    "scripts/inspect_native_tools.py"
+  ],
+  "skill_fingerprint": "4cf675fbe4fe7ea9aa851872c1b2fbbf6f9e5a3f735a1abd5ae5d3bd89850597",
+  "evidence": {
+    "critical_items": "passed",
+    "required_reporting": "passed",
+    "tests": "OpenAI 40; LangGraph 21; Temporal 27 (live server and Replayer); MCP1 27 and MCP2 27 independently rerun",
+    "notes": "One blind in-session diagnostic per framework, not a reliability estimate. All four chose handler/service enforcement; separate deterministic adapter matrix remains required. Original starters, candidates, locks, reports, parent probes and logs: local-evaluations/2026-10-17. Temporal initially blocked by approval-review account limit, later approved and passed. First-response proposal timing/full transcripts were not exposed; exact backend revision unknown. Actual abe73aab input fingerprints preserved; newer Python/local CLI guidance is not certified."
+  }
+}

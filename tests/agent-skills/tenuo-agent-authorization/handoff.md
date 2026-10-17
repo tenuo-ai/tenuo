@@ -23,14 +23,14 @@ audit. The handoff adds no adapter implementation changes.
   LangChain/LangGraph, live Temporal, MCP 1 and MCP 2. Tests use scripted models;
   no provider API key is needed for those deterministic suites.
 - Structural/release validation, live inventory comparison and whitespace checks
-  pass. All 110 open PRs from both required authors were classified at the
-  recorded snapshot; refresh against GitHub before relying on that inventory.
+  pass. All 120 open PRs from both required authors are classified after the
+  final refresh (including ten new local CLI stack PRs); refresh against GitHub before relying on that inventory.
 - Independently built PR leaves were tested separately. The raw #915 leaf lacks
   merged #813 config forwarding and fails compiled key selection; the separate
   main-plus-leaf code overlay passes, with a CHANGELOG merge conflict recorded.
-- The strict readiness gate passes structure, reviewed horizon/framework facts
-  and current framework dispatch evidence. It still fails coding-agent
-  completeness/freshness requirements; see the completed diagnostic round below.
+- The strict readiness gate passes structure and current deterministic framework
+  dispatch evidence. It still requires guidance review and refreshed coding-agent
+  evidence after the local CLI edit and live horizon refresh; see below.
 
 Committed JSON beside this file records actual source/harness fingerprints,
 package versions, native artifact hashes and outputs. Historical PR-lane runs
@@ -43,25 +43,25 @@ See [the preserved seven-project run](local-evaluations/2026-10-17/README.md) fo
 original starters, candidate code, exact skill inputs, reports, independent probes
 and logs. Payment implementation/reporting passed in all three languages;
 OpenAI, LangGraph and both MCP-major independent reruns passed. Temporal's
-agent reports 25 live tests pass; an independent receiver probe passes, but the
-additional independent live/replay test is **not run**, due to automatic approval
-review being unavailable at the account usage limit. Do not count it as green.
+independent full rerun now passes 27 cases including live workflow/retry/resume
+and Replayer. Its first attempt could not start because approval review hit an
+account usage limit; a subsequent normally approved invocation passed. Both the
+first-blocked note and successful output are preserved.
 
 The round evaluated copied skill `abe73aab`, before the local CLI change below.
 Historical payment failures and all evaluated fingerprints are retained. The
-fresh Python result is consequently stale for today's Python reference. No
-aggregate framework result is emitted while its independent Temporal probe is
-pending. These seven single-run diagnostics do not establish a reliability rate.
+Python result is consequently stale for today's Python reference. The subsequent
+horizon refresh also marks affected inputs stale in all runs. The aggregate
+framework result records the completed four-case round with its original
+fingerprint. These seven diagnostics do not establish a reliability rate.
 
 ## Remaining work
 
-1. Run the preserved Temporal `grader_probes/test_independent.py` with permission
-   for a local test server. Preserve failure if it fails; do not relax enforcement.
-2. Review/replay `78819f03` Python/local CLI guidance and warrant/audit routing.
+1. Review/replay `78819f03` Python/local CLI guidance and warrant/audit routing.
    Do not re-fingerprint the older run to certify unseen instructions.
-3. Refresh/review changed live PRs and SDK facts, rerun strict readiness, and
+2. Refresh/review changed live PRs and SDK facts, rerun strict readiness, and
    preserve source/stack distinctions and root-only trust throughout.
-4. Daniel must test locally by hand before any PR. No PR has been opened.
+3. Daniel must test locally by hand before any PR. No PR has been opened.
 
 ## Commands
 
@@ -74,8 +74,8 @@ python3 scripts/validate_agent_skills.py --readiness --summary /tmp/agent-skill-
 git diff --check origin/main...HEAD
 ```
 
-The readiness command still exits nonzero for pending framework evidence and
-guidance review/freshness blockers. Do not change historical grades/fingerprints merely to make it green.
+The readiness command still exits nonzero for guidance
+review/freshness blockers. Do not change historical grades/fingerprints merely to make it green.
 For dispatch suites, build/install the exact selected checkout in isolated
 Python 3.12 environments and use `scripts/run_agent_skill_frameworks.py` as
 specified in maintenance.md; MCP major versions need separate environments.
