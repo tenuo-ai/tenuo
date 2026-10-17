@@ -185,4 +185,3 @@ def file_approval_handler(path=None):
         return authority.collect_file_approval(list(chain), request)
 
     return handler
-
