@@ -55,10 +55,36 @@ def parser():
         template.add_argument("--file", required=True)
         if action == "show":
             template.add_argument("--expanded", action="store_true")
+    warrants = commands.add_parser("warrant").add_subparsers(dest="action", required=True)
+    issue = warrants.add_parser("issue")
+    source = issue.add_mutually_exclusive_group(required=True)
+    source.add_argument("--template")
+    source.add_argument("--request")
+    issue.add_argument("--holder")
+    issue.add_argument("--from", dest="parent")
+    issue.add_argument("--key")
+    for action in ("show", "verify", "reissue"):
+        sub = warrants.add_parser(action)
+        source = sub.add_mutually_exclusive_group(required=True)
+        source.add_argument("--file")
+        source.add_argument("--id", type=name)
+        if action == "reissue":
+            sub.add_argument("--ttl", required=True)
+            sub.add_argument("--holder")
+            sub.add_argument("--key")
+        if action != "reissue":
+            continue
+        sub.add_argument("--out")
+        sub.add_argument("--no-store", action="store_true")
+    issue.add_argument("--out")
+    issue.add_argument("--no-store", action="store_true")
+    warrants.add_parser("list")
     return root
 
 
 def execute(opts, workspace):
+    if opts.command == "warrant":
+        return warrant_command(opts, workspace)
     if opts.command == "template":
         from tenuo.warrant_template import WarrantTemplate
         from .files import write_yaml
@@ -122,11 +148,79 @@ def execute(opts, workspace):
     raise DocumentError("unknown command")
 
 
+def warrant_command(opts, workspace):
+    from pathlib import Path
+    from tenuo.warrant_template import WarrantTemplate, duration
+    from .warrants import decode_chain, describe, issue, load_chain, reissue, save
+
+    if opts.action == "issue":
+        path = Path(opts.template or opts.request).expanduser()
+        template = WarrantTemplate.load(path)
+        data = template.document
+        if opts.request:
+            if data.get("kind") != "warrant-request" or opts.holder:
+                raise DocumentError("--request needs kind: warrant-request with its own holder; do not pass --holder")
+            holder = data["holder"]
+        else:
+            if data.get("kind") or not opts.holder:
+                raise DocumentError("--template needs --holder and a template without kind: warrant-request")
+            holder = opts.holder
+        if "/" in holder or "\\" in holder or holder.endswith(".pub"):
+            public_path = Path(holder).expanduser()
+            holder = str(public_path if public_path.is_absolute() else path.parent / public_path)
+        chain = issue(
+            workspace,
+            template,
+            workspace.public_key(holder),
+            issuer=opts.key,
+            parent=load_chain(opts.parent) if opts.parent else None,
+        )
+        return {"warrant": describe(chain), "files": save(workspace, chain, out=opts.out, store=not opts.no_store)}
+    if opts.action == "list":
+        entries, errors = [], []
+        for path in sorted((workspace.path / "warrants").glob("*.warrant")):
+            try:
+                row = describe(load_chain(path))
+                try:
+                    workspace.authorizer().verify_chain(load_chain(path))
+                    row["verified"] = True
+                except Exception:
+                    row["verification_error"] = "Not valid against current local trust, expiry or revocations"
+                entries.append(row)
+            except Exception:
+                errors.append({"file": str(path), "error": "Could not decode warrant"})
+        return {"warrants": entries, "errors": errors}
+    path = getattr(opts, "file", None) or workspace.path / "warrants" / (opts.id + ".warrant")
+    if opts.action == "show" and str(path).endswith((".yaml", ".yml")):
+        return {"request": WarrantTemplate.load(path).document, "signed": False}
+    chain = decode_chain(sys.stdin.read(4 * 1024 * 1024 + 1)) if str(path) == "-" else load_chain(path)
+    if opts.action == "show":
+        return {"warrant": describe(chain)}
+    if opts.action == "verify":
+        try:
+            workspace.authorizer().verify_chain(chain)
+        except Exception:
+            return {
+                "valid": False,
+                "id": str(chain[-1].id),
+                "error": "Warrant verification failed. Check trust, full chain, expiry and revocations.",
+                "exit_code": 3,
+            }
+        return {"valid": True, "id": str(chain[-1].id)}
+    chain = reissue(
+        chain,
+        workspace.signing_key(opts.key or workspace.config["issuer"]),
+        duration(opts.ttl),
+        holder=workspace.public_key(opts.holder) if opts.holder else None,
+    )
+    return {"warrant": describe(chain), "files": save(workspace, chain, out=opts.out, store=not opts.no_store)}
+
+
 def main(argv=None):
     opts = parser().parse_args(argv)
     try:
         result = execute(opts, Workspace(opts.home))
-        status = 1 if any(c["status"] == "error" for c in result.get("checks", [])) else 0
+        status = result.pop("exit_code", 1 if any(c["status"] == "error" for c in result.get("checks", [])) else 0)
     except Exception as exc:
         # Parse/key errors may include input bytes in third-party messages. Keep
         # the CLI error bounded to our own safe messages or the exception type.

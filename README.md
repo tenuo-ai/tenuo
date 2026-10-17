@@ -48,6 +48,9 @@ trust, signed revocation lists and development isolation limits.
 Use [YAML warrant templates](tenuo-python/examples/local_cli/orders.yaml) with
 `tenuo-cli template validate --file orders.yaml`, or load the same file through
 `tenuo.WarrantTemplate` in Python.
+Issue a signed chain with `tenuo-cli warrant issue --template orders.yaml
+--holder agent`, then inspect it with `warrant show` and validate it with
+`warrant verify`. See the [lifecycle walkthrough](docs/local-cli.md).
 
 ### AI coding agents
 

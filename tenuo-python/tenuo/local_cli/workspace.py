@@ -93,6 +93,7 @@ class Workspace:
 
         self.config
         authorizer = Authorizer(trusted_roots=self.trusted_roots())
+        authorizer.set_clock_tolerance(0)
         authorizer.set_revocation_list(read_revocation_list(self.path / "revocations.srl"))
         return authorizer
 

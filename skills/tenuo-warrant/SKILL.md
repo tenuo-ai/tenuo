@@ -33,6 +33,13 @@ holder's public key path or local name. Treat it as an unsigned proposal. The
 issuer never needs the holder's private key. Compile approval gates and approver
 public keys into the warrant; never use an editable policy as runtime authority.
 
+Use `tenuo-cli warrant issue --template FILE --holder agent` or `--request FILE`
+for local issuance. `--from WARRANT --key agent --request FILE` delegates with
+the parent's holder key, never bypassing native attenuation. Warrant files carry
+the full root-first chain. Inspect with `warrant show`; verify with `warrant
+verify`. Reissue produces a new ID and leaves the old warrant valid until expiry
+or revocation. Never silently select the newest stored warrant for an agent.
+
 ### Phase 1: Discover Context
 
 Before asking questions, scan the codebase:
