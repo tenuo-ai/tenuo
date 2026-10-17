@@ -191,3 +191,45 @@ Responses use native `SignedApproval` artifacts. Refusals bind the reason under
 a distinct local domain and cannot authorize the original call. An approval is
 reusable for the same warrant, holder, tool and arguments until it expires;
 there is no one-use tracking or changed Temporal retry-expiry behavior.
+
+## LangChain and LangGraph
+
+Install `tenuo[langchain]` (and `tenuo[langgraph]` for a graph). Issue a warrant
+to the agent and select its delivery file explicitly:
+
+```python
+from langchain_core.tools import tool
+from tenuo.langchain import TenuoTool
+
+@tool
+def get_order(order_id: str) -> str:
+    """Look up an order."""
+    return f"Order {order_id} is ready"
+
+protected = TenuoTool.local(get_order, warrant=".tenuo/agent.warrant")
+print(protected.invoke({"order_id": "A-1001"}))
+# An order outside the YAML scope raises before get_order runs:
+protected.invoke({"order_id": "OTHER"})
+```
+
+Give only protected tools to your agent. A LangGraph `ToolNode([protected])`
+uses the same check on both sync and async dispatch; no warrant or key registry
+is required in graph state. A graph checkpointer does not automatically suspend
+for file approvals: return the request to an operator and retry after their
+signed response arrives.
+
+`path=` chooses the workspace and `key=` the agent key name or path. Before
+each call the adapter reloads the selected warrant, trust and revocation files,
+verifies the full chain, and checks the holder. Missing or malformed data denies
+that call. Rollbacks below the accepted SRL version are refused for the lifetime
+of that adapter; this does not persist a version floor across process restarts.
+Replacing the selected file therefore needs no agent restart. Updating files
+is an external controller action: an agent must not be able to edit them.
+
+Approval-gated calls write requests under `.tenuo/requests/`. The approval CLI's
+default response path is `.tenuo/approvals/<request_hash>.yaml`; retrying the
+same call reads and verifies it. Decisions generate native signed receipts in
+the configured `receipts.jsonl` using the existing SDK receipt machinery.
+Local adapters currently support enforcement mode only and never read the
+controller or approver private key. This is an in-process guardrail: expose
+effects through a separately protected service if agent code can bypass wrappers.
