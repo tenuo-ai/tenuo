@@ -73,8 +73,9 @@ All documented symbols can be imported from the top-level package (`from tenuo.t
 | `tenuo.temporal._decorators` | `tool`, `unprotected` |
 | `tenuo.temporal._observability` | `TemporalAuditEvent`, `TenuoMetrics` |
 | `tenuo.temporal._constants` | `TENUO_WARRANT_HEADER`, `TENUO_KEY_ID_HEADER`, `TENUO_POP_HEADER`, `TENUO_COMPRESSED_HEADER` |
-| `tenuo.temporal.exceptions` | `TenuoContextError`, `PopVerificationError`, `TemporalConstraintViolation`, `WarrantExpired`, `ChainValidationError`, `LocalActivityError`, `KeyResolutionError` |
+| `tenuo.temporal.exceptions` | `TenuoContextError`, `PopVerificationError`, `TemporalConstraintViolation`, `WarrantExpired`, `ChainValidationError`, `LocalActivityError`, `KeyResolutionError`, `TenuoActivityMappingError` |
 | `tenuo.temporal_plugin` | `TenuoTemporalPlugin` |
+| `tenuo.temporal.harness` | `harness_plugin_config`, `warrant_evaluator`, `HARNESS_INTERNAL_ACTIVITIES`, `HARNESS_TOOL_CTX_EXCLUDE_ARGS`, `HARNESS_MCP_CALL_TOOL_ACTIVITIES` — see [Tenuo for the Temporal Agent Harness](./temporal-harness.md) |
 
 ---
 
@@ -1212,12 +1213,14 @@ transform_warrant = (
 
 - `tests/e2e/test_temporal_live.py`, `test_temporal_replay.py`: in-process Temporal test server, serialization, delegation, continue-as-new, replay
 - `tests/e2e/test_temporal_e2e.py`: mocked Temporal with real Tenuo objects: interceptors, PoP, constraints, child headers
+- `tests/e2e/test_temporal_harness_support.py`, `tests/unit/test_temporal_harness_module.py`: `pop_exclude_args`, `unwarranted_activities`, `mcp_call_tool_activities`, and `tenuo.temporal.harness` presets/`warrant_evaluator`
 
 ---
 
 ## More Information
 
 - [Temporal Documentation](https://docs.temporal.io)
+- [Tenuo for the Temporal Agent Harness](./temporal-harness.md)
 - [Tenuo Core Concepts](./concepts.md)
 - [Security Model](./security.md)
 - [Example Code](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal)
