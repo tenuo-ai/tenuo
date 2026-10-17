@@ -1,0 +1,311 @@
+diff --git a/agent_app.py b/agent_app.py
+index 4094906..bcda371 100644
+--- a/agent_app.py
++++ b/agent_app.py
+@@ -1,41 +1,91 @@
+-"""Compiled refund agent. amount_cents is USD cents."""
++"""Local scripted refund agent; all effects are fake, amounts are USD cents.
++
++The handler verifies public presentations. Only the caller makes holder proof.
++This process-local development example is not a sandbox for arbitrary Python.
++"""
++import time
+ from typing import Any, TypedDict
+ from langgraph.graph import StateGraph, START, END
+ from langgraph.prebuilt import ToolNode
+ from langchain_core.tools import tool
+ from langchain_core.messages import AIMessage
+-from tenuo import Exact, Range, SigningKey, Warrant
++from langchain_core.runnables import RunnableConfig
++from pydantic import StrictInt, StrictStr
++from tenuo import Authorizer, Exact, Range, SigningKey, Warrant
+ from tenuo.keys import KeyRegistry
+ 
+ effects = []
+ 
++
+ @tool
+-def refund_order(order_id: str, amount_cents: int) -> str:
+-    """Refund an order; amount_cents is USD cents."""
+-    effects.append((order_id, amount_cents))
+-    return "refunded"
++def refund_order(order_id: StrictStr, amount_cents: StrictInt) -> str:
++    """Retired direct refund route: use a configured graph with public proof."""
++    raise PermissionError("Direct refund route disabled: authorization required")
++
+ 
+ class State(TypedDict):
+     messages: list
+     warrant: Any
+     warrant_chain: list
+ 
++
+ def task_authority():
++    """Development issuance entrypoint; keep these issuer keys outside agents in production."""
+     issuer, parent_holder, worker = [SigningKey.generate() for _ in range(3)]
+-    root = Warrant.mint_builder().holder(parent_holder.public_key).capability("refund_order", order_id=Exact("123"), amount_cents=Range(max=50000)).ttl(300).mint(issuer)
+-    child = root.grant_builder().holder(worker.public_key).capability("refund_order", order_id=Exact("123"), amount_cents=Range(max=50000)).ttl(120).grant(parent_holder)
++    scope = {"order_id": Exact("123"), "amount_cents": Range(min=1, max=50000)}
++    root = Warrant.mint_builder().holder(parent_holder.public_key).capability("refund_order", **scope).ttl(300).mint(issuer)
++    child = root.grant_builder().holder(worker.public_key).capability("refund_order", **scope).ttl(120).terminal().grant(parent_holder)
+     registry = KeyRegistry.get_instance()
++    # A different default key makes config-forwarding mistakes detectable.
+     registry.register("default", SigningKey.generate())
+     registry.register("refund-worker", worker)
+     return issuer, root, child
+ 
++
+ def make_graph(roots):
++    # Trust is pinned at graph construction, never supplied by a tool request.
++    if not roots:
++        raise ValueError("Explicit trusted issuer roots required")
++    verifier = Authorizer(trusted_roots=list(roots), clock_tolerance_secs=0)
++
++    @tool("refund_order")
++    def protected_refund(order_id: StrictStr, amount_cents: StrictInt, config: RunnableConfig) -> str:
++        """Refund order 123 for 1..50000 integer USD cents with caller proof."""
++        # Strict schema avoids framework coercion before this final boundary.
++        if type(order_id) is not str or type(amount_cents) is not int:
++            raise PermissionError("Invalid refund argument types")
++        if order_id != "123" or not 1 <= amount_cents <= 50000:
++            raise PermissionError("Refund exceeds local order/amount ceiling")
++        args = {"order_id": order_id, "amount_cents": amount_cents}
++        presentation = config.get("configurable", {}).get("refund_presentation")
++        if not isinstance(presentation, dict):
++            raise PermissionError("Missing public authorization presentation")
++        try:
++            tokens, signature = presentation["chain"], presentation["signature"]
++            if not isinstance(tokens, list) or not tokens or not isinstance(signature, bytes) or len(signature) != 64:
++                raise ValueError("Malformed chain or proof")
++            chain = [Warrant.from_base64(token) for token in tokens]
++            verifier.check_chain(chain, "refund_order", args, signature)
++        except Exception as exc:
++            raise PermissionError(f"Authorization denied: {exc}") from exc
++        # No unguarded refund function/client exists behind this check.
++        effects.append((args["order_id"], args["amount_cents"]))
++        return "refunded"
++
+     builder = StateGraph(State)
+-    builder.add_node("tools", ToolNode([refund_order]))
++    builder.add_node("tools", ToolNode([protected_refund], handle_tool_errors=True))
+     builder.add_edge(START, "tools")
+     builder.add_edge("tools", END)
+     return builder.compile()
+ 
++
+ def run_refund(graph, warrant, parents, order_id, amount_cents):
++    """Caller-side scripted dispatcher; private key never reaches the verifier."""
++    presentation = None
++    if warrant is not None:
++        key = KeyRegistry.get_instance().get("refund-worker")
++        args = {"order_id": order_id, "amount_cents": amount_cents}
++        presentation = {"chain": [w.to_base64() for w in [*parents, warrant]],
++                        "signature": warrant.sign(key, "refund_order", args, int(time.time()))}
+     state = {"messages": [AIMessage(content="", tool_calls=[{"name": "refund_order", "args": {"order_id": order_id, "amount_cents": amount_cents}, "id": "call"}])], "warrant": warrant, "warrant_chain": parents}
+-    return graph.invoke(state, config={"configurable": {"tenuo_key_id": "refund-worker"}})
++    return graph.invoke(state, config={"configurable": {"tenuo_key_id": "refund-worker", "refund_presentation": presentation}})
+diff --git a/requirements.lock b/requirements.lock
+new file mode 100644
+index 0000000..c8c6d29
+--- /dev/null
++++ b/requirements.lock
+@@ -0,0 +1,45 @@
++annotated-types==0.8.0
++anyio==4.15.1
++certifi==2026.7.22
++charset-normalizer==3.5.2
++distro==1.9.0
++h11==0.16.0
++httpcore==1.0.9
++httpcore2==2.13.1
++httpx==0.28.1
++httpx2==2.13.1
++idna==3.20
++iniconfig==2.3.1
++jsonpatch==1.35
++jsonpointer==3.2.1
++langchain==1.3.18
++langchain-core==1.6.12
++langchain-protocol==0.0.19
++langgraph==1.2.11
++langgraph-checkpoint==4.3.0
++langgraph-prebuilt==1.1.1
++langgraph-sdk==0.4.8
++langsmith==0.14.11
++orjson==3.13.0
++ormsgpack==1.13.0
++packaging==26.3
++pluggy==1.7.0
++pydantic==2.14.1
++pydantic_core==2.50.1
++Pygments==2.21.0
++pytest==9.1.1
++pytest-asyncio==1.4.0
++PyYAML==6.0.3
++requests==2.34.2
++requests-toolbelt==1.0.0
++sniffio==1.3.1
++tenacity==9.2.1
++-e git+https://github.com/tenuo-ai/tenuo.git@abe73aab4df50a7044ab8b0d560b061c2b57d650#egg=tenuo&subdirectory=../../../tenuo-skill-readiness/tenuo-python
++truststore==0.10.5
++typing-inspection==0.4.4
++typing_extensions==4.16.0
++urllib3==2.8.0
++uuid_utils==0.17.1
++websockets==16.1.1
++xxhash==4.0.1
++zstandard==0.25.0
+diff --git a/tests/test_app.py b/tests/test_app.py
+index 6a8e9e2..73b64f3 100644
+--- a/tests/test_app.py
++++ b/tests/test_app.py
+@@ -1,14 +1,137 @@
+-import agent_app
++import time
++import pytest
++from langchain_core.messages import AIMessage
++from tenuo import Exact, Range, SigningKey, Warrant
+ from tenuo.keys import KeyRegistry
++import agent_app as app
+ 
+-def test_delegated_task():
+-    KeyRegistry.reset_instance(); agent_app.effects.clear()
+-    issuer, root, child = agent_app.task_authority()
+-    graph = agent_app.make_graph([issuer.public_key])
+-    agent_app.run_refund(graph, child, [root], "123", 20000)
+-    assert agent_app.effects == [("123", 20000)]
+-
+-def test_direct_tool():
+-    agent_app.effects.clear()
+-    agent_app.refund_order.invoke({"order_id":"123", "amount_cents":20000})
+-    assert agent_app.effects == [("123", 20000)]
++
++@pytest.fixture(autouse=True)
++def reset():
++    KeyRegistry.reset_instance()
++    app.effects.clear()
++
++
++def dispatch(graph, chain=None, signer=None, order="123", cents=20000, signature=None, tool="refund_order", extra=None):
++    args = {"order_id": order, "amount_cents": cents, **(extra or {})}
++    presentation = None
++    if chain is not None:
++        if signature is None:
++            signature = chain[-1].sign(signer, tool, args, int(time.time()))
++        presentation = {"chain": [w.to_base64() for w in chain], "signature": signature}
++    state = {"messages": [AIMessage(content="", tool_calls=[{"name": tool, "args": args, "id": "test"}])], "warrant": None, "warrant_chain": []}
++    return graph.invoke(state, config={"configurable": {"refund_presentation": presentation}})["messages"][-1]
++
++
++def root_warrant(issuer, holder, capability="refund_order", maximum=50000, ttl=120):
++    return Warrant.mint_builder().holder(holder.public_key).capability(capability, order_id=Exact("123"), amount_cents=Range(min=1, max=maximum)).ttl(ttl).mint(issuer)
++
++
++def denied(message, reason):
++    assert message.status == "error"
++    assert reason.lower() in message.content.lower()
++    assert app.effects == []
++
++
++def test_delegated_task_and_demo(capsys):
++    issuer, root, child = app.task_authority()
++    graph = app.make_graph([issuer.public_key])
++    result = app.run_refund(graph, child, [root], "123", 20000)
++    assert result["messages"][-1].content == "refunded"
++    assert app.effects == [("123", 20000)]
++    print("Task warrant: refund(order=123, amount<=500 USD)")
++    print("Allowed: refund(order=123, amount=200 USD) -> effects=1")
++    app.effects.clear()
++    result = app.run_refund(graph, child, [root], "123", 490000)
++    denied(result["messages"][-1], "ceiling")
++    print("Denied: refund(order=123, amount=4900 USD) -> effects=0")
++
++
++def test_direct_tool_and_underlying_callable():
++    with pytest.raises(PermissionError, match="Direct refund route disabled"):
++        app.refund_order.invoke({"order_id": "123", "amount_cents": 20000})
++    with pytest.raises(PermissionError, match="Direct refund route disabled"):
++        app.refund_order.func("123", 20000)
++    assert app.effects == []
++
++
++@pytest.mark.parametrize("cents", [1, 50000])
++def test_allowed_edges(cents):
++    issuer, root, child = app.task_authority()
++    result = app.run_refund(app.make_graph([issuer.public_key]), child, [root], "123", cents)
++    assert result["messages"][-1].content == "refunded"
++    assert app.effects == [("123", cents)]
++
++
++@pytest.mark.parametrize("order,cents", [("124", 20000), ("123", 50001), ("123", 0), ("123", -1), ("123", 2**60)])
++def test_local_ceiling(order, cents):
++    issuer, root, child = app.task_authority()
++    denied(app.run_refund(app.make_graph([issuer.public_key]), child, [root], order, cents)["messages"][-1], "ceiling")
++
++
++@pytest.mark.parametrize("cents", [True, 1.5, "20000"])
++def test_no_lossy_coercion(cents):
++    issuer, _, _ = app.task_authority()
++    denied(dispatch(app.make_graph([issuer.public_key]), cents=cents), "valid integer")
++
++
++def test_missing_and_malformed():
++    issuer, _, _ = app.task_authority()
++    graph = app.make_graph([issuer.public_key])
++    denied(dispatch(graph), "Missing public authorization")
++    state = {"messages": [AIMessage(content="", tool_calls=[{"name": "refund_order", "args": {"order_id":"123", "amount_cents":20000}, "id":"x"}])]}
++    message = graph.invoke(state, config={"configurable": {"refund_presentation": {"chain":["invalid"], "signature": bytes(64)}}})["messages"][-1]
++    denied(message, "Authorization denied")
++
++
++def test_untrusted_wrong_holder_missing_chain():
++    issuer, root, child = app.task_authority()
++    worker = KeyRegistry.get_instance().get("refund-worker")
++    denied(dispatch(app.make_graph([SigningKey.generate().public_key]), [root, child], worker), "trust")
++    graph = app.make_graph([issuer.public_key])
++    denied(dispatch(graph, [root, child], SigningKey.generate()), "signature")
++    denied(dispatch(graph, [child], worker), "trust")
++
++
++def test_wrong_capability_and_narrower_amount():
++    issuer, holder = SigningKey.generate(), SigningKey.generate()
++    graph = app.make_graph([issuer.public_key])
++    wrong = root_warrant(issuer, holder, capability="cancel_order")
++    denied(dispatch(graph, [wrong], holder), "refund_order")
++    narrow = root_warrant(issuer, holder, maximum=10000)
++    denied(dispatch(graph, [narrow], holder), "amount_cents")
++
++
++def test_proof_binds_final_arguments():
++    issuer, root, child = app.task_authority()
++    worker = KeyRegistry.get_instance().get("refund-worker")
++    proof = child.sign(worker, "refund_order", {"order_id":"123", "amount_cents":10000}, int(time.time()))
++    denied(dispatch(app.make_graph([issuer.public_key]), [root, child], signature=proof), "signature")
++
++
++def test_unknown_args_fail_before_effect():
++    issuer, root, child = app.task_authority()
++    worker = KeyRegistry.get_instance().get("refund-worker")
++    # Even if the framework ignores the unknown field, it changes signed args;
++    # proof verification must reject that call before the effect.
++    denied(dispatch(app.make_graph([issuer.public_key]), [root, child], worker, extra={"currency":"EUR"}), "signature")
++
++
++def test_expired_at_receiving_boundary():
++    issuer, holder = SigningKey.generate(), SigningKey.generate()
++    warrant = root_warrant(issuer, holder, ttl=1)
++    graph = app.make_graph([issuer.public_key])
++    time.sleep(1.1)
++    denied(dispatch(graph, [warrant], holder), "expir")
++
++
++def test_valid_narrow_child_then_widening_rejected():
++    issuer, parent, worker = [SigningKey.generate() for _ in range(3)]
++    root = root_warrant(issuer, parent)
++    child = root.grant_builder().holder(worker.public_key).capability("refund_order", order_id=Exact("123"), amount_cents=Range(min=1, max=20000)).ttl(60).terminal().grant(parent)
++    assert dispatch(app.make_graph([issuer.public_key]), [root, child], worker).content == "refunded"
++    assert app.effects == [("123", 20000)]
++    app.effects.clear()
++    with pytest.raises(Exception, match="(?i)(attenuat|constraint|widen|range)"):
++        root.grant_builder().holder(worker.public_key).capability("refund_order", order_id=Exact("123"), amount_cents=Range(min=1, max=50001)).ttl(60).grant(parent)
++    assert app.effects == []

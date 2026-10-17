@@ -1,0 +1,290 @@
+diff --git a/payment_service/__init__.py b/payment_service/__init__.py
+index 2d4827e..d9e6ffd 100644
+--- a/payment_service/__init__.py
++++ b/payment_service/__init__.py
+@@ -1 +1,6 @@
+-from .client import PaymentClient, client, execute_transfer
++from .client import AuthorizationDenied, PaymentClient, Presentation, client, execute_transfer
++from .caller import present_transfer
++from .issuer import issue_transfer_authority
++
++__all__ = ["AuthorizationDenied", "PaymentClient", "Presentation", "client",
++           "execute_transfer", "present_transfer", "issue_transfer_authority"]
+diff --git a/payment_service/client.py b/payment_service/client.py
+index 60023d8..15c0b23 100644
+--- a/payment_service/client.py
++++ b/payment_service/client.py
+@@ -1,14 +1,81 @@
++"""Fail-closed payment boundary. This example owns only an isolated fake effect."""
++from dataclasses import dataclass, field
++from typing import Any
++
++from tenuo import Authorizer, PublicKey, Warrant
++
++CAPABILITY = "payment.transfer"
++MAX_AMOUNT = 2**53 - 1  # All accepted integers are exact in the core's numeric view.
++
++
++class AuthorizationDenied(PermissionError):
++    """The payment effect was not invoked."""
++
++
++@dataclass(frozen=True)
++class Presentation:
++    """Public transport data, ordered root to leaf. Never contains signing keys."""
++
++    chain: tuple[bytes, ...] = field(repr=False)
++    signature: bytes = field(repr=False)
++
++
++def transfer_arguments(recipient: str, amount: int) -> dict[str, Any]:
++    if type(recipient) is not str or not recipient or len(recipient) > 200:
++        raise AuthorizationDenied("invalid recipient")
++    if type(amount) is not int or not 1 <= amount <= MAX_AMOUNT:
++        raise AuthorizationDenied("invalid amount")
++    return {"recipient": recipient, "amount": amount}
++
++
+ class PaymentClient:
+-    def __init__(self):
+-        self.calls = []
++    """Construct in trusted service startup with the configured issuer PUBLIC key.
++
++    Construction is configuration, never a request operation. No private key is
++    accepted. Run this component outside an untrusted caller's mutable process
++    before connecting a real payment adapter.
++    """
++
++    def __init__(self, trusted_issuer: PublicKey | None = None) -> None:
++        self.__authorizer = (
++            Authorizer(trusted_roots=[trusted_issuer], clock_tolerance_secs=0)
++            if trusted_issuer is not None else None
++        )
++        self.__calls: list[tuple[str, int]] = []
++
++    @property
++    def calls(self) -> list[tuple[str, int]]:
++        return list(self.__calls)
+ 
+-    def transfer(self, recipient: str, amount: int) -> dict:
+-        self.calls.append((recipient, amount))
+-        return {"recipient": recipient, "amount": amount, "status": "sent"}
++    def transfer(
++        self, recipient: str, amount: int, *, authority: Presentation | None = None
++    ) -> dict[str, Any]:
++        args = transfer_arguments(recipient, amount)
++        if self.__authorizer is None:
++            raise AuthorizationDenied("verifier is not configured")
++        if not isinstance(authority, Presentation):
++            raise AuthorizationDenied("authority required")
++        if (type(authority.chain) is not tuple or not 1 <= len(authority.chain) <= 8
++                or any(type(item) is not bytes or len(item) > 65536 for item in authority.chain)
++                or type(authority.signature) is not bytes or len(authority.signature) != 64):
++            raise AuthorizationDenied("malformed presentation")
++        try:
++            chain = [Warrant.from_bytes(item) for item in authority.chain]
++            self.__authorizer.check_chain(chain, CAPABILITY, args, authority.signature)
++        except Exception as exc:
++            # Generic public error; the cause is available to protected diagnostics.
++            raise AuthorizationDenied("authorization rejected") from exc
++        # The only effecting path consumes the exact values checked above.
++        self.__calls.append((args["recipient"], args["amount"]))
++        return {**args, "status": "sent"}
+ 
+ 
++# Old imports remain usable, but never silently acquire issuer trust.
+ client = PaymentClient()
+ 
+ 
+-def execute_transfer(recipient: str, amount: int) -> dict:
+-    return client.transfer(recipient, amount)
++def execute_transfer(
++    recipient: str, amount: int, *, authority: Presentation | None = None,
++    service: PaymentClient = client,
++) -> dict[str, Any]:
++    return service.transfer(recipient, amount, authority=authority)
+diff --git a/tests/test_payment.py b/tests/test_payment.py
+index 17e5502..72608ec 100644
+--- a/tests/test_payment.py
++++ b/tests/test_payment.py
+@@ -1,13 +1,171 @@
+-from payment_service import PaymentClient, client, execute_transfer
++"""Receiving-boundary tests. Every effect is an isolated in-memory fake."""
++import importlib
++import time
+ 
++import pytest
++from tenuo import Exact, Range, SigningKey, Warrant
+ 
+-def test_application_transfer():
+-    client.calls.clear()
+-    assert execute_transfer("merchant", 200)["status"] == "sent"
+-    assert client.calls == [("merchant", 200)]
++from payment_service import (
++    AuthorizationDenied, PaymentClient, Presentation, execute_transfer,
++    issue_transfer_authority, present_transfer,
++)
++from payment_service.client import CAPABILITY
+ 
+ 
+-def test_payment_client():
+-    raw = PaymentClient()
+-    raw.transfer("merchant", 200)
+-    assert raw.calls == [("merchant", 200)]
++@pytest.fixture
++def setup():
++    issuer, holder = SigningKey.generate(), SigningKey.generate()
++    service = PaymentClient(issuer.public_key)
++    chain = issue_transfer_authority(
++        issuer, holder.public_key, recipient="merchant", max_amount=500
++    )
++    return issuer, holder, service, chain
++
++
++def denied(service, action, reason=None):
++    with pytest.raises(AuthorizationDenied) as caught:
++        action()
++    assert service.calls == []
++    if reason:
++        assert caught.value.__cause__ is not None
++        assert reason.lower() in str(caught.value.__cause__).lower()
++
++
++def test_allowed_application_flow(setup):
++    _, holder, service, chain = setup
++    proof = present_transfer(chain, holder, "merchant", 200)
++    assert execute_transfer("merchant", 200, authority=proof, service=service) == {
++        "recipient": "merchant", "amount": 200, "status": "sent"
++    }
++    assert service.calls == [("merchant", 200)]
++    assert Warrant.from_bytes(chain[-1]).is_terminal()
++    print("Allowed payment.transfer(recipient=merchant, amount=200, ceiling=500): effects=1")
++
++
++def test_missing_authority(setup):
++    _, _, service, _ = setup
++    denied(service, lambda: service.transfer("merchant", 200))
++
++
++def test_untrusted_issuer(setup):
++    _, holder, service, _ = setup
++    chain = issue_transfer_authority(SigningKey.generate(), holder.public_key,
++                                    recipient="merchant", max_amount=500)
++    denied(service, lambda: service.transfer("merchant", 200,
++           authority=present_transfer(chain, holder, "merchant", 200)), "not trusted")
++
++
++def test_wrong_holder(setup):
++    _, _, service, chain = setup
++    # Sign a mathematically valid proof with an unrelated holder key.
++    proof = present_transfer(chain, SigningKey.generate(), "merchant", 200)
++    denied(service, lambda: service.transfer("merchant", 200, authority=proof), "proof")
++
++
++def test_expiry(setup):
++    issuer, holder, service, _ = setup
++    chain = issue_transfer_authority(issuer, holder.public_key, recipient="merchant",
++                                    max_amount=500, ttl_seconds=1)
++    proof = present_transfer(chain, holder, "merchant", 200)
++    time.sleep(2.05)
++    denied(service, lambda: service.transfer("merchant", 200, authority=proof), "expired")
++
++
++def test_wrong_capability(setup):
++    issuer, holder, service, _ = setup
++    warrant = (Warrant.mint_builder().capability("payment.refund", recipient=Exact("merchant"),
++               amount=Range(1, 500)).holder(holder.public_key).ttl(60).mint(issuer))
++    chain = (warrant.to_bytes(),)
++    denied(service, lambda: service.transfer("merchant", 200,
++           authority=present_transfer(chain, holder, "merchant", 200)), "payment.transfer")
++
++
++@pytest.mark.parametrize("recipient,amount,reason", [
++    ("attacker", 200, "recipient"), ("merchant", 501, "amount"),
++])
++def test_argument_denial(setup, recipient, amount, reason):
++    _, holder, service, chain = setup
++    proof = present_transfer(chain, holder, recipient, amount)
++    denied(service, lambda: service.transfer(recipient, amount, authority=proof), reason)
++
++
++def delegated_fixture():
++    issuer, holder, worker = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
++    root = (Warrant.mint_builder().capability(CAPABILITY, recipient=Exact("merchant"),
++            amount=Range(1, 500)).holder(holder.public_key).ttl(120).mint(issuer))
++    builder = root.attenuate_builder()
++    builder.with_capability(CAPABILITY,
++                            {"recipient": Exact("merchant"), "amount": Range(1, 250)})
++    builder.with_holder(worker.public_key)
++    builder.with_ttl(60)
++    builder.terminal()
++    child = builder.delegate(holder)
++    return issuer, holder, worker, root, child
++
++
++def test_narrower_child_root_only_trust():
++    issuer, _, worker, root, child = delegated_fixture()
++    service = PaymentClient(issuer.public_key)
++    chain = (root.to_bytes(), child.to_bytes())
++    service.transfer("merchant", 200, authority=present_transfer(chain, worker, "merchant", 200))
++    assert service.calls == [("merchant", 200)]
++
++
++def test_missing_parent_chain():
++    issuer, _, worker, _, child = delegated_fixture()
++    service = PaymentClient(issuer.public_key)
++    chain = (child.to_bytes(),)
++    denied(service, lambda: service.transfer("merchant", 200,
++           authority=present_transfer(chain, worker, "merchant", 200)), "not trusted")
++
++
++def test_wider_child_rejected_at_receiving_boundary():
++    issuer, holder, worker, root, child = delegated_fixture()
++    # Adversarial wire fixture: keep linkage, holder, TTL, and depth unchanged,
++    # change only amount max 250 -> 1000, and correctly re-sign as the delegator.
++    # Released native wire format: [1, payload_bytes, [1, signature_bytes]].
++    # Domain below was confirmed against the installed native implementation
++    # by reproducing an existing warrant signature with SigningKey.sign_raw.
++    payload = child.payload_bytes
++    old = b"cmax\xf9\x5b\xd0"  # CBOR text 'max', float16 250
++    new = b"cmax\xf9\x63\xd0"  # float16 1000; same wire length
++    assert payload.count(old) == 1
++    widened = payload.replace(old, new)
++    wire = child.to_bytes()
++    assert wire.count(payload) == 1
++    assert holder.sign_raw(b"tenuo-warrant-v1\x01" + payload) == wire[-64:]
++    forged_wire = wire.replace(payload, widened)
++    forged_wire = forged_wire[:-64] + holder.sign_raw(b"tenuo-warrant-v1\x01" + widened)
++    forged = Warrant.from_bytes(forged_wire)
++    forged.verify(holder.public_key_bytes())  # Not a malformed signature fixture.
++    assert forged.capabilities[CAPABILITY]["amount"].max == 1000
++    service = PaymentClient(issuer.public_key)
++    chain = (root.to_bytes(), forged.to_bytes())
++    # The concrete call still satisfies both envelopes. Denial must be because
++    # the child envelope widened, rather than the concrete call being denied.
++    proof = present_transfer(chain, worker, "merchant", 200)
++    denied(service, lambda: service.transfer("merchant", 200, authority=proof), "range expanded")
++
++
++def test_original_module_routes_cannot_bypass(setup):
++    _, _, configured, _ = setup
++    original = importlib.import_module("payment_service.client")
++    raw = original.PaymentClient()
++    denied(raw, lambda: raw.transfer("merchant", 200))
++    denied(original.client, lambda: original.client.transfer("merchant", 200))
++    denied(original.client, lambda: original.execute_transfer("merchant", 200))
++    denied(configured, lambda: configured.transfer("merchant", 200))
++
++
++def test_malformed_and_tampered_proof(setup):
++    _, holder, service, chain = setup
++    denied(service, lambda: service.transfer("merchant", 200,
++           authority=Presentation((b"garbage",), bytes(64))))
++    valid = present_transfer(chain, holder, "merchant", 200)
++    denied(service, lambda: service.transfer("merchant", 201, authority=valid), "proof")
++
++
++@pytest.mark.parametrize("amount", [True, 1.0, "200", 0, -1, 2**53])
++def test_lossy_or_invalid_amount_denied(setup, amount):
++    _, _, service, _ = setup
++    denied(service, lambda: service.transfer("merchant", amount))

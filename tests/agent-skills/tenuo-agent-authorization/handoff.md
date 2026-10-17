@@ -29,40 +29,39 @@ audit. The handoff adds no adapter implementation changes.
   merged #813 config forwarding and fails compiled key selection; the separate
   main-plus-leaf code overlay passes, with a CHANGELOG merge conflict recorded.
 - The strict readiness gate passes structure, reviewed horizon/framework facts
-  and current framework dispatch evidence. It deliberately fails coding-agent
-  evidence requirements.
+  and current framework dispatch evidence. It still fails coding-agent
+  completeness/freshness requirements; see the completed diagnostic round below.
 
 Committed JSON beside this file records actual source/harness fingerprints,
 package versions, native artifact hashes and outputs. Historical PR-lane runs
 retain their old fingerprints after harness refinements. They do not establish
 released functionality or substitute for current merged-main results.
 
+## Local diagnostic round completed
+
+See [the preserved seven-project run](local-evaluations/2026-10-17/README.md) for
+original starters, candidate code, exact skill inputs, reports, independent probes
+and logs. Payment implementation/reporting passed in all three languages;
+OpenAI, LangGraph and both MCP-major independent reruns passed. Temporal's
+agent reports 25 live tests pass; an independent receiver probe passes, but the
+additional independent live/replay test is **not run**, due to automatic approval
+review being unavailable at the account usage limit. Do not count it as green.
+
+The round evaluated copied skill `abe73aab`, before the local CLI change below.
+Historical payment failures and all evaluated fingerprints are retained. The
+fresh Python result is consequently stale for today's Python reference. No
+aggregate framework result is emitted while its independent Temporal probe is
+pending. These seven single-run diagnostics do not establish a reliability rate.
+
 ## Remaining work
 
-1. Run blind coding-agent evaluations in fresh external-style projects. Fresh
-   in-session subagents with no inherited conversation are suitable for an
-   initial diagnostic pass; no separate OpenAI API key is required for that
-   route. Record the inherited model identity as far as exposed, scenario,
-   resolved SDK source, run count, limits and every outcome. Do not claim a
-   pinned backend revision if the session does not expose one.
-2. The proposed full first round is three payment runs (Python, TypeScript,
-   Rust) plus four framework projects (OpenAI Agents, LangChain/LangGraph,
-   Temporal, MCP exercised against both SDK majors). It has not been executed.
-   A disposable Python starter with two passing baseline tests was prepared
-   locally, but no evaluating subagent was started and no fresh result exists.
-   Recreate starters from the scenario documents; temporary paths are not
-   portable handoff artifacts.
-3. Give evaluating agents only the starter, installed skill and task. Keep the
-   hidden rubric and prior failures out of their context. Independently inspect
-   generated patches and run receiving-boundary/bypass probes; generated green
-   tests alone do not establish a pass. Preserve failed runs and reporting
-   failures. A diagnostic sample is not a reliability estimate.
-4. Refresh/review changed PRs and SDK facts without borrowing pending APIs into
-   released code. Do not merge all PR stacks together. Preserve root-only trust,
-   complete delegated chains, observe/enforce distinctions and measured zero
-   protected effects for denials.
-5. Update evidence and rerun the strict gate. Complete Daniel's local manual
-   testing before opening a PR. No PR has been opened for this branch.
+1. Run the preserved Temporal `grader_probes/test_independent.py` with permission
+   for a local test server. Preserve failure if it fails; do not relax enforcement.
+2. Review/replay `78819f03` Python/local CLI guidance and warrant/audit routing.
+   Do not re-fingerprint the older run to certify unseen instructions.
+3. Refresh/review changed live PRs and SDK facts, rerun strict readiness, and
+   preserve source/stack distinctions and root-only trust throughout.
+4. Daniel must test locally by hand before any PR. No PR has been opened.
 
 ## Commands
 
@@ -75,8 +74,8 @@ python3 scripts/validate_agent_skills.py --readiness --summary /tmp/agent-skill-
 git diff --check origin/main...HEAD
 ```
 
-The readiness command currently exits nonzero for the expected coding-agent
-blockers. Do not change historical grades/fingerprints merely to make it green.
+The readiness command still exits nonzero for pending framework evidence and
+guidance review/freshness blockers. Do not change historical grades/fingerprints merely to make it green.
 For dispatch suites, build/install the exact selected checkout in isolated
 Python 3.12 environments and use `scripts/run_agent_skill_frameworks.py` as
 specified in maintenance.md; MCP major versions need separate environments.

@@ -1,0 +1,9 @@
+[project]
+name = "payment-service-eval"
+version = "0.0.1"
+requires-python = ">=3.12"
+dependencies = ["tenuo==0.3.2"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

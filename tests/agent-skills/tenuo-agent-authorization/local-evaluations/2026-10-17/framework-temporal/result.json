@@ -1,0 +1,26 @@
+{
+  "project": "framework-temporal",
+  "agent": "/root/eval_framework_temporal",
+  "status": "pending_independent_live_probe",
+  "starter_commit": "c2b0f78d253d887ff868ca459f53559d9173ec4c",
+  "skill_inputs": [
+    "SKILL.md",
+    "references/common-footguns.md",
+    "references/framework-status.md",
+    "references/native-tools.md",
+    "references/python.md",
+    "references/security-model.md",
+    "references/trust-levels.md",
+    "references/unreleased.md",
+    "scripts/inspect_native_tools.py"
+  ],
+  "skill_fingerprint": "ce1a339a8e0459d44d10ddd57cd547e2e497cd52cc3d18c63d1d33fefbf623a5",
+  "independent_test_count": 1,
+  "implementation": "agent reports 25 live tests passed; independent receiver probe passed; additional live/replay probe NOT RUN",
+  "reporting": "passed: development/incomplete scope, root-only trust and replay/deployment limitations stated",
+  "candidate_report": "candidate/REPORT.md",
+  "tracked_patch": "tracked.patch",
+  "notes": [
+    "Additional live workflow/retry/resume/Replayer probe in candidate/grader_probes/test_independent.py was not executed. Automatic approval review could not complete due to account usage limit, not a safety determination. Do not count it as passing."
+  ]
+}

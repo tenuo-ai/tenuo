@@ -1,8 +1,10 @@
 # Authorization skill distribution audit
 
 The skill now separates imported runtime source, matching release, merged main,
-and the open-PR horizon. **Promotion remains blocked on fresh coding-agent
-evidence.** Structural success and passing dispatch suites do not waive that.
+and the open-PR horizon. **Promotion remains blocked.** Seven local coding-agent
+diagnostics now have preserved source/reports and independent probes; the
+additional Temporal live replay probe and evaluation of subsequent guidance
+changes remain pending. Daniel’s local manual testing is also required.
 
 The audit started at main `28305436`. The final live snapshot records main
 `ba1efb55`; intervening TypeScript examples do not change the reviewed SDK source
@@ -35,13 +37,28 @@ branch. Textually clean merge previews are not semantic compatibility proof.
 Core/protocol, CrewAI, ADK, FastAPI and A2A pending fixes were reviewed as hazards;
 their entire alternative/stacked end states have not been exhaustively executed.
 
-The existing payment coding-agent evaluations remain failed and stale, including
-reporting failures despite previously passing generated implementation tests.
-Fresh framework coding-agent evidence is absent. Its scenario now specifies
-external-style release/main starters and independent bypass probes. Fresh coding-agent evaluations can use isolated in-session subagents; a separate
-OpenAI API key or external model spend is not required for that route. External
-paid replays still need an agreed model/run/time/cost budget. No fresh coding-agent
-run has completed, and no historical grades or fingerprints were renewed.
+The first local diagnostic round ran one blind in-session coding subagent in each
+of seven external-style starters. [Evidence and limits](local-evaluations/2026-10-17/README.md)
+include exact copied skill inputs, original starters, candidates, locks, reports,
+parent probes and logs. Python payment: 26 pass; TypeScript: 21 pass; Rust: 11
+behavioral plus 2 compile-fail pass. All three pass implementation and reporting
+review; historical failures remain archived. OpenAI: 40 pass; LangGraph: 21 pass;
+MCP: 27 pass on each major. These framework candidates chose direct effect
+handlers/services; they do not replace adapter regression coverage.
+
+Temporal's agent reports 25 live tests passing. Independent source review and a
+receiver probe pass, but the additional live workflow/retry/resume/Replayer probe
+could not start: automatic approval review failed due to account usage limits.
+It is preserved as unrun, and no aggregate framework coding-agent pass is emitted.
+No separate OpenAI API key or paid external API was used. One run per starter is
+a diagnostic sample, not a reliability estimate or controlled comparison.
+
+The branch advanced with local CLI guidance in `78819f03` during these runs.
+The runs used the copied skill at `abe73aab`; fingerprints are preserved, so the
+Python guidance evidence is visibly stale rather than silently renewed. New
+local CLI and warrant/audit routing behavior still needs review/replay. Scanner
+self-matches and the packaged TypeScript WASM's imperfect build provenance are
+recorded findings. Daniel's manual testing remains pending. No PR is open.
 
 Use `python3 scripts/validate_agent_skills.py --readiness --summary
 /tmp/agent-skill-readiness.md` for the explicit promotion gate. Ordinary CI remains

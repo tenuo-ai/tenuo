@@ -1,0 +1,24 @@
+{
+  "project": "payment-rust",
+  "agent": "/root/eval_payment_rust",
+  "status": "pass",
+  "starter_commit": "3c08be0afdf9273a816da780c54d4ba7075f66fc",
+  "skill_inputs": [
+    "SKILL.md",
+    "references/common-footguns.md",
+    "references/framework-status.md",
+    "references/native-tools.md",
+    "references/rust.md",
+    "references/security-model.md",
+    "references/trust-levels.md",
+    "references/unreleased.md",
+    "scripts/inspect_native_tools.py"
+  ],
+  "skill_fingerprint": "29acd1c2a3641b7223d19539ef02d73879ea6acb36b17103bb3b2bb7ac9ac7b1",
+  "independent_test_count": 13,
+  "implementation": "source reviewed; independent probes passed",
+  "reporting": "passed: development/incomplete scope, root-only trust and replay/deployment limitations stated",
+  "candidate_report": "candidate/REPORT.md",
+  "tracked_patch": "tracked.patch",
+  "notes": []
+}

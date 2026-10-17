@@ -1,0 +1,393 @@
+diff --git a/client.py b/client.py
+index 6b7595b..35359ff 100644
+--- a/client.py
++++ b/client.py
+@@ -3,9 +3,23 @@ from pathlib import Path
+ from mcp import ClientSession, StdioServerParameters
+ from mcp.client.stdio import stdio_client
+ 
+-async def call_refund(journal, order_id, amount_cents, meta=None):
+-    parameters = StdioServerParameters(command=sys.executable, args=[str(Path(__file__).with_name("server.py"))], env={**os.environ, "REFUND_JOURNAL":str(journal)})
++
++async def call_refund(journal, order_id, amount_cents, meta=None, *, trusted_root):
++    # The local launcher owns configuration; request metadata cannot choose the
++    # root. No issuer or holder private keys are passed to the verifier process.
++    parameters = StdioServerParameters(
++        command=sys.executable, args=[str(Path(__file__).with_name("server.py"))],
++        env={"PATH": os.environ.get("PATH", ""), "REFUND_JOURNAL": str(journal),
++             "REFUND_TRUSTED_ROOT": trusted_root},
++    )
+     async with stdio_client(parameters) as (read, write):
+         async with ClientSession(read, write) as session:
+             await session.initialize()
+             return await session.call_tool("refund_order", {"order_id": order_id, "amount_cents": amount_cents}, meta=meta)
++
++
++def result_is_error(result):
++    """MCP 1 uses isError; MCP 2 uses is_error."""
++    if "is_error" in type(result).model_fields:
++        return result.is_error
++    return result.isError
+diff --git a/requirements-mcp2.lock b/requirements-mcp2.lock
+new file mode 100644
+index 0000000..5407308
+--- /dev/null
++++ b/requirements-mcp2.lock
+@@ -0,0 +1,71 @@
++aiofile==3.12.3
++annotated-types==0.8.0
++anyio==4.15.1
++attrs==26.1.0
++Authlib==1.9.1
++beartype==0.23.1
++cachetools==7.2.3
++caio==0.12.9
++cffi==2.1.1
++click==8.5.0
++cryptography==50.0.2
++cyclopts==5.2.0
++dnspython==2.9.0
++docstring_parser==0.18.0
++email-validator==2.3.0
++exceptiongroup==1.3.1
++fastmcp==4.1.0
++fastmcp-slim==4.1.0
++griffelib==2.3.2
++h11==0.16.0
++httpcore2==2.13.1
++httpx2==2.13.1
++idna==3.20
++iniconfig==2.3.1
++jaraco.classes==3.4.0
++jaraco.context==6.1.2
++jaraco.functools==4.6.0
++joserfc==1.7.5
++jsonref==1.1.0
++jsonschema==4.26.0
++jsonschema-path==0.5.0
++jsonschema-specifications==2025.9.1
++keyring==25.7.0
++markdown-it-py==4.2.0
++mcp==2.3.0
++mcp-types==2.3.0
++mdurl==0.1.2
++more-itertools==11.2.1
++openapi-pydantic==0.6.0
++opentelemetry-api==1.45.1
++packaging==26.3
++pathable==0.6.0
++platformdirs==4.13.3
++pluggy==1.7.0
++py-key-value-aio==0.4.6
++pycparser==3.11
++pydantic==2.14.1
++pydantic-settings==2.16.0
++pydantic_core==2.50.1
++Pygments==2.21.0
++PyJWT==2.15.1
++pyperclip==1.11.0
++pytest==9.1.1
++pytest-asyncio==1.4.0
++python-dotenv==1.2.4
++python-multipart==0.0.32
++PyYAML==6.0.3
++referencing==0.37.0
++rich==15.0.0
++rich-rst==2.2.0
++rpds-py==2026.9.1
++sse-starlette==3.5.0
++starlette==1.8.0
++-e git+https://github.com/tenuo-ai/tenuo.git@abe73aab4df50a7044ab8b0d560b061c2b57d650#egg=tenuo&subdirectory=../../../tenuo-skill-readiness/tenuo-python
++truststore==0.10.5
++typing-inspection==0.4.4
++typing_extensions==4.16.0
++uncalled-for==0.4.1
++uvicorn==0.54.0
++watchfiles==1.3.0
++websockets==17.2
+diff --git a/requirements.lock b/requirements.lock
+new file mode 100644
+index 0000000..03e3517
+--- /dev/null
++++ b/requirements.lock
+@@ -0,0 +1,71 @@
++aiofile==3.12.3
++annotated-types==0.8.0
++anyio==4.15.1
++attrs==26.1.0
++Authlib==1.9.1
++beartype==0.23.1
++cachetools==7.2.3
++caio==0.12.9
++certifi==2026.7.22
++cffi==2.1.1
++click==8.5.0
++cryptography==50.0.2
++cyclopts==5.2.0
++dnspython==2.9.0
++docstring_parser==0.18.0
++email-validator==2.3.0
++exceptiongroup==1.3.1
++fastmcp==3.4.9
++fastmcp-slim==3.4.9
++griffelib==2.3.2
++h11==0.16.0
++httpcore==1.0.9
++httpx==0.28.1
++httpx-sse==0.4.3
++idna==3.20
++iniconfig==2.3.1
++jaraco.classes==3.4.0
++jaraco.context==6.1.2
++jaraco.functools==4.6.0
++joserfc==1.7.5
++jsonref==1.1.0
++jsonschema==4.26.0
++jsonschema-path==0.5.0
++jsonschema-specifications==2025.9.1
++keyring==25.7.0
++markdown-it-py==4.2.0
++mcp==1.30.0
++mdurl==0.1.2
++more-itertools==11.2.1
++openapi-pydantic==0.6.0
++opentelemetry-api==1.45.1
++packaging==26.3
++pathable==0.6.0
++platformdirs==4.13.3
++pluggy==1.7.0
++py-key-value-aio==0.4.6
++pycparser==3.11
++pydantic==2.14.1
++pydantic-settings==2.16.0
++pydantic_core==2.50.1
++Pygments==2.21.0
++PyJWT==2.15.1
++pyperclip==1.11.0
++pytest==9.1.1
++pytest-asyncio==1.4.0
++python-dotenv==1.2.4
++python-multipart==0.0.32
++PyYAML==6.0.3
++referencing==0.37.0
++rich==15.0.0
++rich-rst==2.2.0
++rpds-py==2026.9.1
++sse-starlette==3.5.0
++starlette==1.8.0
++-e git+https://github.com/tenuo-ai/tenuo.git@abe73aab4df50a7044ab8b0d560b061c2b57d650#egg=tenuo&subdirectory=../../../tenuo-skill-readiness/tenuo-python
++typing-inspection==0.4.4
++typing_extensions==4.16.0
++uncalled-for==0.4.1
++uvicorn==0.54.0
++watchfiles==1.3.0
++websockets==17.2
+diff --git a/server.py b/server.py
+index a94f84e..caaac61 100644
+--- a/server.py
++++ b/server.py
+@@ -1,15 +1,46 @@
+-"""stdio refund server; amount_cents is USD cents."""
++"""Local stdio refund boundary. The journal is the only effect; USD cents."""
+ import os
+ from pathlib import Path
++
+ from fastmcp import FastMCP
++from fastmcp.server.dependencies import get_context
++from pydantic import StrictInt, StrictStr
++from tenuo import Authorizer, PublicKey
++from tenuo.mcp import MCPVerifier
++
+ server = FastMCP("refunds")
++_verifier = None
++
+ 
+-@server.tool()
+-def refund_order(order_id: str, amount_cents: int) -> str:
+-    """Refund an order; amount_cents is USD cents."""
+-    with Path(os.environ["REFUND_JOURNAL"]).open("a") as f:
+-        f.write(f"{order_id}:{amount_cents}\n")
++def refund_order(order_id: StrictStr, amount_cents: StrictInt) -> str:
++    """Refund order 123, from 1 to 50,000 USD cents, with caller authority."""
++    # Check direct Python calls too, which bypass Pydantic validation.
++    if type(order_id) is not str or type(amount_cents) is not int:
++        raise ValueError("Refund arguments require an exact string and integer")
++    if _verifier is None:
++        raise RuntimeError("Refund verifier is not configured")
++    # Actual wire request metadata on FastMCP 3 and 4. No signing key or
++    # caller-selectable verification clock is accepted at this boundary.
++    request = get_context().request_context
++    if request is None:
++        raise RuntimeError("Refund requires an active MCP request")
++    clean = _verifier.verify_or_raise(
++        "refund_order", {"order_id": order_id, "amount_cents": amount_cents},
++        meta=request.meta,
++    )
++    if clean["order_id"] != "123" or not 1 <= clean["amount_cents"] <= 50_000:
++        raise ValueError("Refund outside local policy: order 123, 1..50000 cents")
++    with Path(os.environ["REFUND_JOURNAL"]).open("a") as journal:
++        journal.write(f"{clean['order_id']}:{clean['amount_cents']}\n")
+     return "refunded"
+ 
++
++# Keep the original module callable, with enforcement inside its body.
++server.tool()(refund_order)
++
+ if __name__ == "__main__":
+-    server.run(show_banner=False)
++    root = PublicKey.from_bytes(bytes.fromhex(os.environ["REFUND_TRUSTED_ROOT"]))
++    _verifier = MCPVerifier(
++        authorizer=Authorizer(trusted_roots=[root]), require_warrant=True,
++    )
++    server.run(transport="stdio", show_banner=False)
+diff --git a/tests/test_app.py b/tests/test_app.py
+index 65995de..7f00ecb 100644
+--- a/tests/test_app.py
++++ b/tests/test_app.py
+@@ -1,14 +1,137 @@
++import asyncio
++import json
++import time
++
+ import pytest
+-from client import call_refund
++from tenuo import Exact, Range, SigningKey, Warrant
++from tenuo_core import sign_meta
++
++from client import call_refund, result_is_error
++from development import issue_task, presentation
++
++
++@pytest.fixture
++def authority():
++    issuer, holder = SigningKey.generate(), SigningKey.generate()
++    return issuer, holder, issue_task(issuer, holder)
++
+ 
+-@pytest.mark.asyncio
+-async def test_refund(tmp_path):
++def effect_count(journal):
++    return len(journal.read_text().splitlines()) if journal.exists() else 0
++
++
++def text(result):
++    return " ".join(getattr(c, "text", "") for c in result.content)
++
++
++@pytest.mark.parametrize("amount", [1, 10_000, 20_000, 50_000])
++async def test_allowed(tmp_path, authority, amount):
++    issuer, holder, warrant = authority
+     journal = tmp_path / "refunds"
+-    await call_refund(journal,"123",20000)
+-    assert journal.read_text() == "123:20000\n"
++    result = await call_refund(journal, "123", amount,
++        presentation(warrant, holder, "123", amount),
++        trusted_root=issuer.public_key.to_bytes().hex())
++    assert not result_is_error(result), text(result)
++    assert effect_count(journal) == 1
++    assert journal.read_text() == f"123:{amount}\n"
++
++
++@pytest.mark.parametrize("case,expected", [
++    ("missing", "warrant"), ("malformed", "Malformed"),
++    ("untrusted", "trust"), ("wrong_holder", "PoP"),
++    ("missing_pop", "signature"), ("tampered_args", "PoP"),
++    ("wrong_capability", "authorized"), ("expired", "expired"),
++    ("wrong_order", "constraint"), ("above_limit", "constraint"),
++    ("negative", "constraint"), ("zero", "constraint"),
++    ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
++])
++async def test_denied_before_effect(tmp_path, authority, case, expected):
++    issuer, holder, warrant = authority
++    order, amount = "123", 20_000
++    signer = holder
++    if case == "untrusted":
++        warrant = issue_task(SigningKey.generate(), holder)
++    if case == "wrong_holder":
++        signer = SigningKey.generate()
++    if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
++        tool = "other_tool" if case == "wrong_capability" else "refund_order"
++        maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
++        warrant = Warrant.issue(issuer, capabilities={tool: {
++            "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
++        }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
++        if case == "expired":
++            await asyncio.sleep(2)
++    if case == "wrong_order": order = "456"
++    if case in ("above_limit", "local_ceiling"): amount = 50_001
++    if case == "negative": amount = -1
++    if case == "zero": amount = 0
++    meta = presentation(warrant, signer, order, amount)
++    if case == "missing": meta = None
++    if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
++    if case == "missing_pop": meta["tenuo"].pop("signature")
++    if case == "tampered_args": amount += 1
++    journal = tmp_path / "refunds"
++    result = await call_refund(journal, order, amount, meta,
++        trusted_root=issuer.public_key.to_bytes().hex())
++    assert result_is_error(result), text(result)
++    assert expected.lower() in text(result).lower(), text(result)
++    assert effect_count(journal) == 0
++
++
++@pytest.mark.parametrize("order,amount", [
++    ("123", True), ("123", 20_000.5), ("123", "20000"),
++    (123, 20_000), ("123", 2**53 + 1), ("123", 2**64),
++])
++async def test_invalid_numeric_domain(tmp_path, authority, order, amount):
++    issuer, holder, warrant = authority
++    journal = tmp_path / "refunds"
++    # Sign at the client, but send every fixture to the real server.
++    result = await call_refund(journal, order, amount,
++        presentation(warrant, holder, order, amount),
++        trusted_root=issuer.public_key.to_bytes().hex())
++    assert result_is_error(result), text(result)
++    assert effect_count(journal) == 0
++
++
++def test_original_module_route(tmp_path, monkeypatch, authority):
++    import server
++    from tenuo import Authorizer
++    from tenuo.mcp import MCPVerifier
++    journal = tmp_path / "refunds"
++    monkeypatch.setenv("REFUND_JOURNAL", str(journal))
++    issuer, _, _ = authority
++    # Even with a real configured verifier, direct invocation at the original
++    # defining module has no actual MCP request and cannot reach the effect.
++    monkeypatch.setattr(server, "_verifier", MCPVerifier(
++        authorizer=Authorizer(trusted_roots=[issuer.public_key]), require_warrant=True))
++    with pytest.raises(RuntimeError, match="No active context"):
++        server.refund_order("123", 20_000)
++    assert effect_count(journal) == 0
++
+ 
+-@pytest.mark.asyncio
+-async def test_another_refund(tmp_path):
++async def test_narrow_child_and_missing_parent(tmp_path, authority):
++    issuer, delegator, parent = authority
++    recipient = SigningKey.generate()
++    child = (parent.grant_builder()
++        .capability("refund_order", order_id=Exact("123"), amount_cents=Range(min=1, max=20_000))
++        .holder(recipient.public_key).ttl(120).terminal().grant(delegator))
++    assert child.is_terminal
++    args = {"order_id": "123", "amount_cents": 10_000}
++    root = issuer.public_key.to_bytes().hex()
+     journal = tmp_path / "refunds"
+-    await call_refund(journal,"123",10000)
+-    assert journal.read_text() == "123:10000\n"
++    meta = {"tenuo": sign_meta([parent, child], recipient, "refund_order", json.dumps(args), int(time.time()))}
++    result = await call_refund(journal, **args, meta=meta, trusted_root=root)
++    assert not result_is_error(result), text(result)
++    assert effect_count(journal) == 1
++    # Keep the same valid leaf and signer, but omit the root chain.
++    meta = presentation(child, recipient, **args)
++    result = await call_refund(journal, **args, meta=meta, trusted_root=root)
++    assert result_is_error(result)
++    assert "trust" in text(result).lower() or "chain" in text(result).lower(), text(result)
++    assert effect_count(journal) == 1
++    # The SDK rejects widening before it can make a signed child. This is
++    # issuer-side evidence, separate from the receiver tests above.
++    with pytest.raises(Exception, match="(?i)monotonic|widen|range|constraint"):
++        (parent.grant_builder()
++            .capability("refund_order", order_id=Exact("123"), amount_cents=Range(min=1, max=50_001))
++            .holder(recipient.public_key).ttl(120).terminal().grant(delegator))

@@ -1,0 +1,29 @@
+{
+  "python": "3.12.11",
+  "versions": {
+    "tenuo": "0.3.2",
+    "mcp": "2.3.0",
+    "fastmcp": "4.1.0",
+    "pydantic": "2.14.1",
+    "pytest": "9.1.1"
+  },
+  "tenuo": {
+    "path": "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python/tenuo/__init__.py",
+    "sha256": "6f5c3e620467bb0be38d08d9d6eaf9ed52fa39efb21a6f44f531f52136cd0878"
+  },
+  "tenuo_core": {
+    "path": "/private/tmp/tenuo-local-agent-evals/framework-mcp/.venv-mcp2/lib/python3.12/site-packages/tenuo_core/__init__.py",
+    "sha256": "b111b5e433d03d264d29f3a194366570be02778ee574a3109d63cf6030d06052"
+  },
+  "native": {
+    "path": "/private/tmp/tenuo-local-agent-evals/framework-mcp/.venv-mcp2/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+    "sha256": "b619ec542fd7497f3bfc690ffd4b025769809b071238ce263dfc189ad7385742"
+  },
+  "source_commit": "abe73aab4df50a7044ab8b0d560b061c2b57d650",
+  "signatures": {
+    "MCPVerifier": "(authorizer: 'Any' = None, config: 'Optional[Any]' = None, require_warrant: 'bool' = True, control_plane: 'Optional[Any]' = None, nonce_store: 'Optional[Any]' = None, runtime: 'Optional[Any]' = None) -> 'None'",
+    "MCPVerifier.verify": "(self, tool_name: 'str', arguments: 'Optional[Dict[str, Any]]', meta: 'Any' = None) -> 'MCPVerificationResult'",
+    "Warrant.issue": "(keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None)",
+    "ClientSession.call_tool": "(self, name: 'str', arguments: 'dict[str, Any] | None' = None, read_timeout_seconds: 'float | None' = None, progress_callback: 'ProgressFnT | None' = None, *, input_responses: 'types.InputResponses | None' = None, request_state: 'str | None' = None, meta: 'RequestParamsMeta | None' = None, allow_input_required: 'bool' = False, allow_claimed: 'bool' = False) -> 'types.CallToolResult | types.InputRequiredResult | types.Result'"
+  }
+}

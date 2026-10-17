@@ -1,0 +1,5 @@
+# Preserve raw diff context markers and terminal padding in measured evidence.
+tracked.patch -whitespace
+*.stderr -whitespace
+validation-mcp2-initial.txt -whitespace
+*.log -whitespace

@@ -1,0 +1,2447 @@
+FFFFFFFFFFFFFFFFFFFFFFFF..                                               [100%]
+=================================== FAILURES ===================================
+_______________________________ test_allowed[1] ________________________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_allowed_1_0')
+authority = (SigningKey(public_key=5180d151..., secret=[REDACTED]), SigningKey(public_key=faa53b7f..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+amount = 1
+
+    @pytest.mark.parametrize("amount", [1, 10_000, 20_000, 50_000])
+    async def test_allowed(tmp_path, authority, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, "123", amount,
+            presentation(warrant, holder, "123", amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert not result.isError, text(result)
+                   ^^^^^^^^^^^^^^
+
+tests/test_app.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta={'fastmcp': {'wrap_result': True}}, content=[TextContent(type='text', text='refunded', annotations=None, meta=None)], structured_content={'result': 'refunded'}, is_error=False, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:36] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+_____________________________ test_allowed[10000] ______________________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_allowed_10000_0')
+authority = (SigningKey(public_key=d4f28153..., secret=[REDACTED]), SigningKey(public_key=d6dbf9e5..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+amount = 10000
+
+    @pytest.mark.parametrize("amount", [1, 10_000, 20_000, 50_000])
+    async def test_allowed(tmp_path, authority, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, "123", amount,
+            presentation(warrant, holder, "123", amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert not result.isError, text(result)
+                   ^^^^^^^^^^^^^^
+
+tests/test_app.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta={'fastmcp': {'wrap_result': True}}, content=[TextContent(type='text', text='refunded', annotations=None, meta=None)], structured_content={'result': 'refunded'}, is_error=False, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:37] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+_____________________________ test_allowed[20000] ______________________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_allowed_20000_0')
+authority = (SigningKey(public_key=e4e310d7..., secret=[REDACTED]), SigningKey(public_key=41d8dd59..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:05:00>)
+amount = 20000
+
+    @pytest.mark.parametrize("amount", [1, 10_000, 20_000, 50_000])
+    async def test_allowed(tmp_path, authority, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, "123", amount,
+            presentation(warrant, holder, "123", amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert not result.isError, text(result)
+                   ^^^^^^^^^^^^^^
+
+tests/test_app.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta={'fastmcp': {'wrap_result': True}}, content=[TextContent(type='text', text='refunded', annotations=None, meta=None)], structured_content={'result': 'refunded'}, is_error=False, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:37] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+_____________________________ test_allowed[50000] ______________________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_allowed_50000_0')
+authority = (SigningKey(public_key=5a67de99..., secret=[REDACTED]), SigningKey(public_key=de303fed..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+amount = 50000
+
+    @pytest.mark.parametrize("amount", [1, 10_000, 20_000, 50_000])
+    async def test_allowed(tmp_path, authority, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, "123", amount,
+            presentation(warrant, holder, "123", amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert not result.isError, text(result)
+                   ^^^^^^^^^^^^^^
+
+tests/test_app.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta={'fastmcp': {'wrap_result': True}}, content=[TextContent(type='text', text='refunded', annotations=None, meta=None)], structured_content={'result': 'refunded'}, is_error=False, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:38] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+__________________ test_denied_before_effect[missing-warrant] __________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_miss0')
+authority = (SigningKey(public_key=e0da5e25..., secret=[REDACTED]), SigningKey(public_key=6ad8e011..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'missing', expected = 'warrant'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': No warrant provid...do not receive _meta).", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:39] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:39] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: No warrant provided. Use             
+                    SecureMCPClient(inject_warrant=True) for _meta or           
+                    inject_warrant='argument' for arguments._tenuo, or pass     
+                    params.meta with tenuo metadata into MCPVerifier.verify. On 
+                    FastMCP, register TenuoMiddleware(verifier) so _meta from   
+                    the wire request reaches the verifier (tool handlers alone  
+                    do not receive _meta).                                      
+________________ test_denied_before_effect[malformed-Malformed] ________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_malf0')
+authority = (SigningKey(public_key=6b8aa2b9..., secret=[REDACTED]), SigningKey(public_key=72a81207..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'malformed', expected = 'Malformed'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Malformed warrant...uo encoding is invalid", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:39] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:40] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Malformed warrant: Validation error: 
+                    _meta.tenuo encoding is invalid                             
+__________________ test_denied_before_effect[untrusted-trust] __________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_untr0')
+authority = (SigningKey(public_key=c0dadb19..., secret=[REDACTED]), SigningKey(public_key=55eeb376..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'untrusted', expected = 'trust'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Root warrant issuer is not trusted", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:40] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+Authorization denied for refund_order: Root warrant issuer is not trusted
+[10/17/26 12:04:40] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Root warrant issuer is not trusted   
+_________________ test_denied_before_effect[wrong_holder-PoP] __________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_wron0')
+authority = (SigningKey(public_key=937de853..., secret=[REDACTED]), SigningKey(public_key=19f1fe25..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:05:00>)
+case = 'wrong_holder', expected = 'PoP'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Access denied: Si...beyond the PoP window.", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:41] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+Authorization denied for refund_order: Signature verification failed: Proof-of-Possession verification failed
+[10/17/26 12:04:41] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Access denied: Signature verification
+                    failed: Proof-of-Possession verification failed PoP covers  
+                    the core's reading of the argument JSON, including null.    
+                    Check that the client signs with the same key bound in the  
+                    warrant and that the timestamp has not drifted beyond the   
+                    PoP window.                                                 
+_______________ test_denied_before_effect[missing_pop-signature] _______________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_miss1')
+authority = (SigningKey(public_key=31f18fc2..., secret=[REDACTED]), SigningKey(public_key=f2054f5c..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'missing_pop', expected = 'signature'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Access denied: Mi...ents._tenuo.signature.", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:42] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:42] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Access denied: Missing signature:    
+                    precomputed_signature is required when verify_mode='verify' 
+                    Ensure the client sends a PoP signature in                  
+                    _meta.tenuo.signature or arguments._tenuo.signature.        
+_________________ test_denied_before_effect[tampered_args-PoP] _________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_tamp0')
+authority = (SigningKey(public_key=64c3d9c9..., secret=[REDACTED]), SigningKey(public_key=61dd9389..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'tampered_args', expected = 'PoP'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Access denied: Si...beyond the PoP window.", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:43] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+Authorization denied for refund_order: Signature verification failed: Proof-of-Possession verification failed
+[10/17/26 12:04:43] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Access denied: Signature verification
+                    failed: Proof-of-Possession verification failed PoP covers  
+                    the core's reading of the argument JSON, including null.    
+                    Check that the client signs with the same key bound in the  
+                    warrant and that the timestamp has not drifted beyond the   
+                    PoP window.                                                 
+____________ test_denied_before_effect[wrong_capability-authorized] ____________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_wron1')
+authority = (SigningKey(public_key=541f1758..., secret=[REDACTED]), SigningKey(public_key=c5a7e662..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'wrong_capability', expected = 'authorized'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Tool 'refund_order' is not authorized", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:43] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:43] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Tool 'refund_order' is not authorized
+__________________ test_denied_before_effect[expired-expired] __________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_expi0')
+authority = (SigningKey(public_key=7cf3e0de..., secret=[REDACTED]), SigningKey(public_key=606f7030..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:58>)
+case = 'expired', expected = 'expired'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Warrant has expired", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:46] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:46] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Warrant has expired                  
+______________ test_denied_before_effect[wrong_order-constraint] _______________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_wron2')
+authority = (SigningKey(public_key=79bb0dd1..., secret=[REDACTED]), SigningKey(public_key=86f36554..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'wrong_order', expected = 'constraint'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Constraint 'order...s not match constraint", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:47] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:47] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Constraint 'order_id' not satisfied: 
+                    value does not match constraint                             
+______________ test_denied_before_effect[above_limit-constraint] _______________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_abov0')
+authority = (SigningKey(public_key=6a8a69de..., secret=[REDACTED]), SigningKey(public_key=a9d79061..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'above_limit', expected = 'constraint'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Constraint 'amoun...s not match constraint", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:48] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:48] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Constraint 'amount_cents' not        
+                    satisfied: value does not match constraint                  
+________________ test_denied_before_effect[negative-constraint] ________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_nega0')
+authority = (SigningKey(public_key=cca07297..., secret=[REDACTED]), SigningKey(public_key=054a2944..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'negative', expected = 'constraint'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Constraint 'amoun...s not match constraint", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:49] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:49] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Constraint 'amount_cents' not        
+                    satisfied: value does not match constraint                  
+__________________ test_denied_before_effect[zero-constraint] __________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_zero0')
+authority = (SigningKey(public_key=dd6a072d..., secret=[REDACTED]), SigningKey(public_key=402ac6f7..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'zero', expected = 'constraint'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Constraint 'amoun...s not match constraint", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:49] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:50] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Constraint 'amount_cents' not        
+                    satisfied: value does not match constraint                  
+____________ test_denied_before_effect[narrower_warrant-constraint] ____________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_narr0')
+authority = (SigningKey(public_key=973f10fd..., secret=[REDACTED]), SigningKey(public_key=fa2edc8f..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+case = 'narrower_warrant', expected = 'constraint'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Constraint 'amoun...s not match constraint", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:50] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:50] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Constraint 'amount_cents' not        
+                    satisfied: value does not match constraint                  
+____________ test_denied_before_effect[local_ceiling-local policy] _____________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_denied_before_effect_loca0')
+authority = (SigningKey(public_key=1f2fdad9..., secret=[REDACTED]), SigningKey(public_key=93809823..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:05:00>)
+case = 'local_ceiling', expected = 'local policy'
+
+    @pytest.mark.parametrize("case,expected", [
+        ("missing", "warrant"), ("malformed", "Malformed"),
+        ("untrusted", "trust"), ("wrong_holder", "PoP"),
+        ("missing_pop", "signature"), ("tampered_args", "PoP"),
+        ("wrong_capability", "authorized"), ("expired", "expired"),
+        ("wrong_order", "constraint"), ("above_limit", "constraint"),
+        ("negative", "constraint"), ("zero", "constraint"),
+        ("narrower_warrant", "constraint"), ("local_ceiling", "local policy"),
+    ])
+    async def test_denied_before_effect(tmp_path, authority, case, expected):
+        issuer, holder, warrant = authority
+        order, amount = "123", 20_000
+        signer = holder
+        if case == "untrusted":
+            warrant = issue_task(SigningKey.generate(), holder)
+        if case == "wrong_holder":
+            signer = SigningKey.generate()
+        if case in ("wrong_capability", "expired", "narrower_warrant", "local_ceiling"):
+            tool = "other_tool" if case == "wrong_capability" else "refund_order"
+            maximum = 10_000 if case == "narrower_warrant" else 100_000 if case == "local_ceiling" else 50_000
+            warrant = Warrant.issue(issuer, capabilities={tool: {
+                "order_id": Exact("123"), "amount_cents": Range(min=1, max=maximum),
+            }}, ttl_seconds=1 if case == "expired" else 300, holder=holder.public_key)
+            if case == "expired":
+                await asyncio.sleep(2)
+        if case == "wrong_order": order = "456"
+        if case in ("above_limit", "local_ceiling"): amount = 50_001
+        if case == "negative": amount = -1
+        if case == "zero": amount = 0
+        meta = presentation(warrant, signer, order, amount)
+        if case == "missing": meta = None
+        if case == "malformed": meta = {"tenuo": {"warrant": "garbage", "signature": "garbage"}}
+        if case == "missing_pop": meta["tenuo"].pop("signature")
+        if case == "tampered_args": amount += 1
+        journal = tmp_path / "refunds"
+        result = await call_refund(journal, order, amount, meta,
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Refund outside lo...er 123, 1..50000 cents", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:51] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:51] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 10 frames hidden ...                 │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/functio │
+                    │ n_tool.py:96 in wrapper                                  │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/serve │
+                    │ r.py:32 in refund_order                                  │
+                    │                                                          │
+                    │   29 │   │   meta=request.meta,                          │
+                    │   30 │   )                                               │
+                    │   31 │   if clean["order_id"] != "123" or not 1 <= clean │
+                    │ ❱ 32 │   │   raise ValueError("Refund outside local poli │
+                    │   33 │   with Path(os.environ["REFUND_JOURNAL"]).open("a │
+                    │   34 │   │   journal.write(f"{clean['order_id']}:{clean[ │
+                    │   35 │   return "refunded"                               │
+                    ╰──────────────────────────────────────────────────────────╯
+                    ValueError: Refund outside local policy: order 123, 1..50000
+                    cents                                                       
+____________________ test_invalid_numeric_domain[123-True] _____________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_invalid_numeric_domain_120')
+authority = (SigningKey(public_key=f1fcd1f3..., secret=[REDACTED]), SigningKey(public_key=98c4de13..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+order = '123', amount = True
+
+    @pytest.mark.parametrize("order,amount", [
+        ("123", True), ("123", 20_000.5), ("123", "20000"),
+        (123, 20_000), ("123", 2**53 + 1), ("123", 2**64),
+    ])
+    async def test_invalid_numeric_domain(tmp_path, authority, order, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        # Sign at the client, but send every fixture to the real server.
+        result = await call_refund(journal, order, amount,
+            presentation(warrant, holder, order, amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text='1 validation error for call[refund_order]\namount_ce...ic.dev/2.14/v/int_type', annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:52] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+                    WARNING  Invalid arguments for tool           server.py:1471
+                             'refund_order': {'error_count': 1,                 
+                             'error_types': ['int_type']}                       
+___________________ test_invalid_numeric_domain[123-20000.5] ___________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_invalid_numeric_domain_121')
+authority = (SigningKey(public_key=4fec4a7e..., secret=[REDACTED]), SigningKey(public_key=f87cb740..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+order = '123', amount = 20000.5
+
+    @pytest.mark.parametrize("order,amount", [
+        ("123", True), ("123", 20_000.5), ("123", "20000"),
+        (123, 20_000), ("123", 2**53 + 1), ("123", 2**64),
+    ])
+    async def test_invalid_numeric_domain(tmp_path, authority, order, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        # Sign at the client, but send every fixture to the real server.
+        result = await call_refund(journal, order, amount,
+            presentation(warrant, holder, order, amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text='1 validation error for call[refund_order]\namount_ce...ic.dev/2.14/v/int_type', annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:52] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:53] WARNING  Invalid arguments for tool           server.py:1471
+                             'refund_order': {'error_count': 1,                 
+                             'error_types': ['int_type']}                       
+___________________ test_invalid_numeric_domain[123-20000_0] ___________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_invalid_numeric_domain_122')
+authority = (SigningKey(public_key=12768c9f..., secret=[REDACTED]), SigningKey(public_key=ad2a157b..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:05:00>)
+order = '123', amount = '20000'
+
+    @pytest.mark.parametrize("order,amount", [
+        ("123", True), ("123", 20_000.5), ("123", "20000"),
+        (123, 20_000), ("123", 2**53 + 1), ("123", 2**64),
+    ])
+    async def test_invalid_numeric_domain(tmp_path, authority, order, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        # Sign at the client, but send every fixture to the real server.
+        result = await call_refund(journal, order, amount,
+            presentation(warrant, holder, order, amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="1 validation error for call[refund_order]\namount_ce...ic.dev/2.14/v/int_type", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:53] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+                    WARNING  Invalid arguments for tool           server.py:1471
+                             'refund_order': {'error_count': 1,                 
+                             'error_types': ['int_type']}                       
+___________________ test_invalid_numeric_domain[123-20000_1] ___________________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_invalid_numeric_domain_123')
+authority = (SigningKey(public_key=f99cc3b0..., secret=[REDACTED]), SigningKey(public_key=d42e8010..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+order = 123, amount = 20000
+
+    @pytest.mark.parametrize("order,amount", [
+        ("123", True), ("123", 20_000.5), ("123", "20000"),
+        (123, 20_000), ("123", 2**53 + 1), ("123", 2**64),
+    ])
+    async def test_invalid_numeric_domain(tmp_path, authority, order, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        # Sign at the client, but send every fixture to the real server.
+        result = await call_refund(journal, order, amount,
+            presentation(warrant, holder, order, amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text='1 validation error for call[refund_order]\norder_id\...dev/2.14/v/string_type', annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:54] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+                    WARNING  Invalid arguments for tool           server.py:1471
+                             'refund_order': {'error_count': 1,                 
+                             'error_types': ['string_type']}                    
+______________ test_invalid_numeric_domain[123-9007199254740993] _______________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_invalid_numeric_domain_124')
+authority = (SigningKey(public_key=730d0155..., secret=[REDACTED]), SigningKey(public_key=ec2e5f19..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:04:59>)
+order = '123', amount = 9007199254740993
+
+    @pytest.mark.parametrize("order,amount", [
+        ("123", True), ("123", 20_000.5), ("123", "20000"),
+        (123, 20_000), ("123", 2**53 + 1), ("123", 2**64),
+    ])
+    async def test_invalid_numeric_domain(tmp_path, authority, order, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        # Sign at the client, but send every fixture to the real server.
+        result = await call_refund(journal, order, amount,
+            presentation(warrant, holder, order, amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Constraint 'amoun...s not match constraint", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:54] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:54] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Constraint 'amount_cents' not        
+                    satisfied: value does not match constraint                  
+____________ test_invalid_numeric_domain[123-18446744073709551616] _____________
+
+tmp_path = PosixPath('/private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pytest-of-danieljoseph/pytest-274/test_invalid_numeric_domain_125')
+authority = (SigningKey(public_key=a50e2342..., secret=[REDACTED]), SigningKey(public_key=77bade49..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a9b... tools=[refund_order] ttl=0:05:00>)
+order = '123', amount = 18446744073709551616
+
+    @pytest.mark.parametrize("order,amount", [
+        ("123", True), ("123", 20_000.5), ("123", "20000"),
+        (123, 20_000), ("123", 2**53 + 1), ("123", 2**64),
+    ])
+    async def test_invalid_numeric_domain(tmp_path, authority, order, amount):
+        issuer, holder, warrant = authority
+        journal = tmp_path / "refunds"
+        # Sign at the client, but send every fixture to the real server.
+        result = await call_refund(journal, order, amount,
+            presentation(warrant, holder, order, amount),
+            trusted_root=issuer.public_key.to_bytes().hex())
+>       assert result.isError, text(result)
+               ^^^^^^^^^^^^^^
+
+tests/test_app.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CallToolResult(meta=None, content=[TextContent(type='text', text="Error calling tool 'refund_order': Invalid tool arguments", annotations=None, meta=None)], structured_content=None, is_error=True, result_type='complete')
+item = 'isError'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'CallToolResult' object has no attribute 'isError'. Did you mean: 'is_error'?
+
+.venv-mcp2/lib/python3.12/site-packages/pydantic/main.py:1105: AttributeError
+----------------------------- Captured stderr call -----------------------------
+[10/17/26 12:04:55] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:04:55] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/server/server │
+                    │ .py:1467 in call_tool                                    │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ -mcp2/lib/python3.12/site-packages/fastmcp/tools/base.py │
+                    │ :440 in _run                                             │
+                    │                                                          │
+                    │                 ... 12 frames hidden ...                 │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Invalid tool arguments               
+=============================== warnings summary ===============================
+tests/test_app.py::test_narrow_child_and_missing_parent
+  /private/tmp/tenuo-local-agent-evals/framework-mcp/tests/test_app.py:124: FastMCPDeprecationWarning: Accessing `CallToolResult.isError` is deprecated; MCP SDK v2 renamed this field to `is_error`. Update your code to read `.is_error` instead.
+    assert not result.isError, text(result)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_app.py::test_allowed[1] - AttributeError: 'CallToolResult' ...
+FAILED tests/test_app.py::test_allowed[10000] - AttributeError: 'CallToolResu...
+FAILED tests/test_app.py::test_allowed[20000] - AttributeError: 'CallToolResu...
+FAILED tests/test_app.py::test_allowed[50000] - AttributeError: 'CallToolResu...
+FAILED tests/test_app.py::test_denied_before_effect[missing-warrant] - Attrib...
+FAILED tests/test_app.py::test_denied_before_effect[malformed-Malformed] - At...
+FAILED tests/test_app.py::test_denied_before_effect[untrusted-trust] - Attrib...
+FAILED tests/test_app.py::test_denied_before_effect[wrong_holder-PoP] - Attri...
+FAILED tests/test_app.py::test_denied_before_effect[missing_pop-signature] - ...
+FAILED tests/test_app.py::test_denied_before_effect[tampered_args-PoP] - Attr...
+FAILED tests/test_app.py::test_denied_before_effect[wrong_capability-authorized]
+FAILED tests/test_app.py::test_denied_before_effect[expired-expired] - Attrib...
+FAILED tests/test_app.py::test_denied_before_effect[wrong_order-constraint]
+FAILED tests/test_app.py::test_denied_before_effect[above_limit-constraint]
+FAILED tests/test_app.py::test_denied_before_effect[negative-constraint] - At...
+FAILED tests/test_app.py::test_denied_before_effect[zero-constraint] - Attrib...
+FAILED tests/test_app.py::test_denied_before_effect[narrower_warrant-constraint]
+FAILED tests/test_app.py::test_denied_before_effect[local_ceiling-local policy]
+FAILED tests/test_app.py::test_invalid_numeric_domain[123-True] - AttributeEr...
+FAILED tests/test_app.py::test_invalid_numeric_domain[123-20000.5] - Attribut...
+FAILED tests/test_app.py::test_invalid_numeric_domain[123-20000_0] - Attribut...
+FAILED tests/test_app.py::test_invalid_numeric_domain[123-20000_1] - Attribut...
+FAILED tests/test_app.py::test_invalid_numeric_domain[123-9007199254740993]
+FAILED tests/test_app.py::test_invalid_numeric_domain[123-18446744073709551616]
+24 failed, 2 passed, 1 warning in 22.10s
