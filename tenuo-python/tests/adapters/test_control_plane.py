@@ -420,7 +420,7 @@ class TestMCPVerifierControlPlane:
 
 @pytest.mark.skipif(
     not __import__("tenuo.langgraph", fromlist=["WRAP_TOOL_CALL_SUPPORTED"]).WRAP_TOOL_CALL_SUPPORTED,
-    reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)",
+    reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)",
 )
 class TestLangGraphControlPlane:
     @pytest.fixture

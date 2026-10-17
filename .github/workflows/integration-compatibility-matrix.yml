@@ -259,7 +259,7 @@ jobs:
             }
 
   # Temporal — needs Rust toolchain + test server, so runs as a separate job.
-  # Tests both minimum (1.23.0, where SimplePlugin was introduced) and latest.
+  # Tests both minimum (1.33.0, the tenuo[temporal] extra's floor) and latest.
   # Replay safety: records workflow history on one version, replays on both.
   # ==========================================================================
   temporal-compatibility:
@@ -311,7 +311,7 @@ jobs:
       - name: Install temporalio (minimum)
         if: matrix.version == 'minimum'
         run: |
-          uv pip install --system "temporalio==1.23.0" "protobuf>=6.0"
+          uv pip install --system "temporalio==1.33.0" "protobuf>=6.0"
 
       - name: Install temporalio (latest)
         if: matrix.version == 'latest'
