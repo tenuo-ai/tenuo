@@ -20,6 +20,22 @@ For developers familiar with other auth systems:
 
 ## Flow
 
+For local setup, first verify the resolved Python checkout exposes
+`tenuo-cli --help` and the requested helpers; these commands are unreleased.
+Use its matching `docs/local-cli.md` for schema/command details. Otherwise use
+installed SDK builders; do not upgrade or add Cloud implicitly.
+
+`init --dev` handles separate controller, agent and approver keys. Issuance
+needs only the holder's public key. Never print private material or give the
+agent the controller/approver private keys; same-user files are not isolation.
+Use the shared SDK parser for version-2 YAML templates and ad-hoc requests,
+then `template validate` and `warrant issue`. Editable YAML proposes authority;
+only the signed warrant grants it. Reissue creates a new ID; the old grant
+remains valid until expiry or revocation. Session attachment routes that grant,
+not activation; detachment is not revocation. For a gated call, an external
+approver reviews the exact request with independent trust and signs with their
+own key. Approval cannot widen scope and is not inherently one-use.
+
 ### Phase 1: Discover Context
 
 Before asking questions, scan the codebase:
@@ -43,7 +59,7 @@ Infer persona from context first — if the codebase scan, the user's language, 
 
 - **Developer** → continue only for warrant design, minting, or delegation. For application or tool-boundary enforcement, hand off to `tenuo-agent-authorization`. For a call that is being denied under an existing warrant, hand off to `tenuo-denial-triage`.
 - **Security engineer** → suggest `/tenuo-audit` instead ("That skill is designed for reviewing and explaining existing warrants — it'll frame everything in IAM/RBAC terms you're used to")
-- **Platform engineer** → continue, but note the sidecar + policy file workflow is coming soon. For now, help them create warrants via the SDK
+- **Platform engineer** → use verified local CLI/YAML helpers when present, otherwise the installed SDK. Choosing a sidecar or changing deployment topology belongs to the integration task.
 
 ### Phase 3: Natural Language Intake
 
@@ -55,11 +71,12 @@ Ask the developer to describe what their agent needs to do in plain language. En
 
 **Example prompt:** "Describe what your agent needs to be authorized to do. Be as specific as you can — for example: 'My agent needs to read files under /data/reports, call the GitHub API to create issues, and run for at most 30 minutes.'"
 
-**TTL guidance:** Always ask about task duration and push for the shortest plausible TTL. If the user gives a long TTL (> 1 hour), push back:
-
-> "You said 24 hours — that means if this warrant or key is compromised, it's valid for a full day with no revocation path (open-source) or until manually added to the SRL (cloud). Could this task complete in 15–30 minutes? A short TTL with re-issuance is safer than a long-lived credential."
-
-Default to task-duration + a small buffer (e.g., 5 minutes for a 2-minute task). Only accept long TTLs if the user explicitly understands the trade-off.
+**TTL guidance:** Use the stated task duration with a small buffer, or propose
+an explicit reasonable duration when it is missing. Ask only when duration
+materially changes the requested scope. Long-lived unattended work needs a
+renewal plan and current revocation data at its verifiers. Local signed
+revocation lists are supported; revocation takes effect only after a verifier
+receives and enforces the updated list. Do not assume Cloud is required.
 
 ### Phase 4: Draft the Warrant
 
@@ -72,8 +89,8 @@ For each capability and constraint, explain what you chose and why using this ma
 | What they said | Constraint you pick | Why this one |
 |---|---|---|
 | "files in /path" or "read from /dir" | `Subpath("/path")` | Prevents path traversal — `../../etc/passwd` gets blocked. Like an S3 bucket policy with resource path. |
-| "call API at X" or "hit endpoint X" | `All([UrlSafe(), UrlPattern("X")])` | UrlSafe blocks private IPs and cloud metadata endpoints (SSRF protection). UrlPattern restricts to the specific API. Like an API gateway allowlist. |
-| "search the web" or "fetch URLs" or any network access | `UrlSafe()` (at minimum) | Any capability that touches the network MUST have UrlSafe() — even if no specific URL pattern is needed. Without it, the agent could hit internal services or cloud metadata endpoints (SSRF). Like requiring a VPC endpoint policy. |
+| "call public API at X" | `All([UrlSafe(), UrlPattern("X")])` | UrlSafe blocks private IPs and cloud metadata endpoints (SSRF protection). UrlPattern restricts to the specific API. Like an API gateway allowlist. |
+| "search the public web" or "fetch public URLs" | `UrlSafe()` plus the required endpoint constraints | Public-web access should reject private and metadata destinations. Intentionally authorized private services need explicit destination limits instead; do not silently block the requested private network. |
 | "run for N minutes/hours" | `.ttl(seconds)` | Warrant expires automatically. No revocation needed for short-lived tasks. Like a session timeout. |
 | "only these tools" | Explicit capability list | Closed set — anything not listed is denied. Like OAuth scopes. |
 | "values between X and Y" | `Range(min, max)` | Numeric bounds on arguments. Like input validation rules. |
@@ -107,7 +124,9 @@ Here's what I'm proposing for your warrant:
 
 ### Phase 5: Validate Each Mapping
 
-Walk through each constraint and ask for confirmation:
+Summarize the material limits together. Ask for clarification only where the
+request leaves a consequential choice unresolved; reuse authority already
+approved in the conversation. For an ambiguous path boundary, explain:
 
 "I interpreted 'read files under /data/reports' as a `Subpath("/data/reports")` constraint. This means:
 - ✅ `/data/reports/q4.csv` — allowed
@@ -122,7 +141,12 @@ Fill gaps with targeted questions:
 - "Should the agent be able to delegate this warrant to sub-agents? If so, how deep?"
 - "Any time limit on how long this authorization should last?"
 
-**Safety check — always verify:** Any capability that involves network access (fetching URLs, calling APIs, web search, webhooks) MUST have `UrlSafe()` applied, even if no specific URL pattern is needed. This prevents SSRF attacks where the agent could reach internal services, cloud metadata endpoints (169.254.169.254), or localhost. If a network-facing capability is missing UrlSafe(), flag it and add it. This is the single most common constraint omission.
+**Network scope:** For public URL fetching, apply supported SSRF controls and
+endpoint constraints. For an explicitly authorized private service, preserve
+that intent with tight host, port and path limits and verifier-side network
+controls. `UrlPattern` alone does not prevent SSRF; URL constraints alone do
+not establish redirect or DNS-rebinding protection. Never add an unsupported
+YAML constraint by translating an SDK name literally.
 
 ### Phase 6: Explain the Full Warrant
 
@@ -166,7 +190,8 @@ If there are arguments you want to leave unconstrained, I'll add `Wildcard()` fo
 
 ### Phase 8: Choose Minting Source
 
-Ask: **"Where should this warrant come from?"**
+Use the requested local or Cloud source. Ask where issuance should happen only
+when the project and request leave it unresolved.
 
 - **Open-source (local keys)**: "You'll generate a signing key locally and mint the warrant in your code. Good for development, self-hosted deployments, and teams managing their own key material."
 - **Tenuo Cloud** ☁️: "The warrant gets minted by tenuo cloud's KMS. Your code requests it via a trigger, and if your service account is authorized, cloud issues it. Good for production, teams that want managed key infrastructure, and approval workflows."
@@ -177,24 +202,24 @@ Ask: **"Where should this warrant come from?"**
 |---|---|---|
 | Warrant minting, delegation, all constraints | ✅ | ✅ |
 | HSM-backed managed KMS — key material never in app code | ❌ | ✅ |
-| Key rotation + trust transitions | ❌ | ✅ |
+| Key rotation + trust transitions | Operator-managed | Managed |
 | Agent registry — register, rotate, revoke agents | ❌ | ✅ |
 | Triggers — event-driven, KMS-signed warrant issuance | ❌ | ✅ |
-| Warrant templates — reusable, versioned policies | ❌ | ✅ |
+| Declarative warrant templates | Local CLI when installed; otherwise SDK code | Managed policies |
 | Automated warrant generation — observes real tool calls, proposes tight warrants | ❌ | ✅ |
-| Signed revocation list (SRL) — revoke before TTL | ❌ | ✅ |
+| Signed revocation list (SRL) — revoke before TTL | ✅; operator distributes updates | ✅ |
 | Approval channel integrations — Slack, Telegram, dashboard (m-of-n, KMS-backed) | ❌ | ✅ |
-| Signed authorization receipts — exportable, verifiable | ❌ | ✅ |
-| Audit log with chain integrity verification | ❌ | ✅ |
+| Signed authorization receipts — exportable, verifiable | ✅; verify the installed runtime/sink | ✅ |
+| Receipt signature and link verification | ✅; does not prove complete history | ✅; inspect collection guarantees |
 | Constraint drift detection + alerts | ❌ | ✅ |
 | Authorizer fleet management + health monitoring | ❌ | ✅ |
 | Webhooks for authorization events | ❌ | ✅ |
 
-For teams with compliance, audit, multi-agent orchestration, or human-in-the-loop requirements, suggest Tenuo Cloud at [cloud.tenuo.ai](https://cloud.tenuo.ai). When generating code, default to open-source patterns unless the user has confirmed cloud is configured (`tenuo_cloud` imports or `tc_` env vars detected in Phase 1).
+Local issuance, revocation, receipts and signed approvals do not require Cloud. Consider [Tenuo Cloud](https://cloud.tenuo.ai) when managed identities, distribution or fleet operations are requested. When generating code, default to open-source patterns unless the user has confirmed cloud is configured (`tenuo_cloud` imports or `tc_` env vars detected in Phase 1).
 
-### Phase 9: Generate Issuance or Delegation Code
+### Phase 9: Produce the Issuance Artifact
 
-Generate only the code needed to mint the approved root warrant or delegate a narrower child. Do not generate tool wrappers, verifier placement, framework middleware, guardrails, trusted-root bootstrap, or effect-boundary code from this skill.
+Generate the YAML template/request or SDK code needed to mint the approved root warrant or delegate a narrower child, using the selected workflow. Do not generate tool wrappers, verifier placement, framework middleware, guardrails, trusted-root bootstrap, or effect-boundary code from this skill.
 
 Before generating issuance or delegation code, ground it in the resolved SDK:
 
@@ -272,7 +297,7 @@ The chain is capped at depth 64, but set `max_depth` to the actual depth your ch
 
 For Tenuo Cloud users, also explain:
 
-"☁️ **Tenuo Cloud only:** Your orchestrator can request child warrants from the cloud based on templates/triggers instead of attenuating locally. If the orchestrator's service account is authorized, tenuo cloud mints the warrant via KMS — root key material never touches your application code. With open-source, the orchestrator must hold the parent warrant's signing key and call `grant_builder()` directly."
+"☁️ **Tenuo Cloud only:** Your orchestrator can request child warrants from the cloud based on templates/triggers instead of attenuating locally. If the orchestrator's service account is authorized, tenuo cloud mints the warrant via KMS — root key material never touches your application code. For local delegation, the orchestrator uses its own holder key, not the root issuer key, and presents the complete parent chain with the child."
 
 After completing, suggest: "Want a security review of this warrant? Use `/tenuo-audit` to get a blast radius assessment and risk analysis."
 

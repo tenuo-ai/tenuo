@@ -1,0 +1,133 @@
+diff --git a/agent_app.py b/agent_app.py
+index b8afce4..cf287ea 100644
+--- a/agent_app.py
++++ b/agent_app.py
+@@ -1,21 +1,55 @@
+ """Refund assistant. amount_cents is an integer count of USD cents."""
+ import json
+-from agents import Agent, Runner, function_tool, InputGuardrail, set_tracing_disabled
++import time
++from dataclasses import dataclass
++from agents.tool_context import ToolContext
++from agents import Agent, Runner, function_tool, set_tracing_disabled
+ from agents.models.interface import Model
+ from agents.items import ModelResponse
+ from agents.usage import Usage
+ from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
+-from tenuo import Exact, Range
+-from tenuo.openai import create_tier1_guardrail
++from tenuo import Exact, Range, SigningKey, Warrant, parse_strict_json
++from refund_service import Presentation, RefundDenied, RefundService
+ 
+ set_tracing_disabled(True)
+ effects = []
+ 
+-@function_tool
+-def refund_order(order_id: str, amount_cents: int) -> str:
+-    """Refund an order; amount_cents is USD cents."""
+-    effects.append((order_id, amount_cents))
+-    return "refunded"
++@dataclass(frozen=True)
++class RefundSession:
++    service: RefundService
++    chain: tuple[str, ...]
++    holder: SigningKey
++
++    def present(self, args):
++        leaf = Warrant.from_base64(self.chain[-1])
++        return Presentation(self.chain, leaf.sign(self.holder, "refund_order", args, int(time.time())))
++
++
++def development_session():
++    """Local demo issuance only; never production key provisioning."""
++    issuer, holder = SigningKey.generate(), SigningKey.generate()
++    scope = {"order_id": Exact("123"), "amount_cents": Range(min=1, max=50000)}
++    parent = Warrant.mint(keypair=issuer, capabilities={"refund_order": scope},
++                          holder=holder.public_key, ttl_seconds=300)
++    leaf = (parent.grant_builder().capability("refund_order", scope)
++            .holder(holder.public_key).ttl(240).terminal().grant(holder))
++    service = RefundService([issuer.public_key], effects)
++    return RefundSession(service, (parent.to_base64(), leaf.to_base64()), holder)
++
++
++@function_tool(failure_error_function=None)
++def refund_order(ctx: ToolContext[RefundSession], order_id: str, amount_cents: int) -> str:
++    """Refund an order; amount_cents is an integer count of USD cents."""
++    if not isinstance(ctx.context, RefundSession):
++        raise RefundDenied("missing session authority")
++    # This SDK strips Annotated strictness while building its schema. Validate
++    # the original JSON rather than trusting its coercive Pydantic conversion.
++    args = parse_strict_json(ctx.tool_arguments)
++    if (type(args) is not dict or set(args) != {"order_id", "amount_cents"}
++            or type(args["order_id"]) is not str or type(args["amount_cents"]) is not int):
++        raise RefundDenied("invalid argument types")
++    order_id, amount_cents = args["order_id"], args["amount_cents"]
++    return ctx.context.service.refund_order(order_id, amount_cents, ctx.context.present(args))
+ 
+ class ScriptedModel(Model):
+     def __init__(self, calls):
+@@ -30,8 +64,8 @@ class ScriptedModel(Model):
+         raise NotImplementedError
+ 
+ def make_agent(calls):
+-    policy = create_tier1_guardrail(allow_tools=["refund_order"], constraints={"refund_order": {"order_id": Exact("123"), "amount_cents": Range(max=50000)}})
+-    return Agent(name="refund assistant", model=ScriptedModel(calls), tools=[refund_order], input_guardrails=[InputGuardrail(guardrail_function=policy, name="tenuo")])
++    return Agent(name="refund assistant", model=ScriptedModel(calls), tools=[refund_order])
+ 
+-async def run_agent(calls):
+-    return await Runner.run(make_agent(calls), "Process the requested refund.")
++async def run_agent(calls, *, session=None):
++    session = development_session() if session is None else session
++    return await Runner.run(make_agent(calls), "Process the requested refund.", context=session)
+diff --git a/requirements.lock b/requirements.lock
+new file mode 100644
+index 0000000..2898a3a
+--- /dev/null
++++ b/requirements.lock
+@@ -0,0 +1,46 @@
++annotated-types==0.8.0
++anyio==4.15.1
++attrs==26.1.0
++certifi==2026.7.22
++cffi==2.1.1
++charset-normalizer==3.5.2
++click==8.5.0
++cryptography==50.0.2
++griffelib==2.3.2
++h11==0.16.0
++httpcore2==2.13.1
++httpx2==2.13.1
++idna==3.20
++iniconfig==2.3.1
++jiter==0.17.0
++jsonschema==4.26.0
++jsonschema-specifications==2025.9.1
++mcp==2.3.0
++mcp-types==2.3.0
++openai==3.33.0
++openai-agents==0.22.0
++opentelemetry-api==1.45.1
++packaging==26.3
++pluggy==1.7.0
++pycparser==3.11
++pydantic==2.14.1
++pydantic_core==2.50.1
++Pygments==2.21.0
++PyJWT==2.15.1
++pytest==9.1.1
++pytest-asyncio==1.4.0
++python-multipart==0.0.32
++PyYAML==6.0.3
++referencing==0.37.0
++requests==2.34.2
++rpds-py==2026.9.1
++sniffio==1.3.1
++sse-starlette==3.5.0
++starlette==1.8.0
++tenuo==0.3.2
++truststore==0.10.5
++typing-inspection==0.4.4
++typing_extensions==4.16.0
++urllib3==2.8.0
++uvicorn==0.54.0
++websockets==16.1.1

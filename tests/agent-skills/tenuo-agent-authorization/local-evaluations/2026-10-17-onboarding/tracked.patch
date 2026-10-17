@@ -1,0 +1,324 @@
+diff --git a/README.md b/README.md
+index 6ba9e3b..0e85f8b 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,17 @@
+-# Invoice agent starter
+-
+-The agent can execute Python. It sends planned payment arguments to a separately
+-owned payment worker over HTTP. Only the worker owns provider credentials. The
+-local effects list replaces the provider for all tests. approved_invoices.json
+-represents the approval service's trusted business record; invoice notes are
+-untrusted input. There is no Cloud account or installed template/CLI helper.
+-Amounts are integer USD cents. No real payments or production configuration.
++# Invoice agent with Tenuo
++
++Run the installed SDK demo (no accounts, model keys, or real payments):
++
++```sh
++.venv/bin/python demo.py
++```
++
++It pays 20,000 USD cents on approved invoice INV-123, then blocks the same payment tool when an untrusted note diverts the bank account or the amount exceeds 1,420,000 cents. Each line prints the actual number of fake provider effects.
++
++The agent can choose partial payment amounts autonomously within the trusted approval. `authority.issue_invoice()` is the reusable code-first issuance recipe: it reads trusted `approved_invoices.json`, binds a five-minute terminal warrant to the agent holder, and fixes invoice, payee and amount range. No YAML/template parser or Cloud integration is required.
++
++Recommend an approval-service-owned issuer and the existing separately owned payment worker as verifier. Only the worker owns provider credentials; it verifies the full public warrant chain and holder proof over HTTP immediately before paying. Agent Python code cannot bypass this by posting unsigned requests directly to the worker. Production must actually protect the worker, approval records, issuer key and provider access from the agent.
++
++This local run is a **development loop**: ephemeral keys and all source share one developer environment. Local cumulative invoice spending is locked and capped by the trusted approval, but resets on worker restart. Production needs durable atomic budget accounting and provider idempotency, protected keys, authenticated transport/root provisioning and approval/revocation freshness. Tenuo authorization alone does not prevent duplicate effects or prove invoice intent.
++
++Run validation with `.venv/bin/python -m pytest -q`. See [REPORT.md](REPORT.md) for exact evidence and limits.
+diff --git a/agent.py b/agent.py
+index cc73dbd..3697f29 100644
+--- a/agent.py
++++ b/agent.py
+@@ -1,7 +1,19 @@
++"""Holder-side transport. Issuer private keys never belong here."""
++import base64
+ import json
+-from urllib.request import Request,urlopen
++import time
++from urllib.request import Request, urlopen
+ 
+-def pay_invoice(worker_url,invoice_id,bank_account,amount_cents,**transport):
+-    args=dict(invoice_id=invoice_id,bank_account=bank_account,amount_cents=amount_cents)
+-    request=Request(worker_url+'/pay',data=json.dumps({**args,**transport}).encode(),headers={'Content-Type':'application/json'})
+-    with urlopen(request) as response: return json.load(response)
++
++def presentation(chain, holder_key, args, tool='pay_invoice'):
++    return {'warrants': [w.to_base64() for w in chain],
++            'proof': base64.b64encode(chain[-1].sign(
++                holder_key, tool, args, int(time.time()))).decode('ascii')}
++
++
++def pay_invoice(worker_url, invoice_id, bank_account, amount_cents, **transport):
++    args = dict(invoice_id=invoice_id, bank_account=bank_account, amount_cents=amount_cents)
++    request = Request(worker_url + '/pay', data=json.dumps({**args, **transport}).encode(),
++                      headers={'Content-Type': 'application/json'})
++    with urlopen(request, timeout=5) as response:
++        return json.load(response)
+diff --git a/tests/test_starter.py b/tests/test_starter.py
+index c72ea9d..34810ca 100644
+--- a/tests/test_starter.py
++++ b/tests/test_starter.py
+@@ -1,14 +1,166 @@
++import base64
++import json
+ import threading
++import time
++from urllib.error import HTTPError
++from urllib.request import Request, urlopen
++import pytest
++from tenuo import Exact, Range, SigningKey, Warrant
+ import worker
+-from agent import pay_invoice
+-
+-def test_original_payment_path():
+-    worker.effects.clear();server=worker.serve(0)
+-    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+-    try:
+-        assert pay_invoice('http://127.0.0.1:'+str(server.server_port),'INV-123','verified-bank',20000)=={'paid':True}
+-        assert len(worker.effects)==1
+-    finally:server.shutdown();server.server_close()
+-
+-def test_direct_worker_route_exists():
+-    assert worker.Handler.do_POST
++from agent import pay_invoice, presentation
++from authority import issue_invoice, TOOL
++
++
++@pytest.fixture
++def setup():
++    issuer, holder = SigningKey.generate(), SigningKey.generate()
++    chain = issue_invoice(issuer, holder.public_key, 'INV-123')
++    worker.effects.clear()
++    server = worker.serve(0, trusted_roots=[issuer.public_key])
++    thread = threading.Thread(target=server.serve_forever, daemon=True)
++    thread.start()
++    yield issuer, holder, chain, f'http://127.0.0.1:{server.server_port}'
++    server.shutdown()
++    server.server_close()
++
++
++def args(**changes):
++    return dict(invoice_id='INV-123', bank_account='verified-bank', amount_cents=20000, **changes)
++
++
++def reject(url, values, transport, reason=None):
++    before = len(worker.effects)
++    with pytest.raises(HTTPError) as caught:
++        pay_invoice(url, **values, **transport)
++    assert caught.value.code == 403
++    body = json.load(caught.value)
++    if reason:
++        assert body['denied'] == reason, body
++    assert len(worker.effects) == before
++    return body
++
++
++def test_original_payment_path_now_requires_authority(setup):
++    issuer, holder, chain, url = setup
++    values = args()
++    assert pay_invoice(url, **values, **presentation(chain, holder, values)) == {'paid': True}
++    assert worker.effects == [values]
++    reject(url, values, {}, 'ValueError')
++
++
++@pytest.mark.parametrize('changes', [
++    {'bank_account': 'attacker-bank'}, {'invoice_id': 'INV-999'},
++    {'amount_cents': 1420001}, {'amount_cents': 0}, {'amount_cents': -1},
++    {'amount_cents': True}, {'amount_cents': 1.1}, {'amount_cents': '20000'},
++    {'amount_cents': 2**53},
++])
++def test_material_argument_limits(setup, changes):
++    _, holder, chain, url = setup
++    values = {**args(), **changes}
++    result = reject(url, values, presentation(chain, holder, values))
++    if changes.get('amount_cents', 1) == 1420001 or 'bank_account' in changes or 'invoice_id' in changes:
++        assert result['denied'] == 'ConstraintViolation', result
++    else:
++        assert result['denied'] == 'ValueError', result
++
++
++@pytest.mark.parametrize('amount', [1, 1420000])
++def test_inclusive_amount_boundaries(setup, amount):
++    _, holder, chain, url = setup
++    values = {**args(), 'amount_cents': amount}
++    assert pay_invoice(url, **values, **presentation(chain, holder, values)) == {'paid': True}
++    assert worker.effects == [values]
++
++
++def test_wrong_holder_missing_chain_wrong_capability_and_tamper(setup):
++    _, holder, chain, url = setup
++    values = args()
++    wrong = SigningKey.generate()
++    for transport in [presentation(chain, wrong, values),
++                      presentation([chain[-1]], holder, values),
++                      presentation(chain, holder, values, tool='other_tool')]:
++        result = reject(url, values, transport)
++        assert result['denied'] != 'TypeError', result
++    # Same holder, same transport; mutate only a material argument after signing.
++    reject(url, {**values, 'amount_cents': 20001}, presentation(chain, holder, values))
++    bad = presentation(chain, holder, values)
++    raw = bytearray(chain[-1].to_bytes()); raw[-1] ^= 1
++    bad['warrants'][-1] = base64.b64encode(raw).decode()
++    reject(url, values, bad)
++    bad = presentation(chain, holder, values); bad['warrants'] = ['not-a-warrant']
++    reject(url, values, bad)
++
++
++def test_untrusted_issuer(setup):
++    _, holder, _, url = setup
++    other = issue_invoice(SigningKey.generate(), holder.public_key, 'INV-123')
++    result = reject(url, args(), presentation(other, holder, args()))
++    assert result['denied'] not in ('ValueError', 'TypeError'), result
++
++
++def test_expiry_at_receiver(setup):
++    issuer, holder, _, url = setup
++    limits = {'invoice_id': Exact('INV-123'), 'bank_account': Exact('verified-bank'),
++              'amount_cents': Range(min=1, max=1420000)}
++    root = Warrant.issue_issuer([TOOL], issuer, constraint_bounds=limits, holder=issuer.public_key, ttl_seconds=60)
++    short = root.issue_execution().capability(TOOL, limits).holder(holder.public_key).ttl(1).terminal().build(issuer)
++    time.sleep(2)
++    result = reject(url, args(), presentation([root, short], holder, args()))
++    assert 'Expir' in result['denied'], result
++
++
++def test_original_defining_handler_direct_http_route(setup):
++    # Real dispatch invokes worker.Handler.do_POST from its original defining module.
++    # Bypass agent.py entirely and POST an unsigned payment to the original endpoint.
++    _, _, _, url = setup
++    assert worker.Handler.do_POST.__module__ == 'worker'
++    request = Request(url + '/pay', data=json.dumps(args()).encode(),
++                      headers={'Content-Type': 'application/json'})
++    with pytest.raises(HTTPError) as caught:
++        urlopen(request, timeout=5)
++    assert caught.value.code == 403
++    assert worker.effects == []
++
++
++def test_terminal_execution_and_widening_not_issuable(setup):
++    issuer, holder, chain, url = setup
++    assert chain[-1].is_terminal()
++    # Positive control: the terminal execution warrant works through the receiver.
++    assert pay_invoice(url, **args(), **presentation(chain, holder, args())) == {'paid': True}
++    before = len(worker.effects)
++    with pytest.raises(Exception) as terminal:
++        chain[-1].grant_builder().holder(SigningKey.generate().public_key).ttl(60).grant(holder)
++    assert 'terminal' in str(terminal.value).lower() or 'depth' in str(terminal.value).lower()
++    wider = {'invoice_id': Exact('INV-123'), 'bank_account': Exact('verified-bank'),
++             'amount_cents': Range(min=1, max=1420001)}
++    with pytest.raises(Exception) as widening:
++        (chain[0].issue_execution().capability(TOOL, wider).holder(holder.public_key)
++         .ttl(60).terminal().build(issuer))
++    assert 'range expanded' in str(widening.value).lower()
++    assert len(worker.effects) == before
++
++
++def test_valid_proof_wrong_capability_at_receiver(setup):
++    issuer, holder, _, url = setup
++    other = 'refund_invoice'
++    root = Warrant.issue_issuer([other], issuer, holder=issuer.public_key, ttl_seconds=60)
++    leaf = root.issue_execution().capability(other, {}).holder(holder.public_key).ttl(30).terminal().build(issuer)
++    result = reject(url, args(), presentation([root, leaf], holder, args()))
++    assert result['denied'] not in ('ValueError', 'TypeError'), result
++
++
++def test_unexpected_argument_and_missing_proof(setup):
++    _, holder, chain, url = setup
++    transport = presentation(chain, holder, args())
++    reject(url, args(), {**transport, 'currency': 'EUR'}, 'ValueError')
++    del transport['proof']
++    reject(url, args(), transport, 'ValueError')
++
++
++def test_cumulative_local_invoice_ceiling(setup):
++    _, holder, chain, url = setup
++    full = {**args(), 'amount_cents': 1420000}
++    assert pay_invoice(url, **full, **presentation(chain, holder, full)) == {'paid': True}
++    extra = {**args(), 'amount_cents': 1}
++    reject(url, extra, presentation(chain, holder, extra), 'ValueError')
++    assert len(worker.effects) == 1
+diff --git a/worker.py b/worker.py
+index 64344be..8eb634b 100644
+--- a/worker.py
++++ b/worker.py
+@@ -1,15 +1,69 @@
++"""Public-proof-only verification at the existing HTTP payment effect boundary."""
++import base64
+ import json
++import threading
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from tenuo import Authorizer, Warrant
++from authority import MAX_EXACT_CENTS, TOOL, RECORDS
++
++effects = []  # Fake provider journal, owned by the trusted worker in deployment.
++
+ 
+-effects=[]
+ class Handler(BaseHTTPRequestHandler):
+     def do_POST(self):
+-        request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+-        effects.append(request)  # Fake payment-provider call; no real credentials.
+-        self.send_response(200); self.end_headers(); self.wfile.write(b'{"paid":true}')
+-    def log_message(self,*args): pass
++        try:
++            if self.path != '/pay':
++                raise ValueError('unknown route')
++            size = int(self.headers.get('Content-Length', '0'))
++            if not 0 < size <= 65536:
++                raise ValueError('invalid request size')
++            request = json.loads(self.rfile.read(size))
++            if set(request) != {'invoice_id', 'bank_account', 'amount_cents', 'warrants', 'proof'}:
++                raise ValueError('missing authority or unexpected arguments')
++            args = {k: request[k] for k in ('invoice_id', 'bank_account', 'amount_cents')}
++            if not all(type(args[k]) is str and args[k] for k in ('invoice_id', 'bank_account')):
++                raise ValueError('invalid payment identifiers')
++            amount = args['amount_cents']
++            if type(amount) is not int or not 1 <= amount <= MAX_EXACT_CENTS:
++                raise ValueError('amount must be lossless positive integer cents')
++            if type(request['warrants']) is not list or len(request['warrants']) != 2:
++                raise ValueError('missing warrant chain')
++            chain = [Warrant.from_base64(w) for w in request['warrants']]
++            proof = base64.b64decode(request['proof'], validate=True)
++            self.server.authorizer.check_chain(chain, TOOL, args, signature=proof)
++            # Execute exactly the same values that were verified; no downstream coercion.
++            with self.server.payment_lock:
++                record = self.server.approvals[args['invoice_id']]
++                if (record['status'] != 'approved' or record['currency'] != 'USD'
++                        or record['approved_bank_account'] != args['bank_account']):
++                    raise ValueError('payment does not match trusted approval')
++                spent = self.server.paid_cents.get(args['invoice_id'], 0)
++                if spent + amount > record['approved_amount_cents']:
++                    raise ValueError('invoice approval exhausted')
++                effects.append(args.copy())
++                self.server.paid_cents[args['invoice_id']] = spent + amount
++        except Exception as exc:
++            # Local-only diagnostic type; do not reveal policy details over production HTTP.
++            self.send_response(403)
++            self.end_headers()
++            self.wfile.write(json.dumps({'denied': type(exc).__name__}).encode())
++            return
++        self.send_response(200)
++        self.end_headers()
++        self.wfile.write(b'{"paid":true}')
++
++    def log_message(self, *args):
++        pass
++
++
++def serve(port=8080, *, trusted_roots=()):
++    server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
++    server.approvals = json.loads(RECORDS.read_text())
++    server.payment_lock = threading.Lock()
++    server.paid_cents = {}  # Development-only; production requires atomic durable state.
++    server.authorizer = Authorizer(trusted_roots=list(trusted_roots), clock_tolerance_secs=0)
++    return server
+ 
+-def serve(port=8080):
+-    return ThreadingHTTPServer(('127.0.0.1',port),Handler)
+ 
+-if __name__=='__main__': serve().serve_forever()
++if __name__ == '__main__':
++    raise SystemExit('Configure explicit public trust roots via serve(); run demo.py for the local demo.')

@@ -1,0 +1,42 @@
+[10/17/26 12:05:31] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:05:32] INFO     Starting MCP server 'refunds' with transport.py:241
+                             transport 'stdio'                                  
+[10/17/26 12:05:32] Error calling tool 'refund_order'                           
+                    ╭─────────── Traceback (most recent call last) ────────────╮
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ /lib/python3.12/site-packages/fastmcp/server/server.py:1 │
+                    │ 359 in call_tool                                         │
+                    │                                                          │
+                    │ /private/tmp/tenuo-local-agent-evals/framework-mcp/.venv │
+                    │ /lib/python3.12/site-packages/fastmcp/tools/base.py:421  │
+                    │ in _run                                                  │
+                    │                                                          │
+                    │                 ... 9 frames hidden ...                  │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:1307 in verify_or_raise  │
+                    │                                                          │
+                    │   1304 │   │   │   │   clean = verifier.verify_or_raise( │
+                    │   1305 │   │   │   │   return open(clean["path"]).read() │
+                    │   1306 │   │   """                                       │
+                    │ ❱ 1307 │   │   return self.verify(tool_name, arguments,  │
+                    │        meta=meta).raise_if_denied().clean_arguments      │
+                    │   1308                                                   │
+                    │   1309                                                   │
+                    │   1310 # ----------------------------------------------- │
+                    │                                                          │
+                    │ /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/t │
+                    │ enuo-python/tenuo/mcp/server.py:408 in raise_if_denied   │
+                    │                                                          │
+                    │    405 │   │   │   clean = verifier.verify("read_file",  │
+                    │        arguments).raise_if_denied().clean_arguments      │
+                    │    406 │   │   """                                       │
+                    │    407 │   │   if not self.allowed:                      │
+                    │ ❱  408 │   │   │   raise MCPAuthorizationError(self)     │
+                    │    409 │   │   return self                               │
+                    │    410 │                                                 │
+                    │    411 │   def to_jsonrpc_error(self) -> Dict[str, Any]: │
+                    ╰──────────────────────────────────────────────────────────╯
+                    MCPAuthorizationError: Constraint 'amount_cents' not        
+                    satisfied: value does not match constraint                  

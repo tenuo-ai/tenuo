@@ -1,0 +1,6 @@
+{
+  "source": "editable checkout declared in requirements.txt",
+  "commit": "abe73aab4df50a7044ab8b0d560b061c2b57d650",
+  "package": "tenuo",
+  "manifest_version": "0.3.2"
+}

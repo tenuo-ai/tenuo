@@ -1,0 +1,5 @@
+-e /Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python
+mcp==1.30.0
+fastmcp==3.4.9
+pytest==9.1.1
+pytest-asyncio==1.4.0

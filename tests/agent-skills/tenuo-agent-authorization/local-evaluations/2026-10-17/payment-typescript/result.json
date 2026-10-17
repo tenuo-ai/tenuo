@@ -1,0 +1,26 @@
+{
+  "project": "payment-typescript",
+  "agent": "/root/eval_payment_typescript",
+  "status": "pass",
+  "starter_commit": "8b76b30739ddcbd64643c8c9d2b144dbbc92527b",
+  "skill_inputs": [
+    "SKILL.md",
+    "references/common-footguns.md",
+    "references/framework-status.md",
+    "references/native-tools.md",
+    "references/security-model.md",
+    "references/trust-levels.md",
+    "references/typescript.md",
+    "references/unreleased.md",
+    "scripts/inspect_native_tools.py"
+  ],
+  "skill_fingerprint": "b6c60dd4e816ec3766204c03a9270d819754f1b446616436741b61da9f7b136f",
+  "independent_test_count": 21,
+  "implementation": "source reviewed; independent probes passed",
+  "reporting": "passed: development/incomplete scope, root-only trust and replay/deployment limitations stated",
+  "candidate_report": "candidate/REPORT.md",
+  "tracked_patch": "tracked.patch",
+  "notes": [
+    "Report correctly labels incomplete integration (test-only issuance). Same-victim-challenge wrong-holder parent probe passed. Packaged WASM provenance remains sourceClean:false/wasmMatchesCommit:false. Discarded exploratory ephemeral seed output is not included in artifacts."
+  ]
+}

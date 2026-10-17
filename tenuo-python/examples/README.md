@@ -2,6 +2,33 @@
 
 This directory contains working examples demonstrating how to use the Tenuo Python SDK.
 
+## Task authority in one command
+
+Let a payment specialist choose an amount for an approved invoice. Its delegated
+warrant fixes the invoice and verified bank account and caps each payment at
+$250, inside its coordinator's $500 authority. A malicious bank-change instruction
+cannot redirect the payment; the specialist cannot borrow the parent's higher cap.
+
+```bash
+uv run --no-project tenuo-python/examples/task_authority.py
+```
+
+Run from the repository root with `uv` installed. The script installs its pinned
+released SDK on first run. No model key, Cloud account, Docker or real payment.
+
+```text
+ALLOWED Chosen payment: $200 to verified-bank -> payment effects=1
+DENIED  Injected bank change: $200 to attacker-bank -> payment effects=0
+DENIED  Worker tries $400 (parent allows it; child does not) -> payment effects=0
+DENIED  Worker tries a different invoice -> payment effects=0
+```
+
+[The example](task_authority.py) deliberately signs bad calls and sends them to
+the real verifier: it models an already-fooled model rather than measuring a live
+prompt attack. It is a core authorization example, not a framework adapter demo.
+Co-located ephemeral keys make it a development loop. Limits are per call; no
+total-budget, replay prevention or payment-idempotency guarantee is implied.
+
 ## Prerequisites
 
 ```bash

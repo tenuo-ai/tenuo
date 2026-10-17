@@ -1,0 +1,3 @@
+Task warrant: refund(order=123, 1<=amount_cents<=50000), TTL=300s
+refund(order=123, amount_cents=20000): ALLOWED, effects=1
+refund(order=123, amount_cents=490000): DENIED, effects=0

@@ -1,0 +1,26 @@
+{
+  "project": "framework-mcp",
+  "agent": "/root/eval_framework_mcp",
+  "status": "pass",
+  "starter_commit": "5b50373f28e8b05bcd688d39504df67cfba61613",
+  "skill_inputs": [
+    "SKILL.md",
+    "references/common-footguns.md",
+    "references/framework-status.md",
+    "references/mcp.md",
+    "references/python.md",
+    "references/security-model.md",
+    "references/trust-levels.md",
+    "references/unreleased.md",
+    "scripts/inspect_mcp_project.py"
+  ],
+  "skill_fingerprint": "21c52c902a19b7517a17d299be2d39f8bf9897cb22821b0658005f3ab60c3c2e",
+  "independent_test_count": 54,
+  "implementation": "source reviewed; independent probes passed",
+  "reporting": "passed: development/incomplete scope, root-only trust and replay/deployment limitations stated",
+  "candidate_report": "candidate/REPORT.md",
+  "tracked_patch": "tracked.patch",
+  "notes": [
+    "Agent was interrupted by usage limit after writing REPORT.md and final logs. Independent parent reruns passed 27 tests on each major. Initial MCP2 result-field assertion failure remains in candidate/validation-mcp2-initial.txt."
+  ]
+}

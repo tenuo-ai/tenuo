@@ -1,0 +1,34 @@
+{
+  "commands": [
+    {
+      "command": "python3 -m unittest discover -s scripts/tests -p 'test_*.py'",
+      "returncode": 0,
+      "tests": 62
+    },
+    {
+      "command": "python3 scripts/validate_agent_skills.py --summary /tmp/agent-skill-evidence.md",
+      "returncode": 0
+    },
+    {
+      "command": "python3 scripts/validate_agent_skills.py --readiness --summary /tmp/agent-skill-readiness.md",
+      "returncode": 1,
+      "expected": "NOT READY; guidance review and stale actual evaluated inputs after later local CLI/horizon changes"
+    },
+    {
+      "command": "python3 scripts/repin_agent_skill.py --tag v0.3.2 --check",
+      "returncode": 0,
+      "expected": ""
+    },
+    {
+      "command": "git diff --cached --check",
+      "returncode": 0
+    },
+    {
+      "command": "python3 scripts/refresh_agent_skill_horizon.py --check",
+      "first_returncode": 1,
+      "first_reason": "10 new local CLI PRs opened during test round",
+      "returncode_after_review_refresh": 0
+    }
+  ],
+  "live_horizon_check_this_round": true
+}

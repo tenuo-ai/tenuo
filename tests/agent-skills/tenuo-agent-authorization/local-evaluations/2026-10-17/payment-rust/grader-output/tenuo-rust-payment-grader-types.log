@@ -1,0 +1,11 @@
+    Checking payment-service-eval v0.0.1 (/private/tmp/tenuo-local-agent-evals/payment-rust)
+warning: unused import: `ConstraintValue`
+ --> tests/independent_grader.rs:4:17
+  |
+4 |     use tenuo::{ConstraintValue, args};
+  |                 ^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `payment-service-eval` (test "independent_grader") generated 1 warning (run `cargo fix --test "independent_grader" -p payment-service-eval` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s

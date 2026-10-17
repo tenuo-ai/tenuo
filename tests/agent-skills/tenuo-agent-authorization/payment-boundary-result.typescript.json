@@ -1,26 +1,26 @@
 {
   "scenario": "payment-boundary-eval.md",
   "language": "typescript",
-  "evaluated_at": "2026-09-26",
-  "model_class": "lower-cost coding model (claude-sonnet-5, one fresh authorized run with the skill)",
-  "result": "fail",
+  "evaluated_at": "2026-10-17",
+  "model_class": "in-session coding subagent; inherited session model; exact backend revision not exposed",
+  "result": "pass",
   "evidence_kind": "fresh",
   "inputs": [
     "SKILL.md",
-    "references/native-tools.md",
-    "references/typescript.md",
-    "references/trust-levels.md",
     "references/common-footguns.md",
+    "references/framework-status.md",
+    "references/native-tools.md",
     "references/security-model.md",
+    "references/trust-levels.md",
+    "references/typescript.md",
+    "references/unreleased.md",
     "scripts/inspect_native_tools.py"
   ],
-  "skill_fingerprint": "c84d0b7bb38747c2b1df8f7cf6e8156c723e4a680302ac52d20aba4ddfd7e09d",
+  "skill_fingerprint": "b6c60dd4e816ec3766204c03a9270d819754f1b446616436741b61da9f7b136f",
   "evidence": {
-    "sdk": "@tenuo/core 0.3.1-beta.0 from npm",
-    "tests": "10 passed; rerun by grader",
-    "typecheck": "tsc --noEmit passed",
     "critical_items": "passed",
-    "notes": "Second fresh authorized run. All critical implementation checks pass: receiving-boundary denials, host-configured recipient/amount ceilings, verified effect arguments, actual import failure of the original exports, and correct holder-owned narrowing with a successful child control. Independent widening diagnostic confirms TENUO_CHAIN_INVALID with a range-expanded message, not the prior missing-key setup error. The development-loop label is supported by real issuer/caller/service APIs. Required reporting remains incomplete: it mentions same-process roles and missing secret-store wiring but omits the required warnings that the process can mint replacement authority or replace/disable the guard, and that issuance/root signing must move outside the agent boundary for production. Inputs include actual reference reads and executed inventory script.",
-    "required_reporting": "failed"
+    "required_reporting": "passed",
+    "tests": "21 tests independently rerun, including grader probes; see artifact logs",
+    "notes": "One blind diagnostic run, not a reliability estimate. Source/report independently reviewed. Artifact: local-evaluations/2026-10-17/payment-typescript/result.json. Historical failed evidence retained under local-evaluations/2026-10-17/historical. Fingerprint remains the actual abe73aab skill; later guidance changes are not certified."
   }
 }

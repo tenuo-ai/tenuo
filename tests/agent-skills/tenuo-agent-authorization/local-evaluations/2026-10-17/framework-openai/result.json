@@ -1,0 +1,27 @@
+{
+  "project": "framework-openai",
+  "agent": "/root/eval_framework_openai",
+  "status": "pass",
+  "starter_commit": "aaabe00f4bce7c2ff7448c1a46ca377525d349d2",
+  "skill_inputs": [
+    "SKILL.md",
+    "references/common-footguns.md",
+    "references/framework-status.md",
+    "references/native-tools.md",
+    "references/python.md",
+    "references/security-model.md",
+    "references/trust-levels.md",
+    "references/unreleased.md",
+    "scripts/inspect_native_tools.py"
+  ],
+  "skill_fingerprint": "ce1a339a8e0459d44d10ddd57cd547e2e497cd52cc3d18c63d1d33fefbf623a5",
+  "independent_test_count": 40,
+  "implementation": "source reviewed; independent probes passed",
+  "reporting": "passed: development/incomplete scope, root-only trust and replay/deployment limitations stated",
+  "candidate_report": "candidate/REPORT.md",
+  "tracked_patch": "tracked.patch",
+  "notes": [
+    "Evaluator added requirements.lock after agent started; report initially observed no lockfile. Runner wraps service denial as UserError; independent probe asserts nested constraint reason and zero effects.",
+    "Initial independent grader fixture omitted child capabilities and failed before dispatch. Grader fixture corrected; candidate implementation unchanged."
+  ]
+}

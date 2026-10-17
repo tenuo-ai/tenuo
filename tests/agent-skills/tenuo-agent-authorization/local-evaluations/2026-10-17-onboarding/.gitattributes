@@ -1,0 +1,2 @@
+# Raw patch context and terminal output are preserved.
+tracked.patch -whitespace

@@ -1,0 +1,1782 @@
+{
+  "541": {
+    "source_fingerprint": "f7866ef8751d7d8e705ad48d540a5354ee4a32a33abb84f8628f63aed28d87ee",
+    "category": [
+      "G"
+    ],
+    "summary": "Install-first TypeScript documentation; validate snippets against the resolved npm artifact.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "562": {
+    "source_fingerprint": "ec3479474ad8425c18891c242ea1a7ccdc2ad8a7731c2eb8259dd89328e68bd5",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "Local receipt signing, MCP denial evidence and terminal-leaf helpers are pending APIs; GitHub Actions stack foundation.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "563": {
+    "source_fingerprint": "c8d17a3d603bfd0c5590ed60b41ecb35e616ad57736472f95ff11a1c0437b310",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "H"
+    ],
+    "summary": "OIDC exchange and separate issuer/gateway roles build on SDK primitives; not a released deployment recipe.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "564": {
+    "source_fingerprint": "39c788b82fcda783e6c720000c46b767a953e7359a25142efaadb589b4fce51c",
+    "category": [
+      "A",
+      "C",
+      "E"
+    ],
+    "summary": "GitHub App effects execute after gateway verification; preserve exchange/gateway credential separation.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "565": {
+    "source_fingerprint": "d534b675478e80624f4043c826428e9bfb413d60cc13e006774b1f7211143f37",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "Holder process and stdio shim transport public envelopes without exporting signing keys; stack prerequisite for action E2E.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "566": {
+    "source_fingerprint": "9834049a5b96f914464f2a26db8e5a33377c28f7f3b6da18b64f00638d5285dc",
+    "category": [
+      "A",
+      "C",
+      "D",
+      "E",
+      "G"
+    ],
+    "summary": "Action E2E depends on the whole OIDC/holder/gateway stack; live GitHub verification is still unproven in the PR.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "595": {
+    "source_fingerprint": "813afae022200083a113b2c7f68c392d316579b4c65af71ed1c26d1065531eb5",
+    "category": [
+      "I"
+    ],
+    "summary": "Reviewed lab telemetry and collector; no agent-integration correctness guidance changes. Privacy blockers remain outside this skill.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      594
+    ],
+    "related": [
+      587
+    ]
+  },
+  "616": {
+    "source_fingerprint": "16709bfbe2dc15f5d001c86c833e17b09b103fdf8b773954a3e5baa6930e5b33",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "Rig/rmcp delegation demo signs at tool call and verifies at server; use only if present in the target source.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "666": {
+    "source_fingerprint": "550a3fec5d2b96c3979b58681b08f2aa78d9398429c3f8b0f48f2003714fa0e0",
+    "category": [
+      "A",
+      "E",
+      "F",
+      "H"
+    ],
+    "summary": "Verifier issuance ordering, root shape, composite attenuation and lifetime ceiling changes; draft/vector conformance does not retroactively change releases.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      667
+    ]
+  },
+  "667": {
+    "source_fingerprint": "50d632c52d5dc20590b734928374a254661c5b6dc6df71d1ee93a384fa1d6e99",
+    "category": [
+      "E",
+      "F",
+      "H"
+    ],
+    "summary": "AAT -02 JWS draft/vectors specify typing, audience and attenuation invariants; protocol horizon only, not the current CBOR profile.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      666
+    ]
+  },
+  "677": {
+    "source_fingerprint": "90753ef822eb57ed6537df095acf2556f18e64f23fb7e9769fe09d6a5fee0da4",
+    "category": [
+      "G"
+    ],
+    "summary": "Task-scoped framing across public docs; preserve API names and protocol meaning.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "691": {
+    "source_fingerprint": "743c84e74ddef90c264276649c4b7c1a43a3dc7c094e0674ac2dc948a892aca3",
+    "category": [
+      "A",
+      "B",
+      "F",
+      "G"
+    ],
+    "summary": "Host-local noArgs ceiling for TypeScript; does not change empty wire capabilities or delegated authority. Do not emit noArgs on a release lacking it.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "762": {
+    "source_fingerprint": "7de839e68e8c2b0be439061ae6965ecae6c7daeb6fc41271c82d50a945111284",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "Alternative audit/permissive scope-only observation design. Superseded by broader observe semantics; do not combine or assume it is installed.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "merge_notes": "Alternative to #817; #817 supersedes this PR. Do not merge both semantics."
+  },
+  "772": {
+    "source_fingerprint": "a0678a4b1b649e78d2d4a436e63a6bd4718ad91cdb620a781741f7f2f4589c97",
+    "category": [
+      "E",
+      "F",
+      "H"
+    ],
+    "summary": "Design-only versioned MCP envelope and PoP-v2 domain; no runtime implementation. Keep target proof/canonicalization version, never retry a different version after invalid proof.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "778": {
+    "source_fingerprint": "846bcba21f84233413f4d446b17b6babfe6f2c1b5b9a99e8e9ece8ff1f89c03b",
+    "category": [
+      "I"
+    ],
+    "summary": "Reviewed lab star-command removal and stage completion UX; no SDK or agent-integration correctness change.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "785": {
+    "source_fingerprint": "7d243907a26621fde60c363194f73606cc5a6053442d077f3d457a99dff38d68",
+    "category": [
+      "A",
+      "F"
+    ],
+    "summary": "Core POSIX Shlex evaluator unifies matching and attenuation; pending parser semantics need adversarial tests on target.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      809
+    ],
+    "merge_notes": "Overlaps #809 with a core tokenizer strategy; evaluate separately, no invented combined parser."
+  },
+  "799": {
+    "source_fingerprint": "cc954cd3825600bdd8dec1ae146c8790b86c4e46b8a9a548270606af35370368",
+    "category": [
+      "C",
+      "G"
+    ],
+    "summary": "Temporal retry window and approval ordering documentation correction; verify worker behavior, not just retry counts.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "802": {
+    "source_fingerprint": "cf51479e6227301107758873a4198e6886110de10bf7adecedc4c3cc939cec46",
+    "category": [
+      "A",
+      "B",
+      "F"
+    ],
+    "summary": "Python Exact non-string support is pending; use target-supported constraints for numeric IDs, never stringify an integer effect.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "803": {
+    "source_fingerprint": "e98eaa265a9bca1a7b9cc07be2f14c76e39efa5859b442151e0bf214ef2eb7e7",
+    "category": [
+      "A",
+      "B",
+      "F"
+    ],
+    "summary": "Python OneOf/NotOneOf non-string support is pending; target constructor/matcher governs syntax and types.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "804": {
+    "source_fingerprint": "62ff4b9506737a42168139e0684c5171250e324a984141df6eff5873da37b4ba",
+    "category": [
+      "I"
+    ],
+    "summary": "Reviewed CI property-test activation/stale-test repair; no public integration contract change.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "808": {
+    "source_fingerprint": "4cda230b5314698db8b9cdc5706da20353e966a18d58b1a5d554092c0130a485",
+    "category": [
+      "A",
+      "F"
+    ],
+    "summary": "UrlSafe allowed-domain policy currently has public-IP/malformed-pattern hazards; pending fix cannot be assumed. Enforce destinations independently where affected.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "809": {
+    "source_fingerprint": "39fa45378a8b7d2ced5ceb242fb43feef70a15051454912297fd5dbf02ff10c6",
+    "category": [
+      "A",
+      "F"
+    ],
+    "summary": "Python Shlex operator-token rejection fixes pending parsing behavior; overlaps the independent core tokenizer proposal.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      785
+    ]
+  },
+  "814": {
+    "source_fingerprint": "427771aac49fad03a879be6a57d674a7bc6ade98c18cc05a6d45b921d95169c6",
+    "category": [
+      "B",
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "Compiled @tenuo_node config/key selection is pending, separate from merged guard_node config forwarding; use real compile().invoke() proof.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "supersedes": [
+      668
+    ],
+    "related": [
+      813
+    ]
+  },
+  "815": {
+    "source_fingerprint": "9a72e13bc6f903733ac3d7aa2bc89de6c59ce6992b0697002c97140261c7e499",
+    "category": [
+      "B",
+      "C",
+      "D",
+      "G"
+    ],
+    "summary": "Optional-dependency install errors and FastAPI import stubs change; extra names/version floors must match installed packaging.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "817": {
+    "source_fingerprint": "1325d251a4333cec6f892f1d5c6fc64fb265a00e7996454e5c088dfbccdcaed3",
+    "category": [
+      "A",
+      "B",
+      "C"
+    ],
+    "summary": "Shared observe mode allows would-deny calls, including integrity/approval failures, while recording DENY. Requires adapter followups; effect may execute.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "supersedes": [
+      762
+    ]
+  },
+  "818": {
+    "source_fingerprint": "8cc3c57d89dd92c1da951351333035a0bc84439dccb0c64e47f92f3f1a6bdbbc",
+    "category": [
+      "A",
+      "E"
+    ],
+    "summary": "grant scopes currently lose parent-chain propagation; pending fix preserves chain_scope. Explicitly transport complete parents on target.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "819": {
+    "source_fingerprint": "2da4f758ef842b8bf057b908d1ddf5ce7df58310a2959962725af7b32608cad8",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "GuardedCrew per-agent warrants need issuer parents with root-only trust; builder and chain forms are pending.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "823": {
+    "source_fingerprint": "089139c05ab62ec26e48220da8bf8c4c20690ab4d6ffd56d4829a797556c6352",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "CrewAI MCP demo omitted per-member scope and did not authorize attacks; example corrections are not proof that an installed adapter is safe.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      821
+    ]
+  },
+  "824": {
+    "source_fingerprint": "0fb1b70872a01f6cc50203b41af373cc6e4c3f825a8f56d94fe31502050544f6",
+    "category": [
+      "A",
+      "C",
+      "F"
+    ],
+    "summary": "A2A server constraints were skipped with require_pop=True; protect effect independently until target confirms enforcement.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "825": {
+    "source_fingerprint": "736a528688bac1150b1245d728b063de648aec28448a6603dd36bcf1857a41e4",
+    "category": [
+      "B",
+      "C"
+    ],
+    "summary": "A2A audience default is incompatible with core warrants; pending default correction is not released behavior.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "826": {
+    "source_fingerprint": "e62f0e3d73b989baa414b71ce0060c10443c8e808c2fff3901f46fb73b8d07a4",
+    "category": [
+      "A",
+      "C",
+      "E"
+    ],
+    "summary": "A2A WarrantStack path bypasses trust_delegated=False; verify chain format and policy in actual target.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "827": {
+    "source_fingerprint": "cd0a465a6f10870d74460400ddf1f41a4ab2f0a75de7ca61303dce3603ad5238",
+    "category": [
+      "A",
+      "C",
+      "E"
+    ],
+    "summary": "Temporal Nexus forwarding can duplicate leaf and omit delegated parents; pending normalization fix, not a universal chain recipe.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "828": {
+    "source_fingerprint": "49156fe49f9866955d0f02f2f0b30f8bb63e478ce1f77da03dacf89f6b8a5929",
+    "category": [
+      "B",
+      "C"
+    ],
+    "summary": "Temporal environment/cloud warrant sources call expiry incorrectly; avoid claiming these sources work without target tests.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "829": {
+    "source_fingerprint": "c5f51d41f3aaeabeb4fb850e7e3159bac8cd9881f0f827b434610a3f8cea5b17",
+    "category": [
+      "A",
+      "E"
+    ],
+    "summary": "Missing-parent denial gains chain_missing guidance; send full chain, never broaden roots to silence trust errors.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "830": {
+    "source_fingerprint": "8ebf6eb72eb5f6c74e739bc5ef947c09d2d353d15e2be41f4b3d0ae71359f165",
+    "category": [
+      "A",
+      "B",
+      "C"
+    ],
+    "summary": "Opt-in unwarranted internal activities skip missing-warrant enforcement; narrowly classify plumbing, never exempt effects.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "831": {
+    "source_fingerprint": "6d0a6c50a8e19473f2a8895122f5966bc23bea6bee97aa616ff2d4d8e8d581ef",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "Child workflow attenuation policy is pending; verify plain child starts and fail-closed policy errors in target.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "832": {
+    "source_fingerprint": "3d4604444f88dcf98cfa04c5c6692237e512c87ea1a220b3bc4307b5d55dcbb7",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "Signed workflow-update approvals and install-warrant APIs are pending; cannot recommend them to released workflows.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "833": {
+    "source_fingerprint": "c037fcdd0cf120aabc7df078d1bae373f97e47642d01cfcd6bd401cd209ed1d1",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "F"
+    ],
+    "summary": "Temporal PoP exclusions and MCP wrapper mapping change authority extraction; excluded arguments must not grant authority.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "834": {
+    "source_fingerprint": "c069bb7f2c10238fc860606901d6f6d93bf4a5ffc3c2a46a0def55d8e37d4559",
+    "category": [
+      "B",
+      "C",
+      "D",
+      "G",
+      "E"
+    ],
+    "summary": "Temporal harness presets depend on transport/mapping, child policy and update bridges; no shortcut to protecting all harness activities.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      831,
+      832
+    ],
+    "merge_notes": "Merge #830, #833, then presets after #831 and #832."
+  },
+  "835": {
+    "source_fingerprint": "3c1dd2016967f34eaff09b5455ca79734bf04b63e711c0889b1629b32b573ed2",
+    "category": [
+      "I"
+    ],
+    "summary": "Reviewed lab website-theme test removal; runtime tests remain, no skill integration change.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "836": {
+    "source_fingerprint": "fde7981750237e23b0e510f0b432171a19ffb86de4a4cddb38f6818bdeb076a2",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "Workflow start/schedule APIs gain parent-only warrant_chain transport; released helpers cannot silently borrow this parameter.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "837": {
+    "source_fingerprint": "855f94746ffe78b4870f04c35e5e00355a49fef0bf0f5428834d3e44da338a2c",
+    "category": [
+      "I"
+    ],
+    "summary": "Reviewed Explorer visual theme/header changes; no authorization decision or integration contract change.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      835
+    ]
+  },
+  "838": {
+    "source_fingerprint": "38daade1d4ed150635515fff5ded5714923be15618bbe8811385b8e458075858",
+    "category": [
+      "G"
+    ],
+    "summary": "Docs/site front matter and generated-vector presentation change; immutable target source remains authoritative.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      799
+    ]
+  },
+  "839": {
+    "source_fingerprint": "3f1e216800cdd23e30edd3d0f584fa69ce5033195eb1cffd3e509a55626cac9d",
+    "category": [
+      "I"
+    ],
+    "summary": "Reviewed website rebuild dispatch workflow; no SDK/framework enforcement change.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "840": {
+    "source_fingerprint": "9f6eeb588882fc1dd792e3c50927f2cffd6afe0d7c538dac0718e40d2931066c",
+    "category": [
+      "G"
+    ],
+    "summary": "Website content cutover changes documentation locations; keep portable SDK references and respect external cutover order.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      835,
+      838,
+      839
+    ],
+    "merge_notes": "Website must build imported guides before removing old site."
+  },
+  "841": {
+    "source_fingerprint": "da04c54ffe614ebca0fe3c409eb01e2cf8aa5b9503b31597d8f1c17fb1b3f37f",
+    "category": [
+      "A",
+      "B",
+      "C"
+    ],
+    "summary": "Approval exceptions gain TenuoError ancestry with catch-site protections; broad exception catches must not allow effects.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "842": {
+    "source_fingerprint": "dd0be7774dbfbaef46be48620cb3ba2b46ec6e540f0704752035a92527d2f927",
+    "category": [
+      "A",
+      "C",
+      "F",
+      "G"
+    ],
+    "summary": "Bare A2A constraint classes become advertise-only with warnings; enforce with instances and target-tested server policy.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "843": {
+    "source_fingerprint": "87f4cc111b3c9c27e9cff2e688a928f94b22b417b242913b11d1a7f060136ff8",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "CrewAI local pre-checks gain observe semantics; observed DENY may run, hook enforcement must be tested independently.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "844": {
+    "source_fingerprint": "0929d8427dee43da331a2db7b6fa937fe697ed2231ca66f7af51d43d6ee78c9a",
+    "category": [
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "Temporal helpers normalize parents-only chains and deprecate trailing-leaf form; target versions differ despite unchanged wire header.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      827
+    ],
+    "merge_notes": "Possible textual conflict with #827 in Nexus authority resolution; retain explicit chain normalization review."
+  },
+  "845": {
+    "source_fingerprint": "4726a31913a11b9a9aaa4097f4dda00f44719b18efd6ea99bcd4e92b982fc7fa",
+    "category": [
+      "A",
+      "B",
+      "F",
+      "H"
+    ],
+    "summary": "Receipt key 16 marks observed DENY as not enforced; older verifiers reject the new receipt. Never infer blocked effects from DENY alone.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "846": {
+    "source_fingerprint": "a3f89c642545cab1df0fbaabef3c5526ceec52eea6dedec84bac913f989de882",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "OpenAI local checks gain observe semantics across client/Agents paths; these semantics are not in the release.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "847": {
+    "source_fingerprint": "0257afa7fe837441ad4304354a955d95e1f90e87814f8addd09b400c7146babf",
+    "category": [
+      "A",
+      "B",
+      "E"
+    ],
+    "summary": "HTTP headers gain explicit/ambient parent-chain transport and bound approvals; verify installed method parameters.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "848": {
+    "source_fingerprint": "72b0c1476b20e426181de19600e13e4e2393ad9cbf75247ae26248b981d679d4",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "OpenAI builder and AutoGen entrypoints gain explicit root/approval options; missing roots still fail closed.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "849": {
+    "source_fingerprint": "0a47127558606bd806ddca82c2d9c0c4d95e4cccbe7a92dc5ade136cfcee8895",
+    "category": [
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "LangGraph state accepts stack tokens/root-first lists and rejects ambiguous chain forms; pending input forms cannot be assumed.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "850": {
+    "source_fingerprint": "8a936864c915949223783fafc81462696827672725b6be4ed6058378d8a5566b",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "ADK dry_run becomes guard-scoped observation with corrected denial audit; effect can run under observed DENY.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "851": {
+    "source_fingerprint": "655d8d25e8b14f6b8580374ce18c43f16a2ab613dfed322d368964e904256904",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "Temporal activity early checks and audit gain observe behavior; signals/updates/Nexus require next layer.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "852": {
+    "source_fingerprint": "b8baa83aa598a90da9d76872e8fa58b1a5ef6f3b1fff788fd4e4aa5e4b3c07af",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "A2A PoP observe path records denied decision while running; no-PoP path needs separate constraint fixes.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "854": {
+    "source_fingerprint": "abf60cbf2a2a0e8aedca9f3d5793a1e314c034b825975ad58a4ec3724935a147",
+    "category": [
+      "B",
+      "C"
+    ],
+    "summary": "AutoGen denial records/codes retain actual call metadata; verify target error semantics, not docs tables.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "855": {
+    "source_fingerprint": "b2cf3c9ca79b8877f7ed1c8658e6751c26b79d0d00128135a3face6c03cf0ddb",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "Temporal signals/updates/Nexus gain observation with remaining structural denials; assess paths individually.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "857": {
+    "source_fingerprint": "91e92edd6ae7b165e473579de22abb38a82825c0b863f3c51639460b15b939c0",
+    "category": [
+      "B",
+      "C"
+    ],
+    "summary": "OpenAI denial records and audit expose canonical enforcement data; pending metadata not available on release.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "858": {
+    "source_fingerprint": "4423e1a178f8c86864b1fe84d3c7f215d224f69ed65c0118e8ef2a203370625a",
+    "category": [
+      "B",
+      "C"
+    ],
+    "summary": "CrewAI denial records preserve canonical reasons and constraints; exceptions alone do not establish effect prevention.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "860": {
+    "source_fingerprint": "abaf454d14f8147366cfdb046b9d1d833186a02e253795de92ab18fe5e59734b",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "G"
+    ],
+    "summary": "Denial text can disclose warrant/argument values through Explorer links; pending change moves sensitive URLs to explicit debugging API.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "861": {
+    "source_fingerprint": "d5d3b4a4a6732f36cb3cc79462621fee6b519739c861684d02175a343dd41a11",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "ADK docs repair roots, chain transport and nonexistent builder APIs; snippets depend on observe stack.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "862": {
+    "source_fingerprint": "53732a97fbaca4c757b51b5f7a3b5ec36139d444b25756279c78930a22da3210",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "OpenAI docs repair roots/chains/modes and error tables; depends on multiple pending APIs, never copy wholesale to release.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      848,
+      816,
+      845,
+      860
+    ]
+  },
+  "863": {
+    "source_fingerprint": "26de213cd915dff323f8d5b363d6ebc6e5e09512d57113620b3c892295506afc",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "AutoGen docs repair trust, chain and error/observe tables; test snippets on installed version.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      848,
+      817,
+      845
+    ]
+  },
+  "864": {
+    "source_fingerprint": "2a4bd5f9ca7fcec968ffb06c3c6a9f63b1057fd69f6bb06e470fcc472ce5f416",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "A2A docs depend on server constraints, defaults, stack trust and observe fixes; not released integration instructions.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      824,
+      825,
+      826,
+      852
+    ]
+  },
+  "865": {
+    "source_fingerprint": "90a72e565201b1350bdd641b073ffa768b700111a884ae104faed7dc790ad018",
+    "category": [
+      "C",
+      "G"
+    ],
+    "summary": "Temporal docs correct wire errors and observe fields on its stack; released dry_run behavior must be checked separately.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "866": {
+    "source_fingerprint": "9e9e9033fae2c3c0678ffad9facb7b0d604ce00b2096fefc5ff64a4002ec7345",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "CrewAI docs repair root-only delegation and error/observe tables; GuardedCrew propagation is another prerequisite.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      819,
+      845
+    ]
+  },
+  "867": {
+    "source_fingerprint": "a64baff7a0a08a1f0da88498d1dfc7bfc957070b1cb6e89f28b06c1a185a6e30",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "Nexus docs require root trust, chain propagation and stack-specific observe/error semantics.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "868": {
+    "source_fingerprint": "94d42179f1a57c58c8136d5bc5ac36f6e0a87ab78dc75c25fd3caf3cb67c670e",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "AutoGen Tier 1 sync/async/stream observation is pending; do not describe current observed denials as blocked effects.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "869": {
+    "source_fingerprint": "25afd5169679856208019bf8f5db3fd4c3a3b8922c6a9016a4209342d9951d60",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "FastAPI docs depend on typed arguments, HTTP transport and observe changes; require_pop router option is documented as a no-op.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      856,
+      822,
+      817
+    ],
+    "related": [
+      919
+    ],
+    "merge_notes": "Base #856 and HTTP chain #822 have merged; observe #817 remains pending. Router coverage #919 is independent."
+  },
+  "870": {
+    "source_fingerprint": "8d444f10cdd713796cfe6a307d245240ee084855e0539d334fcf5c836cbff21e",
+    "category": [
+      "B",
+      "C",
+      "F",
+      "H"
+    ],
+    "summary": "WASM/TypeScript/Explorer expose receipt enforced flag from receipt stack; decoding a denial is not evidence of blocking.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "871": {
+    "source_fingerprint": "c22d6e9b87cc4588ed477fc550be82e21581afc805c279a83faef48146dd9a82",
+    "category": [
+      "B",
+      "G"
+    ],
+    "summary": "API-reference imports, error constants, headers and observe receipts corrected against pending APIs; inspect exports first.",
+    "security_relevance": false,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      841,
+      845,
+      847,
+      860,
+      829
+    ]
+  },
+  "872": {
+    "source_fingerprint": "25f9fc4a30b1c5ca38847d11e9946003cd8baf73de9221d1d69357e780908b17",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "Production rollout docs depend on observe/receipts/headers/Temporal chain fixes; explicit root-only trust remains invariant.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      845,
+      847,
+      836,
+      829
+    ]
+  },
+  "873": {
+    "source_fingerprint": "ae0dcf6a8e75a02207897ccb60d5b09fe602505fd884a98e5a757a0170296181",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "MCP README CrewAI path needs per-member warrant/key/chain scopes; context variables do not automatically enter CrewAI threads.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "874": {
+    "source_fingerprint": "a4570301a0ec6bd1497e45565d69b78c2e4d3a83a2f6f4bd0010e3ffca09ae17",
+    "category": [
+      "A",
+      "E",
+      "G",
+      "H"
+    ],
+    "summary": "Spec corrects empty trusted_roots to reject all warrants; never infer allow-all from stale spec prose.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "875": {
+    "source_fingerprint": "9e46cf4d7f3a21c22f2c125031491186a93b7c66991e38a208fa5d2c7a506951",
+    "category": [
+      "C",
+      "D",
+      "G"
+    ],
+    "summary": "Compatibility docs correct ToolNode hook floor, Temporal plugin floor and A2A ASGI dependencies; Stable labels do not prove mediation.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      898
+    ]
+  },
+  "876": {
+    "source_fingerprint": "1a31f0bac1436c57025c072898d12479ffba4260f64d77458a2940cdc663a7a7",
+    "category": [
+      "C",
+      "D",
+      "G"
+    ],
+    "summary": "MCP demo servers port to decorators for SDK 2.x compatibility; old low-level Server registration is not cross-major portable.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "877": {
+    "source_fingerprint": "c306f6f627a745a7ff184ee0b03c72968162b82900e1f2a6d9b4cab712836090",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "MCP docs repair config/fail-closed client/observe guidance; base includes merged client fix, observe remains pending.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      821,
+      817
+    ],
+    "related": [
+      821
+    ],
+    "merge_notes": "Base #821 has merged; its fail-closed client exists on main, while observe #817 remains pending."
+  },
+  "878": {
+    "source_fingerprint": "940851a642ebac67b46be3792aea30e984ffea083c22aa1717d201229d4a8da6",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "LangGraph docs require state schema retaining warrant, keys and roots; stack tokens/observe depend on separate open branches.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "depends_on": [
+      817
+    ]
+  },
+  "879": {
+    "source_fingerprint": "8d57a26565944948ba7e3afb5bb0f4ddb831b9f929b4bea3aa6795bf7a90e506",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "LangChain docs repair trust, guard_tools misuse and observe rollout; replacement examples depend on pending observe stack.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "880": {
+    "source_fingerprint": "a497336b201b3747c36d587ac1e1c9d2de59138a11dd3449aab628258f5bd1c7",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "auto_protect can silently weaken process enforcement under observe stack; preserve configured mode/roots and warn before observation.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "881": {
+    "source_fingerprint": "7f0114f5823e2e07bf05b9c56051d93e6f5add0ee1a67c16df5c5317d8cf1e21",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "FastAPI denial logging leaks argument values; pending redaction fix does not change authorization behavior.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "882": {
+    "source_fingerprint": "78790d1a2d0c239be0c7139383d22dafde6f161048735f367a62774f81304c15",
+    "category": [
+      "A",
+      "B",
+      "C"
+    ],
+    "summary": "FastAPI strict route audit/error_handler are currently ignored; pending implementation cannot certify all routes today.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "883": {
+    "source_fingerprint": "b190c20aeb7784d390f380e86a3f3a1831e03db8d53dee8d076a5fb23a652100",
+    "category": [
+      "B",
+      "C"
+    ],
+    "summary": "Temporal missing/wrong-key PoP error codes change on observe stack; assert zero effects and inspect reason, not remembered code.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "884": {
+    "source_fingerprint": "df5043d8d16d5e8428386f1f0040a9a0fa53c29876a3ace946152a1126f750f1",
+    "category": [
+      "B",
+      "C"
+    ],
+    "summary": "CrewAI adds UntrustedWarrant subtype for chain trust failures; missing parents are not wrong signing keys.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "885": {
+    "source_fingerprint": "168a473edf416a305d508e8c4113ee949abd01da168d63ede91279eda7440930",
+    "category": [
+      "C"
+    ],
+    "summary": "A2A enforce denials are not audited currently; pending audit fix changes evidence, not permission.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "897": {
+    "source_fingerprint": "e0d113b5651fc06da88c9c01328cde5fc326e7dfb34d59bb1eacf30a4205380f",
+    "category": [
+      "C"
+    ],
+    "summary": "ADK audit timestamps and hint deduplication corrected; audit parseability does not prove enforcement.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "898": {
+    "source_fingerprint": "f2b84b94024adf93b9b2b5ae1b2c11c3e6c333f28ae4fdca8d4081e851f2c2ad",
+    "category": [
+      "C",
+      "D",
+      "G"
+    ],
+    "summary": "Floor messaging aligns with actual ToolNode hook and Temporal plugin support; inspect installed framework features, not stale minimum claims.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      875
+    ]
+  },
+  "899": {
+    "source_fingerprint": "4989f4ffae9a67210ccc049d5a6943088f71c895acbc6e6cc7e446955e2f1f09",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "A2A worker example trusts root and presents orchestrator chain; do not trust the intermediate just to make a call pass.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "904": {
+    "source_fingerprint": "d91aa9a0ad48810dbebd1cc4d7aaee64eba1f26d4f2a92a0db534e7b05214075",
+    "category": [
+      "G"
+    ],
+    "summary": "Docs synchronize with published site; source/release distinctions must survive page synchronization.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "905": {
+    "source_fingerprint": "e815d437207faf9c6ad235b819953004b61c77c78dc7b8a654fb9a46ef54d10a",
+    "category": [
+      "C",
+      "G"
+    ],
+    "summary": "LangChain create_agent middleware quick path uses real allow/deny calls; stacked docs and external demo must land before links work.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "merge_notes": "tenuo-ai/tenuo-demos#15 must merge first; external PR number is not a local dependency."
+  },
+  "906": {
+    "source_fingerprint": "e43b184bfc71d21ca116ec7b057e102075433cabfb0eed3746280c33b277c1e6",
+    "category": [
+      "C",
+      "G"
+    ],
+    "summary": "LangGraph create_agent guidance points to middleware with roots/state_schema; depends on doc synchronization, independent of quick path reorder.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      905
+    ]
+  },
+  "907": {
+    "source_fingerprint": "5ebe44445529c0aa995f37b5e45dd6282eedd38b113349a47366438a8cd5f96e",
+    "category": [
+      "G"
+    ],
+    "summary": "README quick path links pending external demo; do not treat a link as a tested integration.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "merge_notes": "Requires tenuo-ai/tenuo-demos#15 for runnable demo link."
+  },
+  "911": {
+    "source_fingerprint": "5cd111b0fe7caaef7187aa2fed4f580fa4208abd0076551c082f3a9e47aa45ce",
+    "category": [
+      "A",
+      "F"
+    ],
+    "summary": "CEL object-value binding changes optional-field expressions; release may reject value references. Inspect target semantics.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "914": {
+    "source_fingerprint": "9d5fdce7a55894097fb0a0794e41bb27cdc68c1ac92543e86d0715b7a180523a",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "F"
+    ],
+    "summary": "TypeScript empty policy, approval reuse, unknown inputs and chain serialization hardening are pending; do not assume fail-closed empty tools on release.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "915": {
+    "source_fingerprint": "3bc1707ba48f386dca4cb2f052f4685b4614f7401a75c7d89affecaa470b59ac",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E"
+    ],
+    "summary": "LangChain fallback can execute original tools; guard_node lacks full trust/expiry checks. Pending stack fixes executor rebuilding, node verification and floors; prefer verified tool/effect boundary meanwhile.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "merge_notes": "Leaf #817 -> #880 -> #915 lacks newer merged #813 guard_node config forwarding: raw-leaf compiled key-selection regression fails. Rebase on current main before combining; merge-tree reports CHANGELOG conflict, code combines cleanly. #849/#814 remain independent.",
+    "depends_on": [
+      813
+    ]
+  },
+  "916": {
+    "source_fingerprint": "6c62ce9e00e76bebc42a45ef712983e28a8c5631c7580168bce4abf52b8bb934",
+    "category": [
+      "A",
+      "C",
+      "E"
+    ],
+    "summary": "Temporal sandbox import can replace native extensions process-wide; Replayer lacks key preloading. Keep mixed-worker/replay claims blocked until target-tested fix.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "917": {
+    "source_fingerprint": "58f58afe9569011793ab324c2c5b6fd28e065f8b1bfab5763ef09198aeea65d2",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "CrewAI exceptions/coroutines in hooks can permit tools; async Flow guard lifetime also changes. Require real kickoff/Flow effect counters or independent service enforcement.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      819
+    ],
+    "merge_notes": "Existing test append conflict with #819; preserve both test classes when maintainer integrates."
+  },
+  "918": {
+    "source_fingerprint": "ac6c956a3a3f048e834b224c8ac7bfae30d63de1250c63aa596510a74cc8332a",
+    "category": [
+      "A",
+      "C",
+      "F"
+    ],
+    "summary": "ADK closed-world arguments, ScopedWarrant scope and approval failure handling have gaps; real InMemoryRunner tests needed before adapter claims.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "919": {
+    "source_fingerprint": "de6c3b7010b5cebfe53c8de1e5278cc1bd9225d2d42f1a86adde14d1bc98ad40",
+    "category": [
+      "A",
+      "C"
+    ],
+    "summary": "SecureAPIRouter add_api_route/include_router can serve unguarded effects; pending stack covers every served route and refuses unsupported routes.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      856,
+      869
+    ],
+    "merge_notes": "Import conflict with merged #856; #869 should retain these router documentation corrections."
+  },
+  "920": {
+    "source_fingerprint": "e842192c1955a669578e8b33e1f109f985b6ba76b5a43790005b6da8c85f896e",
+    "category": [
+      "A",
+      "C",
+      "E"
+    ],
+    "summary": "A2A consumes JTI before PoP/approval authorization; denied attempts can burn authority. Pending retry/replay ordering fix does not grant new authority.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      825,
+      826,
+      852,
+      885,
+      864
+    ],
+    "merge_notes": "Code reported compatible; CHANGELOG conflicts with #825/#826. Test each leaf independently."
+  },
+  "923": {
+    "source_fingerprint": "f2c06f3537dd324dfc5bdf45e8896457c7134f94cf91b0e811f3b31b11e36a4c",
+    "category": [
+      "A",
+      "B",
+      "F",
+      "H"
+    ],
+    "summary": "Optional constraint/type 22 and null-as-absent semantics are new wire behavior on CEL stack; older verifiers fail closed. Do not emit pending constructors.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "924": {
+    "source_fingerprint": "ea8ade8b5fc36f8f3a1a59c65886f15b6aeb8e5d429bee7c6a54725bc487f3e3",
+    "category": [
+      "G"
+    ],
+    "summary": "Docs navigation/integration chooser adds discovery, not tested framework guarantees; external site build prerequisites remain.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      904,
+      838
+    ],
+    "merge_notes": "Website #49 pull-script or #42 assembler must ingest navigation; do not turn external numbers into local edges."
+  },
+  "925": {
+    "source_fingerprint": "d1f7b03c528a2df30fe8932788a1727191edf66959c911cc885c401d8841967a",
+    "category": [
+      "I"
+    ],
+    "summary": "Reviewed Nexus solutions-page relocation to website; no developer adapter behavior change. External page must publish before deletion.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      904
+    ],
+    "merge_notes": "Merge tenuo-ai/website#51 first; coordinate website#49 upstream list and #904 deletion conflict."
+  },
+  "926": {
+    "source_fingerprint": "562ebb39ca452d220ab3e0e523232cf7aa7f192c88714ce707d20746b068701a",
+    "category": [
+      "G"
+    ],
+    "summary": "Proposed vocabulary decision; retain existing tier API names and defer broad rewrite until decision merges.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves.",
+    "related": [
+      904,
+      862,
+      866,
+      863,
+      878,
+      906,
+      918,
+      861,
+      850,
+      911,
+      923
+    ],
+    "merge_notes": "Broad vocabulary sweep intentionally waits for docs stacks; skill keeps existing API names."
+  },
+  "927": {
+    "source_fingerprint": "8b33066d2bd42090b3273a40d0eaa3a8dea2695c821312825410de4dde71e241",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "F"
+    ],
+    "summary": "Temporal unchecked_args omits named arguments from PoP and policy; only non-authority plumbing qualifies, with worker signature validation. Pending opt-in API.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "928": {
+    "source_fingerprint": "93193dfb4706a065d202a5f18c92f6c6ca1d6df7b590fc64e938cd795c2a9c60",
+    "category": [
+      "G"
+    ],
+    "summary": "Error-message documentation URLs corrected; live web pages are not a replacement for version-matched source.",
+    "security_relevance": false,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "929": {
+    "source_fingerprint": "8f5a42cd3f8f04e905b6c095dd15b917d5b047c7bf52effd52c680e9cb51567a",
+    "category": [
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "CrewAI snippets repair missing issuer/roots/imports and real Flow decorators; deny-before-body proof must include runtime hooks.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "932": {
+    "source_fingerprint": "30e1678042ca03decad24f46a8c4497e2e15dacacbb4d5206f4fea8d2c34aebf",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "F"
+    ],
+    "summary": "Optional Temporal _workflow_id constraint derives ID from runtime on both sides; not available in installed release, not proof of starter identity.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "review_basis": "Live title, full body, changed-file inventory; source diffs for representative enforcement stack leaves."
+  },
+  "942": {
+    "source_fingerprint": "5e53890c0589c7613e93e45c0eea7f920d9d7e88411ce34b6edc5ffaadad0812",
+    "category": [
+      "A",
+      "B",
+      "D",
+      "E",
+      "G"
+    ],
+    "summary": "Development workspace, separate issuer/holder keys, public trust and signed revocations plus CLI entrypoint/dependency changes. Local setup is unreleased; exports do not establish hardened behavior.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [],
+    "related": [
+      951
+    ]
+  },
+  "943": {
+    "source_fingerprint": "6adb6dca0aeeacb5b4a9e1e2d64b1cdc54ec61389a51964bac7e03b66c0b61f1",
+    "category": [
+      "A",
+      "B",
+      "F",
+      "G"
+    ],
+    "summary": "Shared version-2 YAML parser introduces constrained issuance requests and approval gates. Use only matching installed parser forms; YAML proposes authority and does not alter signed warrants.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      942
+    ],
+    "related": [
+      951
+    ]
+  },
+  "944": {
+    "source_fingerprint": "8c6e09ad3dc90517f6f498466ea65c4b7944aced5872b72798d2ebcbb2a990bf",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "G"
+    ],
+    "summary": "Local issuance/delegation stores complete chains and reissues grants with new IDs. Root-only trust and full parent transport remain required; reissue does not revoke old authority.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      943
+    ],
+    "related": [
+      951
+    ]
+  },
+  "945": {
+    "source_fingerprint": "e6196d86b7e8768ca9b4dd5446dfbf008f669376971f875fa2618ea9e96140fc",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "F",
+      "G"
+    ],
+    "summary": "Exact-call approval file exchange uses independently trusted approvers and warrant eligibility. Approval is reusable for the identical call until expiry, not a one-use token or scope expansion.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      944
+    ],
+    "related": [
+      951
+    ]
+  },
+  "946": {
+    "source_fingerprint": "9ce152a86250dd7ddec8dc56dfc31dd40a20c74a7c7504d801e62a439f0b2fcf",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "TenuoTool.local reloads local verification state for LangChain/LangGraph calls and adds approvals/receipts. This pending factory is not released functionality or proof that raw handlers are covered.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      945
+    ],
+    "related": [
+      951
+    ]
+  },
+  "947": {
+    "source_fingerprint": "4023c82f0bfd67387029b9c8a26995e112cf069d5517cf834ef61fbf59a238f6",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "Local MCP client/public verifier factories use shared authority files and real middleware. Intermediate stack has ambient trust/parent-chain defects fixed only in final hardening; do not recommend factory presence as safety evidence.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      946
+    ],
+    "related": [
+      951
+    ]
+  },
+  "948": {
+    "source_fingerprint": "bb65f26d6729b188d2afe6a713ac722d5d4d410cc43152916fa923037bb1e86c",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "G"
+    ],
+    "summary": "Temporal local configuration refreshes trust/revocation at activity ingress and sends full warrant stacks. Does not replace running-workflow warrants or dynamically refresh Nexus trust; requires exact-stack live tests.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      947
+    ],
+    "related": [
+      951
+    ]
+  },
+  "949": {
+    "source_fingerprint": "b84dc001476de1dcdc26212203999ea7605da1bcc1397ee465bfe774df97c5c7",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "G"
+    ],
+    "summary": "Explicit session attachments route existing signed grants without activating authority or unioning grants. Child sessions need their own attachment; detach is not revocation.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      948
+    ],
+    "related": [
+      951
+    ]
+  },
+  "950": {
+    "source_fingerprint": "825c619c69a16ee8ccad5f878d245650e8ff84d92f907c96e54b057d9d3c1479",
+    "category": [
+      "A",
+      "B",
+      "E",
+      "G"
+    ],
+    "summary": "Local audit commands inspect/filter/verify existing native receipt signatures and links. No new cryptography; receipt validity does not establish complete history or completed effects.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      949
+    ],
+    "related": [
+      951
+    ]
+  },
+  "951": {
+    "source_fingerprint": "e54e48ca718149208466c888ccd5706d21b5428376a80a47b4c6e35df71ce522",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "F",
+      "G"
+    ],
+    "summary": "Required stack hardening rejects private-key public inputs and signer-seed publication, preserves SRL floors through rotation, repairs local MCP Runtime trust/parent transport and tightens enforcement. Partial local CLI stack is unsafe to endorse before these fixes.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
+    "depends_on": [
+      950
+    ],
+    "related": [
+      942,
+      943,
+      944,
+      945,
+      946,
+      947,
+      948,
+      949,
+      950
+    ]
+  }
+}

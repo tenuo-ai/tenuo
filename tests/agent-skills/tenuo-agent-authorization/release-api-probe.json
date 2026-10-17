@@ -1,0 +1,8 @@
+{
+  "version": "0.3.2",
+  "source": "/private/tmp/tenuo-skill-release/lib/python3.12/site-packages/tenuo/__init__.py",
+  "guard_agent": false,
+  "tag": "v0.3.2",
+  "tag_commit": "7f27c7d4782f8f19ec15313e09ab95883a1da811",
+  "result": "guard_agent absent; no main API may be emitted for this wheel"
+}

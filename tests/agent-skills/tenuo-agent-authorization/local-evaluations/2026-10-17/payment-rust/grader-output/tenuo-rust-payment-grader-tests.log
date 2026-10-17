@@ -1,0 +1,33 @@
+   Compiling payment-service-eval v0.0.1 (/private/tmp/tenuo-local-agent-evals/payment-rust)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.57s
+     Running unittests src/lib.rs (target/debug/deps/payment_service_eval-fda05711d49b4ff4)
+
+running 10 tests
+test tests::missing_authority_zero_effects ... ok
+test tests::malformed_and_numeric_domain_zero_effects ... ok
+test tests::expired_zero_effects ... ok
+test tests::untrusted_issuer_zero_effects ... ok
+test tests::wrong_capability_zero_effects ... ok
+test tests::recipient_denial_zero_effects ... ok
+test tests::allowed_effect_once ... ok
+test tests::amount_denial_zero_effects ... ok
+test tests::wrong_holder_zero_effects ... ok
+test tests::delegated_positive_control_then_widening_and_missing_chain_zero_effects ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/independent_grader.rs (target/debug/deps/independent_grader-947da9d29e713afc)
+
+running 1 test
+test independent_receiving_boundary ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests payment_service_eval
+
+running 2 tests
+test src/lib.rs - (line 4) - compile fail ... ok
+test src/lib.rs - (line 10) - compile fail ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+

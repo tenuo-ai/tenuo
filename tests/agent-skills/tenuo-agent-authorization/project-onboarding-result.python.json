@@ -1,0 +1,28 @@
+{
+  "scenario": "project-onboarding-eval.md",
+  "language": "python",
+  "evaluated_at": "2026-10-17",
+  "model_class": "in-session coding subagent; inherited session model; exact backend revision not exposed",
+  "result": "pass",
+  "evidence_kind": "fresh",
+  "inputs": [
+    "SKILL.md",
+    "references/common-footguns.md",
+    "references/deployment-choices.md",
+    "references/framework-status.md",
+    "references/native-tools.md",
+    "references/project-onboarding.md",
+    "references/python.md",
+    "references/security-model.md",
+    "references/trust-levels.md",
+    "references/unreleased.md",
+    "scripts/inspect_native_tools.py"
+  ],
+  "skill_fingerprint": "675f668d2d7df293e7eaab03f3f6f16e40b597cee0396c76a958898f35b6c84e",
+  "evidence": {
+    "critical_items": "passed",
+    "required_reporting": "passed",
+    "tests": "20 agent-generated cases plus 3 independent parent probes; 23 passed in 13.81s. Actual local HTTP dispatch; compileall reported pass.",
+    "notes": "One blind diagnostic against current onboarding/deployment guidance, not a reliability estimate or a replacement for generic payment/framework scenarios. Actual first proposal received before implementation; chose existing independent worker, trusted business records, installed SDK code-first issuance and terminal holder-bound authority. Real receiver probes prove zero effects for signed payee diversion, altered signed values, wrong holder and direct unsigned route. Local locked accounting separately enforces invoice total; restart resets it. Reports development loop and durable-accounting/idempotency/isolation gaps accurately. No Cloud/model/provider calls, package upgrades or private source access. Artifacts: local-evaluations/2026-10-17-onboarding."
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "project": "framework-langgraph",
+  "agent": "/root/eval_framework_langgraph",
+  "status": "pass",
+  "starter_commit": "9bfd226963e80a22e9a55a39715065a02d03ca25",
+  "skill_inputs": [
+    "SKILL.md",
+    "references/common-footguns.md",
+    "references/framework-status.md",
+    "references/native-tools.md",
+    "references/python.md",
+    "references/security-model.md",
+    "references/trust-levels.md",
+    "references/unreleased.md",
+    "scripts/inspect_native_tools.py"
+  ],
+  "skill_fingerprint": "ce1a339a8e0459d44d10ddd57cd547e2e497cd52cc3d18c63d1d33fefbf623a5",
+  "independent_test_count": 21,
+  "implementation": "source reviewed; independent probes passed",
+  "reporting": "passed: development/incomplete scope, root-only trust and replay/deployment limitations stated",
+  "candidate_report": "candidate/REPORT.md",
+  "tracked_patch": "tracked.patch",
+  "notes": [
+    "Initial independent grader fixture omitted child capabilities and failed before dispatch. Grader fixture corrected; candidate implementation unchanged."
+  ]
+}

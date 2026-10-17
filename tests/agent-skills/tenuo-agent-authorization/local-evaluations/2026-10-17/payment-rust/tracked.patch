@@ -1,0 +1,416 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 32d2419..5398021 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,28 +1,398 @@
++//! Fake payment service with mandatory holder-bound authorization.
++//!
++//! The original raw client route is inaccessible, including at its defining module:
++//! ```compile_fail
++//! use payment_service_eval::PaymentClient;
++//! let mut client = PaymentClient::default();
++//! client.transfer("merchant", 200);
++//! ```
++//! The original unguarded function signature is also unavailable:
++//! ```compile_fail
++//! use payment_service_eval::{execute_transfer, PaymentService};
++//! let issuer = tenuo::SigningKey::generate();
++//! let mut service = PaymentService::new(issuer.public_key());
++//! execute_transfer(&mut service, "merchant", 200);
++//! ```
++
++use std::{collections::HashMap, time::Duration};
++use tenuo::sdk::prelude::*;
++use tenuo::{
++    ConstraintSet, ConstraintValue, ErrorCode, Exact, PublicKey, Range, Signature, SigningKey,
++    Warrant,
++};
++
++pub const CAPABILITY: &str = "payment.transfer";
++/// Integer minor currency units; deliberately well inside f64's exact integer domain.
++pub const MAX_AMOUNT: u64 = 1_000_000;
++pub const MAX_TTL: Duration = Duration::from_secs(300);
++
++#[derive(Clone, Debug)]
++pub struct Transfer {
++    pub recipient: String,
++    pub amount: u64,
++}
++impl Transfer {
++    fn arguments(&self) -> Result<HashMap<String, ConstraintValue>, TransferError> {
++        if self.recipient.is_empty()
++            || self.recipient.len() > 256
++            || self.amount == 0
++            || self.amount > MAX_AMOUNT
++        {
++            return Err(TransferError::InvalidArguments);
++        }
++        Ok(HashMap::from([
++            (
++                "recipient".into(),
++                ConstraintValue::String(self.recipient.clone()),
++            ),
++            (
++                "amount".into(),
++                ConstraintValue::Integer(
++                    i64::try_from(self.amount).map_err(|_| TransferError::InvalidArguments)?,
++                ),
++            ),
++        ]))
++    }
++}
++
++/// Public transport data only: complete root-first chain and holder signature.
++#[derive(Clone)]
++pub struct Presentation {
++    pub chain: Vec<Vec<u8>>,
++    pub proof: Signature,
++}
++
++#[derive(Debug, PartialEq, Eq)]
++pub enum TransferError {
++    MissingAuthority,
++    MalformedAuthority,
++    InvalidArguments,
++    Denied(Option<ErrorCode>),
++}
++
++/// Issuer-side entrypoint. Run under the authority owner's control, outside the caller.
++pub fn issue_transfer(
++    issuer: &SigningKey,
++    holder: PublicKey,
++    recipient: &str,
++    max_amount: u64,
++) -> Result<Warrant, TransferError> {
++    Transfer {
++        recipient: recipient.into(),
++        amount: max_amount,
++    }
++    .arguments()?;
++    Warrant::builder()
++        .capability(CAPABILITY, transfer_constraints(recipient, max_amount)?)
++        .holder(holder)
++        .ttl(MAX_TTL)
++        .max_depth(1)
++        .build(issuer)
++        .map_err(|e| TransferError::Denied(Some(e.code())))
++}
++
++fn transfer_constraints(recipient: &str, amount: u64) -> Result<ConstraintSet, TransferError> {
++    let mut constraints = ConstraintSet::new();
++    constraints.insert("recipient", Exact::new(recipient));
++    constraints.insert(
++        "amount",
++        Range::between(1.0, amount as f64).map_err(|_| TransferError::InvalidArguments)?,
++    );
++    Ok(constraints)
++}
++
++/// Holder-side entrypoint. The private key stays here; it is never sent to the service.
++pub fn present(
++    chain: &[Warrant],
++    holder: &SigningKey,
++    transfer: &Transfer,
++) -> Result<Presentation, TransferError> {
++    let leaf = chain.last().ok_or(TransferError::MalformedAuthority)?;
++    if leaf.authorized_holder() != &holder.public_key() {
++        return Err(TransferError::MalformedAuthority);
++    }
++    let args = transfer.arguments()?;
++    let proof = leaf
++        .sign(holder, CAPABILITY, &args)
++        .map_err(|_| TransferError::MalformedAuthority)?;
++    let chain = chain
++        .iter()
++        .map(tenuo::wire::encode)
++        .collect::<Result<_, _>>()
++        .map_err(|_| TransferError::MalformedAuthority)?;
++    Ok(Presentation { chain, proof })
++}
++
+ #[derive(Default)]
+-pub struct PaymentClient {
+-    pub calls: Vec<(String, u64)>,
++struct PaymentClient {
++    calls: Vec<(String, u64)>,
+ }
+ impl PaymentClient {
+-    pub fn transfer(&mut self, recipient: &str, amount: u64) {
++    fn transfer(&mut self, recipient: &str, amount: u64) {
+         self.calls.push((recipient.to_owned(), amount));
+     }
+ }
+-pub fn execute_transfer(client: &mut PaymentClient, recipient: &str, amount: u64) {
+-    client.transfer(recipient, amount);
++
++pub struct PaymentService {
++    verifier: Guard,
++    client: PaymentClient,
++}
++impl PaymentService {
++    /// Trusted operator construction: only this issuer is trusted, never request-provided roots.
++    pub fn new(issuer: PublicKey) -> Self {
++        let verifier = Tenuo::enforcement()
++            .trusted_root(issuer)
++            .revocation(RevocationMode::TtlOnly {
++                max_lifetime: MAX_TTL,
++            })
++            .denial_reporting(DenialReporting::Debug)
++            .build()
++            .expect("fixed verifier configuration");
++        Self {
++            verifier,
++            client: PaymentClient::default(),
++        }
++    }
++    pub fn calls(&self) -> &[(String, u64)] {
++        &self.client.calls
++    }
++    pub fn transfer(
++        &mut self,
++        transfer: Transfer,
++        authority: Option<&Presentation>,
++    ) -> Result<(), TransferError> {
++        let args = transfer.arguments()?;
++        let authority = authority.ok_or(TransferError::MissingAuthority)?;
++        if authority.chain.is_empty()
++            || authority.chain.len() > 2
++            || authority.chain.iter().any(|w| w.len() > 16384)
++        {
++            return Err(TransferError::MalformedAuthority);
++        }
++        let chain = authority
++            .chain
++            .iter()
++            .map(|bytes| tenuo::wire::decode(bytes))
++            .collect::<Result<Vec<_>, _>>()
++            .map_err(|e| TransferError::Denied(Some(e.code())))?;
++        let received = ReceivedAuthorization::new(&chain, &authority.proof, &[])
++            .map_err(|_| TransferError::MalformedAuthority)?;
++        let projection = VerifiedProjection::identical(args);
++        let call = Call::from_transport(CAPABILITY, &projection);
++        self.verifier
++            .check_received(&received, &call)
++            .map_err(|e| TransferError::Denied(e.protocol_code()))?;
++        // No caller callback or await between verification and the owned fake effect.
++        self.client.transfer(&transfer.recipient, transfer.amount);
++        Ok(())
++    }
+ }
++
++pub fn execute_transfer(
++    service: &mut PaymentService,
++    transfer: Transfer,
++    authority: Option<&Presentation>,
++) -> Result<(), TransferError> {
++    service.transfer(transfer, authority)
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    fn transfer(recipient: &str, amount: u64) -> Transfer {
++        Transfer {
++            recipient: recipient.into(),
++            amount,
++        }
++    }
++    fn fixture() -> (SigningKey, SigningKey, Warrant, PaymentService) {
++        let issuer = SigningKey::generate();
++        let holder = SigningKey::generate();
++        let root = issue_transfer(&issuer, holder.public_key(), "merchant", 500).unwrap();
++        let service = PaymentService::new(issuer.public_key());
++        (issuer, holder, root, service)
++    }
++    fn signed(chain: &[Warrant], key: &SigningKey, request: &Transfer) -> Presentation {
++        Presentation {
++            chain: chain
++                .iter()
++                .map(|w| tenuo::wire::encode(w).unwrap())
++                .collect(),
++            proof: chain
++                .last()
++                .unwrap()
++                .sign(key, CAPABILITY, &request.arguments().unwrap())
++                .unwrap(),
++        }
++    }
++    fn resign(w: &mut Warrant, key: &SigningKey) {
++        w.payload_bytes = tenuo::wire::to_vec(&w.payload).unwrap();
++        w.signature = key.sign(&w.signature_preimage());
++    }
++    fn denied(
++        service: &mut PaymentService,
++        request: Transfer,
++        authority: Option<&Presentation>,
++        expected: TransferError,
++    ) {
++        assert_eq!(execute_transfer(service, request, authority), Err(expected));
++        assert_eq!(service.calls().len(), 0);
++    }
++    #[test]
++    fn allowed_effect_once() {
++        let (_, holder, root, mut service) = fixture();
++        let request = transfer("merchant", 200);
++        let proof = present(&[root], &holder, &request).unwrap();
++        execute_transfer(&mut service, request, Some(&proof)).unwrap();
++        assert_eq!(service.calls(), &[("merchant".to_owned(), 200)]);
++    }
++    #[test]
++    fn missing_authority_zero_effects() {
++        let (_, _, _, mut service) = fixture();
++        denied(
++            &mut service,
++            transfer("merchant", 200),
++            None,
++            TransferError::MissingAuthority,
++        );
++    }
++    #[test]
++    fn untrusted_issuer_zero_effects() {
++        let (_, holder, _, mut service) = fixture();
++        let rogue = SigningKey::generate();
++        let root = issue_transfer(&rogue, holder.public_key(), "merchant", 500).unwrap();
++        let request = transfer("merchant", 200);
++        let proof = signed(&[root], &holder, &request);
++        denied(
++            &mut service,
++            request,
++            Some(&proof),
++            TransferError::Denied(Some(ErrorCode::UntrustedRoot)),
++        );
++    }
++    #[test]
++    fn wrong_holder_zero_effects() {
++        let (_, _, root, mut service) = fixture();
++        let request = transfer("merchant", 200);
++        let proof = signed(&[root], &SigningKey::generate(), &request);
++        denied(
++            &mut service,
++            request,
++            Some(&proof),
++            TransferError::Denied(Some(ErrorCode::SignatureInvalid)),
++        );
++    }
++    #[test]
++    fn expired_zero_effects() {
++        let (issuer, holder, mut root, mut service) = fixture();
++        root.payload.issued_at -= 1000;
++        root.payload.expires_at -= 1000;
++        resign(&mut root, &issuer);
++        let request = transfer("merchant", 200);
++        let proof = signed(&[root], &holder, &request);
++        denied(
++            &mut service,
++            request,
++            Some(&proof),
++            TransferError::Denied(Some(ErrorCode::WarrantExpired)),
++        );
++    }
++    #[test]
++    fn wrong_capability_zero_effects() {
++        let (issuer, holder, _, mut service) = fixture();
++        let root = Warrant::builder()
++            .capability(
++                "payment.refund",
++                transfer_constraints("merchant", 500).unwrap(),
++            )
++            .holder(holder.public_key())
++            .ttl(MAX_TTL)
++            .build(&issuer)
++            .unwrap();
++        let request = transfer("merchant", 200);
++        let proof = signed(&[root], &holder, &request);
++        denied(
++            &mut service,
++            request,
++            Some(&proof),
++            TransferError::Denied(Some(ErrorCode::ToolNotAuthorized)),
++        );
++    }
++    #[test]
++    fn recipient_denial_zero_effects() {
++        let (_, holder, root, mut service) = fixture();
++        let request = transfer("attacker", 200);
++        let proof = signed(&[root], &holder, &request);
++        denied(
++            &mut service,
++            request,
++            Some(&proof),
++            TransferError::Denied(Some(ErrorCode::ConstraintViolation)),
++        );
++    }
++    #[test]
++    fn amount_denial_zero_effects() {
++        let (_, holder, root, mut service) = fixture();
++        let request = transfer("merchant", 501);
++        let proof = signed(&[root], &holder, &request);
++        denied(
++            &mut service,
++            request,
++            Some(&proof),
++            TransferError::Denied(Some(ErrorCode::ConstraintViolation)),
++        );
++    }
+     #[test]
+-    fn application_transfer() {
+-        let mut client = PaymentClient::default();
+-        execute_transfer(&mut client, "merchant", 200);
+-        assert_eq!(client.calls, vec![("merchant".to_owned(), 200)]);
++    fn delegated_positive_control_then_widening_and_missing_chain_zero_effects() {
++        let (issuer, holder, root, mut service) = fixture();
++        let child_holder = SigningKey::generate();
++        let child = root
++            .attenuate()
++            .capability(CAPABILITY, transfer_constraints("merchant", 250).unwrap())
++            .holder(child_holder.public_key())
++            .ttl(Duration::from_secs(60))
++            .max_depth(1)
++            .build(&holder)
++            .unwrap();
++        let request = transfer("merchant", 200);
++        let proof = present(&[root.clone(), child.clone()], &child_holder, &request).unwrap();
++        service.transfer(request.clone(), Some(&proof)).unwrap();
++        assert_eq!(service.calls().len(), 1);
++        let mut service = PaymentService::new(issuer.public_key());
++        let proof = signed(&[child.clone()], &child_holder, &request);
++        assert!(service.transfer(request.clone(), Some(&proof)).is_err());
++        assert!(service.calls().is_empty());
++        // A malicious delegator can sign arbitrary bytes: bypass the friendly builder.
++        // Change only the amount envelope; preserve linkage, holder, TTL and valid signatures.
++        let mut wider = child;
++        wider.payload.tools.insert(
++            CAPABILITY.into(),
++            transfer_constraints("merchant", 600).unwrap(),
++        );
++        resign(&mut wider, &holder);
++        let proof = signed(&[root, wider], &child_holder, &request);
++        denied(
++            &mut service,
++            request,
++            Some(&proof),
++            TransferError::Denied(Some(ErrorCode::CapabilityExpansion)),
++        );
+     }
+     #[test]
+-    fn raw_client() {
+-        let mut client = PaymentClient::default();
+-        client.transfer("merchant", 200);
+-        assert_eq!(client.calls.len(), 1);
++    fn malformed_and_numeric_domain_zero_effects() {
++        let (_, holder, root, mut service) = fixture();
++        let request = transfer("merchant", 200);
++        let mut proof = signed(&[root], &holder, &request);
++        proof.chain[0] = vec![0xff];
++        assert!(service.transfer(request, Some(&proof)).is_err());
++        assert!(service.calls().is_empty());
++        for amount in [0, MAX_AMOUNT + 1, (1_u64 << 53) + 1, u64::MAX] {
++            denied(
++                &mut service,
++                transfer("merchant", amount),
++                Some(&proof),
++                TransferError::InvalidArguments,
++            );
++        }
+     }
+ }

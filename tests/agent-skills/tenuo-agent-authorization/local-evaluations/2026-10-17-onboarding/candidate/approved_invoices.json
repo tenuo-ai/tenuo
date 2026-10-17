@@ -1,0 +1,9 @@
+{
+  "INV-123": {
+    "vendor_id": "vendor-7",
+    "approved_bank_account": "verified-bank",
+    "approved_amount_cents": 1420000,
+    "currency": "USD",
+    "status": "approved"
+  }
+}

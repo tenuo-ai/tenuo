@@ -1,0 +1,4 @@
+tenuo==0.3.2
+openai-agents==0.22.0
+pytest==9.1.1
+pytest-asyncio==1.4.0

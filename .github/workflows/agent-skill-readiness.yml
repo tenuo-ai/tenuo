@@ -1,0 +1,97 @@
+name: Agent skill freshness and dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      promotion:
+        description: Check committed evidence with the strict distribution gate
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 7 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  released-quickstart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install released SDK independently of the checkout
+        run: python -m pip install 'tenuo==0.3.2' 'pytest>=8,<10'
+      - name: Show task autonomy and prove receiver denials
+        run: |
+          python tenuo-python/examples/task_authority.py
+          python -m pytest -q tenuo-python/tests/examples/test_task_authority.py
+
+  horizon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Compare live author inventory and SDK sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/refresh_agent_skill_horizon.py --check
+      - name: Validate committed structure and release pins
+        run: python3 scripts/validate_agent_skills.py --summary "$GITHUB_STEP_SUMMARY"
+      - name: Explicit promotion gate (no model invocation)
+        if: github.event_name == 'workflow_dispatch' && inputs.promotion
+        run: python3 scripts/validate_agent_skills.py --readiness --summary "$GITHUB_STEP_SUMMARY"
+
+  framework:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: openai
+            lane: main-openai
+            dependencies: 'openai-agents==0.22.0 mcp>=1.9.4,<2 fastmcp>=3.2.1,<4'
+          - suite: langgraph
+            lane: main-langgraph
+            dependencies: 'langchain>=1 langgraph>=1 langgraph-prebuilt>=1.0.2'
+          - suite: temporal
+            lane: main-temporal
+            dependencies: 'temporalio>=1.33'
+          - suite: mcp
+            lane: main-mcp1
+            dependencies: 'mcp>=1.9.4,<2 fastmcp>=3.2.1,<4'
+          - suite: mcp
+            lane: main-mcp2
+            dependencies: 'mcp>=2,<3 fastmcp>=4,<5'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+      - name: Build exact checkout and install isolated framework dependencies
+        env:
+          FRAMEWORK_DEPENDENCIES: ${{ matrix.dependencies }}
+        run: |
+          python -m venv /tmp/tenuo-skill-ci
+          /tmp/tenuo-skill-ci/bin/python -m pip install --upgrade pip
+          /tmp/tenuo-skill-ci/bin/python -m pip install -e ./tenuo-python pytest pytest-asyncio
+          /tmp/tenuo-skill-ci/bin/python - <<'PY'
+          import os, subprocess, sys
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', *os.environ['FRAMEWORK_DEPENDENCIES'].split()])
+          PY
+      - name: Real dispatch with zero-effect denial assertions
+        run: python3 scripts/run_agent_skill_frameworks.py --python /tmp/tenuo-skill-ci/bin/python --suite '${{ matrix.suite }}' --lane '${{ matrix.lane }}' --output /tmp/framework-evidence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        if: always()
+        with:
+          name: skill-${{ matrix.lane }}
+          path: /tmp/framework-evidence.json

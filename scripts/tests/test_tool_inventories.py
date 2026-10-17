@@ -40,6 +40,25 @@ class ToolInventoryTests(unittest.TestCase):
                 self.assertEqual(summary["counts"]["test"], 2)
                 self.assertEqual(summary["truncated"]["test"], 1)
 
+    def test_candidate_symbols_do_not_certify_a_boundary(self):
+        for name in ("inspect_mcp_project", "inspect_native_tools"):
+            with self.subTest(scanner=name), TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(
+                    "from tenuo.openai import guard_agent\n"
+                    "server = TenuoServerMiddleware(verifier)\n"
+                    "worker = TenuoWorkerInterceptor(config)\n"
+                    "refund_order(order_id)\n"
+                )
+                scanner = load_scanner(name)
+                summary = scanner.summarize(scanner.inspect(root), 8)
+                self.assertFalse(summary["certified"])
+                candidates = summary["candidate_boundaries"]
+                self.assertEqual(candidates[0]["path"], "agent.py")
+                self.assertTrue(candidates[0]["effects"])
+                self.assertIn("Unverified", candidates[0]["possible_bypass"])
+                self.assertTrue(candidates[0]["existing_interception"])
+
     def test_python_hash_comments_still_ignored(self):
         for name in ("inspect_mcp_project", "inspect_native_tools"):
             with self.subTest(scanner=name), TemporaryDirectory() as directory:
