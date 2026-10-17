@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -301,6 +301,13 @@ class AuditEventType(str, Enum):
     WARRANT_EXPIRED = "warrant_expired"
 
 
+def _utc_timestamp(ts: datetime) -> str:
+    """ISO 8601 UTC with a single ``Z`` suffix; naive datetimes are taken as UTC."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 @dataclass
 class AuditEvent:
     """Structured audit event for compliance logging."""
@@ -320,7 +327,7 @@ class AuditEvent:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize for JSON audit log."""
         return {
-            "timestamp": self.timestamp.isoformat() + "Z",
+            "timestamp": _utc_timestamp(self.timestamp),
             "event": self.event.value,
             "task_id": self.task_id,
             "skill": self.skill,

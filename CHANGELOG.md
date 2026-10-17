@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A2A audit timestamps are valid ISO 8601.** `AuditEvent.to_dict()` appended
+  `Z` to an aware UTC `isoformat()`, so audit records carried
+  `...+00:00Z`, which strict parsers reject. They now end in a single `Z`;
+  naive timestamps are taken as UTC and offset timestamps are converted to UTC.
 - **MCP: `MCPVerifier(config=...)` is closed-world.** With a
   `CompiledMcpConfig`, arguments no extraction rule read (`follow_symlinks`,
   a nested `query.where`) reached the tool unchecked, and a config `default`
