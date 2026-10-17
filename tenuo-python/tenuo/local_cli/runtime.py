@@ -24,7 +24,7 @@ class Snapshot:
 class LocalAuthority:
     """One explicit warrant file, independent public trust, and an agent key.
 
-    The controller's and approver's private keys are never read here. A malformed
+    The issuer's and approver's private keys are never read here. A malformed
     configured file denies the current call rather than retaining old authority.
     """
 
@@ -57,9 +57,13 @@ class LocalAuthority:
             candidate = read_revocation_list(self.workspace.path / "revocations.srl")
             authorizer = Authorizer(trusted_roots=roots)
             authorizer.set_clock_tolerance(0)
-            if self._last_srl is not None:
-                authorizer.set_revocation_list(self._last_srl)
             authorizer.set_revocation_list(candidate)
+            if self._last_srl is not None:
+                # The cached issuer may have been rotated out. It is used only
+                # to check the version floor, never as a live warrant root.
+                floor = Authorizer(trusted_roots=[*roots, self._last_srl.issuer])
+                floor.set_revocation_list(self._last_srl)
+                floor.set_revocation_list(candidate)
             self._last_srl = candidate
         chain = load_chain(self.warrant) if self.warrant is not None else []
         if chain:

@@ -119,6 +119,12 @@ def test_invalid_document_refused(document, update):
         WarrantTemplate(document)
 
 
+def test_python_template_constructor_rejects_non_string_argument_names(document):
+    document["capabilities"] = {"refund": {1: "any"}}
+    with pytest.raises(DocumentError, match="nonempty strings"):
+        WarrantTemplate(document)
+
+
 def test_a03_ad_hoc_request_is_not_authority(document):
     document.update(kind="warrant-request", holder="agent", reason="Resolve order A-1001")
     template = WarrantTemplate(document)

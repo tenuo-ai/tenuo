@@ -44,7 +44,7 @@ try:
 except ImportError:
     _WARRANT_HEADER = "X-Tenuo-Warrant"
 
-from tenuo_core import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
+from tenuo_core import (  # type: ignore[import-untyped]
     DelegationDiff,
     DelegationReceipt,
     PublicKey,

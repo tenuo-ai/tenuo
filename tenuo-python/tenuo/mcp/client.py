@@ -809,11 +809,13 @@ class SecureMCPClient:
         if warrant_context:
             from ..runtime import get_runtime
 
-            if not is_configured() and get_runtime() is None:
+            runtime = get_runtime()
+            if not is_configured() and runtime is None:
                 raise ConfigurationError("Tenuo not configured. Supply a Runtime or call configure() first")
 
             from ..bound_warrant import BoundWarrant
             from ..config import resolve_trusted_roots
+            from ..decorators import chain_scope
 
             w = warrant_scope()
             k = key_scope()
@@ -843,7 +845,8 @@ class SecureMCPClient:
                 pop_args=pop_args,
                 constraint_args=constraint_args,
                 bound_warrant=bw,
-                trusted_roots=resolve_trusted_roots(),
+                trusted_roots=list(runtime.trusted_roots) if runtime is not None else resolve_trusted_roots(),
+                warrant_chain=chain_scope(),
                 approval_handler=self._approval_handler,
                 approvals=approvals,
             )

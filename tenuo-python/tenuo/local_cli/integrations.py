@@ -46,7 +46,8 @@ def local_mcp_client(*, path=None, warrant, key="agent", **kwargs):
     from .files import DocumentError
     from .runtime import LocalAuthority
 
-    if "approval_handler" in kwargs or kwargs.get("inject_warrant") is False:
+    injection = kwargs.get("inject_warrant", True)
+    if "approval_handler" in kwargs or not (injection is True or injection == "argument"):
         raise DocumentError("local MCP uses file approvals and always presents its warrant")
     kwargs.setdefault("inject_warrant", True)
     authority = LocalAuthority(path=path, warrant=warrant, key=key)
@@ -63,7 +64,7 @@ def local_mcp_client(*, path=None, warrant, key="agent", **kwargs):
             timeout=30.0,
             raise_on_tool_error=True,
         ):
-            if not warrant_context or inject_warrant is False:
+            if not warrant_context or not (inject_warrant is None or inject_warrant is True or inject_warrant == "argument"):
                 raise DocumentError("local MCP calls cannot disable warrant enforcement or presentation")
             with authority.scope() as (_, _, handler):
                 forwarded = list(approvals or [])
@@ -104,7 +105,7 @@ def local_mcp_verifier(*, path=None, key=None, **kwargs):
     from .files import DocumentError
     from .runtime import LocalAuthority
 
-    if kwargs.get("require_warrant") is False or "authorizer" in kwargs or "runtime" in kwargs:
+    if kwargs.get("require_warrant", True) is not True or "authorizer" in kwargs or "runtime" in kwargs:
         raise DocumentError("local MCP verification requires warrants and independently loaded trust")
     authority = LocalAuthority(path=path, key=key)
 

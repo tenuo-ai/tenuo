@@ -42,30 +42,21 @@ cargo add tenuo --features sdk
 
 See [`tenuo-ts/README.md`](tenuo-ts/README.md) for TypeScript. Rust is [below](#rust).
 
-For local controller files without an account, use `tenuo-cli init --dev` from
-the Python package. See the [local CLI guide](docs/local-cli.md) for identities,
-trust, signed revocation lists and development isolation limits.
-Use [YAML warrant templates](tenuo-python/examples/local_cli/orders.yaml) with
-`tenuo-cli template validate --file orders.yaml`, or load the same file through
-`tenuo.WarrantTemplate` in Python.
-Issue a signed chain with `tenuo-cli warrant issue --template orders.yaml
---holder agent`, then inspect it with `warrant show` and validate it with
-`warrant verify`. See the [lifecycle walkthrough](docs/local-cli.md).
-For human gates, exchange [portable approval request and response files](docs/local-cli.md#approve-a-held-call-using-files)
-with `tenuo-cli approval show|approve|deny`.
-For LangChain or LangGraph tools, `TenuoTool.local(tool,
-warrant=".tenuo/agent.warrant")` loads local authority before each call. See
-the [integration recipe](docs/local-cli.md#langchain-and-langgraph).
-For MCP, `SecureMCPClient.local(...)` presents the selected warrant and
-`MCPVerifier.local(...)` checks fresh public trust at the server. See the
-[MCP setup](docs/local-cli.md#mcp-client-and-server).
-Temporal workers can use `TenuoPluginConfig.local()` and start work with
-`tenuo.local.load_warrant_chain(...)`; see the [Temporal recipe](docs/local-cli.md#temporal).
-Session-based adapters can use [explicit warrant attachments](docs/local-cli.md#session-attachments)
-with `tenuo-cli session attach --session ID --file WARRANT`.
-Inspect signed decisions with `tenuo-cli audit list --denied` and
-`tenuo-cli audit verify`; the [audit guide](docs/local-cli.md#inspect-local-decisions)
-explains signer trust and history-completeness limits.
+### Local CLI (unreleased)
+
+Start with `tenuo-cli init --dev`, then issue from a
+[YAML warrant template](tenuo-python/examples/local_cli/orders.yaml), inspect the
+signed authority and try an allowed call followed by a denied call. Local setup
+needs no account or service. Install the matching source checkout for these
+unreleased commands.
+
+The [local CLI guide](docs/local-cli.md) covers issuance, file-based human
+approvals, revocation, rotation, session attachments and signed audit receipts.
+It includes setup for [LangChain and LangGraph](docs/local-cli.md#langchain-and-langgraph),
+[MCP](docs/local-cli.md#mcp-client-and-server) and
+[Temporal](docs/local-cli.md#temporal). Each adapter checks current local
+authority before protected calls. Issuer and approver private keys live in
+`~/.tenuo`, outside the project, and stay out of the agent's reach.
 
 ### AI coding agents
 

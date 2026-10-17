@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("mcp")
 pytest.importorskip("fastmcp")
 
-from tenuo import WarrantTemplate
+from tenuo import SigningKey, WarrantTemplate
 from tenuo.approval import ApprovalRequired
 from tenuo.local_cli.approvals import sign_response
 from tenuo.local_cli.files import load_yaml, publish, update_revocations, write_yaml
@@ -52,6 +52,20 @@ def test_server_needs_only_public_files_and_denies_missing_proof(local_mcp):
     assert not verifier.verify("refund", args, meta=meta).allowed
 
 
+@pytest.mark.parametrize("value", [False, None, 0, ""])
+def test_local_verifier_rejects_every_falsey_require_warrant(local_mcp, value):
+    workspace, _, _ = local_mcp
+    with pytest.raises(Exception):
+        MCPVerifier.local(path=workspace.path, require_warrant=value)
+
+
+@pytest.mark.parametrize("value", [False, None, 0, ""])
+def test_local_client_requires_an_explicit_presentation_mode(local_mcp, value):
+    workspace, path, _ = local_mcp
+    with pytest.raises(Exception):
+        SecureMCPClient.local(path=workspace.path, warrant=path, command="python", inject_warrant=value)
+
+
 @pytest.mark.asyncio
 async def test_a15_real_fastmcp_middleware_blocks_before_handler(local_mcp):
     from fastmcp import Client, FastMCP
@@ -83,11 +97,21 @@ async def test_a15_real_fastmcp_middleware_blocks_before_handler(local_mcp):
 
 
 @pytest.mark.asyncio
-async def test_a16_local_client_stdio_and_file_approval_reach_server(local_mcp, tmp_path):
+@pytest.mark.parametrize("delegated", [False, True])
+async def test_a16_local_client_stdio_and_file_approval_reach_server(local_mcp, tmp_path, monkeypatch, delegated):
     workspace, path, document = local_mcp
     document["approvals"] = {"keys": [str(workspace.path / "keys/approver.pub")], "required": {"refund": "always"}}
     warrant = WarrantTemplate(document).mint(workspace.signing_key("issuer"), workspace.public_key("agent"))
-    publish(path, (encode_chain([warrant]) + "\n").encode(), replace=True)
+    chain = [warrant]
+    if delegated:
+        child = (warrant.grant_builder().holder(workspace.public_key("agent"))
+                 .capability("refund", **warrant.capabilities["refund"]).ttl(600)
+                 .grant(workspace.signing_key("agent")))
+        chain.append(child)
+    publish(path, (encode_chain(chain) + "\n").encode(), replace=True)
+    # Local Runtime authority must remain independent of ambient configure().
+    unrelated = SigningKey.generate().public_key
+    monkeypatch.setattr("tenuo.config.resolve_trusted_roots", lambda *a, **kw: [unrelated])
     script = tmp_path / "server.py"
     marker = tmp_path / "effects.txt"
     script.write_text(

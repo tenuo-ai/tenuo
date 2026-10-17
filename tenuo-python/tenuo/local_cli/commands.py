@@ -1,4 +1,4 @@
-"""Thin argparse interface over local controller operations."""
+"""Thin argparse interface over local workspace operations."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from .workspace import Workspace
 
 def parser():
     root = argparse.ArgumentParser(prog="tenuo-cli", description="Authorize agents locally from readable files.")
-    root.add_argument("--home", help="Local workspace (default: TENUO_HOME or .tenuo)")
+    root.add_argument("--home", help="Local workspace (default: TENUO_HOME or ~/.tenuo)")
     root.add_argument("--json", action="store_true", help="Print one JSON object to stdout")
     commands = root.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init", help="Prepare local files; --dev also prepares development identities")
@@ -43,7 +43,7 @@ def parser():
         sub = srl.add_parser(action)
         sub.add_argument("--file")
         if action != "show":
-            sub.add_argument("--key", help="Controller key name or path")
+            sub.add_argument("--key", help="Issuer key name or path")
         if action == "add":
             sub.add_argument("--id", required=True, action="append")
     commands.add_parser("doctor")
@@ -136,16 +136,23 @@ def execute(opts, workspace):
         return {"session": read_session(workspace, opts.session)}
     if opts.command == "approval":
         from .approvals import read_request, sign_response
+        from .warrants import decode_chain
         from .files import write_yaml
         from tenuo.warrant_template import duration
 
         document = read_request(opts.file, workspace.authorizer())
+        chain = decode_chain(document["warrant"])
+        review = {"tool": document["tool"], "arguments": document["arguments"],
+                  "warrant_id": str(chain[-1].id), "expires_at": document["expires_at"],
+                  "issuer": fingerprint(chain[0].issuer),
+                  "authorized_approvers": [fingerprint(key) for key in chain[-1].required_approvers()]}
         if opts.action == "show":
-            return {"request": document, "verified": True}
+            return {"request": review, "verified": True,
+                    **({"raw_request": document} if opts.json else {})}
         if not opts.yes:
             if not sys.stdin.isatty():
                 return {"error": "Review with approval show, then pass --yes to sign noninteractively", "exit_code": 2}
-            print(yaml.safe_dump(document, sort_keys=False), file=sys.stderr)
+            print(yaml.safe_dump(review, sort_keys=False), file=sys.stderr)
             if input("Sign this decision? [y/N] ").strip().lower() not in ("y", "yes"):
                 return {"error": "No decision signed", "exit_code": 4}
         response = sign_response(
@@ -212,6 +219,7 @@ def execute(opts, workspace):
                 workspace.signing_key(opts.key or workspace.config["issuer"]),
                 getattr(opts, "id", []),
                 create=opts.action == "create",
+                trusted_roots=workspace.trusted_roots() if opts.action != "create" else None,
             )
         return {
             "version": signed.version,
@@ -227,6 +235,9 @@ def warrant_command(opts, workspace):
     from pathlib import Path
     from tenuo.warrant_template import WarrantTemplate, duration
     from .warrants import decode_chain, describe, issue, load_chain, reissue, save
+
+    if opts.action != "show":
+        workspace.config
 
     if opts.action == "issue":
         path = Path(opts.template or opts.request).expanduser()
@@ -302,9 +313,13 @@ def main(argv=None):
         message = (
             str(exc) if isinstance(exc, (DocumentError, FileExistsError, FileNotFoundError)) else type(exc).__name__
         )
-        result, status = {"error": message}, 1
+        result, status = {"error": message}, getattr(exc, "exit_code", 1)
     if opts.json:
         print(json.dumps(result, allow_nan=False))
     else:
+        if "warrant" in result and isinstance(result["warrant"], dict):
+            opaque = result["warrant"].pop("extensions_base64", {})
+            if opaque:
+                result["warrant"]["additional_signed_extensions"] = list(opaque)
         print(yaml.safe_dump(result, sort_keys=False).rstrip(), file=sys.stderr)
     return status

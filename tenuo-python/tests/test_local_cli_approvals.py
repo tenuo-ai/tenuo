@@ -99,6 +99,18 @@ def test_a10_cli_transports_yaml_without_private_key_in_request(approval, tmp_pa
         assert private.read_text().strip() not in out.read_text()
 
 
+def test_human_review_shows_exact_call_without_opaque_crypto(approval, tmp_path, capsys):
+    workspace, _, document = approval
+    path = tmp_path / "request.yaml"
+    write_yaml(path, document)
+    capsys.readouterr()
+    assert main(["--home", str(workspace.path), "approval", "show", "--file", str(path)]) == 0
+    output = capsys.readouterr()
+    assert "refund" in output.err and "A-1001" in output.err and "6000" in output.err
+    assert document["warrant"] not in output.err and document["request_hash"] not in output.err
+    assert not output.out
+
+
 @pytest.mark.parametrize("expiry", ["2020-01-01T00:00:00Z", "2100-01-01T00:00:00Z", "2026-10-17T15:00:00"])
 def test_invalid_request_expiry_refused(approval, expiry):
     workspace, _, document = approval

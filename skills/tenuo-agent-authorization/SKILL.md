@@ -44,29 +44,11 @@ Read [Framework-neutral integration](references/framework-integration.md) only w
 
 ## Implement one vertical slice
 
-For a Python checkout exposing `TenuoTool.local`, read `docs/local-cli.md` for
-LangChain and LangGraph setup using the shared CLI and YAML parser. Select the
-warrant file explicitly, pass only protected tools to the agent, and prove an
-allowed dispatch plus a denied dispatch with zero handler calls. Keep controller
-and approver private keys outside the agent. Local adapters reload trust and
-revocations per call and write portable approval requests; they remain an
-in-process guardrail when code can call the underlying tool directly.
-
-For local MCP, use `SecureMCPClient.local` to present an explicit warrant and
-`MCPVerifier.local` with existing dispatch middleware to enforce independently.
-The verifier requires public trust and revocation files, never the holder's
-private key. An optional server receipt identity belongs to the server itself.
-Prove a signed but out-of-scope call is denied at the server even when the
-client's local check is bypassed. Do not describe client-only checks as server
-mediation. See the tested local MCP recipe in `docs/local-cli.md`.
-
-For local Temporal activity authorization, use `TenuoPluginConfig.local` and
-load the complete stack with `tenuo.local.load_warrant_chain`. A verification-only
-worker can use `key=None`; a workflow signer needs the matching holder key.
-Use the existing authorized-start and activity helpers. Prove real activity
-ingress allows and denies before its handler, including updated revocations.
-Do not claim issuing a file replaces a running workflow's warrant, implements
-dynamic Nexus refresh, or changes approval validity on retries.
+For local CLI setup and YAML issuance, read the
+[local lifecycle reference](references/local-cli.md) after verifying those
+unreleased helpers exist in the target. It covers version-conditional adapter
+selection, portable approvals and session attachments; code-first task-derived
+issuance remains supported.
 
 1. Name a capability for the effect and constrain every argument that materially changes it.
 2. Issue short-lived authority to the holder's public key. The holder creates proof; the verifier-facing API accepts a presentation or public transport data, never a private signing key.
