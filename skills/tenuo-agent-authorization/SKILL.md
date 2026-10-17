@@ -11,6 +11,10 @@ Implement the smallest end-to-end integration that enforces approved authority a
 
 For “Secure this agent with Tenuo”, inspect the project before explaining concepts. Your first substantive output should be a compact proposal: effects found, recommended effect boundary, minimum task authority (capabilities and material argument limits), integration mode, resolved Tenuo source/version, and why this boundary covers the actual execution path. For example: refund service handler; warrant for the current order, amount at most $500. Resolve the boundary and authority before wiring it. Do not add authority merely to make a failing example pass.
 
+For getting started with an existing project, read [Project onboarding](references/project-onboarding.md). Translate the user's task into useful autonomous actions and bounded authority, then produce a project-specific warrant or supported template and one working integration. Infer implementation details from source; ask only about material business authority that the project and user have not established. A list of SDK concepts or read/write permissions is not an onboarding result.
+
+Recommend deployment with [Deployment choices](references/deployment-choices.md): choose who issues/manages authority separately from where calls are verified and effects run. Ground core and adapter choices in the matching tenuo runtime, Cloud choices in the matching tenuo-cloud runtime/service, and use demos to illustrate topology. The IETF -02 draft explains the design but does not supply installed wire formats, replay controls or framework APIs.
+
 ## Freshness contract
 
 These sources have different authority. Follow this order before choosing an API:
@@ -108,6 +112,8 @@ Denied: refund(order=123, amount=4900) -> Tenuo denies -> effect executes zero t
 ```
 
 Show actual measured results from the target integration, with its scope and remaining gaps. Do not substitute this illustrative output for a test.
+
+Choose a useful action the agent can complete without further intervention inside its task authority. Pair it with an attacker-induced change to a material argument, or an attempted expansion beyond a delegated child's authority. Use the same tool for both calls so a tool allowlist alone cannot explain the result. Keep the user-facing example short and runnable with one documented command; keep framework plumbing in tested SDK examples. A scripted bad tool call demonstrates enforcement after model failure, not a measured live-model prompt-injection success rate.
 
 ## Report the guarantee
 
