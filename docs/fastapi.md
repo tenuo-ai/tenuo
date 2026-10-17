@@ -119,6 +119,30 @@ async def search(
     return {"results": [...]}
 ```
 
+`trusted_issuers` holds your **root** issuer keys. Delegated warrants are accepted when the client sends the full chain (see [Delegation Chains](#delegation-chains-warrantstack)); never add an intermediate agent's key here to make a bare delegated warrant pass. If no roots are configured here, the guard falls back to a bound `Runtime` and then to `tenuo.configure(trusted_roots=...)`; with none of them it denies every request.
+
+### Calling a protected route
+
+The client signs the exact arguments the route will authorize and sends the warrant and PoP as headers:
+
+```python
+import httpx
+from tenuo import Pattern, Range, Warrant
+
+warrant = (Warrant.mint_builder()
+    .capability("search", query=Pattern("acme *"), limit=Range(max=20))
+    .holder(agent_key.public_key)
+    .ttl(600)
+    .mint(issuer_key))
+
+bound = warrant.bind(agent_key)
+args = {"query": "acme earnings", "limit": 5}
+headers = bound.headers("search", args, trusted_roots=[issuer_key.public_key])
+httpx.get("https://api.example.com/search", params=args, headers=headers)
+```
+
+`bound.headers()` checks the call locally first and raises if the warrant would deny it.
+
 ---
 
 ## Installation
@@ -148,8 +172,9 @@ configure_tenuo(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `app` | `FastAPI` | *required* | FastAPI application instance |
-| `trusted_issuers` | `List[PublicKey]` | `None` | Trusted warrant issuers (**required in production**) |
-| `expose_error_details` | `bool` | `False` | Include detailed errors in response |
+| `trusted_issuers` | `List[PublicKey]` | `None` | Trusted root issuer keys (**required in production**) |
+| `runtime` | `Runtime` | `None` | Holder runtime; supplies roots, revocation list and receipt outbox when `trusted_issuers` is omitted |
+| `expose_error_details` | `bool` | `False` | Include the denial reason and arguments in 403 responses |
 
 ### `TenuoGuard`
 
@@ -175,7 +200,7 @@ async def read_file(
 - Query parameters: Extracted from query string
 - Values are typed from the endpoint signature: with `limit: int`, `?limit=5` is authorized as the integer `5` (so `Range` and other numeric constraints work). Parameters the endpoint doesn't declare stay strings. Clients must sign the same typed values, e.g. `bound.headers("list_items", {"limit": 5})`, not `{"limit": "5"}`. Custom `extract_args` results are used as-is.
 
-> **Note:** JSON body fields are **not** extracted by default. To include body fields, provide a custom `extract_args` function to `TenuoGuard`.
+> **Note:** JSON body fields are **not** extracted by default, so they are covered by neither the PoP signature nor the constraints. To authorize body fields, pass an `extract_args` function to `TenuoGuard` (see [Body Parameter Extraction](#body-parameter-extraction)). It can be a plain function or an `async def`.
 
 ### `SecurityContext`
 
@@ -208,7 +233,6 @@ from tenuo.fastapi import SecureAPIRouter
 
 router = SecureAPIRouter(
     tool_prefix="api",    # Optional prefix for tool names
-    require_pop=True,     # Require PoP signatures (default: True)
 )
 ```
 
@@ -217,7 +241,7 @@ router = SecureAPIRouter(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `tool_prefix` | `str` | `None` | Prefix for auto-generated tool names |
-| `require_pop` | `bool` | `True` | Require Proof-of-Possession signatures |
+| `require_pop` | `bool` | `True` | Accepted for compatibility; has no effect. Protected routes always require PoP |
 
 **Methods:**
 
@@ -239,8 +263,8 @@ Tenuo expects these HTTP headers:
 
 | Header | Description |
 |--------|-------------|
-| `X-Tenuo-Warrant` | Base64-encoded warrant (or warrant stack) |
-| `X-Tenuo-PoP` | Base64-encoded Proof-of-Possession signature |
+| `X-Tenuo-Warrant` | Base64-encoded warrant, or a WarrantStack (root → leaf) for delegated warrants |
+| `X-Tenuo-PoP` | Standard base64-encoded Proof-of-Possession signature |
 | `X-Tenuo-Approvals` | Base64-encoded JSON array of base64 CBOR `SignedApproval` blobs (optional, for retry) |
 
 **Example request (with approval retry):**
@@ -253,7 +277,7 @@ curl -X GET "https://api.example.com/search?query=test" \
   -H "X-Tenuo-Approvals: W3siLi4uIn1d"
 ```
 
-On **409** with `"error": "approval_required"`, read `request_hash` from the body, sign, and re-submit with `X-Tenuo-Approvals`. See [Human Approvals](approvals.md#wire-format-retry-payloads).
+On **409** with `"error": "approval_required"`, read `detail.request_hash` from the body, sign, and re-submit with `X-Tenuo-Approvals`. See [Human Approvals](approvals.md#wire-format-retry-payloads).
 
 ---
 
@@ -261,50 +285,43 @@ On **409** with `"error": "approval_required"`, read `request_hash` from the bod
 
 ### Error Responses
 
-Tenuo returns structured errors with canonical wire codes:
+`TenuoGuard` rejects a request with an `HTTPException`, so FastAPI wraps the body in `detail`:
 
 ```json
 {
-  "error": "constraint-violation",
-  "error_code": 1501,
-  "message": "Constraint violation: field 'amount' exceeded maximum value",
-  "details": {}
+  "detail": {
+    "error": "authorization_denied",
+    "message": "Authorization denied",
+    "request_id": "f777a1b7"
+  }
 }
 ```
 
-**Wire Code Support:**
+| Status | `detail.error` | When |
+|--------|----------------|------|
+| `400` | (string detail) | `X-Tenuo-Warrant` is not a valid warrant or WarrantStack |
+| `400` | `invalid_pop` | `X-Tenuo-PoP` is not valid base64 |
+| `400` | `invalid_approval` | `X-Tenuo-Approvals` cannot be decoded |
+| `401` | `missing_warrant` | No `X-Tenuo-Warrant` header |
+| `401` | `missing_pop` | No `X-Tenuo-PoP` header |
+| `401` | `warrant_expired` | Warrant TTL exceeded |
+| `403` | `authorization_denied` | Any other denial: tool not in warrant, constraint violation, bad PoP, untrusted root, missing chain, revoked |
+| `403` | `configuration_error` | No trusted roots configured anywhere |
+| `409` | `approval_required` | Approval gate fired (`request_hash`, `min_approvals` in `detail`) |
+| `409` | `insufficient_approvals` | Multi-sig threshold not met (`got` / `need` in `detail`) |
+| `500` | `configuration_error` | A sync `extract_args` returned an awaitable |
 
-The FastAPI integration automatically includes canonical error codes (1000-2199) that map to HTTP status codes. This enables:
-
-- **Machine-readable errors**: Clients can programmatically handle specific error types
-- **Cross-protocol consistency**: Same error codes used across HTTP, JSON-RPC, and gRPC
-- **Precise debugging**: Error codes pinpoint the exact failure reason
-
-Common error codes:
-
-| Wire Code | Name | HTTP Status | Meaning |
-|-----------|------|-------------|---------|
-| 1100 | `signature-invalid` | 401 | Invalid cryptographic signature |
-| 1300 | `warrant-expired` | 401 | Warrant TTL exceeded |
-| 1500 | `tool-not-authorized` | 403 | Tool not in warrant's allowed list |
-| 1501 | `constraint-violation` | 403 | Argument violates constraint |
-| 1600 | `pop-signature-mismatch` | 403 | PoP verification failed |
-| 1700 | `insufficient-approvals` | **409** | Multi-sig threshold not met (`got` / `need` in body) |
-| 1707 | `approval-required` | **409** | Approval gate fired (`request_hash` in body) |
-| 1800 | `warrant-revoked` | 401 | Warrant revoked by issuer |
+Every 403 carries a `request_id`; the server logs the denial reason under the same ID. With `expose_error_details=True`, the 403 `detail` also includes the reason, `tool` and `args`.
 
 Approval retries use **409 Conflict** (not 403) so clients can branch separately from scope denials. Re-submit with `X-Tenuo-Approvals`. See [Human Approvals](approvals.md#signals-by-integration).
 
-See [wire format specification](./spec/wire-format-v1#appendix-a-error-code-reference) for the complete list.
+`configure_tenuo()` also registers a handler for `TenuoError` exceptions that escape your own route code. That handler returns a flat body with a canonical wire code:
 
-### Status Codes
+```json
+{"error": "constraint-violation", "error_code": 1501, "message": "...", "details": {}}
+```
 
-| Code | Meaning |
-|------|---------|
-| `400 Bad Request` | Malformed request (invalid base64, missing fields) |
-| `401 Unauthorized` | Authentication failed (expired, revoked, bad signature) |
-| `403 Forbidden` | Authorization failed (tool/constraints not satisfied) |
-| `413 Payload Too Large` | Warrant or request exceeds size limits |
+See [wire format specification](./spec/wire-format-v1#appendix-a-error-code-reference) for the wire code list.
 
 ### Custom Error Handling
 
@@ -329,7 +346,7 @@ async def tenuo_error_handler(request: Request, exc: TenuoError):
     )
 ```
 
-**Note**: The FastAPI integration registers a global exception handler automatically when you call `configure_tenuo()`, so custom handlers are optional.
+**Note**: `configure_tenuo()` registers this `TenuoError` handler automatically, so a custom one is optional. Denials from `TenuoGuard` are `HTTPException`s and are not routed through it.
 
 ---
 
@@ -358,7 +375,7 @@ Since JSON body fields are not extracted by default, provide a custom `extract_a
 ```python
 from fastapi import Request
 from pydantic import BaseModel
-from tenuo.fastapi import TenuoGuard, SecurityContext
+from tenuo.fastapi import TenuoGuard, SecurityContext, extract_body_args
 
 class TransferRequest(BaseModel):
     from_account: str
@@ -366,7 +383,7 @@ class TransferRequest(BaseModel):
     amount: float
 
 async def extract_transfer_args(request: Request) -> dict:
-    body = await request.json()
+    body = await extract_body_args(request)  # {} if the body isn't JSON
     return {**request.path_params, **dict(request.query_params), **body}
 
 @app.post("/transfer")
@@ -377,6 +394,8 @@ async def transfer(
     # ctx.args = {"from_account": "...", "to_account": "...", "amount": ...}
     pass
 ```
+
+Custom `extract_args` results are used as-is, so the client signs the same JSON values it sends: `bound.headers("transfer", body)` with `json=body`.
 
 ---
 
@@ -431,14 +450,14 @@ async def issue_warrant():
 By default, authorization errors don't reveal constraint details:
 
 ```python
-# Client sees:
-# {"error": "authorization_denied", "message": "Authorization denied", "request_id": "abc123"}
+# Client sees (403):
+# {"detail": {"error": "authorization_denied", "message": "Authorization denied", "request_id": "abc123"}}
 
-# Server logs:
-# [abc123] Tool 'read_file' denied: path=/etc/passwd, expected=Pattern(/data/*)
+# Server logs (warning):
+# [abc123] Authorization denied for tool 'read_file' with args {'path': '/etc/passwd'}. Reason: ... Warrant ID: tnu_wrt_...
 ```
 
-Enable detailed errors only for development:
+The server log line includes argument values; treat it as sensitive. Enable detailed client errors only for development:
 
 ```python
 configure_tenuo(app, expose_error_details=True)  # Development only!
@@ -494,7 +513,7 @@ async def get_users(ctx: SecurityContext = Depends(TenuoGuard("admin_users"))):
 
 ## Delegation Chains (WarrantStack)
 
-When an orchestrator delegates a subset of its authority to a worker, the full chain of warrants must be sent together. `TenuoGuard` automatically detects a `WarrantStack` and validates the chain end-to-end.
+When an orchestrator delegates a subset of its authority to a worker, the full chain of warrants must be sent together. The server only trusts the root issuer, so it can verify the worker's warrant only when the parents arrive with it. `TenuoGuard` detects a `WarrantStack` in `X-Tenuo-Warrant` and verifies the chain end-to-end.
 
 ```python
 from tenuo import SigningKey, Warrant, encode_warrant_stack
@@ -512,13 +531,37 @@ child = (root.grant_builder()
     .capability("search")
     .holder(worker.public_key).ttl(1800).grant(orchestrator))
 
-# Client sends the full chain as a single X-Tenuo-Warrant header
+# Server-side: configure_tenuo(app, trusted_issuers=[issuer.public_key])  # root only
+
+# Client: the worker signs PoP; warrant_chain lists the parents, root first
+args = {"query": "acme q3"}
+headers = child.bind(worker).headers(
+    "search", args,
+    trusted_roots=[issuer.public_key],
+    warrant_chain=[root],
+)
+# headers["X-Tenuo-Warrant"] is the WarrantStack [root, child]
+
+# Or build the header yourself:
 stack_b64 = encode_warrant_stack([root, child])
-# Server-side: configure_tenuo(app, trusted_issuers=[issuer.public_key])
-# TenuoGuard automatically detects WarrantStack and uses check_chain
 ```
 
-> **Important:** Orphaned child warrants (sent without the parent chain) are rejected. Always send the complete chain from root to leaf.
+> **Important:** A child warrant sent without its parents is rejected with 403, because its issuer (the orchestrator) is not a trusted root. Always send the complete chain from root to leaf.
+
+---
+
+## Observe Mode
+
+To learn what policy your agents need before enforcing it, run in observe mode:
+
+```python
+from tenuo import configure
+
+configure(trusted_roots=[issuer_key.public_key], mode="observe")
+# or: TENUO_MODE=observe  ("audit" and "permissive" are accepted aliases)
+```
+
+`TenuoGuard` still runs full verification, but a request it would deny is let through: the route runs and the server logs `OBSERVE: would deny <tool>: <reason>` at warning level. This applies to every denial the guard makes after the headers are parsed, including PoP and chain failures, so use observe mode only while discovering policy. Missing headers, an expired warrant and malformed headers are still rejected.
 
 ---
 
