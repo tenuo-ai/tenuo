@@ -38,6 +38,7 @@ from tenuo.temporal._constants import (
 from tenuo.temporal._decorators import (
     _warrant_tool_name_for_activity_type,
     is_unprotected,
+    is_unwarranted_activity,
 )
 from tenuo.temporal._headers import (
     _extract_warrant_from_headers,
@@ -217,6 +218,14 @@ class _TenuoWorkflowOutboundInterceptor:
         try:
             run_key = _current_run_key()
             activity_type = input.activity
+
+            # unwarranted_activities: dispatch exactly as if no Tenuo headers
+            # were configured for this workflow at all — no warrant/PoP
+            # headers attached. Checked first and unconditionally so it can
+            # never be short-circuited by other outbound state (pending
+            # approvals, overrides, ...).
+            if is_unwarranted_activity(activity_type, self._config):
+                return self._next.start_activity(input)
 
             with _store_lock:
                 pending_approvals = _pending_activity_approvals.pop(run_key, None)
@@ -1082,6 +1091,18 @@ class TenuoActivityInboundInterceptor:
         # -- 4. Unauthenticated Execution Handling --
         if warrant is None:
             if self._config.require_warrant:
+                if is_unwarranted_activity(info.activity_type, self._config):
+                    # unwarranted_activities allowlist: internal plumbing
+                    # this worker chose to run without a warrant. Only
+                    # reached with warrant is None — an activity in this
+                    # list that DOES present a warrant falls through to
+                    # normal verification below, unaffected.
+                    logger.debug(
+                        "Activity %s allowed without a warrant "
+                        "(unwarranted_activities allowlist)",
+                        info.activity_type,
+                    )
+                    return await self._next.execute_activity(input)
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
                 if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise self._wrap_as_non_retryable(TemporalConstraintViolation(

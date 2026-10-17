@@ -121,6 +121,49 @@ class TenuoPluginConfig:
     PoP so verification matches the activity inbound interceptor.
     """
 
+    unwarranted_activities: Tuple[str, ...] = field(default_factory=tuple)
+    """
+    Activity-type name patterns exempt from warrant requirements — skipped by
+    the outbound PoP signer, and allowed inbound with **no warrant present**
+    even when ``require_warrant=True``.
+
+    Each entry is matched against the Temporal **activity type** name
+    (``input.activity`` / ``activity.info().activity_type`` — not the
+    warrant tool name, so matching does not depend on ``tool_mappings`` or
+    ``@tool()`` agreeing) with a whole-string glob: ``*`` matches any run of
+    characters, anything else matches literally (no partial/substring
+    matches — a pattern like ``"call-tool"`` can never match
+    ``"evil-call-tool-safe"``). Use this only for a framework's own internal
+    plumbing activities — model calls, an approval-routing activity,
+    batch/session lifecycle calls — that are not effects on a customer
+    system and so need no capability check. See
+    ``tenuo.temporal.harness.HARNESS_INTERNAL_ACTIVITIES`` for the Temporal
+    Agent Harness preset.
+
+    **What this changes, precisely:**
+    - Outbound: the interceptor does not attach warrant/PoP headers to a
+      matching activity at all — it dispatches exactly as it would with no
+      Tenuo headers configured.
+    - Inbound: a matching activity with **no warrant presented** is allowed
+      through without authorization, regardless of ``require_warrant``.
+
+    **What this does not change:** if a matching activity DOES arrive with
+    a warrant (a caller attached one, correctly or not), it is verified
+    exactly like any other activity — the allowlist only waives the
+    "no warrant" denial, it is never a bypass for a bad or malformed
+    warrant. Malformed Tenuo headers (undecodable warrant, bad chain) are
+    still denied before this allowlist is even consulted.
+
+    Validated at construction time against a set of MCP call-tool effect-
+    activity name shapes (``*-call-tool-v2`` and friends, including the bare
+    ``"*"``) — a pattern that would match one of those is rejected with
+    ``ConfigurationError``, so a careless wildcard cannot silently exempt
+    real tool-call effects from authorization.
+
+    Empty by default: no activity is exempt, and behavior is unchanged from
+    configs that never set this field.
+    """
+
     audit_callback: Optional[Callable[[TemporalAuditEvent], None]] = None
     """Optional callback for authorization audit events."""
 
@@ -538,6 +581,15 @@ class TenuoPluginConfig:
                 "executions will be allowed. Ensure this is intentional.",
                 stacklevel=2,
             )
+
+        # Normalize to a tuple whatever iterable the caller passed (list,
+        # set, generator, ...), then validate before anything else touches
+        # it. Runs even for the empty default so the field is always a tuple.
+        self.unwarranted_activities = tuple(self.unwarranted_activities)
+
+        if self.unwarranted_activities:
+            from tenuo.temporal._activity_patterns import validate_unwarranted_activities
+            validate_unwarranted_activities(self.unwarranted_activities)
 
         snapshots = self._provider_snapshots
 
