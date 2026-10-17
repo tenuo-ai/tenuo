@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Dict, List, Optional, Protocol, Union
 
+from .exceptions import TenuoError
+
 if TYPE_CHECKING:
     from tenuo_core import SignedApproval, SigningKey
 
@@ -152,7 +154,7 @@ class ApprovalRequest:
 # =============================================================================
 
 
-class ApprovalRequired(Exception):
+class ApprovalRequired(TenuoError):
     """Raised when an approval gate requires approval but no handler/approvals are set.
 
     This is not an authorization failure — the warrant permits the call, but a
@@ -170,7 +172,7 @@ class ApprovalRequired(Exception):
         super().__init__(text)
 
 
-class ApprovalDenied(Exception):
+class ApprovalDenied(TenuoError):
     """Raised when a human denies an approval request.
 
     Attributes:
@@ -192,7 +194,7 @@ class ApprovalTimeout(ApprovalDenied):
         super().__init__(request, reason=f"timed out after {timeout_seconds}s")
 
 
-class ApprovalVerificationError(Exception):
+class ApprovalVerificationError(TenuoError):
     """Raised when a SignedApproval fails cryptographic verification.
 
     This indicates tampering, hash mismatch, untrusted approver key,

@@ -19,6 +19,7 @@ import time
 from contextvars import ContextVar
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
+from tenuo.approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 from tenuo.temporal._constants import (
     TENUO_APPROVALS_HEADER,
     TENUO_ARG_KEYS_HEADER,
@@ -1348,6 +1349,9 @@ def _verify_nexus_operation(
             authorizer=authorizer,
             verified_pop=pop_bytes,
         )
+    except (ApprovalRequired, ApprovalDenied, ApprovalVerificationError) as exc:
+        # Not TenuoErrors before; keep wrapping them like other unexpected errors.
+        raise TenuoContextError(f"Nexus operation authorization failed for {tool_name!r}: {exc}") from exc
     except _nexus_auth_error_types() as exc:
         _emit_nexus_control_plane_event(
             config,

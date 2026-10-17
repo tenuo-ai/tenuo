@@ -1325,11 +1325,16 @@ class TenuoActivityInboundInterceptor:
             try:
                 from tenuo.exceptions import TenuoError as _TenuoError
                 from tenuo.exceptions import ExpiredError as _ExpiredError
+                from tenuo.approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
+
+                # Approval outcomes were not TenuoErrors before; keep the internal-error path.
+                _approval_errors: tuple = (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)
             except ImportError:
                 _TenuoError = TenuoTemporalError  # type: ignore[assignment, misc]
                 _ExpiredError = type(None)  # type: ignore[assignment, misc]
+                _approval_errors = ()
 
-            if isinstance(e, (_TenuoError, TenuoTemporalError)):
+            if isinstance(e, (_TenuoError, TenuoTemporalError)) and not isinstance(e, _approval_errors):
                 self._emit_denial_event(
                     info=info,
                     warrant=warrant,

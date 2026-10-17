@@ -3923,6 +3923,42 @@ class TestApprovalGates:
         assert exc_info.value.non_retryable
         next_activity.execute_activity.assert_not_awaited()
 
+    def test_handler_approval_denied_stays_internal_error_even_in_dry_run(self):
+        """ApprovalDenied from the handler keeps the non-retryable internal-error
+        path (it subclasses TenuoError but must not become a shadowable denial).
+        """
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import SigningKey
+        from tenuo.approval import ApprovalDenied
+
+        control_key, agent_key, approver_key = (SigningKey.generate() for _ in range(3))
+        warrant = self._mint_gated_warrant(control_key, agent_key, approver_key=approver_key)
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+
+        def handler(request):
+            raise ApprovalDenied(request, reason="rejected by reviewer")
+
+        plugin = TenuoWorkerInterceptor(
+            TenuoPluginConfig(
+                key_resolver=EnvKeyResolver(),
+                trusted_roots=[control_key.public_key],
+                approval_handler=handler,
+                dry_run=True,
+            )
+        )
+        info, inp = self._build_activity_inputs(warrant, pop)
+        next_activity = MagicMock(execute_activity=AsyncMock(), init=MagicMock())
+        inbound = plugin.intercept_activity(next_activity)
+        with patch("temporalio.activity.info", return_value=info):
+            with pytest.raises(ApplicationError) as exc_info:
+                asyncio.run(inbound.execute_activity(inp))
+        assert exc_info.value.non_retryable
+        assert "Internal authorization error: ApprovalDenied" in str(exc_info.value)
+        next_activity.execute_activity.assert_not_awaited()
+
     def test_call_outside_capability_is_denied_without_asking_approvers(self):
         """A gated tool called with arguments the warrant does not grant is denied
         by authorization; the approval handler is never invoked.
