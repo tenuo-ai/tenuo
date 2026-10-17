@@ -203,7 +203,7 @@ def render(snapshot: dict) -> str:
             )
             + " |"
         )
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def fetch_live() -> tuple[list[dict], str]:
@@ -334,7 +334,7 @@ def render_frameworks(status: dict, snapshot: dict) -> str:
             + f["deny_before_effect_evidence"],
             "",
         ]
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def main() -> int:

@@ -203,4 +203,3 @@ Open PR horizon: [#808](https://github.com/tenuo-ai/tenuo/pull/808).
 Source paths to inspect in the matching checkout: external hermes-tenuo repository.
 
 Dispatch-test evidence to inspect: external plugin CI; not established here. Existing tests require inspection and execution; no blanket certification. See adapter regression results for exact cases.
-
