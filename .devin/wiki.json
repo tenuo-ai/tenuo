@@ -1,7 +1,7 @@
 {
   "repo_notes": [
     {
-      "content": "Tenuo is task-scoped authorization for AI agents. A warrant is a signed grant of which tools an agent may call, with which argument constraints, for how long. Warrants are holder-bound (proof-of-possession), can only narrow when delegated (attenuation), are verified offline where the action executes, and produce signed allow/deny receipts. The Rust core lives in tenuo-core; tenuo-python (PyO3 bindings plus framework adapters) and tenuo-ts (TypeScript, beta) wrap it. docs/ is the Jekyll source for https://tenuo.ai and is the best source for user-facing behavior. Ignore benchmarks/, labs/, and docs/blog/ when describing the product."
+      "content": "Tenuo is task-scoped authorization for AI agents. A warrant is a signed grant of which tools an agent may call, with which argument constraints, for how long. Warrants are holder-bound (proof-of-possession), can only narrow when delegated (attenuation), are verified offline where the action executes, and produce signed allow/deny receipts. The Rust core lives in tenuo-core; tenuo-python (PyO3 bindings plus framework adapters) and tenuo-ts (TypeScript, beta) wrap it. docs/ holds the user-facing documentation published at https://tenuo.ai and is the best source for user-facing behavior. Ignore benchmarks/ and labs/ when describing the product."
     }
   ],
   "pages": [
