@@ -1410,5 +1410,69 @@ class TestPhase5RealCrewAIIntegration:
             pytest.skip("crewai not installed")
 
 
+class TestGuardedCrewIssuerChain:
+    """Agent warrants verify against the trusted root alone (issuer chain travels)."""
+
+    def _agent_guard(self, issuer, issuer_key, root_key):
+        from tenuo.crewai import GuardedCrew
+
+        crew = (
+            GuardedCrew(agents=[MagicMock(role="researcher")], tasks=[MagicMock()])
+            .with_issuer(issuer, issuer_key)
+            .with_trusted_roots([root_key.public_key])
+            .policy({"researcher": ["search"]})
+            .constraints({"researcher": {"search": {"query": Pattern("arxiv:*")}}})
+            .on_denial("skip")
+            .build()
+        )
+        crew._protect_agents()
+        return crew._guards["researcher"]
+
+    def test_root_minted_issuer_only_root_trusted(self):
+        """Issuer warrant minted by the root; only the root key is trusted."""
+        from tenuo import SigningKey, Warrant
+
+        root_key = SigningKey.generate()
+        issuer_key = SigningKey.generate()
+        issuer_warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("arxiv:*"))
+            .holder(issuer_key.public_key)
+            .mint(root_key)
+        )
+
+        guard = self._agent_guard(issuer_warrant, issuer_key, root_key)
+
+        assert guard._authorize("search", {"query": "arxiv:2401.00001"}) is None
+        assert isinstance(guard._authorize("search", {"query": "evil.com"}), DenialResult)
+        assert isinstance(guard._authorize("delete", {"query": "arxiv:1"}), DenialResult)
+
+    def test_delegated_issuer_chain_as_list(self):
+        """Issuer warrant delegated from a control-plane root, passed root-first."""
+        from tenuo import SigningKey, Warrant
+        from tenuo.crewai import WarrantDelegator
+
+        root_key = SigningKey.generate()
+        orchestrator_key = SigningKey.generate()
+        issuer_key = SigningKey.generate()
+        root_warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("*"))
+            .holder(orchestrator_key.public_key)
+            .mint(root_key)
+        )
+        issuer_warrant = WarrantDelegator().delegate(
+            parent_warrant=root_warrant,
+            parent_key=orchestrator_key,
+            child_holder=issuer_key.public_key,
+            attenuations={"search": {"query": Pattern("arxiv:*")}},
+        )
+
+        guard = self._agent_guard([root_warrant, issuer_warrant], issuer_key, root_key)
+
+        assert guard._authorize("search", {"query": "arxiv:2401.00001"}) is None
+        assert isinstance(guard._authorize("search", {"query": "evil.com"}), DenialResult)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

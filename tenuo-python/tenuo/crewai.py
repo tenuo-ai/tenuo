@@ -1992,7 +1992,9 @@ class GuardedCrewBuilder:
         self._tasks = tasks
         self._process = process
         self._issuer_warrant: Optional[Warrant] = None
+        self._issuer_chain: Optional[List[Warrant]] = None
         self._issuer_key: Optional[SigningKey] = None
+        self._trusted_roots: Optional[list] = None
         self._policy: Dict[str, List[str]] = {}
         self._constraints: Dict[str, Dict[str, Dict[str, Constraint]]] = {}
         self._on_denial: DenialMode = "raise"
@@ -2000,13 +2002,29 @@ class GuardedCrewBuilder:
         self._strict: bool = False
         self._ttl: Optional[str] = None
 
-    def with_issuer(self, warrant: Warrant, signing_key: SigningKey) -> "GuardedCrewBuilder":
+    def with_issuer(
+        self,
+        warrant: Warrant,
+        signing_key: SigningKey,
+        *,
+        warrant_chain: Optional[List[Warrant]] = None,
+    ) -> "GuardedCrewBuilder":
         """Set the warrant issuer for Tier 2.
 
-        The issuer will create per-agent warrants based on the policy.
+        The issuer will create per-agent warrants based on the policy. Each
+        agent warrant carries the issuer warrant (and its parents) as its
+        chain, so it verifies against the trusted root alone. If the issuer
+        warrant was itself delegated, pass its parents as ``warrant_chain``,
+        or pass the whole chain as ``warrant`` (WarrantStack string or
+        root-first list).
         """
-        self._issuer_warrant = warrant
+        self._issuer_warrant, self._issuer_chain = split_presented_warrant(warrant, warrant_chain)
         self._issuer_key = signing_key
+        return self
+
+    def with_trusted_roots(self, roots: list) -> "GuardedCrewBuilder":
+        """Set trusted root public keys for every agent guard."""
+        self._trusted_roots = list(roots)
         return self
 
     def policy(self, agent_tools: Dict[str, List[str]]) -> "GuardedCrewBuilder":
@@ -2074,6 +2092,8 @@ class GuardedCrewBuilder:
             audit_callback=self._audit_callback,
             strict=self._strict,
             ttl=self._ttl,
+            issuer_chain=self._issuer_chain,
+            trusted_roots=self._trusted_roots,
         )
 
 
@@ -2099,6 +2119,8 @@ class _GuardedCrewImpl:
         audit_callback: Optional[Callable[[AuditEvent], None]],
         strict: bool,
         ttl: Optional[str],
+        issuer_chain: Optional[List[Warrant]] = None,
+        trusted_roots: Optional[list] = None,
     ):
         self._agents = agents
         self._tasks = tasks
@@ -2111,6 +2133,8 @@ class _GuardedCrewImpl:
         self._audit_callback = audit_callback
         self._strict = strict
         self._ttl = ttl
+        self._issuer_chain = issuer_chain
+        self._trusted_roots = trusted_roots
 
         # Built crew instance (created on first kickoff)
         self._crew = None
@@ -2146,6 +2170,9 @@ class _GuardedCrewImpl:
         if self._audit_callback:
             builder.audit(self._audit_callback)
 
+        if self._trusted_roots is not None:
+            builder.with_trusted_roots(self._trusted_roots)
+
         # Tier 2: Issue per-agent warrant from issuer
         if self._issuer_warrant and self._issuer_key:
             # Generate agent-specific signing key (in production, agent provides their own)
@@ -2161,7 +2188,13 @@ class _GuardedCrewImpl:
                     attenuations={tool: agent_constraints.get(tool, {}) for tool in allowed_tools},
                     ttl=_parse_ttl(self._ttl) if self._ttl else None,
                 )
-                builder.with_warrant(agent_warrant, agent_key)
+                # The issuer warrant (and its parents) travel with the agent
+                # warrant so it verifies against the trusted root alone.
+                builder.with_warrant(
+                    agent_warrant,
+                    agent_key,
+                    warrant_chain=[*(self._issuer_chain or []), self._issuer_warrant],
+                )
                 logger.debug(f"Issued Tier 2 warrant to agent '{role}'")
             except EscalationAttempt:
                 # Escalation attempt during delegation is always a security error
