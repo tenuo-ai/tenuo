@@ -52,6 +52,14 @@ and approver private keys outside the agent. Local adapters reload trust and
 revocations per call and write portable approval requests; they remain an
 in-process guardrail when code can call the underlying tool directly.
 
+For local MCP, use `SecureMCPClient.local` to present an explicit warrant and
+`MCPVerifier.local` with existing dispatch middleware to enforce independently.
+The verifier requires public trust and revocation files, never the holder's
+private key. An optional server receipt identity belongs to the server itself.
+Prove a signed but out-of-scope call is denied at the server even when the
+client's local check is bypassed. Do not describe client-only checks as server
+mediation. See the tested local MCP recipe in `docs/local-cli.md`.
+
 1. Name a capability for the effect and constrain every argument that materially changes it.
 2. Issue short-lived authority to the holder's public key. The holder creates proof; the verifier-facing API accepts a presentation or public transport data, never a private signing key.
 3. Configure trusted roots, verification time, and local policy ceilings independently of request data. A test clock belongs in private test code or trusted verifier construction, not a caller-selectable execution argument.

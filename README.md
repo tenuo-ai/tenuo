@@ -56,6 +56,9 @@ with `tenuo-cli approval show|approve|deny`.
 For LangChain or LangGraph tools, `TenuoTool.local(tool,
 warrant=".tenuo/agent.warrant")` loads local authority before each call. See
 the [integration recipe](docs/local-cli.md#langchain-and-langgraph).
+For MCP, `SecureMCPClient.local(...)` presents the selected warrant and
+`MCPVerifier.local(...)` checks fresh public trust at the server. See the
+[MCP setup](docs/local-cli.md#mcp-client-and-server).
 
 ### AI coding agents
 
