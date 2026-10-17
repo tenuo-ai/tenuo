@@ -8,6 +8,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from tenuo.temporal._constants import (
+    TENUO_CHAIN_HEADER,
     TENUO_COMPRESSED_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_WARRANT_HEADER,
@@ -71,6 +72,12 @@ def tenuo_headers(
             "Private keys must never be transmitted in headers."
         )
 
+    chain = None
+    if isinstance(warrant, (list, tuple)):
+        if not warrant:
+            raise TenuoContextError("tenuo_headers: warrant chain must not be empty")
+        chain = list(warrant)
+        warrant = chain[-1]
     warrant_bytes = bytes(warrant.to_bytes())
 
     headers: Dict[str, bytes] = {
@@ -86,6 +93,13 @@ def tenuo_headers(
         headers[TENUO_WARRANT_HEADER] = warrant_bytes
         headers[TENUO_COMPRESSED_HEADER] = b"0"
 
+    if chain is not None:
+        from tenuo_core import encode_warrant_stack
+
+        encoded = encode_warrant_stack(chain)
+        if not encoded:
+            raise TenuoContextError("tenuo_headers: could not encode the warrant chain")
+        headers[TENUO_CHAIN_HEADER] = encoded.encode("utf-8")
     return headers
 
 

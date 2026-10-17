@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -95,11 +96,11 @@ class LocalAuthority:
         return collect
 
     @contextmanager
-    def scope(self):
+    def scope(self, snapshot=None):
         from tenuo import HolderIdentity, Runtime
         from tenuo.receipts import FileReceiptSink
 
-        snapshot = self.snapshot()
+        snapshot = self.snapshot() if snapshot is None else snapshot
         if snapshot.key is None:
             yield snapshot, None, None
             return
@@ -122,6 +123,12 @@ class LocalAuthority:
                     yield snapshot, None, None
         finally:
             receipts = runtime.drain_receipts()
-            for receipt in receipts:
-                sink.handle(receipt)
-            runtime.acknowledge_receipts(len(receipts))
+            try:
+                for receipt in receipts:
+                    sink.handle(receipt)
+            except Exception:
+                # Never turn a completed effect into a retry because audit I/O
+                # failed, or mask an original authorization/tool exception.
+                logging.getLogger(__name__).warning("Local receipt persistence failed", exc_info=True)
+            else:
+                runtime.acknowledge_receipts(len(receipts))

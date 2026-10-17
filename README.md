@@ -59,6 +59,8 @@ the [integration recipe](docs/local-cli.md#langchain-and-langgraph).
 For MCP, `SecureMCPClient.local(...)` presents the selected warrant and
 `MCPVerifier.local(...)` checks fresh public trust at the server. See the
 [MCP setup](docs/local-cli.md#mcp-client-and-server).
+Temporal workers can use `TenuoPluginConfig.local()` and start work with
+`tenuo.local.load_warrant_chain(...)`; see the [Temporal recipe](docs/local-cli.md#temporal).
 
 ### AI coding agents
 
