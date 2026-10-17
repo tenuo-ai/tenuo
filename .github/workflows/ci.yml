@@ -953,6 +953,11 @@ jobs:
         working-directory: tenuo-ts
         run: node examples/vercel-ai-sdk/scripts/verify-packed.mjs
 
+      - name: Express example
+        if: steps.lane.outputs.needed == 'true'
+        working-directory: tenuo-ts
+        run: node examples/express/scripts/verify-packed.mjs
+
   # Test the committed WASM package on the remaining supported Node lines
   # without rebuilding it. Node 24 is the active LTS.
   tenuo-ts-node-compat:
