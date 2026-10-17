@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import binascii
 import gzip
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from tenuo.temporal._constants import (
     TENUO_COMPRESSED_HEADER,
@@ -216,3 +218,42 @@ def _current_workflow_headers() -> Dict[str, bytes]:
 
     info = workflow.info()
     return _unwrap_payload_headers(getattr(info, "headers", {}))
+
+
+# ---------------------------------------------------------------------------
+# Signed approvals over headers (activity headers, and workflow-update
+# headers via TenuoClientInterceptor.set_approvals_for_update()).
+# ---------------------------------------------------------------------------
+# Same wire shape ``tenuo.temporal._nexus`` uses for its own (Nexus-specific)
+# approvals header — kept as a small, separate encode/decode pair here rather
+# than a shared import so this module (activity/workflow/update headers) has
+# no dependency on the Nexus transport module.
+
+
+def encode_signed_approvals(approvals: Sequence[Any]) -> bytes:
+    """Encode ``SignedApproval`` objects for the ``x-tenuo-approvals`` header."""
+    encoded = json.dumps(
+        [base64.b64encode(approval.to_bytes()).decode("ascii") for approval in approvals]
+    )
+    return encoded.encode("utf-8")
+
+
+def decode_signed_approvals(raw: bytes) -> List[Any]:
+    """Decode an ``x-tenuo-approvals`` header value into ``SignedApproval`` objects.
+
+    Raises ``tenuo.exceptions.InvalidApproval`` on a malformed value —
+    callers that treat a bad header as "no approval attached" rather than a
+    hard failure should catch that explicitly, not swallow all exceptions.
+    """
+    from tenuo_core import SignedApproval as _CoreSignedApproval
+
+    try:
+        approvals_list = json.loads(raw.decode("utf-8"))
+        return [
+            _CoreSignedApproval.from_bytes(base64.b64decode(item))
+            for item in approvals_list
+        ]
+    except Exception as exc:
+        from tenuo.exceptions import InvalidApproval
+
+        raise InvalidApproval(f"Malformed x-tenuo-approvals header: {exc}") from exc

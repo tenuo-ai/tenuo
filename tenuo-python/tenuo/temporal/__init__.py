@@ -26,6 +26,7 @@ For direct imports (preferred in library / internal code)::
     tenuo.temporal._workflow      execute_workflow_authorized, start_workflow_authorized,
                                   tenuo_execute_activity, tenuo_execute_child_workflow,
                                   AuthorizedWorkflow, current_warrant, current_key_id,
+                                  tenuo_install_warrant,
                                   workflow_grant, workflow_issue_execution,
                                   set_activity_approvals, tenuo_continue_as_new, …
     tenuo.temporal._client        TenuoClientInterceptor, TenuoWarrantContextPropagator,
@@ -71,6 +72,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "AuthorizedWorkflow": ("tenuo.temporal._workflow", "AuthorizedWorkflow"),
     "current_warrant": ("tenuo.temporal._workflow", "current_warrant"),
     "current_key_id": ("tenuo.temporal._workflow", "current_key_id"),
+    "tenuo_install_warrant": ("tenuo.temporal._workflow", "tenuo_install_warrant"),
     "workflow_grant": ("tenuo.temporal._workflow", "workflow_grant"),
     "workflow_issue_execution": ("tenuo.temporal._workflow", "workflow_issue_execution"),
     "set_activity_approvals": ("tenuo.temporal._workflow", "set_activity_approvals"),

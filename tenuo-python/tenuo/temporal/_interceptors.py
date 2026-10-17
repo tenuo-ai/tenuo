@@ -587,7 +587,63 @@ class _TenuoWorkflowInboundInterceptor:
                     constraint=f"Update not authorized: {update_name}",
                     warrant_id=self._resolve_warrant_id(),
                 )
+        self._maybe_stash_update_approvals(input)
         return await self.next.handle_update_handler(input)
+
+    def _maybe_stash_update_approvals(self, input: Any) -> None:
+        """Stage a signed approval carried on an ``x-tenuo-approvals`` update
+        header for the next activity this workflow run dispatches.
+
+        Populates the exact same store ``set_activity_approvals()`` writes
+        to (``_pending_activity_approvals``), so it has the exact same
+        one-shot, next-dispatch consumption the outbound interceptor already
+        implements and tests cover — this only adds a second way to *stage*
+        an approval (via update headers, for a caller that cannot run
+        workflow code, e.g. a human approver's client), not a new way to
+        *consume* one. A malformed header is logged and otherwise ignored —
+        it never fails the update itself, since the update's own
+        authorization (``authorized_updates``, above) is a separate concern
+        from whether it happens to carry a usable approval; a missing or
+        unusable approval simply means the later gated dispatch denies with
+        ``ApprovalGateTriggered``, same as if none had been supplied at all.
+        """
+        headers = getattr(input, "headers", None) or {}
+        raw: Optional[bytes] = None
+        for k, v in headers.items():
+            if k == TENUO_APPROVALS_HEADER:
+                data = getattr(v, "data", None)
+                if isinstance(data, bytes):
+                    raw = data
+                break
+        if raw is None:
+            return
+
+        from tenuo.temporal._headers import decode_signed_approvals
+
+        try:
+            approvals = decode_signed_approvals(raw)
+        except Exception as exc:
+            logger.warning(
+                "Malformed x-tenuo-approvals header on update %r; ignoring: %s",
+                getattr(input, "update", None),
+                exc,
+            )
+            return
+
+        from tenuo.temporal._state import _pending_activity_approvals
+
+        run_key = _current_run_key()
+        with _store_lock:
+            if run_key in _pending_activity_approvals:
+                logger.warning(
+                    "Update %r's approvals overwrite %d pending approvals for "
+                    "run_id=%s that were never consumed by an activity "
+                    "dispatch.",
+                    getattr(input, "update", None),
+                    len(_pending_activity_approvals[run_key]),
+                    run_key,
+                )
+            _pending_activity_approvals[run_key] = approvals
 
 
 # ── TenuoWorkerInterceptor (worker interceptor) ─────────────────────────
