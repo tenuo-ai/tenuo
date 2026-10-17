@@ -17,10 +17,47 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from tenuo.temporal.exceptions import (
     TenuoArgNormalizationError,
+    TenuoContextError,
     TenuoPreValidationError,
 )
 
 logger = logging.getLogger("tenuo.temporal")
+
+WORKFLOW_ID_ARG = "_workflow_id"
+"""Reserved argument filled from Temporal, never from the caller.
+
+When a warrant's capability constrains ``_workflow_id`` (for example
+``Exact("refund-order-123")`` or ``Pattern("refund-order-123*")``), the plugin
+adds the running workflow's ID to the arguments it signs and verifies for that
+tool. Capabilities that do not name it are unaffected.
+"""
+
+
+def _add_workflow_id(
+    warrant: Any,
+    tool_name: str,
+    args: Dict[str, Any],
+    workflow_id: str,
+) -> Dict[str, Any]:
+    """Return ``args`` plus ``_workflow_id`` if the warrant constrains it for this tool.
+
+    The value comes from Temporal (``workflow.info()`` when signing,
+    ``activity.info()`` when verifying), so an Activity argument may not carry
+    the reserved name itself.
+    """
+    try:
+        caps = warrant.capabilities
+        # As core resolves a tool: its own capability, else the ``"*"`` one.
+        fields = caps.get(tool_name, caps.get("*"))
+    except Exception as exc:
+        raise TenuoContextError(f"Cannot read the warrant's capabilities for {tool_name!r}") from exc
+    if not isinstance(fields, dict) or WORKFLOW_ID_ARG not in fields:
+        return args
+    if WORKFLOW_ID_ARG in args:
+        raise TenuoContextError(
+            f"Activity argument {WORKFLOW_ID_ARG!r} is reserved: the plugin fills it from the running workflow's ID"
+        )
+    return {**args, WORKFLOW_ID_ARG: workflow_id}
 
 
 def _args_dict_uses_only_positional_fallback_keys(args_dict: Dict[str, Any]) -> bool:

@@ -609,6 +609,45 @@ This section covers the full threat model, trust boundaries, PoP windows, dedup,
 5. **Over-broad credentials**: Short TTLs, delegation / `workflow_grant` for least privilege, signal/update guards.
 6. **Mis-signing (named vs positional args)**: `strict_mode=True` fails fast on ambiguous PoP.
 
+### Limiting a capability to a workflow
+
+By default a warrant is scoped by its holder key, TTL and argument constraints,
+not by the workflow it was issued for: any workflow whose worker holds the
+holder key can use it until it expires. To limit a capability to one workflow,
+or a family of workflows, constrain the reserved `_workflow_id` argument:
+
+```python
+warrant = (
+    Warrant.mint_builder()
+    .holder(agent_key.public_key)
+    .capability(
+        "issue_refund",
+        order_id=Exact("order-123"),
+        amount=Range(max=250),
+        _workflow_id=Exact("refund-order-123"),  # or Pattern("refund-order-123*")
+    )
+    .ttl(600)
+    .mint(control_key)
+)
+```
+
+For a capability that names `_workflow_id`, the outbound interceptor signs the
+running workflow's ID (`workflow.info().workflow_id`) and the activity
+interceptor verifies it against `activity.info().workflow_id`. Both come from
+Temporal; an activity argument with that name is rejected. Capabilities that
+don't name it behave exactly as before.
+
+- `Pattern("refund-order-123*")` admits child workflows and Schedule triggers
+  whose IDs share the prefix. Attenuation can narrow it, e.g. to a child's
+  `Exact` ID, but never widen it.
+- It applies to activities. Child workflow starts, Nexus operations and signal or
+  update guards don't read it.
+- The client that starts a workflow chooses its ID, so this keeps authority to a
+  named workflow and fails closed when headers reach the wrong one; it is not
+  proof of who started it. Who may start workflows is governed by Temporal
+  namespace access control, and a reject-duplicate ID reuse policy stops a
+  closed workflow's ID from being reused.
+
 ### Clock skew and PoP time windows
 
 Verification checks PoP using multiple aligned time windows around the verifier's clock:
