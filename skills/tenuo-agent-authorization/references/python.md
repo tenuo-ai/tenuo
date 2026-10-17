@@ -14,6 +14,10 @@ For another version, verify that a `v<version>` tag exists and that `tenuo-pytho
 
 ## Choose the boundary
 
+For local CLI setup and YAML issuance, read the
+[local lifecycle reference](local-cli.md) only after checking the target exports
+those unreleased helpers. Keep code-first issuance for task-derived values.
+
 - Use the top-level `@guard` wrapper for a generic in-process guardrail when that matches the threat model. `GuardBuilder` is not a top-level `tenuo` export; use it only from a supported adapter module, such as `tenuo.openai`, `tenuo.crewai`, `tenuo.autogen`, or `tenuo.google_adk`, after checking the installed adapter API.
 - Use `Authorizer` at a server or worker boundary for independent warrant, trust-chain, PoP, capability, and constraint verification.
 - For MCP, prefer `MCPVerifier` with the integration's middleware so verification occurs before the tool handler.

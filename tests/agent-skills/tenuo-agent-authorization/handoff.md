@@ -80,3 +80,20 @@ blockers. Do not change historical grades/fingerprints merely to make it green.
 For dispatch suites, build/install the exact selected checkout in isolated
 Python 3.12 environments and use `scripts/run_agent_skill_frameworks.py` as
 specified in maintenance.md; MCP major versions need separate environments.
+
+## Local CLI alignment follow-up
+
+The local follow-up branch `skill/local-cli-alignment` adds a version-gated
+`references/local-cli.md`, linked from the Python reference. It describes the
+unreleased common CLI and explicitly does not add those helpers to the pinned
+release contract. Warrant/audit guidance now recognizes local SRLs and receipts,
+distinguishes reissuance, attachment and revocation, and preserves intentionally
+authorized private endpoints. Warrant creation asks only about material unknowns
+instead of requiring confirmation of every constraint.
+
+Validation: all 62 script tests passed, all four skills and 58 portable links
+validated, and the three edited skill entrypoints passed skill-creator's
+frontmatter validation. No new coding-agent evaluation was run. Historical
+fingerprints and grades remain unchanged; the additional guidance-review
+freshness warning is expected until that review/evaluation is performed. This
+follow-up does not confer promotion approval or authorize a push/PR.
