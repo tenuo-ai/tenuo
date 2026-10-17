@@ -5170,6 +5170,29 @@ class TestSignalAndUpdateRuntimeDenial:
         assert "ping" in str(excinfo.value)
         nxt.handle_update_handler.assert_not_called()
 
+    def test_dropped_signals_share_one_metric_key(self):
+        """The sender picks signal names, so they must not become metric labels."""
+        from tenuo.temporal import TenuoMetrics
+
+        inbound, _, cfg, wf_id = self._stub_inbound(authorized_signals=["add"])
+        cfg.metrics = TenuoMetrics(prefix="sigdrop_unit")
+        events = []
+        cfg.audit_callback = events.append
+        try:
+            with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)), \
+                    patch("temporalio.workflow.unsafe.is_replaying", return_value=False), \
+                    patch("temporalio.workflow.now"):
+                loop = asyncio.new_event_loop()
+                try:
+                    for name in ("drop_a", "drop_b"):
+                        loop.run_until_complete(inbound.handle_signal(MagicMock(signal=name)))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup(wf_id)
+        assert list(cfg.metrics.get_stats()["denied"].values()) == [2]
+        assert [e.tool for e in events] == ["signal:drop_a", "signal:drop_b"]
+
     def test_signal_allowlist_applies_before_run_registration(self, caplog):
         inbound, nxt, run_id = self._unregistered_inbound(authorized_signals=["add"])
         sig_input = MagicMock(signal="drop_tables", headers={})

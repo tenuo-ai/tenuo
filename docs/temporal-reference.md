@@ -776,6 +776,8 @@ config = TenuoPluginConfig(
 
 With `authorized_signals` set, a signal whose name is not on the list is dropped before it reaches the workflow, including a signal that arrives with the first workflow task. The run continues. The drop is decided again on replay, so adding or removing a name changes how signals already in history replay; treat a change to the list like a workflow code change. Workflows that need different names need separate worker configs.
 
+Each drop emits one DENY `TemporalAuditEvent` with `tool="signal:<name>"` and the warrant id (`activity_name` and `activity_id` are empty), and increments the denied metric when `metrics` is set. The metric uses the fixed tool label `signal:<unlisted>`, since the sender picks the signal name; the event and the log line keep the real name. Both run in workflow code: they are skipped on replay, and a callback or metric that raises is logged without changing the drop. Keep `audit_callback` fast, since a callback that blocks the workflow thread for 2 seconds trips Temporal's deadlock detector.
+
 With `authorized_updates` set, the same check runs in the update validator when the update defines one, and in the update handler for every update, including an update with no validator. That failure rejects the update.
 
 ---

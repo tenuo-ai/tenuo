@@ -378,6 +378,57 @@ class _TenuoWorkflowOutboundInterceptor:
 
 # ── Inbound Workflow Interceptor ─────────────────────────────────────────
 
+def _record_dropped_signal(config: "TenuoPluginConfig", tool: str, warrant_id: str) -> None:
+    """Audit and count a dropped signal once.
+
+    This runs in workflow code, which re-runs on every replay, so it skips
+    replays. A raising callback or metric is logged and never changes the drop.
+    The metric label is fixed: the sender picks the signal name, so one label
+    per name would let them grow metric cardinality without bound.
+    """
+    callback = config.audit_callback if config.audit_deny else None
+    if config.metrics is None and callback is None:
+        return
+    from temporalio import workflow  # type: ignore[import-not-found]
+
+    if workflow.unsafe.is_replaying():
+        return
+    info = workflow.info()
+    reason = "signal not in authorized_signals"
+    if config.metrics is not None:
+        try:
+            config.metrics.record_denied(
+                tool="signal:<unlisted>", reason=reason, workflow_type=info.workflow_type, latency_seconds=0.0
+            )
+        except Exception:
+            logger.error("Metrics failed for dropped %s", tool, exc_info=True)
+    if callback is not None:
+        from tenuo import __version__
+
+        event = TemporalAuditEvent(
+            workflow_id=info.workflow_id,
+            workflow_type=info.workflow_type,
+            workflow_run_id=info.run_id,
+            activity_name="",
+            activity_id="",
+            task_queue=info.task_queue,
+            decision="DENY",
+            tool=tool,
+            arguments={},
+            warrant_id=warrant_id,
+            warrant_expires_at=None,
+            warrant_capabilities=[],
+            denial_reason=reason,
+            constraint_violated="authorized_signals",
+            timestamp=workflow.now(),
+            tenuo_version=__version__,
+        )
+        try:
+            callback(event)
+        except Exception:
+            logger.error("Audit callback failed for dropped %s", tool, exc_info=True)
+
+
 class _TenuoWorkflowInboundInterceptor:
     """Workflow interceptor — extracts Tenuo headers and cleans up on completion.
 
@@ -533,11 +584,13 @@ class _TenuoWorkflowInboundInterceptor:
             if signal_name not in config.authorized_signals:
                 # Drop, don't raise: a raised denial fails the run, so any
                 # caller who can signal could end the workflow.
+                warrant_id = self._resolve_warrant_id()
                 logger.warning(
                     "Signal '%s' dropped (warrant_id=%s): not in authorized_signals",
                     signal_name,
-                    self._resolve_warrant_id(),
+                    warrant_id,
                 )
+                _record_dropped_signal(config, f"signal:{signal_name}", warrant_id)
                 return
         return await self.next.handle_signal(input)
 
