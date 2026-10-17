@@ -677,6 +677,7 @@ def _collect_approvals_for_approval_gate(
     threshold: int,
     handler: "Optional[ApprovalHandler]",
     approvals: Optional[List[Any]],
+    warrant_chain: Optional[List[Any]] = None,
 ) -> List[Any]:
     """Collect and verify approvals for an approval-gate-triggered tool call.
 
@@ -712,6 +713,7 @@ def _collect_approvals_for_approval_gate(
         bound_warrant.warrant,
         request_hash,
         holder_key=holder_key,
+        warrant_chain=warrant_chain,
     )
 
     collected: List[Any] = []
@@ -768,6 +770,7 @@ async def _collect_approvals_for_approval_gate_async(
     threshold: int,
     handler: "Optional[ApprovalHandler]",
     approvals: Optional[List[Any]],
+    warrant_chain: Optional[List[Any]] = None,
 ) -> List[Any]:
     """Async variant of :func:`_collect_approvals_for_approval_gate`.
 
@@ -797,6 +800,7 @@ async def _collect_approvals_for_approval_gate_async(
         bound_warrant.warrant,
         request_hash,
         holder_key=holder_key,
+        warrant_chain=warrant_chain,
     )
 
     collected: List[Any] = []
@@ -1136,6 +1140,7 @@ def _enforce_tool_call_impl(
                 tool_name, _pop_auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
                 approval_handler, approvals,
+                warrant_chain=_presented_chain,
             )
 
         if verify_mode == "sign":
@@ -1607,6 +1612,7 @@ async def _enforce_tool_call_async_impl(
                 tool_name, _pop_auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
                 approval_handler, approvals,
+                warrant_chain=_presented_chain,
             )
 
         _chain_result: Optional[Any] = None

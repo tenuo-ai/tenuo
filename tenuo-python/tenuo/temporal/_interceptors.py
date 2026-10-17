@@ -1255,6 +1255,7 @@ class TenuoActivityInboundInterceptor:
             # -- 11. Multi-Sig Approval Resolution --
             gate_approvals = await self._resolve_approval_gate_approvals(
                 warrant, tool_name, args, headers,
+                chain=list(chain) if chain else [warrant],
             )
 
             # -- 12. Cryptographic Authorization Evaluation --
@@ -1444,6 +1445,7 @@ class TenuoActivityInboundInterceptor:
         tool_name: str,
         args: Dict[str, Any],
         headers: Dict[str, bytes],
+        chain: Optional[List[Any]] = None,
     ) -> Optional[List[Any]]:
         """Evaluate warrant approval gates and collect approvals when a gate fires."""
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
@@ -1485,6 +1487,7 @@ class TenuoActivityInboundInterceptor:
             warrant,
             request_hash,
             holder_key=holder_key,
+            warrant_chain=chain,
         )
 
         handler = self._config.approval_handler if self._config else None
