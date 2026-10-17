@@ -1,0 +1,185 @@
+"""Shared local artifacts. Cryptographic operations remain in the SDK.
+
+Key and SRL helpers follow the existing Temporal local workflow. New writers
+publish atomically; SRL readers also accept its legacy base64 encoding.
+"""
+
+from __future__ import annotations
+
+import base64
+import fcntl
+import os
+import re
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+
+import yaml
+
+MAX_BYTES = 4 * 1024 * 1024
+
+
+class DocumentError(ValueError):
+    """A local document cannot be interpreted safely."""
+
+
+class StrictLoader(yaml.SafeLoader):
+    def compose_node(self, parent, index):
+        event = self.peek_event()
+        if self.check_event(yaml.AliasEvent) or getattr(event, "anchor", None):
+            raise DocumentError("YAML anchors and aliases are not supported")
+        return super().compose_node(parent, index)
+
+    def construct_mapping(self, node, deep=False):
+        result = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if not isinstance(key, str) or not key.strip():
+                raise DocumentError("mapping keys must be nonempty strings")
+            if key in result:
+                raise DocumentError(f"duplicate field: {key}")
+            result[key] = self.construct_object(value_node, deep=deep)
+        return result
+
+
+def read_bytes(path):
+    with Path(path).expanduser().open("rb") as stream:
+        raw = stream.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise DocumentError(f"{path}: file exceeds 4 MiB")
+    return raw
+
+
+def load_yaml(path):
+    try:
+        data = yaml.load(read_bytes(path), Loader=StrictLoader)
+    except yaml.YAMLError as exc:
+        raise DocumentError(f"{path}: invalid YAML") from exc
+    if not isinstance(data, dict):
+        raise DocumentError(f"{path}: expected a YAML mapping")
+    return data
+
+
+def fields(data, allowed, required=(), where="document"):
+    if not isinstance(data, dict):
+        raise DocumentError(f"{where}: expected a mapping")
+    extra, missing = set(data) - set(allowed), set(required) - set(data)
+    if extra:
+        raise DocumentError(f"{where}: unknown fields: {', '.join(sorted(extra))}")
+    if missing:
+        raise DocumentError(f"{where}: missing fields: {', '.join(sorted(missing))}")
+
+
+def publish(path, data, *, replace=False):
+    """Publish complete bytes with mode 0600; never clobber by default."""
+    path = Path(path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if replace:
+            if path.is_symlink():
+                raise DocumentError(f"{path}: refusing to replace a symlink")
+            os.replace(temporary, path)
+        else:
+            os.link(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def write_yaml(path, data, *, replace=False):
+    publish(path, yaml.safe_dump(data, sort_keys=False).encode(), replace=replace)
+
+
+def name(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value):
+        raise DocumentError("name must contain letters, numbers, dots, underscores or hyphens")
+    return value
+
+
+def fingerprint(key):
+    return bytes(key.to_bytes()).hex()[:16]
+
+
+def keygen(base):
+    from tenuo import SigningKey
+
+    base = Path(base)
+    private, public = base.with_name(base.name + ".key"), base.with_name(base.name + ".pub")
+    if private.exists() or public.exists() or private.is_symlink() or public.is_symlink():
+        raise FileExistsError(f"{base}: key already exists; not overwriting")
+    key = SigningKey.generate()
+    publish(private, base64.b64encode(bytes(key.secret_key_bytes())) + b"\n")
+    publish(public, base64.b64encode(bytes(key.public_key.to_bytes())) + b"\n")
+    return private, public, key.public_key
+
+
+def load_signing_key(path):
+    from tenuo import SigningKey
+    from tenuo.keys import load_signing_key_from_file
+
+    raw = read_bytes(path)
+    if raw.startswith(b"-----BEGIN"):
+        return SigningKey.from_pem(raw.decode())
+    return load_signing_key_from_file(str(Path(path).expanduser()))
+
+
+def load_public_key(path):
+    from tenuo import PublicKey
+
+    text = read_bytes(path).decode().strip()
+    for decode in (
+        lambda: PublicKey.from_bytes(base64.b64decode(text, validate=True)),
+        lambda: PublicKey.from_bytes(bytes.fromhex(text)),
+        lambda: PublicKey.from_pem(text),
+    ):
+        try:
+            return decode()
+        except Exception:
+            continue
+    raise DocumentError(f"{path}: expected a public key in base64, hex or PEM")
+
+
+def read_revocation_list(path):
+    from tenuo import SignedRevocationList
+
+    raw = read_bytes(path)
+    try:
+        return SignedRevocationList.from_bytes(raw)
+    except Exception:
+        try:
+            return SignedRevocationList.from_bytes(base64.b64decode(raw.strip(), validate=True))
+        except Exception:
+            raise DocumentError(f"{path}: invalid signed revocation list") from None
+
+
+@contextmanager
+def operator_lock(directory):
+    """Serialize read/modify/publish operations by local controllers."""
+    directory = Path(directory)
+    fd = os.open(directory / ".controller.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
+
+
+def update_revocations(path, issuer, ids=(), *, create=False):
+    from tenuo import SrlBuilder
+
+    path = Path(path)
+    with operator_lock(path.parent):
+        if create:
+            if path.exists():
+                raise FileExistsError(f"{path}: list already exists")
+            builder = SrlBuilder().version(1)
+        else:
+            previous = read_revocation_list(path)
+            previous.verify(issuer.public_key)
+            builder = SrlBuilder().from_existing(previous).version(previous.version + 1)
+        signed = builder.revoke_all(list(ids)).build(issuer)
+        publish(path, bytes(signed.to_bytes()), replace=not create)
+        return signed
