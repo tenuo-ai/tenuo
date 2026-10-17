@@ -1,6 +1,8 @@
 # Python integration
 
-Use this reference only for projects using the current `tenuo` Python package. Confirm the resolved package version and inspect its shipped API, framework module, and tests before generating code; adapters evolve faster than the core warrant types.
+Apply the [freshness contract](../SKILL.md#freshness-contract) first. Consult [framework status](framework-status.md) and the [unreleased horizon](unreleased.md) before choosing a path. These references describe invariants and version-conditional options; an API name here is not evidence that the target exports it.
+
+Use this reference only for projects using the `tenuo` Python package. Confirm the resolved package version and inspect its shipped API, framework module, and tests before generating code; adapters evolve faster than the core warrant types.
 
 Do not treat this reference as an API specification. First locate the importable `tenuo` package and its distribution metadata, then inspect the modules used by the project. Python wheels do not reliably include this repository's top-level examples. If local source is insufficient, compare the resolved package with the Python entry in the [release contract](../release.json). Use these immutable sources only when the versions match:
 

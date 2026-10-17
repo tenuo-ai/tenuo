@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""Refresh the authorization skill's open-PR hazard overlay (requires gh auth).
+
+Reviews live beside the snapshot and survive only an identical source fingerprint.
+New/changed PRs are pending review, never silently classified as safe. No PR code
+is executed by this script. Use --check for an online comparison without writes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SKILL = ROOT / "skills/tenuo-agent-authorization"
+REPO = "tenuo-ai/tenuo"
+AUTHORS = ("d8joseph", "aimable100")
+CATEGORIES = {
+    "A": "authorization/security semantics",
+    "B": "public SDK APIs",
+    "C": "framework behavior",
+    "D": "compatibility/version floors",
+    "E": "delegation/trust/PoP/chain transport",
+    "F": "constraints/wire semantics",
+    "G": "documentation/examples",
+    "H": "protocol/spec",
+    "I": "no skill impact",
+}
+SURFACES = {
+    "MCP": r"\bmcp\b|fastmcp|rmcp",
+    "LangChain": r"langchain|agentexecutor|create_agent|auto_protect",
+    "LangGraph": r"langgraph|tenuo_node|guard_node|warrantstack|tenuotoolnode",
+    "OpenAI Agents": r"openai|agents.sdk",
+    "Temporal": r"temporal|nexus|replayer",
+    "CrewAI": r"crewai|guardedcrew",
+    "Google ADK": r"google.adk|\badk\b",
+    "AutoGen": r"autogen",
+    "FastAPI": r"fastapi|secureapirouter",
+    "A2A": r"\ba2a\b",
+    "Hermes": r"hermes",
+    "TypeScript": r"typescript|\bts\b|tenuo-ts",
+    "core/constraints": r"tenuo-core|constraint|shlex|urlsafe|\bcel\b",
+    "protocol": r"protocol|ietf|\baat\b|wire.format",
+    "GitHub Actions": r"github.actions|gha-|oidc",
+}
+
+
+def gh(*args: str):
+    return json.loads(subprocess.check_output(["gh", *args], text=True))
+
+
+def source_fingerprint(pr: dict) -> str:
+    fields = {
+        k: pr[k]
+        for k in (
+            "number",
+            "author",
+            "title",
+            "body",
+            "base",
+            "head",
+            "head_sha",
+            "files",
+            "status",
+        )
+    }
+    return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
+
+
+def normalize(pr: dict) -> dict:
+    item = {
+        "number": pr["number"],
+        "author": pr["author"]["login"],
+        "title": pr["title"],
+        "url": pr["url"],
+        "body": pr["body"],
+        "base": pr["baseRefName"],
+        "head": pr["headRefName"],
+        "head_sha": pr["headRefOid"],
+        "files": sorted(f["path"] for f in pr["files"]),
+        "status": "draft" if pr.get("isDraft") else "open",
+    }
+    item["source_fingerprint"] = source_fingerprint(item)
+    return item
+
+
+def build_snapshot(
+    prs: list[dict], main_sha: str, reviews: dict, generated_at: str
+) -> dict:
+    items = sorted((normalize(pr) for pr in prs), key=lambda p: p["number"])
+    if len({p["number"] for p in items}) != len(items):
+        raise ValueError("duplicate PRs in inventory")
+    heads = {p["head"]: p["number"] for p in items}
+    for p in items:
+        text = p["title"] + "\n" + p["body"] + "\n" + "\n".join(p["files"])
+        p["affected_surfaces"] = [
+            s
+            for s, pattern in SURFACES.items()
+            if re.search(pattern, text, re.IGNORECASE)
+        ]
+        # Mentions are deliberately NOT dependency edges. Issues, related work,
+        # supersedes, and external-repo numbers require a reviewer's interpretation.
+        p["mentioned_local_numbers"] = sorted(
+            {int(n) for n in re.findall(r"(?<![\w/])#(\d+)", p["body"])}
+        )
+        p["stack_parent"] = heads.get(p["base"])
+        p["review"] = reviews.get(str(p["number"]), {})
+        review = p["review"]
+        p["review_status"] = (
+            "reviewed"
+            if (
+                review.get("source_fingerprint") == p["source_fingerprint"]
+                and review.get("summary")
+                and review.get("category")
+            )
+            else "pending"
+        )
+        if p["review_status"] == "pending":
+            p["review"] = {}  # do not publish a stale review as current advice
+        p["depends_on"] = sorted(
+            set(
+                ([p["stack_parent"]] if p["stack_parent"] else [])
+                + p["review"].get("depends_on", [])
+            )
+        )
+        p["supersedes"] = p["review"].get("supersedes", [])
+        p["related"] = p["review"].get("related", [])
+    return {
+        "schema_version": 1,
+        "generated_at": generated_at,
+        "main_sha": main_sha,
+        "repository": REPO,
+        "authors": list(AUTHORS),
+        "complete": True,
+        "counts": {a: sum(p["author"] == a for p in items) for a in AUTHORS},
+        "categories": CATEGORIES,
+        "pull_requests": items,
+    }
+
+
+def render(snapshot: dict) -> str:
+    lines = [
+        "# Unreleased change horizon",
+        "",
+        "Generated by `scripts/refresh_agent_skill_horizon.py`; do not edit this reference.",
+        "",
+        (
+            f"Queried {snapshot['generated_at']}; merged main `{snapshot['main_sha']}`. "
+            f"All open PRs by {', '.join(AUTHORS)}: {len(snapshot['pull_requests'])}."
+        ),
+        "",
+        (
+            "**Context, never installed functionality. An open PR may invalidate a recommendation without making its replacement API available.** "
+            "Inspect the target's imported source first. A pending review or stale snapshot is an unknown horizon, not clearance."
+        ),
+        "",
+        "The machine-readable [overlay](../unreleased.json) retains bodies, complete changed-file lists, head commits, "
+        "review fingerprints and branch relationships. Categories: "
+        + "; ".join(f"{k}={v}" for k, v in CATEGORIES.items())
+        + ".",
+        "",
+        (
+            "Stack parent edges come from base/head branches. Other dependency, supersedes and related edges are reviewed separately; "
+            "mentions alone are not dependencies. External merge order and conflicts are in each review's merge notes. "
+            "Do not merge all heads together. Evaluate independent leaf stacks in isolated checkouts."
+        ),
+        "",
+        "| PR | Author | Categories / surfaces | Stack parent; additional prerequisites | Review / implication |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+
+    def cell(s):
+        return str(s).replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
+
+    for p in snapshot["pull_requests"]:
+        r = p["review"]
+        lines.append(
+            "| "
+            + " | ".join(
+                map(
+                    cell,
+                    (
+                        f"[#{p['number']}]({p['url']}) {p['title']}",
+                        p["author"],
+                        ",".join(r.get("category", []))
+                        + ": "
+                        + ", ".join(p["affected_surfaces"]),
+                        ", ".join(f"#{n}" for n in p["depends_on"])
+                        or ("main" if p["base"] == "main" else p["base"]),
+                        r.get("summary", "PENDING REVIEW")
+                        + (
+                            " Merge notes: " + r["merge_notes"]
+                            if r.get("merge_notes")
+                            else ""
+                        ),
+                    ),
+                )
+            )
+            + " |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def fetch_live() -> tuple[list[dict], str]:
+    sha = gh("api", f"repos/{REPO}/commits/main")["sha"]
+    prs = []
+    fields = "number,title,url,author,baseRefName,headRefName,headRefOid,body,files,changedFiles,isDraft"
+    for author in AUTHORS:
+        found = gh(
+            "pr",
+            "list",
+            "--repo",
+            REPO,
+            "--state",
+            "open",
+            "--author",
+            author,
+            "--limit",
+            "10000",
+            "--json",
+            fields,
+        )
+        if len(found) >= 10000:
+            raise ValueError("PR query reached limit; refusing incomplete snapshot")
+        for p in found:
+            if len(p["files"]) != p["changedFiles"]:
+                # gh's GraphQL file connection can truncate. REST pagination
+                # must also match changedFiles; fail rather than omit files.
+                pages = gh(
+                    "api",
+                    "--paginate",
+                    "--slurp",
+                    f"repos/{REPO}/pulls/{p['number']}/files?per_page=100",
+                )
+                p["files"] = [{"path": f["filename"]} for page in pages for f in page]
+                if len(p["files"]) != p["changedFiles"]:
+                    raise ValueError(f"incomplete files for #{p['number']}")
+        prs.extend(found)
+    return prs, sha
+
+
+def fetch_main_source_fingerprint(sha: str) -> str:
+    tree = gh("api", f"repos/{REPO}/git/trees/{sha}?recursive=1")
+    if tree.get("truncated"):
+        raise ValueError("truncated main source tree; refusing freshness claim")
+    prefixes = (
+        "tenuo-python/tenuo/",
+        "tenuo-core/src/",
+        "tenuo-ts/packages/core/src/",
+        "tenuo-ts/packages/mcp/src/",
+    )
+    manifests = {
+        "tenuo-python/pyproject.toml",
+        "tenuo-python/Cargo.toml",
+        "tenuo-core/Cargo.toml",
+        "tenuo-ts/packages/core/package.json",
+        "tenuo-ts/packages/mcp/package.json",
+        "docs/compatibility-matrix.md",
+    }
+    entries = sorted(
+        (e["path"], e["sha"])
+        for e in tree["tree"]
+        if e["type"] == "blob"
+        and (e["path"].startswith(prefixes) or e["path"] in manifests)
+    )
+    if not entries:
+        raise ValueError("main source tree contains no SDK files")
+    return hashlib.sha256(json.dumps(entries).encode()).hexdigest()
+
+
+def render_frameworks(status: dict, snapshot: dict) -> str:
+    lines = [
+        "# Framework status by source",
+        "",
+        (
+            "Generated from reviewed `framework-status.json` and the live PR overlay. "
+            "Refresh does not infer new implementation facts: re-review these facts when SDK sources or the release pin change."
+        ),
+        "",
+        (
+            f"Release reviewed: `{status['reviewed_release_tag']}`. Main reviewed: `{status['reviewed_main_sha']}`. "
+            "These are historical comparisons, never an override of target runtime source. "
+            "The repository compatibility matrix mixes released and main claims; its Stable label is not deny-before-effect evidence."
+        ),
+        "",
+        (
+            "No row certifies an integration. Existing test locations below describe coverage to inspect, "
+            "not proof that they ran against your target. Consult the regression report for actual dispatch and effect-count evidence."
+        ),
+        "",
+    ]
+    for f in status["frameworks"]:
+        relevant = [
+            p for p in snapshot["pull_requests"] if f["name"] in p["affected_surfaces"]
+        ]
+        lines += [
+            f"## {f['name']}",
+            "",
+            f"Interception: {f['interception']}",
+            "",
+            f"Released: {f['released']}",
+            "",
+            f"Main: {f['main']}",
+            "",
+            f"Framework floor: {f['minimum_framework_versions']}",
+            "",
+            f"Known gaps: {f['known_bypasses']}",
+            "",
+            "Open PR horizon: "
+            + (
+                ", ".join(f"[#{p['number']}]({p['url']})" for p in relevant)
+                or "No author-inventory match; external changes still require checking."
+            )
+            + ".",
+            "",
+            "Source paths to inspect in the matching checkout: "
+            + (
+                ", ".join(f"`{p}`" for p in f["source_paths"])
+                or "external hermes-tenuo repository"
+            )
+            + ".",
+            "",
+            "Dispatch-test evidence to inspect: "
+            + (
+                ", ".join(f"`{p}`" for p in f["existing_test_paths"])
+                or "external plugin CI; not established here"
+            )
+            + ". "
+            + f["deny_before_effect_evidence"],
+            "",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check", action="store_true", help="compare live PRs/main without writing"
+    )
+    args = parser.parse_args()
+    prs, sha = fetch_live()
+    reviews = json.loads((SKILL / "unreleased-reviews.json").read_text())
+    snapshot = build_snapshot(prs, sha, reviews, datetime.now(UTC).isoformat())
+    snapshot["main_source_fingerprint"] = fetch_main_source_fingerprint(sha)
+    path = SKILL / "unreleased.json"
+    if args.check:
+        old = json.loads(path.read_text())
+        old.pop("generated_at", None)
+        old.pop("main_sha", None)
+        snapshot.pop("generated_at", None)
+        snapshot.pop("main_sha", None)
+        return int(old != snapshot)
+    path.write_text(json.dumps(snapshot, indent=2) + "\n")
+    (SKILL / "references/unreleased.md").write_text(render(snapshot))
+    status = json.loads((SKILL / "framework-status.json").read_text())
+    (SKILL / "references/framework-status.md").write_text(
+        render_frameworks(status, snapshot)
+    )
+    pending = sum(p["review_status"] != "reviewed" for p in snapshot["pull_requests"])
+    print(
+        f"Inventoried {len(prs)} PRs; {pending} need review. Refresh does not grant readiness."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
