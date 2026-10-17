@@ -8,6 +8,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from tenuo.temporal._constants import (
+    TENUO_CHAIN_HEADER,
     TENUO_COMPRESSED_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_WARRANT_HEADER,
@@ -27,15 +28,22 @@ def tenuo_headers(
     key_id: str,
     *,
     compress: bool = True,
+    warrant_chain: Optional[List[Any]] = None,
 ) -> Dict[str, bytes]:
     """Create headers dict for starting a workflow with Tenuo authorization.
 
     Args:
-        warrant: The warrant authorizing this workflow
+        warrant: The warrant authorizing this workflow. May also be the whole
+            chain as one token: a root-first list ``[root, ..., leaf]`` or an
+            encoded WarrantStack string.
         key_id: Identifier for the holder's signing key. The actual signing
             key is resolved at runtime by workers via KeyResolver from secure
             storage (Vault, AWS Secrets Manager, GCP Secret Manager, etc.).
         compress: Whether to gzip compress the warrant (default: True)
+        warrant_chain: Parent warrants of a delegated ``warrant``, root-first,
+            **excluding** the leaf. Emitted as the ``x-tenuo-warrant-chain``
+            header so workers that trust only the root can verify the leaf.
+            Default None sends the leaf alone.
 
     Returns:
         Headers dict to pass to client.start_workflow()
@@ -71,7 +79,14 @@ def tenuo_headers(
             "Private keys must never be transmitted in headers."
         )
 
+    from tenuo._enforcement import split_presented_warrant
+
+    warrant, parents = split_presented_warrant(warrant, warrant_chain)
     warrant_bytes = bytes(warrant.to_bytes())
+    if parents and bytes(parents[-1].to_bytes()) == warrant_bytes:
+        raise TenuoContextError(
+            "tenuo_headers: warrant_chain lists parent warrants only; do not include the leaf warrant."
+        )
 
     headers: Dict[str, bytes] = {
         TENUO_KEY_ID_HEADER: key_id.encode("utf-8"),
@@ -85,6 +100,11 @@ def tenuo_headers(
     else:
         headers[TENUO_WARRANT_HEADER] = warrant_bytes
         headers[TENUO_COMPRESSED_HEADER] = b"0"
+
+    if parents:
+        from tenuo_core import encode_warrant_stack
+
+        headers[TENUO_CHAIN_HEADER] = encode_warrant_stack([*parents, warrant]).encode("utf-8")
 
     return headers
 

@@ -232,6 +232,7 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         key_id: str,
         args: Optional[List[Any]] = None,
         compress: bool = True,
+        warrant_chain: Optional[List[Any]] = None,
         **execute_kwargs: Any,
     ) -> Any:
         """Bind headers and execute a workflow in one call."""
@@ -246,6 +247,7 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
             key_id=key_id,
             args=args,
             compress=compress,
+            warrant_chain=warrant_chain,
             **execute_kwargs,
         )
 
@@ -293,7 +295,12 @@ class TenuoWarrantContextPropagator:
 
 
 @asynccontextmanager
-async def tenuo_warrant_context(warrant_or_source: Any, key_id: str):
+async def tenuo_warrant_context(
+    warrant_or_source: Any,
+    key_id: str,
+    *,
+    warrant_chain: Optional[List[Any]] = None,
+):
     """Async context manager for passing a Tenuo warrant to plain ``client.execute_workflow`` calls.
 
     Sets the module-level :data:`_active_tenuo_warrant` contextvar so that
@@ -315,6 +322,9 @@ async def tenuo_warrant_context(warrant_or_source: Any, key_id: str):
         warrant_or_source: A :class:`~tenuo_core.Warrant` object **or** a
             ``WarrantSource`` with an async ``resolve()`` method.
         key_id: The holder key identifier to embed in headers.
+        warrant_chain: Parent warrants of a delegated warrant, root-first,
+            excluding the leaf. Sent as ``x-tenuo-warrant-chain``; see
+            :func:`~tenuo.temporal.tenuo_headers`.
 
     Yields:
         The resolved :class:`~tenuo_core.Warrant` object.
@@ -326,8 +336,12 @@ async def tenuo_warrant_context(warrant_or_source: Any, key_id: str):
     else:
         warrant = warrant_or_source
 
+    from tenuo._enforcement import split_presented_warrant
+
+    warrant, parents = split_presented_warrant(warrant, warrant_chain)
     propagator = TenuoWarrantContextPropagator()
-    token = propagator.set(warrant, key_id)
+    # tenuo_headers() accepts a root-first [*parents, leaf] list as the warrant.
+    token = propagator.set([*parents, warrant] if parents else warrant, key_id)
     try:
         yield warrant
     finally:
