@@ -38,9 +38,10 @@ their entire alternative/stacked end states have not been exhaustively executed.
 The existing payment coding-agent evaluations remain failed and stale, including
 reporting failures despite previously passing generated implementation tests.
 Fresh framework coding-agent evidence is absent. Its scenario now specifies
-external-style release/main starters and independent bypass probes. Hosted
-replays await the model/run/time/cost budget required by the existing evaluation
-contract; no historical grades or fingerprints were renewed.
+external-style release/main starters and independent bypass probes. Fresh coding-agent evaluations can use isolated in-session subagents; a separate
+OpenAI API key or external model spend is not required for that route. External
+paid replays still need an agreed model/run/time/cost budget. No fresh coding-agent
+run has completed, and no historical grades or fingerprints were renewed.
 
 Use `python3 scripts/validate_agent_skills.py --readiness --summary
 /tmp/agent-skill-readiness.md` for the explicit promotion gate. Ordinary CI remains
