@@ -949,8 +949,19 @@ def _resolve_workflow_nexus_authority(
             chain = list(decode_warrant_stack_base64(encoded_current.decode("utf-8")))
         else:
             current = _extract_warrant_from_headers(raw_current)
-            chain = [current] if current is not None else []
-        chain.append(warrant)
+            if current is None or getattr(current, "parent_hash", None) is not None:
+                # Without the workflow chain header there is no path back to a
+                # trusted root; fail closed instead of sending a rootless chain.
+                raise TenuoContextError(
+                    "tenuo_execute_nexus_operation: delegated warrant requires "
+                    f"the {TENUO_CHAIN_HEADER} header in workflow context, or "
+                    "pass warrant_chain= explicitly."
+                )
+            chain = [current]
+        # The workflow chain already ends with the workflow warrant; only
+        # extend it when a further-attenuated warrant was passed explicitly.
+        if not chain or chain[-1].to_bytes() != warrant.to_bytes():
+            chain.append(warrant)
     _validate_chain_ends_with_warrant(
         chain,
         warrant,
