@@ -112,6 +112,9 @@ class EnforcementResult:
             Contains ``{"got": int, "need": int}`` so callers can tell "re-submit
             with more approvals" from a flat scope denial without parsing the
             human-readable ``denial_reason``.
+        observed: True when the decision was a denial that observe mode let
+            through. ``allowed`` is then True, the denial fields stay populated,
+            and receipts / control-plane events still record the denial.
     """
 
     allowed: bool
@@ -140,6 +143,7 @@ class EnforcementResult:
     # receipt fail a later check against the wire payload.
     pop_auth_args: Optional[Dict[str, Any]] = None
     approval_metadata: Optional[Dict[str, Any]] = None
+    observed: bool = False
 
     def raise_if_denied(self) -> None:
         """
@@ -669,6 +673,40 @@ def _denial_before_approval(
     return error_type, reason, argument
 
 
+def _observed_approval_gate(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    warrant_id: Optional[str],
+    threshold: int,
+    approvals: Optional[List[Any]],
+    presented_chain: Optional[Any],
+    pop_auth_args: Optional[Dict[str, Any]],
+    authorizer: Optional[Any],
+) -> Optional[EnforcementResult]:
+    """In observe mode, record would-require-approval instead of prompting.
+
+    Mirrors Rust ``WouldRequireApproval``: no handler is called and nothing
+    blocks. Approvals already presented with the call are still verified
+    normally, so ``None`` is returned for them and in enforce mode.
+    """
+    from .config import should_block_violation
+
+    if approvals or should_block_violation():
+        return None
+    return EnforcementResult(
+        allowed=False,
+        tool=tool_name,
+        arguments=tool_args,
+        denial_reason=f"approval required for '{tool_name}' ({threshold} approval(s))",
+        error_type="approval_required",
+        warrant_id=warrant_id,
+        presented_chain=presented_chain,
+        pop_auth_args=pop_auth_args,
+        authorizer=authorizer,
+        approval_metadata={"min_approvals": threshold},
+    )
+
+
 def _collect_approvals_for_approval_gate(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -1132,6 +1170,14 @@ def _enforce_tool_call_impl(
 
             # Collect and verify approvals — raises if missing or invalid.
             # Returns verified SignedApproval objects to pass to validate().
+            _would_require = _observed_approval_gate(
+                tool_name, tool_args, warrant_id, _gate_threshold, approvals,
+                _presented_chain, _pop_auth_args,
+                authorizer if authorizer is not None else _auth,
+            )
+            if _would_require is not None:
+                return _would_require
+
             _gate_approvals = _collect_approvals_for_approval_gate(
                 tool_name, _pop_auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
@@ -1603,6 +1649,14 @@ async def _enforce_tool_call_async_impl(
                     authorizer=authorizer if authorizer is not None else _auth,
                 )
 
+            _would_require = _observed_approval_gate(
+                tool_name, tool_args, warrant_id, _gate_threshold, approvals,
+                _presented_chain, _pop_auth_args,
+                authorizer if authorizer is not None else _auth,
+            )
+            if _would_require is not None:
+                return _would_require
+
             _gate_approvals = await _collect_approvals_for_approval_gate_async(
                 tool_name, _pop_auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
@@ -1947,17 +2001,50 @@ def _collect_runtime_receipt(result: EnforcementResult) -> EnforcementResult:
     return result
 
 
+def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
+    """Observe mode: log what would have been denied and let the call proceed.
+
+    The full decision has already run. Denial fields (including integrity
+    error types such as ``invalid_pop``) stay on the result and ``observed`` is
+    set, so receipts and control-plane events still record a denial. Argument
+    values are never logged, only keys and value type names.
+    """
+    from .config import should_block_violation
+
+    if result.allowed or should_block_violation():
+        return result
+    args = result.arguments or {}
+    logger.warning(
+        f"OBSERVE: would deny {result.tool}: {result.denial_reason or result.error_type}",
+        extra={
+            "tool": result.tool,
+            "args_keys": list(args.keys()),
+            "arg_types": {k: type(v).__name__ for k, v in args.items()},
+            "error_type": result.error_type,
+            "constraint_violated": result.constraint_violated,
+            "denial_reason": result.denial_reason,
+            "warrant_id": result.warrant_id,
+            "observed": True,
+        },
+    )
+    result.observed = True
+    result.allowed = True
+    return result
+
+
 from functools import wraps as _wraps  # noqa: E402
 
 
 @_wraps(_enforce_tool_call_impl)
 def enforce_tool_call(*args, **kwargs):
-    return _collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs))
+    return _apply_observe_mode(_collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs)))
 
 
 @_wraps(_enforce_tool_call_async_impl)
 async def enforce_tool_call_async(*args, **kwargs):
-    return _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+    return _apply_observe_mode(
+        _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+    )
 
 
 def parents_from_presented_chain(
@@ -2136,7 +2223,7 @@ def verify_inbound_call(
     if not callable(bind):
         raise ConfigurationError("verify_inbound_call requires a Warrant with bind()")
     bound = bind(VerificationOnlyKey())
-    return _enforce_tool_call_impl(
+    result = _enforce_tool_call_impl(
         tool_name=tool_name,
         tool_args=tool_args,
         bound_warrant=bound,
@@ -2149,6 +2236,7 @@ def verify_inbound_call(
         constraint_args=constraint_args,
         approval_handler=approval_handler,
     )
+    return _apply_observe_mode(result)
 
 
 __all__ = [

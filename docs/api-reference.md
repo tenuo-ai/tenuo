@@ -152,7 +152,7 @@ auto_configure()
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `TENUO_ISSUER_KEY` | Base64-encoded signing key | `SGVsbG8...` |
-| `TENUO_MODE` | Enforcement mode | `enforce`, `audit`, `permissive` |
+| `TENUO_MODE` | Enforcement mode (`audit`, `permissive` are aliases of `observe`) | `enforce`, `observe` |
 | `TENUO_TRUSTED_ROOTS` | Comma-separated public keys | `key1,key2` |
 | `TENUO_DEV_MODE` | Enable development mode | `1` or `true` |
 | `TENUO_DEFAULT_TTL` | Default warrant TTL (seconds) | `300` |
@@ -179,10 +179,11 @@ print(f"Mode: {config.mode}")  # EnforcementMode enum
 Enum controlling how authorization violations are handled:
 
 ```python
-from tenuo import EnforcementMode, is_audit_mode, is_enforce_mode, should_block_violation
+from tenuo import is_observe_mode, is_enforce_mode, should_block_violation
+from tenuo.config import EnforcementMode
 
 # Check current mode
-if is_audit_mode():
+if is_observe_mode():
     print("Violations are logged but not blocked")
 
 if should_block_violation():
@@ -192,15 +193,17 @@ if should_block_violation():
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `EnforcementMode.ENFORCE` | Block unauthorized requests | Production (default) |
-| `EnforcementMode.AUDIT` | Log violations but allow execution | Gradual adoption |
-| `EnforcementMode.PERMISSIVE` | Log + warn header, allow execution | Development |
+| `EnforcementMode.OBSERVE` | Log what would be denied, allow execution | Gradual adoption |
+
+`EnforcementMode.AUDIT` and `EnforcementMode.PERMISSIVE` are aliases of `OBSERVE`, and `mode="audit"` / `mode="permissive"` resolve to it. In observe mode a denial comes back as an `EnforcementResult` with `allowed=True`, `observed=True`, and the denial fields (`error_type`, `denial_reason`, `constraint_violated`) still set.
 
 **Helper Functions:**
 
 | Function | Returns |
 |----------|---------|
 | `is_enforce_mode()` | `True` if mode is ENFORCE |
-| `is_audit_mode()` | `True` if mode is AUDIT |
+| `is_observe_mode()` | `True` if mode is OBSERVE |
+| `is_audit_mode()` | Alias of `is_observe_mode()` |
 | `should_block_violation()` | `True` if violations should be blocked |
 
 ---
@@ -1894,7 +1897,7 @@ tenuo discover --input <LOG_FILE> [--output FILE] [--format yaml|python]
 
 **How it works:**
 
-1. Deploy your app with `mode="audit"` (logs tool calls but does not block)
+1. Deploy your app with `mode="observe"` (logs tool calls but does not block)
 2. Run the app normally for a period
 3. Use `discover` to analyze logs and generate minimal capabilities
 4. Review and refine the generated capabilities
