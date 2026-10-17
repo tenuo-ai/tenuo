@@ -59,7 +59,7 @@ class Workspace:
         self.path.mkdir(mode=0o700, parents=True, exist_ok=False)
         # Protect partially initialized workspaces before generating any secret.
         publish(self.path / ".gitignore", b"*\n!.gitignore\n")
-        for directory in ("keys", "trust", "warrants", "requests", "approvals"):
+        for directory in ("keys", "trust", "warrants", "sessions", "requests", "approvals"):
             (self.path / directory).mkdir(mode=0o700)
         config = dict(DEFAULT_CONFIG, dev_roots=["issuer"] if dev else [])
         if dev:

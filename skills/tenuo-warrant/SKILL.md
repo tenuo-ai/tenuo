@@ -46,6 +46,12 @@ trust data. Never grant a signing agent the approver key to answer its own
 request. Approval cannot widen scope or extend the warrant. Local approvals are
 reusable for an identical call until expiry, not one-use execution tokens.
 
+For session-based agents, `tenuo-cli session attach --session ID --file WARRANT`
+routes an already signed full chain. Use the session ID the integration reports.
+Attaching is not activation, detaching is not revocation, and grants must never
+be merged to satisfy a single call. Keep manifests under operator control and
+read-only to the agent. A child session needs its own explicit attachment.
+
 ### Phase 1: Discover Context
 
 Before asking questions, scan the codebase:
