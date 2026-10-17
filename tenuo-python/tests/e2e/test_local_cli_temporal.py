@@ -121,3 +121,86 @@ async def test_a17_temporal_local_files_allow_deny_and_reload_revocation(tmp_pat
             assert (workspace.path / "receipts.jsonl").read_text().strip()
     finally:
         await env.shutdown()
+
+
+REFUNDS = []
+
+
+@activity.defn(name="refund")
+async def local_refund(order_id: str, amount_cents: int) -> str:
+    REFUNDS.append((order_id, amount_cents))
+    return "refunded"
+
+
+@workflow.defn
+class LocalRefundWorkflow:
+    @workflow.run
+    async def run(self, order_id: str, amount_cents: int) -> str:
+        return await tenuo_execute_activity(
+            local_refund, args=[order_id, amount_cents], start_to_close_timeout=timedelta(seconds=10)
+        )
+
+
+@pytest.mark.temporal_live
+@pytest.mark.asyncio
+async def test_temporal_gated_activity_waits_for_file_approval(tmp_path):
+    import asyncio
+
+    from tenuo.local import file_approval_handler
+    from tenuo.local_cli import main
+
+    binary = shutil.which("temporal")
+    if binary is None:
+        pytest.skip("install the Temporal CLI to run the local server test")
+    workspace = Workspace(tmp_path / ".tenuo")
+    workspace.initialize(dev=True)
+    warrant = WarrantTemplate(
+        {
+            "version": 2,
+            "ttl": "30m",
+            "capabilities": {"refund": {"order_id": "A-1001", "amount_cents": "1..12000"}},
+            "approvals": {
+                "keys": [str(workspace.path / "keys/approver.pub")],
+                "required": {"refund": {"unless": {"amount_cents": "1..5000"}}},
+            },
+        }
+    ).mint(workspace.signing_key("issuer"), workspace.public_key("agent"))
+    config = TenuoPluginConfig.local(
+        workspace.path, activity_fns=[local_refund], approval_handler=file_approval_handler(workspace.path)
+    )
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=binary)
+    try:
+        client = await Client.connect(
+            env.client.service_client.config.target_host, plugins=[TenuoTemporalPlugin(config)]
+        )
+        queue = "local-cli-" + uuid.uuid4().hex
+        async with Worker(
+            client,
+            task_queue=queue,
+            workflows=[LocalRefundWorkflow],
+            activities=[local_refund],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await start_workflow_authorized(
+                client=client,
+                workflow_run_fn=LocalRefundWorkflow.run,
+                workflow_id="local-cli-" + uuid.uuid4().hex,
+                warrant=[warrant],
+                key_id="agent",
+                args=["A-1001", 6000],
+                task_queue=queue,
+                execution_timeout=timedelta(seconds=60),
+            )
+            requests = workspace.path / "requests"
+            for _ in range(100):
+                if list(requests.glob("*.yaml")):
+                    break
+                await asyncio.sleep(0.2)
+            (request,) = requests.glob("*.yaml")
+            assert REFUNDS == []
+            home = ["--home", str(workspace.path)]
+            assert main([*home, "approval", "approve", "--file", str(request), "--yes"]) == 0
+            assert await handle.result() == "refunded"
+            assert REFUNDS == [("A-1001", 6000)]
+    finally:
+        await env.shutdown()

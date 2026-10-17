@@ -74,31 +74,36 @@ class LocalAuthority:
         return Snapshot(roots, candidate, authorizer, chain, key)
 
     def approval_handler(self, snapshot):
-        from tenuo.approval import ApprovalRequired
-        from .approvals import request_document, response_approval
-
         def collect(request):
-            # Verify against current trust and revocations even after a wait.
-            current = self.snapshot()
-            document = request_document(snapshot.chain, request.tool, request.arguments)
-            digest = document["request_hash"]
-            response = self.workspace.path / "approvals" / (digest + ".yaml")
-            if response.exists():
-                return response_approval(document, load_yaml(response), current.authorizer)
-            path = self.workspace.path / "requests" / (digest + ".yaml")
-            try:
-                write_yaml(path, document)
-            except FileExistsError:
-                if load_yaml(path) != document:
-                    raise DocumentError("existing approval request does not match this call") from None
-            pending = ApprovalRequired(request)
-            pending.args = (
-                f"Approval required for {request.tool}. Review with tenuo-cli approval show --file {path}; "
-                f"return the signed response to {response}, then retry.",
-            )
-            raise pending
+            return self.collect_file_approval(snapshot.chain, request)
 
         return collect
+
+    def collect_file_approval(self, chain, request):
+        """Return the signed approval for this exact call, or write its request file."""
+        from .approvals import request_document, response_approval
+
+        # Verify against current trust and revocations even after a wait.
+        current = self.snapshot()
+        current.authorizer.verify_chain(list(chain))
+        document = request_document(chain, request.tool, request.arguments)
+        digest = document["request_hash"]
+        if digest != bytes(request.request_hash).hex():
+            raise DocumentError("approval request does not match the warrant chain it carries")
+        response = self.workspace.path / "approvals" / (digest + ".yaml")
+        if response.exists():
+            return response_approval(document, load_yaml(response), current.authorizer)
+        path = self.workspace.path / "requests" / (digest + ".yaml")
+        try:
+            write_yaml(path, document)
+        except FileExistsError:
+            if load_yaml(path) != document:
+                raise DocumentError("existing approval request does not match this call") from None
+        _pending(
+            request,
+            f"Approval required for {request.tool}. Review with tenuo-cli approval show --file {path}; "
+            f"return the signed response to {response}, then retry.",
+        )
 
     @contextmanager
     def scope(self, snapshot=None):
@@ -137,3 +142,47 @@ class LocalAuthority:
                 logging.getLogger(__name__).warning("Local receipt persistence failed", exc_info=True)
             else:
                 runtime.acknowledge_receipts(len(receipts))
+
+
+def _pending(request, message):
+    from tenuo.approval import ApprovalRequired
+
+    try:
+        from temporalio import activity
+        from temporalio.exceptions import ApplicationError
+
+        in_activity = activity.in_activity()
+    except ImportError:
+        in_activity = False
+    if in_activity:
+        # Temporal retries the activity until the response file exists or the
+        # warrant expires; no worker slot is held while a person decides.
+        raise ApplicationError(message, type="ApprovalPending", non_retryable=False)
+    pending = ApprovalRequired(request)
+    pending.args = (message,)
+    raise pending
+
+
+def file_approval_handler(path=None):
+    """An approval handler that exchanges approval files in a local workspace.
+
+    The handler writes ``requests/<hash>.yaml`` for a gated call and returns the
+    signed approval once ``approvals/<hash>.yaml`` holds a response from an
+    approver the warrant names (``tenuo-cli approval approve --file ...``). The
+    chain travels with each request, so one handler serves every warrant; it is
+    checked against the workspace's current trust and revocations. The handler
+    reads no private keys.
+
+    While waiting it raises ``ApprovalRequired``, or inside a Temporal activity a
+    retryable ``ApplicationError`` of type ``ApprovalPending``.
+    """
+    authority = LocalAuthority(path=path, key=None, announce=False)
+
+    def handler(request):
+        chain = getattr(request, "warrant_chain", None)
+        if not chain:
+            raise DocumentError("approval request carries no warrant chain, so an approver cannot verify it")
+        return authority.collect_file_approval(list(chain), request)
+
+    return handler
+
