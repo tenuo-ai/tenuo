@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "runs": [
+    {
+      "lane": "main-plus-pr915-langgraph",
+      "suite": "langgraph",
+      "source_sha": "283054366670c7021cf7a84d852690809bdbcec7",
+      "implementation_fingerprint": "4d2c0f70c95cb2132ede02338bdb2aebf9c65a435c711444916efb02912e167f",
+      "harness_fingerprint": "27ac9d79f4ce76131b7e9b763106534122af3fbd6fb87d81936bf9f7f3a178df",
+      "generated_at": "2026-10-17T14:45:53.879156+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "openai-agents": "0.22.0",
+          "langchain": "1.3.18",
+          "langchain-core": "1.6.12",
+          "langgraph": "1.2.11",
+          "langgraph-prebuilt": "1.1.1",
+          "temporalio": "1.34.0",
+          "mcp": "1.30.0",
+          "fastmcp": "3.4.9"
+        },
+        "tenuo_path": "/private/tmp/tenuo-skill-main-pr915/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "49b663982fd9228c45d725fc1c227cd6aa58efb040b0a53960b6f09150500ebc",
+        "direct_url": "{\"url\":\"file:///tmp/tenuo-skill-main-pr915/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": false
+      },
+      "counts": {
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 0,
+      "result": "pass",
+      "output": "..........                                                               [100%]\n10 passed in 0.33s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    },
+    {
+      "lane": "pr883-temporal",
+      "suite": "temporal",
+      "source_sha": "d1d934e75cc8a1eab6353b5a30b2e10feab3baa7",
+      "implementation_fingerprint": "67f7cc863f898dbce4d46968d7b6b17114506a75530997c26a02643130d37394",
+      "harness_fingerprint": "f94f55c7a977398cae766c8c322d785dc9a85177791c2c30f34f2d0f0e763f4a",
+      "generated_at": "2026-10-17T14:47:59.710607+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "openai-agents": "0.22.0",
+          "langchain": "1.3.18",
+          "langchain-core": "1.6.12",
+          "langgraph": "1.2.11",
+          "langgraph-prebuilt": "1.1.1",
+          "temporalio": "1.34.0",
+          "mcp": "1.30.0",
+          "fastmcp": "3.4.9"
+        },
+        "tenuo_path": "/private/tmp/tenuo-skill-pr883/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "aa5d36013b3936334bb2e0e4914c3ba2d3f7cf6de089e0c1cdd60812acb09809",
+        "direct_url": "{\"url\":\"file:///tmp/tenuo-skill-pr883/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": false
+      },
+      "counts": {
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 0,
+      "result": "pass",
+      "output": ".......                                                                  [100%]\n7 passed in 3.82s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    },
+    {
+      "lane": "pr915-langgraph",
+      "suite": "langgraph",
+      "source_sha": "9705c010ab24bfb67e7fe2350d04e2e478df2e2c",
+      "implementation_fingerprint": "a86516a5d6abe847d7a2d56b6bd5ef937f6215b890f6bc8b04bcb56a4d182713",
+      "harness_fingerprint": "640d767ac26db39681d4af65fc8429de5fa266c140c425062355e0259f2c5d68",
+      "generated_at": "2026-10-17T14:42:47.461491+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "openai-agents": "0.22.0",
+          "langchain": "1.3.18",
+          "langchain-core": "1.6.12",
+          "langgraph": "1.2.11",
+          "langgraph-prebuilt": "1.1.1",
+          "temporalio": "1.34.0",
+          "mcp": "1.30.0",
+          "fastmcp": "3.4.9"
+        },
+        "tenuo_path": "/private/tmp/tenuo-skill-pr915/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "de40131c94616e57fb54e99025cfd2d68d51113036e79d18d2bf9959af396719",
+        "direct_url": "{\"url\":\"file:///tmp/tenuo-skill-pr915/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": false
+      },
+      "counts": {
+        "tests": 10,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 1,
+      "result": "fail",
+      "output": "........F.                                                               [100%]\n=================================== FAILURES ===================================\n_________________ test_guard_node_compiled_config_is_forwarded _________________\n\nauthority = (SigningKey(public_key=97cf8bd4..., secret=[REDACTED]), <Warrant id=tnu_wrt_01a14a50... tools=[refund] ttl=0:05:00>, <Warrant id=tnu_wrt_01a14a50... tools=[refund] ttl=0:02:00>)\n\n    def test_guard_node_compiled_config_is_forwarded(authority):\n        issuer, root, _ = authority\n        seen = []\n    \n        def node(state: State, bound_warrant):\n            seen.append(bound_warrant.holder_key.to_bytes())\n            return {}\n    \n        b = StateGraph(State)\n        b.add_node(\n            \"guarded\",\n            guard_node(node, inject_warrant=True, trusted_roots=[issuer.public_key]),\n        )\n        b.add_edge(START, \"guarded\")\n        b.add_edge(\"guarded\", END)\n>       b.compile().invoke(\n            {\"messages\": [], \"warrant\": root, \"warrant_chain\": []},\n            config={\"configurable\": {\"tenuo_key_id\": \"holder\"}},\n        )\n\n/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tests/agent-skills/tenuo-agent-authorization/frameworks/test_langgraph.py:129: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n../tenuo-skill-tests/lib/python3.12/site-packages/langgraph/pregel/main.py:3913: in invoke\n    for chunk in self.stream(\n../tenuo-skill-tests/lib/python3.12/site-packages/langgraph/pregel/main.py:2967: in stream\n    for _ in runner.tick(\n../tenuo-skill-tests/lib/python3.12/site-packages/langgraph/pregel/_runner.py:207: in tick\n    run_with_retry(\n../tenuo-skill-tests/lib/python3.12/site-packages/langgraph/pregel/_retry.py:617: in run_with_retry\n    return task.proc.invoke(task.input, config)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n../tenuo-skill-tests/lib/python3.12/site-packages/langgraph/_internal/_runnable.py:707: in invoke\n    input = context.run(step.invoke, input, config, **kwargs)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n../tenuo-skill-tests/lib/python3.12/site-packages/langgraph/_internal/_runnable.py:447: in invoke\n    ret = self.func(*args, **kwargs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^\ntenuo-python/tenuo/langgraph.py:979: in wrapper\n    _verify_node_warrant(node.__name__, bw, warrant_chain, trusted_roots, required_tools)\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nnode_name = 'node', bw = <BoundWarrant id=tnu_wrt_01a1... KEY_BOUND=True>\nwarrant_chain = None, trusted_roots = [PublicKey(97cf8bd4...)]\nrequired_tools = None\n\n    def _verify_node_warrant(\n        node_name: str,\n        bw: BoundWarrant,\n        warrant_chain: Optional[List[Any]],\n        trusted_roots: Optional[List[Any]],\n        required_tools: Optional[List[str]],\n    ) -> None:\n        \"\"\"Verify the warrant in state before a guarded node runs.\n    \n        Checks the chain back to a trusted root (signatures, linkage, expiry,\n        revocation), that the bound key is the warrant's holder, and that the\n        warrant grants every tool in ``required_tools``. Tool arguments are not\n        checked here; ``TenuoToolNode`` checks each call's arguments.\n    \n        Raises ConfigurationError on a denial, unless observe mode logs it.\n        \"\"\"\n        from tenuo_core import Authorizer\n    \n        from ._enforcement import EnforcementResult, _apply_observe_mode, _get_allowed_tools\n        from .decorators import chain_scope\n        from .runtime import apply_runtime_revocation, get_runtime\n    \n        roots = resolve_trusted_roots(trusted_roots)\n        if roots is None:\n            runtime = get_runtime()\n            if runtime is not None:\n                roots = list(runtime.trusted_roots)\n        if not roots:\n            raise ConfigurationError(\n                f\"Node '{node_name}': no trusted roots to verify the warrant against. \"\n                \"Pass guard_node(..., trusted_roots=[...]) or call \"\n                \"tenuo.configure(trusted_roots=[...]).\"\n            )\n    \n        parents = warrant_chain if warrant_chain is not None else (chain_scope() or [])\n        reason: Optional[str] = None\n        try:\n            # Same strict leaf expiry as enforce_tool_call, before the chain check\n            # (which allows clock tolerance).\n            if bw.warrant.is_expired():\n                raise ConfigurationError(\"warrant has expired\")\n            authorizer = Authorizer(trusted_roots=roots)\n            apply_runtime_revocation(authorizer)\n            authorizer.verify_chain([*parents, bw.warrant])\n        except Exception as e:\n            reason = f\"warrant verification failed: {e}\"\n        else:\n            if bw.warrant.authorized_holder.to_bytes() != bw.holder_key.to_bytes():\n                reason = \"the bound signing key is not the warrant holder\"\n            elif required_tools:\n                allowed = _get_allowed_tools(bw)\n                if allowed is None or \"*\" in allowed:\n                    allowed = list(required_tools)\n                missing = [t for t in required_tools if t not in allowed]\n                if missing:\n                    reason = f\"warrant does not grant required tool(s): {', '.join(missing)}\"\n        if reason is None:\n            return\n    \n        result = _apply_observe_mode(\n            EnforcementResult(allowed=False, tool=node_name, arguments={}, denial_reason=reason)\n        )\n        if not result.allowed:\n>           raise ConfigurationError(f\"Authorization failed in node '{node_name}': {reason}\")\nE           tenuo.exceptions.ConfigurationError: Authorization failed in node 'node': the bound signing key is not the warrant holder\nE           During task with name 'guarded' and id 'f55bd750-5c62-cb5b-d9a0-8bf622aca673'\n\ntenuo-python/tenuo/langgraph.py:904: ConfigurationError\n=========================== short test summary info ============================\nFAILED ../../../Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tests/agent-skills/tenuo-agent-authorization/frameworks/test_langgraph.py::test_guard_node_compiled_config_is_forwarded\n1 failed, 9 passed in 0.52s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    },
+    {
+      "lane": "pr916-temporal",
+      "suite": "temporal",
+      "source_sha": "ba08152ac9b2466144b08cccb3624818040b730a",
+      "implementation_fingerprint": "6f3a57185c465b65fa468951e7f589a6d960207ab247ee32d9b03b48c14e3401",
+      "harness_fingerprint": "34d3a3e78fced94b46562dc18433b42b812de0f6ac69b964cbba76b06381e8c0",
+      "generated_at": "2026-10-17T14:51:07.684183+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "openai-agents": "0.22.0",
+          "langchain": "1.3.18",
+          "langchain-core": "1.6.12",
+          "langgraph": "1.2.11",
+          "langgraph-prebuilt": "1.1.1",
+          "temporalio": "1.34.0",
+          "mcp": "1.30.0",
+          "fastmcp": "3.4.9"
+        },
+        "tenuo_path": "/private/tmp/tenuo-skill-pr916/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "aaa0b4f2c7e3f1cd6459451c03b0802e373a7ab46a59fe5f4c2cbd031b6ddab5",
+        "direct_url": "{\"url\":\"file:///tmp/tenuo-skill-pr916/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": false
+      },
+      "counts": {
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 0,
+      "result": "pass",
+      "output": ".......                                                                  [100%]\n7 passed in 3.23s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    }
+  ],
+  "review_notes": {
+    "pr915-langgraph": "Raw leaf lacks merged #813 config forwarding. Nine cases pass; compiled guard_node holder selection fails. Earlier fixture-only failure was corrected before this recorded run. This is historical evidence at its recorded harness fingerprint, not a main lane.",
+    "main-plus-pr915-langgraph": "Test-only conflict-free SDK files restored from merge-tree of 28305436 and #915. CHANGELOG conflict retained outside the code overlay; no synthetic merge is committed or recommended. Ten cases passed. Historical evidence retains its original harness fingerprint.",
+    "pr883-temporal": "Independent #817 -> #850 -> #851 -> #855 -> #883 leaf, built with its native SDK. Seven live cases passed. Later harness adds an explicit receiver DENY audit assertion; historical evidence is not relabeled as that newer harness.",
+    "pr916-temporal": "Independent sandbox/Replayer fix, built with its native SDK; seven live cases, including explicit receiver DENY assertions. Two dedicated PR live regressions also passed separately."
+  },
+  "additional_runs": [
+    {
+      "pr": 915,
+      "source_sha": "9705c010ab24bfb67e7fe2350d04e2e478df2e2c",
+      "tests": [
+        "test_langgraph_node_verification.py",
+        "test_langchain_agent_loops.py"
+      ],
+      "output": ".....................                                                    [100%]\n21 passed in 2.36s\n",
+      "result": "pass"
+    },
+    {
+      "pr": 916,
+      "source_sha": "ba08152ac9b2466144b08cccb3624818040b730a",
+      "tests": [
+        "test_temporal_sandbox_isolation.py"
+      ],
+      "output": "..                                                                       [100%]\n2 passed in 1.03s\n",
+      "result": "pass"
+    }
+  ],
+  "merge_tree_checks": [
+    {
+      "refs": [
+        "origin/skill-pr-915",
+        "origin/skill-pr-923"
+      ],
+      "output": "d7e6eb1e003e3a5db371f2299a32089eb39315e7\n",
+      "interpretation": "Textually clean only; no combined runtime claim."
+    },
+    {
+      "refs": [
+        "origin/skill-pr-883",
+        "origin/skill-pr-916"
+      ],
+      "output": "397949ac9829f3e730f110b5ce5b8f0063fbfef5\n",
+      "interpretation": "Textually clean only; tested independently, no combined runtime claim."
+    },
+    {
+      "refs": [
+        "28305436",
+        "origin/skill-pr-915"
+      ],
+      "output": "a25f1032306a49eb1d1b07a0569d42418bde79b8\n100644 ecc050da41a90cc89c447346f8747bbb1b6a2953 1\tCHANGELOG.md\n100644 c2c8effc8ec3b6d4780fd34f0b37be27cf9ff1c0 2\tCHANGELOG.md\n100644 9e529565dd232e52dfba2a134542c1e43f1ca39c 3\tCHANGELOG.md\n\nAuto-merging CHANGELOG.md\nCONFLICT (content): Merge conflict in CHANGELOG.md\nAuto-merging tenuo-python/tenuo/langgraph.py\nAuto-merging tenuo-python/tests/adapters/test_langgraph.py\n",
+      "interpretation": "CHANGELOG conflict. SDK files combine cleanly; isolated code overlay passes ten dispatch cases."
+    }
+  ]
+}

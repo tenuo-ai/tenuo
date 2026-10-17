@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "runs": [
+    {
+      "lane": "main-langgraph",
+      "suite": "langgraph",
+      "source_sha": "283054366670c7021cf7a84d852690809bdbcec7",
+      "implementation_fingerprint": "ac40e46253b120a3b4f5979f01ef839a33810e6a482fcdcd775c70f0bc862ec0",
+      "harness_fingerprint": "4c0e9bd84117e7b3096d598a5625872f8f9a72269e75665cad63b344bac86715",
+      "generated_at": "2026-10-17T14:52:54.953552+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "openai-agents": "0.22.0",
+          "langchain": "1.3.18",
+          "langchain-core": "1.6.12",
+          "langgraph": "1.2.11",
+          "langgraph-prebuilt": "1.1.1",
+          "temporalio": "1.34.0",
+          "mcp": "1.30.0",
+          "fastmcp": "3.4.9"
+        },
+        "tenuo_path": "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "b619ec542fd7497f3bfc690ffd4b025769809b071238ce263dfc189ad7385742",
+        "direct_url": "{\"url\":\"file:///Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": false
+      },
+      "counts": {
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 0,
+      "result": "pass",
+      "output": "..........                                                               [100%]\n10 passed in 0.36s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    },
+    {
+      "lane": "main-mcp1",
+      "suite": "mcp",
+      "source_sha": "283054366670c7021cf7a84d852690809bdbcec7",
+      "implementation_fingerprint": "ac40e46253b120a3b4f5979f01ef839a33810e6a482fcdcd775c70f0bc862ec0",
+      "harness_fingerprint": "7746a068f5aa9405fb1bc97a0ff489f62277234fabf84c0b704dd7b5b013325c",
+      "generated_at": "2026-10-17T14:53:09.555144+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "openai-agents": "0.22.0",
+          "langchain": "1.3.18",
+          "langchain-core": "1.6.12",
+          "langgraph": "1.2.11",
+          "langgraph-prebuilt": "1.1.1",
+          "temporalio": "1.34.0",
+          "mcp": "1.30.0",
+          "fastmcp": "3.4.9"
+        },
+        "tenuo_path": "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "b619ec542fd7497f3bfc690ffd4b025769809b071238ce263dfc189ad7385742",
+        "direct_url": "{\"url\":\"file:///Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": false
+      },
+      "counts": {
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 0,
+      "result": "pass",
+      "output": ".......                                                                  [100%]\n7 passed in 7.42s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    },
+    {
+      "lane": "main-mcp2",
+      "suite": "mcp",
+      "source_sha": "283054366670c7021cf7a84d852690809bdbcec7",
+      "implementation_fingerprint": "ac40e46253b120a3b4f5979f01ef839a33810e6a482fcdcd775c70f0bc862ec0",
+      "harness_fingerprint": "7746a068f5aa9405fb1bc97a0ff489f62277234fabf84c0b704dd7b5b013325c",
+      "generated_at": "2026-10-17T14:53:14.961319+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "mcp": "2.3.0",
+          "fastmcp": "4.1.0"
+        },
+        "tenuo_path": "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-mcp2/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "b619ec542fd7497f3bfc690ffd4b025769809b071238ce263dfc189ad7385742",
+        "direct_url": "{\"url\":\"file:///Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": null
+      },
+      "counts": {
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 0,
+      "result": "pass",
+      "output": ".......                                                                  [100%]\n7 passed in 4.84s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    },
+    {
+      "lane": "main-openai",
+      "suite": "openai",
+      "source_sha": "283054366670c7021cf7a84d852690809bdbcec7",
+      "implementation_fingerprint": "ac40e46253b120a3b4f5979f01ef839a33810e6a482fcdcd775c70f0bc862ec0",
+      "harness_fingerprint": "fef201a77ea5a447ada5f934e75c94bbe76a8266ee050378fcb086f557e3b8bf",
+      "generated_at": "2026-10-17T14:52:52.757152+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "openai-agents": "0.22.0",
+          "langchain": "1.3.18",
+          "langchain-core": "1.6.12",
+          "langgraph": "1.2.11",
+          "langgraph-prebuilt": "1.1.1",
+          "temporalio": "1.34.0",
+          "mcp": "1.30.0",
+          "fastmcp": "3.4.9"
+        },
+        "tenuo_path": "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "b619ec542fd7497f3bfc690ffd4b025769809b071238ce263dfc189ad7385742",
+        "direct_url": "{\"url\":\"file:///Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": false
+      },
+      "counts": {
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 0,
+      "result": "pass",
+      "output": ".......                                                                  [100%]\n7 passed in 0.86s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    },
+    {
+      "lane": "main-temporal",
+      "suite": "temporal",
+      "source_sha": "283054366670c7021cf7a84d852690809bdbcec7",
+      "implementation_fingerprint": "ac40e46253b120a3b4f5979f01ef839a33810e6a482fcdcd775c70f0bc862ec0",
+      "harness_fingerprint": "34d3a3e78fced94b46562dc18433b42b812de0f6ac69b964cbba76b06381e8c0",
+      "generated_at": "2026-10-17T14:53:00.261465+00:00",
+      "runtime": {
+        "python": "3.12.11 (main, Jun  3 2025, 15:41:47) [Clang 17.0.0 (clang-1700.0.13.3)]",
+        "packages": {
+          "tenuo": "0.3.2",
+          "openai-agents": "0.22.0",
+          "langchain": "1.3.18",
+          "langchain-core": "1.6.12",
+          "langgraph": "1.2.11",
+          "langgraph-prebuilt": "1.1.1",
+          "temporalio": "1.34.0",
+          "mcp": "1.30.0",
+          "fastmcp": "3.4.9"
+        },
+        "tenuo_path": "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python/tenuo/__init__.py",
+        "native_path": "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/tenuo_core.abi3.so",
+        "native_sha256": "b619ec542fd7497f3bfc690ffd4b025769809b071238ce263dfc189ad7385742",
+        "direct_url": "{\"url\":\"file:///Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python\",\"dir_info\":{\"editable\":true}}",
+        "agents_mcp_hook": false
+      },
+      "counts": {
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "returncode": 0,
+      "result": "pass",
+      "output": ".......                                                                  [100%]\n7 passed in 3.33s\n",
+      "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification."
+    }
+  ]
+}

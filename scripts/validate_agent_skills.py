@@ -614,6 +614,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="fail when release.json does not match the SDK manifests at HEAD "
         "(use in the pull request that re-pins the skill after a release)",
     )
+    parser.add_argument(
+        "--readiness", action="store_true",
+        help="strict distribution gate: require reviewed fresh horizon, framework regressions, "
+        "and passing current coding-agent evidence; never invokes a hosted model",
+    )
     args = parser.parse_args(argv)
 
     errors: list[str] = []
@@ -624,10 +629,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     required_tag = contract.get("repository_tag") if contract else None
     tag_available = validate_release_contract(contract, errors) if contract else False
     if contract:
-        check_release_drift(contract, errors, warnings, args.require_current_release)
+        check_release_drift(contract, errors, warnings, args.require_current_release or args.readiness)
     evaluation_report = load_behavioral_eval_results(errors, notices, warnings)
-    if args.summary:
-        args.summary.write_text(evaluation_report, encoding="utf-8")
 
     skill_dirs = sorted(path for path in SKILLS.iterdir() if path.is_dir())
     if not skill_dirs:
@@ -651,6 +654,24 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             if skill_dir == INTEGRATION_SKILL:
                 validate_no_api_fences(markdown, text, errors)
+
+    if __package__:
+        from .agent_skill_readiness import horizon_checks, promotion_checks, render_promotion
+    else:
+        from agent_skill_readiness import horizon_checks, promotion_checks, render_promotion
+
+    if (INTEGRATION_SKILL / "unreleased.json").exists() and contract:
+        horizon_errors, horizon_warnings = horizon_checks(ROOT, INTEGRATION_SKILL, contract)
+        errors.extend(horizon_errors)
+        warnings.extend(horizon_warnings)
+    if args.readiness:
+        checks = promotion_checks(ROOT, INTEGRATION_SKILL, contract or {}, errors)
+        evaluation_report += "\n" + render_promotion(checks)
+        for label, issues in checks.items():
+            errors.extend(f"distribution readiness / {label}: {issue}" for issue in issues)
+        print(render_promotion(checks))
+    if args.summary:
+        args.summary.write_text(evaluation_report, encoding="utf-8")
 
     for notice in notices:
         _emit("notice", notice)
