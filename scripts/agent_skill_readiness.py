@@ -16,12 +16,15 @@ if __package__:
         CATEGORIES,
         render,
         render_frameworks,
+        refresh_policy,
+        matches_refresh_pr,
         source_fingerprint,
     )
     from .run_agent_skill_frameworks import (
         harness_fingerprint,
         implementation_fingerprint,
         is_green,
+        matching_native_build,
     )
 else:
     from refresh_agent_skill_horizon import (
@@ -29,12 +32,15 @@ else:
         CATEGORIES,
         render,
         render_frameworks,
+        refresh_policy,
+        matches_refresh_pr,
         source_fingerprint,
     )
     from run_agent_skill_frameworks import (
         harness_fingerprint,
         implementation_fingerprint,
         is_green,
+        matching_native_build,
     )
 
 MAX_AGE_DAYS = 7
@@ -95,8 +101,19 @@ def horizon_checks(
         }:
             errors.append("open-PR author counts contradict inventory")
         heads = {p["head"]: p["number"] for p in prs}
+        policy = refresh_policy(root / "scripts/agent_skill_refresh_pr.json")
         for p in prs:
             n = p["number"]
+            identity = p.get("refresh_identity")
+            if identity and (
+                not matches_refresh_pr(p, policy)
+                or identity.get("policy") != policy
+                or identity.get("method") != "full-head-tree-excluding-horizon-outputs-and-own-review-v1"
+                or not isinstance(identity.get("tree_fingerprint"), str)
+                or len(identity["tree_fingerprint"]) != 64
+                or any(c not in "0123456789abcdef" for c in identity["tree_fingerprint"])
+            ):
+                errors.append(f"PR #{n}: invalid self-refresh identity exception")
             if p["author"] not in AUTHORS or p[
                 "source_fingerprint"
             ] != source_fingerprint(p):
@@ -209,6 +226,7 @@ def promotion_checks(
         "framework regression matrix": [],
         "generic payment-boundary coding-agent eval": [],
         "framework coding-agent eval": [],
+        "project onboarding coding-agent eval": [],
     }
     evidence_dir = root / "tests/agent-skills/tenuo-agent-authorization"
     try:
@@ -223,12 +241,23 @@ def promotion_checks(
             ("mcp", "1"),
             ("mcp", "2"),
         ):
-            matches = [
-                r
-                for r in runs
+            current = [
+                r for r in runs
                 if r["suite"] == suite
                 and r["implementation_fingerprint"] == implementation
                 and r["harness_fingerprint"] == harness_fingerprint(suite)
+                and (major is None or r["runtime"]["packages"].get("mcp", "").split(".")[0] == major)
+            ]
+            for r in current:
+                if r["result"] != "pass" or not is_green(r["counts"], r["returncode"]):
+                    checks["framework regression matrix"].append(
+                        f"current {suite} lane {r.get('lane', 'unnamed')} failed; "
+                        "another green lane cannot override it"
+                    )
+            matches = [
+                r
+                for r in current
+                if matching_native_build(r.get("native_build"), implementation, r["runtime"])
                 and r["result"] == "pass"
                 and is_green(r["counts"], r["returncode"])
                 and not age_problem(r["generated_at"], datetime.now(UTC))
@@ -249,6 +278,7 @@ def promotion_checks(
     for scenario, label in (
         ("payment-boundary", "generic payment-boundary coding-agent eval"),
         ("framework-boundary", "framework coding-agent eval"),
+        ("project-onboarding", "project onboarding coding-agent eval"),
     ):
         for language in (
             ("python", "typescript", "rust")
@@ -259,6 +289,8 @@ def promotion_checks(
             issues, warnings = [], []
             try:
                 result = json.loads(path.read_text())
+                if not isinstance(result, dict):
+                    raise ValueError("coding-agent evidence must be an object")
                 inputs = validate_behavioral_eval_result(
                     result,
                     issues,
@@ -287,9 +319,58 @@ def promotion_checks(
                     inputs, skill
                 ):
                     raise ValueError("stale skill input fingerprint")
+                if scenario == "framework-boundary":
+                    for issue in framework_case_checks(result, evidence_dir, skill):
+                        checks[label].append(issue)
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 checks[label].append(f"{language}: {exc}")
     return checks
+
+
+def framework_case_checks(result: dict, evidence_dir: Path, skill: Path) -> list[str]:
+    """An aggregate pass is not evidence that every required dispatcher ran."""
+    if __package__:
+        from .validate_agent_skills import validate_behavioral_eval_result
+    else:
+        from validate_agent_skills import validate_behavioral_eval_result
+
+    problems = []
+    cases = result.get("cases")
+    if not isinstance(cases, dict):
+        return ["missing per-case coding-agent evidence"]
+    for name in ("openai", "langgraph", "temporal", "mcp1", "mcp2"):
+        case = cases.get(name)
+        issues, warnings = [], []
+        if not isinstance(case, dict):
+            problems.append(f"{name}: missing coding-agent case")
+            continue
+        try:
+            inputs = validate_behavioral_eval_result(
+                case, issues, f"framework case {name}", "python", warnings,
+                skill_dir=skill, scenario="framework-boundary-eval.md",
+            )
+            if (
+                issues or warnings or not inputs
+                or case.get("result") != "pass"
+                or case.get("evidence_kind") != "fresh"
+                or any(case.get("evidence", {}).get(key) != "passed"
+                       for key in ("critical_items", "required_reporting"))
+            ):
+                raise ValueError("needs current passing implementation and reporting evidence")
+            artifacts = case.get("artifacts")
+            if not isinstance(artifacts, list) or not artifacts:
+                raise ValueError("missing preserved case artifacts")
+            for artifact in artifacts:
+                if not isinstance(artifact, str):
+                    raise ValueError("artifact paths must be strings")
+                path = evidence_dir / artifact
+                if (Path(artifact).is_absolute() or ".." in Path(artifact).parts
+                    or not path.resolve().is_relative_to(evidence_dir.resolve())
+                    or not path.is_file()):
+                    raise ValueError(f"missing or non-contained artifact: {artifact}")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            problems.append(f"{name}: {exc}")
+    return problems
 
 
 def render_promotion(checks: dict[str, list[str]]) -> str:

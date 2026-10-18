@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -121,12 +122,27 @@ class Finding:
 
 
 def iter_files(root: Path) -> Iterable[Path]:
-    for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
-            continue
-        if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):
-            continue
-        yield path
+    # Prune before descent: filtering rglob results still traverses dependency
+    # trees. A copied skill and an alternatively named virtualenv are not target
+    # application evidence. Keep other agent configuration directories visible.
+    installed_skill = Path(__file__).resolve().parents[1]
+    for directory, directories, files in os.walk(root, followlinks=False):
+        parent = Path(directory)
+        directories[:] = [
+            name for name in directories
+            if name not in IGNORED_DIRS
+            and not (parent / name).is_symlink()
+            and (parent / name).resolve() != installed_skill
+            and not (parent / name / "pyvenv.cfg").is_file()
+        ]
+        for name in files:
+            path = parent / name
+            if (
+                path.suffix.lower() in TEXT_SUFFIXES
+                and path.is_file()
+                and path.resolve().is_relative_to(root.resolve())
+            ):
+                yield path
 
 
 def inspect(root: Path) -> list[Finding]:

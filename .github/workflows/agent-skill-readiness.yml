@@ -89,7 +89,7 @@ jobs:
           subprocess.check_call([sys.executable, '-m', 'pip', 'install', *os.environ['FRAMEWORK_DEPENDENCIES'].split()])
           PY
       - name: Real dispatch with zero-effect denial assertions
-        run: python3 scripts/run_agent_skill_frameworks.py --python /tmp/tenuo-skill-ci/bin/python --suite '${{ matrix.suite }}' --lane '${{ matrix.lane }}' --output /tmp/framework-evidence.json
+        run: python3 scripts/run_agent_skill_frameworks.py --rebuild-native --python /tmp/tenuo-skill-ci/bin/python --suite '${{ matrix.suite }}' --lane '${{ matrix.lane }}' --output /tmp/framework-evidence.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
         if: always()
         with:

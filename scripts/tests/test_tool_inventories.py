@@ -1,6 +1,7 @@
 """Exercise the inventory scanners on source files, not just their regexes."""
 
 import importlib.util
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -58,6 +59,38 @@ class ToolInventoryTests(unittest.TestCase):
                 self.assertTrue(candidates[0]["effects"])
                 self.assertIn("Unverified", candidates[0]["possible_bypass"])
                 self.assertTrue(candidates[0]["existing_interception"])
+
+    def test_installed_skill_and_named_virtualenv_are_not_application_evidence(self):
+        for name in ("inspect_mcp_project", "inspect_native_tools"):
+            with self.subTest(scanner=name), TemporaryDirectory() as directory:
+                root = Path(directory)
+                installed = root / ".claude/skills/tenuo-agent-authorization"
+                (installed / "scripts").mkdir(parents=True)
+                shutil.copy(SCRIPTS / f"{name}.py", installed / "scripts" / f"{name}.py")
+                (installed / "example.py").write_text("MCPVerifier()\nrefund_order()\n")
+                environment = root / ".venv-mcp2"
+                environment.mkdir()
+                (environment / "pyvenv.cfg").write_text("home = /some/python\n")
+                (environment / "dependency.py").write_text("MCPVerifier()\nrefund_order()\n")
+                # Other configuration is still project evidence.
+                (root / ".claude/settings.json").write_text('{"command": "refund_order()"}')
+                (root / "agent.py").write_text("refund_order()\n")
+                spec = importlib.util.spec_from_file_location(name, installed / "scripts" / f"{name}.py")
+                scanner = importlib.util.module_from_spec(spec)
+                sys.modules[name] = scanner
+                spec.loader.exec_module(scanner)
+                paths = {finding.path for finding in scanner.inspect(root)}
+                self.assertEqual(paths, {"agent.py", ".claude/settings.json"})
+
+    def test_external_symlink_does_not_invent_target_effects(self):
+        for name in ("inspect_mcp_project", "inspect_native_tools"):
+            with self.subTest(scanner=name), TemporaryDirectory() as directory:
+                root = Path(directory) / "project"
+                root.mkdir()
+                external = Path(directory) / "external.py"
+                external.write_text("refund_order()\n")
+                (root / "external.py").symlink_to(external)
+                self.assertEqual(load_scanner(name).inspect(root), [])
 
     def test_python_hash_comments_still_ignored(self):
         for name in ("inspect_mcp_project", "inspect_native_tools"):

@@ -1,0 +1,7 @@
+{
+  "repository": "tenuo-ai/tenuo",
+  "number": 955,
+  "author": "d8joseph",
+  "base": "main",
+  "head": "skill/authorization-readiness"
+}

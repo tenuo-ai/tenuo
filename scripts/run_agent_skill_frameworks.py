@@ -33,6 +33,11 @@ def fingerprint(root: Path, paths: list[Path]) -> str:
 def implementation_fingerprint(source: Path) -> str:
     paths = list((source / "tenuo-python/tenuo").rglob("*.py"))
     paths += list((source / "tenuo-core/src").rglob("*.rs"))
+    paths += list((source / "tenuo-python/src").rglob("*.rs"))
+    paths += [path for path in (
+        source / "tenuo-python/Cargo.lock", source / "tenuo-core/Cargo.lock",
+        source / "tenuo-python/build.rs", source / "tenuo-core/build.rs",
+    ) if path.is_file()]
     paths += [
         source / "tenuo-python/pyproject.toml",
         source / "tenuo-python/Cargo.toml",
@@ -71,6 +76,20 @@ def is_green(counts: dict, returncode: int) -> bool:
     )
 
 
+def matching_native_build(build: object, implementation: str, runtime: dict) -> bool:
+    """A distribution URL proves location, not what compiled the extension."""
+    return bool(
+        isinstance(build, dict)
+        and build.get("result") == "pass"
+        and build.get("implementation_fingerprint") == implementation
+        and build.get("native_sha256") == runtime.get("native_sha256")
+        and isinstance(build.get("native_sha256"), str)
+        and len(build["native_sha256"]) == 64
+        and build.get("command")
+        and build.get("generated_at")
+    )
+
+
 PROBE = r"""
 import hashlib, importlib.metadata as m, json, tenuo, tenuo_core, sys
 from pathlib import Path
@@ -103,6 +122,10 @@ def main() -> int:
     )
     parser.add_argument("--suite", choices=SUITES, required=True)
     parser.add_argument(
+        "--rebuild-native", action="store_true",
+        help="force an exact-source native rebuild before tests; otherwise reuse a matching build record from --output",
+    )
+    parser.add_argument(
         "--lane",
         required=True,
         help="e.g. main-mcp1 or pr883-temporal; preserves other lanes",
@@ -112,6 +135,20 @@ def main() -> int:
     )
     args = parser.parse_args()
     source = args.source.resolve()
+    implementation = implementation_fingerprint(source)
+    report = (
+        json.loads(args.output.read_text())
+        if args.output.exists()
+        else {"schema_version": 1, "runs": []}
+    )
+    build_command = [
+        str(args.python), "-m", "pip", "install", "--no-deps",
+        "--force-reinstall", "-e", str(source / "tenuo-python"),
+    ]
+    if args.rebuild_native:
+        subprocess.run(build_command, cwd=source, check=True)
+        if implementation_fingerprint(source) != implementation:
+            raise RuntimeError("SDK source changed during native build")
     env = {
         **os.environ,
         "PYTHONPATH": str(source / "tenuo-python"),
@@ -130,6 +167,24 @@ def main() -> int:
     installed_source = Path(unquote(urlsplit(direct.get("url", "")).path)).resolve()
     if installed_source != source / "tenuo-python":
         raise RuntimeError("native distribution was not built/installed from --source")
+    if args.rebuild_native:
+        native_build = {
+            "result": "pass", "command": build_command,
+            "implementation_fingerprint": implementation,
+            "native_sha256": probe["native_sha256"],
+            "generated_at": datetime.now(UTC).isoformat(),
+        }
+    else:
+        native_build = next(
+            (r.get("native_build") for r in reversed(report["runs"])
+             if matching_native_build(r.get("native_build"), implementation, probe)),
+            None,
+        )
+        if native_build is None:
+            raise RuntimeError(
+                "no matching native build record; rerun with --rebuild-native "
+                "(an editable install URL alone does not prove source freshness)"
+            )
     with tempfile.TemporaryDirectory(prefix="tenuo-framework-") as directory:
         junit = Path(directory) / "junit.xml"
         command = [
@@ -154,11 +209,14 @@ def main() -> int:
     sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=source, text=True
     ).strip()
+    if implementation_fingerprint(source) != implementation:
+        raise RuntimeError("SDK source changed during framework tests")
     evidence = {
         "lane": args.lane,
         "suite": args.suite,
         "source_sha": sha,
-        "implementation_fingerprint": implementation_fingerprint(source),
+        "implementation_fingerprint": implementation,
+        "native_build": native_build,
         "harness_fingerprint": harness_fingerprint(args.suite),
         "generated_at": datetime.now(UTC).isoformat(),
         "runtime": probe,
@@ -168,11 +226,6 @@ def main() -> int:
         "output": run.stdout,
         "scope": "Real dispatch and effect counters for the enumerated cases only. No whole-agent or cross-version certification.",
     }
-    report = (
-        json.loads(args.output.read_text())
-        if args.output.exists()
-        else {"schema_version": 1, "runs": []}
-    )
     report["runs"] = sorted(
         [r for r in report["runs"] if r["lane"] != args.lane] + [evidence],
         key=lambda r: r["lane"],
