@@ -751,6 +751,20 @@ Once you add **any** constraint, unknown arguments are rejected. Inside a `Warra
 
 ## Examples
 
+For a short local demonstration of delegated task authority, run from the
+repository root:
+
+```bash
+uv run --no-project tenuo-python/examples/task_authority.py
+```
+
+A worker pays the approved invoice for $200, then refuses a diverted bank
+account, a request beyond its delegated $250 limit, and another invoice. Denied
+calls execute zero effects. No model key or Cloud account is required.
+[Run the same task through OpenAI Agents, LangGraph, Temporal or MCP](examples/task_authority_frameworks/README.md)
+with one command per framework. These examples pin released dependencies and
+demonstrate their stated effect boundary; they do not certify every adapter.
+
 ```bash
 # Basic usage
 python examples/basic_usage.py
