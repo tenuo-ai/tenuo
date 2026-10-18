@@ -1818,7 +1818,7 @@
     "review_basis": "Live full body/file inventory and full docs diff inspected, including launcher order, actual endpoint metadata, explicit roots and scope claims. PR author service tests not rerun here."
   },
   "955": {
-    "source_fingerprint": "7b2a1beed6de21c838eb4e446da8dbb19cad64700eeead46c2d57ca4aa4330da",
+    "source_fingerprint": "2fc165810fa760998fdc2e56d4be4af1dcf0f4876ca9da979e8d8074aa59ab15",
     "category": [
       "A",
       "G"
