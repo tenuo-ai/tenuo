@@ -1,0 +1,13 @@
+✔ top-level empty capability map is rejected (0.587125ms)
+✔ per-tool empty policy permits arbitrary arguments (5.77725ms)
+✔ inspect and explain expose terminal narrower-child diagnostics (10.048333ms)
+✔ holder-approved destination cannot be changed by argument selection (0.475375ms)
+✔ terminal session cannot create another child (0.72725ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 20.912166

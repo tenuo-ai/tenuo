@@ -1,0 +1,17 @@
+test_actual_markdown_snippet_mints_roundtrippable_terminal_child (__main__.ReleasedWarrantExample.test_actual_markdown_snippet_mints_roundtrippable_terminal_child) ... ok
+test_allow_unknown_preserves_explicit_constraints (__main__.ReleasedWarrantExample.test_allow_unknown_preserves_explicit_constraints) ... ok
+test_audit_parent_hash_is_raw_payload_hash (__main__.ReleasedWarrantExample.test_audit_parent_hash_is_raw_payload_hash) ... ok
+test_changed_bank_with_real_holder_proof_denies (__main__.ReleasedWarrantExample.test_changed_bank_with_real_holder_proof_denies) ... ok
+test_changed_invoice_with_real_holder_proof_denies (__main__.ReleasedWarrantExample.test_changed_invoice_with_real_holder_proof_denies) ... ok
+test_child_amount_ceiling_even_when_real_holder_signs (__main__.ReleasedWarrantExample.test_child_amount_ceiling_even_when_real_holder_signs) ... ok
+test_missing_parent_fails_without_trusting_intermediate (__main__.ReleasedWarrantExample.test_missing_parent_fails_without_trusting_intermediate) ... ok
+test_released_high_level_mint_builder_has_no_depth_or_terminal_setter (__main__.ReleasedWarrantExample.test_released_high_level_mint_builder_has_no_depth_or_terminal_setter) ... ok
+test_terminal_child_cannot_delegate (__main__.ReleasedWarrantExample.test_terminal_child_cannot_delegate) ... ok
+test_untrusted_root_fails (__main__.ReleasedWarrantExample.test_untrusted_root_fails) ... ok
+test_wrong_holder_signing_exact_challenge_fails (__main__.ReleasedWarrantExample.test_wrong_holder_signing_exact_challenge_fails) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.004s
+
+OK
+{"tenuo": "0.3.2", "skill_path": "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/skills/tenuo-warrant/SKILL.md"}

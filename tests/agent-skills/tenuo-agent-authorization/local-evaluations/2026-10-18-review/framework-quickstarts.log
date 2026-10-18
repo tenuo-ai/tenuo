@@ -1,0 +1,14 @@
+test_real_dispatch_commands (__main__.FrameworkCommands.test_real_dispatch_commands) ... ok
+test_changed_arguments_after_signing (__main__.ReceiverTests.test_changed_arguments_after_signing) ... ok
+test_missing_parent_is_not_repaired_by_trusting_worker (__main__.ReceiverTests.test_missing_parent_is_not_repaired_by_trusting_worker) ... ok
+test_receiver_rejects_coercive_types (__main__.ReceiverTests.test_receiver_rejects_coercive_types) ... ok
+test_startup_error_is_not_accepted_as_denial (__main__.ReceiverTests.test_startup_error_is_not_accepted_as_denial) ... ok
+test_untrusted_root (__main__.ReceiverTests.test_untrusted_root) ... ok
+test_valid_then_same_tool_material_argument_denials (__main__.ReceiverTests.test_valid_then_same_tool_material_argument_denials) ... ok
+test_wrong_holder_signs_same_challenge (__main__.ReceiverTests.test_wrong_holder_signs_same_challenge) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 5.418s
+
+OK
+Task: INV-123 → verified-bank. Parent <= $500; worker <= $250, 60s.

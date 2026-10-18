@@ -1,0 +1,24 @@
+Obtaining file:///Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: tenuo
+  Building editable for tenuo (pyproject.toml): started
+  Building editable for tenuo (pyproject.toml): finished with status 'done'
+  Created wheel for tenuo: filename=tenuo-0.3.2-cp39-abi3-macosx_11_0_arm64.whl size=5082286 sha256=912b8fa3a822001c98f3d15f8fd3d54161a14706acc7b3182d480ebe1ef85ea3
+  Stored in directory: /private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pip-ephem-wheel-cache-ygcqhtte/wheels/45/a4/61/b0cc18efadaa065e857b602c126e35de0c29d68c5f06e0869f
+Successfully built tenuo
+Installing collected packages: tenuo
+  Attempting uninstall: tenuo
+    Found existing installation: tenuo 0.3.2
+    Uninstalling tenuo-0.3.2:
+      Successfully uninstalled tenuo-0.3.2
+Successfully installed tenuo-0.3.2
+.......                                                                  [100%]
+7 passed in 0.64s
+

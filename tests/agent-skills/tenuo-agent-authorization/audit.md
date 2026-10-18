@@ -1,84 +1,78 @@
 # Authorization skill distribution audit
 
-The skill now separates imported runtime source, matching release, merged main,
-and the open-PR horizon. **Promotion remains blocked.** Seven local coding-agent
-diagnostics now have preserved source/reports and independent probes; the
-Temporal live replay probe now passes; evaluation of subsequent guidance
-changes remains pending. Daniel’s local manual testing is also required.
+**Promotion remains blocked by stale/incomplete coding-agent evidence.** Draft
+PR [#955](https://github.com/tenuo-ai/tenuo/pull/955) is open. Daniel waived personal
+manual review and requested thorough agent review. No marketplace submission.
 
-The audit started at main `28305436`. The final live snapshot records main
-`ba1efb55`; intervening TypeScript examples do not change the reviewed SDK source
-fingerprint. The initial **110** open PRs were classified (94 `d8joseph`, 16 `aimable100`,
-including seven reviewed no-impact entries). A final live check found ten new
-local CLI PRs #942–#951; all were reviewed/classified, bringing the current
-inventory to **120** (104 Daniel, 16 Niki). Their full stack order and mandatory
-final hardening are recorded without adopting pending factories. Bodies, files, head commits, base/head branches, dependency edges, alternatives,
-supersedes and external merge order are retained in the overlay/reviews.
-Changed PR content invalidates its assessment; refresh never grants readiness.
+The skill now defaults to local SDK or supported CLI onboarding, proposes
+project-specific task authority and effect/credential ownership, and supports
+existing Cloud workflows or a staged migration. Cloud is optional management;
+verification remains at the actual effect boundary. Private Cloud source was
+reviewed for design, not copied or used as an invented installed API.
 
-The independently installed PyPI wheel confirms `tenuo==0.3.2` lacks
-`tenuo.openai.guard_agent`. Main exports it. Current Agents SDK 0.22.0 supports
-function-tool tests but lacks the MCP hook required by that helper; Tenuo refuses
-that configuration. No successful Agents-to-MCP interception is claimed there.
-Temporal's declared plugin floor is 1.33.0; the matrix's 1.23.0 claim is stale.
+## Source and freshness
 
-| Evidence | Result / limit |
+Installed runtime is authoritative, followed by matching release docs/tests.
+Main and the open-PR overlay expose known differences/hazards; neither supplies
+missing APIs. Released 0.3.2 lacks OpenAI guard_agent; merged main has it. Agents
+0.22 lacks its required MCP hook, so main refuses that unsupported path. Temporal
+plugin minimum is 1.33 despite older compatibility prose claiming 1.23.
+
+The latest snapshot reviewed 124 open PRs from Daniel and Niki, including local
+CLI #942–#952, FastMCP guidance #953 and wrapper #956, and this skill PR #955.
+All categories, no-impact assessments, source identities and stack relationships
+are retained. The local CLI stack moved while testing: ebdfb291 was executed;
+cb440d2's workspace-placement/docs delta was inspected separately. Pending
+commands remain unavailable to released integrations. Refresh live before use.
+
+Human generated references change with hazards/facts, not timestamp/head-only
+provenance. JSON retains exact provenance. The explicitly designated self-PR
+uses full-tree identity excluding only generated horizon outputs and its own
+review entry; source and other review changes still invalidate its assessment.
+
+## Independent checks
+
+[Latest artifacts](local-evaluations/2026-10-18-review/README.md) preserve commands,
+inputs, outputs and limits. SDK/runtime behavior was not rewritten.
+
+| Check | Result and limit |
 | --- | --- |
-| Script unit tests | 62 pass; review invalidation, truncation, stack edges, freshness, guidance drift, scanner heuristics and readiness failure behavior |
-| Main OpenAI Runner | 7 pass: function allow/deny, handoff target allow/deny, unsupported hosted refusal, MCP refusal where SDK hook is absent |
-| Main LangChain/LangGraph | 10 pass: ToolNode/middleware allow, argument denial, root-only delegation, missing chain, compiled key selection, explicit raw-handler bypass negative control |
-| Main Temporal | 7 live cases: activity allow/deny, delegation, missing chain, retry, signal resume/replay, injected-argument rejection; deny/chain cases assert receiver DENY and zero body entries |
-| Main MCP 1 and MCP 2 | 7 each over stdio metadata: allow, constraint, missing proof, wrong holder/root, delegated chain, missing parents; durable journal proves zero effects |
-| Independent PR leaves | Temporal #883: 7 pass; #916: 7 pass plus 2 dedicated sandbox/Replayer cases. These are not merged functionality. |
-| LangChain leaf #915 | Raw leaf: 9 pass/1 fail because newer merged config fix #813 is absent. Separate main-plus-leaf code overlay: 10 pass; merge-tree reports a CHANGELOG conflict. Its 21 dedicated node/executor tests also pass on the raw leaf. |
+| Script unit tests | 72 passed; source/review invalidation, truncation, stacks, scanner exclusions, exact native provenance and per-case readiness |
+| Main OpenAI Runner | 7 passed: function/handoff allow and deny, unsupported hosted/MCP refusal |
+| Main LangChain/LangGraph | 10 passed: real ToolNode/middleware, delegated chain, compiled key selection and raw-handler bypass negative control |
+| Main Temporal | 7 live passed: activity ingress, chain, retry/resume/replay and injected arguments |
+| Main MCP 1 / MCP 2 | 7 each passed: real stdio metadata, root/holder/proof/constraint/chain cases with durable effect journal |
+| Short released examples | 8 methods passed, including five real framework commands; each one allowed/three denied with zero effects |
+| Warrant guidance | Actual Markdown Python example/probes: 11 passed; installed TypeScript diagnostics: 5 passed |
+| Unreleased local CLI leaf | 89 focused tests plus 3 live Temporal cases passed at ebdfb291; independent CLI-to-LangChain workflow passed typed denials with zero effects |
 
-Versioned JSON records package versions, native artifact hashes, source and
-harness fingerprints and output. Historical horizon runs retain their original
-fingerprints after harness refinements. No PRs were merged into the implementation
-branch. Textually clean merge previews are not semantic compatibility proof.
-Core/protocol, CrewAI, ADK, FastAPI and A2A pending fixes were reviewed as hazards;
-their entire alternative/stacked end states have not been exhaustively executed.
+All 38 merged-main dispatch cases were rerun after rebuilding exact source and
+recording native attestation. An initial concurrent-build wheel decompression
+failure is preserved; sequential rebuild passed. Independent PR-leaf history
+remains separate: Temporal #883/#916 pass; raw #915 fails missing merged config
+forwarding, separate main+leaf overlay passes with a documented merge conflict.
+No giant merge of pending stacks was attempted.
 
-The first local diagnostic round ran one blind in-session coding subagent in each
-of seven external-style starters. [Evidence and limits](local-evaluations/2026-10-17/README.md)
-include exact copied skill inputs, original starters, candidates, locks, reports,
-parent probes and logs. Python payment: 26 pass; TypeScript: 21 pass; Rust: 11
-behavioral plus 2 compile-fail pass. All three pass implementation and reporting
-review; historical failures remain archived. OpenAI: 40 pass; LangGraph: 21 pass;
-MCP: 27 pass on each major. These framework candidates chose direct effect
-handlers/services; they do not replace adapter regression coverage.
+The local CLI Temporal check explicitly uses an unsandboxed runner, so it does
+not establish sandbox/Replayer safety. Local shared-user files are a development
+loop; moving keys outside a project does not protect against an unrestricted
+same-user shell. No live Cloud issuance, production migration or full repository
+scripts/check.sh pass is claimed.
 
-Temporal's agent reports 25 live tests passing. The independent full rerun now
-passes 27 cases, including real workflow retry/resume with zero activity-body
-entries on denial and history Replayer without additional effects. The first
-attempt could not start because automatic approval review hit an account usage
-limit; review later responded and a normally approved invocation passed. The
-framework aggregate is now recorded against the actual evaluated skill inputs.
-No separate OpenAI API key or paid external API was used. One run per starter is
-a diagnostic sample, not a reliability estimate or controlled comparison.
+## Behavioral evidence
 
-The branch advanced with local CLI guidance in `78819f03` during these runs.
-The runs used the copied skill at `abe73aab`; fingerprints are preserved. The
-Python/local CLI edit and later refreshed horizon now make affected evidence
-visibly stale rather than silently renewed. New
-local CLI and warrant/audit routing behavior still needs review/replay. Scanner
-self-matches and the packaged TypeScript WASM's imperfect build provenance are
-recorded findings. Daniel's manual testing remains pending. No PR is open.
+The [seven-project round](local-evaluations/2026-10-17/README.md) passed independent
+implementation/reporting review against copied skill abe73aab: Python payment 26,
+TypeScript 21, Rust 11 plus 2 compile-fail; OpenAI 40, LangGraph 21, Temporal 27,
+MCP 27 on each major. The [onboarding round](local-evaluations/2026-10-17-onboarding/README.md)
+passed 23 real-HTTP cases and produced supported task issuance and an accurate
+existing-worker deployment recommendation. These are diagnostic samples, not a
+reliability estimate. Exact old inputs, prior failures and model-identity limits
+remain preserved; subsequent skill changes leave them visibly stale.
 
-Use `python3 scripts/validate_agent_skills.py --readiness --summary
-/tmp/agent-skill-readiness.md` for the explicit promotion gate. Ordinary CI remains
-structural/advisory. The separate manual/weekly workflow checks the live horizon
-and real dispatch without invoking a hosted model. A future release or changed
-SDK/PR source requires source review and refreshed evidence before promotion.
-
-The project-onboarding follow-up adds explicit deployment/issuance choices,
-grounded source review including Cloud and the pending IETF -02 draft, and a
-one-command released-SDK payment-autonomy example. Eleven example receiver tests
-pass on release/main, and five existing example API checks pass. A separate
-fresh blind onboarding run passes 23 independent real-HTTP tests; its first
-proposal and accurate development-loop limits are preserved in
-[the new artifacts](local-evaluations/2026-10-17-onboarding/README.md).
-This is additional evidence, not renewal of historical payment/framework inputs
-or promotion approval. Short canonical examples for every integration and
-discovery/marketplace packaging remain distribution work after correctness and
-manual testing; no PR or marketplace submission has been opened.
+Fresh issuance/review routing attempts selected the appropriate skills, then
+hit the account usage limit before completing. No pass is claimed. Current
+strict readiness must remain NOT READY until fresh payment/framework/onboarding
+and routing evidence is reviewed. Warrant/audit/denial-triage skills also retain
+separate behavioral limitations; authorization's strict gate does not certify
+all four skills. See [handoff](handoff.md) for the remaining evaluation work.

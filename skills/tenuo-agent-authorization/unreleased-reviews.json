@@ -1749,7 +1749,7 @@
     ]
   },
   "951": {
-    "source_fingerprint": "e54e48ca718149208466c888ccd5706d21b5428376a80a47b4c6e35df71ce522",
+    "source_fingerprint": "3e5f60627b403c35a901da708845763a1eff3cf990f2bff1ff99ec83e7e5ee42",
     "category": [
       "A",
       "B",
@@ -1758,11 +1758,11 @@
       "F",
       "G"
     ],
-    "summary": "Required stack hardening rejects private-key public inputs and signer-seed publication, preserves SRL floors through rotation, repairs local MCP Runtime trust/parent transport and tightens enforcement. Partial local CLI stack is unsafe to endorse before these fixes.",
+    "summary": "Required stack hardening rejects private-key public inputs and signer-seed publication, preserves SRL floors through rotation and repairs local MCP trust/parent transport. Updated default workspace ~/.tenuo still requires restricted actual agent access; same-user shell can read issuer keys. Partial stack is unsafe to endorse.",
     "security_relevance": true,
     "api_relevance": true,
     "docs_relevance": true,
-    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here.",
+    "review_basis": "Live full body, changed-file inventory, base/head commits and explicit dependency order. Representative #951 leaf hardening diff and key-role tests inspected from matching local head; PR-reported test counts not independently rerun here. Follow-up cb440d2 delta from tested ebdfb291 inspected: default workspace moves outside project to ~/.tenuo, issuer terminology, documentation and a new default-path test. Independent old-leaf 89 cases plus 3 live Temporal tests pass; this does not renew tests for changed files.",
     "merge_notes": "Ten-part local CLI stack #942 -> #943 -> #944 -> #945 -> #946 -> #947 -> #948 -> #949 -> #950 -> #951. Merge in order; final #951 hardening required before release/endorsement. This release prerequisite is not a reverse dependency edge (would cycle). No stack code merged into skill branch; parallel adapter stacks not tested together. Reconcile overlapping skill edits from #951/78819f03.",
     "depends_on": [
       950
@@ -1778,5 +1778,78 @@
       949,
       950
     ]
+  },
+  "952": {
+    "source_fingerprint": "2c86743978359227d1971b53fb9b83883cd02b31bac8d32030aa6e66ecd7bfc4",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "E"
+    ],
+    "summary": "Local file approval handler carries a complete warrant chain, verifies current trust/revocations and request-hash binding, and makes pending Temporal approval retryable. New API requires the full local CLI stack; absent from release/main.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": false,
+    "depends_on": [
+      951
+    ],
+    "related": [
+      946,
+      947,
+      949
+    ],
+    "merge_notes": "Stacked on feat/local-cli-review (#951); retain full #942\u2013#951 prerequisite order. Pending Temporal retry behavior is not a released guarantee.",
+    "review_basis": "Live full body, complete file inventory and diff inspected, including hash binding, current chain validation, no-private-key handler and positive/negative tests. PR-reported 1085 tests not independently claimed."
+  },
+  "953": {
+    "source_fingerprint": "b80a3516b138fabf881c68c7f74a216d76b3fbdf431904f8824c9de20335b048",
+    "category": [
+      "A",
+      "C",
+      "G"
+    ],
+    "summary": "Documents launch-time interception of existing FastMCP servers and fixes missing explicit trusted_roots in MCP/ADK examples. Verify actual server object, middleware order, canonicalization and no direct unguarded entrypoint; sample free-text Wildcard is not automatically suitable business authority.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "related": [],
+    "merge_notes": "External demo prerequisites tenuo-ai/tenuo-demos#22, #23 and #25 must merge before example links work; external numbers are not local dependency edges. Launcher recipe is guidance, not blanket server/adapter certification.",
+    "review_basis": "Live full body/file inventory and full docs diff inspected, including launcher order, actual endpoint metadata, explicit roots and scope claims. PR author service tests not rerun here."
+  },
+  "955": {
+    "source_fingerprint": "7b2a1beed6de21c838eb4e446da8dbb19cad64700eeead46c2d57ca4aa4330da",
+    "category": [
+      "A",
+      "G"
+    ],
+    "summary": "Refreshes onboarding skills with runtime-first API selection, reviewed hazard inventory, real-dispatch regressions and behavioral readiness evidence. Local Tenuo onboarding is the default; Cloud management/migration is optional and version-checked. Draft readiness is not promotion approval.",
+    "security_relevance": true,
+    "api_relevance": false,
+    "docs_relevance": true,
+    "related": [
+      672
+    ],
+    "merge_notes": "This skill-refresh PR includes its own inventory. An explicit full-tree identity excludes only generated horizon outputs and its own review entry; captured SHA remains provenance. Independent evidence remains required before promotion.",
+    "review_basis": "Maintainer review of own PR diff and independent reviews of guidance, scanners/readiness and examples; model evaluations preserve exact actual inputs and historical failures."
+  },
+  "956": {
+    "source_fingerprint": "2b6bacebee901e7b3928c6e359531507090b3b2e603db1c4d25fc0ca3f5c7c61",
+    "category": [
+      "A",
+      "B",
+      "C",
+      "G"
+    ],
+    "summary": "Pending python -m tenuo.mcp.wrap installs FastMCP middleware at low-level session startup and refuses non-FastMCP servers. Inspect actual patched SDK classes, middleware configuration/order, transports and subprocess positive/zero-effect tests. Absent from released/main runtime until merged and installed.",
+    "security_relevance": true,
+    "api_relevance": true,
+    "docs_relevance": true,
+    "depends_on": [
+      953
+    ],
+    "related": [],
+    "merge_notes": "Stacked on docs/fastmcp-existing-servers (#953), whose external demo merge prerequisites still apply. Do not emit this command for a release missing tenuo.mcp.wrap. Process-wide patching and existing middleware need source verification.",
+    "review_basis": "Live body, complete changed-file inventory and implementation/subprocess test diff inspected. Reported FastMCP3.2.1/3.4.9/4.1.0 compatibility and manual stock-server runs not independently rerun here."
   }
 }

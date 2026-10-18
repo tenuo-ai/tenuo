@@ -201,8 +201,9 @@
   ],
   "reviewed_main_source_fingerprint": "fa340e4a8c415b8bd85cb07bce83d9914aff666a9993fd996eb562d1e1d0d868",
   "guidance_review": {
-    "fingerprint": "c9a331564f728ee932bd63e56eedd127bdf1005158614f282cb7c052a16932c6",
+    "fingerprint": "d7fc8e0f05638c5348b339c4e78cf1f725d3aaca14c2d8eaa483231845e3aaa9",
     "consistent_with_known_gaps": true,
-    "basis": "Reviewed handwritten guidance routes known adapter gaps to installed-source inspection, real dispatch proof, and effect-boundary enforcement. No pending replacement API is prescribed as installed behavior."
+    "reviewed_at": "2026-10-18",
+    "basis": "Source review of runtime-first guidance and independent design/readiness reviews; local SDK/CLI onboarding default, explicit pending local stack, root-only chains and deny-before-effect, optional version-checked Cloud migration. Rebuilt exact main real-dispatch matrix passes 38 cases; released short framework commands pass. This is guidance consistency review, not renewed coding-agent evidence."
   }
 }

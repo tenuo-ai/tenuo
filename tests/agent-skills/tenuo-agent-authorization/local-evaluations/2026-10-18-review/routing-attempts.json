@@ -1,0 +1,18 @@
+{
+  "result": "incomplete",
+  "model_class": "in-session coding subagent; inherited session model; exact backend revision not exposed",
+  "attempts": [
+    {
+      "agent": "route_issuance_local",
+      "request": "Security engineer requests runnable local parent/terminal child warrant authoring only, with optional Cloud migration explanation; no framework wiring.",
+      "first_proposal": "Selected tenuo-warrant, inspect installed release, local bounded invoice/bank/amount parent and terminal worker child; promised runnable assertions and Cloud migration explanation.",
+      "completion": "Stopped at account usage limit before producing final implementation/evidence; not a behavioral pass."
+    },
+    {
+      "agent": "route_audit_local",
+      "request": "Developer requests review only of proposed policy, no implementation changes.",
+      "first_assessment": "Selected tenuo-audit because request is review only; excludes warrant/authorization/denial routes. Intended narrowing plausible but actual terminal API/chain/PoP need runtime verification.",
+      "completion": "Stopped at account usage limit before completing review; not a behavioral pass."
+    }
+  ]
+}

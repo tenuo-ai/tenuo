@@ -2,7 +2,8 @@
 
 Reviewed 2026-10-17. This is source/design review and executable example evidence,
 not a new coding-agent evaluation. Historical evaluated inputs stay unchanged.
-No PR is opened; Daniel's manual testing remains required.
+Draft PR #955 is open. Daniel waived personal manual review; independent review
+and executable evidence remain required before declaring distribution readiness.
 
 ## Source authority
 

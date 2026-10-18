@@ -14,7 +14,7 @@ Use the matching checkout's `docs/local-cli.md` and
 `tenuo-python/examples/local_cli/orders.yaml` for command/schema details. Keep
 API examples in that tested source rather than reimplementing them in a skill.
 
-1. `tenuo-cli init --dev` prepares separate controller, agent and approver keys,
+1. `tenuo-cli init --dev` prepares separate issuer, agent and approver keys,
    local trust and an empty signed revocation list. It refuses an existing
    workspace. Developers need not generate or copy private key bytes manually.
 2. Use the SDK's shared version-2 YAML parser. A template describes TTL,
@@ -22,7 +22,7 @@ API examples in that tested source rather than reimplementing them in a skill.
    and `holder`. Validate with `template validate --file FILE`. Use only the
    constraint forms the parser supports; it does not expose every SDK constraint.
 3. `warrant issue --template FILE --holder agent` or `--request FILE` signs a
-   grant. The controller needs only the holder's public key. YAML is a proposal;
+   grant. The issuer needs only the holder's public key. YAML is a proposal;
    editing it does not alter existing signed authority.
 4. Explicitly select the warrant in the integration. Prove one real allowed
    effect and an out-of-scope denial with zero effects, using its actual
@@ -32,8 +32,12 @@ Generated untagged public key files use `.pub`; private files use `.key`.
 Never pass a private key file as a holder/approver public input or print private
 material. Raw Ed25519 public and private values can both contain 32 bytes.
 For deployment, give the agent only its own key and public verification data;
-keep controller/approver private keys outside its runtime. Separate files under
-one user are a development loop, not OS isolation.
+keep issuer/approver private keys outside its runtime. Inspect workspace placement
+in the installed version: the pending stack changed its default from project
+`.tenuo` to `~/.tenuo`. Use an explicit isolated `--home` for tests. A directory
+outside the project helps only when actual filesystem/tool access excludes it;
+an unrestricted shell under the same OS user can still read those keys. Separate
+files under one user are a development loop, not OS isolation.
 
 ## Lifecycle choices
 

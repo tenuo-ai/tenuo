@@ -1,0 +1,8 @@
+...                                                                      [100%]
+=============================== warnings summary ===============================
+tests/e2e/test_local_cli_temporal.py::test_a17_temporal_local_files_allow_deny_and_reload_revocation
+  /private/tmp/tenuo-cli-independent.EscE4c/.venv/lib/python3.12/site-packages/temporalio/plugin.py:265: UserWarning: TenuoTemporalPlugin is running with UnsandboxedWorkflowRunner. Tenuo itself still enforces warrant + PoP authorization, but you are opting out of Temporal's workflow sandbox, so any non-deterministic code in your own workflows (time.time(), random, unguarded I/O, module-level state) can cause replay divergence. Prefer SandboxedWorkflowRunner in production and omit ``workflow_runner`` to let the plugin supply one with passthrough for 'tenuo' and 'tenuo_core' configured.
+    return cast(Callable[[T | None], T | None], parameter)(existing)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 1 warning in 1.96s

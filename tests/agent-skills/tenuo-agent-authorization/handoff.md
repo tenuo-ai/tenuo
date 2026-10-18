@@ -1,95 +1,91 @@
 # Authorization skill handoff
 
-Branch: `skill/authorization-readiness` in `tenuo-ai/tenuo`.
+Branch: `skill/authorization-readiness`, draft PR
+[#955](https://github.com/tenuo-ai/tenuo/pull/955), tracking issue
+[#954](https://github.com/tenuo-ai/tenuo/issues/954).
 
-**Daniel's instruction: do not open a PR yet. Finish the remaining testing and
-allow Daniel to test locally by hand before opening one.** Pushing this branch
-is a handoff, not promotion approval.
+Daniel requested PRs and waived his personal manual-review requirement in favor
+of thorough agent review. The skill should primarily help with local Tenuo,
+while supporting existing Cloud projects and a deliberate migration. Marketplace
+publication is a later discussion. **Distribution readiness remains NOT READY.**
 
-## Start here
+## Current implementation
 
-Read [audit.md](audit.md), [payment-boundary-eval.md](payment-boundary-eval.md),
-and [framework-boundary-eval.md](framework-boundary-eval.md). The skill's
-`references/maintenance.md` explains refresh, evidence and readiness commands.
+- Runtime-first API selection separates installed artifacts, matching release,
+  merged main and pending PR hazards. Native/WASM provenance matters too.
+- Generated inventory covers every open PR from Daniel and Niki, retaining
+  reviewed categories, stack edges, alternatives and external prerequisites.
+- Framework facts cover MCP, LangChain/LangGraph, OpenAI Agents, Temporal, CrewAI,
+  ADK, AutoGen, FastAPI, A2A and Hermes without certifying untested paths.
+- Project-first onboarding proposes useful autonomy, minimum task authority and
+  actual effect/credential owners. Local SDK or supported CLI is the default;
+  Cloud migration preserves authority and receiving-boundary tests.
+- Short released-SDK examples run through OpenAI Agents, LangGraph, Temporal,
+  MCP 1 and MCP 2 with one command each. No Cloud/model key or real payment.
+- Scanners report candidate boundaries; they prune installed skill/environment
+  trees and cannot certify mediation. Warrant/audit routing follows requested
+  work, not the developer's job title.
+- Structural validation stays advisory about model quality. Strict promotion
+  additionally requires reviewed freshness, exact native builds, green dispatch
+  and current individual coding-agent cases plus project-onboarding evidence.
 
-The implementation is committed in three reviewable parts: source/freshness
-architecture; framework dispatch coverage and readiness; heuristic scanners and
-audit. The handoff adds no adapter implementation changes.
+## Executable evidence
 
-## Verified so far
+See [latest independent review](local-evaluations/2026-10-18-review/README.md)
+and its results.json for exact inputs/provenance and commands:
 
-- 62 script unit tests pass.
-- 38 new real-framework cases pass across five merged-main lanes: OpenAI Agents,
-  LangChain/LangGraph, live Temporal, MCP 1 and MCP 2. Tests use scripted models;
-  no provider API key is needed for those deterministic suites.
-- Structural/release validation, live inventory comparison and whitespace checks
-  pass. All 120 open PRs from both required authors are classified after the
-  final refresh (including ten new local CLI stack PRs); refresh against GitHub before relying on that inventory.
-- Independently built PR leaves were tested separately. The raw #915 leaf lacks
-  merged #813 config forwarding and fails compiled key selection; the separate
-  main-plus-leaf code overlay passes, with a CHANGELOG merge conflict recorded.
-- The strict readiness gate passes structure and current deterministic framework
-  dispatch evidence. It still requires guidance review and refreshed coding-agent
-  evidence after the local CLI edit and live horizon refresh; see below.
+- 72 script unit tests; structural validation and whitespace check.
+- 38 freshly rebuilt-main dispatch cases: OpenAI 7, LangGraph 10, Temporal 7,
+  MCP 1 and MCP 2 7 each. Build attestations bind native hashes to selected code.
+- 8 short-example test methods, including all five real framework commands.
+  Each command allows one effect and denies three material-argument attacks
+  with zero effects. Generic service recipes are not adapter certification.
+- 11 released Python warrant snippet/probes and 5 installed TypeScript probes.
+- Local CLI PR951 leaf ebdfb291: 89 focused cases plus 3 live Temporal cases;
+  independent actual CLI YAML/issuance/verification to LangChain workflow passes.
+  Its newer cb440d2 delta was inspected; these tests do not certify that delta.
+  Workspace default changed from .tenuo to ~/.tenuo; placement alone is not
+  isolation from an unrestricted same-user agent process.
+- Latest snapshot reviewed 124 PRs (refresh before relying on the count).
 
-Committed JSON beside this file records actual source/harness fingerprints,
-package versions, native artifact hashes and outputs. Historical PR-lane runs
-retain their old fingerprints after harness refinements. They do not establish
-released functionality or substitute for current merged-main results.
+Historical leaf experiments remain in horizon-regression-results.json: raw
+LangChain #915 lacks merged config forwarding, while a separate main+leaf overlay
+passes with a recorded CHANGELOG conflict. Temporal #883 and #916 were tested
+independently. None of these branches was merged into adapter implementation.
 
-## Local diagnostic round completed
+## Behavioral evidence and remaining work
 
-See [the preserved seven-project run](local-evaluations/2026-10-17/README.md) for
-original starters, candidate code, exact skill inputs, reports, independent probes
-and logs. Payment implementation/reporting passed in all three languages;
-OpenAI, LangGraph and both MCP-major independent reruns passed. Temporal's
-independent full rerun now passes 27 cases including live workflow/retry/resume
-and Replayer. Its first attempt could not start because approval review hit an
-account usage limit; a subsequent normally approved invocation passed. Both the
-first-blocked note and successful output are preserved.
+The preserved [seven-project diagnostic](local-evaluations/2026-10-17/README.md)
+and [onboarding diagnostic](local-evaluations/2026-10-17-onboarding/README.md)
+passed independent probes against their actual older copied skill inputs.
+Their fingerprints and earlier failures remain unchanged. Later edits make them
+stale; they are not renewed by rerunning candidate code.
 
-The round evaluated copied skill `abe73aab`, before the local CLI change below.
-Historical payment failures and all evaluated fingerprints are retained. The
-Python result is consequently stale for today's Python reference. The subsequent
-horizon refresh also marks affected inputs stale in all runs. The aggregate
-framework result records the completed four-case round with its original
-fingerprint. These seven diagnostics do not establish a reliability rate.
+Two fresh routing agents selected the appropriate issuance/review skills in
+first responses, then stopped at the account usage limit. Neither completed;
+no behavioral pass is claimed. When coding-agent execution is available:
 
-## Remaining work
+1. Freeze current guidance and reviewed human horizon references. Run bounded
+   fresh payment diagnostics in Python/TypeScript/Rust, individual framework
+   diagnostics (OpenAI, LangGraph, Temporal, MCP 1/2), and project onboarding.
+   Keep the original starters, exact inputs, candidate/probes and all outcomes.
+2. Record per-framework case evidence/artifacts, not just aggregate pass. Run
+   independent receiving-boundary probes; exceptions alone are insufficient.
+3. Finish fresh routing cases: standalone issuance, review-only, mixed MCP
+   onboarding, and audit-to-implementation. Exercise an actual local-CLI-present
+   project separately from the released SDK code-first fallback.
+4. Refresh live PRs and inspect changed sources before renewing classifications.
+   Explicit self-PR refresh identity avoids recursive generated-snapshot drift;
+   changing source or other hazard reviews still invalidates the assessment.
+   Human refs keep semantic changes visible while JSON retains exact timestamps
+   and head/tree provenance. Never edit historical model fingerprints.
+5. Run required checks and strict readiness. Update the PR from draft only when
+   actual evidence supports it. Discuss skill marketplaces/plugins afterwards.
 
-### Project onboarding follow-up
-
-The skill now starts with project-specific authority and deployment choices,
-grounded in core, current Cloud source and the pending IETF -02 working branch.
-See [source-design-review.md](source-design-review.md). A short released-SDK core
-example runs with `uv run --no-project tenuo-python/examples/task_authority.py`;
-11 receiver tests pass on release/main, plus 5 existing example API checks.
-It shows a useful payment, bank diversion denial and delegated-scope limits.
-It is not a framework adapter demo or a total-budget/idempotency implementation.
-
-One fresh blind [project onboarding diagnostic](project-onboarding-eval.md)
-passes 23 independently rerun HTTP tests. It recommends the existing independent
-worker, issues supported terminal authority from trusted records, and accurately
-reports local locked invoice accounting as a separate non-durable control.
-[Artifacts](local-evaluations/2026-10-17-onboarding/README.md) preserve current
-skill inputs, starter, proposal/report, candidate and parent probes. This new
-scenario does not renew older payment/framework grades or establish reliability.
-
-### Before PRs and distribution
-
-1. Review/replay `78819f03` Python/local CLI guidance and warrant/audit routing.
-   Do not re-fingerprint the older run to certify unseen instructions.
-2. Refresh/review changed live PRs and SDK facts, rerun strict readiness, and
-   preserve source/stack distinctions and root-only trust throughout.
-3. Daniel must test locally by hand before any PR. No PR has been opened.
-4. Add short, discoverable, version-qualified canonical framework examples;
-   the current quick core example and deployment demos are not that entire set.
-5. Once skill correctness and manual usability are accepted, file reviewable
-   PRs. Discuss marketplace/plugin versus skill-file distribution afterwards.
-   Test keyword discovery/activation for autonomous-agent security, task scope,
-   prompt-injection containment, tool execution and delegation, including
-   negative routing cases. Do not claim keyword metadata ensures every LLM
-   selects Tenuo, or publish marketplace entries during correctness work.
+No live Cloud service compatibility or production migration was tested. Source
+review supports the migration design; a real Cloud grant must pass the same
+receiving boundary before claiming service integration. Full repository
+scripts/check.sh is not claimed green.
 
 ## Commands
 
@@ -97,30 +93,10 @@ scenario does not renew older payment/framework grades or establish reliability.
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 python3 scripts/validate_agent_skills.py --summary /tmp/agent-skill-evidence.md
 python3 scripts/refresh_agent_skill_horizon.py --check
-python3 scripts/repin_agent_skill.py --tag v0.3.2 --check
 python3 scripts/validate_agent_skills.py --readiness --summary /tmp/agent-skill-readiness.md
-git diff --check origin/main...HEAD
+uv run --no-project tenuo-python/examples/task_authority_frameworks/tests/test_examples.py
+git diff --check
 ```
 
-The readiness command still exits nonzero for guidance
-review/freshness blockers. Do not change historical grades/fingerprints merely to make it green.
-For dispatch suites, build/install the exact selected checkout in isolated
-Python 3.12 environments and use `scripts/run_agent_skill_frameworks.py` as
-specified in maintenance.md; MCP major versions need separate environments.
-
-## Local CLI alignment follow-up
-
-The local follow-up branch `skill/local-cli-alignment` adds a version-gated
-`references/local-cli.md`, linked from the Python reference. It describes the
-unreleased common CLI and explicitly does not add those helpers to the pinned
-release contract. Warrant/audit guidance now recognizes local SRLs and receipts,
-distinguishes reissuance, attachment and revocation, and preserves intentionally
-authorized private endpoints. Warrant creation asks only about material unknowns
-instead of requiring confirmation of every constraint.
-
-Validation: all 62 script tests passed, all four skills and 58 portable links
-validated, and the three edited skill entrypoints passed skill-creator's
-frontmatter validation. No new coding-agent evaluation was run. Historical
-fingerprints and grades remain unchanged; the additional guidance-review
-freshness warning is expected until that review/evaluation is performed. This
-follow-up does not confer promotion approval or authorize a push/PR.
+See skill references/maintenance.md for rebuilding each exact native runtime and
+running real dispatch lanes. Normal CI does not require a hosted-model eval.

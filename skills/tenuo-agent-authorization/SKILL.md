@@ -13,7 +13,9 @@ For “Secure this agent with Tenuo”, inspect the project before explaining co
 
 For getting started with an existing project, read [Project onboarding](references/project-onboarding.md). Translate the user's task into useful autonomous actions and bounded authority, then produce a project-specific warrant or supported template and one working integration. Infer implementation details from source; ask only about material business authority that the project and user have not established. A list of SDK concepts or read/write permissions is not an onboarding result.
 
-Recommend deployment with [Deployment choices](references/deployment-choices.md): choose who issues/manages authority separately from where calls are verified and effects run. Ground core and adapter choices in the matching tenuo runtime, Cloud choices in the matching tenuo-cloud runtime/service, and use demos to illustrate topology. The IETF -02 draft explains the design but does not supply installed wire formats, replay controls or framework APIs.
+Start with local Tenuo: the installed SDK, locally verified task authority, and the smallest useful integration in the user's project. Use local CLI/templates when the resolved runtime supports them; otherwise use SDK issuance. No Cloud account is needed to get started, and self-managed local verification can also be a production deployment.
+
+Use [Deployment choices](references/deployment-choices.md) when choosing issuance ownership, working with an existing Cloud setup, or migrating to Cloud. Keep a configured Cloud workflow when it fits the request; propose Cloud management when its managed issuance or fleet operations solve an actual need. Choose who issues/manages authority separately from where calls are verified and effects run. Ground core and adapter choices in the matching tenuo runtime, Cloud choices in the matching tenuo-cloud runtime/service, and use demos to illustrate topology. The IETF -02 draft explains the design but does not supply installed wire formats, replay controls or framework APIs.
 
 ## Freshness contract
 

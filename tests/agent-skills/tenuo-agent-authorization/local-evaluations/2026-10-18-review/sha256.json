@@ -1,0 +1,23 @@
+{
+  ".gitattributes": "f86ec0aae8007c97ef7c862de006afb7a387bea8e1b46a2e5e75ef9633b9c19a",
+  "README.md": "0c1c910d089fad1ef28d9db6c88777962ccc71863c9033c6ad004b5c9ff1bd8f",
+  "framework-quickstarts.log": "e3a89a1a7aaefc94590b97de500ab5ffc8dc9beb65d902c7246f5af26e02ac75",
+  "independent-cli-demo.log": "605d0cc31d7177fd82b842847d78ebbd8eb8e5a354b1a545d6a9a0a1f5fb435b",
+  "independent-tests.log": "9976d0d9e5713ed9a1857d2dbd9bdc7a320ac68ebffffa83e687aa5895025fe1",
+  "independent-tests.xml": "a7b75c72b9db46add2b4967c5e98ac4ff4e639d3b77847694b2320e1ed1d0ec0",
+  "independent_cli_demo.py": "fb72444799b67c58a16baf9e9b21c84a4759bdbaaff824c252d5008fae19025a",
+  "native-build-initial-failure.log": "46fd8c7ef19ac31add7a585ca973fbe5afc3ac997e1775ac74d05ac3c5cdcdc7",
+  "native-build-retry.log": "50903044fa0840269360d9364f8cff538a01ecd9289ce993f89ee6132375ac61",
+  "native-build.log": "e0bece1082d209f2af277662e62612be75acea20ff1545e414cc303742da39bb",
+  "native-install.log": "25216ee2a1d6152e2cbc1a2b5e72779870a073622bcc457c848a5430ee26da13",
+  "readiness.md": "870de1b22f0c5f2fdbca4034b96c07f090420a36ad0b3f8953006f7dc6f8ff77",
+  "released-warrant-probes.log": "f6fd759019e970251734facf7b95d169880e9dadba55db422718a1801d30b2cc",
+  "results.json": "cd235f12c018cb6caa22c0023e84079553f0ee3b3cfb40b43fc1cf9a879cd306",
+  "routing-attempts.json": "c7bad507a0d7cdcc190c4982c886fae6d35be701c8a3077ce5d24d86de188269",
+  "script-tests.log": "d4db68b7f3ce88e01c0b0d98741f3311d3fafb6e86ef8097b4ce06d7675f9a89",
+  "strict-readiness.log": "5038a91b47d3977a8d36617a1a0f015ab24a78855cbde0eafd7bd492b2d07cf2",
+  "structural-validation.log": "fca1819ee6efe37dc33f873277ba62b9b6b0cd9faf6ff8613cbf6868de12f233",
+  "temporal-tests.log": "1b578828e1050c37a8d3635c9fa776573ef3ee25a1bdb472e3650b8fb98cb926",
+  "temporal-tests.xml": "e6c5de44793cecfc615781b4e168575ef960f5750a6034f674f7e6bc02bc4421",
+  "typescript-warrant-probes.log": "aa68b471c3af1e7a48a0d3d32451a06ee078a6e59f30086d93b27740757dd0c8"
+}

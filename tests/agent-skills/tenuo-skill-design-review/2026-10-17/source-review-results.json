@@ -1,0 +1,68 @@
+{
+  "review_kind": "source review and executable SDK diagnostics; not a coding-agent or framework-dispatch evaluation",
+  "reviewed_at": "2026-10-17",
+  "review_base_commit": "0e8b8db87bb2f3cbbd1c53ecb6087706dd8f1a08",
+  "core_sdk_baseline_commit": "ba1efb55bb0548fdbd584b4653cdd6454b645193",
+  "local_cli_review_commit": "ebdfb291cbfd968cc31fd262d552c8e61c0a93ce",
+  "cloud_review_commit": "54516d532b4ce0d61c7857527c53758bfa9071e8",
+  "skill_inputs_sha256": {
+    "skills/tenuo-warrant/SKILL.md": "8fbcdd4b19037358b6cdef4777587921b3268bb11f407ded33ab468b06adae6b",
+    "skills/tenuo-warrant/references/typescript.md": "e29dd9062c26aace3a6cfceb229f8b414c0dfda364aaebd2502c267fb9af226c",
+    "skills/tenuo-audit/SKILL.md": "1cd7971ff5bfd1d1926a26d0f28b2274d91719196785ba4cc9515c2f1efab273"
+  },
+  "python": {
+    "version": "3.12.11",
+    "tenuo": "0.3.2",
+    "tenuo_source": "/private/tmp/tenuo-local-agent-evals/framework-openai/.venv/lib/python3.12/site-packages/tenuo/__init__.py",
+    "builder_sha256": "5a13d2d7220f5a81e49cd0d39952e08243a802d10b74cdf7ca458a682ed7ee1c",
+    "native_sha256": {
+      "tenuo_core.abi3.so": "cdab4164312a1a59f0f4978f9cc3c600b3dc575b39728a14656219873e3ce379"
+    }
+  },
+  "typescript": {
+    "node": "v24.10.0",
+    "package_version": "0.3.2-beta.0",
+    "build_info": {
+      "package": "@tenuo/core",
+      "version": "0.3.2-beta.0",
+      "sourceCommit": "7f27c7d4782f8f19ec15313e09ab95883a1da811",
+      "sourceClean": false,
+      "wasmSha256": "071de0080d616e5519841930f0579e5234a93a9f29724595609744d43b7e9d4a",
+      "wasmMatchesCommit": false
+    },
+    "declarations_sha256": "ff1a8e9de4316cd849df536948d72a0e6b9512a061e3c20a0c2d37d6f82df636"
+  },
+  "checks": [
+    {
+      "name": "released Python actual warrant snippet and diagnostics",
+      "tests": 11,
+      "passed": 11,
+      "failed": 0,
+      "log": "released-warrant-tests.log"
+    },
+    {
+      "name": "installed TypeScript issuance and audit diagnostics",
+      "tests": 5,
+      "passed": 5,
+      "failed": 0,
+      "log": "typescript-guidance-tests.log"
+    },
+    {
+      "name": "skill-creator quick validation",
+      "skills": 2,
+      "passed": 2
+    },
+    {
+      "name": "owned diff whitespace validation",
+      "passed": true
+    }
+  ],
+  "limits": [
+    "No provider/model API used; no deployment or Cloud mutations.",
+    "SDK diagnostic probes are not zero-effect framework dispatch tests.",
+    "Blind routing behavior is reviewed separately by the parent agent.",
+    "Cloud client inspected via committed source only; no installed Cloud runtime or live calls tested.",
+    "Local CLI skill semantics checked against the named leaf source; CLI behavioral evidence is separate.",
+    "A grader-development hash assertion initially compared a hex string to digest bytes; corrected to hexadecimal comparison after inspecting the actual released Python property. No SDK or candidate behavior changed."
+  ]
+}

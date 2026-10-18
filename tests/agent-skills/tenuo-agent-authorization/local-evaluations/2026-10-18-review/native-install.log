@@ -1,0 +1,5 @@
+Using Python 3.12.11 environment at: /private/tmp/tenuo-cli-independent.EscE4c/.venv
+Resolved 1 package in 28ms
+Prepared 1 package in 120ms
+Installed 1 package in 10ms
+ + tenuo==0.3.2 (from file:///tmp/tenuo-cli-independent.EscE4c/wheels/tenuo-0.3.2-cp39-abi3-macosx_11_0_arm64.whl)

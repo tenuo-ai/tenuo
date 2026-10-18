@@ -17,6 +17,11 @@ and effect enforcement separately. Infer existing topology and credential
 ownership from code and deployment manifests before proposing new infrastructure.
 Include the chosen model and key owners in the first proposal; Cloud is an
 optional management choice, not a replacement for a protected effect boundary.
+For a new integration, start with the installed local SDK or supported local CLI.
+Deliver a useful allow/deny demonstration before introducing optional Cloud
+setup. For an existing Cloud project, use its verified issuance path rather than
+replacing it with local key management. For migration, follow the staged plan in
+Deployment choices and preserve the task envelope and effect-boundary tests.
 
 Infer candidate limits from trusted configuration, schemas and application logic.
 Tool descriptions, retrieved documents, model output and observed calls reveal
@@ -128,3 +133,10 @@ account or services. It pays a trusted invoice once, then refuses a diverted
 bank account, a child's attempted use of the parent's larger limit, and another
 invoice. This is a core development example, not proof of any framework adapter.
 Do not require cloning a demo just to secure the user's existing project.
+
+The same task has short real-dispatch examples under
+`tenuo-python/examples/task_authority_frameworks/`: OpenAI Agents, LangGraph,
+Temporal and MCP 1/2. Its README lists one run command per framework and exact
+scope. All use released SDK APIs and local fake effects; the generic service
+recipes do not establish coverage of an official framework adapter. Use them to
+explain the value, then prove the user's actual integration separately.

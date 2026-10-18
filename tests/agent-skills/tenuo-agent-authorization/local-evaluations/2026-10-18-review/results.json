@@ -1,0 +1,58 @@
+{
+  "reviewed_at": "2026-10-18",
+  "evidence_kind": "independent executable/source review; not a coding-agent evaluation",
+  "base_commit": "0e8b8db87bb2f3cbbd1c53ecb6087706dd8f1a08",
+  "input_hashes": {
+    "skills/tenuo-agent-authorization/SKILL.md": "d786923b723d582bd4426c1933d70b11d3c0ea72ceebbd8432063699a0c4801b",
+    "skills/tenuo-agent-authorization/references/deployment-choices.md": "45d734b1687aedcbb684d7862f2fcd1b845defa93f4c3cc3f62ebb794f1feac7",
+    "skills/tenuo-agent-authorization/references/project-onboarding.md": "ef6590652bd5ad905aafce20b7679a6d8887781b95d4259ad2238b6cebb6fd8f",
+    "skills/tenuo-agent-authorization/references/local-cli.md": "33097038276faa916313be3ef4155180a10cb1b024786e9f7f2307d798dd365f",
+    "skills/tenuo-warrant/SKILL.md": "26aebe976a6b78a9d68470fbd2d593cee5c0a6795e6e3b1caade9bcb75bf2364",
+    "skills/tenuo-warrant/references/typescript.md": "e29dd9062c26aace3a6cfceb229f8b414c0dfda364aaebd2502c267fb9af226c",
+    "skills/tenuo-audit/SKILL.md": "1cd7971ff5bfd1d1926a26d0f28b2274d91719196785ba4cc9515c2f1efab273",
+    "tenuo-python/examples/task_authority_frameworks/temporal.py": "20cba7cd5f8b75dd49e7c1c02128c6a32df7d76dada6220199254ea1292a859d",
+    "tenuo-python/examples/task_authority_frameworks/langgraph_tools.py": "83e2a5099946f89fb060ca96384bcbd26b6068ca2d107d32bcbfcf7180f134f6",
+    "tenuo-python/examples/task_authority_frameworks/mcp2_stdio.py": "043de5b4f994eba19dced54bbcb90fd41a7512e2f0eb73e2f4f45095ca3c9f11",
+    "tenuo-python/examples/task_authority_frameworks/mcp_stdio.py": "d9690f9e5eb74bddb1ff2574b1e20299b75c516fe1fdc9ec0036475208e60d59",
+    "tenuo-python/examples/task_authority_frameworks/README.md": "20ab21b7b8da5909ff118a386613087ad4692b18dd0165570e647894f9370d71",
+    "tenuo-python/examples/task_authority_frameworks/common.py": "adbf8b65606cdd7b1b4306e8d88760e5c4eb8b40457c5cd3b0b42a74edb27d5c",
+    "tenuo-python/examples/task_authority_frameworks/openai_agents.py": "cc48f20afd2e970a829b34112bd4d7e29f7cb7ea5f61e4766fe6b6eff86abf8a",
+    "tenuo-python/examples/task_authority_frameworks/tests/test_examples.py": "911c7ddbcb190d2ff8ba2369d0bc25bdec40121c66951516497b91e551e8cc3b"
+  },
+  "checks": {
+    "script_unit_tests": 72,
+    "real_framework_regressions": 38,
+    "quickstart_test_methods": 8,
+    "quickstart_real_framework_commands": 5,
+    "released_warrant_probes": 11,
+    "typescript_warrant_probes": 5,
+    "local_cli_leaf_unit_and_dispatch_tests": 89,
+    "local_cli_leaf_temporal_tests": 3,
+    "independent_cli_workflow": "passed: CLI YAML validation/issuance/verification, real LangChain allow, three typed constraint denials with zero effects, continued public-root verification after issuer secret removal"
+  },
+  "local_cli_leaf": {
+    "sha": "ebdfb291cbfd968cc31fd262d552c8e61c0a93ce",
+    "build": "fresh offline locked maturin build from isolated git archive; external source worktree untouched",
+    "runtime": {
+      "tenuo": "0.3.2",
+      "source": "/private/tmp/tenuo-cli-independent.EscE4c/.venv/lib/python3.12/site-packages/tenuo/__init__.py",
+      "native_hashes": {
+        "tenuo_core.abi3.so": "fd307549ecff0c4781c02973afca20b05a34a30e2d0b537d23e8fdf0f7530f4a"
+      }
+    },
+    "updated_head": "cb440d2b2fccbd3df71aa4f3c090519408d18bc9",
+    "updated_head_limit": "Delta inspected, not rerun: default workspace moves .tenuo to ~/.tenuo; no core/native change; tests above apply only to ebdfb291."
+  },
+  "horizon": {
+    "count": 124,
+    "author_counts": null,
+    "pending": 0
+  },
+  "limits": [
+    "Historical coding-agent fingerprints remain unchanged and stale after guidance changes.",
+    "Fresh issuance-only and review-only routing agents selected appropriate skills in first responses, then stopped at account usage limit before implementation/review completion. No pass claimed.",
+    "No real Cloud service or migration performed; local path requires no Cloud account.",
+    "Initial native wheel installation failed with zlib decompression error during concurrent builds; sequential rebuild and all 38 dispatch tests passed.",
+    "Temporal local-CLI test uses UnsandboxedWorkflowRunner; no sandbox/replayer certification from that suite."
+  ]
+}

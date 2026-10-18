@@ -64,4 +64,4 @@ be established for the actual transport/profile, not assumed from draft prose.
 
 Record `project-onboarding-result.python.json` with actual inputs/fingerprint and
 preserve artifacts under local-evaluations. This scenario is advisory evidence;
-it does not waive the strict gate's other required scenarios or manual review.
+it does not waive the strict gate's other required scenarios or independent review.

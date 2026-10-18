@@ -1,4 +1,15 @@
-# Choose ownership and enforcement
+# Start locally; choose ownership and enforcement
+
+Default to a working local integration using the project's resolved Tenuo SDK,
+or its local CLI/templates when supported. Demonstrate useful bounded autonomy
+without requiring a Cloud account. Local verification and self-managed issuance
+are also valid production choices when keys and effect boundaries are protected.
+An ephemeral in-process demo is a development loop; deployment determines the
+stronger guarantee, not whether Cloud is enabled.
+
+Help with an existing Cloud deployment or a requested migration. Introduce Cloud
+when managed issuance, identities, approvals or fleet operations address a
+concrete need; do not turn ordinary onboarding into a Cloud setup exercise.
 
 Recommend the smallest deployment that covers the user's threat model and actual
 effect routes. Make two choices independently: **who issues/manages authority**
@@ -51,6 +62,42 @@ The project proposal should name the chosen issuer, holder and verifier/effect
 owner, where their keys/credentials live, the bypass being closed, and the
 smallest deployment change needed. Explain one relevant alternative and why it
 does or does not fit; do not dump every topology on the developer.
+
+## Move local issuance to Cloud when useful
+
+Keep the working local integration as the behavioral baseline. Migration changes
+issuance/management ownership; determine separately which verifier configuration
+and transport must change. Do not rewrite a working effect handler just to move
+the issuer.
+
+1. Inventory the local issuer, holder keys, trusted roots, task inputs, templates,
+   chain transport, enforcement mode and any revocation/approval/receipt paths.
+   Preserve the existing bounded authority and allow/deny tests.
+2. Resolve the installed Cloud client and target service contract. Translate the
+   local issuance rules into that service's actual template/trigger schema,
+   retaining issuer-side validation of trusted task values. Preview the concrete
+   grant: tools, material arguments, holder, TTL and delegation limits must match
+   the intended local envelope. Local YAML is not an import format by assumption.
+3. Identify who may request issuance and where Cloud credentials live. Give the
+   agent its holder key and task grant; keep credentials that can request broader
+   grants in the trusted issuer component. A Cloud-issued root grant is not
+   automatically a child of an existing local parent warrant.
+4. Configure the verifier's intended Cloud root and complete chain transport from
+   trusted configuration. If a transition needs both local and Cloud roots, make
+   that trust expansion explicit and time-bound; do not accept roots from calls
+   or trust intermediate holders. Keep enforce mode explicit.
+5. Test a real Cloud-issued grant through the same dispatcher and receiving
+   boundary: allowed effect once, out-of-task effects zero, wrong holder and
+   untrusted root zero. Verify outage, expiry, revocation freshness and any
+   approval/receipt behavior actually required. Keep those results separate from
+   the no-account local quickstart; mocks do not establish service compatibility.
+6. Cut over the issuance path deliberately. After in-flight grants and rollback
+   requirements are addressed, remove retired issuer secrets, credentials and
+   temporary root trust. Report any untested service behavior or migration step.
+
+Prepare schemas and code before asking to change a live service. Creating an
+account, publishing templates or firing production triggers requires the user's
+authorization; explaining and testing the local migration plan does not.
 
 ## What the design guarantees
 

@@ -1,0 +1,75 @@
+Obtaining file:///Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: tenuo
+  Building editable for tenuo (pyproject.toml): started
+  Building editable for tenuo (pyproject.toml): still running...
+  Building editable for tenuo (pyproject.toml): finished with status 'done'
+  Created wheel for tenuo: filename=tenuo-0.3.2-cp39-abi3-macosx_11_0_arm64.whl size=5082009 sha256=c7af37890a33a4f0ae22fca0922888ff5ceca09baffb77a3714542eeaea4a934
+  Stored in directory: /private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pip-ephem-wheel-cache-2kyldlcg/wheels/45/a4/61/b0cc18efadaa065e857b602c126e35de0c29d68c5f06e0869f
+Successfully built tenuo
+Installing collected packages: tenuo
+  Attempting uninstall: tenuo
+    Found existing installation: tenuo 0.3.2
+    Uninstalling tenuo-0.3.2:
+      Successfully uninstalled tenuo-0.3.2
+  Rolling back uninstall of tenuo
+  Moving to /private/tmp/tenuo-skill-tests/bin/tenuo
+   from /private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pip-uninstall-2rj4ibea/tenuo
+  Moving to /private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo-0.3.2.dist-info/
+   from /private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/~enuo-0.3.2.dist-info
+  Moving to /private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo.pth
+   from /private/var/folders/lz/38bkr99545v8bsrx1n66lf4c0000gn/T/pip-uninstall-6zip24y1/tenuo.pth
+  Moving to /private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/tenuo_core/
+   from /private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/~enuo_core
+ERROR: Exception:
+Traceback (most recent call last):
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/cli/base_command.py", line 109, in _run_wrapper
+    status = _inner_run()
+             ^^^^^^^^^^^^
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/cli/base_command.py", line 102, in _inner_run
+    return self.run(options, args)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/cli/req_command.py", line 106, in wrapper
+    return func(self, options, args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/commands/install.py", line 556, in run
+    installed = install_given_reqs(
+                ^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/req/__init__.py", line 85, in install_given_reqs
+    requirement.install(
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/req/req_install.py", line 794, in install
+    install_wheel(
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/operations/install/wheel.py", line 754, in install_wheel
+    _install_wheel(
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/operations/install/wheel.py", line 605, in _install_wheel
+    file.save()
+  File "/private/tmp/tenuo-skill-tests/lib/python3.12/site-packages/pip/_internal/operations/install/wheel.py", line 369, in save
+    shutil.copyfileobj(f, dest, blocksize)
+  File "/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/shutil.py", line 203, in copyfileobj
+    while buf := fsrc_read(length):
+                 ^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/zipfile/__init__.py", line 992, in read
+    data = self._read1(n)
+           ^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/zipfile/__init__.py", line 1068, in _read1
+    data = self._decompressor.decompress(data, n)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+zlib.error: Error -3 while decompressing data: invalid literal/length/distance code
+Traceback (most recent call last):
+  File "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/scripts/run_agent_skill_frameworks.py", line 238, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/scripts/run_agent_skill_frameworks.py", line 149, in main
+    subprocess.run(build_command, cwd=source, check=True)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/tmp/tenuo-skill-tests/bin/python', '-m', 'pip', 'install', '--no-deps', '--force-reinstall', '-e', '/Users/danieljoseph/Claude/Tenuo/tenuo-skill-readiness/tenuo-python']' returned non-zero exit status 2.

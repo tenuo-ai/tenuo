@@ -1,0 +1,9 @@
+Tenuo: enforce · tnu_wrt_01a14cc1a23b7e429c58b4b94e0732a8 · trusts 1 root(s) (development identities) · revocations v1
+{"id": "evt_5f884141520a45e2", "event_type": "authorization_success", "severity": "info", "@timestamp": "2026-10-18T02:05:21.257171+00:00", "service": "tenuo-python", "warrant_id": "<BoundWarrant id=tnu_wrt_01a1... KEY_BOUND=True>", "tool": "pay_invoice", "action": "authorized", "constraints": {"invoice_id": "INV-123", "bank_account": "verified-bank", "amount_cents": 20000}, "details": "Authorization successful for pay_invoice"}
+ALLOWED: INV-123, verified-bank, $200; effects=1
+DENIED: {'bank_account': 'attacker-bank'} effects=0
+DENIED: {'invoice_id': 'INV-999'} effects=0
+DENIED: {'amount_cents': 50001} effects=0
+{"id": "evt_544e5902e88c447c", "event_type": "authorization_success", "severity": "info", "@timestamp": "2026-10-18T02:05:21.275712+00:00", "service": "tenuo-python", "warrant_id": "<BoundWarrant id=tnu_wrt_01a1... KEY_BOUND=True>", "tool": "pay_invoice", "action": "authorized", "constraints": {"invoice_id": "INV-123", "bank_account": "verified-bank", "amount_cents": 20000}, "details": "Authorization successful for pay_invoice"}
+ALLOWED after issuer secret removed; verifier uses public root; effects=1
+Development loop only: same-user key files are not OS isolation.
