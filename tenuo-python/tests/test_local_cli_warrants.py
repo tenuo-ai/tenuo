@@ -1,5 +1,6 @@
 """CLI issuance, inspection, full-chain transport and native revocation."""
 
+import base64
 import json
 import time
 
@@ -8,7 +9,7 @@ import yaml
 
 from tenuo import Authorizer, SigningKey, WarrantTemplate
 from tenuo.local_cli import main
-from tenuo.local_cli.files import DocumentError, update_revocations
+from tenuo.local_cli.files import DocumentError, fingerprint, update_revocations
 from tenuo.local_cli.warrants import describe, encode_chain, issue, load_chain, reissue
 from tenuo.local_cli.workspace import Workspace
 
@@ -87,11 +88,54 @@ def test_a08_show_decodes_without_trust_and_verify_fails_without_it(setup, capsy
 def test_reissue_changes_id_preserves_scope_and_keeps_old_warrant_valid(setup):
     workspace, path = setup
     original = issue(workspace, WarrantTemplate.load(path), workspace.public_key("agent"))
-    replacement = reissue(original, workspace.signing_key("issuer"), 600)
+    replacement = reissue(workspace, original, 600)
     assert original[-1].id != replacement[-1].id
     assert describe(original)["capabilities"] == describe(replacement)["capabilities"]
     workspace.authorizer().verify_chain(original)
     workspace.authorizer().verify_chain(replacement)
+
+
+def test_reissue_refuses_a_revoked_warrant_but_renews_an_expired_one(setup, capsys):
+    workspace, path = setup
+    prefix = ["--home", str(workspace.path), "--json"]
+    assert main([*prefix, "warrant", "issue", "--template", str(path), "--holder", "agent"]) == 0
+    revoked = json.loads(capsys.readouterr().out)["warrant"]["id"]
+    assert main([*prefix, "revocations", "add", "--id", revoked]) == 0
+    capsys.readouterr()
+    assert main([*prefix, "warrant", "reissue", "--id", revoked, "--ttl", "1h"]) != 0
+    assert "revoked" in capsys.readouterr().out
+    assert len(list((workspace.path / "warrants").glob("*.warrant"))) == 1
+
+    short = path.with_name("short.yaml")
+    short.write_text(path.read_text().replace("ttl: 30m", "ttl: 1s"))
+    assert main([*prefix, "warrant", "issue", "--template", str(short), "--holder", "agent"]) == 0
+    expired = json.loads(capsys.readouterr().out)["warrant"]["id"]
+    time.sleep(2.1)
+    assert main([*prefix, "warrant", "verify", "--id", expired]) == 3
+    capsys.readouterr()
+    assert main([*prefix, "warrant", "reissue", "--id", expired, "--ttl", "1h"]) == 0
+    renewed = json.loads(capsys.readouterr().out)["warrant"]["id"]
+    assert main([*prefix, "warrant", "verify", "--id", renewed]) == 0
+
+
+def test_holder_flag_is_relative_to_cwd_and_request_holder_to_the_request(setup, tmp_path, monkeypatch, capsys):
+    workspace, path = setup
+    here, there = SigningKey.generate().public_key, SigningKey.generate().public_key
+    folder = tmp_path / "shared"
+    folder.mkdir()
+    (folder / "orders.yaml").write_text(path.read_text())
+    (folder / "agent.pub").write_bytes(base64.b64encode(bytes(there.to_bytes())) + b"\n")
+    (tmp_path / "agent.pub").write_bytes(base64.b64encode(bytes(here.to_bytes())) + b"\n")
+    monkeypatch.chdir(tmp_path)
+    prefix = ["--home", str(workspace.path), "--json"]
+
+    assert main([*prefix, "warrant", "issue", "--template", str(folder / "orders.yaml"), "--holder", "agent.pub"]) == 0
+    assert json.loads(capsys.readouterr().out)["warrant"]["holder"] == fingerprint(here)
+
+    request = yaml.safe_load(path.read_text()) | {"kind": "warrant-request", "holder": "agent.pub"}
+    (folder / "request.yaml").write_text(yaml.safe_dump(request))
+    assert main([*prefix, "warrant", "issue", "--request", str(folder / "request.yaml")]) == 0
+    assert json.loads(capsys.readouterr().out)["warrant"]["holder"] == fingerprint(there)
 
 
 def test_reissue_refuses_unsupported_claims_instead_of_losing_them(setup):
@@ -100,7 +144,7 @@ def test_reissue_refuses_unsupported_claims_instead_of_losing_them(setup):
     data["approvals"] = {"keys": [str(workspace.path / "keys/approver.pub")], "required": {"get_order": "always"}}
     original = issue(workspace, WarrantTemplate(data), workspace.public_key("agent"))
     with pytest.raises(DocumentError, match="cannot copy exactly"):
-        reissue(original, workspace.signing_key("issuer"), 600)
+        reissue(workspace, original, 600)
 
 
 def test_a09_expired_warrant_denies_same_operation():

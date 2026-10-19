@@ -247,13 +247,14 @@ def warrant_command(opts, workspace):
             if data.get("kind") != "warrant-request" or opts.holder:
                 raise DocumentError("--request needs kind: warrant-request with its own holder; do not pass --holder")
             holder = data["holder"]
+            # A request names its holder relative to the request file; --holder is relative to the current directory.
+            if "/" in holder or "\\" in holder or holder.endswith(".pub"):
+                public_path = Path(holder).expanduser()
+                holder = str(public_path if public_path.is_absolute() else path.parent / public_path)
         else:
             if data.get("kind") or not opts.holder:
                 raise DocumentError("--template needs --holder and a template without kind: warrant-request")
             holder = opts.holder
-        if "/" in holder or "\\" in holder or holder.endswith(".pub"):
-            public_path = Path(holder).expanduser()
-            holder = str(public_path if public_path.is_absolute() else path.parent / public_path)
         chain = issue(
             workspace,
             template,
@@ -294,9 +295,10 @@ def warrant_command(opts, workspace):
             }
         return {"valid": True, "id": str(chain[-1].id)}
     chain = reissue(
+        workspace,
         chain,
-        workspace.signing_key(opts.key or workspace.config["issuer"]),
         duration(opts.ttl),
+        issuer=opts.key,
         holder=workspace.public_key(opts.holder) if opts.holder else None,
     )
     return {"warrant": describe(chain), "files": save(workspace, chain, out=opts.out, store=not opts.no_store)}

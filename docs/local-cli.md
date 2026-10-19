@@ -183,8 +183,9 @@ tenuo-cli warrant verify --file ~/.tenuo/agent.warrant
 Issuance saves a native root-first warrant stack in `warrants/<id>.warrant`.
 `--out` also writes a delivery copy; `--no-store --out PATH` writes only that
 copy. Existing paths are never overwritten. Holder paths in a YAML request are
-relative to that document; `holder: agent` resolves the workspace's public key.
-Issuance never reads the agent's private key.
+relative to that document; a `--holder` path resolves from the current
+directory. `holder: agent` resolves the workspace's public key. Issuance never
+reads the agent's private key.
 
 `show --file PATH` or `show --id ID` decodes the signed authority without trust.
 `show --file -` accepts a pasted stack on stdin. `verify` separately checks the
@@ -199,8 +200,10 @@ tenuo-cli warrant issue --from ~/.tenuo/agent.warrant --key agent --request narr
 
 Reissuance signs a new warrant with a new ID; it never extends or edits the old
 warrant. The old warrant remains valid until it expires or is revoked.
-Automatic reissue currently accepts only simple root execution warrants whose
-claims can be copied exactly. For approval-gated or other richer warrants,
+Reissue refuses a revoked ID. Revoking the old ID after a reissue does not
+cover the new warrant, which is a new root, so revoke both. Automatic reissue
+currently accepts only simple root execution warrants whose claims can be
+copied exactly. For approval-gated or other richer warrants,
 issue explicitly from the reviewed YAML again. Delegation uses the parent
 holder's key and native attenuation: tools, limits, approvals and lifetime
 cannot exceed the parent. The output always carries its complete chain.

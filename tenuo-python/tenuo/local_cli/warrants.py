@@ -104,7 +104,7 @@ def save(workspace, chain, *, out=None, store=True):
     return [str(p) for p in targets]
 
 
-def reissue(previous, key, ttl, *, holder=None):
+def reissue(workspace, previous, ttl, *, issuer=None, holder=None):
     """Copy a simple root grant, refusing claims that cannot be preserved exactly."""
     from tenuo import Warrant
     from tenuo_core import WarrantType
@@ -112,6 +112,11 @@ def reissue(previous, key, ttl, *, holder=None):
     if len(previous) != 1 or previous[0].depth != 0 or previous[0].parent_hash is not None:
         raise DocumentError("reissue a delegated warrant from its valid parent using warrant issue --from")
     old = previous[0]
+    # A reissued warrant is a new root, so revoking the old ID would no longer cover it. Expiry is not checked:
+    # renewing an expired grant is what reissue is for.
+    if str(old.id) in workspace.authorizer().installed_revocation_list().revoked_ids:
+        raise DocumentError(f"{old.id} is revoked; reissuing it would undo the revocation")
+    key = workspace.signing_key(issuer or workspace.config["issuer"])
     check_public_material(key, [holder or old.holder_key, *(old.required_approvers() or [])])
     if bytes(old.issuer.to_bytes()) != bytes(key.public_key.to_bytes()) or not old.verify(key.public_key.to_bytes()):
         raise DocumentError("issuer key does not match the previous warrant")
