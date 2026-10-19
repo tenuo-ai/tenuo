@@ -100,10 +100,56 @@ class LocalAuthority:
 
         return collect
 
+    def _receipt_sink(self):
+        from tenuo.receipts import FileReceiptSink
+
+        receipt_path = self.workspace.path / self.workspace.config["audit"]["receipts"]
+        if not receipt_path.exists():
+            try:
+                publish(receipt_path, b"")
+            except FileExistsError:
+                pass
+        return FileReceiptSink(receipt_path)
+
+    def record_denial(self, tool, args, code, *, chain=None, snapshot=None):
+        """Sign and store a receipt for a call refused before the runtime evaluated it.
+
+        Covers refusals the runtime never sees, such as an expired or revoked
+        attached warrant (``chain`` given) or no attached authority at all.
+        ``code`` is a canonical decision code such as ``warrant-expired``,
+        ``warrant-revoked`` or ``authority-missing``. The receipt records that
+        possession was never established (no proof-of-possession signature).
+
+        Returns True when a receipt was written. Never raises: a refusal must not
+        turn into a different error because audit could not be written.
+        """
+        import time
+        import uuid
+
+        try:
+            from tenuo_core import ReceiptIssuer
+
+            snapshot = self.snapshot() if snapshot is None else snapshot
+            if snapshot.key is None:
+                return False
+            issuer = ReceiptIssuer(snapshot.key)
+            issuer.bind_authorizer(snapshot.authorizer)
+            wire = issuer.issue_denial_receipt(
+                list(chain or []), tool, dict(args or {}), int(time.time()), f"deny:{code}:{uuid.uuid4().hex}", code
+            )
+            if wire is None:
+                # Older native cores sign denials only when a warrant chain is present.
+                logging.getLogger(__name__).warning("No receipt for %s denial of %s: unsupported by this core", code, tool)
+                return False
+            self._receipt_sink().handle(wire)
+            return True
+        except Exception:
+            logging.getLogger(__name__).warning("Local denial receipt failed for %s", tool, exc_info=True)
+            return False
+
     @contextmanager
     def scope(self, snapshot=None):
         from tenuo import HolderIdentity, Runtime
-        from tenuo.receipts import FileReceiptSink
 
         snapshot = self.snapshot() if snapshot is None else snapshot
         if snapshot.key is None:
@@ -112,13 +158,7 @@ class LocalAuthority:
         runtime = Runtime(
             HolderIdentity(snapshot.key), trusted_roots=snapshot.roots, revocation_list=snapshot.srl, receipts="collect"
         )
-        receipt_path = self.workspace.path / self.workspace.config["audit"]["receipts"]
-        if not receipt_path.exists():
-            try:
-                publish(receipt_path, b"")
-            except FileExistsError:
-                pass
-        sink = FileReceiptSink(receipt_path)
+        sink = self._receipt_sink()
         try:
             with runtime.bind():
                 if snapshot.chain:
