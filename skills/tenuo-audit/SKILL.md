@@ -5,6 +5,13 @@ description: Audit, explain, or compare existing Tenuo warrants and delegation c
 
 # Tenuo Warrant Auditor
 
+For local Python SDK setups with `tenuo-cli`, inspect a warrant with `warrant
+show` and check current validity separately with `warrant verify`. `audit list`
+and `audit verify` use native signed receipts and existing SDK verification.
+Distinguish a valid signature, a recognized signer, recorded link integrity,
+history completeness, and evidence an effect completed; none implies the rest.
+Read `docs/local-cli.md` for the exact commands and limits.
+
 Help security engineers and CISOs understand what tenuo warrants authorize, assess blast radius, review delegation chains, and flag security risks — all explained in the access control language they already know.
 
 **Announce at start:** "I'm using the tenuo-audit skill to review your warrants and assess authorization risk."

@@ -338,3 +338,29 @@ signed list. Keep session manifests, warrant storage, trust and revocations
 read-only to the agent. Only requests, memory and the agent's audit destination
 need writable state. Mount verification directories rather than individual files
 when controllers publish changes by atomic replacement.
+
+## Inspect local decisions
+
+```bash
+tenuo-cli audit list
+tenuo-cli audit list --denied
+tenuo-cli audit list --warrant tnu_wrt_REAL_ID --limit 20
+tenuo-cli audit verify
+```
+
+The reader uses native signature verification and the existing SDK receipt-chain
+verifier. It displays tool, decision, warrant ID, time, signer fingerprint and
+revocation version. `--since` accepts a timezone-qualified ISO timestamp.
+`--file` chooses a rotated file; inspection is limited to 64 MiB per file.
+
+Verification recognizes public keys in the workspace's `keys/`. Use repeated
+`--authorizer NAME_OR_PUBLIC_KEY_FILE` to choose a narrower set or recognize a
+separate server identity. Recognition is an operator trust decision, not a
+verified human identity.
+
+The command checks signatures and recorded predecessor links. It does **not**
+prove a complete history: adapter instances and restarts can start new streams,
+and missing unlinked streams or a removed tail cannot be detected from that
+file alone. Receipts commit to arguments; they do not include all raw arguments
+or prove that an allowed effect completed. Use the integration's log or tool
+result for detailed arguments and the denial message.

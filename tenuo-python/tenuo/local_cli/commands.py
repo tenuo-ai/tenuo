@@ -47,6 +47,16 @@ def parser():
         if action == "add":
             sub.add_argument("--id", required=True, action="append")
     commands.add_parser("doctor")
+    audit = commands.add_parser("audit").add_subparsers(dest="action", required=True)
+    for action in ("list", "verify"):
+        sub = audit.add_parser(action)
+        sub.add_argument("--file")
+        sub.add_argument("--authorizer", action="append")
+        if action == "list":
+            sub.add_argument("--warrant", type=name)
+            sub.add_argument("--denied", action="store_true")
+            sub.add_argument("--since")
+            sub.add_argument("--limit", type=int, default=100)
     templates = commands.add_parser("template").add_subparsers(dest="action", required=True)
     create = templates.add_parser("new")
     create.add_argument("--out", required=True)
@@ -105,6 +115,13 @@ def parser():
 
 
 def execute(opts, workspace):
+    if opts.command == "audit":
+        from .audit import inspect_audit
+
+        return inspect_audit(workspace, path=opts.file, verify=opts.action == "verify",
+                             authorizers=opts.authorizer, warrant=getattr(opts, "warrant", None),
+                             denied=getattr(opts, "denied", False), since=getattr(opts, "since", None),
+                             limit=getattr(opts, "limit", 100))
     if opts.command == "session":
         from .sessions import attach, detach, list_sessions, read_session
         from .warrants import load_chain
