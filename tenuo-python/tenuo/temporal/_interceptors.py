@@ -1005,6 +1005,19 @@ class TenuoActivityInboundInterceptor:
             return exc
 
     async def execute_activity(self, input: Any) -> Any:
+        authority = getattr(self._config, "_local_authority", None)
+        if authority is None:
+            return await self._execute_activity(input)
+        try:
+            snapshot = authority.snapshot()
+        except Exception:
+            raise self._wrap_as_non_retryable(ChainValidationError(
+                reason="Local verification files unavailable or invalid; run tenuo-cli doctor"
+            )) from None
+        with authority.scope(snapshot) as (snapshot, _, _):
+            return await self._execute_activity(input, local_snapshot=snapshot)
+
+    async def _execute_activity(self, input: Any, local_snapshot: Any = None) -> Any:
         """Intercept activity execution for authorization."""
         try:
             from temporalio import activity  # type: ignore[import-not-found]
@@ -1166,8 +1179,9 @@ class TenuoActivityInboundInterceptor:
                 return await _deny_or_continue(tool=tool_name, reason=reason)
 
         # -- 7. Trusted-Root & Revocation Refresh --
-        self._maybe_refresh_trusted_roots()
-        self._maybe_refresh_revocation_list()
+        if local_snapshot is None:
+            self._maybe_refresh_trusted_roots()
+            self._maybe_refresh_revocation_list()
 
         if self._authorizer is None:
             from tenuo.exceptions import ConfigurationError
@@ -1212,6 +1226,15 @@ class TenuoActivityInboundInterceptor:
                 authorizer = self._authorizer
 
             # -- 10. Proof-of-Possession Extraction --
+            if local_snapshot is not None:
+                from tenuo_core import Authorizer
+
+                policy = {}
+                if info.attempt > 1 and self._config.retry_pop_max_windows is not None:
+                    policy["pop_max_windows"] = self._config.retry_pop_max_windows
+                authorizer = _build_authorizer(Authorizer, local_snapshot.roots, self._config,
+                                               revocation_list=local_snapshot.srl, **policy)
+                authorizer.set_clock_tolerance(0)
             pop_header = headers.get(TENUO_POP_HEADER)
             if pop_header:
                 try:

@@ -60,6 +60,14 @@ Prove a signed but out-of-scope call is denied at the server even when the
 client's local check is bypassed. Do not describe client-only checks as server
 mediation. See the tested local MCP recipe in `docs/local-cli.md`.
 
+For local Temporal activity authorization, use `TenuoPluginConfig.local` and
+load the complete stack with `tenuo.local.load_warrant_chain`. A verification-only
+worker can use `key=None`; a workflow signer needs the matching holder key.
+Use the existing authorized-start and activity helpers. Prove real activity
+ingress allows and denies before its handler, including updated revocations.
+Do not claim issuing a file replaces a running workflow's warrant, implements
+dynamic Nexus refresh, or changes approval validity on retries.
+
 1. Name a capability for the effect and constrain every argument that materially changes it.
 2. Issue short-lived authority to the holder's public key. The holder creates proof; the verifier-facing API accepts a presentation or public transport data, never a private signing key.
 3. Configure trusted roots, verification time, and local policy ceilings independently of request data. A test clock belongs in private test code or trusted verifier construction, not a caller-selectable execution argument.

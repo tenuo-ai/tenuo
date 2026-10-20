@@ -130,6 +130,31 @@ class TenuoPluginConfig:
     audit_deny: bool = True
     """Whether to emit audit events for denied actions."""
 
+    _local_authority: Optional[Any] = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def local(cls, path=None, *, key="agent", **kwargs):
+        """Load shared local files without giving the worker an issuer key.
+
+        Protected activity ingress rereads trust and revocations before each
+        call. Pass key=None for a verification-only worker.
+        """
+        from tenuo.local_cli.files import DocumentError
+        from tenuo.local_cli.runtime import LocalAuthority
+
+        reserved = {"signing_key", "key_resolver", "trusted_roots", "trusted_roots_provider",
+                    "revocation_list", "revocation_list_provider", "runtime", "_local_authority"}
+        if reserved.intersection(kwargs):
+            raise DocumentError("local Temporal configuration loads keys, trust and revocations from its workspace")
+        if (kwargs.get("dry_run") or kwargs.get("on_denial", "raise") != "raise"
+                or kwargs.get("require_warrant", True) is not True or kwargs.get("unwarranted_activities")
+                or kwargs.get("block_local_activities", True) is not True):
+            raise DocumentError("local Temporal configuration requires warrant enforcement")
+        authority = LocalAuthority(path=path, key=key)
+        snapshot = authority.snapshot()
+        return cls(signing_key=snapshot.key, trusted_roots=snapshot.roots, revocation_list=snapshot.srl,
+                   _local_authority=authority, **kwargs)
+
     @classmethod
     def from_env(cls, **overrides: Any) -> "TenuoPluginConfig":
         """Create config from environment variables.
@@ -643,7 +668,7 @@ class TenuoPluginConfig:
 
             self.key_resolver = _StaticSigningKeyResolver(self.signing_key)
 
-        if self.key_resolver is None:
+        if self.key_resolver is None and self._local_authority is None:
             from tenuo.exceptions import ConfigurationError
 
             raise ConfigurationError(

@@ -24,6 +24,7 @@ Guidance for agents writing code with Tenuo:
 - `tenuo-cli approval show|approve|deny --file REQUEST.yaml` reviews and answers portable exact-call requests. Signers come from the verified warrant, never the request's own claims. Noninteractive signing requires `--yes`; approvals expire within the request and warrant lifetime.
 - LangChain/LangGraph: `TenuoTool.local(tool, warrant=".tenuo/agent.warrant")` reloads explicit local authority per call, writes portable approval requests and signed receipts, and fails closed. Use these protected tools in a LangGraph ToolNode; this is an in-process guardrail, not a sandbox.
 - MCP: `SecureMCPClient.local(warrant=..., command=..., args=...)` enforces and presents local authority, forwarding signed approvals. `MCPVerifier.local(path=...)` needs only public trust/config/SRL data; use existing server middleware before dispatch. An optional separate verifier key signs server receipts.
+- Temporal: `TenuoPluginConfig.local(activity_fns=[...])` reads common local files. Use `tenuo.local.load_warrant_chain` with `start_workflow_authorized`. Protected activity ingress reloads trust and SRLs; `key=None` supports verification-only workers. Issuance alone never replaces a running workflow's warrant or extends approval expiry.
 
 - [Quick Start](https://tenuo.ai/quickstart): Get started with Tenuo in 5 minutes
 - [Concepts](https://tenuo.ai/concepts): Why Tenuo, threat model, and core invariants

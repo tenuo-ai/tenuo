@@ -270,3 +270,44 @@ and disabled warrant injection. File approvals acquired on the client are
 forwarded to the server as native signed approvals. A client check alone is an
 in-process guardrail; server mediation protects the MCP dispatch path. Neither
 prevents arbitrary code in the server process from accessing its own resources.
+
+## Temporal
+
+Install `tenuo[temporal]`. Worker configuration uses the same local files:
+
+```python
+from tenuo.local import load_warrant_chain
+from tenuo.temporal import TenuoPluginConfig, TenuoTemporalPlugin, start_workflow_authorized
+
+config = TenuoPluginConfig.local(activity_fns=[get_order])
+plugin = TenuoTemporalPlugin(config)
+# Connect the Temporal client with plugins=[plugin], and create its worker.
+handle = await start_workflow_authorized(
+    client=client,
+    workflow_run_fn=OrderWorkflow.run,
+    workflow_id="order-diagnostics",
+    warrant=load_warrant_chain(".tenuo/agent.warrant"),
+    key_id="agent",
+    args=["A-1001"],
+    task_queue="orders",
+)
+```
+
+Use the existing `tenuo_execute_activity` helper inside the workflow. Workflow
+start headers carry the complete warrant chain. Protected activity ingress
+rereads trust and revocations before each call and refuses missing or invalid
+files. A worker that only verifies incoming activity calls can use
+`TenuoPluginConfig.local(key=None)` without any private key. A worker hosting
+workflows that sign downstream calls needs its own matching holder key.
+
+The factory refuses settings that disable warrant enforcement or local-activity
+protection. It does not change approval expiry or retry semantics. Dynamic
+Nexus trust refresh and attaching replacement warrants to running workflows are
+separate lifecycle features; this adapter does not claim to implement them.
+Issuing another file leaves an already running workflow's warrant unchanged.
+
+`tenuo.local` exposes shared key/public-key/SRL readers and
+`load_warrant_chain`; they use the same implementation as the common CLI.
+Local signed receipt delivery reports storage failures in logs rather than
+turning a completed effect into a retry. Receipts are decision evidence, not
+proof that an authorized effect completed.
