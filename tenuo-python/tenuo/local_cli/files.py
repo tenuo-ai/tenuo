@@ -160,7 +160,7 @@ def read_revocation_list(path):
 def operator_lock(directory):
     """Serialize read/modify/publish operations by local controllers."""
     if os.name != "posix":
-        raise DocumentError("local workspace updates currently require macOS or Linux")
+        raise DocumentError("local controller updates currently require macOS or Linux")
     import fcntl
 
     directory = Path(directory)

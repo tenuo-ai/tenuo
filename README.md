@@ -45,6 +45,9 @@ See [`tenuo-ts/README.md`](tenuo-ts/README.md) for TypeScript. Rust is [below](#
 For local controller files without an account, use `tenuo-cli init --dev` from
 the Python package. See the [local CLI guide](docs/local-cli.md) for identities,
 trust, signed revocation lists and development isolation limits.
+Use [YAML warrant templates](tenuo-python/examples/local_cli/orders.yaml) with
+`tenuo-cli template validate --file orders.yaml`, or load the same file through
+`tenuo.WarrantTemplate` in Python.
 
 ### AI coding agents
 

@@ -47,10 +47,35 @@ def parser():
         if action == "add":
             sub.add_argument("--id", required=True, action="append")
     commands.add_parser("doctor")
+    templates = commands.add_parser("template").add_subparsers(dest="action", required=True)
+    create = templates.add_parser("new")
+    create.add_argument("--out", required=True)
+    for action in ("validate", "show"):
+        template = templates.add_parser(action)
+        template.add_argument("--file", required=True)
+        if action == "show":
+            template.add_argument("--expanded", action="store_true")
     return root
 
 
 def execute(opts, workspace):
+    if opts.command == "template":
+        from tenuo.warrant_template import WarrantTemplate
+        from .files import write_yaml
+
+        if opts.action == "new":
+            data = {
+                "version": 2,
+                "name": "order-lookup",
+                "ttl": "30m",
+                "capabilities": {"get_order": {"order_id": "A-1001"}},
+            }
+            write_yaml(opts.out, data)
+            return {"file": opts.out, "message": "Edit the tool and argument names to match your application."}
+        template = WarrantTemplate.load(opts.file)
+        if opts.action == "validate":
+            return {"valid": True, "file": opts.file}
+        return {"template": template.expanded() if opts.expanded else template.document, "signed": False}
     if opts.command == "init":
         workspace.initialize(dev=opts.dev)
         return {

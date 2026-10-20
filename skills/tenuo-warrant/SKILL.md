@@ -26,6 +26,13 @@ Read `docs/local-cli.md` in the matching checkout. Never print private material
 or hand the deployed agent the controller or approver private key. Separate
 files under one OS user provide a development loop, not process isolation.
 
+For local declarative issuance, use `tenuo.WarrantTemplate.load(path)` and the
+version 2 YAML syntax in `docs/local-cli.md`. Validate with `tenuo-cli template
+validate --file PATH`. A one-off request adds `kind: warrant-request` and the
+holder's public key path or local name. Treat it as an unsigned proposal. The
+issuer never needs the holder's private key. Compile approval gates and approver
+public keys into the warrant; never use an editable policy as runtime authority.
+
 ### Phase 1: Discover Context
 
 Before asking questions, scan the codebase:

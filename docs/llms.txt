@@ -19,6 +19,7 @@ Guidance for agents writing code with Tenuo:
 ## Docs
 
 - [Local CLI](https://tenuo.ai/local-cli): Local identities, trust, signed revocation lists and diagnostics with `tenuo-cli init --dev`. Controller and approver private keys stay outside the deployed agent.
+- Local YAML templates and warrant requests use `tenuo.WarrantTemplate.load(path)`, the same parser as `tenuo-cli template validate`. An unsigned request never grants authority; approval gates and keys become signed warrant claims.
 
 - [Quick Start](https://tenuo.ai/quickstart): Get started with Tenuo in 5 minutes
 - [Concepts](https://tenuo.ai/concepts): Why Tenuo, threat model, and core invariants
