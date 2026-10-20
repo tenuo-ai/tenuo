@@ -35,6 +35,7 @@ The default workspace is `.tenuo/`. Change it with `TENUO_HOME` or `--home PATH`
 | `trust/*.pub` | Issuers the verifier accepts |
 | `revocations.srl` | Core signed revocation list in native CBOR |
 | `warrants/` | Issued warrant chains |
+| `sessions/` | Explicit operator-controlled session attachments |
 | `requests/`, `approvals/` | Portable requests and responses |
 
 Private files are created with mode `0600`. The workspace ignores its contents
@@ -311,3 +312,29 @@ Issuing another file leaves an already running workflow's warrant unchanged.
 Local signed receipt delivery reports storage failures in logs rather than
 turning a completed effect into a retry. Receipts are decision evidence, not
 proof that an authorized effect completed.
+
+## Session attachments
+
+For a session-based agent, issuance and attachment are different operations:
+
+```bash
+tenuo-cli session attach --session chat-a --file .tenuo/agent.warrant
+tenuo-cli session list
+tenuo-cli session show --session chat-a
+tenuo-cli session detach --session chat-a --id tnu_wrt_REAL_ID
+```
+
+Use the session identifier reported by the integration. Attachment verifies the
+chain and the selected agent's **public** key (`--holder agent` by default),
+then references the stored full chain in a strict YAML manifest. It never
+activates, extends or signs a warrant. A session can reference several warrants;
+each call must fit one complete warrant, without combining partial grants.
+Attachments survive conversational turns. A new child session needs its own
+attachment; it does not inherit a parent's grants automatically.
+
+Detachment removes one session's reference. It does not revoke a warrant used
+elsewhere. Revocation changes validity wherever a verifier checks the updated
+signed list. Keep session manifests, warrant storage, trust and revocations
+read-only to the agent. Only requests, memory and the agent's audit destination
+need writable state. Mount verification directories rather than individual files
+when controllers publish changes by atomic replacement.

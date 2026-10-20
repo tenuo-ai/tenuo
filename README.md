@@ -61,6 +61,8 @@ For MCP, `SecureMCPClient.local(...)` presents the selected warrant and
 [MCP setup](docs/local-cli.md#mcp-client-and-server).
 Temporal workers can use `TenuoPluginConfig.local()` and start work with
 `tenuo.local.load_warrant_chain(...)`; see the [Temporal recipe](docs/local-cli.md#temporal).
+Session-based adapters can use [explicit warrant attachments](docs/local-cli.md#session-attachments)
+with `tenuo-cli session attach --session ID --file WARRANT`.
 
 ### AI coding agents
 

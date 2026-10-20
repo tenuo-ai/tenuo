@@ -28,7 +28,7 @@ class LocalAuthority:
     configured file denies the current call rather than retaining old authority.
     """
 
-    def __init__(self, *, path=None, warrant=None, key="agent"):
+    def __init__(self, *, path=None, warrant=None, key="agent", announce=True):
         from pathlib import Path
 
         self.workspace = Workspace(path)
@@ -39,10 +39,11 @@ class LocalAuthority:
         snapshot = self.snapshot()
         label = str(snapshot.chain[-1].id) if snapshot.chain else "inbound verification"
         dev = " (development identities)" if self.workspace.config["dev_roots"] else ""
-        print(
-            f"Tenuo: enforce · {label} · trusts {len(snapshot.roots)} root(s){dev} · revocations v{snapshot.srl.version}",
-            file=sys.stderr,
-        )
+        if announce:
+            print(
+                f"Tenuo: enforce · {label} · trusts {len(snapshot.roots)} root(s){dev} · revocations v{snapshot.srl.version}",
+                file=sys.stderr,
+            )
 
     def snapshot(self):
         from tenuo import Authorizer
