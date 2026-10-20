@@ -618,6 +618,11 @@ export type ReceiptInfo = {
   readonly policyDefinitionHash?: string;
   readonly prevReceiptHash?: string;
   readonly trustedRootsHash?: string;
+  /**
+   * The mode the decision was made under (receipt key 16). In observe mode a
+   * denied call ran anyway. Receipts that predate key 16 read as "enforce".
+   */
+  readonly mode: "enforce" | "observe";
 };
 
 /** Root-anchored receipt check: the embedded chain against trusted roots at decision time. */
