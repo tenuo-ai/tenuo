@@ -208,7 +208,9 @@ function indexPage(): string {
     ["No spare authority", 20, "Every grant stays at or below the mission's least-privilege ceiling."],
   ] as const;
   const body = `${stepper(0)}
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security challenge · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security challenge · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p><div class="lab-hero-cta"><a class="btn btn-primary" href="#terminal-setup">Start the challenge</a><a class="btn btn-outline" href="${CODESPACES_URL}">Run it in Codespaces</a></div><ul class="lab-hero-facts"><li>Free, no account or API key</li><li>Real checks from the real library</li><li>About 90 minutes, with two optional bosses</li></ul></header>
+
+{% include lab-warmup.html title="Not sure yet? Warm up in 30 seconds." cta="That&rsquo;s one agent. The challenge has six, and one of them is lying" href="#terminal-setup" %}
 
 <figure class="lab-cover"><img src="/images/challenge-image.svg" width="1200" height="630" alt="A boarding pass from Toronto to Cancún for Alice Chen, stamped denied because it is outside the granted scope." decoding="async" fetchpriority="high"></figure>
 

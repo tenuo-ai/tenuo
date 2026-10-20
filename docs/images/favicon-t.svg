@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <style>
-    text { fill: #1a1a1a; }
-    @media (prefers-color-scheme: dark) { text { fill: #e8e8e8; } }
-  </style>
-  <text x="16" y="26" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="28" font-weight="600">t</text>
-</svg>
