@@ -125,3 +125,42 @@ warrant = template.mint(controller_key, agent_public_key)
 
 Issuance needs only the recipient's public key. Gates and approvers are embedded
 in the signed warrant; verifiers do not trust the YAML file at runtime.
+
+## Issue, inspect and replace warrants
+
+```bash
+tenuo-cli warrant issue --template orders.yaml --holder agent --out .tenuo/agent.warrant
+tenuo-cli warrant issue --request one-task.yaml
+tenuo-cli warrant list
+tenuo-cli warrant show --file .tenuo/agent.warrant
+tenuo-cli warrant verify --file .tenuo/agent.warrant
+```
+
+Issuance saves a native root-first warrant stack in `warrants/<id>.warrant`.
+`--out` also writes a delivery copy; `--no-store --out PATH` writes only that
+copy. Existing paths are never overwritten. Holder paths in a YAML request are
+relative to that document; `holder: agent` resolves the workspace's public key.
+The controller does not read the agent's private key.
+
+`show --file PATH` or `show --id ID` decodes the signed authority without trust.
+`show --file -` accepts a pasted stack on stdin. `verify` separately checks the
+full chain against current local trust, expiry and the signed revocation list.
+It exits 3 when verification fails. `list` inventories this workspace's files;
+it is not a global inventory of every issued warrant.
+
+```bash
+tenuo-cli warrant reissue --id tnu_wrt_REAL_ID --ttl 1h
+tenuo-cli warrant issue --from .tenuo/agent.warrant --key agent --request narrowed-task.yaml
+```
+
+Reissuance signs a new warrant with a new ID; it never extends or edits the old
+warrant. The old warrant remains valid until it expires or is revoked.
+Automatic reissue currently accepts only simple root execution warrants whose
+claims can be copied exactly. For approval-gated or other richer warrants,
+issue explicitly from the reviewed YAML again. Delegation uses the parent
+holder's key and native attenuation: tools, limits, approvals and lifetime
+cannot exceed the parent. The output always carries its complete chain.
+
+Issuing a warrant does not attach it to a running session or workflow. Deliver
+the selected file through the integration's explicit warrant configuration.
+Nothing automatically selects the newest warrant or combines stored grants.
