@@ -53,6 +53,9 @@ Issue a signed chain with `tenuo-cli warrant issue --template orders.yaml
 `warrant verify`. See the [lifecycle walkthrough](docs/local-cli.md).
 For human gates, exchange [portable approval request and response files](docs/local-cli.md#approve-a-held-call-using-files)
 with `tenuo-cli approval show|approve|deny`.
+For LangChain or LangGraph tools, `TenuoTool.local(tool,
+warrant=".tenuo/agent.warrant")` loads local authority before each call. See
+the [integration recipe](docs/local-cli.md#langchain-and-langgraph).
 
 ### AI coding agents
 

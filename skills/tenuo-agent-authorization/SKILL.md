@@ -44,6 +44,14 @@ Read [Framework-neutral integration](references/framework-integration.md) only w
 
 ## Implement one vertical slice
 
+For a Python checkout exposing `TenuoTool.local`, read `docs/local-cli.md` for
+LangChain and LangGraph setup using the shared CLI and YAML parser. Select the
+warrant file explicitly, pass only protected tools to the agent, and prove an
+allowed dispatch plus a denied dispatch with zero handler calls. Keep controller
+and approver private keys outside the agent. Local adapters reload trust and
+revocations per call and write portable approval requests; they remain an
+in-process guardrail when code can call the underlying tool directly.
+
 1. Name a capability for the effect and constrain every argument that materially changes it.
 2. Issue short-lived authority to the holder's public key. The holder creates proof; the verifier-facing API accepts a presentation or public transport data, never a private signing key.
 3. Configure trusted roots, verification time, and local policy ceilings independently of request data. A test clock belongs in private test code or trusted verifier construction, not a caller-selectable execution argument.

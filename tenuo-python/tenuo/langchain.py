@@ -100,6 +100,13 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
     _bound_warrant: Optional[Any] = None
     _warrant_chain: Optional[List[Any]] = None
 
+    @classmethod
+    def local(cls, tool, *, path=None, warrant, key="agent", **kwargs):
+        """Protect a tool using an explicit local warrant file and fresh trust data."""
+        from .local_cli.integrations import local_langchain_tool
+
+        return local_langchain_tool(tool, path=path, warrant=warrant, key=key, **kwargs)
+
     def __init__(
         self,
         wrapped: Any,
