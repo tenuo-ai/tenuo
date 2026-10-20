@@ -3886,8 +3886,13 @@ class TestApprovalGates:
                 expected = "proof-of-possession" if outcome == "invalid_pop" else outcome
                 assert expected in str(denied.value).lower()
                 next_activity.execute_activity.assert_not_awaited()
-        assert len(requests) == 2
-        assert requests[0].request_hash == requests[1].request_hash
+        if outcome in ("revoked", "expired"):
+            # A retry whose chain is now revoked or expired is refused before the
+            # approver is asked again; an approval could not change the outcome.
+            assert len(requests) == 1
+        else:
+            assert len(requests) == 2
+            assert requests[0].request_hash == requests[1].request_hash
 
     @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
     @pytest.mark.parametrize("application_error", [False, True], ids=["unexpected", "non_retryable"])
@@ -3970,6 +3975,54 @@ class TestApprovalGates:
         assert exc_info.value.non_retryable
         assert "replicas" in str(exc_info.value)
         assert calls == []
+
+    def _assert_denied_without_asking(self, warrant, agent_key, approver_key, trusted_root):
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+        calls: list = []
+
+        def handler(request):
+            calls.append(request)
+            return self._sign_approval(warrant, approver_key, "deploy", {})
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[trusted_root],
+            approval_handler=handler,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop)
+
+        with pytest.raises(ApplicationError) as exc_info:
+            self._run(plugin, info, inp)
+        assert exc_info.value.non_retryable
+        assert calls == []
+        return exc_info.value
+
+    def test_expired_chain_is_denied_without_asking_approvers(self):
+        """An expired gated warrant is refused before the approval handler runs."""
+        import time as _time
+
+        from tenuo import SigningKey
+
+        control_key, agent_key, approver_key = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
+        warrant = self._mint_gated_warrant(control_key, agent_key, approver_key=approver_key, ttl=1)
+        _time.sleep(1.5)
+        error = self._assert_denied_without_asking(warrant, agent_key, approver_key, control_key.public_key)
+        assert "expired" in str(error).lower()
+
+    def test_untrusted_chain_is_denied_without_asking_approvers(self):
+        """A gated warrant from an issuer the worker doesn't trust is refused before
+        the approval handler runs.
+        """
+        from tenuo import SigningKey
+
+        control_key, agent_key, approver_key = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
+        warrant = self._mint_gated_warrant(control_key, agent_key, approver_key=approver_key)
+        self._assert_denied_without_asking(warrant, agent_key, approver_key, SigningKey.generate().public_key)
 
     def test_malformed_approvals_header_raises_invalid_approval(self):
         """Malformed x-tenuo-approvals must raise InvalidApproval, not be ignored."""

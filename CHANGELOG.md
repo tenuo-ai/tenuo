@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **No approval request for an invalid chain.** When an approval gate fires,
+  `enforce_tool_call` (sync and async) and the Temporal activity interceptor
+  now check that the presented chain is unexpired, unrevoked and trusted before
+  asking for approval, through the same shared preflight that already refused
+  calls outside the warrant. Previously an expired, revoked or untrusted
+  warrant produced an approval request that could never succeed. The refusal
+  keeps its error type (`expired`, `revoked`, `untrusted_issuer`) and is
+  receipted like other denials.
+
 - **An off-list Temporal signal no longer ends the workflow.** With
   `authorized_signals` set, a signal name not on the list raised
   `TemporalConstraintViolation`, which the plugin registers as a workflow

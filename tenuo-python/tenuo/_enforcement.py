@@ -669,6 +669,90 @@ def _denial_before_approval(
     return error_type, reason, argument
 
 
+def _sign_path_trusted_roots(trusted_roots: Optional[List[Any]], bound_warrant: Any) -> Optional[List[Any]]:
+    """Trusted roots for the sign path: explicit, then bind-time, then configured, then the runtime's.
+
+    Returns ``None`` when none is configured; callers fail closed.
+    """
+    if trusted_roots is not None:
+        return trusted_roots
+    bound_roots = getattr(bound_warrant, "_trusted_roots", None)
+    if bound_roots is not None:
+        return bound_roots
+    from .config import resolve_trusted_roots
+
+    roots = resolve_trusted_roots(None)
+    if roots is None:
+        from .runtime import get_runtime
+
+        runtime = get_runtime()
+        if runtime is not None:
+            roots = list(runtime.trusted_roots)
+    return roots
+
+
+def _chain_validity_error(full_chain: List[Any], authorizer: Any) -> Optional[BaseException]:
+    """Return the error when the chain is expired, revoked or untrusted, else ``None``.
+
+    Deny-only and used before an approval gate asks anyone: ``None`` allows
+    nothing, and the full authorization, including PoP, still runs. Expiry is
+    checked exactly, as authorization does; ``Authorizer.verify_chain`` alone
+    would allow its clock tolerance. Trust and revocation use ``authorizer``
+    as the caller configured it; without one only expiry is checked.
+    """
+    for warrant in full_chain:
+        if warrant.is_expired():
+            return ExpiredError(str(warrant.id))
+    if authorizer is None:
+        return None
+    try:
+        authorizer.verify_chain(list(full_chain))
+    except TenuoError as exc:
+        return exc
+    return None
+
+
+def _preflight_authorizer(
+    *, verify_mode: str, authorizer: Any, trusted_roots: Optional[List[Any]], bound_warrant: Any,
+) -> Any:
+    """The authorizer ``enforce_tool_call`` will authorize with: same roots, runtime revocation applied.
+
+    ``None`` when the sign path has no trusted roots (it then fails closed).
+    """
+    if verify_mode == "verify":
+        auth = authorizer
+    else:
+        roots = _sign_path_trusted_roots(trusted_roots, bound_warrant)
+        if roots is None:
+            return None
+        from tenuo_core import Authorizer
+
+        auth = Authorizer(trusted_roots=roots)
+    if auth is not None:
+        from .runtime import apply_runtime_revocation
+
+        apply_runtime_revocation(auth)
+    return auth
+
+
+def _refusal_before_approval(
+    warrant: Any, tool_name: str, constraint_args: Dict[str, Any], *, chain: List[Any], authorizer: Any,
+) -> "Optional[BaseException | Tuple[str, str, Optional[str]]]":
+    """Why a gated call is refused before anyone is asked to approve it, else ``None``.
+
+    Every path that collects approvals calls this first (``enforce_tool_call``,
+    sync and async, and Temporal's activity interceptor), so all of them refuse
+    the same calls without putting them in front of an approver. Checked in the
+    order authorization checks them: an expired, revoked or untrusted chain
+    (returned as the exception), then a call the warrant does not grant
+    (returned as ``(error_type, reason, argument)``). Deny-only: ``None``
+    allows nothing.
+    """
+    invalid = _chain_validity_error(chain, authorizer)
+    if invalid is not None:
+        return invalid
+    return _denial_before_approval(warrant, tool_name, constraint_args)
+
 def _collect_approvals_for_approval_gate(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -1094,10 +1178,33 @@ def _enforce_tool_call_impl(
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
-            # Deny calls the warrant does not grant before asking anyone.
-            _not_granted = _denial_before_approval(_warrant_obj, tool_name, _constraint_auth_args)
-            if _not_granted is not None:
-                _err, _reason, _arg = _not_granted
+            # Refuse, before asking anyone, a call authorization would refuse anyway.
+            _refusal = _refusal_before_approval(
+                _warrant_obj,
+                tool_name,
+                _constraint_auth_args,
+                chain=_presented_chain,
+                authorizer=_preflight_authorizer(
+                    verify_mode=verify_mode,
+                    authorizer=authorizer,
+                    trusted_roots=trusted_roots,
+                    bound_warrant=bound_warrant,
+                ),
+            )
+            if isinstance(_refusal, BaseException):
+                return _enforcement_result_from_chain_error_with_logging(
+                    _refusal,
+                    tool_name,
+                    tool_args,
+                    warrant_id,
+                    constraint_auth_args=_constraint_auth_args,
+                    warrant=_warrant_obj,
+                    presented_chain=_presented_chain,
+                    authorizer=authorizer,
+                    pop_auth_args=_pop_auth_args,
+                )
+            if _refusal is not None:
+                _err, _reason, _arg = _refusal
                 return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
@@ -1147,26 +1254,16 @@ def _enforce_tool_call_impl(
             #   4. Fail-closed — raise ConfigurationError
             # ─────────────────────────────────────────────────────────────────
             if trusted_roots is None:
-                _bound_roots = getattr(bound_warrant, "_trusted_roots", None)
-                if _bound_roots is not None:
-                    trusted_roots = _bound_roots
-                else:
-                    from .config import resolve_trusted_roots as _resolve_roots
-                    trusted_roots = _resolve_roots(None)
-                    if trusted_roots is None:
-                        from .runtime import get_runtime
-                        _rt = get_runtime()
-                        if _rt is not None:
-                            trusted_roots = list(_rt.trusted_roots)
-                    if trusted_roots is None:
-                        raise ConfigurationError(
-                            "enforce_tool_call requires trusted_roots in the sign path. "
-                            "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
-                            "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
-                            "or call tenuo.configure(trusted_roots=[...]) at application startup. "
-                            "Accepting self-signed warrants is not permitted (fail-closed). "
-                            "See tenuo_core.Authorizer for details."
-                        )
+                trusted_roots = _sign_path_trusted_roots(None, bound_warrant)
+                if trusted_roots is None:
+                    raise ConfigurationError(
+                        "enforce_tool_call requires trusted_roots in the sign path. "
+                        "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
+                        "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
+                        "or call tenuo.configure(trusted_roots=[...]) at application startup. "
+                        "Accepting self-signed warrants is not permitted (fail-closed). "
+                        "See tenuo_core.Authorizer for details."
+                    )
 
             # ─────────────────────────────────────────────────────────────────
             # VERIFIED SIGN PATH — sign PoP locally, then verify issuer
@@ -1574,14 +1671,41 @@ async def _enforce_tool_call_async_impl(
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
-            # Deny calls the warrant does not grant before asking anyone.
-            _not_granted = _denial_before_approval(_warrant_obj, tool_name, _constraint_auth_args)
-            if _not_granted is not None:
-                _err, _reason, _arg = _not_granted
+            # Refuse, before asking anyone, a call authorization would refuse anyway.
+            _refusal = _refusal_before_approval(
+                _warrant_obj,
+                tool_name,
+                _constraint_auth_args,
+                chain=_presented_chain,
+                authorizer=_preflight_authorizer(
+                    verify_mode=verify_mode,
+                    authorizer=authorizer,
+                    trusted_roots=trusted_roots,
+                    bound_warrant=bound_warrant,
+                ),
+            )
+            if isinstance(_refusal, BaseException):
+                return _enforcement_result_from_chain_error_with_logging(
+                    _refusal,
+                    tool_name,
+                    tool_args,
+                    warrant_id,
+                    constraint_auth_args=_constraint_auth_args,
+                    warrant=_warrant_obj,
+                    presented_chain=_presented_chain,
+                    authorizer=authorizer,
+                    pop_auth_args=_pop_auth_args,
+                )
+            if _refusal is not None:
+                _err, _reason, _arg = _refusal
                 return EnforcementResult(
-                    allowed=False, tool=tool_name, arguments=tool_args,
-                    denial_reason=_reason, constraint_violated=_arg,
-                    error_type=_err, warrant_id=warrant_id,
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=_reason,
+                    constraint_violated=_arg,
+                    error_type=_err,
+                    warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
                     authorizer=authorizer if authorizer is not None else _auth,
@@ -1613,26 +1737,16 @@ async def _enforce_tool_call_async_impl(
 
         if verify_mode == "sign":
             if trusted_roots is None:
-                _bound_roots = getattr(bound_warrant, "_trusted_roots", None)
-                if _bound_roots is not None:
-                    trusted_roots = _bound_roots
-                else:
-                    from .config import resolve_trusted_roots as _resolve_roots
-                    trusted_roots = _resolve_roots(None)
-                    if trusted_roots is None:
-                        from .runtime import get_runtime
-                        _rt = get_runtime()
-                        if _rt is not None:
-                            trusted_roots = list(_rt.trusted_roots)
-                    if trusted_roots is None:
-                        raise ConfigurationError(
-                            "enforce_tool_call requires trusted_roots in the sign path. "
-                            "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
-                            "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
-                            "or call tenuo.configure(trusted_roots=[...]) at application startup. "
-                            "Accepting self-signed warrants is not permitted (fail-closed). "
-                            "See tenuo_core.Authorizer for details."
-                        )
+                trusted_roots = _sign_path_trusted_roots(None, bound_warrant)
+                if trusted_roots is None:
+                    raise ConfigurationError(
+                        "enforce_tool_call requires trusted_roots in the sign path. "
+                        "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
+                        "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
+                        "or call tenuo.configure(trusted_roots=[...]) at application startup. "
+                        "Accepting self-signed warrants is not permitted (fail-closed). "
+                        "See tenuo_core.Authorizer for details."
+                    )
 
             import time as _time
             from tenuo_core import Authorizer as _Authorizer

@@ -762,3 +762,96 @@ def test_verified_approval_includes_signed_envelope_base64(keys):
     raw = base64.standard_b64decode(b64)
     restored = SignedApproval.from_bytes(raw)
     restored.verify()
+
+
+# -----------------------------------------------------------------------------
+# Chain validity is checked before anyone is asked to approve
+# -----------------------------------------------------------------------------
+
+
+class TestChainValidityBeforeApproval:
+    """An expired, revoked or untrusted chain is refused without an approval request."""
+
+    @staticmethod
+    def _gated(issuer, holder, approver, ttl=3600):
+        return Warrant.issue(
+            issuer,
+            capabilities={"transfer": {}},
+            ttl_seconds=ttl,
+            holder=holder.public_key,
+            required_approvers=[approver.public_key],
+            min_approvals=1,
+            approval_gates={"transfer": None},
+        )
+
+    @staticmethod
+    def _recording_handler(calls):
+        def handler(request):
+            calls.append(request)
+            return auto_deny()(request)
+
+        return handler
+
+    def test_expired_chain_is_not_sent_for_approval(self, agent_key, approver_key):
+        bound = self._gated(agent_key, agent_key, approver_key, ttl=1).bind(
+            agent_key, trusted_roots=[agent_key.public_key]
+        )
+        time.sleep(1.1)
+        calls = []
+        result = enforce_tool_call("transfer", {}, bound, approval_handler=self._recording_handler(calls))
+        assert not result.allowed
+        assert result.error_type == "expired"
+        assert calls == []
+        assert result.presented_chain  # still receipted
+
+    def test_untrusted_issuer_is_not_sent_for_approval(self, agent_key, approver_key):
+        stranger = SigningKey.generate()
+        bound = self._gated(stranger, agent_key, approver_key).bind(agent_key, trusted_roots=[agent_key.public_key])
+        calls = []
+        result = enforce_tool_call(
+            "transfer", {}, bound, approval_handler=self._recording_handler(calls), trusted_roots=[agent_key.public_key]
+        )
+        assert not result.allowed
+        assert result.error_type == "untrusted_issuer"
+        assert calls == []
+
+    def test_revoked_chain_is_not_sent_for_approval(self, agent_key, approver_key):
+        from tenuo import HolderIdentity, Runtime
+        from tenuo_core import SignedRevocationList
+
+        warrant = self._gated(agent_key, agent_key, approver_key)
+        builder = SignedRevocationList.builder()
+        builder.revoke(warrant.id)
+        builder.version(1)
+        runtime = Runtime(
+            identity=HolderIdentity.from_signing_key(agent_key),
+            trusted_roots=[agent_key.public_key],
+            revocation_list=builder.build(agent_key),
+        )
+        bound = warrant.bind(agent_key, trusted_roots=[agent_key.public_key])
+        calls = []
+        with runtime.bind():
+            result = enforce_tool_call("transfer", {}, bound, approval_handler=self._recording_handler(calls))
+        assert not result.allowed
+        assert result.error_type == "revoked"
+        assert calls == []
+
+    def test_valid_chain_still_asks_for_approval(self, agent_key, approver_key):
+        bound = self._gated(agent_key, agent_key, approver_key).bind(agent_key, trusted_roots=[agent_key.public_key])
+        result = enforce_tool_call("transfer", {}, bound, approval_handler=auto_approve(approver_key=approver_key))
+        assert result.allowed
+
+    async def test_async_expired_chain_is_not_sent_for_approval(self, agent_key, approver_key):
+        from tenuo._enforcement import enforce_tool_call_async
+
+        bound = self._gated(agent_key, agent_key, approver_key, ttl=1).bind(
+            agent_key, trusted_roots=[agent_key.public_key]
+        )
+        time.sleep(1.1)
+        calls = []
+        result = await enforce_tool_call_async(
+            "transfer", {}, bound, approval_handler=self._recording_handler(calls)
+        )
+        assert not result.allowed
+        assert result.error_type == "expired"
+        assert calls == []

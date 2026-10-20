@@ -1228,6 +1228,8 @@ class TenuoActivityInboundInterceptor:
             # -- 11. Multi-Sig Approval Resolution --
             gate_approvals = await self._resolve_approval_gate_approvals(
                 warrant, tool_name, args, headers,
+                authorizer=authorizer,
+                chain=list(chain) if chain else [warrant],
             )
 
             # -- 12. Cryptographic Authorization Evaluation --
@@ -1417,6 +1419,9 @@ class TenuoActivityInboundInterceptor:
         tool_name: str,
         args: Dict[str, Any],
         headers: Dict[str, bytes],
+        *,
+        authorizer: Any = None,
+        chain: Optional[List[Any]] = None,
     ) -> Optional[List[Any]]:
         """Evaluate warrant approval gates and collect approvals when a gate fires."""
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
@@ -1424,11 +1429,15 @@ class TenuoActivityInboundInterceptor:
         if not _evaluate_approval_gates(warrant, tool_name, args):
             return None
 
-        # A call the warrant does not grant is never sent for approval. Returning
-        # no approvals lets the authorization step below deny it with the reason.
-        from tenuo._enforcement import _denial_before_approval
+        # A call authorization would refuse anyway (outside the warrant, or an
+        # expired, revoked or untrusted chain) is never sent for approval.
+        # Returning no approvals lets the authorization step below deny it with
+        # the reason.
+        from tenuo._enforcement import _refusal_before_approval
 
-        if _denial_before_approval(warrant, tool_name, args) is not None:
+        if _refusal_before_approval(
+            warrant, tool_name, args, chain=chain or [warrant], authorizer=authorizer,
+        ) is not None:
             return None
 
         from tenuo_core import SignedApproval as CoreSignedApproval
