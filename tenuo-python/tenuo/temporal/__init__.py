@@ -41,6 +41,17 @@ For direct imports (preferred in library / internal code)::
     tenuo.temporal._constants     TENUO_WARRANT_HEADER, TENUO_KEY_ID_HEADER, …
     tenuo.temporal.exceptions     TenuoContextError, PopVerificationError, …
     tenuo.temporal_plugin         TenuoTemporalPlugin
+    tenuo.temporal.harness        Temporal Agent Harness presets:
+                                  harness_plugin_config, warrant_evaluator,
+                                  harness_mcp_server_activities,
+                                  harness_sandbox_activities,
+                                  HARNESS_INTERNAL_ACTIVITIES,
+                                  HARNESS_TOOL_CTX_EXCLUDE_ARGS,
+                                  HARNESS_MCP_CALL_TOOL_ACTIVITIES. Not
+                                  imported by this package (no hard
+                                  dependency on temporal-agent-harness);
+                                  import it explicitly. See
+                                  docs/temporal-harness.md.
 """
 
 from __future__ import annotations
