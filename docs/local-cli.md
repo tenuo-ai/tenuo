@@ -233,3 +233,40 @@ the configured `receipts.jsonl` using the existing SDK receipt machinery.
 Local adapters currently support enforcement mode only and never read the
 controller or approver private key. This is an in-process guardrail: expose
 effects through a separately protected service if agent code can bypass wrappers.
+
+## MCP client and server
+
+The client selects a warrant file; the server independently loads public trust
+and the signed revocation list. The verifier never needs the agent's private key.
+
+```python
+from tenuo.mcp import SecureMCPClient
+
+async with SecureMCPClient.local(
+    warrant=".tenuo/agent.warrant", command="python", args=["server.py"]
+) as client:
+    await client.call_tool("get_order", {"order_id": "A-1001"})
+```
+
+On a FastMCP server, protect dispatch through the existing middleware:
+
+```python
+from fastmcp import FastMCP
+from tenuo.mcp import MCPVerifier, TenuoMiddleware
+
+verifier = MCPVerifier.local(path="/run/tenuo-public")
+server = FastMCP("orders", middleware=[TenuoMiddleware(verifier)])
+```
+
+Provision that server directory with `config.yaml`, `trust/*.pub` and
+`revocations.srl`. Do not copy private keys from the client or controller.
+For signed server receipts, create a separate server identity and pass its
+name or private-key path as `MCPVerifier.local(key=...)`. Without it the server
+still verifies calls but does not produce local signed receipts.
+
+Both paths reread verification files per call and fail closed. The local client
+always enforces and presents its authority; it refuses `warrant_context=False`
+and disabled warrant injection. File approvals acquired on the client are
+forwarded to the server as native signed approvals. A client check alone is an
+in-process guardrail; server mediation protects the MCP dispatch path. Neither
+prevents arbitrary code in the server process from accessing its own resources.

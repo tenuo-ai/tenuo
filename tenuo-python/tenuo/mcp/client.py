@@ -325,6 +325,13 @@ class SecureMCPClient:
                     # No existing config, just register MCP
                     tenuo_configure(mcp_config=self.compiled_config)
 
+    @classmethod
+    def local(cls, *, path=None, warrant, key="agent", **kwargs):
+        """Connect with explicit local authority, file approvals and fresh verification data."""
+        from ..local_cli.integrations import local_mcp_client
+
+        return local_mcp_client(path=path, warrant=warrant, key=key, **kwargs)
+
     async def __aenter__(self):
         """Connect to MCP server."""
         await self.connect()
@@ -800,8 +807,10 @@ class SecureMCPClient:
 
         # Authorize locally if warrant context is enabled
         if warrant_context:
-            if not is_configured():
-                raise ConfigurationError("Tenuo not configured. Call configure() first or use warrant_context=False")
+            from ..runtime import get_runtime
+
+            if not is_configured() and get_runtime() is None:
+                raise ConfigurationError("Tenuo not configured. Supply a Runtime or call configure() first")
 
             from ..bound_warrant import BoundWarrant
             from ..config import resolve_trusted_roots

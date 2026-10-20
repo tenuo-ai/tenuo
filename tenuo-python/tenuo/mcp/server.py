@@ -668,6 +668,13 @@ class MCPVerifier:
         self._control_plane = control_plane
         self._nonce_store = nonce_store
 
+    @classmethod
+    def local(cls, *, path=None, key=None, **kwargs):
+        """Verify with reloaded local public trust and SRL files; no holder key required."""
+        from ..local_cli.integrations import local_mcp_verifier
+
+        return local_mcp_verifier(path=path, key=key, **kwargs)
+
     def verify(
         self,
         tool_name: str,
