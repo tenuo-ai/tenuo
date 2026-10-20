@@ -51,6 +51,8 @@ Use [YAML warrant templates](tenuo-python/examples/local_cli/orders.yaml) with
 Issue a signed chain with `tenuo-cli warrant issue --template orders.yaml
 --holder agent`, then inspect it with `warrant show` and validate it with
 `warrant verify`. See the [lifecycle walkthrough](docs/local-cli.md).
+For human gates, exchange [portable approval request and response files](docs/local-cli.md#approve-a-held-call-using-files)
+with `tenuo-cli approval show|approve|deny`.
 
 ### AI coding agents
 

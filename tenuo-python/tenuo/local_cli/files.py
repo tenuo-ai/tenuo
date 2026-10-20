@@ -23,6 +23,12 @@ class DocumentError(ValueError):
 
 
 class StrictLoader(yaml.SafeLoader):
+    # Keep unquoted ISO timestamps as strings, as required by the file schema.
+    yaml_implicit_resolvers = {
+        key: [(tag, pattern) for tag, pattern in rules if tag != "tag:yaml.org,2002:timestamp"]
+        for key, rules in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+
     def compose_node(self, parent, index):
         event = self.peek_event()
         if self.check_event(yaml.AliasEvent) or getattr(event, "anchor", None):

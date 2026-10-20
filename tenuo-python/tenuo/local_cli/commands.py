@@ -79,10 +79,46 @@ def parser():
     issue.add_argument("--out")
     issue.add_argument("--no-store", action="store_true")
     warrants.add_parser("list")
+    approvals = commands.add_parser("approval").add_subparsers(dest="action", required=True)
+    for action in ("show", "approve", "deny"):
+        sub = approvals.add_parser(action)
+        sub.add_argument("--file", required=True)
+        if action == "show":
+            continue
+        sub.add_argument("--key", default="approver")
+        sub.add_argument("--ttl")
+        sub.add_argument("--out")
+        sub.add_argument("--yes", action="store_true")
+        if action == "deny":
+            sub.add_argument("--reason", required=True)
     return root
 
 
 def execute(opts, workspace):
+    if opts.command == "approval":
+        from .approvals import read_request, sign_response
+        from .files import write_yaml
+        from tenuo.warrant_template import duration
+
+        document = read_request(opts.file, workspace.authorizer())
+        if opts.action == "show":
+            return {"request": document, "verified": True}
+        if not opts.yes:
+            if not sys.stdin.isatty():
+                return {"error": "Review with approval show, then pass --yes to sign noninteractively", "exit_code": 2}
+            print(yaml.safe_dump(document, sort_keys=False), file=sys.stderr)
+            if input("Sign this decision? [y/N] ").strip().lower() not in ("y", "yes"):
+                return {"error": "No decision signed", "exit_code": 4}
+        response = sign_response(
+            document,
+            workspace.authorizer(),
+            workspace.signing_key(opts.key),
+            ttl=duration(opts.ttl or workspace.config["approvals"]["ttl"]),
+            reason=opts.reason if opts.action == "deny" else None,
+        )
+        path = opts.out or workspace.path / "approvals" / (document["request_hash"] + ".yaml")
+        write_yaml(path, response)
+        return {"file": str(path), "decision": "approved" if opts.action == "approve" else "denied"}
     if opts.command == "warrant":
         return warrant_command(opts, workspace)
     if opts.command == "template":

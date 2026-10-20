@@ -164,3 +164,30 @@ cannot exceed the parent. The output always carries its complete chain.
 Issuing a warrant does not attach it to a running session or workflow. Deliver
 the selected file through the integration's explicit warrant configuration.
 Nothing automatically selects the newest warrant or combines stored grants.
+
+## Approve a held call using files
+
+An integration writes an `approval-request` YAML file containing the complete
+warrant chain, exact tool arguments, request hash and expiry. Send that file to
+an approver. They need their own private key and independently configured trust
+and revocation data; the request does not establish trust.
+
+```bash
+tenuo-cli approval show --file request.yaml
+tenuo-cli approval approve --file request.yaml --out response.yaml --yes
+# Or refuse that exact call with a signed reason:
+tenuo-cli approval deny --file request.yaml --reason 'Duplicate refund' --out refusal.yaml --yes
+```
+
+Return the response file to the integration. `--key` selects an approver key by
+name or path. Names are local labels; only a public key embedded in the signed
+warrant is accepted. `--ttl 10m` overrides the default `approvals.ttl` of five
+minutes, capped at both request and warrant expiry. Noninteractive signing
+requires `--yes`; interactive signing displays the request and asks first.
+
+The issuer does not participate in approving an already permitted call. Approval
+does not widen its capabilities, extend its lifetime or undo revocation.
+Responses use native `SignedApproval` artifacts. Refusals bind the reason under
+a distinct local domain and cannot authorize the original call. An approval is
+reusable for the same warrant, holder, tool and arguments until it expires;
+there is no one-use tracking or changed Temporal retry-expiry behavior.
