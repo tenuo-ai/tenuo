@@ -3404,7 +3404,16 @@ impl All {
     }
 
     /// Check if all constraints match.
+    ///
+    /// An empty conjunction is invalid rather than vacuously true: it would
+    /// accept every value while appearing to constrain the argument
+    /// (AAT draft -02 §4.5).
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        if self.constraints.is_empty() {
+            return Err(Error::Validation(
+                "All constraint with an empty constraints array is invalid".to_string(),
+            ));
+        }
         for c in &self.constraints {
             if !c.matches(value)? {
                 return Ok(false);
@@ -3413,8 +3422,16 @@ impl All {
         Ok(true)
     }
 
-    /// Validate attenuation: child must have all parent constraints plus optionally more.
+    /// Validate attenuation: every parent clause must be subsumed by at least
+    /// one child clause. A single child clause may cover several parent clauses;
+    /// extra child clauses only narrow further. An empty `constraints` array is
+    /// invalid in either position (AAT draft -02 §4.5).
     pub fn validate_attenuation(&self, child: &All) -> Result<()> {
+        if self.constraints.is_empty() || child.constraints.is_empty() {
+            return Err(Error::MonotonicityViolation(
+                "All constraint with an empty constraints array is invalid".to_string(),
+            ));
+        }
         // Every parent constraint must appear in child
         for parent_c in &self.constraints {
             let found = child
@@ -3457,6 +3474,10 @@ impl Any {
     }
 
     /// Check if any constraint matches.
+    ///
+    /// An empty disjunction matches nothing (deny-all). It is still rejected
+    /// as an attenuation in either position (AAT draft -02 §4.5); see
+    /// [`Any::validate_attenuation`].
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
         for c in &self.constraints {
             if c.matches(value)? {
@@ -3474,6 +3495,11 @@ impl Any {
     /// `Any` requires the child to only retain alternatives the parent already
     /// permits.
     pub fn validate_attenuation(&self, child: &Any) -> Result<()> {
+        if self.constraints.is_empty() || child.constraints.is_empty() {
+            return Err(Error::MonotonicityViolation(
+                "Any constraint with an empty constraints array is invalid".to_string(),
+            ));
+        }
         for child_c in &child.constraints {
             let covered = self
                 .constraints
