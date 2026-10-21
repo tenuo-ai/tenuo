@@ -211,7 +211,7 @@ The middleware:
 
 Install the `tenuo[fastmcp]` extra, which pins FastMCP ≥3.2.1 (includes [hardened client parsing](https://github.com/PrefectHQ/fastmcp/pull/3778) of tool error results).
 
-Running a FastMCP server you didn't write, such as mcp-atlassian or Workspace MCP? You can add the same middleware from a small launcher without forking it: see [Existing FastMCP servers](./fastmcp-servers).
+Running a FastMCP server you didn't write, such as mcp-atlassian or Workspace MCP? Run it with `python -m tenuo.mcp.wrap <server>` to get the same middleware without forking it: see [Existing FastMCP servers](./fastmcp-servers).
 
 ### Pattern 2: SecureMCPClient (Recommended for Clients)
 
