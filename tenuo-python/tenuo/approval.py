@@ -92,6 +92,7 @@ class ApprovalRequest:
         warrant_expires_at_unix: Warrant expiry as Unix seconds when known (optional).
         created_at_unix: When this request was constructed (optional).
         message: Resolved display text copied by adapters (optional).
+        warrant_chain: Presented chain, root first and ending with the warrant (optional).
     """
 
     tool: str
@@ -105,6 +106,7 @@ class ApprovalRequest:
     warrant_expires_at_unix: Optional[int] = None
     created_at_unix: Optional[int] = None
     message: Optional[str] = None
+    warrant_chain: Optional[List[Any]] = None
 
     @staticmethod
     def for_warrant_gate(
@@ -113,6 +115,7 @@ class ApprovalRequest:
         warrant: Any,
         request_hash: bytes,
         holder_key: Optional[Any] = None,
+        warrant_chain: Optional[List[Any]] = None,
     ) -> "ApprovalRequest":
         """Build a request aligned with Rust ``approval::ApprovalRequest`` context."""
         from tenuo_core import resolve_approval_required_message as _resolve
@@ -144,6 +147,7 @@ class ApprovalRequest:
             warrant_expires_at_unix=warrant_expires_at_unix(warrant),
             created_at_unix=int(time.time()),
             message=_resolve(tool, raw_message),
+            warrant_chain=list(warrant_chain) if warrant_chain else None,
         )
 
 
