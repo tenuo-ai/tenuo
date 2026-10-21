@@ -127,10 +127,10 @@ Every enforcement decision is recorded as a cryptographically signed receipt. If
 ### Example
 
 ```python
-from tenuo.openai import GuardBuilder, Pattern
+from tenuo.openai import GuardBuilder, Regex
 
 client = (GuardBuilder(openai.OpenAI())
-    .allow("send_email", to=Pattern("*@company.com"))
+    .allow("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"))
     .build())
 # A hijacked call to attacker@evil.com is denied at the enforcement point.
 # The denial is recorded as a signed receipt.

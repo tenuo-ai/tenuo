@@ -174,7 +174,9 @@ from tenuo import Pattern
 # Suffix wildcard - matches paths starting with /data/
 Pattern("/data/*")
 
-# Prefix wildcard - matches emails ending with @company.com
+# Prefix wildcard - matches any string ending with @company.com
+# Not for recipient fields: * also matches "," ";" "<" and "@", so
+# "eve@evil.com,bob@company.com" matches. Use an anchored Regex there.
 Pattern("*@company.com")
 
 # Middle wildcard - matches specific file in any subdirectory
