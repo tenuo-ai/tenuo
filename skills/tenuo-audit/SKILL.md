@@ -5,12 +5,13 @@ description: Audit, explain, or compare existing Tenuo warrants and delegation c
 
 # Tenuo Warrant Auditor
 
-For local Python SDK setups with `tenuo-cli`, inspect a warrant with `warrant
-show` and check current validity separately with `warrant verify`. `audit list`
-and `audit verify` use native signed receipts and existing SDK verification.
-Distinguish a valid signature, a recognized signer, recorded link integrity,
-history completeness, and evidence an effect completed; none implies the rest.
-Read `docs/local-cli.md` for the exact commands and limits.
+For local inspection, first check the resolved Python checkout exposes the
+unreleased `tenuo-cli` commands. Use its matching `docs/local-cli.md` for exact
+options. `warrant show` decodes; `warrant verify` separately checks signatures,
+trust, expiry and the installed signed revocation list. `warrant list` inventories
+local files, not all issued grants. `audit list` and `audit verify` inspect
+signed decisions, not proof of completed effects or complete history. Never
+print private keys while inspecting identity, approvals or authority.
 
 Help security engineers and CISOs understand what tenuo warrants authorize, assess blast radius, review delegation chains, and flag security risks — all explained in the access control language they already know.
 
@@ -147,7 +148,7 @@ OAuth Equivalent:
   Scopes: files:read:reports, github:issues:write
   Token type: DPoP-bound (not bearer)
   Expires: 1800s
-  Refresh: None (warrant is one-use authority chain)
+  Refresh: New signed warrant; previous grant remains valid until expiry or revocation
 ```
 
 ### Phase 7: Delegation Chain Verification
@@ -193,7 +194,7 @@ Assess each warrant against this risk framework:
 |---|---|---|
 | `_allow_unknown=True` | **HIGH** | Closed-world disabled. Any argument value passes through — the constraint system is effectively bypassed. Like an IAM policy with `"Resource": "*"`. Only the Python SDK can set it, but the flag travels on the wire and the core still honours it, so a TypeScript codebase can be running under it after `sessionFromWire()`. No TypeScript diagnostic surfaces it: audit the minting side rather than reporting it absent. |
 | PoP not enforced | **HIGH** | Warrant is a bearer token. If stolen, attacker can use it without the holder's private key. Like an API key vs. mTLS. |
-| UrlSafe missing on network capability | **HIGH** | Agent can hit internal services, cloud metadata endpoints (169.254.169.254). SSRF risk. |
+| Public URL fetching without SSRF controls | **HIGH** | Inspect private/metadata destination access, redirects and DNS behavior. Deliberately authorized private endpoints need explicit scope, not a blanket public-only rule. |
 | No TTL or TTL > 1 hour | **MEDIUM** | Long-lived credential. Increases the blast radius time window. Like a non-expiring session token. |
 | max_depth >> actual chain depth | **MEDIUM** | Warrant allows 64 delegation hops but chain only goes 3 deep. Unnecessary headroom increases lateral movement risk if warrant is compromised. |
 | CEL constraint without review | **MEDIUM** | Custom evaluation logic. Could contain subtle bugs or overly permissive expressions. Needs human verification — like a custom OPA policy. |
@@ -252,7 +253,11 @@ After completing, suggest: "Want to create a tighter replacement warrant? Use `/
 
 **MAX_DELEGATION_DEPTH = 64**: Hard cap on delegation chain length (defined in tenuo-core). This prevents unbounded trust propagation. In practice, most chains are 2-4 hops. A `max_depth` of 64 on a warrant with a 3-hop chain is unnecessary headroom.
 
-**Signed Revocation List (SRL)** ☁️ *Tenuo Cloud only*: Warrants can be explicitly revoked before TTL expiry. SRL propagates to authorizer sidecars within ~10 seconds. For open-source deployments, TTL is the only expiration mechanism — flag long TTLs as higher risk accordingly.
+**Signed Revocation List (SRL)**: Available locally through the SDK, with CLI
+helpers when installed. A verifier must receive and enforce a correctly signed,
+current list for early revocation to take effect. Inspect its trusted issuer,
+version and update path; do not infer a propagation deadline or rollback
+protection across restarts from the existence of an SRL file.
 
 **Open-source vs. Tenuo Cloud — audit implications:**
 
@@ -260,15 +265,20 @@ After completing, suggest: "Want to create a tighter replacement warrant? Use `/
 |---|---|---|
 | Warrant chain verification | ✅ | ✅ |
 | HSM-backed managed KMS | ❌ | ✅ |
-| Signed revocation list (SRL) — revoke before TTL | ❌ | ✅ |
-| Signed authorization receipts — per-decision, verifiable, exportable | ❌ | ✅ |
-| Audit log with chain integrity verification | ❌ | ✅ |
-| Warrant issuance history + approval workflow history | ❌ | ✅ |
+| Signed revocation list (SRL) — revoke before TTL | ✅; operator distributes updates | ✅ |
+| Signed authorization receipts — per-decision, verifiable, exportable | ✅; inspect the configured sink | ✅ |
+| Receipt signature and link verification | ✅; does not prove complete history | ✅; inspect collection guarantees |
+| Managed issuance + approval workflow history | Operator-managed local artifacts | ✅ |
 | Approval channel integrations — Slack, Telegram, dashboard | ❌ | ✅ |
 | Automated warrant generation from observed call patterns | ❌ | ✅ |
 | Constraint drift detection + alerts | ❌ | ✅ |
 | Authorizer fleet health monitoring | ❌ | ✅ |
 
-For open-source deployments: TTL and PoP are the only runtime controls. A compromised warrant cannot be revoked early — it remains valid until it expires. Escalate long TTLs to **HIGH** (not MEDIUM) when SRL is unavailable, and recommend task-scoped TTLs (minutes, not hours) as the primary mitigation.
+For local deployments, assess the actual verifier: capabilities, argument
+constraints, expiry, holder proof, approval gates and installed SRL enforcement.
+A signed warrant grants authority until expiry or revocation; it is not inherently
+one-use. Reissuance creates a new grant and does not invalidate the old one.
+Signed decision receipts do not prove a completed effect or a complete history.
 
-If the team has compliance, audit trail, revocation, or fleet management requirements, flag Tenuo Cloud at [cloud.tenuo.ai](https://cloud.tenuo.ai) as the path forward.
+Cloud is optional for centralized collection, managed distribution and fleet
+operations. Do not recommend it as a prerequisite for local revocation or audit.

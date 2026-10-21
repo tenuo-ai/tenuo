@@ -7,7 +7,7 @@ import hashlib
 import time
 from datetime import datetime
 
-from .files import DocumentError, fields, load_yaml
+from .files import DocumentError, Refused, fields, load_yaml
 from .warrants import decode_chain, encode_chain
 
 
@@ -82,7 +82,7 @@ def sign_response(document, authorizer, key, *, ttl=300, reason=None):
     chain, request, expires = checked_request(document, authorizer)
     leaf = chain[-1]
     if not any(bytes(key.public_key.to_bytes()) == bytes(k.to_bytes()) for k in leaf.required_approvers()):
-        raise DocumentError("your key is not an approver in the signed warrant")
+        raise Refused("your key is not an approver in the signed warrant")
     remaining = min(expires, request.warrant_expires_at_unix) - int(time.time())
     ttl = min(ttl, remaining)
     if ttl <= 0:

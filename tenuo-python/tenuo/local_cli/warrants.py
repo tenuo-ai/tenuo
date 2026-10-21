@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from .files import DocumentError, fingerprint, name, publish, read_bytes
+from .files import DocumentError, check_public_material, fingerprint, name, publish, read_bytes
 
 
 def decode_chain(text):
@@ -57,6 +57,15 @@ def describe(chain):
         "required_signatures": leaf.approval_threshold(),
         "extensions_base64": {k: base64.b64encode(v).decode() for k, v in leaf.extensions().items()},
         "verified": False,
+        "warrant_type": str(leaf.warrant_type),
+        "session_id": leaf.session_id,
+        "terminal": leaf.terminal,
+        "max_depth": leaf.max_depth,
+        "clearance": str(leaf.clearance) if leaf.clearance is not None else None,
+        "agent_id": leaf.agent_id(),
+        "issuable_tools": leaf.issuable_tools,
+        "max_issue_depth": leaf.max_issue_depth,
+        "constraint_bounds": repr(leaf.constraint_bounds_dict()) if leaf.constraint_bounds_dict() is not None else None,
     }
 
 
@@ -66,6 +75,7 @@ def issue(workspace, template, holder, *, issuer=None, parent=None):
         return [template.mint(workspace.signing_key(issuer or workspace.config["issuer"]), holder)]
     workspace.authorizer().verify_chain(parent)
     key = workspace.signing_key(issuer or "agent")
+    check_public_material(key, [holder, *template._approvers])
     if bytes(key.public_key.to_bytes()) != bytes(parent[-1].holder_key.to_bytes()):
         raise DocumentError("delegation needs the parent holder's key")
     builder = parent[-1].grant_builder().holder(holder).ttl(template.ttl_seconds)
@@ -94,7 +104,7 @@ def save(workspace, chain, *, out=None, store=True):
     return [str(p) for p in targets]
 
 
-def reissue(previous, key, ttl, *, holder=None):
+def reissue(workspace, previous, ttl, *, issuer=None, holder=None):
     """Copy a simple root grant, refusing claims that cannot be preserved exactly."""
     from tenuo import Warrant
     from tenuo_core import WarrantType
@@ -102,8 +112,14 @@ def reissue(previous, key, ttl, *, holder=None):
     if len(previous) != 1 or previous[0].depth != 0 or previous[0].parent_hash is not None:
         raise DocumentError("reissue a delegated warrant from its valid parent using warrant issue --from")
     old = previous[0]
+    # A reissued warrant is a new root, so revoking the old ID would no longer cover it. Expiry is not checked:
+    # renewing an expired grant is what reissue is for.
+    if str(old.id) in workspace.authorizer().installed_revocation_list().revoked_ids:
+        raise DocumentError(f"{old.id} is revoked; reissuing it would undo the revocation")
+    key = workspace.signing_key(issuer or workspace.config["issuer"])
+    check_public_material(key, [holder or old.holder_key, *(old.required_approvers() or [])])
     if bytes(old.issuer.to_bytes()) != bytes(key.public_key.to_bytes()) or not old.verify(key.public_key.to_bytes()):
-        raise DocumentError("controller key does not match the previous warrant")
+        raise DocumentError("issuer key does not match the previous warrant")
     if (
         old.warrant_type != WarrantType.Execution
         or old.extensions()

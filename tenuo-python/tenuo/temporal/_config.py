@@ -130,8 +130,6 @@ class TenuoPluginConfig:
     audit_deny: bool = True
     """Whether to emit audit events for denied actions."""
 
-    _local_authority: Optional[Any] = field(default=None, repr=False, compare=False)
-
     @classmethod
     def local(cls, path=None, *, key="agent", **kwargs):
         """Load shared local files without giving the worker an issuer key.
@@ -496,6 +494,7 @@ class TenuoPluginConfig:
     _provider_state_lock: Any = field(
         default_factory=threading.RLock, init=False, repr=False, compare=False
     )
+    _local_authority: Optional[Any] = field(default=None, repr=False, compare=False)
 
     @property
     def _provider_snapshots_ready(self) -> bool:

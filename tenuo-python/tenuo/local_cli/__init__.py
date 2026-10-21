@@ -1,4 +1,4 @@
-"""Local controller commands, separate from the agent runtime."""
+"""Local issuer and operator commands, separate from the agent runtime."""
 
 
 def main(argv=None):

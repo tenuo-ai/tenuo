@@ -10,7 +10,7 @@ import math
 import re
 from pathlib import Path
 
-from .local_cli.files import DocumentError, fields, load_public_key, load_yaml
+from .local_cli.files import DocumentError, check_public_material, fields, load_public_key, load_yaml
 
 _RANGE = re.compile(r"(-?\d+(?:\.\d+)?)?\.\.(-?\d+(?:\.\d+)?)?")
 
@@ -172,6 +172,7 @@ class WarrantTemplate:
         """Issue to a public key. The issuer never needs the holder's private key."""
         from tenuo import Warrant
 
+        check_public_material(issuer_key, [holder, *self._approvers])
         builder = Warrant.mint_builder().holder(holder).ttl(self.ttl_seconds)
         for tool, constraints in self._capabilities.items():
             builder = builder.capability(tool, **constraints)

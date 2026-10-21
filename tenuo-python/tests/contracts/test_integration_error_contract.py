@@ -581,7 +581,7 @@ class TestTemporalExplicitDenialContract:
 
         from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
 
-        source = inspect.getsource(TenuoActivityInboundInterceptor.execute_activity)
+        source = inspect.getsource(TenuoActivityInboundInterceptor._execute_activity)
         anchor = source.index(") as auth_exc:")
         block = source[anchor : anchor + 2500]
         emit_at = block.index("_emit_denial_event")
@@ -601,7 +601,7 @@ class TestTemporalExplicitDenialContract:
 
         from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
 
-        source = inspect.getsource(TenuoActivityInboundInterceptor.execute_activity)
+        source = inspect.getsource(TenuoActivityInboundInterceptor._execute_activity)
         anchor = source.index(") as auth_exc:")
         block = source[anchor : anchor + 2500]
         assert 'on_denial == "raise"' in block and "dry_run" in block

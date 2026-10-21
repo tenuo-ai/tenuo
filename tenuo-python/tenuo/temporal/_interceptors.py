@@ -1012,7 +1012,7 @@ class TenuoActivityInboundInterceptor:
             snapshot = authority.snapshot()
         except Exception:
             raise self._wrap_as_non_retryable(ChainValidationError(
-                reason="Local verification files unavailable or invalid; run tenuo-cli doctor"
+                reason="Local verification files unavailable or invalid; run tenuo-cli doctor", depth=0
             )) from None
         with authority.scope(snapshot) as (snapshot, _, _):
             return await self._execute_activity(input, local_snapshot=snapshot)

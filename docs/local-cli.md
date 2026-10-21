@@ -3,12 +3,12 @@ title: Local CLI
 description: Prepare local identities, trust, and signed revocation lists
 ---
 
-# Local controller files
+# Local CLI
 
 The Python package includes `tenuo-cli` alongside the existing `tenuo` command.
 No account or running service is required. From an unreleased source checkout,
 use `PYTHONPATH=tenuo-python python -m tenuo.local_cli` instead of `tenuo-cli`.
-Controller file locking currently supports macOS and Linux.
+Workspace file locking currently supports macOS and Linux.
 
 ```bash
 pip install tenuo
@@ -18,31 +18,70 @@ tenuo-cli trust list
 tenuo-cli doctor
 ```
 
-`init --dev` automatically prepares three separate identities: the controller
-(`issuer`), the agent, and an approver. It trusts the local controller and creates
+`init --dev` automatically prepares three separate identities: the issuer (the
+root that signs warrants), the agent, and an approver. It trusts the issuer and creates
 an empty signed revocation list. Plain `init` creates the layout without keys or
 trust. Initialization refuses an existing directory; it never rotates keys.
 
-The default workspace is `.tenuo/`. Change it with `TENUO_HOME` or `--home PATH`.
+The default workspace is `~/.tenuo/`, outside your project. Change it with
+`TENUO_HOME` or `--home PATH`.
 
 | Path | Purpose |
 | --- | --- |
 | `config.yaml` | Strict versioned configuration, defaulting to enforcement |
-| `keys/issuer.key` | Controller private key: grants authority |
-| `keys/agent.key` | Agent private key: proves it is the recipient |
+| `keys/issuer.key` | Issuer (root) private key: signs warrants |
+| `keys/agent.key` | Agent holder key: proves possession of its warrants |
 | `keys/approver.key` | Approver private key: signs held calls |
 | `keys/*.pub` | Public keys to exchange after verifying fingerprints |
-| `trust/*.pub` | Issuers the verifier accepts |
+| `trust/*.pub` | Trusted roots: issuer public keys the verifier accepts |
 | `revocations.srl` | Core signed revocation list in native CBOR |
 | `warrants/` | Issued warrant chains |
 | `sessions/` | Explicit operator-controlled session attachments |
 | `requests/`, `approvals/` | Portable requests and responses |
 
-Private files are created with mode `0600`. The workspace ignores its contents
-in Git. No signing secrets are written to the application's `.env`. Separate
-files under one OS user are **not process isolation**. A deployed agent receives
-only its key, warrants and public verification data. Keep controller and approver
-private keys outside its runtime mounts and credentials.
+Private files are created with mode `0600`, and the workspace ignores its
+contents in Git. No signing secrets are written to the application's `.env`.
+
+## Keep the issuer key out of the agent's reach
+
+Anyone who can read `keys/issuer.key` can sign warrants, including new ones for
+themselves, and can re-sign `revocations.srl` to undo a revocation. Every
+verifier that trusts that issuer accepts the result, on this machine or any
+other. `keys/approver.key` does the same for held calls. The agent needs only
+its own holder key, its warrants, `trust/` and `revocations.srl`.
+
+File permissions don't separate these on their own. Mode `0600` stops other
+users, not the user the agent runs as, and the same is true of a keychain item
+or an environment variable the agent's process can read. Locally, the agent's
+own warrant is what keeps it away from the keys:
+
+- The workspace defaults to `~/.tenuo`, outside your project. Keep it there.
+  For a separate workspace per project, point `TENUO_HOME` at another path
+  outside the project.
+- Scope the agent's file tools to the project with `subpath`. It normalizes
+  `..`, so a path that climbs out of the project is denied. Keeping the workspace
+  outside the allowed root is safer than excluding it with `pattern` or `regex`,
+  which match the string and don't normalize paths.
+- `subpath` checks the path string and doesn't follow symlinks, so a link inside
+  the project that points into `~/.tenuo` gets through. Have file tools open
+  paths with [`path_jail`](https://github.com/tenuo-ai/path_jail), which refuses
+  links that leave the project, and don't give the agent a tool that creates
+  links.
+- Don't give the agent a tool that runs arbitrary commands or code. A shell
+  that allows `cat` or `python` reads any file the user can, whatever the
+  warrant says about paths. List the exact commands it may run instead.
+
+```yaml
+capabilities:
+  read_file: {path: {subpath: /Users/me/project}}
+  run_command: {cmd: [pytest, git status]}
+```
+
+This is a guardrail for local development. If the agent can run code that
+Tenuo doesn't check, separate the keys by OS user, container or machine: run
+`tenuo-cli` as a different user, or leave the issuer's workspace out of the
+agent's container mounts. `doctor` warns when the current user can read the
+issuer or approver key.
 
 ## Keys and trust
 
@@ -51,9 +90,13 @@ tenuo-cli key new another-agent
 tenuo-cli trust add --file ./another-issuer.pub
 ```
 
-Key readers accept base64, hex and PEM. Commands display fingerprints, never
-private key bytes. Compare public-key fingerprints through a trusted channel
-before adding trust.
+Key readers accept base64, hex and PEM. Untagged public keys must have a `.pub`
+filename; public-key PEM files can use other names. Private `.key` paths,
+including symlinks to them, are rejected as public inputs. Public and private
+Ed25519 values can both contain 32 bytes, so byte length alone cannot distinguish
+them. Keep the generated filenames and exchange only the `.pub` files.
+Commands display fingerprints, never private key bytes. Compare public-key
+fingerprints through a trusted channel before adding trust.
 
 ## Revocation
 
@@ -63,7 +106,7 @@ tenuo-cli revocations add --id tnu_wrt_REPLACE_WITH_REAL_ID
 ```
 
 Updates preserve revoked IDs and increment the signed list version. Writes are
-atomic; concurrent local controller updates are serialized. Readers also accept
+atomic; concurrent local updates are serialized. Readers also accept
 legacy base64-encoded lists. A missing or invalid configured list is an error.
 Revocation takes effect when a verifier receives the updated list; the CLI does
 not distribute files to other machines.
@@ -92,7 +135,7 @@ ttl: 30m
 capabilities:
   refund: {order_id: A-1001, amount_cents: 1..12000}
 approvals:
-  keys: [.tenuo/keys/approver.pub]
+  keys: [~/.tenuo/keys/approver.pub]
   required:
     refund: {unless: {amount_cents: 1..5000}}
 ```
@@ -100,7 +143,7 @@ approvals:
 The signed warrant allows refunds through 12000 cents, but requires one listed
 approver for amounts outside the exempt range of 1–5000. An approval cannot
 permit a call outside the warrant's capabilities. `required: {refund: always}`
-gates every refund. Approver paths are relative to the YAML file. Local key
+gates every refund. Relative approver paths resolve from the YAML file. Local key
 names are convenience labels, not verified identities.
 
 For a standalone request, add `kind: warrant-request` and `holder: agent` (or a
@@ -121,7 +164,7 @@ Python code uses the same parser and native SDK builders:
 from tenuo import WarrantTemplate
 
 template = WarrantTemplate.load("orders.yaml")
-warrant = template.mint(controller_key, agent_public_key)
+warrant = template.mint(issuer_key, agent_public_key)
 ```
 
 Issuance needs only the recipient's public key. Gates and approvers are embedded
@@ -130,18 +173,19 @@ in the signed warrant; verifiers do not trust the YAML file at runtime.
 ## Issue, inspect and replace warrants
 
 ```bash
-tenuo-cli warrant issue --template orders.yaml --holder agent --out .tenuo/agent.warrant
+tenuo-cli warrant issue --template orders.yaml --holder agent --out ~/.tenuo/agent.warrant
 tenuo-cli warrant issue --request one-task.yaml
 tenuo-cli warrant list
-tenuo-cli warrant show --file .tenuo/agent.warrant
-tenuo-cli warrant verify --file .tenuo/agent.warrant
+tenuo-cli warrant show --file ~/.tenuo/agent.warrant
+tenuo-cli warrant verify --file ~/.tenuo/agent.warrant
 ```
 
 Issuance saves a native root-first warrant stack in `warrants/<id>.warrant`.
 `--out` also writes a delivery copy; `--no-store --out PATH` writes only that
 copy. Existing paths are never overwritten. Holder paths in a YAML request are
-relative to that document; `holder: agent` resolves the workspace's public key.
-The controller does not read the agent's private key.
+relative to that document; a `--holder` path resolves from the current
+directory. `holder: agent` resolves the workspace's public key. Issuance never
+reads the agent's private key.
 
 `show --file PATH` or `show --id ID` decodes the signed authority without trust.
 `show --file -` accepts a pasted stack on stdin. `verify` separately checks the
@@ -151,13 +195,15 @@ it is not a global inventory of every issued warrant.
 
 ```bash
 tenuo-cli warrant reissue --id tnu_wrt_REAL_ID --ttl 1h
-tenuo-cli warrant issue --from .tenuo/agent.warrant --key agent --request narrowed-task.yaml
+tenuo-cli warrant issue --from ~/.tenuo/agent.warrant --key agent --request narrowed-task.yaml
 ```
 
 Reissuance signs a new warrant with a new ID; it never extends or edits the old
 warrant. The old warrant remains valid until it expires or is revoked.
-Automatic reissue currently accepts only simple root execution warrants whose
-claims can be copied exactly. For approval-gated or other richer warrants,
+Reissue refuses a revoked ID. Revoking the old ID after a reissue does not
+cover the new warrant, which is a new root, so revoke both. Automatic reissue
+currently accepts only simple root execution warrants whose claims can be
+copied exactly. For approval-gated or other richer warrants,
 issue explicitly from the reviewed YAML again. Delegation uses the parent
 holder's key and native attenuation: tools, limits, approvals and lifetime
 cannot exceed the parent. The output always carries its complete chain.
@@ -207,7 +253,7 @@ def get_order(order_id: str) -> str:
     """Look up an order."""
     return f"Order {order_id} is ready"
 
-protected = TenuoTool.local(get_order, warrant=".tenuo/agent.warrant")
+protected = TenuoTool.local(get_order, warrant="~/.tenuo/agent.warrant")
 print(protected.invoke({"order_id": "A-1001"}))
 # An order outside the YAML scope raises before get_order runs:
 protected.invoke({"order_id": "OTHER"})
@@ -225,14 +271,14 @@ verifies the full chain, and checks the holder. Missing or malformed data denies
 that call. Rollbacks below the accepted SRL version are refused for the lifetime
 of that adapter; this does not persist a version floor across process restarts.
 Replacing the selected file therefore needs no agent restart. Updating files
-is an external controller action: an agent must not be able to edit them.
+is an operator action: an agent must not be able to edit them.
 
-Approval-gated calls write requests under `.tenuo/requests/`. The approval CLI's
-default response path is `.tenuo/approvals/<request_hash>.yaml`; retrying the
+Approval-gated calls write requests under `~/.tenuo/requests/`. The approval CLI's
+default response path is `~/.tenuo/approvals/<request_hash>.yaml`; retrying the
 same call reads and verifies it. Decisions generate native signed receipts in
 the configured `receipts.jsonl` using the existing SDK receipt machinery.
 Local adapters currently support enforcement mode only and never read the
-controller or approver private key. This is an in-process guardrail: expose
+issuer or approver private key. This is an in-process guardrail: expose
 effects through a separately protected service if agent code can bypass wrappers.
 
 ## MCP client and server
@@ -244,7 +290,7 @@ and the signed revocation list. The verifier never needs the agent's private key
 from tenuo.mcp import SecureMCPClient
 
 async with SecureMCPClient.local(
-    warrant=".tenuo/agent.warrant", command="python", args=["server.py"]
+    warrant="~/.tenuo/agent.warrant", command="python", args=["server.py"]
 ) as client:
     await client.call_tool("get_order", {"order_id": "A-1001"})
 ```
@@ -260,7 +306,7 @@ server = FastMCP("orders", middleware=[TenuoMiddleware(verifier)])
 ```
 
 Provision that server directory with `config.yaml`, `trust/*.pub` and
-`revocations.srl`. Do not copy private keys from the client or controller.
+`revocations.srl`. Do not copy private keys from the client or issuer.
 For signed server receipts, create a separate server identity and pass its
 name or private-key path as `MCPVerifier.local(key=...)`. Without it the server
 still verifies calls but does not produce local signed receipts.
@@ -287,7 +333,7 @@ handle = await start_workflow_authorized(
     client=client,
     workflow_run_fn=OrderWorkflow.run,
     workflow_id="order-diagnostics",
-    warrant=load_warrant_chain(".tenuo/agent.warrant"),
+    warrant=load_warrant_chain("~/.tenuo/agent.warrant"),
     key_id="agent",
     args=["A-1001"],
     task_queue="orders",
@@ -313,12 +359,35 @@ Local signed receipt delivery reports storage failures in logs rather than
 turning a completed effect into a retry. Receipts are decision evidence, not
 proof that an authorized effect completed.
 
+## Rotation
+
+Before rotating an issuer, generate and trust the replacement public key,
+then advance the existing signed revocation list using that key:
+
+```bash
+tenuo-cli key new next-issuer
+tenuo-cli trust add --file ~/.tenuo/keys/next-issuer.pub --name next-issuer
+tenuo-cli revocations add --key next-issuer --id tnu_wrt_RETIRED_GRANT
+tenuo-cli warrant issue --template orders.yaml --holder agent --key next-issuer
+```
+
+Deliver the new warrant, public trust and list, update `issuer:` in the
+issuer workspace's `config.yaml`, then remove the retired public key from `trust/`.
+Update `dev_roots` when rotating development identities. The new list preserves
+revoked IDs and advances the version; a verifier's cached old issuer is used
+only for its version floor, never restored to live warrant trust.
+
+For holder rotation, create a new agent identity, issue to its public key,
+update the runtime key selection and deliver the new grants. Revoke known old
+warrant IDs explicitly. Rotating a key does not revoke unknown grants elsewhere;
+they remain bounded by their signed expiry and the verifiers' revocation data.
+
 ## Session attachments
 
 For a session-based agent, issuance and attachment are different operations:
 
 ```bash
-tenuo-cli session attach --session chat-a --file .tenuo/agent.warrant
+tenuo-cli session attach --session chat-a --file ~/.tenuo/agent.warrant
 tenuo-cli session list
 tenuo-cli session show --session chat-a
 tenuo-cli session detach --session chat-a --id tnu_wrt_REAL_ID
@@ -337,7 +406,7 @@ elsewhere. Revocation changes validity wherever a verifier checks the updated
 signed list. Keep session manifests, warrant storage, trust and revocations
 read-only to the agent. Only requests, memory and the agent's audit destination
 need writable state. Mount verification directories rather than individual files
-when controllers publish changes by atomic replacement.
+when the operator publishes changes by atomic replacement.
 
 ## Inspect local decisions
 

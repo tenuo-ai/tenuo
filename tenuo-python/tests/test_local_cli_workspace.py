@@ -103,3 +103,73 @@ def test_config_unknown_fields_rejected(tmp_path):
         stream.write("allow_everything: true\n")
     with pytest.raises(DocumentError, match="unknown fields"):
         workspace.authorizer()
+
+
+def test_root_rotation_advances_srl_without_restoring_retired_trust(tmp_path, capsys):
+    from tenuo import WarrantTemplate
+    from tenuo.local_cli.files import publish
+    from tenuo.local_cli.runtime import LocalAuthority
+
+    workspace = Workspace(tmp_path / ".tenuo")
+    workspace.initialize(dev=True)
+    template = WarrantTemplate({"version": 2, "ttl": "30m", "capabilities": {"get_order": {"order_id": "A-1001"}}})
+    old_grant = template.mint(workspace.signing_key("issuer"), workspace.public_key("agent"))
+    authority = LocalAuthority(path=workspace.path)
+    _, public, _ = keygen(workspace.path / "keys/next-issuer")
+    publish(workspace.path / "trust/next-issuer.pub", public.read_bytes())
+    assert main(["--home", str(workspace.path), "--json", "revocations", "add", "--key", "next-issuer",
+                 "--id", "tnu_wrt_previous"]) == 0
+    capsys.readouterr()
+    (workspace.path / "trust/issuer.pub").unlink()
+    new_grant = template.mint(workspace.signing_key("next-issuer"), workspace.public_key("agent"))
+    current = authority.snapshot()
+    current.authorizer.verify_chain([new_grant])
+    assert len(current.roots) == 1
+    with pytest.raises(Exception):
+        current.authorizer.verify_chain([old_grant])
+    assert current.srl.version == 2 and current.srl.is_revoked("tnu_wrt_previous")
+
+
+def test_default_workspace_is_outside_the_project(tmp_path, monkeypatch):
+    """Keys default to ~/.tenuo, so tools scoped to the project cannot reach them."""
+    monkeypatch.delenv("TENUO_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    assert Workspace().path == tmp_path / "home" / ".tenuo"
+    monkeypatch.setenv("TENUO_HOME", str(tmp_path / "custom"))
+    assert Workspace().path == tmp_path / "custom"
+
+
+def test_trust_add_refuses_a_workspace_private_key_under_any_name(tmp_path, capsys):
+    import base64
+    import os
+
+    from tenuo.local_cli.commands import main
+
+    home = tmp_path / ".tenuo"
+    Workspace(home).initialize(dev=True)
+    issuer_key = home / "keys/issuer.key"
+    seed = base64.b64decode(issuer_key.read_text().strip())
+    disguised = tmp_path / "issuer.pub"
+    disguised.write_text(base64.b64encode(seed).decode() + "\n")
+    hardlink = tmp_path / "linked.pub"
+    os.link(issuer_key, hardlink)
+    for path in (issuer_key, disguised, hardlink):
+        assert main(["--home", str(home), "--json", "trust", "add", "--file", str(path)]) != 0
+    assert sorted(p.name for p in (home / "trust").glob("*.pub")) == ["issuer.pub"]
+
+
+def test_an_oversized_revocation_update_leaves_the_list_unchanged(tmp_path, monkeypatch):
+    from tenuo.local_cli import files
+
+    home = tmp_path / ".tenuo"
+    workspace = Workspace(home)
+    workspace.initialize(dev=True)
+    before = (home / "revocations.srl").read_bytes()
+    monkeypatch.setattr(files, "MAX_BYTES", len(before) + 8)
+    with pytest.raises(files.DocumentError, match="would exceed"):
+        files.update_revocations(home / "revocations.srl", workspace.signing_key("issuer"),
+                                 [f"tnu_wrt_{i:032x}" for i in range(20)])
+    assert (home / "revocations.srl").read_bytes() == before

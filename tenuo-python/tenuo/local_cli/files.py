@@ -22,6 +22,12 @@ class DocumentError(ValueError):
     """A local document cannot be interpreted safely."""
 
 
+class Refused(DocumentError):
+    """An explicit operation was refused without changing authority."""
+
+    exit_code = 4
+
+
 class StrictLoader(yaml.SafeLoader):
     # Keep unquoted ISO timestamps as strings, as required by the file schema.
     yaml_implicit_resolvers = {
@@ -68,6 +74,8 @@ def load_yaml(path):
 def fields(data, allowed, required=(), where="document"):
     if not isinstance(data, dict):
         raise DocumentError(f"{where}: expected a mapping")
+    if any(not isinstance(key, str) or not key.strip() for key in data):
+        raise DocumentError(f"{where}: keys must be nonempty strings")
     extra, missing = set(data) - set(allowed), set(required) - set(data)
     if extra:
         raise DocumentError(f"{where}: unknown fields: {', '.join(sorted(extra))}")
@@ -127,16 +135,28 @@ def load_signing_key(path):
     from tenuo import SigningKey
     from tenuo.keys import load_signing_key_from_file
 
-    raw = read_bytes(path)
+    resolved = Path(path).expanduser().resolve(strict=True)
+    if resolved.suffix.lower() == ".pub":
+        raise DocumentError("signing key input points to a public .pub file; use its private .key file")
+    raw = read_bytes(resolved)
+    if raw.startswith(b"-----BEGIN PUBLIC KEY-----"):
+        raise DocumentError("public-key PEM cannot be used as signing key input")
     if raw.startswith(b"-----BEGIN"):
         return SigningKey.from_pem(raw.decode())
-    return load_signing_key_from_file(str(Path(path).expanduser()))
+    return load_signing_key_from_file(str(resolved))
 
 
 def load_public_key(path):
     from tenuo import PublicKey
 
-    text = read_bytes(path).decode().strip()
+    resolved = Path(path).expanduser().resolve(strict=True)
+    if resolved.suffix.lower() == ".key":
+        raise DocumentError("public key input points to a private .key file; use its .pub file")
+    text = read_bytes(resolved).decode().strip()
+    if text and "PRIVATE KEY" in text.splitlines()[0]:
+        raise DocumentError("private-key PEM cannot be used as public key input")
+    if resolved.suffix.lower() != ".pub" and not text.startswith("-----BEGIN PUBLIC KEY-----"):
+        raise DocumentError("untagged public keys must use a .pub filename; public-key PEM is also supported")
     for decode in (
         lambda: PublicKey.from_bytes(base64.b64decode(text, validate=True)),
         lambda: PublicKey.from_bytes(bytes.fromhex(text)),
@@ -147,6 +167,15 @@ def load_public_key(path):
         except Exception:
             continue
     raise DocumentError(f"{path}: expected a public key in base64, hex or PEM")
+
+
+def check_public_material(signing_key, public_keys):
+    """Do not serialize the signer's secret through a mislabeled public field."""
+    import hmac
+
+    secret = bytes(signing_key.secret_key_bytes())
+    if any(hmac.compare_digest(secret, bytes(public.to_bytes())) for public in public_keys):
+        raise DocumentError("public warrant fields contain private signing material; use the corresponding public key")
 
 
 def read_revocation_list(path):
@@ -164,9 +193,9 @@ def read_revocation_list(path):
 
 @contextmanager
 def operator_lock(directory):
-    """Serialize read/modify/publish operations by local controllers."""
+    """Serialize read/modify/publish operations by concurrent tenuo-cli processes."""
     if os.name != "posix":
-        raise DocumentError("local controller updates currently require macOS or Linux")
+        raise DocumentError("local workspace updates currently require macOS or Linux")
     import fcntl
 
     directory = Path(directory)
@@ -176,7 +205,7 @@ def operator_lock(directory):
         yield
 
 
-def update_revocations(path, issuer, ids=(), *, create=False):
+def update_revocations(path, issuer, ids=(), *, create=False, trusted_roots=None):
     from tenuo import SrlBuilder
 
     path = Path(path)
@@ -187,8 +216,20 @@ def update_revocations(path, issuer, ids=(), *, create=False):
             builder = SrlBuilder().version(1)
         else:
             previous = read_revocation_list(path)
-            previous.verify(issuer.public_key)
+            if trusted_roots is None:
+                previous.verify(issuer.public_key)
+            else:
+                from tenuo import Authorizer
+
+                roots = list(trusted_roots)
+                Authorizer(trusted_roots=roots).set_revocation_list(previous)
+                if not any(bytes(root.to_bytes()) == bytes(issuer.public_key.to_bytes()) for root in roots):
+                    raise Refused("add the new issuer public key to trust before rotating the revocation signer")
             builder = SrlBuilder().from_existing(previous).version(previous.version + 1)
         signed = builder.revoke_all(list(ids)).build(issuer)
-        publish(path, bytes(signed.to_bytes()), replace=not create)
+        data = bytes(signed.to_bytes())
+        if len(data) > MAX_BYTES:
+            # Replacing the list with one no reader accepts would lock out every verifier.
+            raise DocumentError(f"{path}: the updated revocation list would exceed 4 MiB; it was not changed")
+        publish(path, data, replace=not create)
         return signed

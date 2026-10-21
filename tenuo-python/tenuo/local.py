@@ -10,7 +10,7 @@ from .local_cli.files import (
 )
 from .local_cli.warrants import load_chain as load_warrant_chain
 from .local_cli.runtime import LocalAuthority
-from .local_cli.sessions import read_session
+from .local_cli.sessions import list_sessions, read_session
 
 __all__ = [
     "fingerprint",
@@ -22,4 +22,5 @@ __all__ = [
     "update_revocations",
     "LocalAuthority",
     "read_session",
+    "list_sessions",
 ]
