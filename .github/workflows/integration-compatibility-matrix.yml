@@ -213,6 +213,7 @@ jobs:
               pytest tenuo-python/tests/adapters/test_mcp_fastmcp_middleware.py \
                 tenuo-python/tests/adapters/test_mcp_fastmcp_e2e.py \
                 tenuo-python/tests/adapters/test_mcp_ci_smoke.py \
+                tenuo-python/tests/adapters/test_mcp_wrap.py \
                 -v --tb=short
               ;;
           esac

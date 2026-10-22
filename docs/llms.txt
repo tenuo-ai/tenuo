@@ -48,6 +48,7 @@ Guidance for agents writing code with Tenuo:
 - [OpenAI](https://tenuo.ai/openai): Tool protection for OpenAI agents and the Agents SDK
 - [Google ADK](https://tenuo.ai/google-adk): Warrant-based authorization for ADK agents
 - [MCP](https://tenuo.ai/mcp): Secure MCP clients and servers with warrants and argument constraints
+- [Existing FastMCP servers](https://tenuo.ai/fastmcp-servers): Add per-call authorization to a FastMCP server you run but didn't write, without forking it
 - [A2A](https://tenuo.ai/a2a): Warrant-based authorization for inter-agent communication
 - [FastAPI](https://tenuo.ai/fastapi): API protection for FastAPI
 - [Temporal](https://tenuo.ai/temporal): Warrant-based authorization for Temporal AI agent workflows
