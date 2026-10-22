@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import json
+from typing import Any
 
 import pytest
 
@@ -215,7 +216,7 @@ class TestNormalizePopArgValueUnsupported:
     def test_error_message_includes_docs_link(self):
         with pytest.raises(TenuoArgNormalizationError) as exc_info:
             _normalize_pop_arg_value({1, 2}, "s")
-        assert "docs/temporal.md" in str(exc_info.value)
+        assert "docs/temporal-reference.md" in str(exc_info.value)
 
 
 class TestNormalizePopArgValueDepthGuard:
@@ -397,3 +398,194 @@ class TestPrevalidateArgsAgainstWarrant:
         with pytest.raises(TenuoPreValidationError) as exc_info:
             _prevalidate_args_against_warrant(warrant, "tool", {"unknown": 1})
         assert isinstance(exc_info.value, TenuoContextError)
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models: signed like dataclasses, not excluded from PoP
+# ---------------------------------------------------------------------------
+
+class TestNormalizePopArgValuePydantic:
+    """Framework context objects are often Pydantic models; they're signed, not skipped."""
+
+    def test_v2_model_is_canonical_json_of_its_json_dump(self):
+        pydantic = pytest.importorskip("pydantic")
+        import datetime
+
+        class Route(pydantic.BaseModel):
+            topic: str
+            partition: int
+
+        class ToolContext(pydantic.BaseModel):
+            run_id: str
+            route: Route
+            started: datetime.datetime
+
+        ctx = ToolContext(run_id="r-1", route=Route(topic="events", partition=3),
+                          started=datetime.datetime(2026, 10, 22, 9, 30, tzinfo=datetime.timezone.utc))
+        result = _normalize_pop_arg_value(ctx, "tool_ctx")
+        assert json.loads(result) == ctx.model_dump(mode="json")
+        assert result == json.dumps(ctx.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
+
+    def test_same_model_values_sign_the_same_whatever_the_field_order(self):
+        pydantic = pytest.importorskip("pydantic")
+
+        class A(pydantic.BaseModel):
+            x: int
+            y: str
+
+        class B(pydantic.BaseModel):
+            y: str
+            x: int
+
+        assert _normalize_pop_arg_value(A(x=1, y="a"), "c") == _normalize_pop_arg_value(B(y="a", x=1), "c")
+
+    def test_a_model_and_its_wire_dict_sign_the_same(self):
+        # The workflow signs the model; a worker without a Pydantic converter
+        # sees the decoded dict. Both must produce the same PoP input.
+        pydantic = pytest.importorskip("pydantic")
+
+        class Ctx(pydantic.BaseModel):
+            topic: str
+            retries: int
+
+        ctx = Ctx(topic="events", retries=2)
+        assert _normalize_pop_arg_value(ctx, "c") == _normalize_pop_arg_value(ctx.model_dump(mode="json"), "c")
+
+    def test_v1_model(self):
+        v1 = pytest.importorskip("pydantic.v1")
+
+        class Ctx(v1.BaseModel):
+            topic: str
+
+        assert json.loads(_normalize_pop_arg_value(Ctx(topic="events"), "c")) == {"topic": "events"}
+
+    def test_model_class_is_not_a_model_value(self):
+        pydantic = pytest.importorskip("pydantic")
+
+        class Ctx(pydantic.BaseModel):
+            topic: str
+
+        with pytest.raises(TenuoArgNormalizationError):
+            _normalize_pop_arg_value(Ctx, "c")
+
+
+def test_framework_args_declares_any_value_constraints():
+    from tenuo import AnyValue
+    from tenuo.temporal import framework_args
+
+    declared = framework_args("tool_ctx", "run_meta")
+    assert set(declared) == {"tool_ctx", "run_meta"}
+    assert all(type(c) is type(AnyValue()) for c in declared.values())
+    with pytest.raises(ValueError):
+        framework_args()
+
+
+class TestSignedFormCoversWhatTheActivityReceives:
+    def test_nested_dataclass_signs_like_the_dict_the_worker_receives(self):
+        @dataclasses.dataclass
+        class Spec:
+            topic: str
+            limit: int
+
+        signed = _normalize_pop_arg_value({"spec": Spec("events", 5), "tags": [Spec("a", 1)]}, "c")
+        received = _normalize_pop_arg_value({"spec": {"topic": "events", "limit": 5},
+                                             "tags": [{"topic": "a", "limit": 1}]}, "c")
+        assert signed == received
+
+    @pytest.mark.parametrize("kind", ["excluded", "serializer", "secret"])
+    def test_models_that_could_hide_a_value_are_refused(self, kind):
+        pydantic = pytest.importorskip("pydantic")
+
+        if kind == "excluded":
+            class Ctx(pydantic.BaseModel):
+                topic: str
+                publish: bool = pydantic.Field(False, exclude=True)
+            value = Ctx(topic="t", publish=True)
+        elif kind == "serializer":
+            class Ctx(pydantic.BaseModel):
+                topic: str
+
+                @pydantic.field_serializer("topic")
+                def mask(self, v):
+                    return "***"
+            value = Ctx(topic="t")
+        else:
+            class Ctx(pydantic.BaseModel):
+                topic: str
+                token: pydantic.SecretStr
+            value = Ctx(topic="t", token="s")
+        with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
+            _normalize_pop_arg_value(value, "tool_ctx")
+
+    @pytest.mark.parametrize("where", ["field", "list", "dict"])
+    def test_a_nested_model_that_could_hide_a_value_is_refused(self, where):
+        pydantic = pytest.importorskip("pydantic")
+
+        class Child(pydantic.BaseModel):
+            publish: bool = pydantic.Field(False, exclude=True)
+
+        class Ctx(pydantic.BaseModel):
+            child: Any
+
+        child = Child(publish=True)
+        nested = {"field": child, "list": [child], "dict": {"c": child}}[where]
+        with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
+            _normalize_pop_arg_value(Ctx(child=nested), "tool_ctx")
+        with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
+            _normalize_pop_arg_value({"ctx": nested}, "tool_ctx")
+
+    def test_dict_keys_sign_as_json_transport_writes_them(self):
+        sent = {True: "a", False: "b", None: "c", 2: "d", 1.5: "e"}
+        received = json.loads(json.dumps(sent))
+        assert _normalize_pop_arg_value(sent, "c") == _normalize_pop_arg_value(received, "c")
+        with pytest.raises(TenuoArgNormalizationError, match="dict key"):
+            _normalize_pop_arg_value({(1, 2): "x"}, "c")
+
+    @pytest.mark.parametrize("kind", ["annotated", "json_encoders", "secret_subclass", "typed_extra"])
+    def test_other_ways_a_dump_can_hide_a_value_are_refused(self, kind):
+        pydantic = pytest.importorskip("pydantic")
+        from typing import Annotated, Dict
+
+        if kind == "annotated":
+            class Ctx(pydantic.BaseModel):
+                topic: Annotated[str, pydantic.PlainSerializer(lambda v: "***")]
+            value = Ctx(topic="t")
+        elif kind == "json_encoders":
+            class Ctx(pydantic.BaseModel):
+                model_config = pydantic.ConfigDict(json_encoders={str: lambda v: "***"})
+                topic: str
+            value = Ctx(topic="t")
+        elif kind == "secret_subclass":
+            class ApiToken(pydantic.SecretStr):
+                pass
+
+            class Ctx(pydantic.BaseModel):
+                token: ApiToken
+            value = Ctx(token=ApiToken("s"))
+        else:
+            class Child(pydantic.BaseModel):
+                publish: bool = pydantic.Field(False, exclude=True)
+
+            class Ctx(pydantic.BaseModel):
+                model_config = pydantic.ConfigDict(extra="allow")
+                __pydantic_extra__: Dict[str, Child]
+            value = Ctx(child={"publish": True})
+        with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
+            _normalize_pop_arg_value(value, "tool_ctx")
+
+    def test_a_secret_outside_any_model_is_refused(self):
+        pydantic = pytest.importorskip("pydantic")
+
+        with pytest.raises(TenuoArgNormalizationError, match="secret"):
+            _normalize_pop_arg_value({"token": pydantic.SecretStr("s")}, "c")
+
+    def test_faithful_builtin_types_still_sign(self):
+        pydantic = pytest.importorskip("pydantic")
+        import ipaddress
+        from pathlib import Path
+
+        class Ctx(pydantic.BaseModel):
+            path: Path
+            host: ipaddress.IPv4Address
+
+        assert _normalize_pop_arg_value(Ctx(path=Path("/a"), host="10.0.0.1"), "c")

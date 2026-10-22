@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pydantic activity arguments on Temporal.** Pydantic models (v1 and v2)
+  are signed by PoP as the canonical JSON of their JSON-mode dump, like
+  dataclasses. `tenuo.temporal.framework_args("tool_ctx")` declares a
+  framework's own argument as an any-value constraint, so it stays signed and in
+  receipts.
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,
@@ -69,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Temporal: dict and dataclass activity arguments were refused.** The
+  workflow signed them in normalized form, but the worker checked the raw
+  objects, so every such call failed. The worker now checks the same normalized
+  values; the activity still receives the original objects.
 - **Temporal `warrant_chain=` takes one shape everywhere.** The workflow start
   helpers took the parents only and rejected a chain that ended with the leaf,
   while `tenuo_execute_activity`, the Nexus helpers, and

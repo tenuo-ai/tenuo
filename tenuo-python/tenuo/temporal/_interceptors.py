@@ -1198,6 +1198,26 @@ class TenuoActivityInboundInterceptor:
                 getattr(info, "workflow_namespace", None),
                 getattr(info, "workflow_id", None),
             )
+            # Authorize the same values the workflow signed: structured
+            # arguments (dicts, dataclasses, Pydantic models) are normalized
+            # exactly as for PoP. The activity itself still receives ``input``.
+            args = _normalize_args_for_pop(args)
+        except TenuoArgNormalizationError as exc:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args={k: "[UNSUPPORTED]" for k in args},
+                reason=str(exc),
+                constraint="unsupported_argument",
+                start_ns=start_ns,
+                authorizer=self._authorizer,
+                presented_chain=[warrant],
+                pop_auth_args={},
+            )
+            if self._config.on_denial == "raise" and not self._config.dry_run:
+                raise self._wrap_as_non_retryable(exc) from exc
+            return await _deny_or_continue(tool=tool_name, reason=str(exc))
         except TenuoContextError as exc:
             self._emit_denial_event(
                 info=info,

@@ -67,6 +67,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "execute_workflow_authorized": ("tenuo.temporal._workflow", "execute_workflow_authorized"),
     "start_workflow_authorized": ("tenuo.temporal._workflow", "start_workflow_authorized"),
     "tenuo_execute_activity": ("tenuo.temporal._workflow", "tenuo_execute_activity"),
+    "framework_args": ("tenuo.temporal._pop", "framework_args"),
     "tenuo_execute_child_workflow": ("tenuo.temporal._workflow", "tenuo_execute_child_workflow"),
     "AuthorizedWorkflow": ("tenuo.temporal._workflow", "AuthorizedWorkflow"),
     "current_warrant": ("tenuo.temporal._workflow", "current_warrant"),

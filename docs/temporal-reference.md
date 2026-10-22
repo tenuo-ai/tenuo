@@ -519,6 +519,41 @@ async with Worker(
 
 ---
 
+### Structured activity arguments
+
+Activity arguments are signed by PoP and checked against the warrant as values.
+Primitives (`str`, `int`, `float`, `bool`, `None`) are used as they are. `dict`,
+`list`, `tuple`, `bytes`, `@dataclass` instances and Pydantic models (v1 or v2)
+are normalized first, on both sides: a Pydantic model becomes the canonical JSON
+of `model_dump(mode="json")`, a dataclass or dict the canonical JSON of its
+fields. The worker checks the same normalized values the workflow signed; the
+activity still receives the original objects. Nested values are converted the
+same way at every depth, so a dataclass inside a dict signs as the dict the
+worker receives. Anything else (a `set`, a bare `datetime`, an arbitrary class)
+is refused with `TenuoArgNormalizationError`, and so is a Pydantic model whose
+dump could leave out or mask a value the activity receives: one with an excluded
+field, a custom serializer or a secret field. Pass those values as their own
+arguments.
+
+Some frameworks pass every activity an argument of their own, such as a Pydantic
+context saying where to publish events. Under closed-world constraints the
+warrant has to name it. Declare it with `framework_args`, which adds an ordinary
+any-value constraint, so the argument stays signed and in receipts and a narrower
+warrant can still constrain it:
+
+```python
+from tenuo import Pattern, Warrant
+from tenuo.temporal import framework_args
+
+warrant = (
+    Warrant.mint_builder()
+    .capability("search", query=Pattern("docs:*"), **framework_args("tool_ctx"))
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(control_key)
+)
+```
+
 ## Sandbox passthrough explained
 
 Temporal's Python SDK re-imports workflow code in an isolated sandbox on every task. Tenuo signs PoP inside the sandbox at `execute_activity()` dispatch time using `tenuo_core` (a PyO3 Rust extension). Both `tenuo` and `tenuo_core` must be declared passthrough.
@@ -1170,7 +1205,7 @@ Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to 
 | Warning: `positional argument keys (arg0, …)` | Named constraints but no function reference | Set `activity_fns` or use `tenuo_execute_activity()` |
 | `WarrantExpired` | TTL elapsed | Mint with longer `ttl()` |
 | Child has no authorization | Started with `execute_child_workflow()` | Use `tenuo_execute_child_workflow()` |
-| `TenuoArgNormalizationError` | Unsupported arg type (`set`, `datetime`, etc.) | Convert to `@dataclass` or `dict` |
+| `TenuoArgNormalizationError` | Unsupported arg type (`set`, a bare `datetime`, etc.) | Convert to a `@dataclass`, Pydantic model or `dict` ([details](#structured-activity-arguments)) |
 | `TenuoPreValidationError: unknown field` | Warrant has fewer fields than activity | Declare all args with `Wildcard()` for unconstrained fields |
 
 ---
