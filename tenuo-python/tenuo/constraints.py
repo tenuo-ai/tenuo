@@ -180,6 +180,7 @@ def ensure_constraint(value: Any) -> Any:
             Not,
             NotOneOf,
             OneOf,
+            Optional,
             Pattern,
             Range,
             Regex,
@@ -210,6 +211,7 @@ def ensure_constraint(value: Any) -> Any:
                 CEL,
                 Subpath,
                 UrlSafe,
+                Optional,
             ),
         ):
             return value

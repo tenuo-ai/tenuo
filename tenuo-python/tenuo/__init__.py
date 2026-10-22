@@ -84,6 +84,7 @@ from tenuo_core import (  # type: ignore
     Not,
     NotOneOf,
     OneOf,
+    Optional,
     # Common constraints
     Pattern,
     PublicKey,
@@ -126,6 +127,12 @@ from .arguments import parse_strict_json
 # Wildcard: allow any value for a field in a closed-world constraint set.
 # `Any` used to alias Wildcard and collided with the OR combinator (`AnyOf`).
 AnyValue = Wildcard
+
+# Optional(inner): the argument may be omitted (or None); if present it must
+# satisfy inner. `tenuo.Optional` shares its name with `typing.Optional`, so
+# `OptionalArg` is provided for modules that import both. Only `OptionalArg` is
+# in __all__, so `from tenuo import *` never shadows `typing.Optional`.
+OptionalArg = Optional
 
 # =============================================================================
 # 80% API - What most users need
@@ -354,6 +361,7 @@ __all__ = [
     "UrlPattern",  # URL matching
     "Regex",  # Regular expression
     "CEL",  # Common Expression Language
+    "OptionalArg",  # Optional argument (also importable as tenuo.Optional)
     # Protocol constants
     "MAX_DELEGATION_DEPTH",
     "MAX_WARRANT_TTL_SECS",

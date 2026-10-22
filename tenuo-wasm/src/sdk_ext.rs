@@ -14,10 +14,9 @@ use tenuo::approval::{
 };
 use tenuo::{
     encode_approval_gate_map, parse_approval_gate_map, ApprovalGateMap, ApprovalRequest,
-    ArgApprovalGate, Authorizer, Clearance, Constraint, ConstraintSet, Error, PublicKey,
-    SignedRevocationList,
-    SigningKey, ToolApprovalGate, Warrant, WarrantType, APPROVAL_GATE_EXTENSION_KEY,
-    MAX_DELEGATION_DEPTH,
+    ArgApprovalGate, Authorizer, Clearance, Constraint, ConstraintSet, ConstraintValue, Error,
+    PublicKey, SignedRevocationList, SigningKey, ToolApprovalGate, Warrant, WarrantType,
+    APPROVAL_GATE_EXTENSION_KEY, MAX_DELEGATION_DEPTH,
 };
 use wasm_bindgen::prelude::*;
 
@@ -154,13 +153,19 @@ fn build_gate_map(
                                     "requireApproval.gates.{tool}.args.{field}: expected \"all\", {{ when }}, or {{ exempt }}, got '{other}'"
                                 )))
                             }
-                            ArgGateDto::When { when } => ArgApprovalGate::Constraint(
-                                constraint_from_expr(when).map_err(|e| {
+                            ArgGateDto::When { when } => {
+                                let constraint = constraint_from_expr(when).map_err(|e| {
                                     JsError::new(&format!(
                                         "requireApproval.gates.{tool}.args.{field}.when: {e}"
                                     ))
-                                })?,
-                            ),
+                                })?;
+                                if matches!(constraint, Constraint::Optional(_)) {
+                                    return Err(JsError::new(&format!(
+                                        "requireApproval.gates.{tool}.args.{field}.when: optional applies only to capability arguments, not approval gates"
+                                    )));
+                                }
+                                ArgApprovalGate::Constraint(constraint)
+                            }
                             ArgGateDto::Exempt { exempt } => {
                                 let inner = constraint_from_expr(exempt).map_err(|e| {
                                     JsError::new(&format!(
@@ -504,7 +509,22 @@ impl SdkContext {
         if let Some(set) = set {
             for (field, constraint) in set.iter() {
                 let expr = serde_json::to_value(constraint).unwrap_or(serde_json::Value::Null);
-                match args.get(field) {
+                // A top-level null is treated as absent, as in the core matcher.
+                let supplied = args
+                    .get(field)
+                    .filter(|v| !matches!(v, ConstraintValue::Null));
+                match supplied {
+                    None if matches!(constraint, Constraint::Optional(_)) => {
+                        fields.push(ExplainFieldDto {
+                            field: field.clone(),
+                            kind: constraint.type_name().to_string(),
+                            constraint: expr,
+                            value: None,
+                            satisfied: true,
+                            reason_code: Some("argument_absent".into()),
+                            reason: Some("optional argument not supplied".into()),
+                        });
+                    }
                     None => {
                         // Every named field is required, wildcard included:
                         // wildcard admits any value, not the absence of one.
@@ -520,7 +540,12 @@ impl SdkContext {
                         });
                     }
                     Some(value) => {
-                        let (satisfied, reason_code, reason) = match constraint {
+                        // A present Optional value is judged by its inner constraint.
+                        let effective = match constraint {
+                            Constraint::Optional(opt) => opt.inner(),
+                            other => other,
+                        };
+                        let (satisfied, reason_code, reason) = match effective {
                             Constraint::UrlSafe(safe) => match value.as_str() {
                                 Some(url) => match safe.rejection_reason(url) {
                                     Ok(None) => (true, None, None),
@@ -537,7 +562,7 @@ impl SdkContext {
                                     Some("URL value must be a string".to_string()),
                                 ),
                             },
-                            _ => match constraint.matches(value) {
+                            _ => match effective.matches(value) {
                                 Ok(true) => (true, None, None),
                                 Ok(false) => (
                                     false,
@@ -545,7 +570,7 @@ impl SdkContext {
                                     Some(format!(
                                         "{} does not satisfy {}",
                                         value,
-                                        constraint.type_name()
+                                        effective.type_name()
                                     )),
                                 ),
                                 Err(e) => (false, None, Some(e.to_string())),
@@ -566,9 +591,9 @@ impl SdkContext {
         }
         let known: Vec<&String> = fields.iter().map(|f| &f.field).collect();
         let unknown: Vec<String> = args
-            .keys()
-            .filter(|k| !known.contains(k))
-            .cloned()
+            .iter()
+            .filter(|(k, v)| !known.contains(k) && !matches!(v, ConstraintValue::Null))
+            .map(|(k, _)| k.clone())
             .collect();
 
         let (outcome, code, field, message) = if !chain_valid {

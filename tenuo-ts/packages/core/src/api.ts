@@ -158,6 +158,16 @@ export type CelConstraint = {
   readonly expression: string;
 };
 
+/**
+ * Optional top-level argument: absent (or `null`) is allowed; a present value
+ * must satisfy `constraint`. Valid only as the outermost constraint of an
+ * argument.
+ */
+export type OptionalConstraint = {
+  readonly kind: "optional";
+  readonly constraint: Exclude<ConstraintExpr, OptionalConstraint>;
+};
+
 export type ConstraintExpr =
   | UnderConstraint
   | EmailConstraint
@@ -179,7 +189,8 @@ export type ConstraintExpr =
   | AnyOfConstraint
   | AllConstraint
   | NotConstraint
-  | CelConstraint;
+  | CelConstraint
+  | OptionalConstraint;
 
 /** Per-argument allow policy. Not a Zod schema. */
 export type AllowPolicy = {

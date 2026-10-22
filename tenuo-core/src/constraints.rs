@@ -21,6 +21,7 @@
 //! | `Any` | At least one must match | `OR(a, b, c)` |
 //! | `Not` | Negation (unsafe) | `NOT(pattern)` - avoid |
 //! | `Cel` | CEL expression | `amount < 10000` |
+//! | `Optional` | Argument may be absent; if present must satisfy inner | `Optional(Range(..10))` |
 //!
 //! ## Security: Constraint Depth Limit
 //!
@@ -103,7 +104,12 @@ pub mod constraint_type_id {
     /// SSRF-safe URL validation (blocks private IPs, metadata endpoints, etc.).
     /// Wire format: `[18, { "schemes": [string], "block_private": bool, ... }]`
     pub const URL_SAFE: u8 = 18;
-    // 19-127: Future standard types
+    // 19-21: Earmarked in wire-format-v1.md (TimeWindow, GeoFence, RateLimit)
+    /// Optional top-level argument: absent (or null) is satisfied, a present
+    /// value must satisfy the inner constraint.
+    /// Wire format: `[22, { "inner": Constraint }]`
+    pub const OPTIONAL: u8 = 22;
+    // 23-127: Future standard types
 
     // Experimental / extension constraints (128-255)
     /// Shell command safety (binary allowlist + metacharacter rejection).
@@ -205,6 +211,12 @@ pub enum Constraint {
     /// Wire type ID: 128 (extension range)
     Shlex(Shlex),
 
+    /// Optional argument: absent (or null) is satisfied; a present value
+    /// must satisfy the inner constraint. Valid only at the top level of a
+    /// [`ConstraintSet`].
+    /// Wire type ID: 22
+    Optional(Optional),
+
     /// Unknown constraint type (deserialized but not understood).
     /// Used for forward compatibility. Always fails authorization.
     Unknown { type_id: u8, payload: Vec<u8> },
@@ -292,6 +304,10 @@ impl Serialize for Constraint {
             }
             Constraint::Shlex(v) => {
                 tup.serialize_element(&SHLEX)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Optional(v) => {
+                tup.serialize_element(&OPTIONAL)?;
                 tup.serialize_element(v)?;
             }
             Constraint::Unknown { type_id, payload } => {
@@ -441,6 +457,12 @@ impl<'de> serde::Deserialize<'de> for Constraint {
                             .ok_or_else(|| A::Error::invalid_length(1, &self))?;
                         Constraint::Shlex(v)
                     }
+                    OPTIONAL => {
+                        let v: Optional = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Optional(v)
+                    }
                     // Unknown type ID (ID 6 reserved for future IntRange with i64 bounds)
                     _ => {
                         // Try to read value as raw bytes for preservation
@@ -461,6 +483,10 @@ impl<'de> serde::Deserialize<'de> for Constraint {
         // Validate depth after full deserialization
         constraint
             .validate_depth()
+            .map_err(serde::de::Error::custom)?;
+        // Optional is only meaningful as the top-level constraint of an argument
+        constraint
+            .validate_optional_placement()
             .map_err(serde::de::Error::custom)?;
 
         Ok(constraint)
@@ -503,6 +529,43 @@ impl Constraint {
                 1 + any.constraints.iter().map(|c| c.depth()).max().unwrap_or(0)
             }
             Constraint::Not(not) => 1 + not.constraint.depth(),
+            Constraint::Optional(opt) => 1 + opt.inner.depth(),
+        }
+    }
+
+    /// Whether this constraint is, or contains anywhere, an `Optional`.
+    fn contains_optional(&self) -> bool {
+        match self {
+            Constraint::Optional(_) => true,
+            Constraint::All(all) => all.constraints.iter().any(Constraint::contains_optional),
+            Constraint::Any(any) => any.constraints.iter().any(Constraint::contains_optional),
+            Constraint::Not(not) => not.constraint.contains_optional(),
+            _ => false,
+        }
+    }
+
+    /// Reject `Optional` anywhere except as the outermost constraint of an
+    /// argument.
+    ///
+    /// Absence is a property of a top-level argument, so `Optional` nested
+    /// inside `All`, `Any`, `Not` or another `Optional` has no meaning and is
+    /// rejected rather than silently treated as its inner constraint.
+    pub fn validate_optional_placement(&self) -> Result<()> {
+        let nested = match self {
+            Constraint::Optional(opt) => opt.inner.contains_optional(),
+            Constraint::All(all) => all.constraints.iter().any(Constraint::contains_optional),
+            Constraint::Any(any) => any.constraints.iter().any(Constraint::contains_optional),
+            Constraint::Not(not) => not.constraint.contains_optional(),
+            _ => false,
+        };
+        if nested {
+            Err(Error::Validation(
+                "Optional is only allowed as the top-level constraint of an argument; \
+                 it cannot be nested inside All, Any, Not or Optional"
+                    .to_string(),
+            ))
+        } else {
+            Ok(())
         }
     }
 
@@ -548,6 +611,7 @@ impl Constraint {
             Constraint::Subpath(s) => s.matches(value),
             Constraint::UrlSafe(u) => u.matches(value),
             Constraint::Shlex(sh) => sh.matches(value),
+            Constraint::Optional(opt) => opt.matches(value),
             Constraint::Unknown { type_id, .. } => Err(Error::ConstraintNotSatisfied {
                 field: "constraint".to_string(),
                 reason: format!("unknown constraint type ID {}", type_id),
@@ -561,6 +625,23 @@ impl Constraint {
     /// Returns `Err` if the child would expand capabilities.
     pub fn validate_attenuation(&self, child: &Constraint) -> Result<()> {
         match (self, child) {
+            // Optional is matched before Wildcard: `Wildcard` requires the
+            // argument to be present, so even it cannot become Optional.
+            //
+            // Optional(c) -> Optional(c'): the inner constraint must narrow.
+            (Constraint::Optional(parent), Constraint::Optional(child_opt)) => {
+                parent.inner.validate_attenuation(&child_opt.inner)
+            }
+            // Optional(c) -> c' (required): dropping absence narrows, so only
+            // the inner constraint has to narrow.
+            (Constraint::Optional(parent), _) => parent.inner.validate_attenuation(child),
+            // c -> Optional(c'): would admit calls that omit the argument.
+            (_, Constraint::Optional(_)) => Err(Error::MonotonicityViolation(format!(
+                "cannot attenuate a required {} constraint to Optional: \
+                 that would admit calls that omit the argument",
+                self.type_name()
+            ))),
+
             // Wildcard can attenuate to ANYTHING (it's the universal superset)
             (Constraint::Wildcard(_), _) => Ok(()),
 
@@ -844,6 +925,7 @@ impl Constraint {
             Constraint::Subpath(_) => "Subpath",
             Constraint::UrlSafe(_) => "UrlSafe",
             Constraint::Shlex(_) => "Shlex",
+            Constraint::Optional(_) => "Optional",
             Constraint::Unknown { .. } => "Unknown",
         }
     }
@@ -3689,6 +3771,66 @@ impl From<Not> for Constraint {
 }
 
 // ============================================================================
+// Optional (absent, or present and satisfying the inner constraint)
+// ============================================================================
+
+/// An optional top-level argument.
+///
+/// In a [`ConstraintSet`], an argument constrained by `Optional(inner)` may be
+/// omitted (or sent as `null`); when it is present, its value must satisfy
+/// `inner`. The key still counts as listed for closed-world checks.
+///
+/// `Optional` is only valid as the outermost constraint of an argument. It
+/// cannot be nested inside `All`, `Any`, `Not` or another `Optional`.
+///
+/// Wire format: `[22, { "inner": Constraint }]`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Optional {
+    pub inner: Box<Constraint>,
+}
+
+impl Optional {
+    /// Create an optional-argument constraint around `inner`.
+    ///
+    /// Fails if `inner` is or contains another `Optional`.
+    pub fn new(inner: impl Into<Constraint>) -> Result<Self> {
+        let inner = inner.into();
+        if inner.contains_optional() {
+            return Err(Error::Validation(
+                "Optional is only allowed as the top-level constraint of an argument; \
+                 it cannot wrap another Optional"
+                    .to_string(),
+            ));
+        }
+        Ok(Self {
+            inner: Box::new(inner),
+        })
+    }
+
+    /// The constraint a present value must satisfy.
+    pub fn inner(&self) -> &Constraint {
+        &self.inner
+    }
+
+    /// Check a single value: `null` counts as absent and is satisfied; any
+    /// other value must satisfy the inner constraint.
+    ///
+    /// Absence of the argument itself is handled by [`ConstraintSet::matches`].
+    pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        if matches!(value, ConstraintValue::Null) {
+            return Ok(true);
+        }
+        self.inner.matches(value)
+    }
+}
+
+impl From<Optional> for Constraint {
+    fn from(o: Optional) -> Self {
+        Constraint::Optional(o)
+    }
+}
+
+// ============================================================================
 // CEL Expression Constraint
 // ============================================================================
 
@@ -3914,6 +4056,12 @@ fn is_false(b: &bool) -> bool {
 ///
 /// Use `Wildcard` constraint to allow any value for a specific field while
 /// still operating in closed-world mode for other fields.
+///
+/// # Absent and null arguments
+///
+/// A top-level argument whose value is `null` is treated exactly as if it
+/// were absent: it is not an unknown field, it does not satisfy a required
+/// argument, and it satisfies an [`Optional`] argument.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ConstraintSet {
     constraints: BTreeMap<String, Constraint>,
@@ -3962,6 +4110,7 @@ impl ConstraintSet {
     pub fn validate_depth(&self) -> Result<()> {
         for constraint in self.constraints.values() {
             constraint.validate_depth()?;
+            constraint.validate_optional_placement()?;
         }
         Ok(())
     }
@@ -3973,11 +4122,18 @@ impl ConstraintSet {
     /// - If no constraints exist: all arguments are allowed (open-world)
     /// - If any constraint exists and `allow_unknown=false`: unknown arguments rejected
     /// - If any constraint exists and `allow_unknown=true`: unknown arguments allowed
+    ///
+    /// A top-level `null` value is treated as absent everywhere: an unlisted
+    /// null is not an unknown field, a required argument sent as null is
+    /// missing, and an `Optional` argument sent as null is satisfied.
     pub fn matches(&self, args: &HashMap<String, ConstraintValue>) -> Result<()> {
         // Zero-trust: if constraints exist and allow_unknown is false,
         // reject any arguments not explicitly constrained
         if !self.constraints.is_empty() && !self.allow_unknown {
-            for key in args.keys() {
+            for (key, value) in args {
+                if matches!(value, ConstraintValue::Null) {
+                    continue; // null == absent
+                }
                 if !self.constraints.contains_key(key) {
                     return Err(Error::ConstraintNotSatisfied {
                         field: key.clone(),
@@ -3989,12 +4145,18 @@ impl ConstraintSet {
 
         // Check all defined constraints are satisfied
         for (field, constraint) in &self.constraints {
-            let value = args
-                .get(field)
-                .ok_or_else(|| Error::ConstraintNotSatisfied {
-                    field: field.clone(),
-                    reason: "missing required argument".to_string(),
-                })?;
+            let value = match args.get(field) {
+                Some(ConstraintValue::Null) | None => {
+                    if matches!(constraint, Constraint::Optional(_)) {
+                        continue; // absent optional argument is satisfied
+                    }
+                    return Err(Error::ConstraintNotSatisfied {
+                        field: field.clone(),
+                        reason: "missing required argument".to_string(),
+                    });
+                }
+                Some(value) => value,
+            };
 
             if !constraint.matches(value)? {
                 return Err(Error::ConstraintNotSatisfied {
@@ -6466,5 +6628,332 @@ mod tests {
             parent.validate_attenuation(&child).is_err(),
             "Any -> Any with superset of branches must be rejected (privilege escalation)"
         );
+    }
+}
+
+#[cfg(test)]
+mod optional_tests {
+    use super::*;
+
+    fn args(pairs: &[(&str, ConstraintValue)]) -> HashMap<String, ConstraintValue> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
+    }
+
+    fn opt(inner: impl Into<Constraint>) -> Constraint {
+        Optional::new(inner).unwrap().into()
+    }
+
+    fn range(min: f64, max: f64) -> Constraint {
+        Range::new(Some(min), Some(max)).unwrap().into()
+    }
+
+    /// `search(query, limit?)` with `limit` capped at 50.
+    fn search_set() -> ConstraintSet {
+        let mut cs = ConstraintSet::new();
+        cs.insert("query", Wildcard::new());
+        cs.insert("limit", opt(range(1.0, 50.0)));
+        cs
+    }
+
+    fn denied_field(result: Result<()>) -> (String, String) {
+        match result {
+            Err(Error::ConstraintNotSatisfied { field, reason }) => (field, reason),
+            other => panic!("expected ConstraintNotSatisfied, got {:?}", other),
+        }
+    }
+
+    // ---------------------------------------------------------------- matching
+
+    #[test]
+    fn optional_absent_is_satisfied() {
+        let cs = search_set();
+        cs.matches(&args(&[("query", "q".into())])).unwrap();
+    }
+
+    #[test]
+    fn optional_null_is_absent() {
+        let cs = search_set();
+        cs.matches(&args(&[
+            ("query", "q".into()),
+            ("limit", ConstraintValue::Null),
+        ]))
+        .unwrap();
+    }
+
+    #[test]
+    fn optional_present_valid_is_allowed() {
+        let cs = search_set();
+        cs.matches(&args(&[("query", "q".into()), ("limit", 10i64.into())]))
+            .unwrap();
+    }
+
+    #[test]
+    fn optional_present_invalid_is_denied() {
+        let cs = search_set();
+        let (field, reason) =
+            denied_field(cs.matches(&args(&[("query", "q".into()), ("limit", 500i64.into())])));
+        assert_eq!(field, "limit");
+        assert_eq!(reason, "value does not match constraint");
+    }
+
+    #[test]
+    fn optional_present_wrong_type_is_denied() {
+        let cs = search_set();
+        assert!(cs
+            .matches(&args(&[("query", "q".into()), ("limit", "ten".into())]))
+            .is_err());
+    }
+
+    #[test]
+    fn optional_matches_single_value() {
+        let c = opt(range(1.0, 50.0));
+        assert!(c.matches(&ConstraintValue::Null).unwrap());
+        assert!(c.matches(&10i64.into()).unwrap());
+        assert!(!c.matches(&500i64.into()).unwrap());
+    }
+
+    // ------------------------------------------------------------- null rule
+
+    #[test]
+    fn required_argument_sent_as_null_is_missing() {
+        let cs = search_set();
+        let (field, reason) = denied_field(cs.matches(&args(&[("query", ConstraintValue::Null)])));
+        assert_eq!(field, "query");
+        assert_eq!(reason, "missing required argument");
+    }
+
+    #[test]
+    fn required_wildcard_sent_as_null_is_missing() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("parameters", Wildcard::new());
+        let (field, reason) =
+            denied_field(cs.matches(&args(&[("parameters", ConstraintValue::Null)])));
+        assert_eq!(field, "parameters");
+        assert_eq!(reason, "missing required argument");
+    }
+
+    #[test]
+    fn unlisted_null_is_absent_under_closed_world() {
+        let cs = search_set();
+        cs.matches(&args(&[
+            ("query", "q".into()),
+            ("human_confirmation", ConstraintValue::Null),
+        ]))
+        .unwrap();
+    }
+
+    #[test]
+    fn unlisted_non_null_is_still_denied_under_closed_world() {
+        let cs = search_set();
+        let (field, reason) = denied_field(cs.matches(&args(&[
+            ("query", "q".into()),
+            ("human_confirmation", false.into()),
+        ])));
+        assert_eq!(field, "human_confirmation");
+        assert!(reason.contains("unknown field"), "{reason}");
+    }
+
+    // ----------------------------------------------------------- closed world
+
+    #[test]
+    fn optional_key_counts_as_listed() {
+        // Only Optional keys listed: the set is still closed-world.
+        let mut cs = ConstraintSet::new();
+        cs.insert("limit", opt(range(1.0, 50.0)));
+        cs.matches(&args(&[])).unwrap();
+        cs.matches(&args(&[("limit", 5i64.into())])).unwrap();
+        let (field, _) = denied_field(cs.matches(&args(&[("other", 1i64.into())])));
+        assert_eq!(field, "other");
+    }
+
+    #[test]
+    fn allow_unknown_still_enforces_present_optional() {
+        let mut cs = search_set();
+        cs.set_allow_unknown(true);
+        cs.matches(&args(&[("query", "q".into()), ("extra", 1i64.into())]))
+            .unwrap();
+        assert!(cs
+            .matches(&args(&[("query", "q".into()), ("limit", 99i64.into())]))
+            .is_err());
+    }
+
+    // ------------------------------------------------------------ attenuation
+
+    #[test]
+    fn attenuate_optional_to_narrower_optional() {
+        opt(range(1.0, 50.0))
+            .validate_attenuation(&opt(range(1.0, 10.0)))
+            .unwrap();
+        assert!(opt(range(1.0, 50.0))
+            .validate_attenuation(&opt(range(1.0, 100.0)))
+            .is_err());
+    }
+
+    #[test]
+    fn attenuate_optional_to_required() {
+        opt(range(1.0, 50.0))
+            .validate_attenuation(&range(1.0, 10.0))
+            .unwrap();
+        opt(Wildcard::new())
+            .validate_attenuation(&Wildcard::new().into())
+            .unwrap();
+        assert!(opt(range(1.0, 50.0))
+            .validate_attenuation(&range(1.0, 100.0))
+            .is_err());
+        assert!(opt(range(1.0, 50.0))
+            .validate_attenuation(&Wildcard::new().into())
+            .is_err());
+    }
+
+    #[test]
+    fn attenuate_required_to_optional_is_rejected() {
+        let err = range(1.0, 50.0)
+            .validate_attenuation(&opt(range(1.0, 10.0)))
+            .unwrap_err();
+        assert!(matches!(err, Error::MonotonicityViolation(_)), "{err:?}");
+        // Wildcard is required too: it admits any value, not absence.
+        let err = Constraint::from(Wildcard::new())
+            .validate_attenuation(&opt(Wildcard::new()))
+            .unwrap_err();
+        assert!(matches!(err, Error::MonotonicityViolation(_)), "{err:?}");
+    }
+
+    #[test]
+    fn attenuate_set_adding_optional_key_follows_keyset_rules() {
+        // Non-empty parent: a new key (Optional or not) is rejected (I4 keyset identity).
+        let parent = search_set();
+        let mut child = search_set();
+        child.insert("page", opt(range(1.0, 5.0)));
+        assert!(parent.validate_attenuation(&child).is_err());
+
+        // Empty (open-world) parent: the child may introduce Optional keys.
+        let open = ConstraintSet::new();
+        open.validate_attenuation(&child).unwrap();
+    }
+
+    #[test]
+    fn attenuate_set_optional_key_must_be_kept() {
+        let parent = search_set();
+        let mut child = ConstraintSet::new();
+        child.insert("query", Wildcard::new());
+        assert!(parent.validate_attenuation(&child).is_err());
+
+        let mut required = ConstraintSet::new();
+        required.insert("query", Wildcard::new());
+        required.insert("limit", range(1.0, 10.0));
+        parent.validate_attenuation(&required).unwrap();
+        // ...and once required, it cannot become optional again.
+        assert!(required.validate_attenuation(&search_set()).is_err());
+    }
+
+    // ------------------------------------------------------------------- wire
+
+    #[test]
+    fn optional_wire_round_trip() {
+        let c = opt(range(1.0, 50.0));
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&c, &mut bytes).unwrap();
+        assert_eq!(bytes[0], 0x82, "2-element array");
+        assert_eq!(bytes[1], constraint_type_id::OPTIONAL);
+        assert_eq!(constraint_type_id::OPTIONAL, 22);
+        // value is a 1-entry map keyed "inner"
+        assert_eq!(bytes[2], 0xa1);
+        let decoded: Constraint = ciborium::de::from_reader(&bytes[..]).unwrap();
+        assert_eq!(decoded, c);
+        assert_eq!(decoded.type_name(), "Optional");
+    }
+
+    #[test]
+    fn constraint_set_with_optional_round_trips() {
+        let cs = search_set();
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&cs, &mut bytes).unwrap();
+        let decoded: ConstraintSet = ciborium::de::from_reader(&bytes[..]).unwrap();
+        assert_eq!(decoded, cs);
+        decoded.matches(&args(&[("query", "q".into())])).unwrap();
+    }
+
+    // --------------------------------------------------------------- nesting
+
+    #[test]
+    fn optional_cannot_wrap_optional() {
+        let inner = opt(Wildcard::new());
+        assert!(matches!(Optional::new(inner), Err(Error::Validation(_))));
+    }
+
+    #[test]
+    fn optional_nested_in_composites_is_rejected() {
+        let nested = [
+            Constraint::All(All::new([opt(Wildcard::new())])),
+            Constraint::Any(Any::new([range(0.0, 1.0), opt(Wildcard::new())])),
+            Constraint::Not(Not::new(opt(Wildcard::new()))),
+            Constraint::All(All::new([Constraint::Not(Not::new(opt(Wildcard::new())))])),
+        ];
+        for c in nested {
+            assert!(c.validate_optional_placement().is_err(), "{c:?}");
+            let mut cs = ConstraintSet::new();
+            cs.insert("x", c.clone());
+            assert!(cs.validate_depth().is_err(), "{c:?}");
+
+            let mut bytes = Vec::new();
+            ciborium::ser::into_writer(&c, &mut bytes).unwrap();
+            let decoded: std::result::Result<Constraint, _> = ciborium::de::from_reader(&bytes[..]);
+            assert!(
+                decoded.is_err(),
+                "nested Optional must not deserialize: {c:?}"
+            );
+        }
+        // Top-level Optional wrapping a composite is fine.
+        opt(All::new([range(0.0, 10.0)]))
+            .validate_optional_placement()
+            .unwrap();
+    }
+
+    #[test]
+    fn optional_depth_counts_wrapper() {
+        assert_eq!(opt(Wildcard::new()).depth(), 1);
+        assert_eq!(opt(Not::new(range(0.0, 1.0).clone())).depth(), 2);
+    }
+
+    // ------------------------------------------------------ older verifiers
+
+    /// A verifier that predates type 22 sees `Constraint::Unknown` for the
+    /// key. It must deny whether the argument is absent or present.
+    #[test]
+    fn unknown_type_for_optional_key_fails_closed() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("query", Wildcard::new());
+        cs.insert(
+            "limit",
+            Constraint::Unknown {
+                type_id: constraint_type_id::OPTIONAL,
+                payload: vec![],
+            },
+        );
+        let (field, reason) = denied_field(cs.matches(&args(&[("query", "q".into())])));
+        assert_eq!(
+            (field.as_str(), reason.as_str()),
+            ("limit", "missing required argument")
+        );
+        let (_, reason) =
+            denied_field(cs.matches(&args(&[("query", "q".into()), ("limit", 5i64.into())])));
+        assert!(reason.contains("unknown constraint type ID 22"), "{reason}");
+    }
+
+    /// The wire value of an unassigned type with a map payload (the shape an
+    /// older verifier receives for `[22, {"inner": ...}]`). The reference
+    /// decoder only captures byte-string payloads as `Unknown`, so this is
+    /// rejected at decode: the warrant never reaches authorization.
+    #[test]
+    fn unassigned_type_with_map_payload_is_rejected_at_decode() {
+        let mut bytes = Vec::new();
+        let mut map = BTreeMap::new();
+        map.insert("inner", Constraint::from(Wildcard::new()));
+        ciborium::ser::into_writer(&(23u8, map), &mut bytes).unwrap();
+        let decoded = ciborium::de::from_reader::<Constraint, _>(&bytes[..]);
+        assert!(decoded.is_err(), "{decoded:?}");
     }
 }

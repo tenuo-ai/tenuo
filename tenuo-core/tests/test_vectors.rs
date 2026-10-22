@@ -2628,6 +2628,71 @@ fn test_vector_a19_3_cidr_constraint() {
     );
 }
 
+/// Test Vector A.19.4: Optional Constraint (type ID 22)
+/// Byte-exact payload from test-vectors.md; checks absent / null / present
+/// handling under proof-of-possession at issued_at+60.
+#[test]
+fn test_vector_a19_4_optional_constraint() {
+    use std::collections::HashMap;
+
+    let payload_hex = "\
+aa00010150019471f8000070008000000000001904020003a166736561726368\
+a16b636f6e73747261696e7473a2656c696d69748216a165696e6e65728203a4\
+636d696ef93c00636d6178f952406d6d696e5f696e636c7573697665f56d6d61\
+785f696e636c7573697665f56571756572798210f60482015820ed4928c628d1\
+c2c6eae90338905995612959273a5c63f93636c14614ac8737d105820158208a\
+88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c06\
+1a65920080071a65920e9008031200";
+    let sig_hex = "7089dbaa6ab6c0419b7df9dee30d0b1098e00c8096abdd2c751f4661ab51a7eec33979121419a3ac3cd34e0189664cafaf6c37d6a976e0a4a66efa76be32c105";
+
+    // `limit` is encoded as [22, {"inner": [3, ...]}]
+    assert!(payload_hex
+        .replace('\\', "")
+        .contains("656c696d69748216a165696e6e6572"));
+
+    let warrant = warrant_from_hex(payload_hex, sig_hex);
+    let limit = warrant.capabilities().unwrap()["search"]
+        .get("limit")
+        .unwrap()
+        .clone();
+    assert_eq!(limit.type_name(), "Optional");
+
+    let worker = worker_key();
+    let as_of = (ISSUED_AT + 60) as i64;
+    let authorizer = Authorizer::new().with_trusted_root(control_plane_key().public_key());
+    let check = |pairs: &[(&str, ConstraintValue)]| {
+        let args: HashMap<String, ConstraintValue> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+        let pop = warrant
+            .sign_with_timestamp(&worker, "search", &args, Some(as_of))
+            .unwrap();
+        authorizer
+            .authorize_one_as_of(&warrant, "search", &args, Some(&pop), &[], as_of)
+            .is_ok()
+    };
+
+    let q = || ("query", ConstraintValue::String("q".into()));
+    assert!(check(&[q()]), "limit absent");
+    assert!(
+        check(&[q(), ("limit", ConstraintValue::Null)]),
+        "limit null"
+    );
+    assert!(
+        check(&[q(), ("limit", ConstraintValue::Integer(10))]),
+        "limit 10"
+    );
+    assert!(
+        !check(&[q(), ("limit", ConstraintValue::Integer(500))]),
+        "limit 500"
+    );
+    assert!(
+        !check(&[("query", ConstraintValue::Null)]),
+        "required query null"
+    );
+}
+
 // ============================================================================
 // A.20 POP FAILURE CASES
 // ============================================================================

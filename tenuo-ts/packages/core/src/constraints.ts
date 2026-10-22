@@ -12,6 +12,7 @@ import type {
   NotConstraint,
   NotOneOfConstraint,
   OneOfConstraint,
+  OptionalConstraint,
   PatternConstraint,
   RangeConstraint,
   RegexConstraint,
@@ -294,6 +295,30 @@ export function all(constraints: readonly ConstraintExpr[]): AllConstraint {
 /** Satisfied when the inner constraint is not. Delegation cannot narrow a `not`; prefer `notOneOf`. */
 export function not(constraint: ConstraintExpr): NotConstraint {
   return { kind: "not", constraint };
+}
+
+/**
+ * Optional argument: the call may omit it (or pass `null`); when present, its
+ * value must satisfy `constraint`. The argument still counts as listed, so the
+ * policy stays closed to arguments it does not name.
+ *
+ * ```ts
+ * allow: { query: wildcard(), limit: optional(range({ min: 1, max: 50 })) }
+ * ```
+ *
+ * Use it only as the outermost constraint of an argument; it cannot be nested
+ * inside `all`, `anyOf`, `not`, or another `optional`. A delegatee may keep it
+ * optional with a narrower inner constraint, or make the argument required,
+ * but cannot make a required argument optional.
+ */
+export function optional(constraint: ConstraintExpr): OptionalConstraint {
+  if (constraint === null || typeof constraint !== "object") {
+    throw new TenuoConfigurationError("tenuo.optional() expects a constraint");
+  }
+  if (constraint.kind === "optional") {
+    throw new TenuoConfigurationError("tenuo.optional() cannot wrap another optional()");
+  }
+  return { kind: "optional", constraint };
 }
 
 /** Common Expression Language predicate over the argument value, evaluated in core. */

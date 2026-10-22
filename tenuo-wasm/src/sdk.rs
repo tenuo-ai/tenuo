@@ -11,7 +11,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tenuo::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
-use tenuo::constraints::{Shlex, Subpath, UrlSafe};
+use tenuo::constraints::{Optional, Shlex, Subpath, UrlSafe};
 use tenuo::payload::WarrantPayload;
 use tenuo::receipt::{Receipt, ReceiptPayload};
 use tenuo::wire::WarrantStack;
@@ -1791,6 +1791,8 @@ enum ConstraintExpr {
     All { constraints: Vec<serde_json::Value> },
     #[serde(rename = "not")]
     Not { constraint: serde_json::Value },
+    #[serde(rename = "optional")]
+    Optional { constraint: serde_json::Value },
     #[serde(rename = "cel")]
     Cel { expression: String },
 }
@@ -1811,6 +1813,15 @@ fn inner_list(kind: &str, items: &[serde_json::Value]) -> Result<Vec<Constraint>
 }
 
 pub(crate) fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> {
+    let constraint = constraint_from_expr_inner(expr)?;
+    // `optional` is only meaningful as the outermost constraint of an argument.
+    constraint
+        .validate_optional_placement()
+        .map_err(|e| e.to_string())?;
+    Ok(constraint)
+}
+
+fn constraint_from_expr_inner(expr: &serde_json::Value) -> Result<Constraint, String> {
     let kind = expr
         .get("kind")
         .and_then(|v| v.as_str())
@@ -1927,6 +1938,11 @@ pub(crate) fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constrain
         }
         ConstraintExpr::Not { constraint } => {
             Ok(Not::new(constraint_from_expr(&constraint)?).into())
+        }
+        ConstraintExpr::Optional { constraint } => {
+            Ok(Optional::new(constraint_from_expr(&constraint)?)
+                .map_err(|e| e.to_string())?
+                .into())
         }
         ConstraintExpr::Cel { expression } => {
             if expression.trim().is_empty() {
@@ -2857,8 +2873,28 @@ mod constraint_expr_tests {
             json!({ "kind": "all", "constraints": [{ "kind": "wildcard" }] }),
             json!({ "kind": "not", "constraint": { "kind": "wildcard" } }),
             json!({ "kind": "cel", "expression": "value > 1" }),
+            json!({ "kind": "optional", "constraint": { "kind": "max", "value": 5 } }),
         ] {
             constraint_from_expr(&expr).unwrap_or_else(|e| panic!("{expr}: {e}"));
+        }
+    }
+
+    #[test]
+    fn optional_is_top_level_only() {
+        let parsed = constraint_from_expr(
+            &json!({ "kind": "optional", "constraint": { "kind": "wildcard" } }),
+        )
+        .unwrap();
+        assert!(matches!(parsed, tenuo::Constraint::Optional(_)));
+        let opt = json!({ "kind": "optional", "constraint": { "kind": "wildcard" } });
+        for nested in [
+            json!({ "kind": "optional", "constraint": opt }),
+            json!({ "kind": "all", "constraints": [opt] }),
+            json!({ "kind": "anyOf", "constraints": [{ "kind": "wildcard" }, opt] }),
+            json!({ "kind": "not", "constraint": opt }),
+        ] {
+            let err = constraint_from_expr(&nested).unwrap_err();
+            assert!(err.contains("top-level"), "{nested}: {err}");
         }
     }
 

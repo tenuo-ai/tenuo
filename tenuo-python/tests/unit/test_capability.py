@@ -217,8 +217,9 @@ class TestEnsureConstraint:
         result = ensure_constraint("hello")
         assert isinstance(result, Exact)
 
-        # Note: Exact only accepts strings in tenuo_core
-        # Integers and booleans must use Range or other types
+        # Non-string literals are wrapped too, keeping their type
+        assert ensure_constraint(42).value == 42
+        assert ensure_constraint(True).value is True
 
         print("  [Result] Strings wrapped in Exact")
 

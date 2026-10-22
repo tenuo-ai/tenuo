@@ -1271,6 +1271,7 @@ fn format_constraint(c: &Constraint) -> String {
         Constraint::Any(a) => format!("Any({} constraints)", a.constraints.len()),
         Constraint::Not(n) => format!("Not({})", format_constraint(&n.constraint)),
         Constraint::Cel(c) => format!("CEL(\"{}\")", c.expression),
+        Constraint::Optional(o) => format!("Optional({})", format_constraint(&o.inner)),
         Constraint::Unknown { type_id, .. } => format!("UNKNOWN(type_id={})", type_id),
         _ => "UNKNOWN(future variant)".to_string(),
     }

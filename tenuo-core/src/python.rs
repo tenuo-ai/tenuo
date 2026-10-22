@@ -12,7 +12,8 @@ use crate::approval::{
 };
 use crate::constraints::{
     All, Any, CelConstraint, Cidr, Constraint, ConstraintValue, Contains, Exact, Not, NotOneOf,
-    OneOf, Pattern, Range, RegexConstraint, Subpath, Subset, UrlPattern, UrlSafe, Wildcard,
+    OneOf, Optional, Pattern, Range, RegexConstraint, Subpath, Subset, UrlPattern, UrlSafe,
+    Wildcard,
 };
 use crate::crypto::{
     PublicKey as RustPublicKey, Signature as RustSignature, SigningKey as RustSigningKey,
@@ -35,7 +36,7 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySequence, PyTuple};
+use pyo3::types::{PyDict, PyInt, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -584,11 +585,16 @@ pub struct PyExact {
 
 #[pymethods]
 impl PyExact {
+    /// Create an exact-value constraint.
+    ///
+    /// Accepts any argument value: str, int, float, bool, None, list or dict.
+    /// The match is type-strict, so ``Exact(42)`` matches ``42`` but not ``"42"``.
+    /// Integers must fit in 64 bits; pass larger IDs as strings.
     #[new]
-    fn new(value: &str) -> Self {
-        Self {
-            inner: Exact::new(value),
-        }
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: Exact::new(py_to_exact_constraint_value(value)?),
+        })
     }
 
     /// Check if a value matches this exact constraint.
@@ -596,7 +602,7 @@ impl PyExact {
     /// This is the runtime check used for Tier 1 authorization.
     ///
     /// Args:
-    ///     value: Value to check (will be converted to string for comparison)
+    ///     value: Value to check. Types must match: ``Exact(42)`` does not match ``"42"``.
     ///
     /// Returns:
     ///     True if value matches exactly, False otherwise
@@ -607,8 +613,11 @@ impl PyExact {
     ///     True
     ///     >>> e.matches("staging")
     ///     False
-    fn matches(&self, value: &str) -> bool {
-        self.inner.value.as_str() == Some(value)
+    ///     >>> Exact(42).matches(42)
+    ///     True
+    fn matches(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -618,7 +627,10 @@ impl PyExact {
     }
 
     fn __repr__(&self) -> String {
-        format!("Exact('{}')", self.inner.value)
+        match &self.inner.value {
+            ConstraintValue::String(s) => format!("Exact('{}')", s),
+            other => format!("Exact({})", other),
+        }
     }
 
     #[getter]
@@ -636,11 +648,20 @@ pub struct PyOneOf {
 
 #[pymethods]
 impl PyOneOf {
+    /// Create a one-of constraint.
+    ///
+    /// Values may be str, int, float, bool, None, list or dict, and can be mixed.
+    /// Matching is type-strict, so ``OneOf([1, 2])`` does not match ``"1"``.
+    /// Integers must fit in 64 bits; pass larger IDs as strings.
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: OneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_exact_constraint_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: OneOf::from_values(values),
+        })
     }
 
     /// Validate that another OneOf is a valid attenuation (narrowing) of this one.
@@ -668,9 +689,11 @@ impl PyOneOf {
     ///     True
     ///     >>> o.contains("development")
     ///     False
-    fn contains(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        self.inner.contains(&cv)
+    ///     >>> OneOf([1, 2]).contains(1)
+    ///     True
+    fn contains(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        Ok(self.inner.contains(&cv))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -704,11 +727,20 @@ pub struct PyNotOneOf {
 
 #[pymethods]
 impl PyNotOneOf {
+    /// Create an exclusion constraint.
+    ///
+    /// Values may be str, int, float, bool, None, list or dict, and can be mixed.
+    /// Matching is type-strict, so ``NotOneOf([0])`` still allows ``"0"``.
+    /// Integers must fit in 64 bits; pass larger IDs as strings.
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: NotOneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_exact_constraint_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: NotOneOf::from_values(values),
+        })
     }
 
     /// Validate that another NotOneOf is a valid attenuation (narrowing) of this one.
@@ -736,9 +768,11 @@ impl PyNotOneOf {
     ///     True
     ///     >>> n.allows("admin")
     ///     False
-    fn allows(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        !self.inner.excluded.contains(&cv)
+    ///     >>> NotOneOf([0]).allows(0)
+    ///     False
+    fn allows(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        Ok(!self.inner.is_excluded(&cv))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -953,9 +987,11 @@ impl PyAll {
             }
             Ok(vec)
         })?;
-        Ok(Self {
-            inner: All::new(rust_constraints),
-        })
+        let inner = All::new(rust_constraints);
+        Constraint::All(inner.clone())
+            .validate_optional_placement()
+            .map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Validate that another All is a valid attenuation (narrowing) of this one.
@@ -1011,9 +1047,11 @@ impl PyAnyOf {
             }
             Ok(vec)
         })?;
-        Ok(Self {
-            inner: Any::new(rust_constraints),
-        })
+        let inner = Any::new(rust_constraints);
+        Constraint::Any(inner.clone())
+            .validate_optional_placement()
+            .map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Check if a value matches ANY constraint in this set.
@@ -1056,9 +1094,11 @@ impl PyNot {
             let bound = constraint.into_bound(py);
             py_to_constraint(&bound)
         })?;
-        Ok(Self {
-            inner: Not::new(rust_constraint),
-        })
+        let inner = Not::new(rust_constraint);
+        Constraint::Not(inner.clone())
+            .validate_optional_placement()
+            .map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Check if a value does NOT match the inner constraint.
@@ -1083,6 +1123,72 @@ impl PyNot {
 
     fn __repr__(&self) -> String {
         "Not(...)".to_string()
+    }
+}
+
+/// Optional top-level argument.
+///
+/// The argument may be omitted (or passed as ``None``); when present, its
+/// value must satisfy ``inner``. The key still counts as listed for
+/// closed-world checks. Only valid as the outermost constraint of an
+/// argument; it cannot be nested inside ``All``, ``AnyOf``, ``Not`` or
+/// another ``Optional``.
+///
+/// Example (Python):
+///
+/// ```text
+/// from tenuo import Optional, Range
+/// Capability("search", query=Pattern("*"), limit=Optional(Range(max=50)))
+/// ```
+#[pyclass(name = "Optional")]
+#[derive(Clone)]
+pub struct PyOptional {
+    inner: Optional,
+}
+
+#[pymethods]
+impl PyOptional {
+    #[new]
+    fn new(inner: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let constraint = py_to_constraint(inner)?;
+        Ok(Self {
+            inner: Optional::new(constraint).map_err(to_py_err)?,
+        })
+    }
+
+    /// The constraint a present value must satisfy.
+    #[getter]
+    fn inner(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        constraint_to_py(py, &self.inner.inner)
+    }
+
+    /// Check a single value: ``None`` counts as absent and is satisfied;
+    /// any other value must satisfy the inner constraint.
+    fn matches(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Validate that ``child`` is a valid narrowing of this constraint.
+    ///
+    /// ``Optional(c)`` may narrow to ``Optional(c')`` or to a required ``c'``
+    /// when ``c'`` narrows ``c``.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        let child_constraint = py_to_constraint(child)?;
+        Constraint::Optional(self.inner.clone())
+            .validate_attenuation(&child_constraint)
+            .map_err(to_py_err)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let inner = constraint_to_py(py, &self.inner.inner)?;
+        Ok(format!("Optional({})", inner.bind(py).repr()?))
     }
 }
 
@@ -2300,6 +2406,13 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAn
                 .into_py_any(py)
                 .map_err(|e| py_validation_err(e.to_string()))?)
         }
+        Constraint::Optional(o) =>
+        {
+            #[allow(deprecated)]
+            Ok(PyOptional { inner: o.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
+        }
     }
 }
 
@@ -2363,8 +2476,11 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
     if let Ok(b) = obj.cast::<PyShlex>() {
         return Ok(Constraint::Shlex(b.borrow().inner.clone()));
     }
+    if let Ok(b) = obj.cast::<PyOptional>() {
+        return Ok(Constraint::Optional(b.borrow().inner.clone()));
+    }
     Err(py_validation_err(
-        "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, UrlSafe, or Shlex",
+        "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, UrlSafe, Shlex, or Optional",
     ))
 }
 
@@ -2396,6 +2512,44 @@ fn py_dict_to_constraint_set(
     }
 
     Ok(constraint_set)
+}
+
+/// Convert a Python value to a ConstraintValue for an exact-match constraint
+/// value (``Exact``, ``OneOf``, ``NotOneOf``), rejecting integers outside the
+/// signed 64-bit range.
+///
+/// ``py_to_constraint_value`` maps those integers to ``Float``, which is
+/// lossy: ``Exact(2**64)`` would also match ``2**64 + 1``. Exact values are
+/// meant to pin identifiers losslessly, so refuse them and point the caller
+/// at a string instead. Nested list and dict values are checked too.
+pub(crate) fn py_to_exact_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
+    reject_lossy_ints(obj)?;
+    py_to_constraint_value(obj)
+}
+
+fn reject_lossy_ints(obj: &Bound<'_, PyAny>) -> PyResult<()> {
+    if obj.is_instance_of::<PyInt>() {
+        if obj.extract::<i64>().is_err() {
+            return Err(py_validation_err(
+                "integer is outside the 64-bit range and cannot be matched exactly; pass it as a string",
+            ));
+        }
+        return Ok(());
+    }
+    if let Ok(dict) = obj.cast::<PyDict>() {
+        for (_, value) in dict.iter() {
+            reject_lossy_ints(&value)?;
+        }
+        return Ok(());
+    }
+    if obj.extract::<String>().is_err() {
+        if let Ok(items) = obj.extract::<Vec<Bound<'_, PyAny>>>() {
+            for item in &items {
+                reject_lossy_ints(item)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Convert a Python value to a ConstraintValue.
@@ -2528,6 +2682,12 @@ fn py_to_arg_approval_gate(
 
     // Any typed constraint object → Constraint gate.
     let constraint = py_to_constraint(av)?;
+    if matches!(constraint, Constraint::Optional(_)) {
+        return Err(py_validation_err(format!(
+            "arg gate '{}': Optional applies only to capability arguments, not approval gates",
+            arg_name
+        )));
+    }
     Ok(ArgApprovalGate::Constraint(constraint))
 }
 
@@ -7028,6 +7188,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAll>()?;
     m.add_class::<PyAnyOf>()?;
     m.add_class::<PyNot>()?;
+    m.add_class::<PyOptional>()?;
     // Core types
     m.add_class::<PySigningKey>()?;
     m.add_class::<PyPublicKey>()?;

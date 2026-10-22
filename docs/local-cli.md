@@ -133,6 +133,12 @@ A plain string is an exact value, so `order_id: A-*` matches only the literal
 `A-*`. `template validate` warns about a plain string or `one_of` entry that
 contains `*` or `?`; write `{pattern: A-*}` to match by pattern.
 
+Every argument a template names must be present, and arguments it doesn't name
+are refused. Wrap an argument a tool may leave out in `optional`: it can be
+omitted, and if it's sent it must match, e.g. `limit: {optional: 1..10}` or
+`action: {optional: send}`. A list may hold integers for numeric IDs such as
+`pullNumber: [57, 58]`.
+
 ```yaml
 version: 2
 name: refunds

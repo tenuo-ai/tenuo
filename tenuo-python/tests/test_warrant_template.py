@@ -141,3 +141,41 @@ def test_template_commands_work_without_initialized_workspace(tmp_path, capsys):
     assert main(["template", "show", "--file", str(path), "--expanded"]) == 0
     assert "signed: false" in capsys.readouterr().err
     assert main(["template", "new", "--out", str(path)]) == 1
+
+
+def test_optional_arguments_may_be_omitted_but_must_match_when_sent():
+    from tenuo import SigningKey, WarrantTemplate
+
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    template = WarrantTemplate({"version": 2, "ttl": "1h", "capabilities": {
+        "web_search": {"query": "any", "limit": {"optional": "1..10"}},
+        "send_message": {"action": {"optional": "send"}, "target": "telegram:1", "message": "any"},
+    }})
+    assert template.expanded()["capabilities"]["web_search"]["limit"] == {"optional": {"range": {"min": 1, "max": 10}}}
+    warrant = template.mint(issuer, holder.public_key)
+    allowed = lambda tool, args: not warrant.why_denied(tool, args).denied  # noqa: E731
+    assert allowed("web_search", {"query": "x"})
+    assert allowed("web_search", {"query": "x", "limit": 5})
+    assert not allowed("web_search", {"query": "x", "limit": 50})
+    assert allowed("send_message", {"target": "telegram:1", "message": "m"})
+    assert not allowed("send_message", {"action": "react", "target": "telegram:1", "message": "m"})
+    assert not allowed("send_message", {"message": "m"})  # target stays required
+
+
+def test_optional_cannot_nest():
+    import pytest
+    from tenuo import WarrantTemplate
+    from tenuo.local_cli.files import DocumentError
+
+    with pytest.raises(DocumentError):
+        WarrantTemplate({"version": 2, "ttl": "1h", "capabilities": {"t": {"a": {"optional": {"optional": "x"}}}}})
+
+
+def test_one_of_accepts_integers_for_numeric_ids():
+    from tenuo import SigningKey, WarrantTemplate
+
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = WarrantTemplate({"version": 2, "ttl": "1h", "capabilities": {
+        "pull_request_read": {"pullNumber": [57, 58]}}}).mint(issuer, holder.public_key)
+    assert not warrant.why_denied("pull_request_read", {"pullNumber": 57}).denied
+    assert warrant.why_denied("pull_request_read", {"pullNumber": 59}).denied

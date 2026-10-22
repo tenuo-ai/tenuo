@@ -250,7 +250,9 @@ pub fn evaluate(
 
 /// Evaluate a CEL expression with the value as the root context.
 ///
-/// For object values, each field becomes a top-level variable.
+/// For object values, each field becomes a top-level variable, and the whole
+/// object is also available as `value` so expressions can test optional fields
+/// with `has(value.field)`. A field named `value` takes precedence.
 /// For other values, the value is available as `value`.
 ///
 /// # Feature Flag
@@ -264,6 +266,11 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
 
     match value {
         ConstraintValue::Object(map) => {
+            if !map.contains_key("value") {
+                context
+                    .add_variable("value", constraint_value_to_cel(value)?)
+                    .map_err(|e| Error::CelError(format!("failed to add variable: {}", e)))?;
+            }
             for (key, val) in map {
                 context
                     .add_variable(key, constraint_value_to_cel(val)?)
@@ -494,6 +501,33 @@ mod tests {
         assert!(
             evaluate_with_value_context("amount < 10000 && currency == 'USD'", &value).unwrap()
         );
+    }
+
+    #[test]
+    fn test_object_context_binds_value_for_optional_fields() {
+        let obj = |approve: Option<bool>| {
+            let mut fields = vec![("amount".to_string(), ConstraintValue::Integer(3600))];
+            if let Some(a) = approve {
+                fields.push(("approve".to_string(), ConstraintValue::Boolean(a)));
+            }
+            ConstraintValue::Object(fields.into_iter().collect())
+        };
+        let expr = "amount <= 4000 && (!has(value.approve) || value.approve == false)";
+        assert!(evaluate_with_value_context(expr, &obj(None)).unwrap());
+        assert!(evaluate_with_value_context(expr, &obj(Some(false))).unwrap());
+        assert!(!evaluate_with_value_context(expr, &obj(Some(true))).unwrap());
+        // Fields stay available as top-level variables.
+        assert!(evaluate_with_value_context("value.amount == amount", &obj(None)).unwrap());
+    }
+
+    #[test]
+    fn test_object_field_named_value_takes_precedence() {
+        let value = ConstraintValue::Object(
+            [("value".to_string(), ConstraintValue::Integer(7))]
+                .into_iter()
+                .collect(),
+        );
+        assert!(evaluate_with_value_context("value == 7", &value).unwrap());
     }
 
     #[test]

@@ -1929,6 +1929,64 @@ fn main() {
     println!("**Expected:** Valid input MUST succeed, invalid input MUST fail with constraint violation.");
     println!();
 
+    // A.19.4 Optional Constraint
+    println!("### A.19.4 Optional Constraint");
+    println!();
+    println!("`limit` is `Optional(Range(1, 50))` (type ID 22, wire value `{{\"inner\": [3, {{...}}]}}`); `query` is a required `Wildcard`.");
+    println!();
+
+    const ID_A19_4: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19,
+        0x04,
+    ];
+
+    let mut tools_a19_4 = BTreeMap::new();
+    let mut cs_a19_4 = ConstraintSet::new();
+    cs_a19_4.insert("query".to_string(), Constraint::Wildcard(tenuo::Wildcard));
+    cs_a19_4.insert(
+        "limit".to_string(),
+        Constraint::Optional(
+            tenuo::constraints::Optional::new(Constraint::Range(
+                tenuo::constraints::Range::new(Some(1.0), Some(50.0)).unwrap(),
+            ))
+            .unwrap(),
+        ),
+    );
+    tools_a19_4.insert("search".to_string(), cs_a19_4);
+
+    let payload_a19_4 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A19_4),
+        tools: tools_a19_4,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a19_4 = sign_payload(&payload_a19_4, &control_plane);
+    print_vector("A.19.4 Optional", &warrant_a19_4);
+    println!("| Valid Input | `query = \"q\"` (limit absent) |");
+    println!("| Valid Input | `query = \"q\", limit = null` |");
+    println!("| Valid Input | `query = \"q\", limit = 10` |");
+    println!("| Invalid Input | `query = \"q\", limit = 500` |");
+    println!("| Invalid Input | `query = null` (required argument treated as absent) |");
+    println!();
+    println!("**Expected:** Valid inputs MUST succeed, invalid inputs MUST fail with constraint violation. A verifier that does not implement type ID 22 MUST NOT authorize any call under this warrant (fail closed).");
+    println!();
+
     // =========================================================================
     // A.20 PoP Failure Cases
     // =========================================================================
