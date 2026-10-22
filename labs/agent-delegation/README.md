@@ -13,8 +13,7 @@ takes about ninety minutes; stages 6 and 7 are optional boss levels.
 
 - Node 20 or newer (`node --version`).
 - A free GitHub account is not needed to run the lab. You will want one for
-  Codespaces if your laptop fights you, to star the repo while you're there,
-  and for the last step.
+  Codespaces if your laptop fights you, and for the last step.
 
 ## Getting set up
 
@@ -22,17 +21,14 @@ takes about ninety minutes; stages 6 and 7 are optional boss levels.
 git clone https://github.com/tenuo-ai/tenuo
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional
 npm run lab
 ```
 
 The core challenge runs locally with no account, sign-in, API key, or credit
-card, and sends nothing automatically. Only `npm run share` and the optional
-star command use the network. The star command contacts GitHub through its CLI.
+card, and sends nothing automatically. Only `npm run share` uses the network.
 If npm fights you, open the repository
 in GitHub Codespaces and pick the "Agent Delegation Lab" configuration instead.
-Its terminal opens in this folder, so the same optional `npm run star` followed
-by `npm run lab` applies.
+Its terminal opens in this folder, so `npm run lab` is all you need.
 
 The lab lives inside the Tenuo repository so that the code you are securing
 with and the code you are reading about are one checkout. Everything the lab
@@ -48,15 +44,12 @@ npm run score      # see your score and why
 npm run audit      # what every agent can currently do
 npm run next       # move to the next stage
 npm run share      # send Tenuo a redacted scorecard to improve the challenge
-npm run star       # optionally star Tenuo without leaving the terminal
 npm run reset      # restore stage 1 and every starter exercise
 ```
 
 Run `attack` and `score` as often as you like. There is no limit and no
 penalty for retries. Each stage explains itself when you run `npm run lab`, and
 the full guide is at [tenuo.ai/lab](https://tenuo.ai/lab/), one page per stage.
-After stage 5, `npm run star` offers the same optional terminal-only path in a
-local clone and Codespaces. It never runs automatically.
 
 ## The cast and the handoffs
 
