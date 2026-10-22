@@ -59,6 +59,8 @@ adapter with Tenuo ([calling it](#calling-it)). Claude Desktop and Cursor don't
 send warrants, so with them the server is useful in observe mode only. Pass
 `--key NAME` to sign receipts with a server identity from the workspace.
 
+Warrants for common jobs are in [MCP recipes](mcp-recipes.md).
+
 Without a workspace, give the wrapper the issuer's public key instead:
 
 ```bash
