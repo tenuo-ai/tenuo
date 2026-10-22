@@ -164,7 +164,7 @@ pub use planes::{
 };
 pub use receipt::{
     canonical_policy_bytes, policy_commitment_digest, srl_commitment_digest, trusted_roots_digest,
-    Receipt, ReceiptPayload,
+    Mode as ReceiptMode, Receipt, ReceiptPayload,
 };
 pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,

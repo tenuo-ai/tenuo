@@ -289,3 +289,91 @@ def test_a_structural_refusal_is_not_receipted():
         )
         is None
     )
+
+
+# -- key 16: mode -------------------------------------------------------------
+
+
+def test_a_denial_receipt_records_enforce_by_default():
+    authorizer, chain, args = _expired_denial()
+    client = _client()
+    client.bind_authorizer(authorizer)
+
+    wire = client.issue_denial_receipt(chain, "read_file", args, 1_700_000_000, "req-deny", "warrant-expired")
+    assert tenuo_core.verify_receipt(wire).mode == "enforce"
+
+
+def test_an_observed_denial_receipt_says_so():
+    authorizer, chain, args = _expired_denial()
+    client = _client()
+    client.bind_authorizer(authorizer)
+
+    wire = client.issue_denial_receipt(
+        chain, "read_file", args, 1_700_000_000, "req-deny", "warrant-expired",
+        mode="observe",
+    )
+    payload = tenuo_core.verify_receipt(wire)
+    assert payload.outcome == "deny"
+    assert payload.mode == "observe"
+
+
+@pytest.mark.parametrize("mode", ["enforce", "observe"])
+def test_an_allow_receipt_records_the_mode(mode):
+    authorizer, result = _decision()
+    client = _client()
+    client.bind_authorizer(authorizer)
+
+    wire = client.issue_receipt(result, "read_file", True, 1_700_000_000, "req-1", mode=mode)
+    payload = tenuo_core.verify_receipt(wire)
+    assert (payload.outcome, payload.mode) == ("allow", mode)
+
+
+def test_an_unknown_mode_is_refused():
+    authorizer, result = _decision()
+    client = _client()
+    client.bind_authorizer(authorizer)
+
+    with pytest.raises(ValueError):
+        client.issue_receipt(result, "read_file", True, 1_700_000_000, "req-1", mode="audit")
+
+
+@pytest.mark.parametrize("posture", ["deferred", "journal"])
+@pytest.mark.parametrize("observed", [True, False])
+def test_control_plane_denial_receipt_records_the_mode(tmp_path, posture, observed):
+    from tenuo.receipts import JournalEmitter
+
+    authorizer, chain, args = _expired_denial()
+    sink = InMemoryReceiptSink()
+    kwargs = (
+        {"receipt_sink": sink}
+        if posture == "deferred"
+        else {"receipt_emitter": JournalEmitter(tmp_path / "receipts.journal")}
+    )
+    client = PythonControlPlaneClient(
+        url="http://127.0.0.1:1", api_key="k", authorizer_name="test", **kwargs
+    )
+    # An observed denial reaches the control plane as allowed=True, observed=True.
+    decision = SimpleNamespace(
+        allowed=observed,
+        observed=observed,
+        mode="observe" if observed else "enforce",
+        tool="read_file",
+        arguments=args,
+        warrant_id="wrt-test",
+        presented_chain=chain,
+        error_type="expired",
+        authorizer=authorizer,
+    )
+
+    client.emit_for_enforcement(decision, request_id="req-observe")
+    assert client.flush_receipts()
+
+    if posture == "deferred":
+        wires = sink.receipts
+    else:
+        wires = (tmp_path / "receipts.journal").read_text().split()
+    assert len(wires) == 1
+    payload = tenuo_core.verify_receipt(wires[0])
+    assert payload.outcome == "deny"
+    assert payload.mode == ("observe" if observed else "enforce")
+

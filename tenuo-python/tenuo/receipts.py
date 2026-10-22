@@ -80,12 +80,13 @@ class _ReceiptIssuer(Protocol):
 
     def issue_receipt(
         self, chain_result: object, tool: object, allowed: object, ts: object,
-        request_id: object, decision_code: object,
+        request_id: object, decision_code: object, mode: str = "enforce",
     ) -> Optional[str]: ...
 
     def issue_denial_receipt(
         self, chain: object, tool: object, args: object, ts: object,
         request_id: object, decision_code: object, verified_pop: object,
+        mode: str = "enforce",
     ) -> Optional[str]: ...
 
 
@@ -331,11 +332,11 @@ class DeferredEmitter:
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
-    def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code) -> None:
-        self._enqueue(("allow", chain_result, tool, allowed, ts, request_id, decision_code))
+    def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code, mode="enforce") -> None:
+        self._enqueue(("allow", chain_result, tool, allowed, ts, request_id, decision_code, mode))
 
-    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
-        self._enqueue(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop))
+    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop, mode="enforce") -> None:
+        self._enqueue(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop, mode))
 
     def _enqueue(self, item: Any) -> None:
         try:
@@ -374,15 +375,11 @@ class DeferredEmitter:
                 if item[0] == "signed":
                     wire = item[1]
                 elif item[0] == "allow":
-                    _, chain_result, tool, allowed, ts, request_id, code = item
-                    wire = inner.issue_receipt(
-                        chain_result, tool, allowed, ts, request_id, code
-                    )
+                    _, chain_result, tool, allowed, ts, request_id, code, mode = item
+                    wire = inner.issue_receipt(chain_result, tool, allowed, ts, request_id, code, mode=mode)
                 else:
-                    _, chain, tool, args, ts, request_id, code, pop = item
-                    wire = inner.issue_denial_receipt(
-                        chain, tool, args, ts, request_id, code, pop
-                    )
+                    _, chain, tool, args, ts, request_id, code, pop, mode = item
+                    wire = inner.issue_denial_receipt(chain, tool, args, ts, request_id, code, pop, mode=mode)
                 if not deliver(self._sink, wire, self._on_error):
                     delay = 0.05
                     delivered = False
@@ -507,21 +504,20 @@ class JournalEmitter:
                     pass
             logger.warning("journal append failed; evidence not stored", exc_info=exc)
 
-    def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code) -> None:
+    def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code, mode="enforce") -> None:
         inner = self._inner
         if inner is None:
             raise RuntimeError("JournalEmitter is not attached")
-        self._append(inner.issue_receipt(
-            chain_result, tool, allowed, ts, request_id, decision_code
-        ))
+        self._append(inner.issue_receipt(chain_result, tool, allowed, ts, request_id, decision_code, mode=mode))
 
-    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
+    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop, mode="enforce") -> None:
         inner = self._inner
         if inner is None:
             raise RuntimeError("JournalEmitter is not attached")
-        self._append(inner.issue_denial_receipt(
-            chain, tool, args, ts, request_id, decision_code, verified_pop
-        ))
+        wire = inner.issue_denial_receipt(
+            chain, tool, args, ts, request_id, decision_code, verified_pop, mode=mode
+        )
+        self._append(wire)
 
     def flush(self, timeout: float = 10.0) -> bool:  # noqa: ARG002 — nothing pending
         os.fsync(self._fd)

@@ -132,6 +132,46 @@ impl<'de> Deserialize<'de> for Outcome {
     }
 }
 
+/// The enforcement mode the decision was made under.
+///
+/// Encoded as the text `"enforce"` or `"observe"`. In observe mode the
+/// enforcement point reached the same decision but did not act on it: a denied
+/// call ran anyway. The outcome (key 4) is always the decision itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Enforce,
+    Observe,
+}
+
+impl Mode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Mode::Enforce => "enforce",
+            Mode::Observe => "observe",
+        }
+    }
+}
+
+impl Serialize for Mode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Mode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "enforce" => Ok(Mode::Enforce),
+            "observe" => Ok(Mode::Observe),
+            other => Err(D::Error::custom(format!(
+                "mode must be \"enforce\" or \"observe\", got {:?}",
+                other
+            ))),
+        }
+    }
+}
+
 /// The signed content of a receipt.
 ///
 /// Encoded as a CBOR map with unsigned integer keys. Absent optional fields are
@@ -236,9 +276,27 @@ pub struct ReceiptPayload {
     /// was operating in: which roots it honoured and which revocations it knew.
     /// See [`trusted_roots_digest`].
     pub trusted_roots_hash: Option<[u8; 32]>,
+
+    /// Key 16. The mode the enforcement point was in when it decided.
+    ///
+    /// Every receipt this version produces carries it, for allows and denials
+    /// alike, so a reader can tell "refused" from "would have been refused"
+    /// and "allowed by an enforcing check" from "ran while observing".
+    ///
+    /// `None` only for a receipt decoded from a producer that predates the
+    /// key; it is kept absent so re-encoding reproduces the signed bytes.
+    /// Observe mode did not exist before the key, so such a receipt was made
+    /// under enforcement: see [`Self::effective_mode`].
+    pub mode: Option<Mode>,
 }
 
 impl ReceiptPayload {
+    /// The mode this decision was made under. A receipt without key 16
+    /// predates observe mode, so it was made under enforcement.
+    pub fn effective_mode(&self) -> Mode {
+        self.mode.unwrap_or(Mode::Enforce)
+    }
+
     /// Create a payload for an allowed decision.
     ///
     /// `pop_signature` is required rather than optional. Proof-of-possession is
@@ -274,6 +332,7 @@ impl ReceiptPayload {
             srl_hash: None,
             prev_receipt_hash: None,
             trusted_roots_hash: None,
+            mode: Some(Mode::Enforce),
         }
     }
 
@@ -313,6 +372,7 @@ impl ReceiptPayload {
             srl_hash: None,
             prev_receipt_hash: None,
             trusted_roots_hash: None,
+            mode: Some(Mode::Enforce),
         }
     }
 
@@ -352,6 +412,7 @@ impl ReceiptPayload {
             srl_hash: None,
             prev_receipt_hash: None,
             trusted_roots_hash: None,
+            mode: Some(Mode::Enforce),
         }
     }
 
@@ -407,6 +468,7 @@ impl Serialize for ReceiptPayload {
             self.srl_hash.is_some(),
             self.prev_receipt_hash.is_some(),
             self.trusted_roots_hash.is_some(),
+            self.mode.is_some(),
         ]
         .iter()
         .filter(|present| **present)
@@ -450,6 +512,9 @@ impl Serialize for ReceiptPayload {
         }
         if let Some(trusted_roots_hash) = &self.trusted_roots_hash {
             map.serialize_entry(&15u8, serde_bytes::Bytes::new(trusted_roots_hash))?;
+        }
+        if let Some(mode) = &self.mode {
+            map.serialize_entry(&16u8, mode)?;
         }
         map.end()
     }
@@ -498,6 +563,7 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                 let mut srl_hash = None;
                 let mut prev_receipt_hash = None;
                 let mut trusted_roots_hash = None;
+                let mut mode = None;
 
                 while let Some(key) = map.next_key::<u8>()? {
                     if !seen.insert(key) {
@@ -543,6 +609,7 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                             trusted_roots_hash =
                                 Some(fixed(bytes.into_vec(), "trusted_roots_hash")?);
                         }
+                        16 => mode = Some(map.next_value()?),
                         _ => {
                             return Err(A::Error::custom(format!(
                                 "unknown receipt payload key {}",
@@ -570,6 +637,7 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                     srl_hash,
                     prev_receipt_hash,
                     trusted_roots_hash,
+                    mode,
                 })
             }
         }
@@ -806,6 +874,7 @@ mod tests {
             srl_hash: Some([5u8; 32]),
             prev_receipt_hash: Some([6u8; 32]),
             trusted_roots_hash: Some([8u8; 32]),
+            mode: Some(Mode::Enforce),
         }
     }
 
@@ -985,7 +1054,8 @@ mod tests {
             .iter()
             .map(|(k, _)| k.as_integer().expect("keys must be integers").into())
             .collect();
-        assert_eq!(keys, vec![0, 2, 3, 4, 5, 8, 9]);
+        // Key 16 (mode) is always written; the other optional fields are absent.
+        assert_eq!(keys, vec![0, 2, 3, 4, 5, 8, 9, 16]);
         assert!(entries.iter().all(|(_, v)| !v.is_null()));
     }
 
@@ -1001,7 +1071,7 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         );
     }
 
@@ -1309,5 +1379,175 @@ mod tests {
 
         assert!(denied.pop_signature.is_none());
         assert!(denied.check_conditional_requirements().is_ok());
+    }
+
+    // --- Key 16: mode -----------------------------------------------------
+
+    fn observed(mut payload: ReceiptPayload) -> ReceiptPayload {
+        payload.mode = Some(Mode::Observe);
+        payload
+    }
+
+    fn observed_denial() -> ReceiptPayload {
+        observed(ReceiptPayload::deny(
+            vec![0xA1, 0x01, 0x02],
+            "tool:delete_file",
+            1_700_000_000,
+            "req-observed",
+            "constraint-violation",
+            [9u8; 64],
+        ))
+    }
+
+    fn payload_keys(bytes: &[u8]) -> Vec<(u64, ciborium::Value)> {
+        let value: ciborium::Value = ciborium::from_reader(bytes).unwrap();
+        value
+            .into_map()
+            .unwrap()
+            .into_iter()
+            .map(|(k, v)| {
+                let key: u64 = k.into_integer().unwrap().try_into().unwrap();
+                (key, v)
+            })
+            .collect()
+    }
+
+    /// A minimal deny payload as a raw CBOR map, with key 16 set to `value`
+    /// when one is given.
+    fn minimal_deny_map_with_key_16(value: Option<ciborium::Value>) -> Vec<u8> {
+        let mut entries = vec![
+            (
+                ciborium::Value::Integer(0.into()),
+                ciborium::Value::Integer(1.into()),
+            ),
+            (
+                ciborium::Value::Integer(2.into()),
+                ciborium::Value::Bytes(vec![0xA1]),
+            ),
+            (
+                ciborium::Value::Integer(3.into()),
+                ciborium::Value::Text("tool:read".into()),
+            ),
+            (
+                ciborium::Value::Integer(4.into()),
+                ciborium::Value::Text("deny".into()),
+            ),
+            (
+                ciborium::Value::Integer(5.into()),
+                ciborium::Value::Integer(1.into()),
+            ),
+            (
+                ciborium::Value::Integer(9.into()),
+                ciborium::Value::Text("req".into()),
+            ),
+            (
+                ciborium::Value::Integer(10.into()),
+                ciborium::Value::Text("constraint-violation".into()),
+            ),
+        ];
+        if let Some(value) = value {
+            entries.push((ciborium::Value::Integer(16.into()), value));
+        }
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&ciborium::Value::Map(entries), &mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn constructors_record_enforce_mode() {
+        assert_eq!(payload().mode, Some(Mode::Enforce));
+        assert_eq!(
+            ReceiptPayload::deny(
+                vec![0xA1],
+                "tool:x",
+                1,
+                "r",
+                "constraint-violation",
+                [1u8; 64]
+            )
+            .mode,
+            Some(Mode::Enforce)
+        );
+        assert_eq!(
+            ReceiptPayload::deny_before_pop(vec![0xA1], "tool:x", 1, "r", "expired").mode,
+            Some(Mode::Enforce)
+        );
+    }
+
+    #[test]
+    fn every_new_receipt_writes_its_mode_as_key_16() {
+        let bytes = full_payload().to_cbor().unwrap();
+        let last = payload_keys(&bytes).pop().unwrap();
+        assert_eq!(
+            last,
+            (16, ciborium::Value::Text("enforce".into())),
+            "key 16 sorts last"
+        );
+    }
+
+    #[test]
+    fn observed_allows_and_denials_round_trip() {
+        for original in [observed(payload()), observed_denial()] {
+            original.check_conditional_requirements().unwrap();
+            let bytes = original.to_cbor().unwrap();
+            assert_eq!(
+                payload_keys(&bytes).pop().unwrap(),
+                (16, ciborium::Value::Text("observe".into()))
+            );
+            let decoded: ReceiptPayload = ciborium::from_reader(&bytes[..]).unwrap();
+            assert_eq!(decoded, original);
+            assert_eq!(decoded.effective_mode(), Mode::Observe);
+        }
+    }
+
+    #[test]
+    fn a_payload_without_key_16_reads_as_enforce() {
+        let bytes = minimal_deny_map_with_key_16(None);
+        let decoded: ReceiptPayload = ciborium::from_reader(&bytes[..]).unwrap();
+        assert_eq!(decoded.mode, None);
+        assert_eq!(decoded.effective_mode(), Mode::Enforce);
+    }
+
+    #[test]
+    fn rejects_a_mode_that_is_not_enforce_or_observe() {
+        for value in [
+            ciborium::Value::Text("audit".into()),
+            ciborium::Value::Text("Enforce".into()),
+            ciborium::Value::Bool(false),
+            ciborium::Value::Integer(0.into()),
+        ] {
+            let bytes = minimal_deny_map_with_key_16(Some(value));
+            let decoded: std::result::Result<ReceiptPayload, _> = ciborium::from_reader(&bytes[..]);
+            assert!(decoded.is_err());
+        }
+    }
+
+    #[test]
+    fn a_signed_observed_denial_verifies() {
+        let signer = SigningKey::generate();
+        let receipt = Receipt::create(&observed_denial(), &signer).unwrap();
+        let verified = receipt.verify_signature().unwrap();
+        assert_eq!(verified.outcome, Outcome::Deny);
+        assert_eq!(verified.mode, Some(Mode::Observe));
+    }
+
+    #[test]
+    fn a_receipt_signed_before_key_16_still_verifies_as_enforce() {
+        // Bytes built by hand without key 16, exactly as a pre-key-16 producer
+        // would have signed them. Re-encoding through the current type must
+        // reproduce them, or old signatures would stop matching.
+        let signer = SigningKey::generate();
+        let legacy_payload = minimal_deny_map_with_key_16(None);
+        let preimage = Receipt::signing_preimage(RECEIPT_VERSION, &legacy_payload);
+        let receipt = Receipt {
+            receipt_version: RECEIPT_VERSION,
+            payload: legacy_payload.clone(),
+            signer_key: signer.public_key(),
+            signature: signer.sign(&preimage),
+        };
+
+        let verified = receipt.verify_signature().unwrap();
+        assert_eq!(verified.effective_mode(), Mode::Enforce);
+        assert_eq!(verified.to_cbor().unwrap(), legacy_payload);
     }
 }

@@ -326,14 +326,17 @@ class Runtime:
         request_id = getattr(result, "request_id", None) or str(uuid.uuid4())
         tool = getattr(result, "tool", "") or ""
         # An observed denial was let through, but the decision was still a deny.
-        allowed = bool(getattr(result, "allowed", False)) and not getattr(result, "observed", False)
+        # Every receipt records the mode it was decided under (key 16).
+        observed = bool(getattr(result, "observed", False))
+        allowed = bool(getattr(result, "allowed", False)) and not observed
+        mode = getattr(result, "mode", None) or "enforce"
         ts = int(time.time())
         try:
             if allowed:
                 if chain_result is None:
                     return
                 wire = self._issuer.issue_receipt(
-                    chain_result, tool, True, ts, request_id, None
+                    chain_result, tool, True, ts, request_id, None, mode=mode
                 )
             else:
                 chain = getattr(result, "presented_chain", None)
@@ -362,7 +365,7 @@ class Runtime:
                     else None
                 )
                 wire = self._issuer.issue_denial_receipt(
-                    list(chain), tool, args, ts, request_id, code, pop
+                    list(chain), tool, args, ts, request_id, code, pop, mode=mode
                 )
         except Exception as exc:  # noqa: BLE001 — must not fail the tool call
             logger.warning("runtime receipt signing failed for %r", tool, exc_info=exc)

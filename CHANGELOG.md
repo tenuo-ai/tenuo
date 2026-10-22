@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Receipt key 16, `mode`.** Every receipt now records the mode the
+  enforcement point was in, `"enforce"` or `"observe"`, next to the decision in
+  key 4. An observed denial is signed as a deny with `mode = "observe"`, so it
+  no longer reads as if the call was blocked; allows record their mode too.
+  Receipts without key 16 predate it and read as `"enforce"`. Python exposes
+  `ReceiptPayload.mode` and takes `mode=` when issuing receipts. Test vectors
+  A.30.1 to A.30.5 now carry key 16; A.30.6 is an observed denial and A.30.7 an
+  observed allow. **Compatibility:** readers from Tenuo 0.3.2 and earlier
+  reject unknown payload keys, so they cannot read receipts from this version.
+  Upgrade receipt readers, including Explorer and the TypeScript SDK, along
+  with producers. Control-plane audit events do not carry the mode yet.
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,

@@ -5457,6 +5457,14 @@ impl PyReceiptPayload {
         self.inner.trusted_roots_hash.map(hex::encode)
     }
 
+    /// The mode the decision was made under (key 16): `"enforce"` or
+    /// `"observe"`. In observe mode a denied call ran anyway. Receipts that
+    /// predate key 16 were made under enforcement and read as `"enforce"`.
+    #[getter]
+    fn mode(&self) -> &'static str {
+        self.inner.effective_mode().as_str()
+    }
+
     /// Raise if a conditionally-required field is missing: `decision_code` on a
     /// denial, `pop_signature` on an allow.
     fn check_conditional_requirements(&self) -> PyResult<()> {
@@ -5467,9 +5475,10 @@ impl PyReceiptPayload {
 
     fn __repr__(&self) -> String {
         format!(
-            "ReceiptPayload(action='{}', outcome='{}', request_id='{}')",
+            "ReceiptPayload(action='{}', outcome='{}', mode='{}', request_id='{}')",
             self.inner.action,
             self.inner.outcome.as_str(),
+            self.inner.effective_mode().as_str(),
             self.inner.request_id
         )
     }

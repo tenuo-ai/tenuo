@@ -115,6 +115,8 @@ class EnforcementResult:
         observed: True when the decision was a denial that observe mode let
             through. ``allowed`` is then True, the denial fields stay populated,
             and receipts / control-plane events still record the denial.
+        mode: ``"enforce"`` or ``"observe"``, the mode the decision was made
+            under. Signed receipts record it as key 16, for allows and denials.
     """
 
     allowed: bool
@@ -144,6 +146,7 @@ class EnforcementResult:
     pop_auth_args: Optional[Dict[str, Any]] = None
     approval_metadata: Optional[Dict[str, Any]] = None
     observed: bool = False
+    mode: str = "enforce"
 
     def raise_if_denied(self) -> None:
         """
@@ -2075,12 +2078,17 @@ def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
 
     The full decision has already run. Denial fields (including integrity
     error types such as ``invalid_pop``) stay on the result and ``observed`` is
-    set, so receipts and control-plane events still record a denial. Argument
-    values are never logged, only keys and value type names.
+    set, so receipts and control-plane events still record a denial. Every
+    result, allowed or not, is marked ``mode="observe"`` so its receipt records
+    the mode (key 16), which is why the caller collects the receipt after this
+    runs. Argument values are never logged, only keys and value type names.
     """
     from .config import should_block_violation
 
-    if result.allowed or should_block_violation():
+    if should_block_violation():
+        return result
+    result.mode = "observe"
+    if result.allowed:
         return result
     args = result.arguments or {}
     # The category and the argument name, never the core's reason text, which
@@ -2109,14 +2117,14 @@ from functools import wraps as _wraps  # noqa: E402
 
 @_wraps(_enforce_tool_call_impl)
 def enforce_tool_call(*args, **kwargs):
-    return _apply_observe_mode(_collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs)))
+    # Observe is applied before the receipt is collected so the receipt can
+    # record the mode (key 16).
+    return _collect_runtime_receipt(_apply_observe_mode(_enforce_tool_call_impl(*args, **kwargs)))
 
 
 @_wraps(_enforce_tool_call_async_impl)
 async def enforce_tool_call_async(*args, **kwargs):
-    return _apply_observe_mode(
-        _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
-    )
+    return _collect_runtime_receipt(_apply_observe_mode(await _enforce_tool_call_async_impl(*args, **kwargs)))
 
 
 def parents_from_presented_chain(

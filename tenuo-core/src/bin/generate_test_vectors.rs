@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use tenuo::{
     constraints::{Constraint, ConstraintSet, ConstraintValue, Exact, Pattern},
     payload::WarrantPayload,
-    receipt::{Receipt, ReceiptPayload},
+    receipt::{Mode, Receipt, ReceiptPayload},
     warrant::{Warrant, WarrantId, WarrantType, WARRANT_VERSION},
     wire::{self, WarrantStack},
     SigningKey,
@@ -3026,6 +3026,15 @@ fn main() {
     println!("list was loaded, which is a different claim from a loaded list that");
     println!("revoked nothing.");
     println!();
+    println!("Key 16 `mode` is the text `\"enforce\"` or `\"observe\"`: the mode the");
+    println!("enforcement point was in when it reached the outcome in key 4. Producers");
+    println!("MUST write it on every receipt, allow or deny. In observe mode the outcome");
+    println!("is still the decision, but it was not acted on: a denied call ran. A");
+    println!("receipt without key 16 comes from a producer that predates it and was made");
+    println!("under enforcement; readers MUST treat it as `\"enforce\"`. Readers that");
+    println!("predate key 16 (Tenuo 0.3.2 and earlier) reject unknown keys, so they");
+    println!("reject every receipt in this section.");
+    println!();
 
     const ID_A30: [u8; 16] = [
         0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30,
@@ -3184,6 +3193,37 @@ fn main() {
         "Key 14 links to A.30.2. Removing A.30.2 from a stream leaves this \
          receipt pointing at nothing, which is what turns \"this decision \
          happened\" into \"these are all the decisions\".",
+    );
+
+    // A.30.6 — an observed denial: decided deny under observe mode. Same chain
+    // and PoP as the allows, so the only differences are keys 4, 10 and 16.
+    let mut payload_a30_6 = ReceiptPayload::deny(
+        chain_a30.clone(),
+        "read_file",
+        ISSUED_AT as i64,
+        "req-a30-observed",
+        "constraint-violation",
+        pop_a30.to_bytes(),
+    );
+    payload_a30_6.trusted_roots_hash = Some(roots_digest_a30);
+    payload_a30_6.mode = Some(Mode::Observe);
+    let receipt_a30_6 = Receipt::create(&payload_a30_6, &authorizer).expect("A.30.6 signs");
+    print_receipt_vector(
+        "A.30.6 Observed Denial",
+        &receipt_a30_6,
+        "Key 16 is `observe`: the enforcement point decided deny but was observing, \
+         so the call ran. A reader must not conclude the action was blocked.",
+    );
+
+    // A.30.7 — an observed allow: identical to A.30.1 except key 16.
+    let mut payload_a30_7 = base_a30();
+    payload_a30_7.mode = Some(Mode::Observe);
+    let receipt_a30_7 = Receipt::create(&payload_a30_7, &authorizer).expect("A.30.7 signs");
+    print_receipt_vector(
+        "A.30.7 Observed Allow",
+        &receipt_a30_7,
+        "Identical to A.30.1 except key 16 is `observe`. The decision was allow; the \
+         receipt records that it was made while observing, not by an enforcing check.",
     );
 
     print_derivation_vectors(&control_plane, &worker);
@@ -3368,6 +3408,13 @@ fn print_receipt_vector(label: &str, receipt: &Receipt, note: &str) {
             .srl_hash
             .map(hex::encode)
             .map(|h| format!("`{}`", h))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 16 mode | {} |",
+        payload
+            .mode
+            .map(|m| format!("`{}`", m.as_str()))
             .unwrap_or_else(|| "absent".to_string())
     );
     println!();
