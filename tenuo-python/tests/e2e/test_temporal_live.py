@@ -511,6 +511,24 @@ class TestLiveDryRun:
         deny_events = [e for e in events if e.decision == "DENY"]
         assert len(deny_events) >= 1
 
+    @pytest.mark.asyncio
+    async def test_observe_mode_runs_and_records_the_denial(self, keys, warrant, demo_dir):
+        """mode="observe": the activity runs, and the audit trail says DENY, not ALLOW."""
+        from tenuo.config import configure, reset_config
+
+        configure(trusted_roots=[keys[0].public_key], mode="observe")
+        try:
+            async with await WorkflowEnvironment.start_local() as env:
+                result, events = await _run_workflow(
+                    env, keys, warrant, DryRunOutOfScopeWorkflow, "/etc",
+                    workflows=[DryRunOutOfScopeWorkflow],
+                )
+        finally:
+            reset_config()
+        assert result.startswith("listed:")
+        listed = [e for e in events if e.tool == "list_directory"]
+        assert listed and all(e.decision == "DENY" for e in listed)
+
 
 @pytest.mark.temporal_live
 class TestLiveToolMappings:

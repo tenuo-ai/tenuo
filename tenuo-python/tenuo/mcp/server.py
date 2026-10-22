@@ -392,6 +392,10 @@ class MCPVerificationResult:
     error_type: Optional[str] = field(default=None)
     """PEP ``error_type`` (``invalid_pop``, ``constraint_violation``, …)."""
 
+    observed: bool = field(default=False)
+    """``True`` when observe mode let a denied call through. The denial fields
+    stay set, and receipts and control-plane events record a deny."""
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -1081,7 +1085,7 @@ class MCPVerifier:
                     pop_args=pop_args,
                     constraint_args=constraints,
                 )
-            if not enforcement.allowed:
+            if not enforcement.allowed or enforcement.observed:
                 result = _mcp_result_from_enforcement(
                     enforcement,
                     tool_name=tool_name,
@@ -1089,6 +1093,10 @@ class MCPVerifier:
                     constraints=constraints,
                     warrant_id=warrant_id,
                 )
+                if enforcement.observed:
+                    # Observe mode lets it run; the denial is still what gets recorded.
+                    result.allowed = True
+                    result.observed = True
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 return _emit_and_return(
                     result, chain_result=enforcement.chain_result, latency_us=latency_us

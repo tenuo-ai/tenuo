@@ -9,6 +9,7 @@ Nexus operation headers.
 from __future__ import annotations
 
 import base64
+import copy
 import dataclasses as _dataclasses
 import functools
 import hashlib
@@ -1338,6 +1339,19 @@ def _verify_nexus_operation(
             )
         if not enforcement.allowed:
             enforcement.raise_if_denied()
+        if enforcement.observed:
+            # Observe mode lets the operation run; record the denial it would have been.
+            would_deny = copy.copy(enforcement)
+            would_deny.allowed = False
+            try:
+                would_deny.raise_if_denied()
+            except _nexus_auth_error_types() as exc:
+                _emit_nexus_control_plane_event(
+                    config, ctx, warrant, chain, tool_name, args,
+                    start_ns=start_ns, exc=exc, authorizer=authorizer, verified_pop=pop_bytes,
+                    observed=enforcement,
+                )
+            return warrant
         chain_result = enforcement.chain_result
         _check_nexus_pop_replay(config, ctx, pop_bytes, tool_name)
         _emit_nexus_control_plane_event(
@@ -1403,7 +1417,9 @@ def _emit_nexus_control_plane_event(
     exc: Optional[BaseException] = None,
     authorizer: Optional[Any] = None,
     verified_pop: Optional[bytes] = None,
+    observed: Optional[Any] = None,
 ) -> None:
+    """``observed``: an observe-mode result to record as the denial it would have been."""
     latency_s = (time.perf_counter_ns() - start_ns) / 1e9
     redacted_args = _redact_nexus_args(config, args)
     request_id = getattr(ctx, "request_id", None)
@@ -1441,16 +1457,25 @@ def _emit_nexus_control_plane_event(
                 )
             return
 
-        result = _nexus_denial_result(
-            exc,
-            tool_name,
-            args,
-            redacted_args,
-            warrant,
-            authorizer=authorizer,
-            presented_chain=presented_chain,
-            verified_pop=verified_pop,
-        )
+        if observed is not None:
+            # Keep the decision's own error type and fields; only redact and add context.
+            result = copy.copy(observed)
+            result.arguments = redacted_args
+            result.authorizer = authorizer if authorizer is not None else result.authorizer
+            result.presented_chain = presented_chain
+            result.verified_pop = verified_pop
+            result.pop_auth_args = args
+        else:
+            result = _nexus_denial_result(
+                exc,
+                tool_name,
+                args,
+                redacted_args,
+                warrant,
+                authorizer=authorizer,
+                presented_chain=presented_chain,
+                verified_pop=verified_pop,
+            )
         collect_enforcement_receipt(
             result, runtime=getattr(config, "runtime", None)
         )
