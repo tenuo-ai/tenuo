@@ -38,6 +38,8 @@ def encode_chain(chain):
 
 
 def describe(chain):
+    from tenuo.warrant_template import constraint_document
+
     leaf = chain[-1]
     gates = {}
     for tool in leaf.capabilities:
@@ -51,13 +53,14 @@ def describe(chain):
         "expires_at": leaf.expires_at(),
         "expired": leaf.is_expired(),
         "chain": [str(w.id) for w in chain],
-        "capabilities": {tool: {arg: repr(c) for arg, c in args.items()} for tool, args in leaf.capabilities.items()},
+        "capabilities": {
+            tool: {arg: constraint_document(c) for arg, c in args.items()} for tool, args in leaf.capabilities.items()
+        },
         "approval_gates": gates,
         "approvers": [fingerprint(k) for k in (leaf.required_approvers() or [])],
         "required_signatures": leaf.approval_threshold(),
         "extensions_base64": {k: base64.b64encode(v).decode() for k, v in leaf.extensions().items()},
-        "verified": False,
-        "warrant_type": str(leaf.warrant_type),
+        "warrant_type": str(leaf.warrant_type).rsplit(".", 1)[-1].lower(),
         "session_id": leaf.session_id,
         "terminal": leaf.terminal,
         "max_depth": leaf.max_depth,
@@ -67,6 +70,27 @@ def describe(chain):
         "max_issue_depth": leaf.max_issue_depth,
         "constraint_bounds": repr(leaf.constraint_bounds_dict()) if leaf.constraint_bounds_dict() is not None else None,
     }
+
+
+def check(workspace, chain):
+    """Whether the chain is valid against this workspace's trust, expiry and revocations right now.
+
+    ``describe`` only decodes, so it never claims validity; callers that ran the
+    check add this to their output.
+    """
+    from tenuo.exceptions import ExpiredError, RevokedError, UntrustedRoot
+
+    try:
+        workspace.authorizer().verify_chain(chain)
+    except ExpiredError:
+        return {"verified": False, "verification_error": "expired"}
+    except RevokedError:
+        return {"verified": False, "verification_error": "revoked"}
+    except UntrustedRoot:
+        return {"verified": False, "verification_error": "issuer not in local trust"}
+    except Exception:
+        return {"verified": False, "verification_error": "not valid against local trust, expiry or revocations"}
+    return {"verified": True}
 
 
 def issue(workspace, template, holder, *, issuer=None, parent=None):

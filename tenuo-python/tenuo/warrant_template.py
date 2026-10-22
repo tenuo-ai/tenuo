@@ -57,6 +57,35 @@ def expanded_constraint(value):
     return copy.deepcopy(value)
 
 
+def constraint_document(constraint):
+    """Template syntax for a native constraint, or its repr when templates can't express it."""
+    name = type(constraint).__name__
+    if name == "Optional":
+        return {"optional": constraint_document(constraint.inner)}
+    if name in ("Wildcard", "AnyValue"):
+        return "any"
+    if name == "Exact":
+        value = constraint.value
+        if isinstance(value, str) and expanded_constraint(value) == {"exact": value}:
+            return value
+        return {"exact": value}
+    if name == "OneOf":
+        values = list(constraint.values)
+        plain = all(isinstance(v, (str, int)) and not isinstance(v, bool) for v in values)
+        return values if plain else {"one_of": values}
+    if name == "Range":
+        bounds = [constraint.min, constraint.max]
+        if all(b is None or float(b).is_integer() for b in bounds):
+            return "..".join("" if b is None else str(int(b)) for b in bounds)
+        return {"range": {k: v for k, v in zip(("min", "max"), bounds) if v is not None}}
+    if name == "Subpath":
+        return {"subpath": constraint.root}
+    keys = {"Pattern": "pattern", "Regex": "regex", "UrlPattern": "url_pattern"}
+    if name in keys:
+        return {keys[name]: constraint.pattern}
+    return repr(constraint)
+
+
 def compile_constraint(value):
     """Compile readable syntax through existing native constraint constructors."""
     from tenuo import Exact, OneOf, Pattern, Range, Regex, Subpath, UrlPattern, Wildcard

@@ -30,9 +30,11 @@ def test_a06_cli_issue_show_list_verify_revoke(setup, capsys):
     assert main([*prefix, "warrant", "issue", "--template", str(path), "--holder", "agent"]) == 0
     result = json.loads(capsys.readouterr().out)
     wid = result["warrant"]["id"]
+    assert result["warrant"]["verified"] is True
     assert load_chain(result["files"][0])[-1].id == wid
     assert main([*prefix, "warrant", "show", "--id", wid]) == 0
-    assert json.loads(capsys.readouterr().out)["warrant"]["verified"] is False
+    # show decodes without checking trust, so it makes no claim either way.
+    assert "verified" not in json.loads(capsys.readouterr().out)["warrant"]
     assert main([*prefix, "warrant", "verify", "--id", wid]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True
     assert main([*prefix, "revocations", "add", "--id", wid]) == 0
@@ -40,7 +42,8 @@ def test_a06_cli_issue_show_list_verify_revoke(setup, capsys):
     assert main([*prefix, "warrant", "verify", "--id", wid]) == 3
     assert json.loads(capsys.readouterr().out)["valid"] is False
     assert main([*prefix, "warrant", "list"]) == 0
-    assert json.loads(capsys.readouterr().out)["warrants"][0]["verified"] is False
+    listed = json.loads(capsys.readouterr().out)["warrants"][0]
+    assert (listed["verified"], listed["verification_error"]) == (False, "revoked")
 
 
 def test_a07_delegation_transports_full_chain_and_never_widens(setup):
@@ -160,6 +163,44 @@ def test_a09_expired_warrant_denies_same_operation():
     time.sleep(2.1)
     with pytest.raises(Exception, match="[Ee]xpir"):
         authorizer.verify_chain([warrant])
+
+
+def test_show_prints_constraints_in_template_syntax(setup):
+    workspace, _ = setup
+    capabilities = {
+        "refund": {"order_id": "A-1001", "amount_cents": "1..12000", "reason": "any"},
+        "read_file": {"path": {"subpath": "/srv/app"}},
+        "search": {"scope": ["docs", "code"], "glob": {"pattern": "*.md"}, "id": {"regex": "^d-[0-9]+$"}},
+        "fetch": {"url": {"url_pattern": "https://api.example.com/*"}, "limit": "..50", "mode": {"exact": "any"}},
+        "review": {"pull": [57, 58], "page": {"optional": "1..10"}, "offset": {"optional": "any"}},
+    }
+    template = WarrantTemplate({"version": 2, "ttl": "10m", "capabilities": capabilities})
+    shown = describe(issue(workspace, template, workspace.public_key("agent")))
+    assert shown["capabilities"] == capabilities
+    assert shown["warrant_type"] == "execution"
+
+
+def test_issue_reports_failed_check_for_untrusted_issuer(setup, capsys, tmp_path):
+    workspace, path = setup
+    stranger = tmp_path / "stranger.key"
+    stranger.write_bytes(SigningKey.generate().secret_key_bytes())
+    stranger.chmod(0o600)
+    prefix = ["--home", str(workspace.path), "--json"]
+    assert main([*prefix, "warrant", "issue", "--template", str(path), "--holder", "agent", "--key", str(stranger)]) == 0
+    warrant = json.loads(capsys.readouterr().out)["warrant"]
+    assert warrant["verified"] is False
+    assert warrant["verification_error"] == "issuer not in local trust"
+
+
+def test_reissue_reports_its_check(setup, capsys):
+    workspace, path = setup
+    prefix = ["--home", str(workspace.path), "--json"]
+    assert main([*prefix, "warrant", "issue", "--template", str(path), "--holder", "agent"]) == 0
+    wid = json.loads(capsys.readouterr().out)["warrant"]["id"]
+    assert main([*prefix, "warrant", "reissue", "--id", wid, "--ttl", "5m"]) == 0
+    reissued = json.loads(capsys.readouterr().out)["warrant"]
+    assert reissued["id"] != wid
+    assert reissued["verified"] is True
 
 
 def test_issue_replace_swaps_an_existing_out_file(setup, capsys):
