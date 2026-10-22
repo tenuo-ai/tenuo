@@ -59,7 +59,7 @@ development guardrail, not OS isolation.
   scope, extend the warrant or bypass revocation; it is reusable for the same
   call until expiry, not inherently one-use.
 - **Attach:** Hermes shared-local mode reports its session ID on a blocked call.
-  An operator uses the integration's command (`hermes-tenuo session attach --session ID --file WARRANT`); attachments
+  An operator uses the integration's command (`tenuo-cli hermes session attach --session ID --file WARRANT`); attachments
   survive turns and reload without gateway restart. A child session needs its
   own attachment. Several grants cannot be unioned to authorize one call.
   Attachment routes signed authority; it does not activate it.

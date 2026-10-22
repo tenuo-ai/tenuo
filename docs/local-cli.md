@@ -36,7 +36,7 @@ The default workspace is `~/.tenuo/`, outside your project. Change it with
 | `trust/*.pub` | Trusted roots: issuer public keys the verifier accepts |
 | `revocations.srl` | Core signed revocation list in native CBOR |
 | `warrants/` | Issued warrant chains |
-| `sessions/` | Session attachments, managed by the integration (e.g. `hermes-tenuo session`) |
+| `sessions/` | Session attachments, managed by the integration (e.g. `tenuo-cli hermes session`) |
 | `requests/`, `approvals/` | Portable requests and responses |
 | `observations.jsonl` | Calls recorded in observe mode, with argument values |
 
@@ -469,11 +469,35 @@ update the runtime key selection and deliver the new grants. Revoke known old
 warrant IDs explicitly. Rotating a key does not revoke unknown grants elsewhere;
 they remain bounded by their signed expiry and the verifiers' revocation data.
 
+## Integration commands
+
+An integration package can add a command group under `tenuo-cli`, named after
+the integration, so everything stays behind one command:
+
+```bash
+pip install hermes-tenuo
+tenuo-cli hermes setup
+tenuo-cli hermes session attach --session cron_1a2b3c --file briefing.warrant
+```
+
+`tenuo-cli --home DIR hermes …` passes the workspace on as `TENUO_HOME`, and
+`--json` as `TENUO_JSON=1`; an integration should honor both. Without
+the package, `tenuo-cli hermes` says which one to install. A package registers
+its group as a `tenuo.cli` entry point whose function receives the remaining
+arguments:
+
+```toml
+[project.entry-points."tenuo.cli"]
+hermes = "hermes_tenuo.cli:tenuo_cli"
+```
+
+Built-in commands always take precedence over an integration's name.
+
 ## Session attachments
 
 For a session-based agent, issuance and attachment are different operations.
-Sessions belong to the integration, so the integration's CLI manages them; for
-Hermes that's `hermes-tenuo session attach|list|show|detach` (see hermes-tenuo).
+Sessions belong to the integration, so the integration adds the commands; for
+Hermes that's `tenuo-cli hermes session attach|list|show|detach`.
 Code uses `tenuo.local.attach`, `detach`, `read_session` and `list_sessions`.
 
 Use the session identifier reported by the integration. Attachment verifies the
