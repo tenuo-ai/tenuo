@@ -187,7 +187,7 @@ def _next_steps(calls_path, steps, vias):
             recipes = calls_path.parent / "recipes" / via if via else None
             if recipes is not None and recipes.is_dir():
                 out.append(f"# or issue a recipe: tenuo-cli warrant issue --template {shlex.quote(str(recipes))}/RECIPE.yaml"
-                           f" --holder agent --out {shlex.quote(warrant)}")
+                           f" --holder agent --set NAME=VALUE --out {shlex.quote(warrant)}")
             out.append(_hand_off(via, step, latest, warrant))
     out.append("tenuo-cli mode enforce")
     return out

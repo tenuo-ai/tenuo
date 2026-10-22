@@ -1,5 +1,6 @@
 """One parser feeds both Python callers and the CLI."""
 
+import re
 import time
 
 import pytest
@@ -179,3 +180,194 @@ def test_one_of_accepts_integers_for_numeric_ids():
         "pull_request_read": {"pullNumber": [57, 58]}}}).mint(issuer, holder.public_key)
     assert not warrant.why_denied("pull_request_read", {"pullNumber": 57}).denied
     assert warrant.why_denied("pull_request_read", {"pullNumber": 59}).denied
+
+
+# -- vars -----------------------------------------------------------------------
+
+VARS = {
+    "version": 2,
+    "ttl": "4h",
+    "vars": {"project": {"description": "the project's absolute path"}, "commands": {"default": ["pytest -q"]},
+             "branch_prefix": {"default": "agent"}},
+    "capabilities": {
+        "read_file": {"path": {"subpath": "${project}"}},
+        "terminal": {"command": "${commands}", "workdir": ["${project}", "${project}/"]},
+        "create_branch": {"branch": {"pattern": "${branch_prefix}/*"}},
+    },
+}
+
+
+def test_vars_fill_whole_values_lists_and_text():
+    from tenuo.warrant_template import WarrantTemplate
+
+    doc = WarrantTemplate(VARS, values={"project": "/srv/app"}).document
+    assert "vars" not in doc
+    assert doc["capabilities"]["read_file"]["path"] == {"subpath": "/srv/app"}
+    assert doc["capabilities"]["terminal"] == {"command": ["pytest -q"], "workdir": ["/srv/app", "/srv/app/"]}
+    assert doc["capabilities"]["create_branch"]["branch"] == {"pattern": "agent/*"}
+    doc = WarrantTemplate(VARS, values={"project": "/srv/app", "commands": ["ruff check ."]}).document
+    assert doc["capabilities"]["terminal"]["command"] == ["ruff check ."]
+
+
+@pytest.mark.parametrize("values, message", [
+    ({}, "this template needs: --set project=...  (the project's absolute path)"),
+    ({"project": "/a", "projet": "/b"}, "--set projet: not one of this template's vars"),
+])
+def test_vars_report_what_is_missing_or_unknown(values, message):
+    from tenuo.local_cli.files import DocumentError
+    from tenuo.warrant_template import WarrantTemplate
+
+    with pytest.raises(DocumentError, match=re.escape(message)):
+        WarrantTemplate(VARS, values=values)
+
+
+def test_vars_must_be_declared_and_lists_are_whole_values():
+    from tenuo.local_cli.files import DocumentError
+    from tenuo.warrant_template import WarrantTemplate
+
+    undeclared = {**VARS, "capabilities": {"read_file": {"path": {"subpath": "${root}"}}}}
+    with pytest.raises(DocumentError, match=re.escape("${root} is used but not declared under vars")):
+        WarrantTemplate(undeclared, values={"project": "/a"})
+    inline_list = {**VARS, "capabilities": {"terminal": {"command": "run ${commands}"}}}
+    with pytest.raises(DocumentError, match="is a list"):
+        WarrantTemplate(inline_list, values={"project": "/a"})
+    plain = {k: v for k, v in VARS.items() if k != "vars"}
+    with pytest.raises(DocumentError, match="declares no vars"):
+        WarrantTemplate(plain, values={"project": "/a"})
+    with pytest.raises(DocumentError, match=re.escape("${project} is used but not declared under vars")):
+        WarrantTemplate(plain)
+
+
+def test_vars_values_are_used_as_written_and_keys_stay_unique():
+    from tenuo.local_cli.files import DocumentError
+    from tenuo.warrant_template import WarrantTemplate
+
+    with pytest.raises(DocumentError, match=re.escape("the value of project contains ${commands}")):
+        WarrantTemplate(VARS, values={"project": "${commands}"})
+    nested_default = {**VARS, "vars": {**VARS["vars"], "branch_prefix": {"default": "${project}"}}}
+    with pytest.raises(DocumentError, match=re.escape("the value of branch_prefix contains ${project}")):
+        WarrantTemplate(nested_default, values={"project": "/a"})
+    tools = {"version": 2, "name": "t", "ttl": "1h", "vars": {"tool": {}},
+             "capabilities": {"${tool}": {}, "read_file": {}}}
+    with pytest.raises(DocumentError, match="'read_file' appears twice"):
+        WarrantTemplate(tools, values={"tool": "read_file"})
+    assert set(WarrantTemplate(tools, values={"tool": "list_files"}).document["capabilities"]) == {
+        "list_files", "read_file"}
+
+
+def test_cli_issue_takes_set(tmp_path, capsys):
+    import json
+
+    import yaml
+    from tenuo.local_cli import main
+
+    path = tmp_path / "t.yaml"
+    path.write_text(yaml.safe_dump(VARS))
+    home = ["--home", str(tmp_path / ".tenuo"), "--json"]
+    assert main([*home, "init", "--dev"]) == 0
+    capsys.readouterr()
+    assert main([*home, "warrant", "issue", "--template", str(path), "--holder", "agent"]) == 1
+    assert "--set project=" in json.loads(capsys.readouterr().out)["error"]
+    assert main([*home, "warrant", "issue", "--template", str(path), "--holder", "agent",
+                 "--set", f"project={tmp_path}", "--set", "commands=[git status, git diff]"]) == 0
+    caps = json.loads(capsys.readouterr().out)["warrant"]["capabilities"]
+    assert caps["terminal"]["command"] == ["git status", "git diff"]
+
+
+def test_parse_set_reads_lists_and_whole_numbers():
+    from tenuo.warrant_template import parse_set
+
+    assert parse_set(["n=412", "prs=[57, 58]", "p=/srv/app", "v=1.5", "t=on"]) == {
+        "n": 412, "prs": [57, 58], "p": "/srv/app", "v": "1.5", "t": "on"}
+    with pytest.raises(DocumentError):
+        parse_set(["novalue"])
+
+
+
+def test_review_details_repeat_set():
+    from tenuo.local_cli.review import brief
+
+    finding = {"severity": "warning", "problem": "broad", "tool": "read_file"}
+    shown = brief({"summary": "1 warning", "findings": [finding]}, "t.yaml", ["project=/srv/my app"])
+    assert shown["details"] == "tenuo-cli warrant review --file t.yaml --set 'project=/srv/my app'"
+
+
+@pytest.mark.parametrize("value", ["any", "1..9"])
+def test_filled_in_strings_are_literal(value):
+    from tenuo.warrant_template import WarrantTemplate
+
+    doc = {"version": 2, "name": "t", "ttl": "1h", "vars": {"repo": {}},
+           "capabilities": {"issue_read": {"repo": "${repo}", "branch": "agent/${repo}", "labels": ["${repo}"]}}}
+    caps = WarrantTemplate(doc, values={"repo": value}).document["capabilities"]["issue_read"]
+    assert caps["repo"] == {"exact": value}
+    assert caps["labels"] == [value]
+    from tenuo import SigningKey
+
+    issuer = SigningKey.generate()
+    warrant = WarrantTemplate(doc, values={"repo": value}).mint(issuer, issuer.public_key)
+    assert type(warrant.capabilities["issue_read"]["repo"]).__name__ == "Exact"
+
+
+def test_set_lists_read_like_the_template_file():
+    from tenuo.local_cli.files import DocumentError
+    from tenuo.warrant_template import parse_set
+
+    assert parse_set(["days=[2026-10-22]"]) == {"days": ["2026-10-22"]}
+    with pytest.raises(DocumentError, match="not a valid list"):
+        parse_set(["commands=[pytest -q"])
+    with pytest.raises(DocumentError, match="anchors and aliases"):
+        parse_set(["x=[&a [1], *a]"])
+
+
+def test_literals_only_where_shorthand_is_read():
+    from tenuo import SigningKey
+    from tenuo.warrant_template import WarrantTemplate
+
+    doc = {"version": 2, "name": "${repo}", "ttl": "1h", "vars": {"repo": {}, "tool": {}},
+           "capabilities": {"${tool}": {
+               "repo": "${repo}",
+               "owner": {"exact": "${repo}"},
+               "branch": {"optional": "${repo}"},
+               "path": {"pattern": "${repo}/*"},
+           }}}
+    filled = WarrantTemplate(doc, values={"repo": "any", "tool": "issue_read"})
+    caps = filled.document["capabilities"]["issue_read"]
+    assert filled.document["name"] == "any"
+    assert caps["repo"] == {"exact": "any"}
+    assert caps["owner"] == {"exact": "any"}
+    assert caps["branch"] == {"optional": {"exact": "any"}}
+    assert caps["path"] == {"pattern": "any/*"}
+    issuer = SigningKey.generate()
+    filled.mint(issuer, issuer.public_key)
+
+
+def test_numbers_and_quoted_strings_from_set():
+    from tenuo import SigningKey
+    from tenuo.warrant_template import WarrantTemplate, parse_set
+
+    doc = {"version": 2, "name": "t", "ttl": "1h", "vars": {"pr": {}, "account": {}},
+           "capabilities": {"pull_request_read": {"pullNumber": "${pr}", "account": {"exact": "${account}"}}}}
+    values = parse_set(["pr=57", 'account="00123"'])
+    assert values == {"pr": 57, "account": "00123"}
+    issuer = SigningKey.generate()
+    warrant = WarrantTemplate(doc, values=values).mint(issuer, issuer.public_key)
+    caps = warrant.capabilities["pull_request_read"]
+    assert type(caps["pullNumber"]).__name__ == "Exact" and type(caps["account"]).__name__ == "Exact"
+
+
+def test_set_is_refused_for_a_signed_warrant(tmp_path, capsys):
+    import json
+
+    import yaml
+    from tenuo.local_cli import main
+
+    path = tmp_path / "t.yaml"
+    path.write_text(yaml.safe_dump(VARS))
+    home = ["--home", str(tmp_path / ".tenuo"), "--json"]
+    assert main([*home, "init", "--dev"]) == 0
+    assert main([*home, "warrant", "issue", "--template", str(path), "--holder", "agent", "--set",
+                 f"project={tmp_path}", "--out", str(tmp_path / "w.warrant")]) == 0
+    capsys.readouterr()
+    for action in ("show", "review"):
+        assert main([*home, "warrant", action, "--file", str(tmp_path / "w.warrant"), "--set", "project=/x"]) == 1
+        assert "not a signed warrant" in json.loads(capsys.readouterr().out)["error"]

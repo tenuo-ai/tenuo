@@ -6,11 +6,19 @@ Documents describe desired authority. Only the SDK's signed warrant grants it.
 from __future__ import annotations
 
 import copy
+import json
 import math
 import re
 from pathlib import Path
 
-from .local_cli.files import DocumentError, check_public_material, fields, load_public_key, load_yaml
+from .local_cli.files import (
+    DocumentError,
+    StrictLoader,
+    check_public_material,
+    fields,
+    load_public_key,
+    load_yaml,
+)
 
 _RANGE = re.compile(r"(-?\d+(?:\.\d+)?)?\.\.(-?\d+(?:\.\d+)?)?")
 
@@ -114,6 +122,8 @@ def compile_constraint(value):
                 or not all(isinstance(v, str) or (isinstance(v, int) and not isinstance(v, bool)) for v in argument)):
             raise DocumentError("one_of needs a nonempty list of strings or integers")
         return OneOf(argument)
+    if kind == "exact" and isinstance(argument, int) and not isinstance(argument, bool):
+        return Exact(argument)
     constructors = {"exact": Exact, "pattern": Pattern, "subpath": Subpath, "regex": Regex, "url_pattern": UrlPattern}
     if kind in constructors and isinstance(argument, str) and "\x00" not in argument:
         if kind == "subpath" and not argument.startswith("/"):
@@ -125,11 +135,157 @@ def compile_constraint(value):
     raise DocumentError(f"unsupported or invalid constraint type: {kind}")
 
 
+_VAR = re.compile(r"\$\{([a-z_][a-z0-9_]*)\}")
+
+
+def resolve_variables(data, values=None):
+    """Substitute a template's declared ``vars`` into its values.
+
+    ``vars`` maps each name to ``{description, default}`` (both optional).
+    ``${name}`` as a whole value takes the variable's value, list or scalar;
+    inside a longer string it is replaced as text. Every variable used must be
+    declared, every ``--set`` must name a declared variable, and a variable
+    with no default must be set. Returns the document without ``vars``.
+    """
+    values = dict(values or {})
+    if not isinstance(data, dict):
+        return data
+    if "vars" not in data:
+        if values:
+            raise DocumentError(f"--set {sorted(values)[0]}: this template declares no vars")
+        used = _placeholders(data)
+        if used:
+            raise DocumentError(f"${{{used[0]}}} is used but not declared under vars")
+        return data
+    declared = data["vars"]
+    fields(declared, declared if isinstance(declared, dict) else [], where="vars")
+    for name, spec in declared.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z_][a-z0-9_]*", name):
+            raise DocumentError(f"vars.{name}: names are lowercase letters, digits and _")
+        fields(spec if spec is not None else {}, ["description", "default"], where=f"vars.{name}")
+    unknown = sorted(set(values) - set(declared))
+    if unknown:
+        raise DocumentError(f"--set {unknown[0]}: not one of this template's vars ({', '.join(declared)})")
+    resolved = {}
+    missing = []
+    for name, spec in declared.items():
+        spec = spec or {}
+        if name in values:
+            resolved[name] = values[name]
+        elif "default" in spec:
+            resolved[name] = spec["default"]
+        else:
+            missing.append(f"--set {name}=..." + (f"  ({spec['description']})" if spec.get("description") else ""))
+    if missing:
+        raise DocumentError("this template needs: " + "; ".join(missing))
+    for name, value in resolved.items():
+        nested = _placeholders(value)
+        if nested:
+            raise DocumentError(f"the value of {name} contains ${{{nested[0]}}}; values are used as written")
+
+    def fill_mapping(mapping, fill_child):
+        out = {}
+        for key, item in mapping.items():
+            resolved_key = substitute(key)
+            if not isinstance(resolved_key, str):
+                raise DocumentError(f"{key!r} must fill in as a name, not {resolved_key!r}")
+            if resolved_key in out:
+                raise DocumentError(f"{resolved_key!r} appears twice once vars are filled in")
+            out[resolved_key] = fill_child(resolved_key, item)
+        return out
+
+    def substitute(value, constraint=False):
+        """``constraint``: value sits where a shorthand constraint is read (an
+        argument's value, or inside its ``optional``)."""
+        if isinstance(value, dict):
+            return fill_mapping(value, lambda key, item: substitute(item, constraint and key == "optional"))
+        if isinstance(value, list):
+            return [substitute(v) for v in value]
+        if not isinstance(value, str):
+            return value
+        names = _VAR.findall(value)
+        if not names:
+            return value
+        for name in names:
+            if name not in resolved:
+                raise DocumentError(f"${{{name}}} is used but not declared under vars")
+        whole = _VAR.fullmatch(value)
+        if whole:
+            filled = copy.deepcopy(resolved[whole.group(1)])
+        else:
+
+            def text(match):
+                part = resolved[match.group(1)]
+                if isinstance(part, (dict, list)):
+                    raise DocumentError(f"${{{match.group(1)}}} is a list; use it as a whole value")
+                return str(part)
+
+            filled = _VAR.sub(text, value)
+        # A filled-in value is a literal: --set repo=any must not become a wildcard,
+        # nor 1..9 a range, and --set pr=57 is that number. Only shorthand reads values that way.
+        if constraint and isinstance(filled, str) and expanded_constraint(filled) != {"exact": filled}:
+            return {"exact": filled}
+        if constraint and isinstance(filled, int) and not isinstance(filled, bool):
+            return {"exact": filled}
+        return filled
+
+    def fill_arguments(tool, arguments):
+        if not isinstance(arguments, dict):
+            return substitute(arguments)
+        return fill_mapping(arguments, lambda argument, value: substitute(value, constraint=True))
+
+    def fill_top(key, value):
+        if key == "capabilities" and isinstance(value, dict):
+            return fill_mapping(value, fill_arguments)
+        return substitute(value)
+
+    return fill_mapping({k: v for k, v in data.items() if k != "vars"}, fill_top)
+
+
+def _placeholders(value):
+    """Every ${name} in a value, at any depth, keys included."""
+    if isinstance(value, dict):
+        return [n for k, v in value.items() for n in _placeholders(k) + _placeholders(v)]
+    if isinstance(value, list):
+        return [n for v in value for n in _placeholders(v)]
+    return _VAR.findall(value) if isinstance(value, str) else []
+
+
+def parse_set(items):
+    """``--set name=value`` pairs: ``[a, b]`` is a list, a whole number an integer
+    (issue and PR numbers), ``"00123"`` in double quotes a string as written,
+    anything else a string."""
+    import yaml
+
+    values = {}
+    for item in items or ():
+        name, sep, value = item.partition("=")
+        if not sep or not name:
+            raise DocumentError(f"--set {item}: use --set NAME=VALUE")
+        if value.startswith("["):
+            # The template's own loader, so a list item reads the same as it would in the file.
+            try:
+                values[name] = yaml.load(value, Loader=StrictLoader)
+            except yaml.YAMLError:
+                raise DocumentError(f"--set {item}: not a valid list") from None
+        elif len(value) >= 2 and value[0] == value[-1] == '"':
+            try:
+                values[name] = json.loads(value)
+            except ValueError:
+                raise DocumentError(f"--set {item}: not a valid quoted string") from None
+        elif re.fullmatch(r"-?\d+", value):
+            values[name] = int(value)
+        else:
+            values[name] = value
+    return values
+
+
 class WarrantTemplate:
     """A validated, immutable snapshot of a template or unsigned request."""
 
-    def __init__(self, data, *, directory=None):
+    def __init__(self, data, *, directory=None, values=None):
         directory = Path.cwd() if directory is None else Path(directory)
+        data = resolve_variables(data, values)
         fields(
             data,
             ["version", "name", "ttl", "capabilities", "approvals", "kind", "holder", "reason"],
@@ -193,9 +349,9 @@ class WarrantTemplate:
         self._data = copy.deepcopy(data)
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path, values=None):
         path = Path(path).expanduser()
-        return cls(load_yaml(path), directory=path.parent)
+        return cls(load_yaml(path), directory=path.parent, values=values)
 
     @property
     def document(self):

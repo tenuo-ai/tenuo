@@ -157,6 +157,34 @@ permit a call outside the warrant's capabilities. `required: {refund: always}`
 gates every refund. Relative approver paths resolve from the YAML file. Local key
 names are convenience labels, not verified identities.
 
+A template can take values when it's issued, so one file serves every project or
+repository. Declare them under `vars` and use `${name}` in values:
+
+```yaml
+version: 2
+name: project-task
+ttl: 4h
+vars:
+  project: {description: "the project's absolute path"}
+  commands: {default: [pytest -q, git status, git diff]}
+capabilities:
+  read_file: {path: {subpath: "${project}"}}
+  terminal: {command: "${commands}", workdir: ["${project}"]}
+```
+
+```bash
+tenuo-cli warrant issue --template project.yaml --holder agent --set project=$PWD
+tenuo-cli warrant issue --template project.yaml --holder agent --set project=$PWD --set "commands=[pytest -q]"
+```
+
+`--set` reads `[a, b]` as a list and a whole number as an integer (issue and PR
+numbers); anything else is text. `${name}` as a whole value takes the variable's
+value; inside a
+longer string it's replaced as text. Quote it inside `{…}`. A variable without a
+`default` must be set, and the error names the `--set` to add. `template
+validate`, `template show` and `warrant review` take `--set` too. The issued
+warrant holds the resolved values; variables never reach a verifier.
+
 For a standalone request, add `kind: warrant-request` and `holder: agent` (or a
 public key path). An optional `reason` helps review. No registered policy is
 required. Requests are unsigned proposals, not warrants.

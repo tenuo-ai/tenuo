@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 
 from . import payload
@@ -333,7 +334,7 @@ def review_chain(chain):
     )
 
 
-def brief(result, source):
+def brief(result, source, sets=()):
     """The part of a review worth showing on validate and issue."""
     lines = []
     for f in result["findings"]:
@@ -341,7 +342,10 @@ def brief(result, source):
         lines.append(f"{f['severity']}: {_where(f)}{f['problem']}{example}")
     shown = {"summary": result["summary"], "findings": lines}
     if lines:
-        shown["details"] = f"tenuo-cli warrant review --file {source}"
+        command = ["tenuo-cli", "warrant", "review", "--file", str(source)]
+        for item in sets:
+            command += ["--set", item]
+        shown["details"] = " ".join(shlex.quote(part) for part in command)
     return shown
 
 
