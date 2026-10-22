@@ -1,3 +1,8 @@
+---
+title: "AI Agent Security Patterns"
+description: "Containing prompt injection and preventing privilege escalation."
+---
+
 # AI Agent Security Patterns
 
 > **TL;DR:** Tenuo provides cryptographic authorization for AI agents. It **contains** prompt injection damage to warrant scope, **prevents** privilege escalation, and **enforces** the P-LLM/Q-LLM separation pattern.

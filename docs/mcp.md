@@ -1,6 +1,11 @@
 ---
-title: "MCP Integration"
-description: "Secure Model Context Protocol clients and servers with Tenuo warrants, argument constraints, and offline-verifiable authorization."
+title: "MCP security: authorization for MCP servers and clients"
+description: "Secure Model Context Protocol servers and clients: verify a task-scoped warrant before every tool runs, with argument constraints and offline verification."
+og_image: /images/og/guide-mcp.png
+og_image_alt: "Tenuo for MCP"
+guide_name: "MCP"
+guide_logo: mcp
+guide_install: 'uv pip install "tenuo[fastmcp]"'
 canonical_url: https://tenuo.ai/mcp
 ---
 
