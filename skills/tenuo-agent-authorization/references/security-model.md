@@ -61,3 +61,9 @@ Prefer claims that name the boundary and conditions:
 > The `transfer` handler verifies warrants against the configured roots and checks holder proof, expiry, capability, amount, and destination before invoking the payment client. Tests show the client is not called for the enumerated denial cases. Redis-backed nonce consumption rejects an identical presented call during the configured window.
 
 Avoid absolute statements such as “the agent cannot transfer elsewhere” unless all alternate credentials, clients, queues, and administrative paths have been excluded from the agent's authority and tested.
+
+## Chains and observation across versions
+
+Trust only independently provisioned roots. A delegated leaf must arrive with the complete parent chain in the target adapter's supported representation; intermediate keys are not replacement roots. Prove a narrower child succeeds with root-only trust and the missing-chain case has zero effects. Inspect installed helper signatures: Temporal and other transports have differing chain conventions across releases and pending PRs.
+
+When observation is implemented, decision=DENY and enforcement not applied can accompany an effect that runs. Report the decision, enforcement mode, and measured effect count separately. A deny receipt alone does not prove a blocked action. Pending observe-mode and receipt-format APIs are context only until present in the target source; do not infer semantics from a mode name.

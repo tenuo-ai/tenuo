@@ -694,6 +694,25 @@ jobs:
   # ============================================================================
   # EXPLORER (WASM + React)
   # ============================================================================
+  task-authority-frameworks:
+    # The scripts pin a released tenuo, so this checks the documented commands as a reader runs them.
+    name: Task authority framework examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Run the framework examples and receiver tests
+        run: uv run --no-project tenuo-python/examples/task_authority_frameworks/tests/test_examples.py
+
   explorer:
     name: Explorer Build
     runs-on: ubuntu-latest
