@@ -1,6 +1,5 @@
 """Unsigned attachments route signed grants without activating or revoking them."""
 
-import json
 
 import pytest
 
@@ -8,7 +7,6 @@ from tenuo import SigningKey, WarrantTemplate
 from tenuo.local_cli import main
 from tenuo.local_cli.files import DocumentError
 from tenuo.local_cli.sessions import attach, detach, read_session, session_path
-from tenuo.local_cli.warrants import encode_chain
 from tenuo.local_cli.workspace import Workspace
 
 
@@ -55,12 +53,10 @@ def test_wrong_holder_and_manifest_identity_are_rejected(session):
         read_session(workspace, "chat-a")
 
 
-def test_cli_session_attachment_and_inventory(session, tmp_path, capsys):
-    workspace, warrant = session
-    path = tmp_path / "grant.warrant"
-    path.write_text(encode_chain([warrant]))
-    prefix = ["--home", str(workspace.path), "--json", "session"]
-    assert main([*prefix, "attach", "--session", "chat-a", "--file", str(path)]) == 0
-    assert json.loads(capsys.readouterr().out)["session"]["session_id"] == "chat-a"
-    assert main([*prefix, "list"]) == 0
-    assert json.loads(capsys.readouterr().out)["sessions"][0]["warrants"] == [warrant.id]
+def test_session_commands_belong_to_the_integration(session, capsys):
+    workspace, _ = session
+    # Sessions are a Hermes concept: hermes-tenuo owns the commands, tenuo.local the library.
+    from tenuo.local import attach, detach, list_sessions, read_session  # noqa: F401
+    with pytest.raises(SystemExit):
+        main(["--home", str(workspace.path), "session", "list"])
+

@@ -83,13 +83,25 @@ def inspect_audit(
             snapshot.write(raw)
             snapshot.flush()
             valid = verify_receipt_chain(snapshot.name, authorizers=sorted(known))
+        starts = sum(payload.prev_receipt_hash is None for payload, _ in decoded)
+        # Every process that signs starts its own chain, and they all append to
+        # this file, so several starts are the expected local layout, not a
+        # merge of foreign streams. Say so instead of repeating that warning.
+        details = "\n".join(
+            line for line in output.getvalue().strip().splitlines() if "receipts have no predecessor" not in line
+        )
         return {
             "valid": valid,
             "receipts": len(decoded),
-            "unlinked_receipts": sum(payload.prev_receipt_hash is None for payload, _ in decoded),
+            "chains": starts,
+            "unlinked_receipts": starts,
             "history_completeness": "not proven",
-            "message": "Checks signed decisions and any recorded links, not completed effects or an undeleted history",
-            "details": output.getvalue().strip(),
+            "message": (
+                "Checks signed decisions and any recorded links, not completed effects or an undeleted history. "
+                "Each process that signs starts a new chain"
+                + (f"; this file holds {starts}." if starts > 1 else ".")
+            ),
+            "details": details,
             "exit_code": 0 if valid else 3,
         }
     if type(limit) is not int or not 1 <= limit <= 10000:

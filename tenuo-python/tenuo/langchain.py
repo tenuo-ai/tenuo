@@ -101,8 +101,12 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
     _warrant_chain: Optional[List[Any]] = None
 
     @classmethod
-    def local(cls, tool, *, path=None, warrant, key="agent", **kwargs):
-        """Protect a tool using an explicit local warrant file and fresh trust data."""
+    def local(cls, tool, *, path=None, warrant=None, key="agent", **kwargs):
+        """Protect a tool using an explicit local warrant file and fresh trust data.
+
+        In a workspace with ``mode: observe`` the tool is never blocked and
+        ``warrant`` may be omitted; each call is recorded to observations.jsonl.
+        """
         from .local_cli.integrations import local_langchain_tool
 
         return local_langchain_tool(tool, path=path, warrant=warrant, key=key, **kwargs)

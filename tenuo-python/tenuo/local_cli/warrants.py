@@ -89,18 +89,28 @@ def issue(workspace, template, holder, *, issuer=None, parent=None):
     return chain
 
 
-def save(workspace, chain, *, out=None, store=True):
+def save(workspace, chain, *, out=None, store=True, replace=False):
+    """Write the chain to the workspace store and/or ``out``.
+
+    ``replace`` lets ``out`` swap an existing warrant file atomically: adapters
+    reading that file use the new warrant on their next call. The workspace
+    copy, named by warrant ID, is never replaced.
+    """
     encoded = (encode_chain(chain) + "\n").encode()
     destination = workspace.path / "warrants" / (name(str(chain[-1].id)) + ".warrant")
-    targets = ([destination] if store else []) + ([Path(out).expanduser()] if out else [])
+    out = Path(out).expanduser() if out else None
+    targets = ([destination] if store else []) + ([out] if out else [])
     targets = list(dict.fromkeys(targets))
     if not targets:
         raise DocumentError("--no-store requires --out")
     for path in targets:
+        if path == out and replace and not path.is_symlink():
+            continue
         if path.exists() or path.is_symlink():
-            raise DocumentError(f"{path}: already exists; choose a new output path")
+            hint = "; pass --replace to swap it in for agents reading it" if path == out else ""
+            raise DocumentError(f"{path}: already exists{hint}")
     for path in targets:
-        publish(path, encoded)
+        publish(path, encoded, replace=replace and path == out)
     return [str(p) for p in targets]
 
 

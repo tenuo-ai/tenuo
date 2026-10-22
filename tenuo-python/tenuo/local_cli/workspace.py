@@ -74,6 +74,17 @@ class Workspace:
         write_yaml(self.path / "config.yaml", config)
         return config
 
+    def set_mode(self, mode):
+        from .files import operator_lock
+
+        if mode not in ("enforce", "observe"):
+            raise DocumentError("mode must be enforce or observe")
+        with operator_lock(self.path):
+            config = self.config
+            config["mode"] = mode
+            write_yaml(self.path / "config.yaml", config, replace=True)
+        return config
+
     def key_path(self, value, *, private=False):
         suffix = ".key" if private else ".pub"
         if isinstance(value, str) and "/" not in value and "\\" not in value and not value.endswith(suffix):
@@ -113,6 +124,13 @@ class Workspace:
                 {
                     "status": "error",
                     "message": "Trust or revocation list invalid; check trust/*.pub and revocations.srl",
+                }
+            )
+        if config["mode"] == "observe":
+            checks.append(
+                {
+                    "status": "warning",
+                    "message": "mode: observe blocks nothing; run tenuo-cli mode enforce once a warrant is attached",
                 }
             )
         if config["dev_roots"]:

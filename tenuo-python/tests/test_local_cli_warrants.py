@@ -160,3 +160,21 @@ def test_a09_expired_warrant_denies_same_operation():
     time.sleep(2.1)
     with pytest.raises(Exception, match="[Ee]xpir"):
         authorizer.verify_chain([warrant])
+
+
+def test_issue_replace_swaps_an_existing_out_file(setup, capsys):
+    from tenuo.local_cli.commands import main as cli
+    from tenuo.local_cli.warrants import load_chain
+
+    workspace, template = setup
+    home, out = workspace.path, workspace.path.parent / "agent.warrant"
+    assert cli(["--home", str(home), "--json", "warrant", "issue", "--template", str(template),
+                "--holder", "agent", "--out", str(out)]) == 0
+    first = load_chain(out)[-1].id
+    capsys.readouterr()
+    assert cli(["--home", str(home), "--json", "warrant", "issue", "--template", str(template),
+                "--holder", "agent", "--out", str(out)]) == 1
+    assert "--replace" in capsys.readouterr().out
+    assert cli(["--home", str(home), "--json", "warrant", "issue", "--template", str(template),
+                "--holder", "agent", "--out", str(out), "--replace"]) == 0
+    assert load_chain(out)[-1].id != first

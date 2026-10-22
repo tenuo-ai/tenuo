@@ -47,6 +47,17 @@ def parser():
         if action == "add":
             sub.add_argument("--id", required=True, action="append")
     commands.add_parser("doctor")
+    mode = commands.add_parser("mode", help="Show or set enforce or observe for local adapters")
+    mode.add_argument("value", nargs="?", choices=("enforce", "observe"))
+    calls = commands.add_parser("calls", help="Calls recorded in observe mode").add_subparsers(
+        dest="action", required=True
+    )
+    for action in ("list", "summary"):
+        sub = calls.add_parser(action)
+        sub.add_argument("--file")
+        sub.add_argument("--tool")
+        if action == "list":
+            sub.add_argument("--limit", type=int, default=100)
     audit = commands.add_parser("audit").add_subparsers(dest="action", required=True)
     for action in ("list", "verify"):
         sub = audit.add_parser(action)
@@ -86,19 +97,11 @@ def parser():
             continue
         sub.add_argument("--out")
         sub.add_argument("--no-store", action="store_true")
+        sub.add_argument("--replace", action="store_true", help="swap an existing --out file")
     issue.add_argument("--out")
     issue.add_argument("--no-store", action="store_true")
+    issue.add_argument("--replace", action="store_true", help="swap an existing --out file")
     warrants.add_parser("list")
-    sessions = commands.add_parser("session").add_subparsers(dest="action", required=True)
-    sessions.add_parser("list")
-    for action in ("show", "attach", "detach"):
-        sub = sessions.add_parser(action)
-        sub.add_argument("--session", required=True)
-        if action == "attach":
-            sub.add_argument("--file", required=True)
-            sub.add_argument("--holder", default="agent")
-        if action == "detach":
-            sub.add_argument("--id", required=True, type=name)
     approvals = commands.add_parser("approval").add_subparsers(dest="action", required=True)
     for action in ("show", "approve", "deny"):
         sub = approvals.add_parser(action)
@@ -122,18 +125,6 @@ def execute(opts, workspace):
                              authorizers=opts.authorizer, warrant=getattr(opts, "warrant", None),
                              denied=getattr(opts, "denied", False), since=getattr(opts, "since", None),
                              limit=getattr(opts, "limit", 100))
-    if opts.command == "session":
-        from .sessions import attach, detach, list_sessions, read_session
-        from .warrants import load_chain
-
-        workspace.config
-        if opts.action == "list":
-            return {"sessions": list_sessions(workspace)}
-        if opts.action == "attach":
-            return {"session": attach(workspace, opts.session, load_chain(opts.file), holder=opts.holder)}
-        if opts.action == "detach":
-            return {"session": detach(workspace, opts.session, opts.id)}
-        return {"session": read_session(workspace, opts.session)}
     if opts.command == "approval":
         from .approvals import read_request, sign_response
         from .warrants import decode_chain
@@ -182,13 +173,18 @@ def execute(opts, workspace):
             return {"file": opts.out, "message": "Edit the tool and argument names to match your application."}
         template = WarrantTemplate.load(opts.file)
         if opts.action == "validate":
-            return {"valid": True, "file": opts.file}
+            warnings = template_warnings(template.document)
+            return {"valid": True, "file": opts.file, **({"warnings": warnings} if warnings else {})}
         return {"template": template.expanded() if opts.expanded else template.document, "signed": False}
     if opts.command == "init":
         workspace.initialize(dev=opts.dev)
         return {
             "home": str(workspace.path),
-            "message": "Local files ready. Next: issue a warrant from a YAML template.",
+            "message": (
+                "Local files ready. Next: tenuo-cli mode observe, run your agent, then tenuo-cli calls summary."
+                if opts.dev
+                else "Local files ready. Next: add an issuer with tenuo-cli trust add, then tenuo-cli mode observe."
+            ),
             "development": opts.dev,
         }
     workspace.config
@@ -229,6 +225,22 @@ def execute(opts, workspace):
         }
     if opts.command == "doctor":
         return {"checks": workspace.diagnostics()}
+    if opts.command == "mode":
+        if opts.value is None:
+            return {"mode": workspace.config["mode"]}
+        workspace.set_mode(opts.value)
+        message = (
+            "Local adapters now record calls and block nothing. Review them with tenuo-cli calls summary."
+            if opts.value == "observe"
+            else "Local adapters enforce warrants from their next call. Temporal workers pick this up when restarted."
+        )
+        return {"mode": opts.value, "message": message}
+    if opts.command == "calls":
+        from .observations import list_calls, summarize_calls
+
+        if opts.action == "list":
+            return list_calls(workspace, path=opts.file, tool=opts.tool, limit=opts.limit)
+        return summarize_calls(workspace, path=opts.file, tool=opts.tool)
     raise DocumentError("unknown command")
 
 
@@ -246,6 +258,22 @@ def refuse_workspace_secret(workspace, path, key):
         ):
             raise DocumentError("trust input is a workspace private key; use its .pub file")
         check_public_material(load_signing_key(private), [key])
+
+
+def template_warnings(document):
+    """Readable-syntax values that probably don't mean what they look like."""
+    warnings = []
+    for tool, arguments in (document.get("capabilities") or {}).items():
+        for argument, value in (arguments or {}).items() if isinstance(arguments, dict) else ():
+            items = value if isinstance(value, list) else [value]
+            for item in items:
+                if isinstance(item, str) and any(mark in item for mark in "*?"):
+                    kind = "one_of value" if isinstance(value, list) else "value"
+                    warnings.append(
+                        f"{tool}.{argument}: {item!r} is an exact {kind}, not a wildcard; "
+                        f"write {{pattern: {item!r}}} to match by pattern, or {{exact: {item!r}}} to keep it exact"
+                    )
+    return warnings
 
 
 def warrant_command(opts, workspace):
@@ -279,7 +307,7 @@ def warrant_command(opts, workspace):
             issuer=opts.key,
             parent=load_chain(opts.parent) if opts.parent else None,
         )
-        return {"warrant": describe(chain), "files": save(workspace, chain, out=opts.out, store=not opts.no_store)}
+        return {"warrant": describe(chain), "files": save(workspace, chain, out=opts.out, store=not opts.no_store, replace=opts.replace)}
     if opts.action == "list":
         entries, errors = [], []
         for path in sorted((workspace.path / "warrants").glob("*.warrant")):
@@ -318,7 +346,7 @@ def warrant_command(opts, workspace):
         issuer=opts.key,
         holder=workspace.public_key(opts.holder) if opts.holder else None,
     )
-    return {"warrant": describe(chain), "files": save(workspace, chain, out=opts.out, store=not opts.no_store)}
+    return {"warrant": describe(chain), "files": save(workspace, chain, out=opts.out, store=not opts.no_store, replace=opts.replace)}
 
 
 def main(argv=None):

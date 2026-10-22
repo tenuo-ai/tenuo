@@ -149,6 +149,15 @@ class TenuoPluginConfig:
                 or kwargs.get("block_local_activities", True) is not True):
             raise DocumentError("local Temporal configuration requires warrant enforcement")
         authority = LocalAuthority(path=path, key=key)
+        authority.started_observing = authority.observing
+        if authority.started_observing:
+            # Observe maps onto dry_run: denials are logged and the activity
+            # runs. The interceptor records each decision, with its arguments,
+            # to the workspace's observations.jsonl (readable by its owner
+            # only); audit callbacks and redaction settings are unchanged.
+            kwargs["dry_run"] = True
+            if kwargs.pop("approval_handler", None) is not None:
+                logger.warning("Tenuo observe: approval_handler is ignored; an unmet gate is recorded and the activity runs")
         snapshot = authority.snapshot()
         return cls(signing_key=snapshot.key, trusted_roots=snapshot.roots, revocation_list=snapshot.srl,
                    _local_authority=authority, **kwargs)
@@ -724,3 +733,4 @@ class TenuoPluginConfig:
         self._activity_registry: Dict[str, Callable] = _build_activity_registry(
             self.activity_fns
         )
+

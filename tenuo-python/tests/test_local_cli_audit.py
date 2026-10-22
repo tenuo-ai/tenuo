@@ -68,3 +68,45 @@ def test_cli_audit_json_and_denial_filter(audited, capsys):
     assert json.loads(capsys.readouterr().out)["decisions"][0]["decision"] == "DENY"
     assert main([*prefix, "verify"]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True
+
+
+def test_receipts_chain_across_calls_in_one_process(audited):
+    workspace, _ = audited
+    authority = LocalAuthority(path=workspace.path, warrant=workspace.path.parent / "agent.warrant", announce=False)
+
+    @guard(tool="get_order")
+    def get_order(order_id: str):
+        return "ready"
+
+    for _ in range(3):  # separate calls, as an adapter makes them
+        with authority.scope():
+            get_order("A-1001")
+    verified = inspect_audit(workspace, verify=True)
+    # The fixture's two receipts are one chain; these three continue a second one, from this "process".
+    assert verified["valid"] and verified["receipts"] == 5
+    assert verified["chains"] == verified["unlinked_receipts"] == 2
+    assert "this file holds 2" in verified["message"]
+    assert "no predecessor" not in verified["details"]
+
+
+def test_observed_calls_leave_no_gap_in_the_receipt_chain(audited):
+    """Observing with the same adapter must not advance the chain with receipts it never writes."""
+    workspace, _ = audited
+    authority = LocalAuthority(path=workspace.path, warrant=workspace.path.parent / "agent.warrant", announce=False)
+
+    @guard(tool="get_order")
+    def get_order(order_id: str):
+        return "ready"
+
+    with authority.scope():
+        get_order("A-1001")
+    workspace.set_mode("observe")
+    authority.decide("get_order", {"order_id": "A-1001"})
+    with authority.scope():
+        get_order("A-1001")
+    workspace.set_mode("enforce")
+    with authority.scope():
+        get_order("A-1001")
+    verified = inspect_audit(workspace, verify=True)
+    assert verified["valid"], verified["details"]
+    assert verified["chains"] == 2  # the fixture's, and this process's: no break in between

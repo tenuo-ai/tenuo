@@ -326,8 +326,12 @@ class SecureMCPClient:
                     tenuo_configure(mcp_config=self.compiled_config)
 
     @classmethod
-    def local(cls, *, path=None, warrant, key="agent", **kwargs):
-        """Connect with explicit local authority, file approvals and fresh verification data."""
+    def local(cls, *, path=None, warrant=None, key="agent", **kwargs):
+        """Connect with explicit local authority, file approvals and fresh verification data.
+
+        In a workspace with ``mode: observe`` no call is blocked and ``warrant``
+        may be omitted; each call is recorded to observations.jsonl.
+        """
         from ..local_cli.integrations import local_mcp_client
 
         return local_mcp_client(path=path, warrant=warrant, key=key, **kwargs)

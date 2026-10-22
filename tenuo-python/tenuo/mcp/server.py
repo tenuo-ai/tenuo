@@ -392,6 +392,9 @@ class MCPVerificationResult:
     error_type: Optional[str] = field(default=None)
     """PEP ``error_type`` (``invalid_pop``, ``constraint_violation``, …)."""
 
+    constraint_violated: Optional[str] = field(default=None)
+    """The argument whose constraint failed, on a ``constraint_violation`` denial."""
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -560,6 +563,9 @@ def _mcp_result_from_enforcement(
         denial_reason=reason,
         jsonrpc_error_code=-32001,
         error_type=error_type or None,
+        constraint_violated=getattr(enforcement, "constraint_violated", None)
+        if error_type == "constraint_violation"
+        else None,
     )
 
 
@@ -927,7 +933,9 @@ class MCPVerifier:
                     clean_arguments=clean_arguments,
                     constraints=constraints,
                     denial_reason=(
-                        "No warrant provided. Use SecureMCPClient(inject_warrant=True) "
+                        "No warrant provided. Call this server with a client that presents "
+                        "one: SecureMCPClient.local(warrant=FILE) with a tenuo-cli workspace, "
+                        "or SecureMCPClient(inject_warrant=True) "
                         "for _meta or inject_warrant='argument' for arguments._tenuo, "
                         "or pass params.meta with tenuo metadata into MCPVerifier.verify. "
                         "On FastMCP, register TenuoMiddleware(verifier) so _meta from the "

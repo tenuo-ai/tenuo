@@ -276,7 +276,14 @@ class _TenuoWorkflowOutboundInterceptor:
                         logger.warning(msg)
 
                     args_dict = _normalize_args_for_pop(args_dict)
-                    _prevalidate_args_against_warrant(warrant, pop_tool_name, args_dict)
+                    try:
+                        _prevalidate_args_against_warrant(warrant, pop_tool_name, args_dict)
+                    except Exception as exc:
+                        if not (self._config and self._config.dry_run):
+                            raise
+                        # dry_run (and local observe): let the activity reach
+                        # ingress, where the decision is logged and recorded.
+                        logger.warning("DRY-RUN mode: %s; scheduling anyway", exc)
 
                     timestamp = int(workflow.now().timestamp())
                     pop_signature = warrant.sign(signer, pop_tool_name, args_dict, timestamp)
@@ -1009,11 +1016,18 @@ class TenuoActivityInboundInterceptor:
         if authority is None:
             return await self._execute_activity(input)
         try:
+            observing = authority.observing
             snapshot = authority.snapshot()
         except Exception:
             raise self._wrap_as_non_retryable(ChainValidationError(
                 reason="Local verification files unavailable or invalid; run tenuo-cli doctor", depth=0
             )) from None
+        if observing != getattr(authority, "started_observing", False):
+            # dry_run was fixed when the worker started; refuse rather than
+            # keep observing after the workspace switched to enforce.
+            raise self._wrap_as_non_retryable(ChainValidationError(
+                reason="Local workspace mode changed since this worker started; restart the worker", depth=0
+            ))
         with authority.scope(snapshot) as (snapshot, _, _):
             return await self._execute_activity(input, local_snapshot=snapshot)
 
@@ -1092,6 +1106,14 @@ class TenuoActivityInboundInterceptor:
         if warrant is None:
             if self._config.require_warrant:
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
+                if self._config.dry_run:
+                    self._observe(
+                        info,
+                        _warrant_tool_name_for_activity_type(self._config, info.activity_type, activity_fn),
+                        self._extract_arguments(input, headers),
+                        decision=None,
+                        reason="no_warrant",
+                    )
                 if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise self._wrap_as_non_retryable(TemporalConstraintViolation(
                         tool=info.activity_type,
@@ -1542,6 +1564,41 @@ class TenuoActivityInboundInterceptor:
 
         return {f"arg{i}": arg for i, arg in enumerate(args)}
 
+    def _observe(
+        self,
+        info: Any,
+        tool: str,
+        args: Dict[str, Any],
+        *,
+        decision: Optional[str],
+        reason: Optional[str] = None,
+        warrant: Any = None,
+        argument: Optional[str] = None,
+    ) -> None:
+        """Record a decision to the local workspace's observations in observe mode.
+
+        Independent of audit callbacks and their redaction or allow/deny
+        filters: the observations file is the operator's own, readable by its
+        owner only, and drafting a warrant needs the real argument values.
+        """
+        authority = getattr(self._config, "_local_authority", None)
+        if authority is None or not getattr(authority, "started_observing", False):
+            return
+        try:
+            authority.record(
+                tool,
+                args or {},
+                decision=decision,
+                reason=reason,
+                warrant_id=getattr(warrant, "id", None) or None,
+                argument=argument,
+                run=getattr(info, "workflow_run_id", None),
+                step="+".join(sorted(getattr(warrant, "tools", None) or [])) or None,
+                via="temporal",
+            )
+        except Exception:
+            logger.warning("Tenuo observe: could not record a Temporal decision", exc_info=True)
+
     def _redact_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Redact argument values for logging."""
         if not self._config.redact_args_in_logs:
@@ -1564,6 +1621,7 @@ class TenuoActivityInboundInterceptor:
         """Emit audit event for allowed action."""
         import time
         latency_s = (time.perf_counter_ns() - start_ns) / 1e9 if start_ns else 0.0
+        self._observe(info, tool, args, decision="allow", warrant=warrant)
 
         if self._config.metrics is not None:
             wf_type = getattr(info, "workflow_type", "")
@@ -1652,6 +1710,7 @@ class TenuoActivityInboundInterceptor:
         """
         import time
         latency_s = (time.perf_counter_ns() - start_ns) / 1e9 if start_ns else 0.0
+        self._observe(info, info.activity_type, {}, decision="deny", reason="chain_invalid")
 
         if self._config.metrics is not None:
             wf_type = getattr(info, "workflow_type", "")
@@ -1711,6 +1770,15 @@ class TenuoActivityInboundInterceptor:
         """Emit audit event for denied action."""
         import time
         latency_s = (time.perf_counter_ns() - start_ns) / 1e9 if start_ns else 0.0
+        from tenuo.exceptions import ConstraintViolation as _CoreConstraintViolation
+
+        kind = _activity_denial_error_type(exc=exc, constraint=constraint, error_type=error_type)
+        self._observe(
+            info, tool, args, decision="deny", reason=kind or "denied", warrant=warrant,
+            # Only a core constraint violation names an argument; other labels
+            # (chain_header_invalid, max_chain_depth_exceeded) aren't arguments.
+            argument=constraint if isinstance(exc, _CoreConstraintViolation) else None,
+        )
 
         if self._config.metrics is not None:
             wf_type = getattr(info, "workflow_type", "")

@@ -10,7 +10,7 @@ from .local_cli.files import (
 )
 from .local_cli.warrants import load_chain as load_warrant_chain
 from .local_cli.runtime import LocalAuthority, file_approval_handler
-from .local_cli.sessions import list_sessions, read_session
+from .local_cli.sessions import attach, detach, list_sessions, read_session
 
 __all__ = [
     "fingerprint",
@@ -24,4 +24,6 @@ __all__ = [
     "file_approval_handler",
     "read_session",
     "list_sessions",
+    "attach",
+    "detach",
 ]
