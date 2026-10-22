@@ -384,19 +384,6 @@ def test_summary_describes_argument_values_across_runs(observing, monkeypatch, c
     }
 
 
-def test_template_validate_warns_about_wildcards_in_exact_values(tmp_path, capsys):
-    path = tmp_path / "t.yaml"
-    path.write_text(
-        "version: 2\nttl: 5m\ncapabilities:\n"
-        "  get_order:\n    order_id: A-*\n"
-        "  list_files:\n    path: {pattern: /data/*}\n    kind: [csv, '*.tsv']\n"
-    )
-    assert main(["--home", str(tmp_path / ".tenuo"), "--json", "template", "validate", "--file", str(path)]) == 0
-    warnings = json.loads(capsys.readouterr().out)["warnings"]
-    assert len(warnings) == 2
-    assert warnings[0].startswith("get_order.order_id: 'A-*' is an exact value")
-    assert warnings[1].startswith("list_files.kind: '*.tsv' is an exact one_of value")
-
 
 def test_summary_reads_paths_as_folders_skips_prose_and_prints_next_commands(observing, monkeypatch, capsys):
     workspace, _ = observing

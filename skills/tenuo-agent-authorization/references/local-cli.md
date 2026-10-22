@@ -39,6 +39,9 @@ development guardrail, not OS isolation.
 
 ## Lifecycle choices
 
+- **Review:** `template validate` and `warrant issue` print a short review;
+  `warrant review --file PATH --json` gives the full one, with attack inputs
+  the native check allows. Fix high findings before wiring the warrant in.
 - **Inspect:** `warrant show` decodes; `warrant verify` separately checks the full
   chain, trust, expiry and current SRL. `warrant list` inventories local files,
   not every grant issued anywhere. `audit list`/`audit verify` inspect native

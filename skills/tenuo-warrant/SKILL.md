@@ -30,7 +30,9 @@ needs only the holder's public key. Never print private material or give the
 agent the issuer/approver private keys: scope its file tools to the project
 with `subpath` and allow no unrestricted shell; same-user files are not isolation.
 Use the shared SDK parser for version-2 YAML templates and ad-hoc requests,
-then `template validate` and `warrant issue`. Editable YAML proposes authority;
+then `template validate` and `warrant issue`. Both print a review; resolve its
+high findings, and show the user any `allowed_inputs` from
+`warrant review --file PATH --json` rather than describing risk yourself. Editable YAML proposes authority;
 only the signed warrant grants it. Reissue creates a new ID; the old grant
 remains valid until expiry or revocation. Session attachment routes that grant,
 not activation; detachment is not revocation. For a gated call, an external

@@ -7,7 +7,12 @@ description: Audit, explain, or compare existing Tenuo warrants and delegation c
 
 For local inspection, first check the resolved Python checkout exposes the
 unreleased `tenuo-cli` commands. Use its matching `docs/local-cli.md` for exact
-options. `warrant show` decodes; `warrant verify` separately checks signatures,
+options. Start from `tenuo-cli --json warrant review --file PATH` (a warrant or
+a YAML template): it explains each argument's constraint, lists findings, and
+reports attack inputs that the native constraint check actually allows. Report
+those inputs as measured; don't re-derive constraint semantics by reading them,
+and treat an empty finding list as "no known pattern matched", not as safe. It
+decodes without verifying. `warrant show` decodes; `warrant verify` separately checks signatures,
 trust, expiry and the installed signed revocation list. `warrant list` inventories
 local files, not all issued grants. `audit list` and `audit verify` inspect
 signed decisions, not proof of completed effects or complete history. Never

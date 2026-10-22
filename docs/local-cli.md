@@ -223,6 +223,41 @@ Issuing a warrant does not attach it to a running session or workflow. Deliver
 the selected file through the integration's explicit warrant configuration.
 Nothing automatically selects the newest warrant or combines stored grants.
 
+## Review what a warrant allows
+
+`template validate` and `warrant issue` end with a short review. For the whole
+review of a template or an issued warrant:
+
+```bash
+tenuo-cli warrant review --file agent.yaml
+tenuo-cli warrant review --file ~/.tenuo/agent.warrant
+```
+
+```yaml
+review:
+  summary: '5 tools, valid for 8h: 4 high, 2 medium, 2 low'
+  allows:
+    read_file:
+      path: glob "src/*" (compares text; does not resolve ..)
+  findings:
+  - severity: high
+    tool: read_file
+    argument: path
+    problem: 'Paths outside the intended directory get through: ...'
+    allowed_inputs:
+    - src/../.env
+    fix: 'Use {subpath: /absolute/project/dir}, which resolves ..'
+```
+
+Each argument's constraint is explained in plain language. Findings come from
+the constraint type and the argument's name (paths, URLs, commands, amounts,
+recipients). `allowed_inputs` are attack inputs, such as traversal, secrets,
+cloud metadata URLs and shell commands, that the argument's native constraint
+check accepts: the same check a verifier runs. An empty list means no known
+pattern got through, not that the warrant is safe for the task. Review decodes
+without verifying; use `warrant verify` for trust, expiry and revocation. It
+reviews the leaf of a delegated chain, which bounds what the holder can do.
+
 ## Approve a held call using files
 
 An integration writes an `approval-request` YAML file containing the complete
