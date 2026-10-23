@@ -151,7 +151,9 @@ class EnforcementResult:
             ConstraintViolation: Argument violates a warrant constraint
             ToolNotAuthorized: Tool not granted by the warrant
             SignatureInvalid: PoP / signature verification failed
-            UntrustedRoot: Root warrant issuer is not in the trusted set
+            UntrustedRoot: Root warrant issuer is not in the trusted set, or a
+                delegated warrant arrived without its parent chain
+                (``error_type="chain_missing"``)
             ToolNotAuthorized: Generic authorization denial fallback
         """
         if self.allowed:
@@ -196,6 +198,9 @@ class EnforcementResult:
 
         if error_type == "untrusted_issuer":
             raise UntrustedRoot()
+
+        if error_type == "chain_missing":
+            raise UntrustedRoot(hint=_CHAIN_MISSING_HINT)
 
         if error_type == "constraint_violation":
             raise ConstraintViolation(
@@ -504,6 +509,35 @@ def _enforcement_result_from_chain_error(
     )
 
 
+_CHAIN_MISSING_HINT = (
+    "Delegated warrant presented without its parent chain. Send the full "
+    "root→leaf WarrantStack (or pass warrant_chain=/use chain_scope()). "
+    "Do not add intermediate keys to trusted_roots."
+)
+
+
+def _is_delegated(warrant: Any) -> bool:
+    depth = getattr(warrant, "depth", None)
+    parent_hash = getattr(warrant, "parent_hash", None)
+    return (isinstance(depth, int) and depth > 0) or (isinstance(parent_hash, (str, bytes)) and len(parent_hash) > 0)
+
+
+def _relabel_chain_missing(result: EnforcementResult, presented_chain: Optional[Any]) -> None:
+    """Name the likely cause when a delegated leaf arrives with no parents.
+
+    Re-labels an existing untrusted-issuer denial only; a delegated warrant
+    whose own issuer is a trusted root is still accepted alone by the core.
+    """
+    if (
+        result.error_type == "untrusted_issuer"
+        and isinstance(presented_chain, list)
+        and len(presented_chain) == 1
+        and _is_delegated(presented_chain[0])
+    ):
+        result.error_type = "chain_missing"
+        result.denial_reason = f"{_CHAIN_MISSING_HINT} ({result.denial_reason})"
+
+
 def _log_chain_enforcement_denial(
     tool_name: str,
     exc: BaseException,
@@ -511,7 +545,7 @@ def _log_chain_enforcement_denial(
 ) -> None:
     """Log authorization denials from chain/sign paths at the right severity."""
     msg = f"Authorization denied for {tool_name}: {exc}"
-    if error_type in ("invalid_pop", "revoked", "untrusted_issuer"):
+    if error_type in ("invalid_pop", "revoked", "untrusted_issuer", "chain_missing"):
         logger.warning(msg)
     else:
         logger.debug(msg)
@@ -552,6 +586,7 @@ def _enforcement_result_from_chain_error_with_logging(
     result.authorizer = authorizer
     result.verified_pop = verified_pop
     result.pop_auth_args = pop_auth_args
+    _relabel_chain_missing(result, presented_chain)
     _log_chain_enforcement_denial(tool_name, exc, result.error_type)
     return result
 

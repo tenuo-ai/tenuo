@@ -2007,6 +2007,7 @@ TenuoError (base)
 │   └── ...
 ├── ChainError
 │   └── UntrustedRoot       # error_type="untrusted_issuer", wire 1406 / untrusted-root
+│                           # error_type="chain_missing": delegated leaf sent without its parent chain
 ├── ConstraintError         # Invalid constraint definition
 └── ConfigurationError      # Invalid configuration
 ```
