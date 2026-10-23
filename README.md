@@ -42,6 +42,16 @@ cargo add tenuo --features sdk
 
 See [`tenuo-ts/README.md`](tenuo-ts/README.md) for TypeScript. Rust is [below](#rust).
 
+### LangChain / LangGraph
+
+Add task-scoped authorization to agent tool calls with `TenuoMiddleware` on `create_agent()`:
+
+```bash
+uv pip install "tenuo[langchain]"
+```
+
+[Run the 30-second demo →](https://github.com/tenuo-ai/tenuo-demos/tree/main/langchain-task-authority) · [LangChain guide](https://tenuo.ai/langchain)
+
 ### AI coding agents
 
 Install Tenuo's implementation skill so a supported coding agent can place
