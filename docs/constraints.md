@@ -700,7 +700,8 @@ constraint.matches("rm -rf /")              # False (rm not in allowlist)
 > "tar --checkpoint-action=exec=cmd -xf file.tar"
 > ```
 >
-> For complete protection, use `proc_jail` which bypasses the shell entirely via `execve()`.
+> To authorize what actually runs, use a structured tool and `tenuo.process`
+> (below), which executes the checked arguments without a shell.
 
 > [!NOTE]
 > **Dangerous Binaries**
@@ -723,6 +724,48 @@ constraint.matches(None)  # False
 # Empty allowlist raises ValueError
 Shlex(allow=[])  # ValueError: Shlex requires at least one allowed binary
 ```
+
+
+#### Running the authorized command
+
+A check on a command string does not fix what runs: the shell expands braces,
+globs and `~` afterwards, and the program reads its own config. For agents that
+run commands, give the tool structured arguments and run them with
+`tenuo.process` (POSIX only):
+
+```python
+from tenuo import OneOf, Subpath, Subset, Warrant
+from tenuo.process import GIT, run, run_command
+
+warrant = (Warrant.mint_builder()
+    .capability("git",
+        subcommand=OneOf(["status", "diff", "log"]),
+        flags=Subset(["--short", "--stat", "--oneline"]),
+        paths=Subset(["."]),
+        cwd=Subpath("/workspace/repo"))
+    .holder(agent_key.public_key).ttl(1800).mint(issuer_key))
+bound = warrant.bind(agent_key)
+
+run(bound, GIT, subcommand="status", flags=["--short"], cwd="/workspace/repo")  # runs
+run(bound, GIT, subcommand="push", cwd="/workspace/repo")                      # AuthorizationDenied
+
+# A tool that takes one string: split once, run that split, never a shell.
+run_command(bound, GIT, "git log --oneline", cwd="/workspace/repo")
+run_command(bound, GIT, "git status && rm -rf ~", cwd="/workspace/repo")      # AuthorizationDenied
+```
+
+- `cwd` is resolved with `realpath` before the check, so a symlink cannot lead
+  outside the `Subpath`.
+- argv is exactly the checked values, with paths after `--`. The environment
+  is fixed by the `Program`; nothing is inherited.
+- The `GIT` profile stops repository config and `.gitattributes` from running
+  programs (`core.fsmonitor`, pagers, external diff, textconv, filters) and
+  turns off network transports. Keep `.git/` out of the agent's file tools,
+  since settings there still apply.
+- Delegation narrows each field: a smaller `OneOf` of subcommands, a smaller
+  `Subset` of flags, a deeper `Subpath`.
+- Other programs: `Program(name="rg", env={...})`. The profile only blocks
+  what it names, so check the program's own options that run code.
 
 ---
 
