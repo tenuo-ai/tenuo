@@ -1122,6 +1122,8 @@ class A2AServer:
             Various A2AErrors for validation failures
         """
         start_time = time.time()
+        # Set when observe mode lets a denial through on the PoP path.
+        observed_enforcement: Optional[Any] = None
 
         # Size guard — reject oversized tokens before any parsing cost
         if len(warrant_token) > MAX_WARRANT_TOKEN_BYTES:
@@ -1252,6 +1254,8 @@ class A2AServer:
                     )
                 if enforcement.allowed:
                     logger.debug(f"PoP verified for skill '{skill_id}'")
+                    if getattr(enforcement, "observed", False):
+                        observed_enforcement = enforcement
                 else:
                     collect_enforcement_receipt(enforcement, None, runtime=runtime)
                     _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
@@ -1395,26 +1399,30 @@ class A2AServer:
         if enforcement is not None:
             collect_enforcement_receipt(enforcement, enforcement.chain_result, runtime=runtime)
 
-        # Log audit event
+        # Log audit event. Observe mode may have let a denial through; record
+        # it as the observed denial it was, not as an allow.
         latency_ms = int((time.time() - start_time) * 1000)
+        observed = observed_enforcement is not None
         await self._audit(
             AuditEvent(
                 timestamp=datetime.now(timezone.utc),
-                event=AuditEventType.WARRANT_VALIDATED,
+                event=AuditEventType.WARRANT_REJECTED if observed else AuditEventType.WARRANT_VALIDATED,
                 task_id="",
                 skill=skill_id,
                 warrant_jti=jti or "",
                 warrant_iss=issuer_normalized or "",
                 warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
-                outcome="allowed",
+                outcome="denied" if observed else "allowed",
                 latency_ms=latency_ms,
+                reason=observed_enforcement.denial_reason if observed_enforcement is not None else None,
+                observed=observed,
             )
         )
 
         if self._control_plane is not None:
             try:
                 from tenuo._enforcement import EnforcementResult
-                _res = EnforcementResult(
+                _res = observed_enforcement or EnforcementResult(
                     allowed=True, tool=skill_id, arguments=arguments,
                     warrant_id=jti or "",
                 )
