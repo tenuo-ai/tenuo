@@ -104,14 +104,18 @@ class MyProjCrew:
 For hierarchical crews with cryptographic authorization:
 
 ```python
-from tenuo import Pattern, SigningKey, Warrant
+from tenuo import Pattern, SigningKey, Warrant, configure
 from tenuo.crewai import GuardBuilder, Subpath
+
+# Issuer key: in production this belongs to your control plane, not the agent
+control_plane_key = SigningKey.generate()
+configure(trusted_roots=[control_plane_key.public_key])
 
 # Agent holds warrant and signing key
 agent_key = SigningKey.generate()
 warrant = (Warrant.mint_builder()
-    .capability("read_file", {"path": Subpath("/data")})
-    .capability("search")
+    .capability("read_file", path=Subpath("/data"))
+    .capability("search", query=Pattern("*"))
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_plane_key))
@@ -132,8 +136,11 @@ guard.register()
 Define gates and approvers on the warrant, then pass `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
+from tenuo import Range
 from tenuo.approval import cli_prompt
 from tenuo.crewai import GuardBuilder
+
+# warrant: minted with an approval gate on transfer_funds (see Human Approvals)
 
 guard = (GuardBuilder()
     .allow("transfer_funds", amount=Range(0, 100_000))
@@ -357,25 +364,26 @@ except EscalationAttempt:
 For CrewAI Flows, use the `@guarded_step` decorator to scope authorization to individual steps:
 
 ```python
-from crewai import Flow, step
+from crewai.flow import Flow, listen, start
 from tenuo.crewai import guarded_step, Pattern, Wildcard
 
 class ResearchFlow(Flow):
-    
+
+    @start()
     @guarded_step(
         allow={"web_search": {"query": Wildcard()}},
         ttl="10m",
-        strict=True  # Fail if unguarded tools detected
     )
-    def research_step(self, state):
-        return self.research_crew.kickoff(state)
-    
+    def research_step(self):
+        return research_crew.kickoff(inputs={"topic": "agent security"})
+
+    @listen(research_step)
     @guarded_step(
-        allow={"send_email": {"recipients": Pattern("*@company.com")}},
-        ttl="5m"
+        allow={"send_email": {"recipients": Pattern("*@company.com"), "body": Wildcard()}},
+        ttl="5m",
     )
-    def notify_step(self, state):
-        return self.email_agent.execute(state)
+    def notify_step(self, research):
+        return email_crew.kickoff(inputs={"summary": research.raw})
 ```
 
 ### Decorator Parameters
