@@ -1,3 +1,9 @@
+---
+title: Envoy Quickstart
+description: Deploy Tenuo with Envoy and get your first denied request in under five minutes.
+permalink: /quickstart/envoy/
+---
+
 # Envoy Quickstart
 
 Put Tenuo in front of a backend with Envoy's **HTTP** external authorization

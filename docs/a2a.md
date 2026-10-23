@@ -1,6 +1,12 @@
 ---
-title: A2A Integration
-description: Warrant-based authorization for inter-agent communication
+title: "A2A agent-to-agent authorization and delegation"
+description: "Delegate narrower authority across remote agents with the A2A protocol: warrants that attenuate at every hop and verify offline."
+og_image: /images/og/guide-a2a.png
+og_image_alt: "Tenuo for A2A"
+guide_name: "A2A"
+guide_logo: a2a
+guide_install: 'uv pip install "tenuo[a2a]"'
+
 ---
 
 # Tenuo A2A Integration

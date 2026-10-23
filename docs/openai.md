@@ -1,6 +1,12 @@
 ---
-title: OpenAI Integration
-description: Tool protection for OpenAI agents and the Agents SDK
+title: "OpenAI Agents SDK authorization and tool security"
+description: "Guard OpenAI and Agents SDK tool calls with task-scoped warrants: allowed tools, argument constraints and signed receipts. Open-source AI agent authorization."
+og_image: /images/og/guide-openai.png
+og_image_alt: "Tenuo for OpenAI"
+guide_name: "OpenAI"
+guide_logo: openai
+guide_install: 'uv pip install "tenuo[openai]"'
+
 ---
 
 # Tenuo OpenAI Integration
