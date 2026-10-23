@@ -543,6 +543,8 @@ def generate_hints(
             granted.extend(caps.keys())
         tools_attr = getattr(warrant, "tools", [])
         granted.extend(tools_attr)
+        # capabilities and tools name the same skills; list each once
+        granted = list(dict.fromkeys(granted))
 
         if granted and tool_name not in granted:
             hints.append(f"Warrant has skills: {granted[:5]}")

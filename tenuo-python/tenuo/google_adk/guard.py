@@ -976,7 +976,7 @@ class TenuoGuard:
 
         try:
             record = {
-                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "event": event,
                 "tool": tool_name,
                 "args": (
