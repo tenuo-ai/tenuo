@@ -1410,5 +1410,106 @@ class TestPhase5RealCrewAIIntegration:
             pytest.skip("crewai not installed")
 
 
+class TestObserveMode:
+    """tenuo.configure(mode="observe"): would-deny calls are logged and audited, then proceed."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_config(self):
+        from tenuo.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+
+    @staticmethod
+    def _ctx(tool, args):
+        return MagicMock(tool_name=tool, tool_input=args, agent=None)
+
+    @staticmethod
+    def _observed(caplog):
+        return [r for r in caplog.records if r.getMessage().startswith("OBSERVE: would deny")]
+
+    @staticmethod
+    def _observe(root=None):
+        from tenuo import SigningKey
+        from tenuo.config import configure
+
+        configure(trusted_roots=[(root or SigningKey.generate()).public_key], mode="observe")
+
+    def _guard(self, events, on_denial="raise"):
+        return GuardBuilder().allow("read", path=Subpath("/data")).audit(events.append).on_denial(on_denial).build()
+
+    def test_tool_not_allowed_proceeds_and_logs(self, caplog):
+        self._observe()
+        events: list = []
+        guard = self._guard(events)
+
+        with caplog.at_level("WARNING"):
+            assert guard.authorize_hook(self._ctx("delete", {"path": "/etc/passwd"})) is None
+
+        [record] = self._observed(caplog)
+        assert record.tool == "delete"
+        assert record.error_type == "tool_denied"
+        assert record.constraint_violated == "tool"
+        assert record.args_keys == ["path"]
+        assert "/etc/passwd" not in record.getMessage()
+        assert [(e.decision, e.observed) for e in events] == [("DENY", True)]
+
+    def test_constraint_violation_proceeds(self, caplog):
+        self._observe()
+        events: list = []
+        guard = self._guard(events)
+
+        with caplog.at_level("WARNING"):
+            assert guard.authorize_hook(self._ctx("read", {"path": "/etc/passwd"})) is None
+
+        [record] = self._observed(caplog)
+        assert record.tool == "read"
+        assert record.constraint_violated == "path"
+        assert events[-1].decision == "DENY" and events[-1].observed is True
+
+    @pytest.mark.parametrize("on_denial", ["raise", "log", "skip"])
+    def test_enforce_mode_still_blocks(self, on_denial, caplog):
+        events: list = []
+        guard = self._guard(events, on_denial)
+
+        with caplog.at_level("WARNING"):
+            assert guard.authorize_hook(self._ctx("delete", {"path": "/data/x"})) is False
+
+        assert self._observed(caplog) == []
+        assert [(e.decision, e.observed) for e in events] == [("DENY", False)]
+
+    def test_tier2_warrant_violation_proceeds(self, caplog):
+        from tenuo import SigningKey, Warrant
+
+        root_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read", path=Subpath("/data/public"))
+            .holder(agent_key.public_key)
+            .mint(root_key)
+        )
+        events: list = []
+        guard = (
+            GuardBuilder()
+            .allow("read", path=Subpath("/data"))
+            .with_warrant(warrant, agent_key)
+            .with_trusted_roots([root_key.public_key])
+            .audit(events.append)
+            .build()
+        )
+        ctx = self._ctx("read", {"path": "/data/private/x"})
+
+        assert guard.authorize_hook(ctx) is False  # Tier 1 passes, warrant denies
+
+        self._observe(root_key)
+        with caplog.at_level("WARNING"):
+            assert guard.authorize_hook(ctx) is None
+        assert [r.tool for r in self._observed(caplog)] == ["read"]
+        # Audited as the observed denial it was, not as an ALLOW.
+        assert (events[-1].decision, events[-1].observed) == ("DENY", True)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

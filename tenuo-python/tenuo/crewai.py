@@ -119,12 +119,13 @@ from tenuo import (
     Wildcard,
 )
 from ._builder import BaseGuardBuilder
-from .config import resolve_trusted_roots
+from .config import resolve_trusted_roots, should_block_violation
 
 # Import unified enforcement logic
 from tenuo._enforcement import (
     DenialResult,
     EnforcementResult,
+    _apply_observe_mode,
     enforce_tool_call,
     enforce_tool_call_async,
     handle_denial,
@@ -456,6 +457,7 @@ class AuditEvent:
         error_code: Machine-readable code if denied
         agent_role: CrewAI agent role (for namespaced tools)
         timestamp: ISO timestamp
+        observed: True for a DENY that observe mode let proceed
     """
 
     tool: str
@@ -465,6 +467,7 @@ class AuditEvent:
     error_code: Optional[str] = None
     agent_role: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    observed: bool = False
 
 
 AuditCallback = Callable[[AuditEvent], None]
@@ -1034,6 +1037,7 @@ class CrewAIGuard:
                 return self._handle_denial(error, tool_name, args, agent_role)
 
         # Step 4: Tier 2 - Warrant authorization with PoP (Unified Enforcement)
+        observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
 
@@ -1057,6 +1061,8 @@ class CrewAIGuard:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
+            if enforcement.observed:
+                observed_result = enforcement
 
         elif self._warrant is not None:
             raise CrewAIConfigurationError(
@@ -1066,8 +1072,19 @@ class CrewAIGuard:
                 f"or remove the warrant to use Tier 1 only."
             )
 
-        # Authorization granted
-        self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
+        # Authorization granted. Observe mode may have let a Tier 2 denial
+        # through; audit that as the observed DENY it was, not as an ALLOW.
+        if observed_result is not None:
+            self._emit_audit(
+                tool_name,
+                args,
+                "DENY",
+                observed_result.denial_reason or "Authorization denied",
+                agent_role=agent_role,
+                observed=True,
+            )
+        else:
+            self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized {tool_name}")
         return None
 
@@ -1126,6 +1143,7 @@ class CrewAIGuard:
                 return self._handle_denial(error, tool_name, args, agent_role)
 
         # Step 4: Tier 2 — async warrant authorization with PoP
+        observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
 
@@ -1149,6 +1167,8 @@ class CrewAIGuard:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
+            if enforcement.observed:
+                observed_result = enforcement
 
         elif self._warrant is not None:
             raise CrewAIConfigurationError(
@@ -1158,8 +1178,19 @@ class CrewAIGuard:
                 f"or remove the warrant to use Tier 1 only."
             )
 
-        # Authorization granted
-        self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
+        # Authorization granted. Observe mode may have let a Tier 2 denial
+        # through; audit that as the observed DENY it was, not as an ALLOW.
+        if observed_result is not None:
+            self._emit_audit(
+                tool_name,
+                args,
+                "DENY",
+                observed_result.denial_reason or "Authorization denied",
+                agent_role=agent_role,
+                observed=True,
+            )
+        else:
+            self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized (async) {tool_name}")
         return None
 
@@ -1221,7 +1252,13 @@ class CrewAIGuard:
 
         Always emits audit event, regardless of mode.
         Uses shared handle_denial() for consistent behavior across integrations.
+
+        In observe mode (``tenuo.configure(mode="observe")``) the denial is
+        audited and logged as ``OBSERVE: would deny ...``, then the call
+        proceeds. ``on_denial`` only governs enforced denials.
         """
+        observe = not should_block_violation()
+
         # Always audit denials (CrewAI-specific)
         self._emit_audit(
             tool_name,
@@ -1230,6 +1267,7 @@ class CrewAIGuard:
             str(error),
             error_code=error.error_code,
             agent_role=agent_role,
+            observed=observe,
         )
 
         # Create an EnforcementResult-like object for the shared handler
@@ -1241,6 +1279,13 @@ class CrewAIGuard:
             denial_reason=str(error),
             error_type=error.error_code.lower() if error.error_code else None,
         )
+
+        if observe:
+            pseudo_result.constraint_violated = (
+                "tool" if isinstance(error, ToolDenied) else getattr(error, "argument", None)
+            )
+            _apply_observe_mode(pseudo_result)  # logs the shared OBSERVE warning
+            return None
 
         return handle_denial(
             pseudo_result,
@@ -1257,6 +1302,7 @@ class CrewAIGuard:
         *,
         error_code: Optional[str] = None,
         agent_role: Optional[str] = None,
+        observed: bool = False,
     ) -> None:
         """Emit audit event for authorization decision.
 
@@ -1274,6 +1320,7 @@ class CrewAIGuard:
                 reason=reason,
                 error_code=error_code,
                 agent_role=agent_role,
+                observed=observed,
             )
             try:
                 self._audit_callback(event)
