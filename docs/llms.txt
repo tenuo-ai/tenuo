@@ -14,6 +14,7 @@ Guidance for agents writing code with Tenuo:
 - Enforce at the effect boundary (where the tool actually runs), not only in the planner.
 - Use the SDK and framework adapters; do not reimplement warrant signing, attenuation, or verification.
 - Test both an allowed call and a denied call that is blocked before any side effect.
+- Configure only root keys as trusted roots. A delegated warrant verifies only when the full root-to-leaf chain travels with the call (a WarrantStack in `X-Tenuo-Warrant` or `_meta.tenuo.warrant`, or `warrant_chain=[...]` with parents root-first). Never add an intermediate key to `trusted_roots` to make a bare leaf pass: that promotes it to a root.
 - Default to enforce mode. For a controlled rollout, use `mode="observe"` (`"audit"` and `"permissive"` are accepted aliases), configure trusted roots explicitly, and follow the [production guide](https://tenuo.ai/production-guide). Observe mode logs what would be denied but does not block unauthorized actions. Switching modes with `configure(...)` replaces the configuration, so supply the trusted roots and any other required settings again.
 
 ## Docs
