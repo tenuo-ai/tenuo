@@ -115,6 +115,7 @@ pub mod revocation_tracker;
 #[cfg_attr(docsrs, doc(cfg(feature = "sdk")))]
 pub mod sdk;
 pub mod strict_json;
+pub mod task_binding;
 pub mod verification;
 pub mod warrant;
 pub mod wire;

@@ -405,7 +405,8 @@ jobs:
             expect_mcp_major: "1"
           - fastmcp-line: "4"
             mcp_spec: "mcp>=2"
-            fastmcp_spec: "fastmcp>=4"
+            # [tasks] adds fastmcp-tasks, so the MCP Tasks e2e tests run.
+            fastmcp_spec: "fastmcp[tasks]>=4"
             expect_fastmcp_major: "4"
             expect_mcp_major: "2"
     steps:
@@ -449,6 +450,9 @@ jobs:
             tests/adapters/test_mcp_ci_smoke.py \
             tests/adapters/test_mcp_fastmcp_middleware.py \
             tests/adapters/test_mcp_fastmcp_e2e.py \
+            tests/adapters/test_mcp_tasks.py \
+            tests/adapters/test_mcp_fastmcp_tasks_e2e.py \
+            tests/adapters/test_mcp_client_tasks_e2e.py \
             tests/e2e/test_smoke.py::test_mcp_import \
             tests/e2e/test_smoke.py::test_fastmcp_import
 

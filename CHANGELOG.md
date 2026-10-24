@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP Tasks (SEP-2663).** A task is bound to the warrant that created it.
+  `tasks/get`, `tasks/update` and `tasks/cancel` must present that warrant,
+  held by the same key, with a PoP over the method name and the request
+  params. Unknown tasks and other callers' tasks get the same denial.
+  - Core: `task_binding::verify_task_request` and `TaskBinding`, exposed to
+    Python as `tenuo_core.verify_task_request` and `tenuo_core.TaskBinding`.
+  - `TenuoMiddleware` binds tasks and guards `tasks/*` on FastMCP 4 with
+    `fastmcp-tasks`. It takes a `task_bindings=` store for multi-process
+    servers. FastMCP 3 serves its tasks protocol outside middleware, so it
+    is not covered.
+  - `MCPVerifier.verify_task_request` audits and receipts each decision like
+    a tool call, with the method as the tool name.
+  - `SecureMCPClient(tasks=True)` (MCP SDK 2.x) negotiates the 2026-07-28
+    protocol, polls tasked calls to their result, and adds `call_tool_task`,
+    which returns a `TenuoTask` handle that signs each request.
+  See [Long-Running Tasks](docs/mcp.md#long-running-tasks).
+
 ### Fixed
 
 - **Constraints reject unknown members when decoded.** A constraint read from

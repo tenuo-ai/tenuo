@@ -5298,6 +5298,127 @@ fn py_decode_meta_approval(token: &str) -> PyResult<PySignedApproval> {
     Ok(PySignedApproval { inner: approval })
 }
 
+/// The authority an MCP task was created under (SEP-2663).
+///
+/// Build one with `TaskBinding.for_created_task(task_id, leaf_warrant)` when
+/// a `tools/call` returns a task handle. Store it by task id and pass it to
+/// `verify_task_request` for later `tasks/*` requests.
+#[pyclass(name = "TaskBinding", frozen)]
+#[derive(Clone)]
+pub struct PyTaskBinding {
+    inner: crate::task_binding::TaskBinding,
+}
+
+#[pymethods]
+impl PyTaskBinding {
+    #[new]
+    fn new(task_id: String, warrant_id: String, holder: &PyPublicKey, expires_at: i64) -> Self {
+        Self {
+            inner: crate::task_binding::TaskBinding {
+                task_id,
+                warrant_id,
+                holder: holder.inner.clone(),
+                expires_at,
+            },
+        }
+    }
+
+    /// Binding for a task created under `warrant`, the leaf of the chain
+    /// that authorized the creating `tools/call`.
+    #[staticmethod]
+    fn for_created_task(task_id: String, warrant: &PyWarrant) -> Self {
+        Self {
+            inner: crate::task_binding::TaskBinding::for_created_task(task_id, &warrant.inner),
+        }
+    }
+
+    #[getter]
+    fn task_id(&self) -> &str {
+        &self.inner.task_id
+    }
+
+    #[getter]
+    fn warrant_id(&self) -> &str {
+        &self.inner.warrant_id
+    }
+
+    #[getter]
+    fn holder(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.holder.clone(),
+        }
+    }
+
+    /// Unix seconds when the creating warrant expires.
+    #[getter]
+    fn expires_at(&self) -> i64 {
+        self.inner.expires_at
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TaskBinding(task_id={:?}, warrant_id={:?}, expires_at={})",
+            self.inner.task_id, self.inner.warrant_id, self.inner.expires_at
+        )
+    }
+}
+
+/// Admit or deny an MCP `tasks/get`, `tasks/update` or `tasks/cancel` request.
+///
+/// `params_json` is the request params without `_meta`. `warrant` and
+/// `signature` are the `_meta.tenuo` fields. `binding` is what the server
+/// stored for the request's `taskId`, or None. Never raises on a denial:
+/// returns a dict with `allowed`, and either `task_id`, `warrant_id` and
+/// `signature` (bytes, the nonce to record against replay) or `code`,
+/// `jsonrpc_code` and `reason`.
+#[pyfunction(name = "verify_task_request")]
+#[pyo3(signature = (authorizer, method, params_json, warrant, signature, binding=None, now=None))]
+#[allow(clippy::too_many_arguments)]
+fn py_verify_task_request(
+    py: Python<'_>,
+    authorizer: &PyAuthorizer,
+    method: &str,
+    params_json: &str,
+    warrant: &str,
+    signature: &str,
+    binding: Option<&PyTaskBinding>,
+    now: Option<i64>,
+) -> PyResult<Py<PyDict>> {
+    let now = now.unwrap_or_else(|| chrono::Utc::now().timestamp());
+    let outcome = crate::task_binding::verify_task_request(
+        &authorizer.inner,
+        method,
+        params_json,
+        warrant,
+        signature,
+        binding.map(|b| &b.inner),
+        now,
+    );
+    let dict = PyDict::new(py);
+    match outcome {
+        Ok(access) => {
+            dict.set_item("allowed", true)?;
+            dict.set_item("task_id", access.task_id)?;
+            dict.set_item("warrant_id", access.warrant_id)?;
+            dict.set_item(
+                "signature",
+                pyo3::types::PyBytes::new(py, &access.signature.to_bytes()),
+            )?;
+        }
+        Err(err) => {
+            dict.set_item("allowed", false)?;
+            dict.set_item("code", err.code())?;
+            dict.set_item("jsonrpc_code", err.jsonrpc_code())?;
+            dict.set_item("reason", err.to_string())?;
+        }
+    }
+    Ok(dict.unbind())
+}
+
 /// Core's argument map for `args_json`, returned as a dict.
 ///
 /// JSON null becomes ``None``. This is the map ``sign_meta`` signs.
@@ -7098,6 +7219,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_args_from_json, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_meta_chain, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_meta_signature, m)?)?;
+    m.add_function(wrap_pyfunction!(py_verify_task_request, m)?)?;
+    m.add_class::<PyTaskBinding>()?;
     m.add_function(wrap_pyfunction!(py_decode_meta_approval, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_receipt, m)?)?;

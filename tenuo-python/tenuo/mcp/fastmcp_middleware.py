@@ -16,13 +16,27 @@ exposed by :attr:`fastmcp.server.context.Context.request_context` ``.meta``
 (FastMCP 3: MCP SDK ``RequestContext``; FastMCP 4: ``FastMCPRequestContext``
 wrapping the raw dict). Whenever ``params.meta`` lacks ``tenuo``, the request
 context's meta is merged underneath it.
+
+MCP Tasks (SEP-2663, FastMCP 4 with ``fastmcp-tasks``): when an authorized
+``tools/call`` comes back as a task, the task id is bound to the creating
+warrant and holder, and ``tasks/get``/``tasks/update``/``tasks/cancel`` must
+present that warrant with a PoP over the request (see :mod:`tenuo.mcp.tasks`).
+FastMCP 3 serves its older ``tasks/*`` handlers outside the middleware chain,
+so this guard cannot see them there.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Optional
 
 from .server import MCPVerificationResult, MCPVerifier
+from .tasks import (
+    TASK_METHODS,
+    InMemoryTaskBindingStore,
+    TaskBindingStore,
+    binding_for_created_task,
+)
 
 _MCP_INSTALL = 'pip install "tenuo[mcp]"'
 _FASTMCP_INSTALL = 'pip install "tenuo[fastmcp]"'
@@ -181,6 +195,29 @@ def _denial_tool_return(verification: MCPVerificationResult) -> ToolResult:
     )
 
 
+def _created_task_id(result: Any) -> Optional[str]:
+    """The ``taskId`` when a ``tools/call`` outcome is a SEP-2663 task handle."""
+    if isinstance(result, Mapping):
+        if result.get("resultType") == "task" and isinstance(result.get("taskId"), str):
+            return result["taskId"]
+        return None
+    if getattr(result, "result_type", None) == "task":
+        task_id = getattr(result, "task_id", None)
+        return task_id if isinstance(task_id, str) else None
+    return None
+
+
+def _jsonrpc_error(code: int, message: str, data: Optional[dict[str, Any]] = None) -> Exception:
+    try:
+        from mcp.shared.exceptions import MCPError  # type: ignore[attr-defined, unused-ignore]  # mcp 2.x
+
+        return MCPError(code=code, message=message, data=data)
+    except ImportError:
+        from mcp.shared.exceptions import McpError  # type: ignore[attr-defined, unused-ignore]  # mcp 1.x
+
+        return McpError(mt.ErrorData(code=code, message=message, data=data))
+
+
 class TenuoMiddleware(Middleware):
     """Run :class:`MCPVerifier` on every ``tools/call`` before the tool runs.
 
@@ -203,10 +240,45 @@ class TenuoMiddleware(Middleware):
         @mcp.tool()
         async def read_file(path: str) -> str:
             return open(path).read()
+
+    When an authorized call runs as a task, the task id is bound to the
+    creating warrant in *task_bindings*, and ``tasks/*`` requests for it are
+    denied with a JSON-RPC error unless they present that warrant and a PoP
+    over the request. Pass a shared :class:`~tenuo.mcp.tasks.TaskBindingStore`
+    when several processes serve the same tasks.
     """
 
-    def __init__(self, verifier: MCPVerifier) -> None:
+    def __init__(
+        self,
+        verifier: MCPVerifier,
+        *,
+        task_bindings: Optional[TaskBindingStore] = None,
+    ) -> None:
         self._verifier = verifier
+        self._task_bindings: TaskBindingStore = (
+            task_bindings if task_bindings is not None else InMemoryTaskBindingStore()
+        )
+
+    async def on_request(
+        self,
+        context: MiddlewareContext[Any],
+        call_next: CallNext[Any, Any],
+    ) -> Any:
+        if context.method not in TASK_METHODS:
+            return await call_next(context)
+        params = context.message
+        if hasattr(params, "model_dump"):
+            params = params.model_dump(by_alias=True, exclude_none=True)
+        result = self._verifier.verify_task_request(
+            context.method, params, bindings=self._task_bindings
+        )
+        if not result.allowed:
+            raise _jsonrpc_error(
+                result.jsonrpc_error_code or -32001,
+                result.denial_reason or "Authorization denied",
+                {"error_type": result.error_type} if result.error_type else None,
+            )
+        return await call_next(context)
 
     async def on_call_tool(
         self,
@@ -223,4 +295,9 @@ class TenuoMiddleware(Middleware):
         if not result.allowed:
             return _denial_tool_return(result)
         new_message = _strip_tenuo_meta(params, result.clean_arguments, resolved_meta=meta)
-        return await call_next(context.copy(message=new_message))
+        outcome = await call_next(context.copy(message=new_message))
+        task_id = _created_task_id(outcome)
+        presented = getattr(result, "presented_chain", None)
+        if task_id is not None and presented:
+            self._task_bindings.put(binding_for_created_task(task_id, presented[-1]))
+        return outcome
