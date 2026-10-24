@@ -1761,7 +1761,8 @@ tools:
 
       environment:
         from: literal        # Static value
-        value: "production"
+        path: ""
+        default: "production"
 
 routes:
   - pattern: "/api/v1/clusters/{cluster}/scale"
@@ -1881,7 +1882,7 @@ routes:
   - pattern: "/api/v1/admin/{action}"
     method: ["POST"]
     tool: "admin_action"
-    extra_constraints:
+    constraints:
       admin_key:
         from: header
         path: "X-Admin-Key"

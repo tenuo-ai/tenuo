@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   finite, and the CLI rejects malformed shorthand ranges as well as
   unknown, mixed, empty, or incorrectly typed constraint JSON instead of silently
   minting a weaker warrant.
+- **Config files and signed payloads reject unknown keys.** Gateway and MCP
+  configs, signed approvals, revocation lists and requests, and receipts now
+  fail to load on a key they do not define instead of ignoring it. Check
+  configs before upgrading: gateway settings that still use the old names
+  `chain_header` or `trusted_issuers` must be renamed to `warrant_header` and
+  `trusted_roots`.
 
 ## [0.3.3] - 2026-10-22
 
