@@ -20,6 +20,8 @@ Tenuo has two modes:
 
 In observe mode every denial, including a bad signature or untrusted root, is logged as one `WARNING` (`OBSERVE: would deny <tool>: <reason>`) with structured fields: `tool`, `args_keys`, `arg_types` (value type names, never values), `error_type`, `constraint_violated`, `denial_reason`, `warrant_id`. The result is returned as allowed with `observed=True` and the denial details kept, and receipts still record it as a denial. Approval gates are not prompted; the call is recorded with `error_type="approval_required"` and proceeds.
 
+If you sign receipts, an observed denial is a **deny** receipt with `enforced=false`, so a receipt stream always shows which denials were let through. Enforced receipts omit the field. Upgrade receipt verifiers before you turn observe mode on: tenuo 0.3.2 and older reject receipts that carry `enforced`.
+
 ```python
 from tenuo import configure, SigningKey
 
@@ -41,11 +43,20 @@ if is_observe_mode():
 
 ## Gradual Rollout
 
-**Step 1: Deploy in observe mode.** All tool calls are logged but never blocked. Analyze logs to see what would be denied.
+**Step 1: Deploy in observe mode.** All tool calls are logged but never blocked. Analyze logs to see what would be denied. Configure the same trusted roots you will enforce with, so the log shows the denials you would really get.
 
 ```python
-configure(issuer_key=SigningKey.generate(), mode="observe", dev_mode=True)
+configure(mode="observe", trusted_roots=[control_plane_pubkey])
 ```
+
+Or, if your app calls `auto_configure()`, from the environment:
+
+```bash
+export TENUO_MODE=observe
+export TENUO_TRUSTED_ROOTS="<root public key>"
+```
+
+Each `OBSERVE: would deny` line names the tool, the argument keys and types, and the `error_type`. Use them to tighten the policy: a `tool_not_allowed` line means the warrant needs that tool, and a `constraint_violation` line names the argument in `constraint_violated`. `untrusted_issuer` or `chain_missing` means trust is misconfigured, not the policy; see [Trusted Roots and Delegation Chains](#trusted-roots-and-delegation-chains).
 
 **Step 2: Add `@guard` to critical tools.**
 
@@ -64,13 +75,28 @@ with mint_sync(Capability("delete_file", path=Subpath("/tmp"))):
     delete_file("/etc/passwd")    # Logged as violation
 ```
 
-**Step 4: Enable enforce mode.** Roll out to a subset of traffic first if needed.
+**Step 4: Enable enforce mode.** Roll out to a subset of traffic first if needed. Observe mode is meant for a rollout window, not a permanent setting: leave it on and nothing is enforced.
 
 ```python
 configure(mode="enforce", trusted_roots=[control_plane_pubkey])
 ```
 
+`configure(...)` replaces the whole configuration, so pass the trusted roots again when you switch modes. With `auto_configure()`, set `TENUO_MODE=enforce` (or unset it) and restart.
+
 > **Tip:** Use `why_denied(tool, args)` to debug specific failures during rollout.
+
+## Trusted Roots and Delegation Chains
+
+Configure **only root keys** as trusted roots: the key of whatever mints your top-level warrants (your control plane or issuer). A verifier then accepts any warrant delegated from that root, at any depth, without knowing the intermediate keys.
+
+To do that it needs the whole chain. A delegated warrant carries a hash of its parent (`parent_hash`), not the parent itself, and the verifier never fetches parents. So every delegated call must present the root-to-leaf chain as one WarrantStack:
+
+- HTTP, FastAPI and A2A: `X-Tenuo-Warrant` carries the stack. `warrant.headers(..., warrant_chain=[root_warrant])` builds it, and `grant()` / `chain_scope()` fill it in for you.
+- MCP: `_meta.tenuo.warrant` carries the stack.
+- Temporal: the `x-tenuo-warrant-chain` header, set by `warrant_chain=` on the start APIs.
+- Framework adapters: pass `warrant_chain=[...]` (parents root-first, excluding the leaf) or a stack token.
+
+A delegated warrant presented alone fails closed (`chain_missing` / `UntrustedRoot`). Do not fix that by adding the orchestrator's key to `trusted_roots`. That quietly promotes the key to a root: the verifier stops checking that the warrant narrows the real root's authority, and the key can mint anything. Trusted roots must come from your configuration, never from anything in the request.
 
 ## Key Management
 
@@ -237,14 +263,25 @@ worker_warrant = (warrant.grant_builder()
 
 ### 3. Authorize an Action
 
+The verifier trusts only the issuer's root key and checks the whole chain, root first:
+
 ```python
+import time
+from tenuo import Authorizer
+
 worker_key = SigningKey.from_env("WORKER_KEY")
 args = {"cluster": "staging-web", "replicas": 5}
-pop_sig = worker_warrant.sign(worker_key, "manage_infrastructure", args)
+pop_sig = worker_warrant.sign(worker_key, "manage_infrastructure", args, int(time.time()))
 
-authorized = worker_warrant.allows("manage_infrastructure", args)
-print(f"Authorized: {authorized}")  # True
+authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
+authorizer.check_chain([warrant, worker_warrant], "manage_infrastructure", args,
+                       signature=bytes(pop_sig))  # raises on denial
+
+# The leaf alone is rejected: its issuer (the orchestrator) is not a root
+# authorizer.check_chain([worker_warrant], ...)  -> UntrustedRoot
 ```
+
+`worker_warrant.allows(tool, args)` only checks constraints. It verifies no signatures and no chain, so use it for previews, never to authorize.
 
 ## Combining Integrations
 
