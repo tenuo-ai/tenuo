@@ -5,6 +5,8 @@ description: Deep reference for Tenuo's Temporal integration — production conf
 
 # Temporal Integration Reference
 
+Applies to tenuo 0.3.2.
+
 > This is the deep reference for Tenuo's Temporal integration. For the getting-started guide, see **[Temporal Integration](./temporal.md)**.
 
 ---
