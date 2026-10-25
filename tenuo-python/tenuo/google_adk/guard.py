@@ -68,11 +68,12 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from tenuo._enforcement import (
     EnforcementResult,
+    _log_observed_denial,
     enforce_tool_call,
     enforce_tool_call_async,
     split_presented_warrant,
 )
-from tenuo.config import resolve_trusted_roots
+from tenuo.config import resolve_trusted_roots, should_block_violation
 from tenuo.exceptions import ConfigurationError, InsufficientApprovals
 
 if TYPE_CHECKING:
@@ -473,8 +474,9 @@ class TenuoGuard:
                         _cp_already_emitted=True,
                     )
 
-                # PoP authorized - tool call is allowed
-                self._audit("tool_allowed", tool.name, args, warrant)
+                # PoP authorized - tool call is allowed (or observed: the shared
+                # observe mode let a denial through, so audit it as one)
+                self._audit_tier2_allow(result, tool.name, args, warrant)
                 return None
 
             except AttributeError as e:
@@ -674,7 +676,7 @@ class TenuoGuard:
                         _cp_already_emitted=True,
                     )
 
-                self._audit("tool_allowed", tool.name, args, warrant)
+                self._audit_tier2_allow(result, tool.name, args, warrant)
                 return None
 
             except AttributeError as e:
@@ -865,9 +867,8 @@ class TenuoGuard:
         need = meta.get("need", 0)
         reason = result.denial_reason or f"Insufficient approvals: got {got}, need {need}"
 
-        if self._dry_run:
-            logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
-            self._audit("tool_dry_run_denied", tool_name, args, reason=reason)
+        if self._observing():
+            self._observe_denial(tool_name, args, reason, error_type="insufficient_approvals")
             return None
 
         self._audit("tool_denied", tool_name, args, reason=reason)
@@ -900,11 +901,10 @@ class TenuoGuard:
         _cp_already_emitted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Handle denial based on on_denial setting."""
-        # Dry run mode: log but don't block
-        if self._dry_run:
-            logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
-            self._audit("tool_dry_run_denied", tool_name, args, reason=reason)
-            return None  # Allow through in dry run
+        # Observe mode (global) or this guard's dry_run: log but don't block
+        if self._observing():
+            self._observe_denial(tool_name, args, reason, constraint_param=constraint_param)
+            return None
 
         self._audit("tool_denied", tool_name, args, reason=reason)
 
@@ -961,6 +961,63 @@ class TenuoGuard:
                 result["hints"] = hints
 
         return result
+
+    def _observing(self) -> bool:
+        """True when denials should be recorded but not enforced.
+
+        ``dry_run`` is observe mode scoped to this guard; global observe mode
+        (``tenuo.configure(mode="observe")``) applies to every guard.
+        """
+        return self._dry_run or not should_block_violation()
+
+    def _observe_denial(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        reason: str,
+        *,
+        constraint_param: Optional[str] = None,
+        error_type: Optional[str] = None,
+    ) -> None:
+        """Record a would-deny the same way as the shared observe mode."""
+        warrant_id = None
+        if self._warrant is not None:
+            _wid = getattr(self._warrant, "id", None)
+            if _wid is not None:
+                warrant_id = _wid.hex() if hasattr(_wid, "hex") else str(_wid)
+        _log_observed_denial(
+            EnforcementResult(
+                allowed=False,
+                tool=tool_name,
+                arguments=args,
+                denial_reason=reason,
+                constraint_violated=constraint_param,
+                error_type=error_type,
+                warrant_id=warrant_id,
+            )
+        )
+        # Event name kept for existing audit consumers; ``observed`` matches
+        # the field other adapters use.
+        self._audit("tool_dry_run_denied", tool_name, args, reason=reason, observed=True)
+
+    def _audit_tier2_allow(self, result: EnforcementResult, tool_name: str, args: Dict[str, Any], warrant: Any) -> None:
+        """Audit a Tier 2 decision the shared path returned as allowed.
+
+        In observe mode the shared path returns allowed=True, observed=True
+        for a denial it already logged; record that as an observed denial, not
+        as an allow.
+        """
+        if getattr(result, "observed", False):
+            self._audit(
+                "tool_dry_run_denied",
+                tool_name,
+                args,
+                warrant,
+                reason=result.denial_reason or "",
+                observed=True,
+            )
+        else:
+            self._audit("tool_allowed", tool_name, args, warrant)
 
     def _audit(
         self,

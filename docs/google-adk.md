@@ -515,6 +515,7 @@ guard = (GuardBuilder()
 
 **Event fields** (JSON lines written to the audit log):
 - `event`: `"tool_allowed"`, `"tool_denied"`, or `"tool_dry_run_denied"`
+- `observed`: `true` on `tool_dry_run_denied` events, which a dry run or observe mode let through
 - `tool`: Name of the tool
 - `args`: Tool arguments (values truncated to 100 chars)
 - `warrant`: Warrant ID and issuer (if available)
@@ -871,9 +872,11 @@ default_guard = GuardBuilder().on_denial("return").build()
 test_guard = TenuoGuard(
     warrant=warrant,
     signing_key=key,
-    dry_run=True,  # Logs with "DRY RUN", never blocks
+    dry_run=True,  # Logs "OBSERVE: would deny ...", never blocks
 )
 ```
+
+`dry_run` is observe mode scoped to one guard. To observe every integration at once, use `tenuo.configure(mode="observe")`: ADK guards honor it the same way, logging the shared `OBSERVE: would deny <tool>: <reason>` warning (argument keys and types, never values) and auditing a `tool_dry_run_denied` event with `observed: true`.
 
 ### Chain Multiple Callbacks
 

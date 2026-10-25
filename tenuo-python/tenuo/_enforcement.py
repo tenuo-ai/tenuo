@@ -2082,6 +2082,19 @@ def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
 
     if result.allowed or should_block_violation():
         return result
+    _log_observed_denial(result)
+    result.observed = True
+    result.allowed = True
+    return result
+
+
+def _log_observed_denial(result: EnforcementResult) -> None:
+    """Log one ``OBSERVE: would deny ...`` warning for a denial that proceeds.
+
+    Shared by observe mode and adapter-level equivalents (e.g. a guard's
+    ``dry_run``) so every integration reports would-deny decisions the same
+    way. Argument values are never logged, only keys and value type names.
+    """
     args = result.arguments or {}
     # The category and the argument name, never the core's reason text, which
     # can quote argument values (a malformed URL or CIDR, say).
@@ -2099,9 +2112,6 @@ def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
             "observed": True,
         },
     )
-    result.observed = True
-    result.allowed = True
-    return result
 
 
 from functools import wraps as _wraps  # noqa: E402
