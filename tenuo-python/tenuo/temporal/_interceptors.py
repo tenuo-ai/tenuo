@@ -1099,6 +1099,7 @@ class TenuoActivityInboundInterceptor:
 
         import time
         start_ns = time.perf_counter_ns()
+        observed_denial = False
         chain_result = None
         activity_fn = getattr(input, "fn", None)
 
@@ -1388,6 +1389,13 @@ class TenuoActivityInboundInterceptor:
                     # Reaching the approval gate proves that all preceding core
                     # checks, including holder PoP verification, succeeded.
                     pass
+                except (ConstraintViolation, ToolNotAuthorized):
+                    # In observe mode verify_inbound_call below records this
+                    # denial and lets the activity run.
+                    from tenuo.config import should_block_violation
+
+                    if should_block_violation():
+                        raise
                 except (SignatureInvalid, MissingSignature) as pop_exc:
                     raise PopVerificationError(
                         reason=str(pop_exc),
@@ -1406,7 +1414,9 @@ class TenuoActivityInboundInterceptor:
                     approvals=[],
                 )
 
-            approval_needed = preflight.error_type in ("approval_required", "insufficient_approvals")
+            # An observed result already recorded approval_required; observe never asks for approval.
+            approval_needed = not preflight.observed and preflight.error_type in (
+                "approval_required", "insufficient_approvals")
             if not preflight.allowed and not approval_needed:
                 if preflight.error_type == "invalid_pop":
                     raise PopVerificationError(
@@ -1444,6 +1454,23 @@ class TenuoActivityInboundInterceptor:
                     )
                 enforcement.raise_if_denied()
             chain_result = enforcement.chain_result
+            if enforcement.observed:
+                # Observe mode lets the activity run; record the denial it would have been.
+                self._emit_denial_event(
+                    info=info,
+                    warrant=warrant,
+                    tool=tool_name,
+                    args=args,
+                    reason=enforcement.denial_reason or "denied",
+                    constraint=enforcement.constraint_violated,
+                    start_ns=start_ns,
+                    authorizer=authorizer,
+                    presented_chain=list(chain) if chain else [warrant],
+                    verified_pop=pop_bytes,
+                    pop_auth_args=args,
+                    error_type=enforcement.error_type,
+                )
+                observed_denial = True
 
             # -- 14. Replay Deduplication --
             if info.attempt <= 1:
@@ -1459,8 +1486,12 @@ class TenuoActivityInboundInterceptor:
                 )
 
             if _active_span is not None:
-                _active_span.set_attribute("tenuo.decision", "allow")
-                _active_span.set_attribute("tenuo.constraint_violated", "")
+                # An observed denial ran, but the decision was deny.
+                _active_span.set_attribute("tenuo.decision", "deny" if observed_denial else "allow")
+                _active_span.set_attribute(
+                    "tenuo.constraint_violated",
+                    (enforcement.constraint_violated or "") if observed_denial else "",
+                )
 
         # -- 15. Fail-Closed Error Mapping & Tracing --
         except (
@@ -1592,6 +1623,8 @@ class TenuoActivityInboundInterceptor:
                 _span_ctx.__exit__(None, None, None)
 
         # -- 15. Emit Allow + Dispatch Activity --
+        if observed_denial:
+            return await self._next.execute_activity(input)
         self._emit_allow_event(
             info=info,
             warrant=warrant,

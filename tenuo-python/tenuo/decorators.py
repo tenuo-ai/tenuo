@@ -854,12 +854,15 @@ def guard(
                 expires_at = warrant_to_use.expires_at() if hasattr(warrant_to_use, "expires_at") else "unknown"
                 error_code = AuthErrorCode.EXPIRED
 
+                from .config import is_observe_mode
+
+                observing = is_observe_mode()
                 audit_logger.log(
                     AuditEvent(
                         event_type=AuditEventType.WARRANT_EXPIRED,
                         warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else None,
                         tool=tool_name,
-                        action="denied",
+                        action="observed" if observing else "denied",
                         error_code=error_code,
                         details=f"Warrant expired at {expires_at}",
                         metadata={
@@ -870,16 +873,13 @@ def guard(
                     )
                 )
 
-                error_msg = _make_actionable_error(
-                    error_code=error_code,
-                    tool_name=tool_name,
-                    func_name=func_name,
-                    callsite=callsite,
-                    details=f"Warrant expired at {expires_at}.",
-                )
-                raise ExpiredError(
-                    warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else "unknown", expired_at=expires_at
-                )
+                # Observe mode runs the call: enforce_tool_call below records
+                # the expiry as an observed denial, like any other.
+                if not observing:
+                    raise ExpiredError(
+                        warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else "unknown",
+                        expired_at=expires_at,
+                    )
 
             keypair_to_use = active_keypair or get_signing_key_context()
 

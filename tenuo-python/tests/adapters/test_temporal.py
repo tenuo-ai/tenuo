@@ -1928,8 +1928,10 @@ def test_otel_import_check():
     assert isinstance(_otel_available, bool)
 
 
-def test_otel_span_emitted_on_allow():
-    """Verify Tenuo emits a 'tenuo.authorize' OTel span with allow decision on success."""
+@pytest.mark.parametrize("observe", [False, True], ids=["allow", "observed-deny"])
+def test_otel_span_emitted_on_allow(observe):
+    """Verify Tenuo emits a 'tenuo.authorize' OTel span with allow decision on success,
+    and deny for a call observe mode let through."""
     # opentelemetry-sdk ships separately from opentelemetry-api, and only the
     # api is pulled in transitively, so the sdk is what has to be probed here.
     pytest.importorskip("opentelemetry.sdk")
@@ -1982,8 +1984,9 @@ def test_otel_span_emitted_on_allow():
     ai = ti.intercept_activity(nxt)
 
     import time as _time
+    path = "/etc/passwd" if observe else "/tmp/demo"
     pop = warrant.sign(
-        agent_key, "read_file", {"path": "/tmp/demo"}, int(_time.time())
+        agent_key, "read_file", {"path": path}, int(_time.time())
     )
 
     act_headers = {}
@@ -2010,9 +2013,13 @@ def test_otel_span_emitted_on_allow():
 
     inp = MagicMock()
     inp.fn = lambda path: path
-    inp.args = ("/tmp/demo",)
+    inp.args = (path,)
     inp.headers = payload_headers
 
+    if observe:
+        from tenuo.config import configure
+
+        configure(trusted_roots=[control_key.public_key], mode="observe")
     loop = asyncio.new_event_loop()
     try:
         with patch("tenuo.temporal._interceptors._otel_trace", test_trace), \
@@ -2020,6 +2027,10 @@ def test_otel_span_emitted_on_allow():
             loop.run_until_complete(ai.execute_activity(inp))
     finally:
         loop.close()
+        if observe:
+            from tenuo.config import reset_config
+
+            reset_config()
 
     finished = exporter.get_finished_spans()
     tenuo_spans = [s for s in finished if s.name == "tenuo.authorize"]
@@ -2029,7 +2040,9 @@ def test_otel_span_emitted_on_allow():
     span = tenuo_spans[0]
     attrs = dict(span.attributes or {})
     assert attrs.get("tenuo.tool") == "read_file"
-    assert attrs.get("tenuo.decision") == "allow"
+    assert attrs.get("tenuo.decision") == ("deny" if observe else "allow")
+    if observe:
+        nxt.execute_activity.assert_awaited()
     assert "tenuo.warrant_id" in attrs
     assert "tenuo.constraint_violated" in attrs
 
