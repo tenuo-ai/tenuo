@@ -1385,7 +1385,7 @@ def _enforce_tool_call_impl(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
+    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered, ApprovalDenied, ApprovalVerificationError):
         raise
     except ApprovalRequired as e:
         if verify_mode == "sign":
@@ -1813,7 +1813,7 @@ async def _enforce_tool_call_async_impl(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
+    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered, ApprovalDenied, ApprovalVerificationError):
         raise
     except ApprovalRequired as e:
         if verify_mode == "sign":
