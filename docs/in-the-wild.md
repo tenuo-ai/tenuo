@@ -1,6 +1,6 @@
 ---
 title: Tenuo in the Wild
-description: External writing, talks, and coverage about Tenuo
+description: Independent AAT implementations, external projects, writing, talks, and coverage
 ---
 
 <style>
@@ -52,6 +52,12 @@ description: External writing, talks, and coverage about Tenuo
   background: rgba(0, 212, 255, 0.1);
   color: var(--accent);
   border: 1px solid rgba(0, 212, 255, 0.25);
+}
+
+.wild-badge--implementation {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.25);
 }
 
 .wild-badge--mention {
@@ -116,7 +122,49 @@ description: External writing, talks, and coverage about Tenuo
 
 # Tenuo in the Wild
 
-<p class="wild-intro">External mentions, write-ups, and recognition.</p>
+<p class="wild-intro">Independent implementations, external projects, writing, talks, and recognition.</p>
+
+## Independent implementations
+
+Independent projects are implementing and extending the AAT model across Go, Rust, and TypeScript.
+
+<div class="wild-list">
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--implementation">Implementation</span>
+    <div class="wild-title"><a href="https://github.com/IgorKammerGrahl/Warden">Warden</a></div>
+    <div class="wild-attribution">Igor Kammer Grahl · Go · Apache-2.0</div>
+    <p class="wild-description">Independent AAT implementation with token derivation, chain verification, proof of possession, and an enforcement proxy for MCP tool calls. Its implementation findings helped shape the next revision of the draft.</p>
+    <a class="wild-link" href="https://github.com/IgorKammerGrahl/Warden">View on GitHub →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--implementation">Implementation</span>
+    <div class="wild-title"><a href="https://github.com/udaykishore-resu/arcp">Agent Runtime Controls Profile (ARCP)</a></div>
+    <div class="wild-attribution">Udaykishore Resu · Go · MIT</div>
+    <p class="wild-description">AAT implementation and MCP binding extended with runtime budgets, instruction-provenance controls, single-use approvals, and push revocation.</p>
+    <a class="wild-link" href="https://github.com/udaykishore-resu/arcp">View on GitHub →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--implementation">Implementation</span>
+    <div class="wild-title"><a href="https://github.com/behalf-sh/behalf">behalf</a></div>
+    <div class="wild-attribution">behalf-sh · Go and Rust · Apache-2.0</div>
+    <p class="wild-description">Tamper-evident action receipts for AI agents that carry the AAT delegation chain behind each consequential action, with independent capture and offline verification paths.</p>
+    <a class="wild-link" href="https://github.com/behalf-sh/behalf">View on GitHub →</a>
+  </div>
+
+  <div class="wild-card">
+    <span class="wild-badge wild-badge--implementation">Implementation</span>
+    <div class="wild-title"><a href="https://github.com/mcguinness/mission-bound-authorization">Mission-Bound Authorization</a></div>
+    <div class="wild-attribution">Karl McGuinness · TypeScript</div>
+    <p class="wild-description">Reference architecture that uses AAT-style offline attenuation to derive narrower authority for agents while keeping it bound to an approved, governed mission.</p>
+    <a class="wild-link" href="https://github.com/mcguinness/mission-bound-authorization">View on GitHub →</a>
+  </div>
+
+</div>
+
+## Coverage and recognition
 
 <div class="wild-list">
 
