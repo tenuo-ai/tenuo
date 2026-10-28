@@ -1161,7 +1161,9 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
     async def handle(self, scope: Any, receive: Any, send: Any) -> None:
         # Lazy FastAPI includes dispatch through handle(), not __call__().
         if await self._validate_dispatch(scope, receive, send):
-            await super().handle(scope, receive, send)
+            # Eager-inclusion versions have no handle() hook.
+            handler = getattr(super(), "handle", super().__call__)
+            await handler(scope, receive, send)
 
     def _get_tool_name(self, path: str, method: str, name: Optional[str] = None) -> str:
         """Infer tool name from route info."""
