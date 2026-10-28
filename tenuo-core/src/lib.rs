@@ -114,6 +114,7 @@ pub mod revocation_tracker;
 #[deny(missing_docs)]
 #[cfg_attr(docsrs, doc(cfg(feature = "sdk")))]
 pub mod sdk;
+pub mod shell_words;
 pub mod strict_json;
 pub mod verification;
 pub mod warrant;
@@ -149,9 +150,10 @@ pub mod python_control_plane;
 
 // Re-exports for convenience
 pub use constraints::{
-    All, Any, AnyOf, CelConstraint, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains,
-    Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subpath, Subset, UrlPattern,
-    Wildcard, MAX_CONSTRAINT_DEPTH,
+    All, Any, AnyOf, CelConstraint, Cidr, Constraint, ConstraintDiagnostics, ConstraintSet,
+    ConstraintValue, ConstraintViolation, ConstraintViolationKind, Contains, Exact, Not, NotOneOf,
+    OneOf, Pattern, Range, RegexConstraint, Subpath, Subset, UrlPattern, Wildcard,
+    MAX_CONSTRAINT_DEPTH,
 };
 pub use crypto::{PublicKey, Signature, SigningKey};
 pub use error::{Error, ErrorCode, Result};

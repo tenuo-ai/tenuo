@@ -50,16 +50,17 @@ jobs:
         run: |
           BUILD=$(grep -oP 'AUTHORIZER_BUILD:\s*u32\s*=\s*\K\d+' tenuo-core/src/bin/authorizer.rs || echo "1")
           CRATE_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' tenuo-core/Cargo.toml)
-          FULL_VERSION="${CRATE_VERSION}+authz.${BUILD}"
-          
+
+          # Docker tags reject '+'. Keep the build suffix hyphenated
+          # ("0.3.2-authz-3"), not dotted ("0.3.2-authz.3"): a dotted suffix
+          # has more dots than the crate tag and wins the Hub version badge.
           if [ -n "${{ github.event.inputs.version_tag }}" ]; then
-            VERSION="${{ github.event.inputs.version_tag }}"
+            DOCKER_VERSION="${{ github.event.inputs.version_tag }}"
+            DOCKER_VERSION="${DOCKER_VERSION/+authz./-authz-}"
+            DOCKER_VERSION="${DOCKER_VERSION//+/-}"
           else
-            VERSION="${FULL_VERSION}"
+            DOCKER_VERSION="${CRATE_VERSION}-authz-${BUILD}"
           fi
-          
-          # Docker tags don't allow '+' (SemVer build metadata), replace with '-'
-          DOCKER_VERSION="${VERSION//+/-}"
           echo "version=${DOCKER_VERSION}" >> $GITHUB_OUTPUT
           echo "crate_version=${CRATE_VERSION}" >> $GITHUB_OUTPUT
 
@@ -119,16 +120,17 @@ jobs:
         run: |
           BUILD=$(grep -oP 'AUTHORIZER_BUILD:\s*u32\s*=\s*\K\d+' tenuo-core/src/bin/authorizer.rs || echo "1")
           CRATE_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' tenuo-core/Cargo.toml)
-          FULL_VERSION="${CRATE_VERSION}+authz.${BUILD}"
-          
+
+          # Docker tags reject '+'. Keep the build suffix hyphenated
+          # ("0.3.2-authz-3"), not dotted ("0.3.2-authz.3"): a dotted suffix
+          # has more dots than the crate tag and wins the Hub version badge.
           if [ -n "${{ github.event.inputs.version_tag }}" ]; then
-            VERSION="${{ github.event.inputs.version_tag }}"
+            DOCKER_VERSION="${{ github.event.inputs.version_tag }}"
+            DOCKER_VERSION="${DOCKER_VERSION/+authz./-authz-}"
+            DOCKER_VERSION="${DOCKER_VERSION//+/-}"
           else
-            VERSION="${FULL_VERSION}"
+            DOCKER_VERSION="${CRATE_VERSION}-authz-${BUILD}"
           fi
-          
-          # Docker tags don't allow '+' (SemVer build metadata), replace with '-'
-          DOCKER_VERSION="${VERSION//+/-}"
           echo "version=${DOCKER_VERSION}" >> $GITHUB_OUTPUT
           echo "crate_version=${CRATE_VERSION}" >> $GITHUB_OUTPUT
 
@@ -154,10 +156,15 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ steps.version.outputs.version }}
+            # Order matters for the Docker Hub version badge (sort=date):
+            # it shows the newest tag, unless that tag is "latest", in which
+            # case it shows the same-digest tag with the most dots (oldest
+            # wins a tie). Crate version first, "latest" last. Never a bare
+            # numeric SHA: that is what made the badge read 0777990.
             type=raw,value=${{ steps.version.outputs.crate_version }}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=sha,prefix=sha-
             type=raw,value=latest
-            type=sha,prefix=
 
       - name: Create manifest list and push
         working-directory: /tmp/digests

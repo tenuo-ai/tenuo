@@ -5,7 +5,7 @@ export default {
   checkers: ["typescript"],
   tsconfigFile: "packages/core/tsconfig.json",
   mutate: [
-    "packages/core/src/client.ts:283-310",
+    "packages/core/src/client.ts:312-339",
     "packages/core/src/mcp.ts:84-92",
   ],
   testFiles: [

@@ -38,7 +38,7 @@
 
 use crate::approval::{AuditEvent, AuditEventType};
 use crate::audit::log_event;
-use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
+use crate::constraints::{Constraint, ConstraintDiagnostics, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
@@ -503,6 +503,10 @@ impl<'de> Deserialize<'de> for Warrant {
                 let signature: Signature = seq
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(4, &self));
+                }
 
                 // Deserialize payload
                 let payload: WarrantPayload = ciborium::de::from_reader(&payload_bytes[..])
@@ -1171,43 +1175,15 @@ impl Warrant {
         constraint_args: &HashMap<String, ConstraintValue>,
         signature: Option<&Signature>,
     ) -> Result<()> {
-        // Check expiration
-        if self.is_expired() {
-            return Err(Error::WarrantExpired {
-                warrant_id: self.id().to_string(),
-                expired_at: self.expires_at(),
-            });
-        }
-
-        // Only execution warrants can authorize actions
-        if self.payload.warrant_type != WarrantType::Execution {
-            return Err(Error::InvalidWarrantType {
-                message: "only execution warrants can authorize actions".to_string(),
-            });
-        }
-
-        // Check if tool is allowed
-        let constraints = if let Some(c) = self.payload.tools.get(tool) {
-            c
-        } else if let Some(c) = self.payload.tools.get("*") {
-            c
-        } else {
-            return Err(Error::ToolNotAuthorized {
-                tool: tool.to_string(),
-            });
-        };
-
-        // Check Proof-of-Possession over the wire-args view (mandatory)
-        self.verify_pop(
+        self.authorize_with_pop_args_and_config_as_of(
             tool,
             pop_args,
+            constraint_args,
             signature,
             POP_TIMESTAMP_WINDOW_SECS,
             POP_MAX_WINDOWS,
-        )?;
-
-        // Check warrant constraints against the extracted view
-        constraints.matches(constraint_args)
+            Utc::now().timestamp(),
+        )
     }
 
     /// Authorize an action with custom PoP window configuration.
@@ -1255,8 +1231,43 @@ impl Warrant {
     }
 
     /// Authorize against a committed evaluation instant (test / replay seam).
+    ///
+    /// Decoding is clock-neutral, so this standalone path rejects a warrant
+    /// issued after `as_of` by more than [`CLOCK_SKEW_TOLERANCE_SECS`].
+    /// Verifiers with their own tolerance (`Authorizer`, `DataPlane`) check
+    /// issuance themselves and call the shared core instead.
     #[allow(clippy::too_many_arguments)]
     pub fn authorize_with_pop_args_and_config_as_of(
+        &self,
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        pop_window_secs: i64,
+        pop_max_windows: u32,
+        as_of: i64,
+    ) -> Result<()> {
+        if self.is_issued_in_future_as_of(
+            as_of,
+            chrono::Duration::seconds(CLOCK_SKEW_TOLERANCE_SECS as i64),
+        ) {
+            return Err(Error::IssuedInFuture);
+        }
+        self.authorize_issuance_checked_as_of(
+            tool,
+            pop_args,
+            constraint_args,
+            signature,
+            pop_window_secs,
+            pop_max_windows,
+            as_of,
+        )
+    }
+
+    /// Authorization after the caller has applied its own future-issuance
+    /// policy: expiry, warrant type, tool, proof of possession, constraints.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn authorize_issuance_checked_as_of(
         &self,
         tool: &str,
         pop_args: &HashMap<String, ConstraintValue>,
@@ -1320,6 +1331,28 @@ impl Warrant {
         };
 
         constraints.matches(args)
+    }
+
+    /// Diagnose all capability-constraint failures without authorizing the call.
+    ///
+    /// This resolves exact and wildcard tool capabilities exactly as
+    /// [`Self::check_constraints`] does, but returns deterministic structured
+    /// diagnostics for adapters and developer tooling. It does not verify any
+    /// cryptographic or temporal security property.
+    pub fn diagnose_constraints(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<ConstraintDiagnostics> {
+        let constraints = if let Some(c) = self.payload.tools.get(tool) {
+            c
+        } else if let Some(c) = self.payload.tools.get("*") {
+            c
+        } else {
+            return Ok(ConstraintDiagnostics::tool_not_authorized(tool));
+        };
+
+        constraints.diagnose(args)
     }
 
     /// Canonical PoP preimage: `POP_CONTEXT || CBOR((warrant_id_hex, tool, sorted_args, window_ts))`.
@@ -1958,6 +1991,31 @@ impl Default for WarrantBuilder {
     }
 }
 
+/// Expiry for a delegated warrant that requested `ttl_secs`.
+///
+/// A child may not outlive its parent. A request that would is rejected
+/// rather than silently shortened, so the caller learns that it asked for
+/// more than it was given. Omitting the TTL inherits the parent's expiry.
+fn child_expiry_within_parent(now_sec: u64, ttl_secs: u64, parent_expires_at: u64) -> Result<u64> {
+    let proposed = now_sec.saturating_add(ttl_secs);
+    if proposed > parent_expires_at {
+        return Err(Error::MonotonicityViolation(format!(
+            "ttl {}s would outlive the parent warrant, which expires in {}s",
+            ttl_secs,
+            parent_expires_at.saturating_sub(now_sec)
+        )));
+    }
+    Ok(proposed)
+}
+
+/// Expiry for a high-level delegation API that promises to cap a requested
+/// lifetime at the parent's expiry. This calculation is deliberately done in
+/// the core, using the same clock read as warrant construction, so language
+/// bindings cannot race a wall-clock second boundary.
+fn child_expiry_capped_to_parent(now_sec: u64, ttl_secs: u64, parent_expires_at: u64) -> u64 {
+    now_sec.saturating_add(ttl_secs).min(parent_expires_at)
+}
+
 /// Builder for attenuating existing warrants.
 #[derive(Debug)]
 pub struct AttenuationBuilder<'a> {
@@ -1971,6 +2029,7 @@ pub struct AttenuationBuilder<'a> {
     // Common fields
     clearance: Option<Clearance>,
     ttl: Option<Duration>,
+    cap_ttl_to_parent: bool,
     max_depth: Option<u32>,
     session_id: Option<String>,
     agent_id: Option<String>,
@@ -2030,6 +2089,7 @@ impl<'a> AttenuationBuilder<'a> {
             constraint_bounds,
             clearance: parent.payload.clearance,
             ttl: None,
+            cap_ttl_to_parent: false,
             max_depth: None, // Will inherit from parent if not set
             session_id: parent.payload.session_id.clone(),
             agent_id: parent.payload.agent_id.clone(),
@@ -2088,6 +2148,18 @@ impl<'a> AttenuationBuilder<'a> {
     /// Set a shorter TTL.
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = false;
+        self
+    }
+
+    /// Set a TTL, shortening it atomically to the parent's expiry if needed.
+    ///
+    /// This is intended for high-level SDKs whose documented behavior is to
+    /// clamp a requested lifetime. Low-level callers should use [`Self::ttl`]
+    /// when an overlong request must be reported as an error.
+    pub fn ttl_capped_to_parent(mut self, ttl: Duration) -> Self {
+        self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = true;
         self
     }
 
@@ -2385,12 +2457,14 @@ impl<'a> AttenuationBuilder<'a> {
 
         let now_sec = Utc::now().timestamp() as u64;
         let expires_at = if let Some(ttl) = self.ttl {
-            let ttl_secs = ttl.as_secs();
-            let proposed = now_sec + ttl_secs;
-            if proposed > self.parent.payload.expires_at {
-                self.parent.payload.expires_at
+            if self.cap_ttl_to_parent {
+                child_expiry_capped_to_parent(
+                    now_sec,
+                    ttl.as_secs(),
+                    self.parent.payload.expires_at,
+                )
             } else {
-                proposed
+                child_expiry_within_parent(now_sec, ttl.as_secs(), self.parent.payload.expires_at)?
             }
         } else {
             self.parent.payload.expires_at
@@ -2559,6 +2633,7 @@ pub struct OwnedAttenuationBuilder {
     // Common fields
     clearance: Option<Clearance>,
     ttl: Option<Duration>,
+    cap_ttl_to_parent: bool,
     max_depth: Option<u32>,
     session_id: Option<String>,
     agent_id: Option<String>,
@@ -2628,6 +2703,7 @@ impl OwnedAttenuationBuilder {
             max_issue_depth,
             constraint_bounds,
             ttl: None,
+            cap_ttl_to_parent: false,
             max_depth: None,
             intent: None,
             extensions,
@@ -2803,12 +2879,27 @@ impl OwnedAttenuationBuilder {
     /// Set a shorter TTL.
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = false;
         self
     }
 
     /// Set TTL (mutable version for FFI).
     pub fn set_ttl(&mut self, ttl: Duration) {
         self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = false;
+    }
+
+    /// Set a TTL, shortening it atomically to the parent's expiry if needed.
+    pub fn ttl_capped_to_parent(mut self, ttl: Duration) -> Self {
+        self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = true;
+        self
+    }
+
+    /// Mutable variant of [`Self::ttl_capped_to_parent`] for FFI bindings.
+    pub fn set_ttl_capped_to_parent(&mut self, ttl: Duration) {
+        self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = true;
     }
 
     /// Set a lower maximum delegation depth.
@@ -3283,11 +3374,18 @@ impl OwnedAttenuationBuilder {
         let expires_at = if let Some(ttl) = self.ttl {
             let chrono_ttl = ChronoDuration::from_std(ttl)
                 .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
-            let proposed = now_sec + chrono_ttl.num_seconds() as u64;
-            if proposed > self.parent.payload.expires_at {
-                self.parent.payload.expires_at
+            if self.cap_ttl_to_parent {
+                child_expiry_capped_to_parent(
+                    now_sec,
+                    chrono_ttl.num_seconds() as u64,
+                    self.parent.payload.expires_at,
+                )
             } else {
-                proposed
+                child_expiry_within_parent(
+                    now_sec,
+                    chrono_ttl.num_seconds() as u64,
+                    self.parent.payload.expires_at,
+                )?
             }
         } else {
             self.parent.payload.expires_at
@@ -3824,7 +3922,11 @@ impl<'a> IssuanceBuilder<'a> {
         let chrono_ttl = ChronoDuration::from_std(ttl)
             .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
         let now_sec = Utc::now().timestamp() as u64;
-        let expires_at = now_sec + chrono_ttl.num_seconds() as u64;
+        let expires_at = child_expiry_within_parent(
+            now_sec,
+            chrono_ttl.num_seconds() as u64,
+            self.issuer.payload.expires_at,
+        )?;
 
         // Effective max depth: logic needs to align with requirement for concrete u8
         // If max_depth not set, inherit or default?
@@ -4219,6 +4321,37 @@ mod tests {
     }
 
     #[test]
+    fn test_decoded_future_warrant_cannot_authorize_standalone() {
+        // Decoding is clock-neutral, so the standalone authorize path must
+        // reject a correctly signed warrant dated beyond the default skew.
+        let keypair = create_test_keypair();
+        let args = HashMap::new();
+        for (offset, accepted) in [(3600, false), (10, true)] {
+            let mut warrant = Warrant::builder()
+                .tool("test", ConstraintSet::new())
+                .ttl(Duration::from_secs(300))
+                .holder(keypair.public_key())
+                .build(&keypair)
+                .unwrap();
+            let now = Utc::now().timestamp() as u64;
+            warrant.payload.issued_at = now + offset;
+            warrant.payload.expires_at = now + offset + 300;
+            warrant.payload_bytes = crate::wire::to_vec(&warrant.payload).unwrap();
+            warrant.signature = keypair.sign_raw(&warrant.signed_message());
+
+            let decoded = crate::wire::decode(&crate::wire::encode(&warrant).unwrap()).unwrap();
+            decoded.verify(&keypair.public_key()).unwrap();
+            let pop = decoded.sign(&keypair, "test", &args).unwrap();
+            let result = decoded.authorize("test", &args, Some(&pop));
+            if accepted {
+                assert!(result.is_ok(), "issued {offset}s ahead: {result:?}");
+            } else {
+                assert!(matches!(result, Err(Error::IssuedInFuture)), "{result:?}");
+            }
+        }
+    }
+
+    #[test]
     fn test_issued_in_future_rejection() {
         let keypair = create_test_keypair();
 
@@ -4394,15 +4527,44 @@ mod tests {
             .build(&parent_keypair)
             .unwrap();
 
-        // Request longer TTL - should be capped to parent
-        let child = parent
+        // Requesting a longer TTL than the parent has left is a widening attempt.
+        let result = parent
             .attenuate()
             .inherit_all() // POLA: explicitly inherit all capabilities
             .ttl(Duration::from_secs(3600))
-            .build(&parent_keypair) // parent_keypair is parent's holder
-            .unwrap();
+            .build(&parent_keypair); // parent_keypair is parent's holder
+        assert!(
+            matches!(result, Err(Error::MonotonicityViolation(ref m)) if m.contains("outlive")),
+            "expected rejection, got {:?}",
+            result.map(|w| w.expires_at())
+        );
 
+        // Omitting the TTL inherits the parent's expiry.
+        let child = parent
+            .attenuate()
+            .inherit_all()
+            .build(&parent_keypair)
+            .unwrap();
+        assert_eq!(child.expires_at(), parent.expires_at());
+
+        // A TTL within the parent's remaining lifetime is accepted as requested.
+        let child = parent
+            .attenuate()
+            .inherit_all()
+            .ttl(Duration::from_secs(30))
+            .build(&parent_keypair)
+            .unwrap();
         assert!(child.expires_at() <= parent.expires_at());
+
+        // High-level SDKs can explicitly request atomic clamping without a
+        // separate, racy wall-clock calculation in the language binding.
+        let child = parent
+            .attenuate()
+            .inherit_all()
+            .ttl_capped_to_parent(Duration::from_secs(3600))
+            .build(&parent_keypair)
+            .unwrap();
+        assert_eq!(child.expires_at(), parent.expires_at());
     }
 
     #[test]
@@ -5043,6 +5205,32 @@ mod tests {
         hasher.update(issuer_warrant.payload_bytes());
         let parent_hash: [u8; 32] = hasher.finalize().into();
         assert_eq!(execution_warrant.parent_hash(), Some(&parent_hash));
+    }
+
+    #[test]
+    fn test_issuance_ttl_cannot_exceed_issuer() {
+        let issuer_kp = create_test_keypair();
+        let holder_kp = create_test_keypair();
+        let issuer_warrant = Warrant::builder()
+            .r#type(WarrantType::Issuer)
+            .issuable_tools(vec!["read_file".to_string()])
+            .ttl(Duration::from_secs(60))
+            .holder(issuer_kp.public_key())
+            .build(&issuer_kp)
+            .unwrap();
+
+        let result = issuer_warrant
+            .issue_execution_warrant()
+            .unwrap()
+            .tool("read_file", ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_kp.public_key())
+            .build(&issuer_kp);
+
+        assert!(
+            matches!(result, Err(Error::MonotonicityViolation(ref message)) if message.contains("outlive")),
+            "expected overlong issuance TTL to be rejected"
+        );
     }
 
     #[test]

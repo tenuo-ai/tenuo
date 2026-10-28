@@ -170,8 +170,12 @@ configure_tenuo(
 - A route counts as guarded when `TenuoGuard` is anywhere in its dependency tree: on the route, through `SecureAPIRouter`, or in router or app `dependencies=`.
 - `require_warrant` only checks that the headers are present, so it does not count.
 - Plain Starlette routes, mounts (`StaticFiles`, sub-apps) and websocket routes without a guard fail too; list their paths in `exempt` if they are public.
-- The OpenAPI and docs routes (`/openapi.json`, `/docs`, `/docs/oauth2-redirect`, `/redoc`) are always exempt.
-- The check runs once at startup, so routes added after the app starts are not checked.
+- A public root mount uses `exempt=["/"]`; Starlette's empty root-mount path (`""`) is accepted as an alias.
+- FastAPI's built-in OpenAPI and docs handlers are always exempt, including custom docs URLs. Application routes at those same URLs still need a guard or an explicit exemption.
+- The check runs after startup hooks and the lifespan setup complete, before requests are served. Routes added later while the app is serving are not checked.
+- Strict validation requires ASGI lifespan/startup to be enabled. With `uvicorn --lifespan off` the startup check does not run, so `strict=True` cannot detect unguarded routes.
+
+Synchronous `error_handler` callbacks run in the framework's worker thread pool so blocking I/O does not stall the event loop. Async callbacks are awaited normally, as are awaitables returned by sync callbacks.
 
 ### `TenuoGuard`
 
@@ -195,6 +199,7 @@ async def read_file(
 **Argument extraction (default):**
 - Path parameters: Extracted from URL
 - Query parameters: Extracted from query string
+- Values are typed from the endpoint signature: with `limit: int`, `?limit=5` is authorized as the integer `5` (so `Range` and other numeric constraints work). Parameters the endpoint doesn't declare stay strings. Clients must sign the same typed values, e.g. `bound.headers("list_items", {"limit": 5})`, not `{"limit": "5"}`. Custom `extract_args` results are used as-is.
 
 > **Note:** JSON body fields are **not** extracted by default. To include body fields, provide a custom `extract_args` function to `TenuoGuard`.
 
@@ -556,4 +561,3 @@ stack_b64 = encode_warrant_stack([root, child])
 - [Security](./security)  -- Threat model, best practices
 - [API Reference](./api-reference)  -- Full Python API documentation
 - [LangChain](./langchain)  -- Tool protection for LangChain
-

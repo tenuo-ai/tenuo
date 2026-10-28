@@ -102,6 +102,9 @@ try {
 
 The first call runs. The second is rejected with
 `TENUO_CONSTRAINT_VIOLATION`; the original `execute` function is never called.
+`pnpm example:basic` runs this as
+[`examples/basic.ts`](packages/core/examples/basic.ts), including the explicit
+`{ session }` form below.
 
 You can also pass a session explicitly when ambient session context is not a
 good fit:
@@ -150,6 +153,26 @@ covered, for example with `pattern("*")`, or removed from the call.
 
 An empty tool policy, `allow: {}`, adds no host ceiling. The session warrant
 still applies; it does not mean “allow everything.”
+
+Inside a warrant, though, an empty capability does accept any arguments. So
+`session({ tools })` refuses a tool whose `allow` is `{}` rather than minting
+that silently. Name the tool's arguments, or opt in explicitly by naming the
+capability in the session's own `allow`:
+
+```ts
+// Throws: read_file has allow: {}.
+tenuo.session({ tools: [readFile] });
+
+// Explicit: this session may call read_file with any arguments.
+tenuo.session({ tools: [readFile], allow: { read_file: {} } });
+```
+
+Policy objects are checked for typos. `tenuo.tool()` requires `allow` and
+throws on unknown keys such as `alow`; `session()`, `issue()`, and `narrow()`
+options do the same. `execute()` options pass unknown keys through to the
+wrapped tool (framework options such as `abortSignal` or `toolCallId`), except
+keys that look like a misspelled Tenuo option (`sesion`, `approval`,
+`onReciept`, `requestID`), which throw instead of being ignored.
 
 ### Sessions carry delegated authority
 
@@ -290,7 +313,8 @@ await tenuo.withSession(reportSession, runReportAgent);
 ```
 
 The child can remove tools and tighten argument constraints; it cannot widen
-the parent, and it never outlives the parent warrant.
+the parent, and it never outlives the parent warrant: a `ttlSeconds` longer
+than the parent has left is clamped to the parent's expiry.
 `toWire()` exports only the warrant chain. It never exports the holder secret.
 
 ### Delegate to another agent
@@ -321,13 +345,20 @@ const mine = tenuo.sessionFromWire({ warrant: received, holderKey });
 await tenuo.withSession(mine, runReportAgent);
 ```
 
+`toWire()` returns the chain as an array of tokens, root first. Where only one
+string fits, such as an environment variable or a header, use
+`toWireString()`: the whole chain as one CBOR warrant stack in URL-safe
+base64, the same encoding as `present().warrant`. `sessionFromWire()` accepts
+either. Do not join the array yourself; a joined string is rejected with a
+pointer to `toWireString()`.
+
 Two checks make this a handoff of *less* authority rather than a shared
 credential:
 
 - Core rejects the child at `narrow()` time, before a token exists, if it names
-  a tool the parent lacks, widens a constraint, outlives the parent, or exceeds
-  the depth ceiling. The error carries `TENUO_CHAIN_INVALID` (or
-  `TENUO_DEPTH_EXCEEDED`).
+  a tool the parent lacks, widens a constraint, or exceeds the depth ceiling.
+  The error carries `TENUO_CHAIN_INVALID` (or `TENUO_DEPTH_EXCEEDED`). A
+  requested lifetime longer than the parent's is clamped, not rejected.
 - A copied chain is not authority. `sessionFromWire()` with any other holder key
   fails with `TENUO_INVALID_POP`, and a server verifying the proof-of-possession
   fails the same way.
@@ -526,7 +557,32 @@ createTenuo.inspectApproval(envelope); // { approverPublicKey, requestHash, exte
 
 Delegation can add approvers and raise the threshold with
 `narrow(session, allow, { addApprovers, minApprovals })`; it can never remove
-or lower them.
+them, and a `minApprovals` below the parent's throws.
+
+By default an approval envelope can be reused until it expires: the approval
+binds the exact call, so the same call can run again with it. To make
+approvals one-use, give the tool a nonce store. When an allowed call carried
+approvals, each one that matches the call is recorded before the tool body
+runs, and a second use is denied with `TENUO_INSUFFICIENT_APPROVALS`:
+
+```ts
+import { memoryNonceStore } from "@tenuo/core";
+
+const transfer = tenuo.tool(rawTransfer, {
+  capability: "transfer",
+  allow: { amount: max(100_000) },
+  // Remember keys as long as an approval can live (one hour by default).
+  nonceStore: memoryNonceStore({ ttlSeconds: 3600 }),
+});
+```
+
+The store is keyed on signed approval fields, so re-encoding an envelope does
+not make it fresh. A store that forgets a key before the approval expires lets
+it be used again, so size the store's TTL to your approval lifetime; the
+`memoryNonceStore()` default of 180 seconds suits PoP replay, not approvals. `memoryNonceStore()` protects one process; use a shared
+`NonceStore` (for example Redis) when several processes run the tool. The same
+`nonceStore` option on `mcp.verify()`, `mcp.handler()`, and `@tenuo/mcp`
+consumes approvals the same way, in addition to rejecting a replayed PoP.
 
 ### Revocation lists
 
@@ -576,8 +632,9 @@ holder secret.
 
 - Distribute newer signed revocation lists to long-running enforcement
   processes and load them with `tenuo.revoke()`.
-- For replay-sensitive or approval-gated MCP actions, use a shared production
-  `NonceStore`; the in-memory store only protects one process.
+- For replay-sensitive or approval-gated actions, in process or over MCP, use a
+  shared production `NonceStore`; the in-memory store only protects one
+  process.
 - Route `ApprovalRequiredError` to an approval service and retry only with the
   resulting signed approval envelopes.
 - Send receipts to a durable queue or collector. Keep receipt hooks lightweight;
@@ -675,6 +732,7 @@ const runtime = createTenuo.runtime({
   receipts: "collect",
 });
 
+// warrant: the array from toWire(), or the single string from toWireString()
 const session = runtime.sessionFromWire(warrant);
 await readFile.execute({ path: "/data/q3.pdf" }, { session });
 const receipts = session.peekReceipts();
@@ -821,8 +879,9 @@ keys, never the client's holder secret.
 
 Proof-of-possession v1 is replayable within its validity window unless a nonce
 store is configured. Use `memoryNonceStore()` for one-process deployments or
-provide an async `NonceStore` backed by shared storage. A nonce-store failure
-fails closed. Its `ttlSeconds` option defaults to 180 and, when provided, must
+provide an async `NonceStore` backed by shared storage. With a store, an
+allowed call also consumes the approvals it carried, so a freshly signed PoP
+cannot reuse them. A nonce-store failure fails closed. Its `ttlSeconds` option defaults to 180 and, when provided, must
 be positive, finite, and small enough to represent in milliseconds.
 
 See the [`@tenuo/mcp` README](packages/mcp/README.md) for handler behavior,

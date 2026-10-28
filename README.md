@@ -366,8 +366,8 @@ This runs the [orchestrator -> worker -> authorizer](https://tenuo.ai/demo.html)
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.3.2  # Sidecar for warrant verification
-docker pull tenuo/control:0.3.2     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.3.3  # Sidecar for warrant verification
+docker pull tenuo/control:0.3.3     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -404,7 +404,7 @@ The core crate is the protocol. The `sdk` feature is the enforcement surface: a 
 
 ```toml
 [dependencies]
-tenuo = { version = "0.3.2", features = ["sdk"] }
+tenuo = { version = "0.3.3", features = ["sdk"] }
 ```
 
 ```rust
@@ -452,7 +452,7 @@ Use Rust for authorizer sidecars, gateways, MCP servers built on `rmcp`, and any
 
 Tenuo builds on capability token ideas described in [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025). Inspired by [Macaroons](https://research.google/pubs/pub41892/), [Biscuit](https://www.biscuitsec.org/), and [UCAN](https://ucan.xyz/).
 
-The token format and delegation protocol are being standardized as [draft-niyikiza-oauth-attenuating-agent-tokens-01](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/01/) in the IETF OAuth Working Group. The core attenuation rules are formally verified with [Alloy](docs/formal_verification/aat_constraints.als) (capability and argument-key monotonicity) and [Z3](docs/formal_verification/z3_bounds.py) (constraint-type subsumption bounds).
+The token format and delegation protocol are specified in [Attenuating Authorization Tokens for Agentic Delegation Chains](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/), an active individual Internet-Draft in the IETF OAuth Working Group. The core attenuation rules are formally verified with [Alloy](docs/formal_verification/aat_constraints.als) (capability and argument-key monotonicity) and [Z3](docs/formal_verification/z3_bounds.py) (constraint-type subsumption bounds).
 
 See [Related Work](https://tenuo.ai/related-work) for detailed comparison.
 

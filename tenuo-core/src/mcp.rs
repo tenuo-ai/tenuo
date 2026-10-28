@@ -46,6 +46,8 @@
 //!         default: 1048576
 //! ```
 //!
+//! Unknown keys are rejected, so a misspelled key fails to load instead of being ignored.
+//!
 //! ```rust,ignore
 //! use tenuo::{Authorizer, CompiledMcpConfig, McpConfig, PublicKey, wire};
 //! use serde_json::json;
@@ -138,6 +140,7 @@ const MAX_CONSTRAINT_COUNT_PER_TOOL: usize = crate::wire::MAX_CONSTRAINTS_PER_TO
 /// Simpler than `GatewayConfig` as it doesn't need HTTP routing.
 /// It maps MCP tool names directly to Tenuo tool configurations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpConfig {
     /// Configuration version
     pub version: String,
@@ -152,6 +155,7 @@ pub struct McpConfig {
 
 /// Global MCP settings.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct McpSettings {
     /// Trusted Control Plane public keys (hex)
     #[serde(default)]

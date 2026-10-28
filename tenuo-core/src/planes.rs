@@ -96,17 +96,23 @@ fn verify_approvals_with_tolerance(
         NotAuthorized,
         Duplicate,
         Expired,
+        NotYetValid,
         HashMismatch,
     }
 
     let mut valid_count = 0u32;
     let mut seen_approvers = std::collections::HashSet::new();
-    let tolerance_secs = clock_tolerance.num_seconds() as u64;
+    // Clock tolerance covers an approver whose clock runs ahead (an approval
+    // dated slightly in the future). Expiry is strict, as it is for warrants at
+    // authorization: an approval for a high-impact action must not outlive the
+    // window the approver chose.
+    let skew_tolerance_secs = clock_tolerance.num_seconds().max(0) as u64;
     let mut rejections: Vec<Rejection> = Vec::new();
     let mut verified: Vec<VerifiedApproval> = Vec::new();
 
     for approval in approvals {
-        let payload = match approval.verify() {
+        // Signature and structure here; the time checks below give precise reasons.
+        let payload = match approval.verify_with_skew(u64::MAX) {
             Ok(p) => p,
             Err(_) => {
                 rejections.push(Rejection::InvalidSignature);
@@ -124,8 +130,13 @@ fn verify_approvals_with_tolerance(
             continue;
         }
 
-        if payload.expires_at.saturating_add(tolerance_secs) < now {
+        if now >= payload.expires_at {
             rejections.push(Rejection::Expired);
+            continue;
+        }
+
+        if payload.approved_at > now.saturating_add(skew_tolerance_secs) {
+            rejections.push(Rejection::NotYetValid);
             continue;
         }
 
@@ -156,7 +167,8 @@ fn verify_approvals_with_tolerance(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotAuthorized => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::Expired => "approval expired",
+            Rejection::NotYetValid => "approval dated in the future beyond clock tolerance",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }
@@ -166,7 +178,7 @@ fn verify_approvals_with_tolerance(
 
     // m-of-n: build rejection summary
     let mut parts = Vec::new();
-    let counts: [(usize, &str); 5] = [
+    let counts: [(usize, &str); 6] = [
         (
             rejections
                 .iter()
@@ -194,6 +206,13 @@ fn verify_approvals_with_tolerance(
                 .filter(|r| matches!(r, Rejection::Expired))
                 .count(),
             "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotYetValid))
+                .count(),
+            "dated in the future",
         ),
         (
             rejections
@@ -613,8 +632,6 @@ pub struct DataPlane {
     trusted_issuers: HashMap<String, PublicKey>,
     /// Optional: own keypair for attenuating warrants.
     own_keypair: Option<SigningKey>,
-    /// Clock skew tolerance for expiration checks.
-    clock_tolerance: chrono::Duration,
     /// Signed revocation list.
     revocation_list: Option<crate::revocation::SignedRevocationList>,
     /// Local cache of directly revoked warrants (Parental Revocation)
@@ -622,6 +639,9 @@ pub struct DataPlane {
     /// Tool clearance requirements: minimum clearance required per tool.
     /// Supports exact matches and glob patterns (e.g., "admin_*").
     tool_clearance_requirements: HashMap<String, Clearance>,
+    /// Allowed positive skew for warrants issued by a clock ahead of ours.
+    /// Expiry remains strict and is never extended by this tolerance.
+    clock_tolerance: chrono::Duration,
 }
 
 impl DataPlane {
@@ -632,10 +652,10 @@ impl DataPlane {
         Self {
             trusted_issuers: HashMap::new(),
             own_keypair: None,
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
@@ -647,10 +667,10 @@ impl DataPlane {
                 .map(|pk| (hex::encode(pk.to_bytes()), pk))
                 .collect(),
             own_keypair: None,
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
@@ -659,29 +679,27 @@ impl DataPlane {
         Self {
             trusted_issuers: HashMap::new(),
             own_keypair: Some(keypair),
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
-    /// Set the clock skew tolerance.
+    /// Set tolerance for warrants issued by a clock ahead of this verifier.
     ///
     /// In distributed systems, clocks on different machines can drift apart.
-    /// This tolerance allows a grace period when checking warrant expiration.
+    /// Warrant expiry remains strict; this only affects the not-yet-valid
+    /// check on `issued_at`.
     ///
     /// # Arguments
-    /// * `tolerance` - Grace period (e.g., 30 seconds). Use 0 for strict checking.
+    /// * `tolerance` - Maximum accepted positive clock skew.
     ///
-    /// # Example
-    /// ```rust,ignore
-    /// let mut data_plane = DataPlane::new();
-    /// data_plane.set_clock_tolerance(Duration::from_secs(60)); // 1 minute tolerance
-    /// ```
     pub fn set_clock_tolerance(&mut self, tolerance: std::time::Duration) {
-        self.clock_tolerance = chrono::Duration::from_std(tolerance)
-            .unwrap_or(chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS));
+        // Fallible: chrono's range is narrower than std's. Anything beyond it
+        // is effectively unbounded tolerance, and the issuance check saturates.
+        self.clock_tolerance =
+            chrono::Duration::from_std(tolerance).unwrap_or(chrono::Duration::MAX);
     }
 
     /// Set a signed revocation list.
@@ -1086,15 +1104,19 @@ impl DataPlane {
             .collect();
         verify_batch_raw(&batch_items)?;
 
-        // Authenticity first, then semantics. Expiry/structural checks cover
+        // Authenticity first, then semantics. Time/structural checks cover
         // every warrant, including a singleton root — they used to run only
         // while walking child links.
+        let as_of = chrono::Utc::now().timestamp();
         for warrant in chain {
-            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
+            if warrant.is_expired_as_of(as_of) {
                 return Err(Error::WarrantExpired {
                     warrant_id: warrant.id().to_string(),
                     expired_at: warrant.expires_at(),
                 });
+            }
+            if warrant.is_issued_in_future_as_of(as_of, self.clock_tolerance) {
+                return Err(Error::IssuedInFuture);
             }
             warrant.validate_structural().map_err(|e| {
                 Error::ChainVerificationFailed(format!(
@@ -1261,15 +1283,8 @@ impl DataPlane {
             )));
         }
 
-        // 4. Check child is not expired (with clock tolerance)
-        if child.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired {
-                warrant_id: child.id().to_string(),
-                expired_at: child.expires_at(),
-            });
-        }
-
-        // 5. Validate constraint attenuation (monotonicity)
+        // 4. Validate constraint attenuation (monotonicity). Expiry was checked
+        // for every warrant at the single evaluation instant above.
         match (parent.r#type(), child.r#type()) {
             (WarrantType::Execution, WarrantType::Execution) => {
                 // For execution warrants, validate capability attenuation
@@ -1423,32 +1438,46 @@ impl DataPlane {
                 }
             }
 
-            let auth_result = leaf.authorize(tool, args, signature).and_then(|_| {
-                // Evaluate approval gates before running multi-sig verification.
-                // Only require approvals when a gate fires for this tool+args. Absent a
-                // gate map evaluate_approval_gates returns false, matching Authorizer's
-                // semantics: required_approvers without any gate configuration means no
-                // call is gated (the builder rejects this state; legacy warrants see it
-                // as fully ungated rather than fully gated).
-                let gate_map = crate::approval_gate::parse_approval_gate_map(
-                    leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
-                )?;
-                let needs_approval =
-                    crate::approval_gate::evaluate_approval_gates(gate_map.as_ref(), tool, args)?;
-
-                if needs_approval {
-                    verify_approvals_with_tolerance(
-                        leaf,
+            // verify_chain applied this plane's issuance tolerance already.
+            let auth_result = leaf
+                .authorize_issuance_checked_as_of(
+                    tool,
+                    args,
+                    args,
+                    signature,
+                    crate::warrant::POP_TIMESTAMP_WINDOW_SECS,
+                    crate::warrant::POP_MAX_WINDOWS,
+                    chrono::Utc::now().timestamp(),
+                )
+                .and_then(|_| {
+                    // Evaluate approval gates before running multi-sig verification.
+                    // Only require approvals when a gate fires for this tool+args. Absent a
+                    // gate map evaluate_approval_gates returns false, matching Authorizer's
+                    // semantics: required_approvers without any gate configuration means no
+                    // call is gated (the builder rejects this state; legacy warrants see it
+                    // as fully ungated rather than fully gated).
+                    let gate_map = crate::approval_gate::parse_approval_gate_map(
+                        leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+                    )?;
+                    let needs_approval = crate::approval_gate::evaluate_approval_gates(
+                        gate_map.as_ref(),
                         tool,
                         args,
-                        approvals,
-                        chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-                        chrono::Utc::now().timestamp() as u64,
-                    )
-                } else {
-                    Ok(Vec::new())
-                }
-            });
+                    )?;
+
+                    if needs_approval {
+                        verify_approvals_with_tolerance(
+                            leaf,
+                            tool,
+                            args,
+                            approvals,
+                            self.clock_tolerance,
+                            chrono::Utc::now().timestamp() as u64,
+                        )
+                    } else {
+                        Ok(Vec::new())
+                    }
+                });
 
             match &auth_result {
                 Ok(_) => {
@@ -1629,10 +1658,11 @@ impl AuthorizerBuilder {
         self
     }
 
-    /// Set the clock tolerance for expiration checks.
+    /// Set the clock tolerance for future-issued timestamps.
     ///
-    /// In distributed systems, clocks can drift. This tolerance allows a grace
-    /// period when checking warrant expiration.
+    /// In distributed systems, clocks can drift. This tolerance accepts a
+    /// warrant or approval whose issuer's clock is slightly ahead. Expiry is
+    /// always strict.
     ///
     /// Default: 30 seconds.
     pub fn clock_tolerance(mut self, tolerance: chrono::Duration) -> Self {
@@ -1853,7 +1883,7 @@ impl Authorizer {
         self
     }
 
-    /// Set the clock tolerance for expiration checks (chainable).
+    /// Set the clock tolerance for future-issued timestamps (chainable).
     ///
     /// Default: 30 seconds.
     pub fn with_clock_tolerance(mut self, tolerance: chrono::Duration) -> Self {
@@ -2460,7 +2490,7 @@ impl Authorizer {
                     )));
                 }
             }
-            if warrant.is_expired_with_tolerance_as_of(self.clock_tolerance, as_of) {
+            if warrant.is_expired_as_of(as_of) {
                 return Err(Error::WarrantExpired {
                     warrant_id: warrant.id().to_string(),
                     expired_at: warrant.expires_at(),
@@ -2904,8 +2934,9 @@ impl Authorizer {
                 }
             }
 
-            // Capability, constraint, and PoP verification (split-view)
-            leaf.authorize_with_pop_args_and_config_as_of(
+            // Capability, constraint, and PoP verification (split-view).
+            // Issuance was checked above with this Authorizer's tolerance.
+            leaf.authorize_issuance_checked_as_of(
                 tool,
                 pop_args,
                 constraint_args,
@@ -3744,19 +3775,104 @@ mod tests {
     }
 
     #[test]
-    fn test_authorizer_rejects_expired_single_root_chain() {
+    fn test_warrant_expiry_is_strict_despite_clock_tolerance() {
         let control_plane = ControlPlane::generate();
         let warrant = control_plane
             .issue_warrant("test", &[], Duration::from_secs(0))
             .unwrap();
-        std::thread::sleep(Duration::from_millis(1100));
+
+        let mut data_plane = DataPlane::new_with_issuers([control_plane.public_key()]);
+        data_plane.set_clock_tolerance(Duration::from_secs(60));
+        let error = data_plane
+            .verify_chain(std::slice::from_ref(&warrant))
+            .unwrap_err();
+        assert!(matches!(error, Error::WarrantExpired { .. }));
 
         let authorizer = Authorizer::new()
             .with_trusted_root(control_plane.public_key())
-            .with_clock_tolerance(chrono::Duration::zero());
+            .with_clock_tolerance(chrono::Duration::seconds(60));
 
         let error = authorizer.verify_chain(&[warrant]).unwrap_err();
         assert!(matches!(error, Error::WarrantExpired { .. }));
+    }
+
+    #[test]
+    fn test_verifiers_keep_configured_issuance_tolerance_over_standalone_default() {
+        // 45s ahead: beyond the standalone 30s default, within a configured 60s.
+        let control_plane = ControlPlane::generate();
+        let mut warrant = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(300))
+            .unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now + 45;
+        warrant.payload.expires_at = now + 300;
+        warrant.payload_bytes = crate::wire::to_vec(&warrant.payload).unwrap();
+        warrant.signature = control_plane.keypair.sign_raw(&warrant.signed_message());
+        let args = HashMap::new();
+        let pop = warrant.sign(&control_plane.keypair, "test", &args).unwrap();
+
+        assert!(matches!(
+            warrant.authorize("test", &args, Some(&pop)),
+            Err(Error::IssuedInFuture)
+        ));
+
+        let mut data_plane = DataPlane::new_with_issuers([control_plane.public_key()]);
+        data_plane.set_clock_tolerance(Duration::from_secs(60));
+        data_plane
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "test",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .unwrap();
+
+        let authorizer = Authorizer::new()
+            .with_trusted_root(control_plane.public_key())
+            .with_clock_tolerance(chrono::Duration::seconds(60));
+        authorizer
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "test",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn test_set_clock_tolerance_accepts_any_std_duration() {
+        let mut data_plane = DataPlane::new();
+        for secs in [i64::MAX as u64, u64::MAX] {
+            data_plane.set_clock_tolerance(Duration::from_secs(secs));
+        }
+        data_plane.set_clock_tolerance(Duration::MAX);
+    }
+
+    #[test]
+    fn test_data_plane_applies_clock_tolerance_to_future_issuance_only() {
+        let control_plane = ControlPlane::generate();
+        let mut warrant = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(300))
+            .unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now + 45;
+        warrant.payload.expires_at = now + 300;
+        warrant.payload_bytes = crate::wire::to_vec(&warrant.payload).unwrap();
+        warrant.signature = control_plane.keypair.sign_raw(&warrant.signed_message());
+
+        let mut accepts = DataPlane::new_with_issuers([control_plane.public_key()]);
+        accepts.set_clock_tolerance(Duration::from_secs(60));
+        assert!(accepts.verify_chain(std::slice::from_ref(&warrant)).is_ok());
+
+        let mut rejects = DataPlane::new_with_issuers([control_plane.public_key()]);
+        rejects.set_clock_tolerance(Duration::from_secs(30));
+        assert!(matches!(
+            rejects.verify_chain(&[warrant]),
+            Err(Error::IssuedInFuture)
+        ));
     }
 
     #[test]
@@ -4110,6 +4226,72 @@ mod tests {
             &[approval],
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn data_plane_check_chain_uses_configured_approval_clock_tolerance() {
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+
+        let issuer = SigningKey::generate();
+        let approver = SigningKey::generate();
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
+        let warrant = Warrant::builder()
+            .capability("sensitive_action", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver.public_key()])
+            .min_approvals(1)
+            .holder(issuer.public_key())
+            .extension(
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY,
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+        let args = HashMap::new();
+        let pop = warrant.sign(&issuer, "sensitive_action", &args).unwrap();
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            "sensitive_action",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let approval = SignedApproval::create(
+            ApprovalPayload::new(
+                request_hash,
+                rand::random(),
+                "approver@example.com".into(),
+                now + chrono::Duration::seconds(45),
+                now + chrono::Duration::seconds(120),
+            ),
+            &approver,
+        );
+
+        let mut accepts = DataPlane::new_with_issuers([issuer.public_key()]);
+        accepts.set_clock_tolerance(Duration::from_secs(60));
+        assert!(accepts
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "sensitive_action",
+                &args,
+                Some(&pop),
+                std::slice::from_ref(&approval),
+            )
+            .is_ok());
+
+        let mut rejects = DataPlane::new_with_issuers([issuer.public_key()]);
+        rejects.set_clock_tolerance(Duration::ZERO);
+        assert!(rejects
+            .check_chain(
+                &[warrant],
+                "sensitive_action",
+                &args,
+                Some(&pop),
+                &[approval],
+            )
+            .is_err());
     }
 
     #[test]
@@ -6161,6 +6343,41 @@ mod tests {
 
         let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[expired]);
         assert!(result.is_err(), "expired approval must be rejected");
+    }
+
+    #[test]
+    fn test_pin_approval_expiry_is_strict_despite_clock_tolerance() {
+        // Clock tolerance (30s by default) must not extend an approval past the
+        // expiry its approver chose; warrants are already strict at authorization.
+        let (warrant, authorizer, issuer, admin1, _, args) = approval_pin_test_setup();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            "action",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let approved_at = chrono::Utc::now() - chrono::Duration::seconds(20);
+        let payload = ApprovalPayload::new(
+            request_hash,
+            rand::random(),
+            "admin1".to_string(),
+            approved_at,
+            approved_at + chrono::Duration::seconds(10), // expired 10s ago, inside the tolerance
+        );
+        let just_expired = SignedApproval::create(payload, &admin1);
+
+        let result =
+            authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[just_expired]);
+        let err = result
+            .expect_err("approval past its expiry must be rejected")
+            .to_string();
+        assert!(
+            err.contains("expired"),
+            "expected expiry rejection, got: {err}"
+        );
     }
 
     #[test]

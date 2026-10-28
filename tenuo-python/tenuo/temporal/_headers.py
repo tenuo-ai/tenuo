@@ -5,9 +5,10 @@ from __future__ import annotations
 import binascii
 import gzip
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from tenuo.temporal._constants import (
+    TENUO_CHAIN_HEADER,
     TENUO_COMPRESSED_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_WARRANT_HEADER,
@@ -27,15 +28,23 @@ def tenuo_headers(
     key_id: str,
     *,
     compress: bool = True,
+    warrant_chain: Optional[List[Any]] = None,
 ) -> Dict[str, bytes]:
     """Create headers dict for starting a workflow with Tenuo authorization.
 
     Args:
-        warrant: The warrant authorizing this workflow
+        warrant: The warrant authorizing this workflow. May also be the whole
+            chain as one token: a root-first list ``[root, ..., leaf]`` or an
+            encoded WarrantStack string.
         key_id: Identifier for the holder's signing key. The actual signing
             key is resolved at runtime by workers via KeyResolver from secure
             storage (Vault, AWS Secrets Manager, GCP Secret Manager, etc.).
         compress: Whether to gzip compress the warrant (default: True)
+        warrant_chain: The chain for a delegated ``warrant``, root-first:
+            either its parents, or the full chain ending with the leaf.
+            Emitted as the ``x-tenuo-warrant-chain`` header so workers that
+            trust only the root can verify the leaf. Default None sends the
+            leaf alone.
 
     Returns:
         Headers dict to pass to client.start_workflow()
@@ -71,6 +80,7 @@ def tenuo_headers(
             "Private keys must never be transmitted in headers."
         )
 
+    warrant, chain = _resolve_warrant_chain(warrant, warrant_chain, operation="tenuo_headers")
     warrant_bytes = bytes(warrant.to_bytes())
 
     headers: Dict[str, bytes] = {
@@ -86,7 +96,47 @@ def tenuo_headers(
         headers[TENUO_WARRANT_HEADER] = warrant_bytes
         headers[TENUO_COMPRESSED_HEADER] = b"0"
 
+    if len(chain) > 1:
+        from tenuo_core import encode_warrant_stack
+
+        headers[TENUO_CHAIN_HEADER] = encode_warrant_stack(chain).encode("utf-8")
+
     return headers
+
+
+def _resolve_warrant_chain(
+    warrant: Any,
+    warrant_chain: Optional[List[Any]],
+    *,
+    operation: str,
+) -> Tuple[Any, List[Any]]:
+    """Normalize ``warrant`` plus ``warrant_chain`` to ``(leaf, [root, ..., leaf])``.
+
+    Every Temporal helper accepts ``warrant_chain`` in either shape: the
+    leaf's parents (root-first, excluding the leaf), or the full chain ending
+    with the leaf. The shapes are told apart by comparing the last element's
+    bytes with the leaf; a valid chain never repeats a warrant, so the two
+    cannot be confused. The leaf anywhere but last is rejected.
+
+    ``warrant`` may also be the whole chain as one token (a root-first list or
+    an encoded WarrantStack), as in ``split_presented_warrant``.
+    """
+    from tenuo._enforcement import split_presented_warrant
+
+    leaf, parents_or_chain = split_presented_warrant(warrant, warrant_chain)
+    parents = list(parents_or_chain or [])
+    leaf_bytes = bytes(leaf.to_bytes())
+    # Only an explicit warrant_chain may carry the leaf as its last entry. A
+    # whole chain passed as ``warrant`` already had its leaf split off, so a
+    # second copy there is a malformed chain and must hit the check below.
+    if warrant_chain and parents and bytes(parents[-1].to_bytes()) == leaf_bytes:
+        parents.pop()
+    if any(bytes(parent.to_bytes()) == leaf_bytes for parent in parents):
+        raise TenuoContextError(
+            f"{operation}: warrant_chain lists the leaf warrant before its end. "
+            "Pass the parent warrants, or the full chain ending with the leaf."
+        )
+    return leaf, [*parents, leaf]
 
 
 def _validate_chain_ends_with_warrant(

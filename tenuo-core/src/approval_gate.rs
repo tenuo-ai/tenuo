@@ -1601,7 +1601,7 @@ mod tests {
             "amount".into(),
             ArgApprovalGate::Constraint(Constraint::Unknown {
                 type_id: 255,
-                payload: Vec::new(),
+                payload: vec![0xa0], // A valid single CBOR item: {}.
             }),
         );
         let mut gm = ApprovalGateMap::new();
