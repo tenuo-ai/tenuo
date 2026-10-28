@@ -61,6 +61,17 @@ Two checks are stricter, and some calls that used to pass now fail:
 
 ### Fixed
 
+- **FastAPI: `SecureAPIRouter` guards direct and included HTTP routes.**
+  `add_api_route()` and plain included routers no longer run without a warrant.
+  Nested and inclusion-level guards keep their authority. Lazy additions are
+  checked before dispatch, including mounts and plain Starlette routes that
+  do not run FastAPI dependencies. Unsupported route types are refused.
+- **FastAPI: inferred tool names cannot silently share authority.** Colliding
+  path names and ambiguous method groups need an explicit `tool=`. Aliases of
+  one route object under different inferred permissions need explicit
+  `TenuoGuard` dependencies or distinct routes. Only GET/HEAD automatically
+  share inferred read authority; PUT/PATCH retain their shared update name.
+
 - **WASM builders reject malformed Shlex and approval gates.** Invalid command
   lists, unsupported Shlex options, and malformed nested approval constraints
   fail warrant creation instead of being silently omitted. Shlex remains a
@@ -264,19 +275,6 @@ are now denied. Check these before upgrading:
   stay raw strings. Custom `extract_args` is unchanged.
 
 ### Fixed
-
-- **FastAPI: `SecureAPIRouter` guards every route it serves.** Routes added
-  with `add_api_route()` and the routes of routers passed to
-  `include_router()` ran with no warrant. They now get a `TenuoGuard` named
-  from the include prefix, path and method, including routes added to an
-  included router later; a route that already has a `TenuoGuard` keeps it.
-  Websocket routes, mounts, frontends and plain Starlette routes cannot carry
-  a guard, so adding one raises `ConfigurationError`.
-- **FastAPI: inferred tool names no longer collide.** `/admin_users` and
-  `/admin/users` both inferred `api_admin_users_read`, so one warrant covered
-  both. `SecureAPIRouter` now raises `ConfigurationError` on such a collision,
-  and on a route whose methods infer different names (`GET` and `POST`);
-  pass `tool=` explicitly.
 
 - **OpenAI `guard()` checks async clients.** On `AsyncOpenAI`,
   `chat.completions.create()` returned the raw coroutine, and the awaited

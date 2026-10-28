@@ -247,6 +247,10 @@ router = SecureAPIRouter(
 
 Every HTTP route the router serves is guarded: routes added with the decorators or `add_api_route()`, and the routes of routers passed to `include_router()` (named from the include prefix and path). A route that already depends on a `TenuoGuard` keeps it. Websocket routes, mounts and plain Starlette routes cannot carry a guard, so `SecureAPIRouter` raises `ConfigurationError` instead of serving them; put public routes on a plain `APIRouter`. Two paths that infer the same tool name (`/admin_users` and `/admin/users`), or one route whose methods infer different names, also raise; pass `tool=`.
 
+On FastAPI versions with lazy inclusion, late additions are revalidated before dispatch. An unsafe included route graph is denied rather than executing an unguarded handler, even when app-wide strict mode is off. Older versions copy routes at inclusion time, so later additions are not served. Register routes through the framework APIs rather than modifying route lists or dependency objects directly.
+
+If the same route object is included at multiple paths, add explicit `TenuoGuard` dependencies to the inclusions or use distinct route objects. This avoids silently reusing one alias's inferred permission for another. Nested router and include-level guards keep their existing tool names. GET/HEAD may share inferred read authority, and PUT/PATCH retain the same update name; other method groups such as GET/OPTIONS require an explicit `tool=`.
+
 **Methods:**
 
 All standard `APIRouter` methods are supported, with an additional `tool` parameter:

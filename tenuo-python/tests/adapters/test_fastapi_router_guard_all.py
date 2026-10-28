@@ -19,6 +19,7 @@ fastapi = pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")
 
 from fastapi import APIRouter, Depends, FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 from starlette.responses import PlainTextResponse  # noqa: E402
 
 from tenuo.fastapi import SecureAPIRouter, SecurityContext, TenuoGuard, configure_tenuo  # noqa: E402
@@ -114,7 +115,7 @@ def test_included_plain_router_routes_are_guarded() -> None:
 
 def test_route_added_to_included_router_later_is_guarded() -> None:
     if not _lazy_include_supported():
-        pytest.skip("FastAPI < 0.120 copies routes at include time; later routes are not served")
+        pytest.skip("FastAPI copies routes at include time; later routes are not served")
     ran: List[str] = []
     router = SecureAPIRouter(tool_prefix="api")
     sub = APIRouter()
@@ -130,6 +131,200 @@ def test_route_added_to_included_router_later_is_guarded() -> None:
     assert ran == []
     assert _call(app, "POST", "/late", _headers("api_late_create", {})) == 200
     assert ran == ["late"]
+
+
+@pytest.mark.parametrize("kind", ["plain", "mount"])
+def test_late_non_api_route_cannot_bypass_included_guard(kind: str) -> None:
+    if not _lazy_include_supported():
+        pytest.skip("Older FastAPI copies included routes")
+    ran: List[str] = []
+    router = SecureAPIRouter()
+    sub = APIRouter()
+
+    @sub.get("/safe")
+    async def safe() -> Dict[str, bool]:
+        return {}
+
+    router.include_router(sub)
+    app = _app(router)
+    assert _call(app, "GET", "/safe", _headers("safe_read", {})) == 200
+
+    async def plain(request: Any) -> Any:
+        ran.append("unprotected")
+        return PlainTextResponse("open")
+
+    if kind == "plain":
+        sub.add_route("/late", plain, methods=["GET"])
+    else:
+        mounted = FastAPI()
+        mounted.add_route("/", plain, methods=["GET"])
+        sub.mount("/late", mounted)
+        # Some FastAPI versions do not invalidate lazy caches for mount()
+        # alone; another normal registration makes that mount dispatchable.
+        sub.add_api_route("/refresh", safe, methods=["GET"])
+
+    path = "/late" if kind == "plain" else "/late/"
+    assert _call(app, "GET", path) == 403
+    assert ran == []
+
+
+def test_unchanged_lazy_graph_is_not_revalidated_on_every_request() -> None:
+    if not _lazy_include_supported():
+        pytest.skip("Tests lazy inclusion graph invalidation")
+    from unittest.mock import patch
+
+    router = SecureAPIRouter()
+    if not callable(getattr(router, "_get_routes_version", None)):
+        pytest.skip("Framework has no graph invalidation hook; conservative fallback rescans")
+    sub = APIRouter()
+
+    async def action() -> Dict[str, bool]:
+        return {}
+
+    sub.add_api_route("/x", action, methods=["GET"])
+    router.include_router(sub)
+    app = _app(router)
+    guard = router._included_guards[0]
+    with patch.object(guard, "refresh", wraps=guard.refresh) as refresh:
+        assert _call(app, "GET", "/x", _headers("x_read", {})) == 200
+        assert _call(app, "GET", "/x", _headers("x_read", {})) == 200
+        assert refresh.call_count == 1
+        sub.add_api_route("/y", action, methods=["GET"])
+        assert _call(app, "GET", "/y", _headers("y_read", {})) == 200
+        assert refresh.call_count == 2
+
+
+@pytest.mark.parametrize("kind", ["fastapi", "starlette"])
+def test_late_websocket_route_is_closed_before_its_body(kind: str) -> None:
+    if not _lazy_include_supported():
+        pytest.skip("Older FastAPI copies included routes")
+    from starlette.websockets import WebSocketDisconnect
+
+    ran: List[str] = []
+    router = SecureAPIRouter()
+    sub = APIRouter()
+    router.include_router(sub)
+    app = _app(router)
+
+    async def websocket(ws: Any) -> None:
+        ran.append("websocket")
+        await ws.accept()
+
+    if kind == "fastapi":
+        sub.add_api_websocket_route("/ws", websocket)
+    else:
+        sub.add_websocket_route("/ws", websocket)
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with client.websocket_connect("/ws"):
+                pytest.fail("Unsafe websocket route was accepted")
+    assert exc.value.code == 1008
+    assert ran == []
+
+
+def test_aliased_route_requires_explicit_guard_instead_of_sharing_inferred_authority() -> None:
+    if not _lazy_include_supported():
+        pytest.skip("Older FastAPI copies routes into distinct objects")
+    sub = APIRouter()
+
+    @sub.get("/x")
+    async def x() -> Dict[str, bool]:
+        return {}
+
+    aliases = APIRouter()
+    aliases.include_router(sub, prefix="/a")
+    aliases.include_router(sub, prefix="/b")
+    router = SecureAPIRouter()
+    with pytest.raises(ConfigurationError, match="explicit TenuoGuard"):
+        router.include_router(aliases)
+
+
+def test_late_alias_cannot_reuse_cached_inferred_permission() -> None:
+    if not _lazy_include_supported():
+        pytest.skip("Older FastAPI copies included routes")
+    ran: List[str] = []
+    sub = APIRouter()
+
+    @sub.get("/x")
+    async def x() -> Dict[str, bool]:
+        ran.append("x")
+        return {}
+
+    aliases = APIRouter()
+    aliases.include_router(sub, prefix="/a")
+    router = SecureAPIRouter()
+    router.include_router(aliases)
+    app = _app(router)
+    assert _call(app, "GET", "/a/x", _headers("a_x_read", {})) == 200
+    aliases.include_router(sub, prefix="/b")
+    assert _call(app, "GET", "/b/x", _headers("a_x_read", {})) == 403
+    assert ran == ["x"]
+
+
+def test_nested_secure_router_with_lazy_plain_child_preserves_its_guard() -> None:
+    if not _lazy_include_supported():
+        pytest.skip("Tests lazy inclusion dependency contexts")
+    ran: List[str] = []
+    inner = SecureAPIRouter(tool_prefix="inner")
+    sub = APIRouter()
+
+    @sub.get("/x")
+    async def x() -> Dict[str, bool]:
+        ran.append("x")
+        return {}
+
+    inner.include_router(sub)
+    outer = SecureAPIRouter(tool_prefix="outer")
+    outer.include_router(inner, prefix="/p")
+    app = _app(outer)
+    assert _call(app, "GET", "/p/x") == 401
+    assert _call(app, "GET", "/p/x", _headers("outer_p_x_read", {})) == 403
+    assert ran == []
+    assert _call(app, "GET", "/p/x", _headers("inner_x_read", {})) == 200
+    assert ran == ["x"]
+
+
+def test_inclusion_dependencies_preserve_explicit_authority_per_alias() -> None:
+    ran: List[str] = []
+    sub = APIRouter()
+
+    @sub.get("/x")
+    async def x() -> Dict[str, bool]:
+        ran.append("x")
+        return {}
+
+    aliases = APIRouter()
+    aliases.include_router(sub, prefix="/a", dependencies=[Depends(TenuoGuard("a"))])
+    aliases.include_router(sub, prefix="/b", dependencies=[Depends(TenuoGuard("b"))])
+    router = SecureAPIRouter()
+    router.include_router(aliases)
+    app = _app(router)
+    assert _call(app, "GET", "/a/x", _headers("b", {})) == 403
+    assert ran == []
+    assert _call(app, "GET", "/a/x", _headers("a", {})) == 200
+    assert _call(app, "GET", "/b/x", _headers("b", {})) == 200
+    assert ran == ["x", "x"]
+
+
+@pytest.mark.parametrize("guard_location", ["router", "include"])
+def test_secure_router_inclusion_preserves_its_explicit_guard(guard_location: str) -> None:
+    ran: List[str] = []
+    dependencies = [Depends(TenuoGuard("action"))]
+    router = SecureAPIRouter(dependencies=dependencies if guard_location == "router" else None)
+    sub = APIRouter()
+
+    @sub.api_route("/x", methods=["GET", "POST"])
+    async def x() -> Dict[str, bool]:
+        ran.append("x")
+        return {}
+
+    router.include_router(sub, dependencies=dependencies if guard_location == "include" else None)
+    app = _app(router)
+    assert _call(app, "POST", "/x") == 401
+    assert _call(app, "POST", "/x", _headers("x_create", {})) == 403
+    assert ran == []
+    assert _call(app, "POST", "/x", _headers("action", {})) == 200
+    assert ran == ["x"]
 
 
 def test_nested_plain_routers_are_guarded() -> None:
@@ -153,13 +348,19 @@ def test_nested_plain_routers_are_guarded() -> None:
     assert ran == ["thing"]
 
 
-def test_included_route_keeps_its_own_guard() -> None:
+@pytest.mark.parametrize("extractor_kind", ["sync", "async"])
+def test_included_route_keeps_its_own_guard(extractor_kind: str) -> None:
     ran: List[str] = []
     router = SecureAPIRouter()
     sub = APIRouter()
 
+    async def extract(request: Any) -> Dict[str, Any]:
+        return {}
+
+    guard = TenuoGuard("search", extract_args=extract if extractor_kind == "async" else None)
+
     @sub.get("/search")
-    async def search(ctx: SecurityContext = Depends(TenuoGuard("search"))) -> Dict[str, bool]:
+    async def search(ctx: SecurityContext = Depends(guard)) -> Dict[str, bool]:
         ran.append("search")
         return {}
 
@@ -270,6 +471,34 @@ def test_multi_method_route_needs_one_name() -> None:
     router.add_api_route("/h2", h, methods=["GET", "POST"], tool="h2")
 
 
+@pytest.mark.parametrize("methods", [["GET", "OPTIONS"], ["POST", "HEAD"]])
+def test_non_get_head_method_groups_require_explicit_authority(methods: List[str]) -> None:
+    router = SecureAPIRouter()
+
+    async def action() -> Dict[str, bool]:
+        return {}
+
+    with pytest.raises(ConfigurationError, match="tool="):
+        router.add_api_route("/action", action, methods=methods)
+    router.add_api_route("/action", action, methods=methods, tool="explicit_action")
+
+
+def test_direct_registration_name_metadata_does_not_change_inferred_authority() -> None:
+    router = SecureAPIRouter()
+    ran: List[str] = []
+
+    async def action() -> Dict[str, bool]:
+        ran.append("action")
+        return {}
+
+    router.add_api_route("/action", action, name="operation", methods=["GET"])
+    app = _app(router)
+    assert _call(app, "GET", "/action", _headers("operation", {})) == 403
+    assert ran == []
+    assert _call(app, "GET", "/action", _headers("action_read", {})) == 200
+    assert ran == ["action"]
+
+
 def test_strict_app_accepts_secure_router_with_included_routes() -> None:
     ran: List[str] = []
     router = SecureAPIRouter()
@@ -285,12 +514,8 @@ def test_strict_app_accepts_secure_router_with_included_routes() -> None:
     configure_tenuo(app, trusted_issuers=[ISSUER.public_key], strict=True)
     app.include_router(router)
 
-    async def go() -> None:
-        async with app.router.lifespan_context(app):
-            pass
-
-    asyncio.run(go())
-    assert _call(app, "POST", "/reset") == 401
+    with TestClient(app) as client:
+        assert client.post("/reset").status_code == 401
     assert ran == []
 
 

@@ -200,7 +200,7 @@ def configure_tenuo(
 def _iter_app_routes(app: Any) -> Iterator[Any]:
     """Yield every route the app serves, with prefixes and included-router deps applied.
 
-    FastAPI 0.120+ includes routers lazily, so ``app.routes`` holds router
+    Newer FastAPI versions include routers lazily, so ``app.routes`` holds router
     references; ``iter_route_contexts`` expands them. Older versions copy
     included routes into ``app.routes`` directly.
     """
@@ -976,7 +976,7 @@ def _calls_tenuo_guard(path: str, call: Any) -> bool:
 
 
 def _lazy_include_supported() -> bool:
-    """FastAPI 0.120+ includes routers by reference instead of copying routes."""
+    """Detect lazy inclusion by capability rather than a version cutoff."""
     try:
         from fastapi.routing import iter_route_contexts  # type: ignore[attr-defined]  # noqa: F401
     except ImportError:
@@ -987,7 +987,7 @@ def _lazy_include_supported() -> bool:
 class _IncludedRoutesGuard(TenuoGuard):
     """Guards the routes of a router included into a ``SecureAPIRouter``.
 
-    FastAPI 0.120+ includes routers by reference, so their routes never pass
+    Lazy FastAPI includes keep routers by reference, so their routes never pass
     through ``SecureAPIRouter.add_api_route``. This guard is attached as an
     include-level dependency and authorizes each request under the tool name
     the route would get if it were declared on the ``SecureAPIRouter``
@@ -995,17 +995,18 @@ class _IncludedRoutesGuard(TenuoGuard):
     are left to it. A route the guard cannot name is denied.
     """
 
-    def __init__(self, owner: "SecureAPIRouter", router: Any, prefix: str) -> None:
+    def __init__(self, owner: "SecureAPIRouter", router: Any, prefix: str, dependencies: Iterable[Any]) -> None:
         super().__init__("")
         self._owner = owner
         self._included = router
         self._prefix = prefix
+        self._dependencies = list(dependencies)
         # id(route) -> (route, tool); tool is None when the route guards itself.
         self._tools: Dict[int, Tuple[Any, Optional[str]]] = {}
         self._guards: Dict[str, TenuoGuard] = {}
         self._lock = threading.Lock()
 
-    def refresh(self, *, at_include: bool) -> None:
+    def refresh(self) -> None:
         """Name every route the included router serves (it may have changed since)."""
         from fastapi.routing import APIRoute, iter_route_contexts  # type: ignore[attr-defined]
 
@@ -1013,18 +1014,24 @@ class _IncludedRoutesGuard(TenuoGuard):
         for context in iter_route_contexts(self._included.routes):
             route = context.original_route
             if not isinstance(route, APIRoute):
-                if at_include:
-                    raise ConfigurationError(
-                        "SecureAPIRouter cannot guard websocket, mount, frontend or plain "
-                        f"Starlette routes ({getattr(route, 'path', route)!r}); "
-                        "serve them from a separate router"
-                    )
-                continue
-            if _has_tenuo_guard(route.dependant):
-                tools[id(route)] = (route, None)
-                continue
+                raise ConfigurationError(
+                    "SecureAPIRouter cannot guard websocket, mount, frontend or plain "
+                    f"Starlette routes ({getattr(context, 'path', route)!r}); "
+                    "serve them from a separate router"
+                )
             path = self._prefix + (context.path or "")
-            tool = self._owner._infer_tool(path, context.methods or ["GET"])
+            tool = None
+            if not (
+                _has_tenuo_guard(context.dependant)
+                or self._owner._is_guarded(path, route.endpoint, self._dependencies)
+            ):
+                tool = self._owner._infer_tool(path, context.methods or ["GET"])
+            previous = tools.get(id(route))
+            if previous is not None and previous[1] != tool:
+                raise ConfigurationError(
+                    "SecureAPIRouter cannot infer distinct authority for aliases of the same "
+                    "route object; add an explicit TenuoGuard to each inclusion or use separate routes"
+                )
             tools[id(route)] = (route, tool)
         self._tools = tools
 
@@ -1041,7 +1048,7 @@ class _IncludedRoutesGuard(TenuoGuard):
             # Route added to the included router after include_router().
             try:
                 with self._lock:
-                    self.refresh(at_include=False)
+                    self.refresh()
             except ConfigurationError:
                 logger.error("SecureAPIRouter could not name an included route", exc_info=True)
                 entry = None
@@ -1087,7 +1094,7 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
 
     This is a real ``APIRouter`` subclass, so ``app.include_router(router)``
     and nested ``router.include_router(...)`` work on every supported FastAPI
-    version. (FastAPI 0.120+ includes routers lazily by reference, which a
+    version. (Newer FastAPI versions include routers lazily by reference, which a
     delegating wrapper cannot satisfy: its routes were silently dropped.)
     """
 
@@ -1101,6 +1108,8 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
         # Inferred tool name -> route path it was inferred from.
         self._inferred_tools: Dict[str, str] = {}
         self._inferred_lock = threading.Lock()
+        self._included_guards: List[_IncludedRoutesGuard] = []
+        self._validated_routes_version: Optional[int] = None
         if self.routes:
             raise ConfigurationError(
                 "SecureAPIRouter(routes=...) would serve those routes unguarded; "
@@ -1111,6 +1120,48 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
     def _router(self) -> "SecureAPIRouter":
         """Backwards compatibility: this used to be a wrapper around ``_router``."""
         return self
+
+    async def _validate_dispatch(self, scope: Any, receive: Any, send: Any) -> bool:
+        """Reject late unsafe additions before FastAPI can dispatch their bodies.
+
+        Include-level dependencies do not run for plain Starlette routes or
+        mounts. Validate the include graph at the router boundary as well,
+        including aliases that reuse a previously cached route object.
+        """
+        if scope["type"] not in ("http", "websocket"):
+            return True
+        # Use FastAPI's own graph invalidation when available. Older lazy
+        # implementations without this hook are revalidated on every call.
+        version_fn = getattr(self, "_get_routes_version", None)
+        version = version_fn() if callable(version_fn) else None
+        if version is not None and version == self._validated_routes_version:
+            return True
+        try:
+            for guard in self._included_guards:
+                with guard._lock:
+                    guard.refresh()
+        except ConfigurationError:
+            logger.error("SecureAPIRouter refused an unsafe included route graph", exc_info=True)
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+            else:
+                response = JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": {"error": "authorization_denied", "message": "Authorization denied"}},
+                )
+                await response(scope, receive, send)
+            return False
+        self._validated_routes_version = version
+        return True
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if await self._validate_dispatch(scope, receive, send):
+            await super().__call__(scope, receive, send)
+
+    async def handle(self, scope: Any, receive: Any, send: Any) -> None:
+        # Lazy FastAPI includes dispatch through handle(), not __call__().
+        if await self._validate_dispatch(scope, receive, send):
+            await super().handle(scope, receive, send)
 
     def _get_tool_name(self, path: str, method: str, name: Optional[str] = None) -> str:
         """Infer tool name from route info."""
@@ -1135,8 +1186,8 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
         if name:
             return name
         requested = {m.upper() for m in methods} or {"GET"}
-        # HEAD and OPTIONS ride along with the route's main method.
-        considered = (requested - {"HEAD", "OPTIONS"}) or requested
+        # Only the standard GET/HEAD pair shares inferred read authority.
+        considered = {"GET"} if "GET" in requested and requested <= {"GET", "HEAD"} else requested
         names = {self._get_tool_name(path, method) for method in considered}
         if len(names) != 1:
             raise ConfigurationError(
@@ -1176,15 +1227,18 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
     def include_router(self, router: Any, *args: Any, prefix: str = "", **kwargs: Any) -> None:  # type: ignore[override]
         """Include ``router`` with every one of its HTTP routes guarded.
 
-        Before FastAPI 0.120 the routes are copied through ``add_api_route``.
-        From 0.120 they stay on ``router``, so an include-level guard names and
-        authorizes each one, including routes added to ``router`` later.
+        Eager inclusion copies routes through ``add_api_route``. With lazy
+        inclusion they stay on ``router``, so an include-level guard names
+        and authorizes each one, including routes added to ``router`` later.
         """
+        guard: Optional[_IncludedRoutesGuard] = None
         if _lazy_include_supported():
-            guard = _IncludedRoutesGuard(self, router, prefix)
-            guard.refresh(at_include=True)
+            guard = _IncludedRoutesGuard(self, router, prefix, kwargs.get("dependencies") or [])
+            guard.refresh()
             kwargs["dependencies"] = [*(kwargs.get("dependencies") or []), Depends(guard)]
         super().include_router(router, *args, prefix=prefix, **kwargs)
+        if guard is not None:
+            self._included_guards.append(guard)
 
     def _refuse(self, kind: str, path: Any) -> None:
         raise ConfigurationError(
