@@ -12,6 +12,7 @@ on:
 
 # Permissions for release workflow
 permissions:
+  checks: read
   contents: read
   packages: write
   id-token: write  # For trusted publishing
@@ -309,6 +310,33 @@ jobs:
           echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
           echo "Publishing @tenuo packages at $version on npm dist-tag $dist_tag"
 
+      - name: Require stable-release checks for the tagged commit
+        if: steps.npm-policy.outputs.dist_tag == 'latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_runs=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?filter=latest&per_page=100")
+          required_checks=(
+            "TypeScript SDK"
+            "TypeScript SDK (Node 22)"
+            "TypeScript SDK (Node 24)"
+            "TypeScript SDK (Windows pack smoke)"
+            "TypeScript Red Team Tests"
+            "TypeScript Differential Security"
+            "TypeScript Mutation Security"
+          )
+          for check_name in "${required_checks[@]}"; do
+            if ! jq -e --arg name "$check_name" \
+              '.check_runs | any(.name == $name and .conclusion == "success")' \
+              <<< "$check_runs" >/dev/null; then
+              echo "Required successful check missing for ${GITHUB_SHA}: $check_name" >&2
+              exit 1
+            fi
+          done
+
       - name: Build WASM
         working-directory: tenuo-ts
         run: pnpm build:wasm
@@ -410,8 +438,9 @@ jobs:
                 echo "Could not verify $package dist-tag latest" >&2
                 exit 1
               fi
-              if [ "$latest" = "$VERSION" ]; then
-                echo "$package prerelease $VERSION must not be tagged latest" >&2
+              if [ -n "$latest" ] && \
+                ! node tenuo-ts/scripts/npm-release-policy.mjs assert "$latest" latest; then
+                echo "$package dist-tag latest must be absent or resolve to a stable version, found '$latest'" >&2
                 exit 1
               fi
             fi
