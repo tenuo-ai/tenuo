@@ -824,7 +824,7 @@ jobs:
           fi
           needed=false
           rust=false
-          if grep -Eq '^(tenuo-core/|tenuo-wasm/|tenuo-ts/|tenuo-python/|\.github/workflows/ci\.yml$)' <<<"$files"; then
+          if grep -Eq '^(tenuo-core/|tenuo-wasm/|tenuo-ts/|tenuo-python/|\.github/workflows/(ci|release)\.yml$)' <<<"$files"; then
             needed=true
           fi
           if grep -Eq '^(tenuo-core/|tenuo-wasm/|\.github/workflows/ci\.yml$)' <<<"$files"; then
@@ -907,6 +907,11 @@ jobs:
         if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: pnpm typecheck
+
+      - name: Test npm release policy
+        if: steps.lane.outputs.needed == 'true'
+        working-directory: tenuo-ts
+        run: pnpm test:release-policy
 
       # Exercise the checked-in binary before `pnpm test` rebuilds it. This is
       # the artifact copied into the published @tenuo/core package.
