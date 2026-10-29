@@ -17,7 +17,7 @@ use tenuo::{
     constraints::{Constraint, ConstraintSet, Wildcard},
     crypto::{PublicKey, SigningKey},
     payload::WarrantPayload,
-    planes::Authorizer,
+    planes::{Authorizer, DataPlane},
     warrant::{Warrant, WarrantId, WarrantType},
 };
 
@@ -71,8 +71,7 @@ fn issued_warrant_inherits_issuer_approvers_and_threshold() {
     );
     assert_eq!(exec.approval_threshold(), 2);
 
-    let auth = Authorizer::new().with_trusted_root(root.public_key());
-    auth.verify_chain(&[issuer, exec]).unwrap();
+    verify_both(&root, &[issuer, exec]).unwrap();
 }
 
 #[test]
@@ -164,9 +163,13 @@ fn forge(payload: WarrantPayload, key: &SigningKey) -> Warrant {
     }
 }
 
-const NOW: i64 = 1_704_067_500;
-const IAT: u64 = 1_704_067_200;
-const EXP: u64 = 1_704_070_800;
+// Relative to the real clock: DataPlane verifies at the current time only.
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
 
 #[allow(clippy::too_many_arguments)]
 fn gated_payload(
@@ -198,7 +201,7 @@ fn gated_payload(
         holder: holder.public_key(),
         issuer: issuer.public_key(),
         issued_at,
-        expires_at: EXP,
+        expires_at: now() + 3600,
         max_depth: 3,
         depth,
         parent_hash,
@@ -239,7 +242,16 @@ fn verify_child(
     child_min: Option<u32>,
 ) -> Result<(), String> {
     let root = forge(
-        gated_payload(1, &k.orch, &k.cp, IAT, 0, None, &[&k.a, &k.b], Some(2)),
+        gated_payload(
+            1,
+            &k.orch,
+            &k.cp,
+            now() - 60,
+            0,
+            None,
+            &[&k.a, &k.b],
+            Some(2),
+        ),
         &k.cp,
     );
     let parent_hash: [u8; 32] = Sha256::digest(&root.payload_bytes).into();
@@ -248,7 +260,7 @@ fn verify_child(
             2,
             &k.worker,
             &k.orch,
-            IAT + 1,
+            now() - 59,
             1,
             Some(parent_hash),
             child_approvers,
@@ -256,11 +268,28 @@ fn verify_child(
         ),
         &k.orch,
     );
-    Authorizer::new()
-        .with_trusted_root(k.cp.public_key())
-        .verify_chain_as_of(&[root, child], NOW)
+    verify_both(&k.cp, &[root, child])
+}
+
+/// Verify through the Authorizer and the DataPlane; both must agree.
+fn verify_both(cp: &SigningKey, chain: &[Warrant]) -> Result<(), String> {
+    let authorizer = Authorizer::new()
+        .with_trusted_root(cp.public_key())
+        .verify_chain(chain)
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    let mut dp = DataPlane::new();
+    dp.trust_issuer("cp", cp.public_key());
+    let data_plane = dp
+        .verify_chain(chain)
+        .map(|_| ())
+        .map_err(|e| e.to_string());
+    assert_eq!(
+        authorizer.is_ok(),
+        data_plane.is_ok(),
+        "{authorizer:?} vs {data_plane:?}"
+    );
+    authorizer
 }
 
 #[test]
@@ -354,8 +383,7 @@ fn gate_survives_issuer_to_issuer_delegation() {
         Some(vec![a.public_key()])
     );
 
-    let auth = Authorizer::new().with_trusted_root(root.public_key());
-    auth.verify_chain(&[top, delegated, exec]).unwrap();
+    verify_both(&root, &[top, delegated, exec]).unwrap();
 }
 
 #[test]
@@ -398,7 +426,7 @@ fn verifier_rejects_issuer_child_that_drops_gates() {
             1,
             &k.orch,
             &k.cp,
-            IAT,
+            now() - 60,
             0,
             None,
             &[&k.a],
@@ -411,7 +439,7 @@ fn verifier_rejects_issuer_child_that_drops_gates() {
         2,
         &k.worker,
         &k.orch,
-        IAT + 1,
+        now() - 59,
         1,
         Some(parent_hash),
         &[],
@@ -421,10 +449,6 @@ fn verifier_rejects_issuer_child_that_drops_gates() {
     child.required_approvers = None;
     let child = forge(child, &k.orch);
 
-    let err = Authorizer::new()
-        .with_trusted_root(k.cp.public_key())
-        .verify_chain_as_of(&[root, child], NOW)
-        .unwrap_err()
-        .to_string();
+    let err = verify_both(&k.cp, &[root, child]).unwrap_err();
     assert!(err.contains("approval gate monotonicity"), "{err}");
 }

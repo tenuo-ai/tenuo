@@ -571,6 +571,50 @@ impl ControlPlane {
 // DATA PLANE
 // ============================================================================
 
+/// Re-check at verification time what the builders enforce: a chain forged
+/// outside the SDK cannot weaken or strip the parent's approval gates, drop a
+/// parent approver, or lower the parent's threshold on a gated child.
+fn verify_approval_link(parent: &Warrant, child: &Warrant) -> Result<()> {
+    use crate::approval_gate::{
+        parse_approval_gate_map, verify_approval_gate_monotonicity, APPROVAL_GATE_EXTENSION_KEY,
+    };
+    let parent_gates = parse_approval_gate_map(parent.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+    let child_gates = parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+    verify_approval_gate_monotonicity(
+        parent_gates.as_ref(),
+        child_gates.as_ref(),
+        &child.approval_gate_scope(),
+    )
+    .map_err(|e| {
+        Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
+    })?;
+
+    // A gated child keeps every parent approver and the parent's threshold.
+    if child_gates.is_some() {
+        if let Some(parent_approvers) = parent.required_approvers() {
+            let child_approvers = child.required_approvers();
+            if parent_approvers
+                .iter()
+                .any(|key| !child_approvers.is_some_and(|c| c.contains(key)))
+            {
+                return Err(Error::ChainVerificationFailed(
+                    "approval gate monotonicity violation: child removes a parent approver"
+                        .to_string(),
+                ));
+            }
+            if child.approval_threshold() < parent.approval_threshold() {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "approval gate monotonicity violation: threshold lowered from {} to {}",
+                    parent.approval_threshold(),
+                    child.approval_threshold()
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Data Plane - Verifies and enforces warrants.
 ///
 /// The data plane only needs public keys of trusted issuers.
@@ -1399,6 +1443,9 @@ impl DataPlane {
                 )));
             }
         }
+
+        // I5: Approval gate monotonicity
+        verify_approval_link(parent, child)?;
 
         // 6. Verify child's signature
         child.verify(child.issuer())?;
@@ -2767,50 +2814,7 @@ impl Authorizer {
         }
 
         // I5: Approval gate monotonicity (wire-level defense-in-depth)
-        // Re-check at verification time what AttenuationBuilder enforces at build time.
-        // A warrant chain forged outside the SDK could weaken or strip approval gates
-        // that the parent warrant established.
-        {
-            use crate::approval_gate::{
-                parse_approval_gate_map, verify_approval_gate_monotonicity,
-                APPROVAL_GATE_EXTENSION_KEY,
-            };
-            let parent_gates =
-                parse_approval_gate_map(parent.extension(APPROVAL_GATE_EXTENSION_KEY))?;
-            let child_gates =
-                parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))?;
-            verify_approval_gate_monotonicity(
-                parent_gates.as_ref(),
-                child_gates.as_ref(),
-                &child.approval_gate_scope(),
-            )
-            .map_err(|e| {
-                Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
-            })?;
-
-            // A gated child keeps every parent approver and the parent's threshold.
-            if child_gates.is_some() {
-                if let Some(parent_approvers) = parent.required_approvers() {
-                    let child_approvers = child.required_approvers();
-                    if parent_approvers
-                        .iter()
-                        .any(|key| !child_approvers.is_some_and(|c| c.contains(key)))
-                    {
-                        return Err(Error::ChainVerificationFailed(
-                            "approval gate monotonicity violation: child removes a parent approver"
-                                .to_string(),
-                        ));
-                    }
-                    if child.approval_threshold() < parent.approval_threshold() {
-                        return Err(Error::ChainVerificationFailed(format!(
-                            "approval gate monotonicity violation: threshold lowered from {} to {}",
-                            parent.approval_threshold(),
-                            child.approval_threshold()
-                        )));
-                    }
-                }
-            }
-        }
+        verify_approval_link(parent, child)?;
 
         // Note: Signature verification is done in batch at the chain level for performance
         // (see verify_chain_with_options). Individual verify_link calls don't re-verify signatures.
