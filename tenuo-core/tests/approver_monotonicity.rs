@@ -176,7 +176,7 @@ fn gated_payload(
     id_byte: u8,
     holder: &SigningKey,
     issuer: &SigningKey,
-    issued_at: u64,
+    now: u64,
     depth: u32,
     parent_hash: Option<[u8; 32]>,
     approvers: &[&SigningKey],
@@ -200,8 +200,9 @@ fn gated_payload(
         tools,
         holder: holder.public_key(),
         issuer: issuer.public_key(),
-        issued_at,
-        expires_at: now() + 3600,
+        // One clock reading per chain keeps child expiry within its parent's.
+        issued_at: now - 60 + depth as u64,
+        expires_at: now + 3600,
         max_depth: 3,
         depth,
         parent_hash,
@@ -218,6 +219,7 @@ fn gated_payload(
 }
 
 struct Keys {
+    now: u64,
     cp: SigningKey,
     orch: SigningKey,
     worker: SigningKey,
@@ -227,6 +229,7 @@ struct Keys {
 
 fn keys() -> Keys {
     Keys {
+        now: now(),
         cp: SigningKey::generate(),
         orch: SigningKey::generate(),
         worker: SigningKey::generate(),
@@ -242,16 +245,7 @@ fn verify_child(
     child_min: Option<u32>,
 ) -> Result<(), String> {
     let root = forge(
-        gated_payload(
-            1,
-            &k.orch,
-            &k.cp,
-            now() - 60,
-            0,
-            None,
-            &[&k.a, &k.b],
-            Some(2),
-        ),
+        gated_payload(1, &k.orch, &k.cp, k.now, 0, None, &[&k.a, &k.b], Some(2)),
         &k.cp,
     );
     let parent_hash: [u8; 32] = Sha256::digest(&root.payload_bytes).into();
@@ -260,7 +254,7 @@ fn verify_child(
             2,
             &k.worker,
             &k.orch,
-            now() - 59,
+            k.now,
             1,
             Some(parent_hash),
             child_approvers,
@@ -426,7 +420,7 @@ fn verifier_rejects_issuer_child_that_drops_gates() {
             1,
             &k.orch,
             &k.cp,
-            now() - 60,
+            k.now,
             0,
             None,
             &[&k.a],
@@ -439,7 +433,7 @@ fn verifier_rejects_issuer_child_that_drops_gates() {
         2,
         &k.worker,
         &k.orch,
-        now() - 59,
+        k.now,
         1,
         Some(parent_hash),
         &[],
