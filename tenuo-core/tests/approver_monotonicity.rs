@@ -283,3 +283,148 @@ fn verifier_rejects_child_that_lowers_threshold() {
     let err = verify_child(&k, &[&k.a, &k.b], Some(1)).unwrap_err();
     assert!(err.contains("threshold lowered"), "{err}");
 }
+
+#[test]
+fn unset_issuer_minimum_still_requires_every_approver() {
+    let (root, worker, a, b) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let issuer = Warrant::builder()
+        .r#type(WarrantType::Issuer)
+        .issuable_tools(vec!["transfer".to_string()])
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes("transfer"))
+        .required_approvers(vec![a.public_key(), b.public_key()])
+        .ttl(Duration::from_secs(3600))
+        .holder(root.public_key())
+        .build(&root)
+        .unwrap();
+    assert_eq!(issuer.approval_threshold(), 2);
+
+    let err = issuer
+        .issue_execution_warrant()
+        .unwrap()
+        .tool("transfer", ConstraintSet::new())
+        .min_approvals(1)
+        .ttl(Duration::from_secs(60))
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("cannot lower approval threshold"),
+        "{err}"
+    );
+}
+
+#[test]
+fn gate_survives_issuer_to_issuer_delegation() {
+    let (root, mid, worker, a) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let top = issuer_warrant(&root, &[&a], 1);
+
+    let delegated = top
+        .attenuate()
+        .inherit_all()
+        .holder(mid.public_key())
+        .build(&root)
+        .unwrap();
+    assert!(delegated.extension(APPROVAL_GATE_EXTENSION_KEY).is_some());
+    assert_eq!(
+        delegated.required_approvers().cloned(),
+        Some(vec![a.public_key()])
+    );
+
+    let exec = delegated
+        .issue_execution_warrant()
+        .unwrap()
+        .tool("transfer", ConstraintSet::new())
+        .ttl(Duration::from_secs(60))
+        .holder(worker.public_key())
+        .build(&mid)
+        .unwrap();
+    assert!(exec.extension(APPROVAL_GATE_EXTENSION_KEY).is_some());
+    assert_eq!(
+        exec.required_approvers().cloned(),
+        Some(vec![a.public_key()])
+    );
+
+    let auth = Authorizer::new().with_trusted_root(root.public_key());
+    auth.verify_chain(&[top, delegated, exec]).unwrap();
+}
+
+#[test]
+fn wildcard_child_keeps_named_gate() {
+    let (root, worker, a) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let parent = Warrant::builder()
+        .tool("*", ConstraintSet::new())
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes("transfer"))
+        .required_approvers(vec![a.public_key()])
+        .ttl(Duration::from_secs(3600))
+        .holder(root.public_key())
+        .build(&root)
+        .unwrap();
+
+    let child = parent
+        .attenuate()
+        .inherit_all()
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap();
+    assert!(child.extension(APPROVAL_GATE_EXTENSION_KEY).is_some());
+}
+
+#[test]
+fn verifier_rejects_issuer_child_that_drops_gates() {
+    let k = keys();
+    let as_issuer = |mut p: WarrantPayload| {
+        p.warrant_type = WarrantType::Issuer;
+        p.tools = BTreeMap::new();
+        p.issuable_tools = Some(vec!["transfer".to_string()]);
+        p.max_issue_depth = Some(3);
+        p
+    };
+    let root = forge(
+        as_issuer(gated_payload(
+            1,
+            &k.orch,
+            &k.cp,
+            IAT,
+            0,
+            None,
+            &[&k.a],
+            Some(1),
+        )),
+        &k.cp,
+    );
+    let parent_hash: [u8; 32] = Sha256::digest(&root.payload_bytes).into();
+    let mut child = as_issuer(gated_payload(
+        2,
+        &k.worker,
+        &k.orch,
+        IAT + 1,
+        1,
+        Some(parent_hash),
+        &[],
+        None,
+    ));
+    child.extensions = BTreeMap::new();
+    child.required_approvers = None;
+    let child = forge(child, &k.orch);
+
+    let err = Authorizer::new()
+        .with_trusted_root(k.cp.public_key())
+        .verify_chain_as_of(&[root, child], NOW)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("approval gate monotonicity"), "{err}");
+}

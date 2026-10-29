@@ -963,15 +963,16 @@ impl Warrant {
 
     /// Get the effective approval threshold.
     pub fn approval_threshold(&self) -> u32 {
-        use std::convert::TryInto;
-        match (&self.payload.required_approvers, self.payload.min_approvals) {
-            (Some(approvers), Some(min)) => {
-                let len: u32 = approvers.len().try_into().unwrap_or(u32::MAX);
-                min.min(len)
-            }
-            (Some(approvers), None) => approvers.len().try_into().unwrap_or(u32::MAX),
-            (None, _) => 0,
-        }
+        approval_threshold(
+            self.payload.required_approvers.as_ref(),
+            self.payload.min_approvals,
+        )
+    }
+
+    /// Tools an approval gate is scoped against: the execution tools, or for an
+    /// issuer warrant, the tools it may issue.
+    pub(crate) fn approval_gate_scope(&self) -> BTreeMap<String, ConstraintSet> {
+        approval_gate_scope(&self.payload.tools, self.payload.issuable_tools.as_ref())
     }
 
     /// Parse the signed `tenuo.approval_gates` extension.
@@ -1566,6 +1567,34 @@ impl Warrant {
             });
         }
         Ok(IssuanceBuilder::new(self))
+    }
+}
+
+/// Effective approval threshold: `min_approvals` capped at the approver count,
+/// or every approver when unset.
+fn approval_threshold(approvers: Option<&Vec<PublicKey>>, min: Option<u32>) -> u32 {
+    use std::convert::TryInto;
+    match (approvers, min) {
+        (Some(approvers), Some(min)) => {
+            let len: u32 = approvers.len().try_into().unwrap_or(u32::MAX);
+            min.min(len)
+        }
+        (Some(approvers), None) => approvers.len().try_into().unwrap_or(u32::MAX),
+        (None, _) => 0,
+    }
+}
+
+/// See [`Warrant::approval_gate_scope`].
+fn approval_gate_scope(
+    tools: &BTreeMap<String, ConstraintSet>,
+    issuable_tools: Option<&Vec<String>>,
+) -> BTreeMap<String, ConstraintSet> {
+    match issuable_tools {
+        Some(names) => names
+            .iter()
+            .map(|name| (name.clone(), ConstraintSet::new()))
+            .collect(),
+        None => tools.clone(),
     }
 }
 
@@ -2263,6 +2292,19 @@ impl<'a> AttenuationBuilder<'a> {
             }
         }
 
+        // An unset parent minimum still means every parent approver.
+        let parent_threshold = self.parent.approval_threshold();
+        let threshold = approval_threshold(
+            self.required_approvers.as_ref(),
+            self.min_approvals.or(self.parent.payload.min_approvals),
+        );
+        if threshold < parent_threshold {
+            return Err(Error::MonotonicityViolation(format!(
+                "cannot lower approval threshold from {} to {}",
+                parent_threshold, threshold
+            )));
+        }
+
         Ok(())
     }
 
@@ -2408,7 +2450,10 @@ impl<'a> AttenuationBuilder<'a> {
         {
             let parent_gates = crate::approval_gate::parse_approval_gate_map(Some(&gate_bytes))?;
             if let Some(parent_gates) = parent_gates {
-                match crate::approval_gate::propagate_approval_gates(&parent_gates, &self.tools) {
+                match crate::approval_gate::propagate_approval_gates(
+                    &parent_gates,
+                    &approval_gate_scope(&self.tools, self.issuable_tools.as_ref()),
+                ) {
                     Some(scoped) => {
                         let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
                         self.extensions.insert(
@@ -3189,6 +3234,19 @@ impl OwnedAttenuationBuilder {
             }
         }
 
+        // An unset parent minimum still means every parent approver.
+        let parent_threshold = self.parent.approval_threshold();
+        let threshold = approval_threshold(
+            self.required_approvers.as_ref(),
+            self.min_approvals.or(self.parent.payload.min_approvals),
+        );
+        if threshold < parent_threshold {
+            return Err(Error::MonotonicityViolation(format!(
+                "cannot lower approval threshold from {} to {}",
+                parent_threshold, threshold
+            )));
+        }
+
         Ok(())
     }
 
@@ -3327,7 +3385,10 @@ impl OwnedAttenuationBuilder {
         {
             let parent_gates = crate::approval_gate::parse_approval_gate_map(Some(&gate_bytes))?;
             if let Some(parent_gates) = parent_gates {
-                match crate::approval_gate::propagate_approval_gates(&parent_gates, &self.tools) {
+                match crate::approval_gate::propagate_approval_gates(
+                    &parent_gates,
+                    &approval_gate_scope(&self.tools, self.issuable_tools.as_ref()),
+                ) {
                     Some(scoped) => {
                         let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
                         self.extensions.insert(
@@ -3898,6 +3959,16 @@ impl<'a> IssuanceBuilder<'a> {
                     }
                     Some(_) => {}
                 }
+            }
+            // An unset issuer minimum still means every issuer approver.
+            let issuer_threshold = self.issuer.approval_threshold();
+            let threshold =
+                approval_threshold(self.required_approvers.as_ref(), self.min_approvals);
+            if threshold < issuer_threshold {
+                return Err(Error::MonotonicityViolation(format!(
+                    "cannot lower approval threshold from {} to {}",
+                    issuer_threshold, threshold
+                )));
             }
         }
 

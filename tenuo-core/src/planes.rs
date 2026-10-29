@@ -2779,12 +2779,10 @@ impl Authorizer {
                 parse_approval_gate_map(parent.extension(APPROVAL_GATE_EXTENSION_KEY))?;
             let child_gates =
                 parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))?;
-            let empty = std::collections::BTreeMap::new();
-            let child_tools = child.capabilities().unwrap_or(&empty);
             verify_approval_gate_monotonicity(
                 parent_gates.as_ref(),
                 child_gates.as_ref(),
-                child_tools,
+                &child.approval_gate_scope(),
             )
             .map_err(|e| {
                 Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
