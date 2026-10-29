@@ -14,6 +14,8 @@ packages release in lockstep and use the same npm channel.
 Other prerelease identifiers fail closed. In particular, no prerelease may be
 published on `latest`. `scripts/npm-release-policy.mjs` is the shared executable
 contract used by tests, package publish commands, and the release workflow.
+Release versions must not contain build metadata because npm strips it during
+publication, which would make post-publish verification ambiguous.
 
 The registry historically pointed `latest` at a beta. Remove that legacy tag
 before the next npm release if no stable version is available, or replace it

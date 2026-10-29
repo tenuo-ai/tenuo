@@ -6,13 +6,16 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
 
-const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_DIR = resolve(SCRIPT_DIR, "..");
 
 export function parseVersion(version) {
   const match = SEMVER.exec(version);
   if (!match) throw new Error(`invalid semantic version: ${version}`);
+  if (match[5]) {
+    throw new Error(`build metadata is not supported in npm release versions: ${version}`);
+  }
   return {
     version,
     baseVersion: `${match[1]}.${match[2]}.${match[3]}`,

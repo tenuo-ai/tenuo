@@ -37,6 +37,8 @@ test("unknown prerelease channels fail closed", () => {
 
 test("invalid semantic versions are rejected", () => {
   assert.throws(() => parseVersion("1.2"), /invalid semantic version/);
+  assert.throws(() => parseVersion("1.2.3+build.1"), /build metadata is not supported/);
+  assert.throws(() => parseVersion("1.2.3-beta.1+build.1"), /build metadata is not supported/);
 });
 
 test("a coordinated repository tag may name the package version or its stable base", () => {

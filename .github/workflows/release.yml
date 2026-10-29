@@ -408,7 +408,7 @@ jobs:
             actual=""
             query_succeeded=false
             for attempt in {1..12}; do
-              if actual=$(npm view "$package" "dist-tags.${DIST_TAG}" 2>/dev/null); then
+              if actual=$(npm view "${package}@${VERSION}" "dist-tags.${DIST_TAG}" 2>/dev/null); then
                 query_succeeded=true
                 if [ "$actual" = "$VERSION" ]; then
                   break
@@ -427,7 +427,7 @@ jobs:
               latest=""
               latest_query_succeeded=false
               for attempt in {1..12}; do
-                if latest=$(npm view "$package" "dist-tags.latest" 2>/dev/null); then
+                if latest=$(npm view "${package}@${VERSION}" "dist-tags.latest" 2>/dev/null); then
                   latest_query_succeeded=true
                   break
                 fi
