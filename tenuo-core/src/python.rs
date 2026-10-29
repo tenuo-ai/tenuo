@@ -3957,7 +3957,7 @@ impl PyWarrant {
     /// Issuer warrants can issue execution warrants but cannot execute tools themselves.
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None))]
+    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None))]
     fn issue_issuer(
         issuable_tools: Vec<String>,
         keypair: &PySigningKey,
@@ -3967,6 +3967,9 @@ impl PyWarrant {
         holder: Option<&PyPublicKey>,
         session_id: Option<&str>,
         clearance: Option<&PyClearance>,
+        required_approvers: Option<Vec<PyPublicKey>>,
+        min_approvals: Option<u32>,
+        approval_gates: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .r#type(WarrantType::Issuer)
@@ -3999,6 +4002,27 @@ impl PyWarrant {
                 let constraint = py_to_constraint(&value)?;
                 builder = builder.constraint_bound(field, constraint);
             }
+        }
+
+        // Approval template: issued execution warrants inherit these
+        if let Some(approvers) = required_approvers {
+            let rust_approvers: Vec<crate::crypto::PublicKey> =
+                approvers.into_iter().map(|pk| pk.inner).collect();
+            builder = builder.required_approvers(rust_approvers);
+        }
+
+        if let Some(min) = min_approvals {
+            builder = builder.min_approvals(min);
+        }
+
+        if let Some(approval_gates_dict) = approval_gates {
+            let approval_gate_map = py_dict_to_approval_gate_map(approval_gates_dict)?;
+            let bytes = crate::approval_gate::encode_approval_gate_map(&approval_gate_map)
+                .map_err(to_py_err)?;
+            builder = builder.extension(
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                bytes,
+            );
         }
 
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;

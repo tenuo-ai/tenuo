@@ -2789,6 +2789,29 @@ impl Authorizer {
             .map_err(|e| {
                 Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
             })?;
+
+            // A gated child keeps every parent approver and the parent's threshold.
+            if child_gates.is_some() {
+                if let Some(parent_approvers) = parent.required_approvers() {
+                    let child_approvers = child.required_approvers();
+                    if parent_approvers
+                        .iter()
+                        .any(|key| !child_approvers.is_some_and(|c| c.contains(key)))
+                    {
+                        return Err(Error::ChainVerificationFailed(
+                            "approval gate monotonicity violation: child removes a parent approver"
+                                .to_string(),
+                        ));
+                    }
+                    if child.approval_threshold() < parent.approval_threshold() {
+                        return Err(Error::ChainVerificationFailed(format!(
+                            "approval gate monotonicity violation: threshold lowered from {} to {}",
+                            parent.approval_threshold(),
+                            child.approval_threshold()
+                        )));
+                    }
+                }
+            }
         }
 
         // Note: Signature verification is done in batch at the chain level for performance

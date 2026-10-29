@@ -61,6 +61,13 @@ Two checks are stricter, and some calls that used to pass now fail:
 
 ### Fixed
 
+- **Issuer warrants keep their approval settings.** `mint_builder().issuer()`
+  silently dropped `approval_gates`, `required_approvers` and
+  `min_approvals`. They are now signed into the issuer warrant, and execution
+  warrants issued from it inherit the approvers and threshold wherever a gate
+  applies. Issuance may add approvers or raise the threshold, not remove or
+  lower them. Reported in #1029.
+
 - **FastAPI: `SecureAPIRouter` guards direct and included HTTP routes.**
   `add_api_route()` and plain included routers no longer run without a warrant.
   Nested and inclusion-level guards keep their authority. Lazy additions are

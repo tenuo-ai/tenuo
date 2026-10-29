@@ -3836,17 +3836,6 @@ impl<'a> IssuanceBuilder<'a> {
             }
         }
 
-        // Validate min_approvals if set
-        if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {
-            if min as usize > approvers.len() {
-                return Err(Error::Validation(format!(
-                    "min_approvals ({}) cannot exceed required_approvers count ({})",
-                    min,
-                    approvers.len()
-                )));
-            }
-        }
-
         // Validate tool validation depth
         for constraints in self.tools.values() {
             constraints.validate_depth()?;
@@ -3873,6 +3862,53 @@ impl<'a> IssuanceBuilder<'a> {
                             .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
                     }
                 }
+            }
+        }
+
+        // The issuer's approvers and threshold are part of its approval template:
+        // wherever a gate survives scoping, the issued warrant keeps them. Issuance
+        // may add approvers or raise the threshold, never remove or lower them.
+        if self
+            .extensions
+            .contains_key(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
+        {
+            if let Some(issuer_approvers) = &self.issuer.payload.required_approvers {
+                match &self.required_approvers {
+                    None => self.required_approvers = Some(issuer_approvers.clone()),
+                    Some(approvers) => {
+                        for key in issuer_approvers {
+                            if !approvers.contains(key) {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "cannot remove issuer approver {}",
+                                    hex::encode(key.to_bytes())
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(issuer_min) = self.issuer.payload.min_approvals {
+                match self.min_approvals {
+                    None => self.min_approvals = Some(issuer_min),
+                    Some(min) if min < issuer_min => {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "cannot lower min_approvals from {} to {}",
+                            issuer_min, min
+                        )));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+
+        // Validate min_approvals if set
+        if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {
+            if min as usize > approvers.len() {
+                return Err(Error::Validation(format!(
+                    "min_approvals ({}) cannot exceed required_approvers count ({})",
+                    min,
+                    approvers.len()
+                )));
             }
         }
 
