@@ -562,3 +562,45 @@ fn wildcard_issuer_issues_named_gated_tool() {
     );
     verify_both(&root, &[issuer, exec]).unwrap();
 }
+
+#[test]
+fn repeated_approver_cannot_satisfy_a_higher_minimum() {
+    let k = keys();
+    let mut root = gated_payload(1, &k.orch, &k.cp, k.now, 0, None, &[], Some(2));
+    root.required_approvers = Some(vec![k.a.public_key(), k.a.public_key()]);
+    let root = forge(root, &k.cp);
+
+    let err = verify_both(&k.cp, &[root]).unwrap_err();
+    assert!(err.contains("distinct required_approvers"), "{err}");
+}
+
+#[test]
+fn issuable_tools_on_execution_child_keeps_gates() {
+    let (root, worker, a) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let parent = Warrant::builder()
+        .tool("transfer", ConstraintSet::new())
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes("transfer"))
+        .required_approvers(vec![a.public_key()])
+        .ttl(Duration::from_secs(3600))
+        .holder(root.public_key())
+        .build(&root)
+        .unwrap();
+
+    let child = parent
+        .attenuate()
+        .inherit_all()
+        .issuable_tools(vec![])
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap();
+    assert!(child.extension(APPROVAL_GATE_EXTENSION_KEY).is_some());
+    assert_eq!(
+        child.required_approvers().cloned(),
+        Some(vec![a.public_key()])
+    );
+    verify_both(&root, &[parent, child]).unwrap();
+}

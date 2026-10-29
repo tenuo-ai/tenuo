@@ -764,10 +764,11 @@ impl Warrant {
         if let (Some(approvers), Some(min)) =
             (&self.payload.required_approvers, self.payload.min_approvals)
         {
-            let len = approvers.len() as u32;
+            // Distinct keys: a repeated approver cannot count twice toward the quorum.
+            let len = distinct_approver_count(approvers);
             if min > len {
                 return Err(Error::Validation(format!(
-                    "min_approvals ({}) exceeds number of required_approvers ({})",
+                    "min_approvals ({}) exceeds number of distinct required_approvers ({})",
                     min, len
                 )));
             }
@@ -867,10 +868,11 @@ impl Warrant {
         if let (Some(approvers), Some(min)) =
             (&self.payload.required_approvers, self.payload.min_approvals)
         {
-            let len = approvers.len() as u32;
+            // Distinct keys: a repeated approver cannot count twice toward the quorum.
+            let len = distinct_approver_count(approvers);
             if min > len {
                 return Err(Error::Validation(format!(
-                    "min_approvals ({}) exceeds number of required_approvers ({})",
+                    "min_approvals ({}) exceeds number of distinct required_approvers ({})",
                     min, len
                 )));
             }
@@ -972,7 +974,11 @@ impl Warrant {
     /// Tools an approval gate is scoped against: the execution tools, or for an
     /// issuer warrant, the tools it may issue.
     pub(crate) fn approval_gate_scope(&self) -> BTreeMap<String, ConstraintSet> {
-        approval_gate_scope(&self.payload.tools, self.payload.issuable_tools.as_ref())
+        approval_gate_scope(
+            self.payload.warrant_type,
+            &self.payload.tools,
+            self.payload.issuable_tools.as_ref(),
+        )
     }
 
     /// Parse the signed `tenuo.approval_gates` extension.
@@ -1606,15 +1612,17 @@ fn approval_threshold(approvers: Option<&Vec<PublicKey>>, min: Option<u32>) -> u
 
 /// See [`Warrant::approval_gate_scope`].
 fn approval_gate_scope(
+    warrant_type: WarrantType,
     tools: &BTreeMap<String, ConstraintSet>,
     issuable_tools: Option<&Vec<String>>,
 ) -> BTreeMap<String, ConstraintSet> {
-    match issuable_tools {
-        Some(names) => names
-            .iter()
+    match warrant_type {
+        WarrantType::Execution => tools.clone(),
+        WarrantType::Issuer => issuable_tools
+            .into_iter()
+            .flatten()
             .map(|name| (name.clone(), ConstraintSet::new()))
             .collect(),
-        None => tools.clone(),
     }
 }
 
@@ -2502,7 +2510,11 @@ impl<'a> AttenuationBuilder<'a> {
             if let Some(parent_gates) = parent_gates {
                 match crate::approval_gate::propagate_approval_gates(
                     &parent_gates,
-                    &approval_gate_scope(&self.tools, self.issuable_tools.as_ref()),
+                    &approval_gate_scope(
+                        self.parent.payload.warrant_type,
+                        &self.tools,
+                        self.issuable_tools.as_ref(),
+                    ),
                 ) {
                     Some(scoped) => {
                         let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
@@ -3460,7 +3472,11 @@ impl OwnedAttenuationBuilder {
             if let Some(parent_gates) = parent_gates {
                 match crate::approval_gate::propagate_approval_gates(
                     &parent_gates,
-                    &approval_gate_scope(&self.tools, self.issuable_tools.as_ref()),
+                    &approval_gate_scope(
+                        self.parent.payload.warrant_type,
+                        &self.tools,
+                        self.issuable_tools.as_ref(),
+                    ),
                 ) {
                     Some(scoped) => {
                         let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
@@ -3503,7 +3519,11 @@ impl OwnedAttenuationBuilder {
             crate::approval_gate::verify_approval_gate_monotonicity(
                 parent_gates.as_ref(),
                 child_gates.as_ref(),
-                &approval_gate_scope(&self.tools, self.issuable_tools.as_ref()),
+                &approval_gate_scope(
+                    self.parent.payload.warrant_type,
+                    &self.tools,
+                    self.issuable_tools.as_ref(),
+                ),
             )
             .map_err(|e| Error::Validation(format!("approval gate monotonicity violation: {e}")))?;
         }
