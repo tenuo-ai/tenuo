@@ -544,3 +544,20 @@ class TestIssuerApprovalTemplate:
 
         with pytest.raises(MonotonicityError):
             builder.build(root)
+
+    def test_issuance_cannot_dilute_approver_quorum(self):
+        root, worker = SigningKey.generate(), SigningKey.generate()
+        a, rogue = SigningKey.generate(), SigningKey.generate()
+        issuer = self._issuer(root, [a], 1)
+
+        builder = (
+            issuer.issue_execution()
+            .tool("transfer")
+            .required_approvers([a.public_key, rogue.public_key])
+            .min_approvals(1)
+            .holder(worker.public_key)
+            .ttl(60)
+        )
+
+        with pytest.raises(MonotonicityError):
+            builder.build(root)

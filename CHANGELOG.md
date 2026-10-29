@@ -66,8 +66,9 @@ Two checks are stricter, and some calls that used to pass now fail:
   `min_approvals`. They are now signed into the issuer warrant, and execution
   warrants issued from it inherit the approvers and threshold wherever a gate
   applies, including through issuer-to-issuer delegation and `*` tools.
-  Issuance may add approvers or raise the threshold, not remove or lower
-  them; an unset minimum counts as every approver. Reported in #1029.
+  Issuance may add approvers (raising the threshold to match) or raise the
+  threshold, not remove or dilute them; an unset minimum counts as every
+  approver. Reported in #1029.
 
 - **FastAPI: `SecureAPIRouter` guards direct and included HTTP routes.**
   `add_api_route()` and plain included routers no longer run without a warrant.

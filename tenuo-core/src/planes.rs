@@ -593,23 +593,30 @@ fn verify_approval_link(parent: &Warrant, child: &Warrant) -> Result<()> {
         Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
     })?;
 
-    // A gated child keeps every parent approver and the parent's threshold.
+    // A gated child keeps every parent approver and cannot dilute the parent's quorum.
     if child_gates.is_some() {
         if let Some(parent_approvers) = parent.required_approvers() {
-            let child_approvers = child.required_approvers();
+            let Some(child_approvers) = child.required_approvers() else {
+                return Err(Error::ChainVerificationFailed(
+                    "approval gate monotonicity violation: child removes a parent approver"
+                        .to_string(),
+                ));
+            };
             if parent_approvers
                 .iter()
-                .any(|key| !child_approvers.is_some_and(|c| c.contains(key)))
+                .any(|key| !child_approvers.contains(key))
             {
                 return Err(Error::ChainVerificationFailed(
                     "approval gate monotonicity violation: child removes a parent approver"
                         .to_string(),
                 ));
             }
-            if child.approval_threshold() < parent.approval_threshold() {
+            let added = crate::warrant::added_approver_count(parent_approvers, child_approvers);
+            let required_threshold = parent.approval_threshold().saturating_add(added);
+            if child.approval_threshold() < required_threshold {
                 return Err(Error::ChainVerificationFailed(format!(
                     "approval gate monotonicity violation: threshold lowered from {} to {}",
-                    parent.approval_threshold(),
+                    required_threshold,
                     child.approval_threshold()
                 )));
             }

@@ -446,3 +446,119 @@ fn verifier_rejects_issuer_child_that_drops_gates() {
     let err = verify_both(&k.cp, &[root, child]).unwrap_err();
     assert!(err.contains("approval gate monotonicity"), "{err}");
 }
+
+#[test]
+fn issuance_cannot_dilute_quorum_by_adding_approver_at_same_threshold() {
+    let (root, worker, a, rogue) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let issuer = issuer_warrant(&root, &[&a], 1);
+
+    let err = issuer
+        .issue_execution_warrant()
+        .unwrap()
+        .tool("transfer", ConstraintSet::new())
+        .required_approvers(vec![a.public_key(), rogue.public_key()])
+        .min_approvals(1)
+        .ttl(Duration::from_secs(60))
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("cannot lower approval threshold"),
+        "{err}"
+    );
+}
+
+#[test]
+fn issuance_adding_approver_without_explicit_min_raises_threshold() {
+    let (root, worker, a, b) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let issuer = issuer_warrant(&root, &[&a], 1);
+
+    let exec = issuer
+        .issue_execution_warrant()
+        .unwrap()
+        .tool("transfer", ConstraintSet::new())
+        .required_approvers(vec![a.public_key(), b.public_key()])
+        .ttl(Duration::from_secs(60))
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap();
+    assert_eq!(exec.approval_threshold(), 2);
+    verify_both(&root, &[issuer, exec]).unwrap();
+}
+
+#[test]
+fn verifier_rejects_child_that_dilutes_quorum_with_extra_approver() {
+    let k = keys();
+    let rogue = SigningKey::generate();
+    // Root requires 2-of-2 [a, b]; child adds rogue at threshold 2 (2-of-3).
+    let err = verify_child(&k, &[&k.a, &k.b, &rogue], Some(2)).unwrap_err();
+    assert!(err.contains("threshold lowered"), "{err}");
+
+    // Raising threshold to 3-of-3 preserves the [a, b] quorum.
+    verify_child(&k, &[&k.a, &k.b, &rogue], Some(3)).unwrap();
+}
+
+#[test]
+fn attenuating_issuer_to_ungated_tool_clears_approvers() {
+    let (root, mid, a) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let top = issuer_warrant(&root, &[&a], 1);
+
+    let delegated = top
+        .attenuate()
+        .issuable_tools(vec!["read_file".to_string()])
+        .holder(mid.public_key())
+        .build(&root)
+        .unwrap();
+    assert!(delegated.extension(APPROVAL_GATE_EXTENSION_KEY).is_none());
+    assert!(delegated.required_approvers().is_none());
+    assert!(delegated.min_approvals().is_none());
+    verify_both(&root, &[top, delegated]).unwrap();
+}
+
+#[test]
+fn wildcard_issuer_issues_named_gated_tool() {
+    let (root, worker, a) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let issuer = Warrant::builder()
+        .r#type(WarrantType::Issuer)
+        .issuable_tools(vec!["*".to_string()])
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes("transfer"))
+        .required_approvers(vec![a.public_key()])
+        .min_approvals(1)
+        .ttl(Duration::from_secs(3600))
+        .holder(root.public_key())
+        .build(&root)
+        .unwrap();
+
+    let exec = issuer
+        .issue_execution_warrant()
+        .unwrap()
+        .tool("transfer", ConstraintSet::new())
+        .ttl(Duration::from_secs(60))
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap();
+    assert!(exec.extension(APPROVAL_GATE_EXTENSION_KEY).is_some());
+    assert_eq!(
+        exec.required_approvers().cloned(),
+        Some(vec![a.public_key()])
+    );
+    verify_both(&root, &[issuer, exec]).unwrap();
+}
