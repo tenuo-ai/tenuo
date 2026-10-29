@@ -22,6 +22,7 @@
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",
-    "@stryker-mutator/vitest-runner": "10.0.0"
+    "@stryker-mutator/vitest-runner": "10.0.0",
+    "semver": "7.8.5"
   }
 }

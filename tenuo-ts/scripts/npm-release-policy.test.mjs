@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   assertDistTag,
+  assertPeerRange,
   assertReleaseTag,
   checkWorkspace,
   distTagForVersion,
@@ -42,6 +43,14 @@ test("a coordinated repository tag may name the package version or its stable ba
   assert.doesNotThrow(() => assertReleaseTag("0.3.3-beta.0", "v0.3.3"));
   assert.doesNotThrow(() => assertReleaseTag("0.3.3-beta.0", "v0.3.3-beta.0"));
   assert.throws(() => assertReleaseTag("0.3.3-beta.0", "v0.3.4"), /does not match/);
+});
+
+test("peer validation uses semantic range membership", () => {
+  const range = ">=0.3.3-beta.0 <0.3.4";
+  assert.doesNotThrow(() => assertPeerRange("0.3.3-beta.1", range));
+  assert.throws(() => assertPeerRange("0.3.4-beta.0", range), /does not accept release/);
+  assert.throws(() => assertPeerRange("0.3.4", range), /does not accept release/);
+  assert.throws(() => assertPeerRange("0.3.3-beta.1", "not a range"), /invalid.*peer range/);
 });
 
 test("the workspace packages have one valid release channel", () => {

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import semver from "semver";
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +49,15 @@ export function assertReleaseTag(version, releaseTag) {
   }
 }
 
+export function assertPeerRange(version, peerRange) {
+  if (!semver.validRange(peerRange)) {
+    throw new Error(`invalid @tenuo/core peer range: ${peerRange}`);
+  }
+  if (!semver.satisfies(version, peerRange)) {
+    throw new Error(`@tenuo/core peer range ${peerRange} does not accept release ${version}`);
+  }
+}
+
 function readPackage(packageDirectory) {
   const packagePath = resolve(packageDirectory, "package.json");
   return JSON.parse(readFileSync(packagePath, "utf8"));
@@ -68,11 +78,10 @@ export function checkWorkspace({ releaseTag } = {}) {
   if (releaseTag) assertReleaseTag(core.version, releaseTag);
 
   const corePeer = mcp.peerDependencies?.["@tenuo/core"];
-  if (typeof corePeer !== "string" || !corePeer.includes(core.version)) {
-    throw new Error(
-      `@tenuo/mcp must declare a peer range containing the exact release version ${core.version}`,
-    );
+  if (typeof corePeer !== "string") {
+    throw new Error("@tenuo/mcp must declare an @tenuo/core peer range");
   }
+  assertPeerRange(core.version, corePeer);
 
   return { version: core.version, distTag };
 }
@@ -85,7 +94,7 @@ function publishPackage(packageDirectory) {
   const result = spawnSync(
     "npm",
     ["publish", "--access", "public", "--provenance", "--tag", distTag],
-    { cwd: absoluteDirectory, stdio: "inherit" },
+    { cwd: absoluteDirectory, stdio: "inherit", shell: process.platform === "win32" },
   );
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);

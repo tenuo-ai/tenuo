@@ -378,20 +378,38 @@ jobs:
           set -euo pipefail
           for package in @tenuo/core @tenuo/mcp; do
             actual=""
+            query_succeeded=false
             for attempt in {1..12}; do
-              actual=$(npm view "$package" "dist-tags.${DIST_TAG}" 2>/dev/null || true)
-              if [ "$actual" = "$VERSION" ]; then
-                break
+              if actual=$(npm view "$package" "dist-tags.${DIST_TAG}" 2>/dev/null); then
+                query_succeeded=true
+                if [ "$actual" = "$VERSION" ]; then
+                  break
+                fi
+                echo "Waiting for $package dist-tag $DIST_TAG (attempt ${attempt}/12)"
+              else
+                echo "Registry query for $package dist-tag $DIST_TAG failed (attempt ${attempt}/12)" >&2
               fi
-              echo "Waiting for $package dist-tag $DIST_TAG (attempt ${attempt}/12)"
               sleep 5
             done
-            if [ "$actual" != "$VERSION" ]; then
+            if [ "$query_succeeded" != true ] || [ "$actual" != "$VERSION" ]; then
               echo "$package dist-tag $DIST_TAG resolved to '$actual', expected '$VERSION'" >&2
               exit 1
             fi
             if [[ "$VERSION" == *-* ]]; then
-              latest=$(npm view "$package" "dist-tags.latest" 2>/dev/null || true)
+              latest=""
+              latest_query_succeeded=false
+              for attempt in {1..12}; do
+                if latest=$(npm view "$package" "dist-tags.latest" 2>/dev/null); then
+                  latest_query_succeeded=true
+                  break
+                fi
+                echo "Registry query for $package dist-tag latest failed (attempt ${attempt}/12)" >&2
+                sleep 5
+              done
+              if [ "$latest_query_succeeded" != true ]; then
+                echo "Could not verify $package dist-tag latest" >&2
+                exit 1
+              fi
               if [ "$latest" = "$VERSION" ]; then
                 echo "$package prerelease $VERSION must not be tagged latest" >&2
                 exit 1
