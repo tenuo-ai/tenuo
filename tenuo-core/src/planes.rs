@@ -579,6 +579,10 @@ fn verify_approval_link(parent: &Warrant, child: &Warrant) -> Result<()> {
         parse_approval_gate_map, verify_approval_gate_monotonicity, APPROVAL_GATE_EXTENSION_KEY,
     };
     let parent_gates = parse_approval_gate_map(parent.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+    if parent_gates.is_none() {
+        // Nothing to preserve; also skips building the scope on ungated chains.
+        return Ok(());
+    }
     let child_gates = parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))?;
     verify_approval_gate_monotonicity(
         parent_gates.as_ref(),
