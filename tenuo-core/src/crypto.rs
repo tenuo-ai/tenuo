@@ -337,6 +337,10 @@ impl<'de> Deserialize<'de> for PublicKey {
                         .next_element()?
                         .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
 
+                    if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                        return Err(serde::de::Error::invalid_length(3, &self));
+                    }
+
                     let arr: [u8; 32] = bytes
                         .try_into()
                         .map_err(|_| serde::de::Error::custom("invalid public key length"))?;
@@ -434,6 +438,10 @@ impl<'de> Deserialize<'de> for Signature {
                         .next_element()?
                         .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
 
+                    if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                        return Err(serde::de::Error::invalid_length(3, &self));
+                    }
+
                     let arr: [u8; 64] = bytes
                         .try_into()
                         .map_err(|_| serde::de::Error::custom("invalid signature length"))?;
@@ -465,6 +473,29 @@ mod tests {
         let signature = keypair.sign(message);
 
         assert!(keypair.public_key().verify(message, &signature).is_ok());
+    }
+
+    #[test]
+    fn binary_key_and_signature_reject_trailing_tuple_elements() {
+        let key = SigningKey::generate();
+        let public_key = key.public_key();
+        let signature = key.sign_raw(b"message");
+
+        let key_tuple = (
+            ED25519_ALG_ID,
+            serde_bytes::ByteBuf::from(public_key.to_bytes().to_vec()),
+            0u8,
+        );
+        let key_bytes = crate::wire::to_vec(&key_tuple).unwrap();
+        assert!(ciborium::de::from_reader::<PublicKey, _>(&key_bytes[..]).is_err());
+
+        let signature_tuple = (
+            ED25519_ALG_ID,
+            serde_bytes::ByteBuf::from(signature.to_bytes().to_vec()),
+            0u8,
+        );
+        let signature_bytes = crate::wire::to_vec(&signature_tuple).unwrap();
+        assert!(ciborium::de::from_reader::<Signature, _>(&signature_bytes[..]).is_err());
     }
 
     #[test]

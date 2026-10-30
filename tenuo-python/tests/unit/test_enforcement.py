@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tenuo import Authorizer, SigningKey, Warrant
+from tenuo import CEL, Authorizer, SigningKey, Warrant
 from tenuo._enforcement import (
     DenialPolicy,
     DenialResult,
@@ -392,6 +392,36 @@ class TestExtractViolatedField:
 
 class TestEnforceToolCall:
     """Tests for enforce_tool_call function."""
+
+    @pytest.mark.parametrize("macro", ["all", "exists"])
+    @pytest.mark.parametrize("value", ["a", 5, True, {"k": 1}])
+    def test_cel_list_macro_rejects_non_lists(self, signing_key, macro, value):
+        agent = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("send_email", {"recipients": CEL(f"value.{macro}(r, r == 'a')")})
+            .holder(agent.public_key)
+            .ttl(60)
+            .mint(signing_key)
+            .bind(agent)
+        )
+        result = enforce_tool_call("send_email", {"recipients": value}, warrant, trusted_roots=[signing_key.public_key])
+        assert result.allowed is False
+        result = enforce_tool_call("send_email", {"recipients": ["a"]}, warrant, trusted_roots=[signing_key.public_key])
+        assert result.allowed is True
+
+    def test_cel_size_type_mismatch_is_denied(self, signing_key):
+        agent = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("send_email", {"recipients": CEL("size(value) < 3")})
+            .holder(agent.public_key)
+            .ttl(60)
+            .mint(signing_key)
+            .bind(agent)
+        )
+        result = enforce_tool_call("send_email", {"recipients": 5}, warrant, trusted_roots=[signing_key.public_key])
+        assert result.allowed is False
 
     def test_requires_bound_warrant(self, basic_warrant):
         """enforce_tool_call should reject plain Warrant (not BoundWarrant)."""
