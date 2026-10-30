@@ -316,6 +316,36 @@ change confined to one project.
 
 Avoid unrelated formatting or cleanup in a focused pull request.
 
+## Docs vocabulary
+
+Tenuo is a new category, so a reader learns its terms from our docs. Use one
+name per idea, in docs, docstrings, error messages and examples.
+
+**Constraints only** and **warrants**, not "Tier 1" and "Tier 2". Several
+integrations can run in two ways:
+
+- **Constraints only**: a tool allowlist and argument constraints configured in
+  application code and checked in that process. No keys, no signatures. The
+  same rules apply to every task for as long as the process runs.
+- **Warrants**: the same constraints inside a signed warrant, bound to the
+  holder's key. Any service that trusts the issuer can verify it, it expires,
+  and delegation can only narrow it. This is task-scoped authority.
+
+Write "start with constraints only, then add warrants when another component
+must verify authority or authority should follow the task". Don't call the
+constraints-only mode "guardrails": Tenuo positions itself against LLM
+guardrails.
+
+For the two layers of the core Python API, say **context API** (`configure`,
+`mint`, `grant`, `Capability`, `@guard`) and **builder API**
+(`Warrant.mint_builder()`, `grant_builder()`, `BoundWarrant`), not "Tier 1 API"
+and "Tier 2 API".
+
+Some identifiers keep the old names for compatibility:
+`create_tier1_guardrail()`, `create_tier2_guardrail()`, `is_tier2()`, and the
+`"tier1"` / `"tier2"` values in OpenAI audit events. Use them in code, and use
+the words above in the prose around them.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the
