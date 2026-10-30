@@ -18,7 +18,7 @@ use tenuo::{
     crypto::{PublicKey, SigningKey},
     payload::WarrantPayload,
     planes::{Authorizer, DataPlane},
-    warrant::{Warrant, WarrantId, WarrantType},
+    warrant::{OwnedAttenuationBuilder, Warrant, WarrantId, WarrantType},
 };
 
 fn gate_bytes(tool: &str) -> Vec<u8> {
@@ -700,10 +700,18 @@ fn inherited_unsorted_or_repeated_approvers_clear_with_their_gate() {
 
     let child = root
         .attenuate()
-        .tool("read_file", read)
+        .tool("read_file", read.clone())
         .holder(k.worker.public_key())
         .build(&k.orch)
         .unwrap();
     assert!(child.required_approvers().is_none());
     assert!(child.extension(APPROVAL_GATE_EXTENSION_KEY).is_none());
+
+    // The owned builder (behind the Python bindings) takes the same path.
+    let owned = OwnedAttenuationBuilder::new(root)
+        .tool("read_file", read)
+        .holder(k.worker.public_key())
+        .build(&k.orch)
+        .unwrap();
+    assert!(owned.required_approvers().is_none());
 }
