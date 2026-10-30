@@ -491,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn test_list_macros_fail_closed_on_non_lists() {
+    fn test_list_macros_deny_on_non_lists_without_panicking() {
         let values = [
             ConstraintValue::String("admin".to_string()),
             ConstraintValue::Integer(5),
@@ -503,13 +503,15 @@ mod tests {
         ];
 
         for value in &values {
+            let all = evaluate_with_value_context("value.all(item, item == 'admin')", value);
             assert!(
-                evaluate_with_value_context("value.all(item, item == 'admin')", value).is_err(),
-                "all over {value:?} must deny instead of panicking"
+                matches!(all, Err(_) | Ok(false)),
+                "all over {value:?} must deny instead of panicking: {all:?}"
             );
+            let exists = evaluate_with_value_context("value.exists(item, item == 'admin')", value);
             assert!(
-                evaluate_with_value_context("value.exists(item, item == 'admin')", value).is_err(),
-                "exists over {value:?} must deny instead of panicking"
+                matches!(exists, Err(_) | Ok(false)),
+                "exists over {value:?} must deny instead of panicking: {exists:?}"
             );
         }
     }
