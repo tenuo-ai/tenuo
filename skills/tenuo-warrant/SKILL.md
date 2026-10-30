@@ -20,6 +20,12 @@ For developers familiar with other auth systems:
 
 ## Flow
 
+For an installed Python SDK that exposes `tenuo-cli`, prefer its local file
+helpers for setup: `tenuo-cli init --dev`, `key list`, `trust list`, and `doctor`.
+Read `docs/local-cli.md` in the matching checkout. Never print private material
+or hand the deployed agent the controller or approver private key. Separate
+files under one OS user provide a development loop, not process isolation.
+
 ### Phase 1: Discover Context
 
 Before asking questions, scan the codebase:
