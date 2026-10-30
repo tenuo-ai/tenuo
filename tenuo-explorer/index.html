@@ -7,7 +7,7 @@
     <title>Tenuo Explorer | Inspect and Test Agent Authority</title>
     <meta name="description" content="Decode signed warrants, simulate authorization decisions, trace delegation, compare authority, and verify receipts locally in your browser." />
     <meta name="keywords" content="Tenuo, authorization, AI agents, warrant, delegation, WASM, playground" />
-    <meta name="theme-color" content="#040a0f" />
+    <meta name="theme-color" content="#FFFFFF" />
     <link rel="canonical" href="https://tenuo.ai/explorer/" />
     
     <!-- Open Graph -->
@@ -21,6 +21,18 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Tenuo Explorer | Inspect Agent Authority" />
     <meta name="twitter:description" content="Inspect warrants, test policy decisions, and trace delegation locally in your browser." />
+    <script>
+      (function () {
+        var preference = 'system';
+        try {
+          var saved = localStorage.getItem('tenuo-theme');
+          if (saved === 'light' || saved === 'dark' || saved === 'system') preference = saved;
+        } catch (_) {}
+        var dark = preference === 'dark' || (preference === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        document.documentElement.dataset.themePreference = preference;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
