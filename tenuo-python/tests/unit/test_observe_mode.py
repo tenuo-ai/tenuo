@@ -111,13 +111,14 @@ def test_observe_allows_constraint_violation_and_logs(caplog):
 
     [rec] = _observe_records(caplog)
     assert rec.levelno == logging.WARNING
-    assert rec.getMessage().startswith("OBSERVE: would deny issue_payout: ")
+    assert rec.getMessage() == "OBSERVE: would deny issue_payout (constraint_violation)"
     assert rec.tool == "issue_payout"
     assert rec.args_keys == ["payee", "amount"]
     assert rec.arg_types == {"payee": "str", "amount": "int"}
     assert rec.error_type == "constraint_violation"
     assert rec.constraint_violated == "payee"
-    assert rec.denial_reason == result.denial_reason
+    assert not hasattr(rec, "denial_reason")
+    assert "ACCT-ATTACKER" not in rec.getMessage()
     assert rec.warrant_id == result.warrant_id
 
 
@@ -156,6 +157,36 @@ def test_receipt_collected_as_denial(monkeypatch):
     result = enforce_tool_call("issue_payout", BAD_ARGS, BOUND, trusted_roots=ROOTS)
     assert seen == [False]
     assert result.allowed
+
+
+def test_mcp_conversion_preserves_observed_denial_metadata():
+    from tenuo._enforcement import EnforcementResult
+    from tenuo.mcp.server import _mcp_result_from_enforcement
+
+    enforcement = EnforcementResult(
+        allowed=True,
+        observed=True,
+        tool="issue_payout",
+        arguments=BAD_ARGS,
+        denial_reason="denied",
+        error_type="constraint_violation",
+        constraint_violated="payee",
+        warrant_id="w1",
+        verified_pop=b"proof",
+        pop_auth_args=BAD_ARGS,
+    )
+    result = _mcp_result_from_enforcement(
+        enforcement,
+        tool_name="issue_payout",
+        clean_arguments=BAD_ARGS,
+        constraints=BAD_ARGS,
+        warrant_id="w1",
+    )
+    assert result.allowed and result.observed
+    assert result.error_type == "constraint_violation"
+    assert result.constraint_violated == "payee"
+    assert result.verified_pop == b"proof"
+    assert result.pop_auth_args == BAD_ARGS
 
 
 # -- verify path --------------------------------------------------------------
@@ -247,6 +278,55 @@ def test_observe_approval_gate_async():
     )
     assert result.allowed and result.observed
     assert result.error_type == "approval_required"
+
+
+def test_observe_approval_gate_reports_invalid_pop_before_missing_approval():
+    _observe()
+    forged = bytes(
+        GATED.sign(SigningKey.generate(), "issue_payout", GATED_ARGS, int(time.time()))
+    )
+    from tenuo_core import Authorizer
+
+    result = verify_inbound_call(
+        tool_name="issue_payout",
+        tool_args=GATED_ARGS,
+        warrant=GATED,
+        pop_signature=forged,
+        authorizer=Authorizer(trusted_roots=ROOTS),
+    )
+    assert result.allowed and result.observed
+    assert result.error_type == "invalid_pop"
+
+
+def test_observe_invalid_presented_approval_is_recorded_not_raised():
+    from tenuo.approval import ApprovalRequest, sign_approval
+    from tenuo_core import py_compute_request_hash
+
+    _observe()
+    rogue = SigningKey.generate()
+    request_hash = py_compute_request_hash(
+        GATED.id,
+        "issue_payout",
+        GATED_ARGS,
+        AGENT.public_key,
+    )
+    request = ApprovalRequest.for_warrant_gate(
+        "issue_payout",
+        GATED_ARGS,
+        GATED,
+        request_hash,
+        holder_key=AGENT.public_key,
+    )
+    invalid = sign_approval(request, rogue)
+    result = enforce_tool_call(
+        "issue_payout",
+        GATED_ARGS,
+        GATED.bind(AGENT, trusted_roots=ROOTS),
+        trusted_roots=ROOTS,
+        approvals=[invalid],
+    )
+    assert result.allowed and result.observed
+    assert result.error_type == "approval_verification_failed"
 
 
 def test_enforce_approval_gate_still_asks():
