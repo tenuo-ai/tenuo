@@ -18,7 +18,6 @@ import pytest
 pytest.importorskip("crewai")
 
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
-os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
 
 from crewai import Agent, Crew, Process, Task  # noqa: E402
