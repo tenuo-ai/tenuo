@@ -186,7 +186,7 @@ def test_guard_decorator_observes_expired_warrant(caplog):
     assert record.error_type == "expired"
 
 
-def test_guard_decorator_collects_expired_warrant_denial_receipt():
+def test_guard_decorator_collects_expired_warrant_denial_receipt(monkeypatch):
     from tenuo import HolderIdentity, Runtime
     from tenuo.decorators import guard
 
@@ -205,20 +205,63 @@ def test_guard_decorator_collects_expired_warrant_denial_receipt():
         receipts="collect",
     )
     configure(trusted_roots=[root.public_key], mode="observe")
+    collected = []
+    from tenuo.receipts import collect_enforcement_receipt as real_collect
+
+    def capture(result, chain_result=None, runtime=None):
+        collected.append(result)
+        return real_collect(result, chain_result, runtime)
+
+    monkeypatch.setattr("tenuo.receipts.collect_enforcement_receipt", capture)
 
     @guard(
         expired,
         tool="expired_tool",
         keypair=holder.signing_key,
+        mapping={"file_path": "value"},
         trusted_roots=[root.public_key],
+    )
+    def expired_tool(file_path="ok"):
+        return file_path
+
+    with runtime.bind():
+        assert expired_tool() == "ok"
+
+    assert len(runtime.peek_receipts()) == 1
+    assert collected[0].arguments == {"value": "ok"}
+
+
+def test_guard_decorator_observe_calls_custom_extractor_once():
+    from tenuo.decorators import guard
+
+    expired = (
+        Warrant.mint_builder()
+        .capability("expired_tool", value=Exact("ok"))
+        .holder(AGENT.public_key)
+        .ttl(0)
+        .mint(ISSUER)
+    )
+    calls = 0
+
+    def extract(value):
+        nonlocal calls
+        calls += 1
+        return {"value": value}
+
+    _observe()
+
+    @guard(
+        expired,
+        tool="expired_tool",
+        keypair=AGENT,
+        extract_args=extract,
+        trusted_roots=ROOTS,
     )
     def expired_tool(value):
         return value
 
-    with runtime.bind():
-        assert expired_tool("ok") == "ok"
-
-    assert len(runtime.peek_receipts()) == 1
+    assert expired_tool("ok") == "ok"
+    assert calls == 1
 
 
 def test_receipt_collected_as_denial(monkeypatch):

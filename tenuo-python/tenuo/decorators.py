@@ -46,7 +46,7 @@ import traceback
 import warnings
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Callable, List, Literal, Optional, Union, get_args, get_origin, get_type_hints, overload
+from typing import Any, Callable, Dict, List, Literal, Optional, Union, get_args, get_origin, get_type_hints, overload
 
 from typing_extensions import Annotated
 
@@ -781,6 +781,43 @@ def guard(
             func_name = f"{func.__module__}.{func.__qualname__}"
 
             warrant_to_use = active_warrant or get_warrant_context()
+            args_not_extracted = object()
+            auth_args_cache: Any = args_not_extracted
+
+            def authorization_args() -> Dict[str, Any]:
+                """Extract once so enforcement and early-denial receipts agree."""
+                nonlocal auth_args_cache
+                if auth_args_cache is not args_not_extracted:
+                    return auth_args_cache
+                if extract_args:
+                    auth_args_cache = extract_args(*args, **kwargs)
+                    return auth_args_cache
+
+                import inspect
+
+                try:
+                    bound = inspect.signature(func).bind(*args, **kwargs)
+                    bound.apply_defaults()
+                    extracted = dict(bound.arguments)
+                except TypeError as e:
+                    audit_logger.log(
+                        AuditEvent(
+                            event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                            tool=tool_name,
+                            action="denied",
+                            error_code="argument_binding_error",
+                            details=f"Failed to bind arguments for {tool_name}: {e}",
+                        )
+                    )
+                    raise
+
+                if mapping:
+                    extracted = {
+                        mapping.get(arg_name, arg_name): value
+                        for arg_name, value in extracted.items()
+                    }
+                auth_args_cache = extracted
+                return auth_args_cache
 
             def observe_early_denial(
                 reason: str,
@@ -790,11 +827,9 @@ def guard(
                 constraint_violated: Optional[str] = None,
             ) -> Any:
                 """Record decorator-local denials and continue in observe mode."""
-                import inspect
-
-                try:
-                    observed_args = dict(inspect.signature(func).bind_partial(*args, **kwargs).arguments)
-                except (TypeError, ValueError):
+                if warrant_to_use is not None:
+                    observed_args = authorization_args()
+                else:
                     observed_args = dict(kwargs)
                 observed_result = EnforcementResult(
                     allowed=False,
@@ -976,40 +1011,7 @@ def guard(
                 )
                 raise MissingSigningKey(tool=tool_name)
 
-            if extract_args:
-                auth_args = extract_args(*args, **kwargs)
-            else:
-                import inspect
-
-                sig = inspect.signature(func)
-
-                try:
-                    bound = sig.bind(*args, **kwargs)
-                    bound.apply_defaults()
-                    auth_args = dict(bound.arguments)
-                except TypeError as e:
-                    # If binding fails (e.g. wrong number of args), we can't authorize
-                    # Let the function call proceed to fail naturally, or raise
-                    # But for security, if we can't inspect args, we shouldn't authorize.
-                    # However, the function call itself would fail right after.
-                    # Let's log and re-raise to be safe/clear.
-                    audit_logger.log(
-                        AuditEvent(
-                            event_type=AuditEventType.AUTHORIZATION_FAILURE,
-                            tool=tool_name,
-                            action="denied",
-                            error_code="argument_binding_error",
-                            details=f"Failed to bind arguments for {tool_name}: {e}",
-                        )
-                    )
-                    raise
-
-                if mapping:
-                    mapped_args = {}
-                    for arg_name, value in auth_args.items():
-                        constraint_name = mapping.get(arg_name, arg_name)
-                        mapped_args[constraint_name] = value
-                    auth_args = mapped_args
+            auth_args = authorization_args()
 
             # Defense in Depth: Enforce code-level constraints from Annotated hints
             # These are checked BEFORE the warrant, preventing unsafe values even if authorized
