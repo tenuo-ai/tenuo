@@ -12,6 +12,7 @@ on:
 
 # Permissions for release workflow
 permissions:
+  checks: read
   contents: read
   packages: write
   id-token: write  # For trusted publishing
@@ -264,9 +265,9 @@ jobs:
           packages-dir: dist/
           skip-existing: true
 
-  # Publish the TypeScript SDK as a beta while the Python/Rust release remains stable.
-  publish-npm-beta:
-    name: Publish TypeScript beta to npm
+  # Publish both TypeScript packages on the channel derived from their version.
+  publish-npm:
+    name: Publish TypeScript packages to npm
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
@@ -298,51 +299,195 @@ jobs:
         working-directory: tenuo-ts
         run: pnpm install --frozen-lockfile
 
+      - name: Validate npm release policy
+        id: npm-policy
+        working-directory: tenuo-ts
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r version dist_tag < <(node scripts/npm-release-policy.mjs check-workspace)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+          if node scripts/npm-release-policy.mjs release-tag "$version" "${GITHUB_REF_NAME}"; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Publishing @tenuo packages at $version on npm dist-tag $dist_tag"
+          elif npm view "@tenuo/core@${version}" version >/dev/null 2>&1 && \
+            npm view "@tenuo/mcp@${version}" version >/dev/null 2>&1; then
+            # A coordinated release that did not bump the TypeScript packages.
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::@tenuo packages stay at published $version; skipping npm for ${GITHUB_REF_NAME}"
+          else
+            echo "Unpublished @tenuo version $version does not match release tag ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+      - name: Require stable-release checks for the tagged commit
+        if: steps.npm-policy.outputs.publish == 'true' && steps.npm-policy.outputs.dist_tag == 'latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_checks=(
+            "TypeScript SDK"
+            "TypeScript SDK (Node 22)"
+            "TypeScript SDK (Node 24)"
+            "TypeScript SDK (Windows pack smoke)"
+            "TypeScript Red Team Tests"
+            "TypeScript Differential Security"
+            "TypeScript Mutation Security"
+          )
+          # A release can be published while CI is still running on the
+          # tagged commit, so wait for the required checks to finish.
+          for attempt in {1..60}; do
+            if ! runs=$(gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?filter=latest&per_page=100" \
+              --jq '.check_runs[] | select(.app.slug == "github-actions") | [.name, .status, (.conclusion // "")] | @tsv'); then
+              echo "Check-run query failed (attempt ${attempt}/60)" >&2
+              sleep 30
+              continue
+            fi
+            pending=()
+            for check_name in "${required_checks[@]}"; do
+              run=$(awk -F'\t' -v name="$check_name" '$1 == name' <<< "$runs" | head -n 1)
+              IFS=$'\t' read -r _ status conclusion <<< "$run"
+              if [ "${status:-}" != "completed" ]; then
+                pending+=("$check_name")
+              elif [ "$conclusion" != "success" ]; then
+                echo "Required check did not succeed for ${GITHUB_SHA}: $check_name ($conclusion)" >&2
+                exit 1
+              fi
+            done
+            if [ "${#pending[@]}" -eq 0 ]; then
+              exit 0
+            fi
+            echo "Waiting for ${pending[*]} (attempt ${attempt}/60)"
+            sleep 30
+          done
+          echo "Required checks did not finish for ${GITHUB_SHA}: ${pending[*]}" >&2
+          exit 1
+
       - name: Build WASM
+        if: steps.npm-policy.outputs.publish == 'true'
         working-directory: tenuo-ts
         run: pnpm build:wasm
 
       - name: Typecheck
+        if: steps.npm-policy.outputs.publish == 'true'
         working-directory: tenuo-ts
         run: pnpm typecheck
 
       - name: Test
+        if: steps.npm-policy.outputs.publish == 'true'
         working-directory: tenuo-ts
         run: pnpm test
 
       - name: Pack smoke
+        if: steps.npm-policy.outputs.publish == 'true'
         working-directory: tenuo-ts
         run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
 
-      - name: Publish @tenuo/core beta
+      - name: Publish @tenuo/core
+        if: steps.npm-policy.outputs.publish == 'true'
         working-directory: tenuo-ts/packages/core
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.npm-policy.outputs.version }}
+          DIST_TAG: ${{ steps.npm-policy.outputs.dist_tag }}
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          set -euo pipefail
           if npm view "@tenuo/core@${VERSION}" version >/dev/null 2>&1; then
             echo "@tenuo/core@${VERSION} already exists; skipping publish"
           else
-            npm publish --access public --provenance --tag beta
+            npm publish --access public --provenance --tag "$DIST_TAG"
           fi
-          # Stay on the beta dist-tag. Also move latest so an untagged
-          # `npm i @tenuo/core` is not stuck on an older prerelease.
-          npm dist-tag add "@tenuo/core@${VERSION}" beta
-          npm dist-tag add "@tenuo/core@${VERSION}" latest
+          npm dist-tag add "@tenuo/core@${VERSION}" "$DIST_TAG"
 
-      - name: Publish @tenuo/mcp beta
+      - name: Wait for @tenuo/core registry visibility
+        if: steps.npm-policy.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.npm-policy.outputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            if npm view "@tenuo/core@${VERSION}" version >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "Waiting for @tenuo/core@${VERSION} to become visible (attempt ${attempt}/12)"
+            sleep 5
+          done
+          echo "@tenuo/core@${VERSION} did not become visible" >&2
+          exit 1
+
+      - name: Publish @tenuo/mcp
+        if: steps.npm-policy.outputs.publish == 'true'
         working-directory: tenuo-ts/packages/mcp
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.npm-policy.outputs.version }}
+          DIST_TAG: ${{ steps.npm-policy.outputs.dist_tag }}
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          set -euo pipefail
           if npm view "@tenuo/mcp@${VERSION}" version >/dev/null 2>&1; then
             echo "@tenuo/mcp@${VERSION} already exists; skipping publish"
           else
-            npm publish --access public --provenance --tag beta
+            npm publish --access public --provenance --tag "$DIST_TAG"
           fi
-          npm dist-tag add "@tenuo/mcp@${VERSION}" beta
-          npm dist-tag add "@tenuo/mcp@${VERSION}" latest
+          npm dist-tag add "@tenuo/mcp@${VERSION}" "$DIST_TAG"
+
+      - name: Verify npm dist-tags
+        if: steps.npm-policy.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.npm-policy.outputs.version }}
+          DIST_TAG: ${{ steps.npm-policy.outputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          for package in @tenuo/core @tenuo/mcp; do
+            actual=""
+            query_succeeded=false
+            for attempt in {1..12}; do
+              if actual=$(npm view "${package}@${VERSION}" "dist-tags.${DIST_TAG}" 2>/dev/null); then
+                query_succeeded=true
+                if [ "$actual" = "$VERSION" ]; then
+                  break
+                fi
+                echo "Waiting for $package dist-tag $DIST_TAG (attempt ${attempt}/12)"
+              else
+                echo "Registry query for $package dist-tag $DIST_TAG failed (attempt ${attempt}/12)" >&2
+              fi
+              sleep 5
+            done
+            if [ "$query_succeeded" != true ] || [ "$actual" != "$VERSION" ]; then
+              echo "$package dist-tag $DIST_TAG resolved to '$actual', expected '$VERSION'" >&2
+              exit 1
+            fi
+            if [[ "$VERSION" == *-* ]]; then
+              latest=""
+              latest_query_succeeded=false
+              for attempt in {1..12}; do
+                if latest=$(npm view "${package}@${VERSION}" "dist-tags.latest" 2>/dev/null); then
+                  latest_query_succeeded=true
+                  break
+                fi
+                echo "Registry query for $package dist-tag latest failed (attempt ${attempt}/12)" >&2
+                sleep 5
+              done
+              if [ "$latest_query_succeeded" != true ]; then
+                echo "Could not verify $package dist-tag latest" >&2
+                exit 1
+              fi
+              if [ "$latest" = "$VERSION" ]; then
+                echo "$package prerelease $VERSION must not be on dist-tag latest" >&2
+                exit 1
+              fi
+              # npm cannot delete latest, so a legacy prerelease stays there
+              # until the first stable release replaces it.
+              if [ -n "$latest" ] && \
+                ! node tenuo-ts/scripts/npm-release-policy.mjs assert "$latest" latest 2>/dev/null; then
+                echo "::warning::$package dist-tag latest still points at legacy prerelease $latest"
+              fi
+            fi
+          done
 
   # Docker: native amd64 + arm64 per platform (no QEMU), then merge manifests.
   docker-authorizer-build:
