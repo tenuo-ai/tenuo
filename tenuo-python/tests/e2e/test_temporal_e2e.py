@@ -1441,7 +1441,7 @@ class TestChildWorkflowDelegation:
 
         captured = {}
         class FakeNext:
-            def start_child_workflow(self, input):
+            async def start_child_workflow(self, input):
                 captured["headers"] = dict(input.headers or {})
                 return MagicMock()
 
@@ -1452,7 +1452,7 @@ class TestChildWorkflowDelegation:
             id: str = child_id
             headers: Optional[Dict[str, Any]] = None
 
-        outbound.start_child_workflow(FakeChildInput())
+        _run(outbound.start_child_workflow(FakeChildInput()))
 
         assert TENUO_WARRANT_HEADER in captured["headers"]
         assert TENUO_KEY_ID_HEADER in captured["headers"]
@@ -1467,7 +1467,7 @@ class TestChildWorkflowDelegation:
 
         captured = {}
         class FakeNext:
-            def start_child_workflow(self, input):
+            async def start_child_workflow(self, input):
                 captured["headers"] = input.headers
                 return MagicMock()
 
@@ -1478,14 +1478,18 @@ class TestChildWorkflowDelegation:
             id: str = "wf-unknown-child"
             headers: Optional[Dict[str, Any]] = None
 
-        outbound.start_child_workflow(FakeChildInput())
+        _run(outbound.start_child_workflow(FakeChildInput()))
         assert captured["headers"] is None
 
     def test_child_workflow_does_not_inherit_parent_headers(
         self, warrant, agent_key, control_key, headers_dict
     ):
         """Even if the parent has stored headers, a plain child workflow call
-        must NOT inherit them — fail-closed requires explicit attenuation."""
+        must NOT inherit them — fail-closed requires explicit attenuation.
+
+        Also covers the ``child_warrant_policy`` path's default-off behavior:
+        this interceptor has no config at all (``config=None``), matching
+        every caller that never sets ``child_warrant_policy``."""
         from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
         from tenuo.temporal._state import _workflow_headers_store
 
@@ -1502,7 +1506,7 @@ class TestChildWorkflowDelegation:
         try:
             captured: Dict[str, Any] = {}
             class FakeNext:
-                def start_child_workflow(self, input):
+                async def start_child_workflow(self, input):
                     captured["headers"] = input.headers
                     return MagicMock()
 
@@ -1513,7 +1517,7 @@ class TestChildWorkflowDelegation:
                 id: str = "wf-child-no-attenuation"
                 headers: Optional[Dict[str, Any]] = None
 
-            outbound.start_child_workflow(FakeChildInput())
+            _run(outbound.start_child_workflow(FakeChildInput()))
             assert captured["headers"] is None, (
                 "Child must not inherit parent headers; use tenuo_execute_child_workflow()"
             )
