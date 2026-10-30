@@ -147,6 +147,45 @@ def test_observe_does_not_touch_real_allows():
     assert result.error_type is None
 
 
+def test_guard_decorator_observes_missing_warrant(caplog):
+    from tenuo.decorators import guard
+
+    _observe()
+
+    @guard(tool="unscoped_tool")
+    def unscoped_tool():
+        return "executed"
+
+    with caplog.at_level(logging.WARNING, logger="tenuo"):
+        assert unscoped_tool() == "executed"
+    [record] = _observe_records(caplog)
+    assert record.tool == "unscoped_tool"
+    assert record.error_type == "missing_warrant"
+
+
+def test_guard_decorator_observes_expired_warrant(caplog):
+    from tenuo.decorators import guard
+
+    expired = (
+        Warrant.mint_builder()
+        .capability("expired_tool", value=Exact("ok"))
+        .holder(AGENT.public_key)
+        .ttl(0)
+        .mint(ISSUER)
+    )
+    _observe()
+
+    @guard(expired, tool="expired_tool", keypair=AGENT, trusted_roots=ROOTS)
+    def expired_tool(value):
+        return value
+
+    with caplog.at_level(logging.WARNING, logger="tenuo"):
+        assert expired_tool("ok") == "ok"
+    [record] = _observe_records(caplog)
+    assert record.tool == "expired_tool"
+    assert record.error_type == "expired"
+
+
 def test_receipt_collected_as_denial(monkeypatch):
     """The runtime receipt sees the denial, not the observe-mode allow."""
     import tenuo.receipts as receipts

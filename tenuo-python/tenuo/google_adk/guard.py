@@ -73,9 +73,13 @@ from tenuo._enforcement import (
     enforce_tool_call_async,
     split_presented_warrant,
 )
-from tenuo.approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
+from tenuo.approval import (
+    ApprovalDenied,
+    ApprovalRequired,
+    ApprovalVerificationError,
+)
 from tenuo.config import resolve_trusted_roots, should_block_violation
-from tenuo.exceptions import ConfigurationError, InsufficientApprovals
+from tenuo.exceptions import ApprovalExpired, ConfigurationError, InsufficientApprovals, InvalidApproval
 
 if TYPE_CHECKING:
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
@@ -436,7 +440,13 @@ class TenuoGuard:
                         approvals=self._approvals,
                         warrant_chain=warrant_chain,
                     )
-                except (ApprovalDenied, ApprovalRequired, ApprovalVerificationError) as e:
+                except (
+                    ApprovalDenied,
+                    ApprovalExpired,
+                    ApprovalRequired,
+                    ApprovalVerificationError,
+                    InvalidApproval,
+                ) as e:
                     # The shared path raises approval failures instead of
                     # returning a denial. Deny the call the same way as any
                     # other, instead of letting the exception end the run.
@@ -658,7 +668,13 @@ class TenuoGuard:
                         approvals=self._approvals,
                         warrant_chain=warrant_chain,
                     )
-                except (ApprovalDenied, ApprovalRequired, ApprovalVerificationError) as e:
+                except (
+                    ApprovalDenied,
+                    ApprovalExpired,
+                    ApprovalRequired,
+                    ApprovalVerificationError,
+                    InvalidApproval,
+                ) as e:
                     # The shared path raises approval failures instead of
                     # returning a denial. Deny the call the same way as any
                     # other, instead of letting the exception end the run.
@@ -910,6 +926,15 @@ class TenuoGuard:
 
         if self._observing():
             self._observe_denial(tool_name, args, reason, error_type="insufficient_approvals")
+            if self._control_plane is not None and not _cp_already_emitted:
+                self._emit_control_plane_denial(
+                    reason,
+                    tool_name,
+                    args,
+                    start_ns=start_ns,
+                    error_type="insufficient_approvals",
+                    observed=True,
+                )
             return None
 
         self._audit("tool_denied", tool_name, args, reason=reason)
@@ -945,30 +970,27 @@ class TenuoGuard:
         # Observe mode (global) or this guard's dry_run: log but don't block
         if self._observing():
             self._observe_denial(tool_name, args, reason, constraint_param=constraint_param)
+            if self._control_plane is not None and not _cp_already_emitted:
+                self._emit_control_plane_denial(
+                    reason,
+                    tool_name,
+                    args,
+                    start_ns=start_ns,
+                    constraint_param=constraint_param,
+                    observed=True,
+                )
             return None
 
         self._audit("tool_denied", tool_name, args, reason=reason)
 
         if self._control_plane is not None and not _cp_already_emitted:
-            import time
-            latency_us = ((time.perf_counter_ns() - start_ns) // 1000) if start_ns is not None else 0
-            warrant_id = ""
-            if self._warrant is not None:
-                _wid = getattr(self._warrant, "id", None)
-                if _wid is not None:
-                    warrant_id = _wid.hex() if hasattr(_wid, "hex") else str(_wid)
-            pseudo = EnforcementResult(
-                allowed=False,
-                warrant_id=warrant_id,
-                tool=tool_name,
-                denial_reason=reason,
-                constraint_violated=constraint_param,
-                arguments=args,
+            self._emit_control_plane_denial(
+                reason,
+                tool_name,
+                args,
+                start_ns=start_ns,
+                constraint_param=constraint_param,
             )
-            try:
-                self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
-            except Exception:
-                logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
         if self._on_denial == "raise":
             raise ToolAuthorizationError(reason, tool_name, args)
@@ -1002,6 +1024,44 @@ class TenuoGuard:
                 result["hints"] = hints
 
         return result
+
+    def _emit_control_plane_denial(
+        self,
+        reason: str,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        start_ns: Optional[int] = None,
+        constraint_param: Optional[str] = None,
+        error_type: Optional[str] = None,
+        observed: bool = False,
+    ) -> None:
+        """Emit a locally produced denial, including observe-mode decisions."""
+        import time
+
+        control_plane = self._control_plane
+        if control_plane is None:
+            return
+        latency_us = ((time.perf_counter_ns() - start_ns) // 1000) if start_ns is not None else 0
+        warrant_id = ""
+        if self._warrant is not None:
+            _wid = getattr(self._warrant, "id", None)
+            if _wid is not None:
+                warrant_id = _wid.hex() if hasattr(_wid, "hex") else str(_wid)
+        pseudo = EnforcementResult(
+            allowed=False,
+            observed=observed,
+            warrant_id=warrant_id,
+            tool=tool_name,
+            denial_reason=reason,
+            error_type=error_type,
+            constraint_violated=constraint_param,
+            arguments=args,
+        )
+        try:
+            control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
+        except Exception:
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
     def _observing(self) -> bool:
         """True when denials should be recorded but not enforced.

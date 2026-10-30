@@ -61,7 +61,7 @@ from .exceptions import (
     ScopeViolation,
     ToolNotAuthorized,
 )
-from ._enforcement import EnforcementResult, enforce_tool_call
+from ._enforcement import EnforcementResult, _log_observed_denial, enforce_tool_call
 from .bound_warrant import BoundWarrant
 
 logger = logging.getLogger("tenuo.decorators")
@@ -774,13 +774,41 @@ def guard(
             if is_bypass_enabled():
                 return func(*args, **kwargs)
 
-            from .config import get_config
+            from .config import get_config, should_block_violation
 
             config = get_config()
             callsite = _get_callsite()
             func_name = f"{func.__module__}.{func.__qualname__}"
 
             warrant_to_use = active_warrant or get_warrant_context()
+
+            def observe_early_denial(
+                reason: str,
+                error_type: str,
+                *,
+                warrant_id: Optional[Any] = None,
+                constraint_violated: Optional[str] = None,
+            ) -> Any:
+                """Record decorator-local denials and continue in observe mode."""
+                import inspect
+
+                try:
+                    observed_args = dict(inspect.signature(func).bind_partial(*args, **kwargs).arguments)
+                except (TypeError, ValueError):
+                    observed_args = dict(kwargs)
+                _log_observed_denial(
+                    EnforcementResult(
+                        allowed=False,
+                        observed=True,
+                        warrant_id=str(warrant_id) if warrant_id is not None else None,
+                        tool=tool_name,
+                        arguments=observed_args,
+                        denial_reason=reason,
+                        error_type=error_type,
+                        constraint_violated=constraint_violated,
+                    )
+                )
+                return func(*args, **kwargs)
 
             if warrant_to_use is None:
                 error_code = AuthErrorCode.MISSING_CONTEXT
@@ -798,6 +826,12 @@ def guard(
                         },
                     )
                 )
+
+                if not should_block_violation():
+                    return observe_early_denial(
+                        f"No warrant context available for tool '{tool_name}'.",
+                        "missing_warrant",
+                    )
 
                 should_fail = config.strict_mode
 
@@ -870,6 +904,13 @@ def guard(
                     )
                 )
 
+                if not should_block_violation():
+                    return observe_early_denial(
+                        f"Warrant expired at {expires_at}.",
+                        "expired",
+                        warrant_id=getattr(warrant_to_use, "id", None),
+                    )
+
                 error_msg = _make_actionable_error(
                     error_code=error_code,
                     tool_name=tool_name,
@@ -903,6 +944,13 @@ def guard(
                         },
                     )
                 )
+
+                if not should_block_violation():
+                    return observe_early_denial(
+                        "Proof-of-Possession is mandatory but no keypair is available.",
+                        "missing_signing_key",
+                        warrant_id=getattr(warrant_to_use, "id", None),
+                    )
 
                 error_msg = _make_actionable_error(
                     error_code=error_code,
@@ -974,6 +1022,14 @@ def guard(
                                 )
                             )
 
+                            if not should_block_violation():
+                                return observe_early_denial(
+                                    details,
+                                    "constraint_violation",
+                                    warrant_id=getattr(warrant_to_use, "id", None),
+                                    constraint_violated=param,
+                                )
+
                             raise AuthorizationDenied(
                                 tool=tool_name,
                                 reason=details,
@@ -1008,6 +1064,12 @@ def guard(
             if verify_mode == "verify":
                 _precomputed_sig = extract_signature(*args, **kwargs) if callable(extract_signature) else None
                 if _precomputed_sig is None:
+                    if not should_block_violation():
+                        return observe_early_denial(
+                            "No Proof-of-Possession signature was provided.",
+                            "missing_signature",
+                            warrant_id=getattr(warrant_to_use, "id", None),
+                        )
                     raise MissingSignature("@guard(verify_mode='verify') requires extract_signature to return bytes")
                 _precomputed_sig = bytes(_precomputed_sig)
                 _raw_chain = extract_chain(*args, **kwargs) if callable(extract_chain) else None

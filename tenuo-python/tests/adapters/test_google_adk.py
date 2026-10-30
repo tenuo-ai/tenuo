@@ -1759,6 +1759,49 @@ class TestObserveMode:
     def _observe_records(self, caplog):
         return [r for r in caplog.records if r.getMessage().startswith("OBSERVE: would deny")]
 
+    @pytest.mark.parametrize("error_name", ["invalid", "expired"])
+    def test_signed_approval_failures_return_denial(
+        self, warrant, keys, trusted_roots, monkeypatch, error_name
+    ):
+        from tenuo.exceptions import ApprovalExpired, InvalidApproval
+
+        error = (
+            InvalidApproval("signature mismatch")
+            if error_name == "invalid"
+            else ApprovalExpired("2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z")
+        )
+
+        def fail_approval(**kwargs):
+            raise error
+
+        monkeypatch.setattr("tenuo.google_adk.guard.enforce_tool_call", fail_approval)
+        guard = self._guard(warrant, keys, trusted_roots, io.StringIO(), on_denial="return")
+        result = guard.before_tool(MockBaseTool("read_file"), {"path": "/tmp/safe"}, MockToolContext())
+        assert result is not None
+        assert result["error"] == "authorization_denied"
+        assert "Approval failed verification" in result["message"]
+
+    def test_async_signed_approval_failure_returns_denial(
+        self, warrant, keys, trusted_roots, monkeypatch
+    ):
+        from tenuo.exceptions import InvalidApproval
+
+        async def fail_approval(**kwargs):
+            raise InvalidApproval("signature mismatch")
+
+        monkeypatch.setattr("tenuo.google_adk.guard.enforce_tool_call_async", fail_approval)
+        guard = self._guard(warrant, keys, trusted_roots, io.StringIO(), on_denial="return")
+        result = asyncio.run(
+            guard.async_before_tool(
+                MockBaseTool("read_file"),
+                {"path": "/tmp/safe"},
+                MockToolContext(),
+            )
+        )
+        assert result is not None
+        assert result["error"] == "authorization_denied"
+        assert "Approval failed verification" in result["message"]
+
     def test_dry_run_uses_shared_observe_log(self, warrant, keys, trusted_roots, caplog):
         log_file = io.StringIO()
         guard = self._guard(warrant, keys, trusted_roots, log_file, dry_run=True)
@@ -1785,6 +1828,30 @@ class TestObserveMode:
         assert len(self._observe_records(caplog)) == 1
         event = json.loads(log_file.getvalue().strip().split("\n")[-1])
         assert event["observed"] is True
+
+    def test_global_observe_mode_emits_tier1_denial_to_control_plane(self, trusted_roots):
+        from tenuo.config import configure
+
+        configure(trusted_roots=trusted_roots, mode="observe")
+        control_plane = MagicMock()
+        guard = (
+            GuardBuilder()
+            .allow("read_file", path=Subpath("/data"))
+            .with_control_plane(control_plane)
+            .build()
+        )
+
+        assert guard.before_tool(
+            MockBaseTool("read_file"),
+            {"path": "/etc/passwd"},
+            MockToolContext(),
+        ) is None
+
+        control_plane.emit_for_enforcement.assert_called_once()
+        emitted = control_plane.emit_for_enforcement.call_args.args[0]
+        assert emitted.allowed is False
+        assert emitted.observed is True
+        assert emitted.constraint_violated == "path"
 
     def test_global_observe_mode_allows_constraint_violation(self, warrant, keys, trusted_roots, caplog):
         from tenuo.config import configure
