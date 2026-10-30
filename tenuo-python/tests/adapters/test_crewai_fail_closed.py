@@ -277,6 +277,31 @@ def test_guarded_step_async_allows_permitted_tool_and_unregisters():
     assert get_before_tool_call_hooks() == []
 
 
+def test_overlapping_async_steps_use_only_their_context_guard():
+    async def run():
+        search_ready = asyncio.Event()
+        delete_ready = asyncio.Event()
+
+        @guarded_step(allow={"search": {"query": Pattern("*")}})
+        async def search_step():
+            search_ready.set()
+            await delete_ready.wait()
+            return await _crew([search], [("search", {"query": "ok"})]).kickoff_async()
+
+        @guarded_step(allow={"delete_file": {"path": Pattern("*")}})
+        async def delete_step():
+            delete_ready.set()
+            await search_ready.wait()
+            return await _crew(
+                [delete_file], [("delete_file", {"path": "/tmp/ok"})]
+            ).kickoff_async()
+
+        await asyncio.gather(search_step(), delete_step())
+
+    asyncio.run(run())
+    assert sorted(EXECUTED) == [("delete_file", "/tmp/ok"), ("search", "ok")]
+
+
 def test_guarded_step_rejects_sync_function_returning_awaitable():
     async def inner():
         return None

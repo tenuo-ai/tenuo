@@ -141,7 +141,7 @@ from tenuo.approval import ApprovalDenied, ApprovalRequired, ApprovalVerificatio
 
 # Import Python-only security constraints
 from tenuo.constraints import Shlex, Subpath, UrlSafe
-from tenuo.exceptions import ConfigurationError
+from tenuo.exceptions import ApprovalExpired, ConfigurationError, InvalidApproval
 
 # Import shared constraint checking logic from framework-agnostic core
 from tenuo.core import check_constraint
@@ -215,11 +215,19 @@ _APPROVAL_ERROR_CODES = (
     (ApprovalDenied, "APPROVAL_DENIED"),
     (ApprovalRequired, "APPROVAL_REQUIRED"),
     (ApprovalVerificationError, "APPROVAL_VERIFICATION_FAILED"),
+    (InvalidApproval, "APPROVAL_VERIFICATION_FAILED"),
+    (ApprovalExpired, "APPROVAL_VERIFICATION_FAILED"),
 )
 # Keep this as a literal tuple: older mypy versions cannot prove that a tuple
 # produced by a comprehension contains only exception classes when it appears
 # in an ``except`` clause.
-_APPROVAL_ERRORS = (ApprovalDenied, ApprovalRequired, ApprovalVerificationError)
+_APPROVAL_ERRORS = (
+    ApprovalDenied,
+    ApprovalRequired,
+    ApprovalVerificationError,
+    InvalidApproval,
+    ApprovalExpired,
+)
 
 
 def _normalize_role(role: str) -> str:
@@ -1960,6 +1968,33 @@ def get_active_guard() -> Optional["CrewAIGuard"]:
     return _guarded_context.get()
 
 
+@contextmanager
+def _scoped_guard_hook(guard: "CrewAIGuard"):
+    """Register a hook that enforces only in this context's guarded zone.
+
+    CrewAI's hook registry is process-global. Concurrent Flow steps therefore
+    see every registered hook; the ContextVar check prevents one step's guard
+    from applying another step's policy while leaving explicit global guards
+    registered through ``CrewAIGuard.register()`` unchanged.
+    """
+    if not HOOKS_AVAILABLE:
+        yield
+        return
+
+    authorize = guard._create_hook()
+
+    def dispatch(context: Any) -> Optional[bool]:
+        if get_active_guard() is not guard:
+            return None
+        return authorize(context)
+
+    register_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
+    try:
+        yield
+    finally:
+        unregister_before_tool_call_hook(dispatch)
+
+
 def is_strict_mode() -> bool:
     """Check if strict mode is active."""
     return _strict_mode.get()
@@ -2088,15 +2123,10 @@ def guarded_step(
                 guard = _build_guard()
                 step_start = time.time()
                 with _guarded_zone(guard, strict=strict):
-                    # Register the guard as a CrewAI hook so tool calls during
-                    # the step are actually intercepted and authorized.
-                    if HOOKS_AVAILABLE:
-                        guard.register()
                     try:
-                        result = await func(*args, **kwargs)
+                        with _scoped_guard_hook(guard):
+                            result = await func(*args, **kwargs)
                     finally:
-                        if HOOKS_AVAILABLE:
-                            guard.unregister()
                         _finish_step(step_name, step_start)
                 return result
 
@@ -2107,15 +2137,10 @@ def guarded_step(
             guard = _build_guard()
             step_start = time.time()
             with _guarded_zone(guard, strict=strict):
-                # Register the guard as a CrewAI hook so tool calls during
-                # the step are actually intercepted and authorized.
-                if HOOKS_AVAILABLE:
-                    guard.register()
                 try:
-                    result = func(*args, **kwargs)
+                    with _scoped_guard_hook(guard):
+                        result = func(*args, **kwargs)
                 finally:
-                    if HOOKS_AVAILABLE:
-                        guard.unregister()
                     _finish_step(step_name, step_start)
             if inspect.isawaitable(result):
                 # A sync function that returns an awaitable would run its tool
