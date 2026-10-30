@@ -126,6 +126,8 @@ use moka::sync::Cache;
 #[cfg(feature = "cel")]
 use std::net::IpAddr;
 #[cfg(feature = "cel")]
+use std::panic::{catch_unwind, AssertUnwindSafe};
+#[cfg(feature = "cel")]
 use std::sync::Arc;
 
 // ============================================================================
@@ -225,9 +227,7 @@ pub fn evaluate(
             .map_err(|e| Error::CelError(format!("failed to add variable '{}': {}", name, e)))?;
     }
 
-    let result = program
-        .execute(&context)
-        .map_err(|e| Error::CelError(format!("execution failed: {}", e)))?;
+    let result = execute_program(&program, &context)?;
 
     match result {
         Value::Bool(b) => Ok(b),
@@ -279,9 +279,7 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
         }
     }
 
-    let result = program
-        .execute(&context)
-        .map_err(|e| Error::CelError(format!("execution failed: {}", e)))?;
+    let result = execute_program(&program, &context)?;
 
     match result {
         Value::Bool(b) => Ok(b),
@@ -290,6 +288,16 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
             other
         ))),
     }
+}
+
+/// Execute an untrusted CEL program without allowing interpreter panics to
+/// cross the authorization boundary. A panic is a failed constraint, so the
+/// caller's existing fail-closed error path can deny the request.
+#[cfg(feature = "cel")]
+fn execute_program(program: &Program, context: &Context) -> Result<Value> {
+    catch_unwind(AssertUnwindSafe(|| program.execute(context)))
+        .map_err(|_| Error::CelError("execution panicked".to_string()))?
+        .map_err(|e| Error::CelError(format!("execution failed: {e}")))
 }
 
 /// Evaluate a CEL expression (stub when `cel` feature is disabled).
@@ -473,6 +481,79 @@ mod tests {
         ]);
         assert!(evaluate("'admin' in value", &value, &HashMap::new()).unwrap());
         assert!(!evaluate("'superuser' in value", &value, &HashMap::new()).unwrap());
+    }
+
+    #[test]
+    fn test_list_macros_fail_closed_on_non_lists() {
+        let values = [
+            ConstraintValue::String("admin".to_string()),
+            ConstraintValue::Integer(5),
+            ConstraintValue::Boolean(true),
+            ConstraintValue::Object(std::collections::BTreeMap::from([(
+                "role".to_string(),
+                ConstraintValue::String("admin".to_string()),
+            )])),
+        ];
+
+        for value in &values {
+            assert!(
+                evaluate_with_value_context("value.all(item, item == 'admin')", value).is_err(),
+                "all over {value:?} must deny instead of panicking"
+            );
+            assert!(
+                evaluate_with_value_context("value.exists(item, item == 'admin')", value).is_err(),
+                "exists over {value:?} must deny instead of panicking"
+            );
+        }
+    }
+
+    #[test]
+    fn test_interpreter_rejects_non_iterable_without_panicking() {
+        for expression in [
+            "value.all(item, item == 'admin')",
+            "value.exists(item, item == 'admin')",
+        ] {
+            let program = Program::compile(expression).unwrap();
+            let mut context = create_context();
+            context.add_variable("value", "sensitive-value").unwrap();
+            assert!(matches!(
+                program.execute(&context),
+                Err(cel_interpreter::ExecutionError::NoSuchOverload)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_list_macros_still_accept_lists() {
+        let value = ConstraintValue::List(vec![
+            ConstraintValue::String("admin".to_string()),
+            ConstraintValue::String("admin".to_string()),
+        ]);
+
+        assert!(evaluate_with_value_context("value.all(item, item == 'admin')", &value).unwrap());
+        assert!(
+            evaluate_with_value_context("value.exists(item, item == 'admin')", &value).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_evaluation_recovers_after_macro_error() {
+        let scalar = ConstraintValue::String("admin".to_string());
+        let list = ConstraintValue::List(vec![scalar.clone()]);
+        let vars = HashMap::new();
+        for expression in [
+            "value.all(item, item == 'admin')",
+            "value.exists(item, item == 'admin')",
+        ] {
+            assert!(evaluate(expression, &scalar, &vars).is_err());
+            assert!(evaluate(expression, &list, &vars).unwrap());
+            assert!(evaluate_with_value_context(expression, &scalar).is_err());
+            assert!(evaluate_with_value_context(expression, &list).unwrap());
+        }
+        assert!(evaluate("size(value) < 3", &ConstraintValue::Integer(5), &vars).is_err());
+        assert!(
+            evaluate_with_value_context("size(value) < 3", &ConstraintValue::Integer(5)).is_err()
+        );
     }
 
     #[test]

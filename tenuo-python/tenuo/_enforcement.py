@@ -740,13 +740,12 @@ def _refusal_before_approval(
 ) -> "Optional[BaseException | Tuple[str, str, Optional[str]]]":
     """Why a gated call is refused before anyone is asked to approve it, else ``None``.
 
-    Every path that collects approvals calls this first (``enforce_tool_call``,
-    sync and async, and Temporal's activity interceptor), so all of them refuse
-    the same calls without putting them in front of an approver. Checked in the
-    order authorization checks them: an expired, revoked or untrusted chain
-    (returned as the exception), then a call the warrant does not grant
-    (returned as ``(error_type, reason, argument)``). Deny-only: ``None``
-    allows nothing.
+    The sync and async in-process enforcement paths call this before collecting
+    approvals. Temporal performs the equivalent (and stronger PoP) preflight in
+    its activity interceptor. Checked in the order authorization checks them:
+    an expired, revoked or untrusted chain (returned as the exception), then a
+    call the warrant does not grant (returned as ``(error_type, reason,
+    argument)``). Deny-only: ``None`` allows nothing.
     """
     invalid = _chain_validity_error(chain, authorizer)
     if invalid is not None:
@@ -1179,17 +1178,18 @@ def _enforce_tool_call_impl(
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
             # Refuse, before asking anyone, a call authorization would refuse anyway.
+            _preflight_auth = _preflight_authorizer(
+                verify_mode=verify_mode,
+                authorizer=authorizer,
+                trusted_roots=trusted_roots,
+                bound_warrant=bound_warrant,
+            )
             _refusal = _refusal_before_approval(
                 _warrant_obj,
                 tool_name,
                 _constraint_auth_args,
                 chain=_presented_chain,
-                authorizer=_preflight_authorizer(
-                    verify_mode=verify_mode,
-                    authorizer=authorizer,
-                    trusted_roots=trusted_roots,
-                    bound_warrant=bound_warrant,
-                ),
+                authorizer=_preflight_auth,
             )
             if isinstance(_refusal, BaseException):
                 return _enforcement_result_from_chain_error_with_logging(
@@ -1200,7 +1200,7 @@ def _enforce_tool_call_impl(
                     constraint_auth_args=_constraint_auth_args,
                     warrant=_warrant_obj,
                     presented_chain=_presented_chain,
-                    authorizer=authorizer,
+                    authorizer=_preflight_auth,
                     pop_auth_args=_pop_auth_args,
                 )
             if _refusal is not None:
@@ -1215,7 +1215,7 @@ def _enforce_tool_call_impl(
                     warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer if authorizer is not None else _auth,
+                    authorizer=_preflight_auth,
                 )
 
             _gate_approvers = _warrant_obj.required_approvers()
@@ -1234,7 +1234,7 @@ def _enforce_tool_call_impl(
                     warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer if authorizer is not None else _auth,
+                    authorizer=_preflight_auth,
                 )
 
             # Collect and verify approvals — raises if missing or invalid.
@@ -1672,17 +1672,18 @@ async def _enforce_tool_call_async_impl(
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
             # Refuse, before asking anyone, a call authorization would refuse anyway.
+            _preflight_auth = _preflight_authorizer(
+                verify_mode=verify_mode,
+                authorizer=authorizer,
+                trusted_roots=trusted_roots,
+                bound_warrant=bound_warrant,
+            )
             _refusal = _refusal_before_approval(
                 _warrant_obj,
                 tool_name,
                 _constraint_auth_args,
                 chain=_presented_chain,
-                authorizer=_preflight_authorizer(
-                    verify_mode=verify_mode,
-                    authorizer=authorizer,
-                    trusted_roots=trusted_roots,
-                    bound_warrant=bound_warrant,
-                ),
+                authorizer=_preflight_auth,
             )
             if isinstance(_refusal, BaseException):
                 return _enforcement_result_from_chain_error_with_logging(
@@ -1693,7 +1694,7 @@ async def _enforce_tool_call_async_impl(
                     constraint_auth_args=_constraint_auth_args,
                     warrant=_warrant_obj,
                     presented_chain=_presented_chain,
-                    authorizer=authorizer,
+                    authorizer=_preflight_auth,
                     pop_auth_args=_pop_auth_args,
                 )
             if _refusal is not None:
@@ -1708,7 +1709,7 @@ async def _enforce_tool_call_async_impl(
                     warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer if authorizer is not None else _auth,
+                    authorizer=_preflight_auth,
                 )
 
             _gate_approvers = _warrant_obj.required_approvers()
@@ -1724,7 +1725,7 @@ async def _enforce_tool_call_async_impl(
                     error_type="approval_gate_misconfigured", warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer if authorizer is not None else _auth,
+                    authorizer=_preflight_auth,
                 )
 
             _gate_approvals = await _collect_approvals_for_approval_gate_async(

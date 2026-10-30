@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Union, ru
 from urllib.parse import quote
 
 try:
-    from tenuo_core import WARRANT_HEADER as _WARRANT_HEADER  # type: ignore[attr-defined]
+    from tenuo_core import WARRANT_HEADER as _WARRANT_HEADER  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     _WARRANT_HEADER = "X-Tenuo-Warrant"
 
@@ -56,6 +56,7 @@ from tenuo_core import (
     compute_diff as rust_compute_diff,
 )
 
+from ._native_patch import native_original, patch_native
 from .decorators import key_scope
 from .validation import ValidationResult
 
@@ -213,21 +214,17 @@ def _warrant_is_expired_prop(self: Warrant) -> bool:
 
 
 # Add ttl_remaining as a property (wraps ttl_seconds())
-if not hasattr(Warrant, "ttl_remaining"):
-    Warrant.ttl_remaining = property(_warrant_ttl_remaining)  # type: ignore[attr-defined]
+patch_native(Warrant, "ttl_remaining", property(_warrant_ttl_remaining), if_missing=True)
 
 # Short alias: ttl → ttl_remaining
-if not hasattr(Warrant, "ttl"):
-    Warrant.ttl = property(_warrant_ttl_remaining)  # type: ignore[attr-defined]
+patch_native(Warrant, "ttl", property(_warrant_ttl_remaining), if_missing=True)
 
 # Note: is_expired() and is_terminal() are methods from Rust
 # We expose them also as properties for convenience (spec compliance)
 # The methods still work, but properties are more Pythonic
-if not hasattr(Warrant, "expired"):
-    Warrant.expired = property(_warrant_is_expired_prop)  # type: ignore[attr-defined]
+patch_native(Warrant, "expired", property(_warrant_is_expired_prop), if_missing=True)
 
-if not hasattr(Warrant, "terminal"):
-    Warrant.terminal = property(_warrant_is_terminal_prop)  # type: ignore[attr-defined]
+patch_native(Warrant, "terminal", property(_warrant_is_terminal_prop), if_missing=True)
 
 
 # ============================================================================
@@ -270,8 +267,7 @@ def _warrant_capabilities(self: Warrant) -> Dict[str, Dict[str, str]]:
     return result
 
 
-if not hasattr(Warrant, "capabilities"):
-    Warrant.capabilities = property(_warrant_capabilities)  # type: ignore[attr-defined]
+patch_native(Warrant, "capabilities", property(_warrant_capabilities), if_missing=True)
 
 
 # ============================================================================
@@ -300,7 +296,7 @@ def _warrant_repr(self: Warrant) -> str:
 
 
 # Override Rust's __repr__ with our safe version
-Warrant.__repr__ = _warrant_repr  # type: ignore[method-assign]
+patch_native(Warrant, "__repr__", _warrant_repr)
 
 
 # ============================================================================
@@ -337,8 +333,7 @@ def _warrant_validate(
     )
 
 
-if not hasattr(Warrant, "validate"):
-    Warrant.validate = _warrant_validate  # type: ignore[attr-defined]
+patch_native(Warrant, "validate", _warrant_validate, if_missing=True)
 
 
 # ============================================================================
@@ -383,8 +378,7 @@ def _warrant_headers(
     return {_WARRANT_HEADER: self.to_base64(), "X-Tenuo-PoP": pop_b64}
 
 
-if not hasattr(Warrant, "headers"):
-    Warrant.headers = _warrant_headers  # type: ignore[attr-defined]
+patch_native(Warrant, "headers", _warrant_headers, if_missing=True)
 
 
 # ============================================================================
@@ -431,8 +425,7 @@ def _warrant_allows(self: Warrant, tool: str, args: Optional[dict] = None) -> bo
 # Removed legacy preview methods
 
 # Attach methods
-if not hasattr(Warrant, "allows"):
-    Warrant.allows = _warrant_allows  # type: ignore[attr-defined]
+patch_native(Warrant, "allows", _warrant_allows, if_missing=True)
 
 # Removed legacy method attachments
 
@@ -638,8 +631,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     )
 
 
-if not hasattr(Warrant, "why_denied"):
-    Warrant.why_denied = _warrant_why_denied  # type: ignore[attr-defined]
+patch_native(Warrant, "why_denied", _warrant_why_denied, if_missing=True)
 
 
 # ============================================================================
@@ -687,11 +679,9 @@ def _warrant_inspect(self: Warrant) -> str:
 
 
 # Attach debugging methods
-if not hasattr(Warrant, "explain"):
-    Warrant.explain = _warrant_explain  # type: ignore[attr-defined]
+patch_native(Warrant, "explain", _warrant_explain, if_missing=True)
 
-if not hasattr(Warrant, "inspect"):
-    Warrant.inspect = _warrant_inspect  # type: ignore[attr-defined]
+patch_native(Warrant, "inspect", _warrant_inspect, if_missing=True)
 
 
 # ============================================================================
@@ -736,10 +726,12 @@ def _warrant_set_delegation_receipt(self: Warrant, receipt: DelegationReceipt) -
 
 
 # Add delegation_receipt property to Warrant
-if not hasattr(Warrant, "delegation_receipt"):
-    Warrant.delegation_receipt = property(  # type: ignore[attr-defined]
-        _warrant_get_delegation_receipt, _warrant_set_delegation_receipt
-    )
+patch_native(
+    Warrant,
+    "delegation_receipt",
+    property(_warrant_get_delegation_receipt, _warrant_set_delegation_receipt),
+    if_missing=True,
+)
 
 
 # ============================================================================
@@ -760,7 +752,7 @@ def _wrapped_grant_builder(self: Warrant) -> "GrantBuilder":
 
 
 # Add new method
-Warrant.grant_builder = _wrapped_grant_builder  # type: ignore[attr-defined]
+patch_native(Warrant, "grant_builder", _wrapped_grant_builder)
 
 
 # ============================================================================
@@ -874,7 +866,8 @@ def _warrant_delegate(
 # ============================================================================
 
 # Store the original issue_execution method
-_original_issue_execution = Warrant.issue_execution if hasattr(Warrant, "issue_execution") else None
+# Use the native method even if another tenuo copy already wrapped it.
+_original_issue_execution = native_original(Warrant, "issue_execution")
 
 
 def _wrapped_issue_execution(self):
@@ -891,7 +884,7 @@ def _wrapped_issue_execution(self):
 
 # Replace with wrapped version
 if _original_issue_execution is not None:
-    Warrant.issue_execution = _wrapped_issue_execution
+    patch_native(Warrant, "issue_execution", _wrapped_issue_execution)
 
 
 # ============================================================================
@@ -986,7 +979,7 @@ def _warrant_str(self: Warrant) -> str:
 
 
 if not hasattr(Warrant, "__str__") or Warrant.__str__ is object.__str__:
-    Warrant.__str__ = _warrant_str  # type: ignore[method-assign]
+    patch_native(Warrant, "__str__", _warrant_str)
 
 # ============================================================================
 # 11. Mint Method Alias (New Vocabulary)
@@ -1004,7 +997,7 @@ def _warrant_mint(**kwargs) -> Warrant:
 
 
 # Add new method
-Warrant.mint = _warrant_mint  # type: ignore[attr-defined]
+patch_native(Warrant, "mint", _warrant_mint)
 
 
 # ============================================================================
@@ -1026,7 +1019,7 @@ def _warrant_grant(
 
 
 # Add new method
-Warrant.grant = _warrant_grant  # type: ignore[attr-defined]
+patch_native(Warrant, "grant", _warrant_grant)
 
 
 # Add from_str as alias for from_base64
@@ -1038,7 +1031,7 @@ def _warrant_from_str(s: str) -> "Warrant":
     return Warrant.from_base64(s)
 
 
-Warrant.from_str = _warrant_from_str  # type: ignore[attr-defined]
+patch_native(Warrant, "from_str", _warrant_from_str)
 
 # ============================================================================
 # Property Aliases for Brevity
@@ -1051,7 +1044,7 @@ def _warrant_type_alias(self: Warrant):
     return self.warrant_type
 
 
-Warrant.type = property(_warrant_type_alias)  # type: ignore[attr-defined]
+patch_native(Warrant, "type", property(_warrant_type_alias))
 
 
 # Add 'can_issue' as alias for 'issuable_tools'
@@ -1060,7 +1053,7 @@ def _can_issue_alias(self: Warrant):
     return self.issuable_tools
 
 
-Warrant.can_issue = property(_can_issue_alias)  # type: ignore[attr-defined]
+patch_native(Warrant, "can_issue", property(_can_issue_alias))
 
 
 # Add 'receipt' as alias for 'delegation_receipt'
@@ -1069,7 +1062,7 @@ def _receipt_alias(self: Warrant):
     return self.delegation_receipt
 
 
-Warrant.receipt = property(_receipt_alias)  # type: ignore[attr-defined]
+patch_native(Warrant, "receipt", property(_receipt_alias))
 
 
 # Add __bytes__ for bytes(warrant) support
@@ -1082,7 +1075,7 @@ def _warrant_bytes(self: Warrant) -> bytes:
     return self.to_bytes()
 
 
-Warrant.__bytes__ = _warrant_bytes  # type: ignore[attr-defined]
+patch_native(Warrant, "__bytes__", _warrant_bytes)
 
 # from_bytes is now provided natively by the Rust extension (PyWarrant.from_bytes)
 
@@ -1131,4 +1124,4 @@ def _warrant_chain(self: Warrant, store: Optional[Any] = None) -> List[Warrant]:
     return list(reversed(chain))
 
 
-Warrant.chain = _warrant_chain  # type: ignore[attr-defined]
+patch_native(Warrant, "chain", _warrant_chain)

@@ -91,7 +91,7 @@ configure(
 | `issuer_key` | `SigningKey` | None | SigningKey for signing warrants (required for `mint`) |
 | `trusted_roots` | `List[PublicKey]` | None | Public keys to trust as warrant issuers (**required in production**) |
 | `default_ttl` | `int` | 300 | Default warrant TTL in seconds |
-| `clock_tolerance` | `int` | 30 | Clock tolerance for expiration checks |
+| `clock_tolerance` | `int` | 30 | Tolerance for future-issued timestamps; expiry is strict |
 | `pop_window_secs` | `int` | 30 | PoP window size in seconds |
 | `pop_max_windows` | `int` | 4 | Number of PoP windows to accept (~2 min total) |
 | `dev_mode` | `bool` | False | Enable development mode (relaxed security) |
@@ -425,6 +425,7 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `to_base64()` | `str` | Serialize to base64 |
 | `allows(tool, args=None)` | `bool` | Check if action would be allowed (Logic check) |
 | `check_constraints(tool, args)` | `str \| None` | Validate constraints (Logic check) |
+| `diagnose_constraints(tool, args)` | `dict` | List all constraint failures without exposing argument values |
 | `dedup_key(tool, args)` | `str` | Get deterministic cache key |
 | `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
 | `headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
@@ -459,6 +460,20 @@ reason = warrant.why_denied("write_file", path="/etc/passwd")
 
 if reason.deny_code == DenyCode.TOOL_NOT_ALLOWED:
     print("Tool not in warrant")
+
+# All field-shape/value failures in stable order. This is diagnostic only;
+# it does not verify signatures, expiry, revocation, approvals, or PoP.
+diagnostics = warrant.diagnose_constraints(
+    "transfer", {"amount": 300, "unexpected": True}
+)
+# {
+#   "closed_world": True,
+#   "violations": [
+#     {"field": "unexpected", "kind": "unknown_field", ...},
+#     {"field": "amount", "kind": "constraint_mismatch", ...},
+#     {"field": "currency", "kind": "missing_required", ...},
+#   ],
+# }
 
 # Generate HTTP headers
 headers = warrant.headers(keypair, "read_file", {"path": "/data/x.txt"})

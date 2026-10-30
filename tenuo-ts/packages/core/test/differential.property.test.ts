@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import fc from "fast-check";
@@ -24,15 +24,24 @@ function python(): string | undefined {
   );
 }
 
-function runPython<T>(bin: string, command: string, value: unknown): T {
-  const result = spawnSync(bin, [script, command], {
-    encoding: "utf8",
-    input: JSON.stringify(value),
+function runPython<T>(bin: string, command: string, value: unknown): Promise<T> {
+  // Keep the worker event loop responsive during the full randomized suite.
+  // Blocking subprocesses can otherwise starve Vitest's RPC acknowledgments.
+  return new Promise((resolve, reject) => {
+    const child = execFile(bin, [script, command], { encoding: "utf8", timeout: 30_000 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr || stdout || error.message));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout) as T);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    child.stdin!.on("error", reject);
+    child.stdin!.end(JSON.stringify(value));
   });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout || `python exited ${result.status}`);
-  }
-  return JSON.parse(result.stdout) as T;
 }
 
 function fromHex(hex: string): Uint8Array {
@@ -67,12 +76,12 @@ async function authorize(
   }
 }
 
-function pythonVerdict(bin: string, session: WireSession, tool: string, path: string): boolean {
-  return runPython<{ ok: boolean }>(bin, "verify", {
+async function pythonVerdict(bin: string, session: WireSession, tool: string, path: string): Promise<boolean> {
+  return (await runPython<{ ok: boolean }>(bin, "verify", {
     ...session,
     tool,
     args: { path },
-  }).ok;
+  })).ok;
 }
 
 const segment = fc.stringMatching(/^[a-z][a-z0-9]{0,7}$/);
@@ -102,7 +111,7 @@ describe.skipIf(pythonBin === undefined)("randomized Rust/Python/TypeScript diff
           narrows: roots.map((root) => ({ path: { kind: "under", root } })),
         };
 
-        const minted = runPython<WireSession>(pythonBin!, "mint", spec);
+        const minted = await runPython<WireSession>(pythonBin!, "mint", spec);
         const verifier = createTenuo({
           trustedRoots: [createTenuo.publicKeyFromHex(minted.root_hex)],
         });
@@ -112,7 +121,7 @@ describe.skipIf(pythonBin === undefined)("randomized Rust/Python/TypeScript diff
         });
         const expected = tool === "read_file" && allowedPath;
         expect(await authorize(verifier, imported, tool, path)).toBe(expected);
-        expect(pythonVerdict(pythonBin!, minted, tool, path)).toBe(expected);
+        expect(await pythonVerdict(pythonBin!, minted, tool, path)).toBe(expected);
 
         const issuer = createTenuo({ root: createTenuo.devRoot() });
         let tsSession = issuer.session({
@@ -122,7 +131,7 @@ describe.skipIf(pythonBin === undefined)("randomized Rust/Python/TypeScript diff
           tsSession = issuer.narrow(tsSession, { path: under(root) });
         }
         const exported = exportSession(tsSession);
-        expect(pythonVerdict(pythonBin!, { ...exported, warrant: exported.warrants.at(-1)! }, tool, path)).toBe(
+        expect(await pythonVerdict(pythonBin!, { ...exported, warrant: exported.warrants.at(-1)! }, tool, path)).toBe(
           expected,
         );
       }),

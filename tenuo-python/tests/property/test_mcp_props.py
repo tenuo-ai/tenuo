@@ -10,7 +10,6 @@ Verifies:
 from __future__ import annotations
 
 import base64
-import time
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -25,6 +24,7 @@ from tenuo.mcp.server import (
 )
 
 from .strategies import (
+    mcp_sign_meta,
     st_args_dict,
     st_mcp_meta,
     st_tool_name,
@@ -196,18 +196,13 @@ class TestWarrantStackDecode:
         warrant, key, tool, args = data
         from tenuo import encode_warrant_stack
 
-        pop = _make_pop(warrant, key, tool, args)
         stack_b64 = encode_warrant_stack([warrant])
         meta = {
             "tenuo": {
                 "warrant": stack_b64,
-                "signature": base64.b64encode(pop).decode(),
+                "signature": mcp_sign_meta(warrant, key, tool, args)["signature"],
             }
         }
         verifier = _make_verifier(key)
         result = verifier.verify(tool, args, meta=meta)
         assert result.allowed is True
-
-
-def _make_pop(warrant, key, tool, args):
-    return bytes(warrant.sign(key, tool, args, int(time.time())))

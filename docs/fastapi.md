@@ -150,6 +150,32 @@ configure_tenuo(
 | `app` | `FastAPI` | *required* | FastAPI application instance |
 | `trusted_issuers` | `List[PublicKey]` | `None` | Trusted warrant issuers (**required in production**) |
 | `expose_error_details` | `bool` | `False` | Include detailed errors in response |
+| `strict` | `bool` | `False` | Refuse to start while any route has no `TenuoGuard` |
+| `exempt` | `Iterable[str]` | `()` | Paths `strict` skips (docs routes are always exempt) |
+| `error_handler` | `Callable[[Exception], Any]` | `None` | Called with each `TenuoError`; a returned `Response` replaces the default |
+
+#### Strict mode
+
+Every route opts in to Tenuo, so a route added without a guard is open. With `strict=True` the app checks its routes when it starts and raises `ConfigurationError` listing each route that has no `TenuoGuard`:
+
+```python
+configure_tenuo(
+    app,
+    trusted_issuers=[issuer_pubkey],
+    strict=True,
+    exempt=["/health"],  # public by design
+)
+```
+
+- A route counts as guarded when `TenuoGuard` is anywhere in its dependency tree: on the route, through `SecureAPIRouter`, or in router or app `dependencies=`.
+- `require_warrant` only checks that the headers are present, so it does not count.
+- Plain Starlette routes, mounts (`StaticFiles`, sub-apps) and websocket routes without a guard fail too; list their paths in `exempt` if they are public.
+- A public root mount uses `exempt=["/"]`; Starlette's empty root-mount path (`""`) is accepted as an alias.
+- FastAPI's built-in OpenAPI and docs handlers are always exempt, including custom docs URLs. Application routes at those same URLs still need a guard or an explicit exemption.
+- The check runs after startup hooks and the lifespan setup complete, before requests are served. Routes added later while the app is serving are not checked.
+- Strict validation requires ASGI lifespan/startup to be enabled. With `uvicorn --lifespan off` the startup check does not run, so `strict=True` cannot detect unguarded routes.
+
+Synchronous `error_handler` callbacks run in the framework's worker thread pool so blocking I/O does not stall the event loop. Async callbacks are awaited normally, as are awaitables returned by sync callbacks.
 
 ### `TenuoGuard`
 
@@ -218,6 +244,12 @@ router = SecureAPIRouter(
 |-----------|------|---------|-------------|
 | `tool_prefix` | `str` | `None` | Prefix for auto-generated tool names |
 | `require_pop` | `bool` | `True` | Require Proof-of-Possession signatures |
+
+Every HTTP route the router serves is guarded: routes added with the decorators or `add_api_route()`, and the routes of routers passed to `include_router()` (named from the include prefix and path). A route that already depends on a `TenuoGuard` keeps it. Websocket routes, mounts and plain Starlette routes cannot carry a guard, so `SecureAPIRouter` raises `ConfigurationError` instead of serving them; put public routes on a plain `APIRouter`. Two paths that infer the same tool name (`/admin_users` and `/admin/users`), or one route whose methods infer different names, also raise; pass `tool=`.
+
+On FastAPI versions with lazy inclusion, late additions are revalidated before dispatch. An unsafe included route graph is denied rather than executing an unguarded handler, even when app-wide strict mode is off. Older versions copy routes at inclusion time, so later additions are not served. Register routes through the framework APIs rather than modifying route lists or dependency objects directly.
+
+If the same route object is included at multiple paths, add explicit `TenuoGuard` dependencies to the inclusions or use distinct route objects. This avoids silently reusing one alias's inferred permission for another. Nested router and include-level guards keep their existing tool names. GET/HEAD may share inferred read authority, and PUT/PATCH retain the same update name; other method groups such as GET/OPTIONS require an explicit `tool=`.
 
 **Methods:**
 
@@ -402,12 +434,17 @@ async def search(
 ):
     return {"results": [f"Result for: {query}"]}
 
+# A {path:path} parameter arrives without its leading slash ("/files/data/a.txt"
+# gives "data/a.txt"), so restore it before Subpath("/data") checks it.
+def file_args(request):
+    return {"path": "/" + request.path_params["path"]}
+
 @app.get("/files/{path:path}")
 async def read_file(
     path: str,
-    ctx: SecurityContext = Depends(TenuoGuard("read_file"))
+    ctx: SecurityContext = Depends(TenuoGuard("read_file", extract_args=file_args))
 ):
-    return {"path": path, "content": "..."}
+    return {"path": ctx.args["path"], "content": "..."}
 
 # Issue a warrant for testing
 @app.post("/admin/issue-warrant")
@@ -528,4 +565,3 @@ stack_b64 = encode_warrant_stack([root, child])
 - [Security](./security)  -- Threat model, best practices
 - [API Reference](./api-reference)  -- Full Python API documentation
 - [LangChain](./langchain)  -- Tool protection for LangChain
-

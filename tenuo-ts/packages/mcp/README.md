@@ -48,8 +48,11 @@ Zod (or any host schema) is **valid**. `allow` is **allowed**, AND'd with the
 warrant in Rust, and zero-trust: every argument must be named. `allow` is
 stripped before `registerTool` so it is not advertised. Pass `nonceStore:
 memoryNonceStore()` to reject an exact replayed PoP (opt-in, in-process only).
-PoP v1 is replayable in-window, including approval-gated calls; pass
-`nonceStore` on a gated tool if that approval must be one-use.
+PoP v1 is replayable in-window, including approval-gated calls. With
+`nonceStore`, an allowed call also consumes the approvals it carried, so a
+fresh PoP cannot reuse them; pass it on a gated tool if approvals must be
+one-use, with a TTL at least as long as an approval lives
+(`memoryNonceStore({ ttlSeconds: 3600 })` for the one-hour default).
 Tenuo denials become `{ isError: true }` with a JSON-RPC body. Handler
 exceptions become `{ isError: true, content: [{ type: "text", text: "Tool execution failed" }] }`
 — the official transport must not see thrown messages. Pass `onHandlerError`
@@ -58,6 +61,10 @@ are registered as `(ctx)` only, matching the official server. `guardHandler()`
 without a schema returns that same `(ctx)` callback so a raw `registerTool`
 wrap typechecks. `guardTools().register()` is the schema-typed path;
 `guardHandler()` with a typed callback infers args from it.
+`guardHandler(tenuo, name, ...)` enforces the authority for `name`, whatever
+name you register it under: the official server does not tell a handler which
+tool was called, so a mismatch cannot be detected at call time. Pass the same
+name to `registerTool`, or use `guardTools().register()`, which binds both.
 A nonce-store
 failure returns the constant "Replay store unavailable"; pass
 `onNonceStoreError` for the original cause. Unknown option keys, including
@@ -65,7 +72,7 @@ mixed typos like `{ allow, nonceStroe }`, throw at register time.
 
 A minimal runnable version of the above, with an in-memory v2 client and
 server, one allowed call, and one denied call, lives in
-[`examples/v2`](examples/v2/README.md). From `tenuo-ts`: `pnpm example:mcp:v2`.
+[`examples/v2`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts/packages/mcp/examples/v2). From `tenuo-ts`: `pnpm example:mcp:v2`.
 
 There is no FastMCP adapter and no v1 adapter package. For
 `@modelcontextprotocol/sdk` v1, copy the recipe in

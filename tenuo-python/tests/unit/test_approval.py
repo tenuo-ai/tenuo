@@ -803,6 +803,7 @@ class TestChainValidityBeforeApproval:
         assert result.error_type == "expired"
         assert calls == []
         assert result.presented_chain  # still receipted
+        assert result.authorizer is not None  # denial receipt retains trust context
 
     def test_untrusted_issuer_is_not_sent_for_approval(self, agent_key, approver_key):
         stranger = SigningKey.generate()
@@ -814,6 +815,7 @@ class TestChainValidityBeforeApproval:
         assert not result.allowed
         assert result.error_type == "untrusted_issuer"
         assert calls == []
+        assert result.authorizer is not None
 
     def test_revoked_chain_is_not_sent_for_approval(self, agent_key, approver_key):
         from tenuo import HolderIdentity, Runtime
@@ -835,6 +837,7 @@ class TestChainValidityBeforeApproval:
         assert not result.allowed
         assert result.error_type == "revoked"
         assert calls == []
+        assert result.authorizer is not None
 
     def test_valid_chain_still_asks_for_approval(self, agent_key, approver_key):
         bound = self._gated(agent_key, agent_key, approver_key).bind(agent_key, trusted_roots=[agent_key.public_key])
@@ -855,3 +858,4 @@ class TestChainValidityBeforeApproval:
         assert not result.allowed
         assert result.error_type == "expired"
         assert calls == []
+        assert result.authorizer is not None

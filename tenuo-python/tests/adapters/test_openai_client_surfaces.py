@@ -16,7 +16,7 @@ import pytest
 openai = pytest.importorskip("openai")
 httpx = pytest.importorskip("httpx")
 
-from tenuo import SigningKey, Subpath, Warrant  # noqa: E402
+from tenuo import NotOneOf, SigningKey, Subpath, Warrant  # noqa: E402
 from tenuo.openai import (  # noqa: E402
     AuditEvent,
     MalformedToolCall,
@@ -44,6 +44,9 @@ class FakeServer:
         self.resp_items: List[Dict[str, Any]] = []
         self.chunk_size = 3
         self.split_name = False
+        # Legacy ``functions=`` API: one function_call on choice 0.
+        self.legacy_call: Optional[Tuple[str, str]] = None
+        self.chat_sse_override: Optional[List[Dict[str, Any]]] = None
 
     # -- scripting -------------------------------------------------------------
 
@@ -75,6 +78,10 @@ class FakeServer:
                     "message": {"role": "assistant", "content": None if tcs else "hi", "tool_calls": tcs or None},
                 }
             )
+        if self.legacy_call:
+            name, args = self.legacy_call
+            out[0]["finish_reason"] = "function_call"
+            out[0]["message"].update(content=None, function_call={"name": name, "arguments": args})
         return {"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "gpt-4o", "choices": out}
 
     def _chat_sse(self) -> str:
@@ -86,6 +93,9 @@ class FakeServer:
                 "model": "gpt-4o",
                 "choices": [{"index": ci, "delta": delta, "finish_reason": finish}],
             }
+
+        if self.chat_sse_override is not None:
+            return "".join(f"data: {json.dumps(e)}\n\n" for e in self.chat_sse_override) + "data: [DONE]\n\n"
 
         k = self.chunk_size
         events = []
@@ -105,8 +115,14 @@ class FakeServer:
                     events.append(chunk(ci, {"tool_calls": [dict(head, **{kind: {"name": name}})]}))
                 for j in range(0, len(data), k):
                     events.append(chunk(ci, {"tool_calls": [{"index": i, kind: {field_name: data[j : j + k]}}]}))
+        if self.legacy_call:
+            name, data = self.legacy_call
+            events.append(chunk(0, {"function_call": {"name": name}}))
+            for j in range(0, len(data), k):
+                events.append(chunk(0, {"function_call": {"arguments": data[j : j + k]}}))
         for ci, calls in enumerate(self.choices):
-            events.append(chunk(ci, {}, "tool_calls" if calls else "stop"))
+            finish = "function_call" if self.legacy_call and ci == 0 else ("tool_calls" if calls else "stop")
+            events.append(chunk(ci, {}, finish))
         return "".join(f"data: {json.dumps(e)}\n\n" for e in events) + "data: [DONE]\n\n"
 
     def _resp_json(self) -> Dict[str, Any]:
@@ -165,6 +181,16 @@ def _custom(name: str, text: str) -> Dict[str, Any]:
     return {"type": "custom", "custom": {"name": name, "input": text}}
 
 
+def _chat_chunk(*choices: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": "chatcmpl-1",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "gpt-4o",
+        "choices": list(choices),
+    }
+
+
 # =============================================================================
 # The "app": executes whatever tool calls reach it
 # =============================================================================
@@ -173,6 +199,8 @@ def _custom(name: str, text: str) -> Dict[str, Any]:
 def run_chat(resp: Any) -> List[str]:
     executed = []
     for choice in resp.choices:
+        if choice.message.function_call:
+            executed.append(choice.message.function_call.name)
         for tc in choice.message.tool_calls or []:
             executed.append(tc.custom.name if tc.type == "custom" else tc.function.name)
     return executed
@@ -183,6 +211,10 @@ def run_chat_stream(chunks: List[Any]) -> List[str]:
     acc: Dict[Tuple[int, int], str] = {}
     for c in chunks:
         for ch in c.choices:
+            fc = ch.delta.function_call
+            if fc:
+                acc.setdefault((ch.index, -1), "")
+                acc[(ch.index, -1)] += fc.name or ""
             for tc in ch.delta.tool_calls or []:
                 key = (ch.index, tc.index)
                 acc.setdefault(key, "")
@@ -191,6 +223,25 @@ def run_chat_stream(chunks: List[Any]) -> List[str]:
                 if name:
                     acc[key] += name
     return list(acc.values())
+
+
+def chat_stream_arguments(chunks: List[Any]) -> Dict[Tuple[int, int], str]:
+    """Reconstruct argument strings exactly as an SDK consumer would."""
+    acc: Dict[Tuple[int, int], str] = {}
+    for chunk in chunks:
+        for choice in chunk.choices:
+            function_call = choice.delta.function_call
+            if function_call:
+                key = (choice.index, -1)
+                acc[key] = acc.get(key, "") + (function_call.arguments or "")
+            for tool_call in choice.delta.tool_calls or []:
+                key = (choice.index, tool_call.index)
+                part = tool_call.function if tool_call.function else getattr(tool_call, "custom", None)
+                arguments = (
+                    part.get("arguments") if isinstance(part, dict) else getattr(part, "arguments", None)
+                ) if part else None
+                acc[key] = acc.get(key, "") + (arguments or "")
+    return acc
 
 
 def run_responses(resp: Any) -> List[str]:
@@ -529,6 +580,271 @@ class TestStreamingChoicesAndNames:
             return run_chat_stream([c async for c in stream])
 
         assert asyncio.run(go()) == ["read_file"]
+
+    @staticmethod
+    def _invalid_index_event(location: str) -> Dict[str, Any]:
+        tool_call = {
+            "index": -1,
+            "id": "call_bad",
+            "type": "function",
+            "function": {"name": "delete_file", "arguments": '{"path":"/data/x"}'},
+        }
+        choice_index = -1 if location == "choice" else 0
+        return _chat_chunk(
+            {
+                "index": choice_index,
+                "delta": {"tool_calls": [dict(tool_call, index=0 if location == "choice" else -1)]},
+                "finish_reason": None,
+            }
+        )
+
+    @pytest.mark.parametrize("location,expected_tool", [("choice", "unknown"), ("tool", "delete_file")])
+    def test_negative_stream_index_is_rejected_and_audited(
+        self, server: FakeServer, location: str, expected_tool: str
+    ) -> None:
+        events: List[AuditEvent] = []
+        server.chat_sse_override = [self._invalid_index_event(location)]
+        client = guard(server.sync_client(), deny_tools=["delete_file"], audit_callback=events.append)
+        with pytest.raises(MalformedToolCall, match="stream index must be a non-negative integer"):
+            list(client.chat.completions.create(model="m", messages=MSGS, stream=True))
+        assert [(event.decision, event.tool_name) for event in events] == [("DENY", expected_tool)]
+
+    @pytest.mark.parametrize("location,expected_tool", [("choice", "unknown"), ("tool", "delete_file")])
+    def test_async_negative_stream_index_is_rejected_and_audited(
+        self, server: FakeServer, location: str, expected_tool: str
+    ) -> None:
+        events: List[AuditEvent] = []
+        server.chat_sse_override = [self._invalid_index_event(location)]
+        client = guard(server.async_client(), deny_tools=["delete_file"], audit_callback=events.append)
+
+        async def go() -> None:
+            stream = await client.chat.completions.create(model="m", messages=MSGS, stream=True)
+            [chunk async for chunk in stream]
+
+        with pytest.raises(MalformedToolCall, match="stream index must be a non-negative integer"):
+            asyncio.run(go())
+        assert [(event.decision, event.tool_name) for event in events] == [("DENY", expected_tool)]
+
+    def test_explicit_null_choice_index_cannot_alias_index_zero(self, server: FakeServer) -> None:
+        events: List[AuditEvent] = []
+        server.chat_sse_override = [
+            _chat_chunk(
+                {
+                    "index": None,
+                    "delta": {"function_call": {"name": "delete_file", "arguments": "{}"}},
+                    "finish_reason": None,
+                },
+                {
+                    "index": 0,
+                    "delta": {"function_call": {"name": "_safe"}},
+                    "finish_reason": None,
+                },
+            )
+        ]
+        # If null were normalized to zero, the guard would authorize the
+        # combined name while an SDK consumer reconstructed delete_file.
+        client = guard(server.sync_client(), allow_tools=["delete_file_safe"], audit_callback=events.append)
+        with pytest.raises(MalformedToolCall, match="stream index must be a non-negative integer"):
+            list(client.chat.completions.create(model="m", messages=MSGS, stream=True, n=2))
+        assert [(event.decision, event.tool_name) for event in events] == [("DENY", "unknown")]
+
+    def test_skip_preserves_allowed_fragments_in_mixed_choice_chunk(self, server: FakeServer) -> None:
+        def choice(index: int, delta: Dict[str, Any], finish: Optional[str] = None) -> Dict[str, Any]:
+            return {"index": index, "delta": delta, "finish_reason": finish}
+
+        server.chat_sse_override = [
+            _chat_chunk(
+                choice(0, {"function_call": {"name": "delete_file"}}),
+                choice(
+                    1,
+                    {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_allowed",
+                                "type": "function",
+                                "function": {"name": "read_file"},
+                            }
+                        ]
+                    },
+                ),
+            ),
+            _chat_chunk(
+                choice(
+                    1,
+                    {"tool_calls": [{"index": 0, "function": {"arguments": '{"path":"/data/'}}]},
+                )
+            ),
+            # This chunk contains a denied legacy fragment and an allowed
+            # fragment. Dropping it would mutate the allowed path to /data/x.
+            _chat_chunk(
+                choice(0, {"function_call": {"arguments": '{"path":"/data/x"}'}}),
+                choice(1, {"tool_calls": [{"index": 0, "function": {"arguments": "subdir/"}}]}),
+            ),
+            _chat_chunk(
+                choice(1, {"tool_calls": [{"index": 0, "function": {"arguments": 'x"}'}}]}),
+                choice(0, {}, "function_call"),
+            ),
+            _chat_chunk(choice(1, {}, "tool_calls")),
+        ]
+        client = guard(server.sync_client(), **policy(on_denial="skip"))
+        chunks = list(client.chat.completions.create(model="m", messages=MSGS, stream=True, n=2))
+
+        assert chat_stream_arguments(chunks) == {(1, 0): '{"path":"/data/subdir/x"}'}
+        assert not any(choice.delta.function_call for chunk in chunks for choice in chunk.choices)
+
+
+# =============================================================================
+# Legacy functions= / function_call responses
+# =============================================================================
+
+
+class TestLegacyFunctionCall:
+    def test_denied(self, server: FakeServer) -> None:
+        server.legacy_call = FORBIDDEN
+        client = guard(server.sync_client(), **policy())
+        with pytest.raises(ToolDenied):
+            run_chat(client.chat.completions.create(model="m", messages=MSGS))
+
+    def test_constraint_checked(self, server: FakeServer) -> None:
+        server.legacy_call = ("read_file", '{"path": "/etc/passwd"}')
+        client = guard(server.sync_client(), **policy())
+        with pytest.raises(OpenAIConstraintViolation):
+            run_chat(client.chat.completions.create(model="m", messages=MSGS))
+
+    def test_allowed_call_passes(self, server: FakeServer) -> None:
+        server.legacy_call = ("read_file", '{"path": "/data/a"}')
+        client = guard(server.sync_client(), **policy())
+        assert run_chat(client.chat.completions.create(model="m", messages=MSGS)) == ["read_file"]
+
+    def test_skip_mode_drops_call(self, server: FakeServer) -> None:
+        server.legacy_call = FORBIDDEN
+        client = guard(server.sync_client(), **policy(on_denial="skip"))
+        assert run_chat(client.chat.completions.create(model="m", messages=MSGS)) == []
+
+    def test_malformed_arguments_dropped_in_skip_mode(self, server: FakeServer) -> None:
+        server.legacy_call = ("read_file", '{"path": ')
+        client = guard(server.sync_client(), **policy(on_denial="skip"))
+        assert run_chat(client.chat.completions.create(model="m", messages=MSGS)) == []
+
+    def test_async_denied(self, server: FakeServer) -> None:
+        server.legacy_call = FORBIDDEN
+        client = guard(server.async_client(), **policy())
+
+        async def go() -> List[str]:
+            return run_chat(await client.chat.completions.create(model="m", messages=MSGS))
+
+        with pytest.raises(ToolDenied):
+            asyncio.run(go())
+
+    def test_stream_denied(self, server: FakeServer) -> None:
+        server.legacy_call = FORBIDDEN
+        client = guard(server.sync_client(), **policy())
+        with pytest.raises(ToolDenied):
+            run_chat_stream(list(client.chat.completions.create(model="m", messages=MSGS, stream=True)))
+
+    def test_stream_skip_mode_drops_call(self, server: FakeServer) -> None:
+        server.legacy_call = FORBIDDEN
+        client = guard(server.sync_client(), **policy(on_denial="skip"))
+        chunks = list(client.chat.completions.create(model="m", messages=MSGS, stream=True))
+        assert run_chat_stream(chunks) == []
+        assert not any(ch.delta.function_call for c in chunks for ch in c.choices)
+
+    def test_stream_allowed_call_passes(self, server: FakeServer) -> None:
+        server.legacy_call = ("read_file", '{"path": "/data/a"}')
+        client = guard(server.sync_client(), **policy())
+        assert run_chat_stream(list(client.chat.completions.create(model="m", messages=MSGS, stream=True))) == [
+            "read_file"
+        ]
+
+    def test_async_stream_denied(self, server: FakeServer) -> None:
+        server.legacy_call = FORBIDDEN
+        client = guard(server.async_client(), **policy())
+
+        async def go() -> List[str]:
+            stream = await client.chat.completions.create(model="m", messages=MSGS, stream=True)
+            return run_chat_stream([c async for c in stream])
+
+        with pytest.raises(ToolDenied):
+            asyncio.run(go())
+
+    def test_stream_audited(self, server: FakeServer) -> None:
+        events: List[AuditEvent] = []
+        server.legacy_call = FORBIDDEN
+        client = guard(server.sync_client(), **policy(audit_callback=events.append))
+        with pytest.raises(ToolDenied):
+            list(client.chat.completions.create(model="m", messages=MSGS, stream=True))
+        assert [(e.decision, e.tool_name) for e in events] == [("DENY", "delete_file")]
+
+
+# =============================================================================
+# Denial text carries no argument values
+# =============================================================================
+
+
+class TestViolationTextHasNoValues:
+    SECRET = "/etc/shadow-sk_live_123"
+
+    def test_constraint_violation_message(self) -> None:
+        err = OpenAIConstraintViolation("read_file", "path", self.SECRET, Subpath("/data"))
+        assert self.SECRET not in str(err)
+        assert "path" in str(err) and err.value == self.SECRET
+
+    def test_type_mismatch_message(self) -> None:
+        from tenuo import Range
+
+        err = OpenAIConstraintViolation("f", "n", "sk_live_123", Range(0, 5), type_mismatch=True)
+        assert "sk_live_123" not in str(err)
+
+    def test_exclusion_constraint_does_not_echo_rejected_value(self) -> None:
+        err = OpenAIConstraintViolation("f", "token", self.SECRET, NotOneOf([self.SECRET]))
+        assert self.SECRET not in str(err)
+        assert "NotOneOf" in str(err)
+
+    def test_raising_constraint_keeps_value_out_of_text_and_logs(self, caplog: pytest.LogCaptureFixture) -> None:
+        class Exploding:
+            def satisfies(self, value: Any) -> bool:
+                raise RuntimeError(f"cannot check {value}")
+
+        from tenuo.openai import verify_tool_call
+
+        with caplog.at_level("DEBUG"), pytest.raises(OpenAIConstraintViolation) as exc:
+            verify_tool_call("f", {"x": self.SECRET}, ["f"], None, {"f": {"x": Exploding()}}, None, None)
+        assert self.SECRET not in str(exc.value)
+        assert self.SECRET not in caplog.text
+        assert "RuntimeError" in caplog.text
+
+    def test_sync_verifier_internal_error_keeps_details_out_of_text_and_logs(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class ExplodingConstraints(dict):
+            def __contains__(self, key: object) -> bool:
+                raise RuntimeError(f"cannot inspect {self_secret}")
+
+        from tenuo.openai import verify_tool_call
+
+        self_secret = self.SECRET
+        with caplog.at_level("ERROR"), pytest.raises(OpenAIConstraintViolation) as exc:
+            verify_tool_call(
+                "f",
+                {"x": self.SECRET},
+                ["f"],
+                None,
+                {"f": ExplodingConstraints()},
+            )
+        assert self.SECRET not in str(exc.value)
+        assert self.SECRET not in caplog.text
+        assert "RuntimeError" in str(exc.value)
+        assert "RuntimeError" in caplog.text
+
+    def test_guarded_client_denial_logs_no_value(self, server: FakeServer, caplog: pytest.LogCaptureFixture) -> None:
+        events: List[AuditEvent] = []
+        server.function_calls(("read_file", json.dumps({"path": self.SECRET})))
+        client = guard(server.sync_client(), **policy(on_denial="log", audit_callback=events.append))
+        with caplog.at_level("DEBUG"):
+            client.chat.completions.create(model="m", messages=MSGS)
+        assert self.SECRET not in caplog.text
+        assert all(self.SECRET not in e.reason for e in events)
 
 
 # =============================================================================

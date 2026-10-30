@@ -78,6 +78,25 @@ def _build_non_retryable_application_error(exc: BaseException) -> "ApplicationEr
     return app_error
 
 
+def _build_retryable_application_error(exc: BaseException) -> "ApplicationError":
+    """Return a retryable ``ApplicationError`` for transient auth dependencies.
+
+    This is deliberately separate from the non-retryable authorization-denial
+    builder.  A stale revocation snapshot means Tenuo cannot safely make a
+    decision until its provider recovers; it is not a permanent denial caused
+    by the warrant or request.
+    """
+    from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+
+    app_error = ApplicationError(
+        str(exc),
+        type=_error_type_for_wire(exc),
+        non_retryable=False,
+    )
+    app_error.__cause__ = exc
+    return app_error
+
+
 class TenuoTemporalError(Exception):
     """Base exception for tenuo.temporal module."""
 
@@ -86,6 +105,22 @@ class TenuoContextError(TenuoTemporalError):
     """Raised when Tenuo context is missing or invalid."""
 
     error_code = "CONTEXT_MISSING"
+
+
+@dataclass
+class RevocationStateStale(TenuoTemporalError):
+    """The last confirmed revocation state exceeded its configured age bound."""
+
+    stale_for_seconds: float
+    max_staleness_seconds: float
+    error_code: str = field(default="REVOCATION_STATE_STALE", init=False)
+
+    def __str__(self) -> str:
+        return (
+            "Revocation state is stale: no successful refresh for "
+            f"{self.stale_for_seconds:.1f}s (configured maximum "
+            f"{self.max_staleness_seconds:.1f}s)"
+        )
 
 
 class LocalActivityError(TenuoTemporalError):

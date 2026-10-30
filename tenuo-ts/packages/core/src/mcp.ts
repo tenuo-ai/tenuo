@@ -11,8 +11,9 @@ import type {
 } from "./api.ts";
 import { AuthorizationDeniedError, TenuoConfigurationError, TenuoError } from "./errors.ts";
 import { collectReceipt, emitIsolatedReceipt } from "./receipts.ts";
+import { admitNonce, consumeApprovals, snapshotApprovals } from "./replay.ts";
 import { nativeSession, type Session } from "./session.ts";
-import type { WasmContext, WasmDecision } from "./wasm.ts";
+import { loadWasm, type WasmContext, type WasmDecision } from "./wasm.ts";
 
 export type Decide = (decision: WasmDecision, tool: string, native?: object, args?: Record<string, unknown>) => void;
 
@@ -87,6 +88,7 @@ export async function verifyPresented(
       `${label} needs { warrant, signature } from tenuo.present() or tenuo.mcp.attach()`,
     );
   }
+  const approvals = snapshotApprovals(envelope.approvals);
   // Capture once: replay admission and receipt callbacks may yield or mutate
   // the caller's object. Execution must use the exact snapshot verified here.
   const snapshot = captureArguments(args);
@@ -95,7 +97,7 @@ export async function verifyPresented(
     name,
     snapshot.json,
     envelope.signature,
-    envelope.approvals,
+    approvals,
     options?.allow,
     options?.requestId,
   );
@@ -104,6 +106,15 @@ export async function verifyPresented(
   emitReceipt(options?.onReceipt, decision.receipt, undefined, host);
   if (decision.outcome === "allow") {
     await admitPop(options?.nonceStore, envelope.signature, options?.onNonceStoreError);
+    // A fresh PoP over the same approvals is a new token; consume the
+    // approvals themselves so a nonce store makes them one-use here too.
+    await consumeApprovals(
+      options?.nonceStore,
+      approvals,
+      receiptRequestHash(decision.receipt),
+      name,
+      options?.onNonceStoreError,
+    );
   }
   decide(decision, name);
   // Run the host parse of the JSON text the proof covers. The raw host
@@ -220,7 +231,6 @@ const VERIFY_OPTION_KEYS = new Set([
   "onNonceStoreError",
   "requestId",
 ]);
-const REPLAY_STORE_UNAVAILABLE = "Replay store unavailable";
 const ATTACH_OPTION_KEYS = new Set(["approvals", "onReceipt", "requestId"]);
 function assertKnownKeys(value: object, known: ReadonlySet<string>, label: string): void {
   const unknown = Object.keys(value).filter((key) => !known.has(key));
@@ -251,72 +261,29 @@ function isHandlerPolicy(value: unknown): value is McpHandlerPolicy {
   return keys.length === 0 || hasAllow || hasReceipt || hasNonce || hasStoreError;
 }
 
-async function admitPop(
-  store: { checkAndRecord(popSignature: string): boolean | Promise<boolean> } | undefined,
+function admitPop(
+  store: McpVerifyOptions["nonceStore"],
   signature: string,
   onNonceStoreError?: (error: unknown) => void | Promise<void>,
 ): Promise<void> {
-  if (store === undefined) {
-    return;
-  }
-  let admitted: boolean | Promise<boolean>;
-  try {
-    admitted = store.checkAndRecord(signature);
-  } catch (error) {
-    throw replayStoreUnavailable(error, onNonceStoreError);
-  }
-  if (isThenable(admitted)) {
-    try {
-      admitted = await admitted;
-    } catch (error) {
-      throw replayStoreUnavailable(error, onNonceStoreError);
-    }
-  }
-  if (typeof admitted !== "boolean") {
-    throw replayStoreUnavailable(
-      new TenuoConfigurationError("NonceStore.checkAndRecord() must return boolean or Promise<boolean>"),
-      onNonceStoreError,
-    );
-  }
-  if (!admitted) {
-    throw new AuthorizationDeniedError(
+  return admitNonce(store, signature, onNonceStoreError, () =>
+    new AuthorizationDeniedError(
       "TENUO_INVALID_POP",
       "PoP replay detected — this exact authorization token was already consumed.",
-    );
-  }
+    ),
+  );
 }
 
-function replayStoreUnavailable(
-  cause: unknown,
-  onNonceStoreError?: (error: unknown) => void | Promise<void>,
-): TenuoConfigurationError {
-  emitIsolated(onNonceStoreError, cause);
-  const error = new TenuoConfigurationError(REPLAY_STORE_UNAVAILABLE);
-  if (cause !== undefined) {
-    error.cause = cause;
-  }
-  return error;
-}
-
-function emitIsolated(
-  hook: ((error: unknown) => void | Promise<void>) | undefined,
-  error: unknown,
-): void {
-  if (hook === undefined) {
-    return;
+/** The request hash core wrote into the decision receipt, when there is one. */
+function receiptRequestHash(receipt: string | undefined): string | undefined {
+  if (receipt === undefined) {
+    return undefined;
   }
   try {
-    const result = hook(error);
-    if (isThenable(result)) {
-      void Promise.resolve(result).catch(() => undefined);
-    }
+    return loadWasm().sdkVerifyReceipt(receipt).request_hash;
   } catch {
-    // Isolated — must not change the public error.
+    return undefined;
   }
-}
-
-function isThenable(value: unknown): value is Promise<boolean> {
-  return value !== null && typeof value === "object" && "then" in value && typeof value.then === "function";
 }
 
 function emitReceipt(

@@ -205,7 +205,11 @@ export type ToolPolicy<TArgs = undefined> = {
   /**
    * Host ceiling. AND'd with the session in Rust.
    * Non-empty maps are zero-trust: every call argument must be named here.
-   * `{}` means no extra ceiling (session/warrant only).
+   * `{}` means no extra ceiling (session/warrant only). Required: a missing
+   * `allow` or an unknown policy key throws. `session({ tools })` refuses a
+   * tool whose `allow` is `{}` unless the session's own `allow` names that
+   * capability explicitly, because an empty capability in a warrant accepts
+   * any arguments.
    */
   readonly allow: [NonNullable<TArgs>] extends [object]
     ? [KeysOfUnion<NonNullable<TArgs>>] extends [never]
@@ -219,11 +223,30 @@ export type ToolPolicy<TArgs = undefined> = {
             : { readonly [Field in KeysOfUnion<NonNullable<TArgs>>]?: ConstraintExpr }
     : AllowPolicy;
   readonly capability?: string;
+  /**
+   * Makes approvals one-use for this tool. When a call that carried
+   * `approvals` is allowed, each approval envelope that matches the call is
+   * recorded here before the tool body runs; an envelope the store has
+   * already seen denies with `TENUO_INSUFFICIENT_APPROVALS`. Same
+   * `NonceStore` shape as the MCP verify path; `memoryNonceStore()` works
+   * for one process. The store must remember a key for as long as an
+   * approval can live (one hour by default), so give `memoryNonceStore()` a
+   * matching `ttlSeconds`. A store that throws, rejects, or returns a
+   * non-boolean fails closed with "Replay store unavailable".
+   */
+  readonly nonceStore?: NonceStore;
+  /** Isolated. Called when `nonceStore.checkAndRecord` throws or rejects. */
+  readonly onNonceStoreError?: (error: unknown) => void | Promise<void>;
 };
 
 /** Compile-time brand only — never assigned at runtime. Do not `in`/`has` this key. */
 declare const protectedBrand: unique symbol;
 
+/**
+ * Tenuo's per-call options. Other keys pass through to the wrapped tool's own
+ * `execute`, except keys that look like a misspelled Tenuo option
+ * (`sesion`, `approval`, `onReciept`), which throw instead of being ignored.
+ */
 export type ExecuteOptions = {
   readonly session?: Session;
   /** Already-signed approval envelopes (hex, standard base64, or CBOR bytes). */
@@ -428,7 +451,10 @@ export type NarrowOptions = {
    * cannot authorize here. Hand `toWire()` to that agent.
    */
   readonly holder?: PublicKeyHandle;
-  /** Child lifetime. Clamped to what the parent has left. */
+  /**
+   * Child lifetime. A value longer than the parent has left is clamped to the
+   * parent's expiry, not rejected: the child never outlives the parent.
+   */
   readonly ttlSeconds?: number;
   /** The child's holder cannot delegate further. */
   readonly terminal?: boolean;
@@ -439,7 +465,7 @@ export type NarrowOptions = {
   readonly agentId?: string;
   /** Approvers can only be added. */
   readonly addApprovers?: readonly PublicKeyHandle[];
-  /** The threshold can only go up. */
+  /** The threshold can only go up. A value below the parent's throws. */
   readonly minApprovals?: number;
 };
 
@@ -648,6 +674,13 @@ export interface Session {
   readonly [Symbol.toStringTag]: "TenuoSession";
   /** Warrant tokens, root first. Does not include the holder secret. */
   toWire(): readonly string[];
+  /**
+   * The whole chain as one string: a CBOR warrant stack in URL-safe base64,
+   * the same encoding as `PresentedCall.warrant`. Use it where only a single
+   * string fits (an environment variable, a header). `sessionFromWire()`
+   * imports it. Does not include the holder secret.
+   */
+  toWireString(): string;
   /** SHA-256 of `(warrant_id, tool, canonical args)`. App-level idempotency, not PoP. */
   dedupKey(tool: string, args: Readonly<Record<string, unknown>>): string;
   /** Holder public key, depth, ceiling, lifetime, tools. Never the secret. */

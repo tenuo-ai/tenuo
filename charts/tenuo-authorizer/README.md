@@ -242,7 +242,7 @@ helm install tenuo-authorizer ./charts/tenuo-authorizer \
 helm upgrade tenuo-authorizer ./charts/tenuo-authorizer -f new-values.yaml
 
 # Upgrade to a new chart version
-helm upgrade tenuo-authorizer ./charts/tenuo-authorizer --version 0.3.2
+helm upgrade tenuo-authorizer ./charts/tenuo-authorizer --version 0.3.3
 ```
 
 ### Health endpoints moved to a separate port
