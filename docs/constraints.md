@@ -1035,7 +1035,11 @@ CEL("budget < revenue * 0.1 && currency == 'USD'")
 
 **How it works:**
 - CEL expressions evaluate to **boolean** (true/false)
-- For **object values**, each field becomes a top-level variable
+- For **object values**, each field becomes a top-level variable. The whole object is available
+  through the opt-in `tenuo_object()` function. Use `has(tenuo_object().field)` to test an
+  optional field, for example `amount <= 4000 && (!has(tenuo_object().approve) ||
+  tenuo_object().approve == false)`. A field named `value` keeps its existing top-level binding,
+  and list-oriented `value.all(...)` policies continue to reject objects.
 - For **primitive values**, the value is available as `value`
 - Expressions are **compiled once** and cached for performance (max 1000 entries)
 

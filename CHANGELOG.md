@@ -61,6 +61,13 @@ Two checks are stricter, and some calls that used to pass now fail:
 
 ### Fixed
 
+- **CEL object constraints can test optional fields.** Object-valued arguments
+  are now available through the opt-in `tenuo_object()` function, so policies
+  can use expressions such as `!has(tenuo_object().approve) ||
+  tenuo_object().approve == false`. Existing top-level field bindings and
+  list-only `value` semantics are unchanged. Older verifiers fail closed on
+  expressions using the new function.
+
 - **`UrlPattern` rejects ambiguous wildcard hosts when authoring.** Patterns
   such as `https://*/*` previously constructed successfully but matched no
   URL. Constructors and human-readable config inputs now reject them with

@@ -250,7 +250,10 @@ pub fn evaluate(
 
 /// Evaluate a CEL expression with the value as the root context.
 ///
-/// For object values, each field becomes a top-level variable.
+/// For object values, each field becomes a top-level variable, and the whole
+/// object is available through the opt-in `tenuo_object()` function so
+/// expressions can test optional fields with `has(tenuo_object().field)`.
+/// Keeping the object out of `value` preserves existing list-only policies.
 /// For other values, the value is available as `value`.
 ///
 /// # Feature Flag
@@ -264,6 +267,13 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
 
     match value {
         ConstraintValue::Object(map) => {
+            let object = constraint_value_to_cel(value)?;
+            let object_function: Box<
+                dyn Fn(&mut cel_interpreter::FunctionContext) -> cel_interpreter::ResolveResult
+                    + Send
+                    + Sync,
+            > = Box::new(move |_| Ok(object.clone()));
+            context.add_function("tenuo_object", object_function);
             for (key, val) in map {
                 context
                     .add_variable(key, constraint_value_to_cel(val)?)
@@ -489,20 +499,22 @@ mod tests {
             ConstraintValue::String("admin".to_string()),
             ConstraintValue::Integer(5),
             ConstraintValue::Boolean(true),
-            ConstraintValue::Object(std::collections::BTreeMap::from([(
-                "role".to_string(),
-                ConstraintValue::String("admin".to_string()),
-            )])),
+            ConstraintValue::Object(std::collections::BTreeMap::from([
+                ("admin".to_string(), ConstraintValue::Boolean(false)),
+                (
+                    "role".to_string(),
+                    ConstraintValue::String("admin".to_string()),
+                ),
+            ])),
         ];
 
         for value in &values {
+            let all = evaluate_with_value_context("value.all(item, item == 'admin')", value);
+            assert!(all.is_err(), "all over {value:?} must fail closed: {all:?}");
+            let exists = evaluate_with_value_context("value.exists(item, item == 'admin')", value);
             assert!(
-                evaluate_with_value_context("value.all(item, item == 'admin')", value).is_err(),
-                "all over {value:?} must deny instead of panicking"
-            );
-            assert!(
-                evaluate_with_value_context("value.exists(item, item == 'admin')", value).is_err(),
-                "exists over {value:?} must deny instead of panicking"
+                exists.is_err(),
+                "exists over {value:?} must fail closed: {exists:?}"
             );
         }
     }
@@ -575,6 +587,53 @@ mod tests {
         assert!(
             evaluate_with_value_context("amount < 10000 && currency == 'USD'", &value).unwrap()
         );
+    }
+
+    #[test]
+    fn test_object_context_exposes_optional_fields_opt_in() {
+        let obj = |approve: Option<bool>| {
+            let mut fields = vec![("amount".to_string(), ConstraintValue::Integer(3600))];
+            if let Some(a) = approve {
+                fields.push(("approve".to_string(), ConstraintValue::Boolean(a)));
+            }
+            ConstraintValue::Object(fields.into_iter().collect())
+        };
+        let expr =
+            "amount <= 4000 && (!has(tenuo_object().approve) || tenuo_object().approve == false)";
+        assert!(evaluate_with_value_context(expr, &obj(None)).unwrap());
+        assert!(evaluate_with_value_context(expr, &obj(Some(false))).unwrap());
+        assert!(!evaluate_with_value_context(expr, &obj(Some(true))).unwrap());
+        // Fields stay available as top-level variables.
+        assert!(
+            evaluate_with_value_context("tenuo_object().amount == amount", &obj(None)).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_tenuo_object_policy_fails_closed_without_function() {
+        let program =
+            Program::compile("!has(tenuo_object().approve) || tenuo_object().approve == false")
+                .unwrap();
+        let context = create_context();
+
+        assert!(program.execute(&context).is_err());
+    }
+
+    #[test]
+    fn test_object_field_named_value_keeps_legacy_precedence() {
+        let value = ConstraintValue::Object(
+            [
+                ("value".to_string(), ConstraintValue::Integer(7)),
+                ("approve".to_string(), ConstraintValue::Boolean(false)),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert!(evaluate_with_value_context(
+            "value == 7 && approve == false && tenuo_object().approve == false",
+            &value
+        )
+        .unwrap());
     }
 
     #[test]
