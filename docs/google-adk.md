@@ -673,7 +673,7 @@ from tenuo import configure, mint, Capability, Subpath, SigningKey
 
 # Configure Tenuo
 key = SigningKey.generate()
-configure(issuer_key=key)
+configure(issuer_key=key, trusted_roots=[key.public_key])
 
 # Connect to MCP server with automatic tool discovery
 async with SecureMCPClient("python", ["mcp_server.py"], register_config=True) as mcp:
