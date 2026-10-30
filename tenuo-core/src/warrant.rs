@@ -1614,6 +1614,36 @@ fn approval_threshold(approvers: Option<&Vec<PublicKey>>, min: Option<u32>) -> u
     }
 }
 
+/// A parent gate with no approvers can never be approved. A child that keeps
+/// such a gate must not name approvers: they apply warrant-wide, so the
+/// delegator could approve calls the parent could never make.
+pub(crate) fn check_approvers_under_unapprovable_gate(
+    parent: &Warrant,
+    child_scope: &BTreeMap<String, ConstraintSet>,
+    child_approvers: Option<&Vec<PublicKey>>,
+) -> Result<()> {
+    if parent
+        .payload
+        .required_approvers
+        .as_ref()
+        .is_some_and(|a| !a.is_empty())
+        || child_approvers.is_none_or(|a| a.is_empty())
+    {
+        return Ok(());
+    }
+    let parent_gates = crate::approval_gate::parse_approval_gate_map(
+        parent.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+    )?;
+    if parent_gates
+        .is_some_and(|g| crate::approval_gate::propagate_approval_gates(&g, child_scope).is_some())
+    {
+        return Err(Error::MonotonicityViolation(
+            "cannot add approvers under a parent approval gate that has none".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Approvers sorted and deduplicated, as the builders store them, so an
 /// inherited list compares equal to the parent's however the parent wrote it.
 fn canonical_approvers(approvers: Option<&Vec<PublicKey>>) -> Option<Vec<PublicKey>> {
@@ -2353,6 +2383,16 @@ impl<'a> AttenuationBuilder<'a> {
 
     /// Validate multi-sig monotonicity (cannot remove approvers or lower threshold).
     fn validate_multisig_monotonicity(&self) -> Result<()> {
+        check_approvers_under_unapprovable_gate(
+            self.parent,
+            &approval_gate_scope(
+                self.parent.payload.warrant_type,
+                &self.tools,
+                self.issuable_tools.as_ref(),
+            ),
+            self.required_approvers.as_ref(),
+        )?;
+
         if let Some(parent_approvers) = &self.parent.payload.required_approvers {
             if let Some(child_approvers) = &self.required_approvers {
                 for parent_key in parent_approvers {
@@ -3340,6 +3380,16 @@ impl OwnedAttenuationBuilder {
 
     /// Validate multi-sig monotonicity.
     fn validate_multisig_monotonicity(&self) -> Result<()> {
+        check_approvers_under_unapprovable_gate(
+            &self.parent,
+            &approval_gate_scope(
+                self.parent.payload.warrant_type,
+                &self.tools,
+                self.issuable_tools.as_ref(),
+            ),
+            self.required_approvers.as_ref(),
+        )?;
+
         if let Some(parent_approvers) = &self.parent.payload.required_approvers {
             if let Some(child_approvers) = &self.required_approvers {
                 for parent_key in parent_approvers {
@@ -4168,6 +4218,11 @@ impl<'a> IssuanceBuilder<'a> {
                 )));
             }
         }
+        check_approvers_under_unapprovable_gate(
+            self.issuer,
+            &self.tools,
+            self.required_approvers.as_ref(),
+        )?;
 
         // Validate min_approvals if set
         if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {

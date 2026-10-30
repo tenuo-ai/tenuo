@@ -68,7 +68,8 @@ Two checks are stricter, and some calls that used to pass now fail:
   applies, including through issuer-to-issuer delegation and `*` tools.
   Issuance may add approvers (raising the threshold to match) or raise the
   threshold, not remove or dilute them; an unset minimum counts as every
-  approver. Reported in #1029.
+  approver. A gate with no approvers stays unapprovable: delegation and
+  issuance cannot name approvers for it. Reported in #1029.
 
 - **FastAPI: `SecureAPIRouter` guards direct and included HTTP routes.**
   `add_api_route()` and plain included routers no longer run without a warrant.

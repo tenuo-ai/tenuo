@@ -593,6 +593,15 @@ fn verify_approval_link(parent: &Warrant, child: &Warrant) -> Result<()> {
         Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
     })?;
 
+    crate::warrant::check_approvers_under_unapprovable_gate(
+        parent,
+        &child.approval_gate_scope(),
+        child.required_approvers(),
+    )
+    .map_err(|e| {
+        Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
+    })?;
+
     // A gated child keeps every parent approver and cannot dilute the parent's quorum.
     if child_gates.is_some() {
         if let Some(parent_approvers) = parent.required_approvers() {

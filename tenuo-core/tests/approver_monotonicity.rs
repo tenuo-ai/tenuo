@@ -715,3 +715,120 @@ fn inherited_unsorted_or_repeated_approvers_clear_with_their_gate() {
         .unwrap();
     assert!(owned.required_approvers().is_none());
 }
+
+fn gated_without_approvers(root: &SigningKey, holder: &SigningKey) -> Warrant {
+    Warrant::builder()
+        .tool("transfer", ConstraintSet::new())
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes("transfer"))
+        .ttl(Duration::from_secs(3600))
+        .holder(holder.public_key())
+        .build(root)
+        .unwrap()
+}
+
+#[test]
+fn delegation_cannot_add_approvers_under_an_approverless_gate() {
+    let (root, mid, worker) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let parent = gated_without_approvers(&root, &mid);
+
+    let err = parent
+        .attenuate()
+        .inherit_all()
+        .add_approvers(vec![mid.public_key()])
+        .holder(worker.public_key())
+        .build(&mid)
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("parent approval gate that has none"),
+        "{err}"
+    );
+}
+
+#[test]
+fn issuance_cannot_name_approvers_under_an_approverless_gate() {
+    let (root, worker) = (SigningKey::generate(), SigningKey::generate());
+    let issuer = Warrant::builder()
+        .r#type(WarrantType::Issuer)
+        .issuable_tools(vec!["transfer".to_string()])
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes("transfer"))
+        .ttl(Duration::from_secs(3600))
+        .holder(root.public_key())
+        .build(&root)
+        .unwrap();
+
+    let err = issuer
+        .issue_execution_warrant()
+        .unwrap()
+        .tool("transfer", ConstraintSet::new())
+        .required_approvers(vec![root.public_key()])
+        .ttl(Duration::from_secs(60))
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("parent approval gate that has none"),
+        "{err}"
+    );
+}
+
+#[test]
+fn verifier_rejects_approvers_added_under_an_approverless_gate() {
+    let k = keys();
+    let mut root = gated_payload(1, &k.orch, &k.cp, k.now, 0, None, &[], None);
+    root.required_approvers = None;
+    let root = forge(root, &k.cp);
+    let parent_hash: [u8; 32] = Sha256::digest(&root.payload_bytes).into();
+    let child = forge(
+        gated_payload(
+            2,
+            &k.worker,
+            &k.orch,
+            k.now,
+            1,
+            Some(parent_hash),
+            &[&k.orch],
+            Some(1),
+        ),
+        &k.orch,
+    );
+
+    let err = verify_both(&k.cp, &[root, child]).unwrap_err();
+    assert!(err.contains("parent approval gate that has none"), "{err}");
+}
+
+#[test]
+fn child_may_gate_a_tool_the_parent_left_ungated() {
+    let (root, worker, a) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let parent = Warrant::builder()
+        .tool("transfer", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .holder(root.public_key())
+        .build(&root)
+        .unwrap();
+
+    let mut builder = OwnedAttenuationBuilder::new(parent.clone());
+    builder.inherit_all();
+    builder.set_holder(worker.public_key());
+    builder
+        .set_approval_gates_extension(gate_bytes("transfer"))
+        .unwrap();
+    let child = builder
+        .add_approvers(vec![a.public_key()])
+        .build(&root)
+        .unwrap();
+    assert_eq!(
+        child.required_approvers().cloned(),
+        Some(vec![a.public_key()])
+    );
+    verify_both(&root, &[parent, child]).unwrap();
+}
