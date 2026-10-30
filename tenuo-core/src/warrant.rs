@@ -1577,24 +1577,28 @@ impl Warrant {
 }
 
 /// Count distinct approvers in `approvers`.
+///
+/// Hash-set based: lists arrive from untrusted wire payloads before the
+/// issuer is checked, so the count must stay linear in the list length.
 fn distinct_approver_count(approvers: &[PublicKey]) -> u32 {
     use std::convert::TryInto;
     approvers
         .iter()
-        .enumerate()
-        .filter(|(i, k)| !approvers[..*i].contains(k))
-        .count()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
         .try_into()
         .unwrap_or(u32::MAX)
 }
 
 /// Count distinct approvers in `child` that are not present in `parent`.
 pub(crate) fn added_approver_count(parent: &[PublicKey], child: &[PublicKey]) -> u32 {
+    use std::collections::HashSet;
     use std::convert::TryInto;
+    let parent: HashSet<_> = parent.iter().collect();
     child
         .iter()
-        .enumerate()
-        .filter(|(i, k)| !child[..*i].contains(k) && !parent.contains(k))
+        .collect::<HashSet<_>>()
+        .difference(&parent)
         .count()
         .try_into()
         .unwrap_or(u32::MAX)

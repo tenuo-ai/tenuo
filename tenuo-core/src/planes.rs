@@ -602,10 +602,8 @@ fn verify_approval_link(parent: &Warrant, child: &Warrant) -> Result<()> {
                         .to_string(),
                 ));
             };
-            if parent_approvers
-                .iter()
-                .any(|key| !child_approvers.contains(key))
-            {
+            let child_set: std::collections::HashSet<_> = child_approvers.iter().collect();
+            if parent_approvers.iter().any(|key| !child_set.contains(key)) {
                 return Err(Error::ChainVerificationFailed(
                     "approval gate monotonicity violation: child removes a parent approver"
                         .to_string(),
