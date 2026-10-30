@@ -167,7 +167,7 @@ class TestGuardWrapper:
             return {"result": "done"}
 
         graph = StateGraph(MockState)
-        graph.add_node("node", guard_node(my_agent))
+        graph.add_node("node", guard_node(my_agent, trusted_roots=[warrant.issuer]))
         graph.add_edge(START, "node")
         graph.add_edge("node", END)
 
