@@ -2379,12 +2379,12 @@ impl<'a> AttenuationBuilder<'a> {
         // An unset parent minimum still means every parent approver; each added
         // approver must also raise the effective threshold so a new key cannot
         // satisfy the quorum in place of a parent approver.
-        let added = delegated_added_approvers(&self.parent, self.required_approvers.as_ref());
+        let added = delegated_added_approvers(self.parent, self.required_approvers.as_ref());
         let base = self.parent.approval_threshold();
         let threshold = approval_threshold(
             self.required_approvers.as_ref(),
             delegated_min_approvals(
-                &self.parent,
+                self.parent,
                 self.required_approvers.as_ref(),
                 self.min_approvals,
             ),
@@ -2638,7 +2638,7 @@ impl<'a> AttenuationBuilder<'a> {
 
         let effective_min = if self.required_approvers.is_some() {
             delegated_min_approvals(
-                &self.parent,
+                self.parent,
                 self.required_approvers.as_ref(),
                 self.min_approvals,
             )
