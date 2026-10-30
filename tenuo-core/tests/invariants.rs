@@ -54,16 +54,20 @@ proptest! {
             .unwrap();
 
         // POLA: inherit_all to get parent capabilities
-        let child = parent
+        let result = parent
             .attenuate()
             .inherit_all()
             .ttl(Duration::from_secs(ttl_child))
             .holder(child_kp.public_key())
-            .build(&child_kp)
-            .unwrap();
+            .build(&child_kp);
 
-        // INVARIANT: child.expires_at <= parent.expires_at
-        prop_assert!(child.expires_at() <= parent.expires_at());
+        // INVARIANT: a child never outlives its parent. A request that would is
+        // rejected; within a second of the boundary either outcome is correct.
+        match result {
+            Ok(child) => prop_assert!(child.expires_at() <= parent.expires_at()),
+            Err(tenuo::Error::MonotonicityViolation(_)) => prop_assert!(ttl_child + 1 >= ttl_parent),
+            Err(e) => return Err(TestCaseError::fail(format!("unexpected error {e:?}"))),
+        }
     }
 
     /// Child warrant depth is always parent depth + 1.

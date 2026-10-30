@@ -51,7 +51,7 @@ Kubernetes probes and health checks go to port 9091.
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) (or Python 3.9+ with `pip install tenuo==0.3.2`)
+- [uv](https://docs.astral.sh/uv/) (or Python 3.9+ with `pip install tenuo==0.3.3`)
 - Docker with Compose, **or** a Kubernetes cluster (kind, minikube, cloud) with kubectl
 - curl
 
@@ -100,7 +100,7 @@ kubectl -n tenuo-system port-forward svc/envoy 8080:8080 &
 ```
 
 This creates the `tenuo-system` namespace with the Tenuo authorizer
-(`tenuo/authorizer:0.3.2`), Envoy (`envoyproxy/envoy:v1.39.1`) and httpbin.
+(`tenuo/authorizer:0.3.3`), Envoy (`envoyproxy/envoy:v1.39.1`) and httpbin.
 The embedded `gateway.yaml` and `envoy.yaml` are the same files used by Docker
 Compose.
 
@@ -230,7 +230,7 @@ Also set `normalize_path: true` and `merge_slashes: true` on the
 above and asserts the status codes and deny reasons:
 
 ```bash
-docs/quickstart/envoy/e2e-test.sh              # published tenuo/authorizer:0.3.2
+docs/quickstart/envoy/e2e-test.sh              # published tenuo/authorizer:0.3.3
 E2E_BUILD=1 docs/quickstart/envoy/e2e-test.sh  # authorizer built from this checkout
 ```
 

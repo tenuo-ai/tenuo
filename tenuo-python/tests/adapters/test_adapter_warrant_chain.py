@@ -297,10 +297,12 @@ class TestWarrantTokenSizeLimit:
                 signing_key=keys[i],
                 holder=keys[i + 1].public_key,
                 capabilities={"search": {"query": Pattern(big)}},
-                ttl_seconds=300,
+                # This fixture tests wire size, not temporal attenuation.
+                # Inherit expiry to avoid racing a second boundary in the loop.
             )
             warrants.append(warrant)
         stack = encode_warrant_stack(warrants)
+        assert all(w.expires_at() == warrants[0].expires_at() for w in warrants)
         decoded_size = sum(len(w.to_bytes()) for w in warrants)
         assert MAX_WARRANT_SIZE < decoded_size < 256 * 1024
         assert len(stack) > MAX_WARRANT_SIZE

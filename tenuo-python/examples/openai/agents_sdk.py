@@ -213,8 +213,8 @@ def demo_agents_sdk_integration():
     """
     Full integration with OpenAI Agents SDK.
 
-    Shows how to attach Tenuo guardrails to agents using the
-    input_guardrails parameter.
+    guard_agent() attaches a Tenuo check to every tool on the agent, so each
+    tool call the model makes is authorized before the tool runs.
     """
     print("=" * 60)
     print("Demo 3: OpenAI Agents SDK Integration")
@@ -230,32 +230,37 @@ def demo_agents_sdk_integration():
         print()
         return
 
-    from agents import Agent, Runner
+    from agents import Agent, Runner, function_tool
 
-    # Create guardrail
-    guardrail = create_tier1_guardrail(
-        constraints={
-            "send_email": {"to": Pattern("*@company.com")},
-        }
+    from tenuo.openai import guard_agent
+
+    sent = []
+
+    @function_tool
+    def send_email(to: str, body: str) -> str:
+        """Send an email."""
+        sent.append(to)
+        return f"sent to {to}"
+
+    agent = guard_agent(
+        Agent(
+            name="SecureAssistant",
+            instructions="You help users with email tasks. Use the send_email tool.",
+            tools=[send_email],
+        ),
+        constraints={"send_email": {"to": Pattern("*@company.com"), "body": Pattern("*")}},
     )
 
-    # Create agent with guardrail
-    agent = Agent(
-        name="SecureAssistant",
-        instructions="You help users with email tasks. Only send to company addresses.",
-        input_guardrails=[guardrail],
-    )
-
-    print(f"Created agent: {agent.name}")
-    print(f"Guardrails: {len(agent.input_guardrails)}")
+    print(f"Created agent: {agent.name} (every tool call checked by Tenuo)")
     print()
 
     # Run the agent (requires OPENAI_API_KEY)
     if os.environ.get("OPENAI_API_KEY"):
 
         async def run_agent():
-            result = await Runner.run(agent, "Send an email to alice@company.com saying hello")
+            result = await Runner.run(agent, "Email hello to alice@company.com and to eve@evil.example")
             print(f"Agent output: {result.final_output}")
+            print(f"Emails actually sent to: {sent}")
 
         asyncio.run(run_agent())
     else:
@@ -325,19 +330,16 @@ Tenuo provides two tiers of protection for OpenAI Agents:
 Tier 1 (Guardrails):
   - Rejects out-of-policy tool calls in trusted code
   - No cryptography needed
-  - Use: create_tier1_guardrail()
+  - Use: guard_agent(..., constraints=...)
 
 Tier 2 (Warrants):
   - The same policy checks, plus signed holder-bound authority
   - Proof-of-Possession on each call
-  - Use: create_tier2_guardrail()
+  - Use: guard_agent(..., warrant=..., signing_key=..., trusted_roots=...)
 
-Both integrate via the input_guardrails parameter:
+Protect an agent's tool calls with guard_agent():
 
-    agent = Agent(
-        name="MyAgent",
-        input_guardrails=[guardrail],
-    )
+    agent = guard_agent(Agent(name="MyAgent", tools=[...]), constraints={...})
 
 For more information:
   - Documentation: https://tenuo.ai/docs

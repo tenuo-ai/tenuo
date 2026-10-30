@@ -16,6 +16,7 @@ import type {
   McpAttachOptions,
   McpVerifyOptions,
   NarrowInput,
+  NonceStore,
   NarrowOptions,
   PresentedCall,
   ProtectedTool,
@@ -36,6 +37,7 @@ import type {
 import { parseConnectToken } from "./connect.ts";
 import { generateIdentity, identityFromKey } from "./identity.ts";
 import { createMcp, presentCall, verifyPresented, type Decide } from "./mcp.ts";
+import { consumeApprovals, snapshotApprovals } from "./replay.ts";
 import { collectReceipt, emitIsolatedReceipt, inheritSessionCollector } from "./receipts.ts";
 import { createRuntime } from "./runtime.ts";
 import { AuthorizationDeniedError, ApprovalRequiredError, TenuoConfigurationError, TenuoError } from "./errors.ts";
@@ -60,6 +62,33 @@ import {
 } from "./wasm.ts";
 
 const currentSession = new AsyncLocalStorage<Session>();
+const TOOL_POLICY_KEYS = ["allow", "capability", "nonceStore", "onNonceStoreError"] as const;
+const EXECUTE_OPTION_KEYS = ["session", "approvals", "onReceipt", "requestId"] as const;
+const SESSION_INPUT_KEYS = [
+  "allow",
+  "tools",
+  "ttlSeconds",
+  "requireApproval",
+  "holder",
+  "maxDepth",
+  "kind",
+  "clearance",
+  "sessionId",
+  "agentId",
+  "issuableTools",
+  "constraintBounds",
+  "maxIssueDepth",
+] as const;
+const ISSUE_INPUT_KEYS = [
+  "allow",
+  "holder",
+  "ttlSeconds",
+  "maxDepth",
+  "clearance",
+  "sessionId",
+  "agentId",
+  "requireApproval",
+] as const;
 const toolPolicies = new WeakMap<object, { capability: string; allow: AllowPolicy }>();
 const wrappedInners = new WeakSet<object>();
 
@@ -336,7 +365,11 @@ class TenuoClient implements Tenuo {
       this.canMint = false;
     }
     if (options.revocationList !== undefined) {
-      this.context.loadRevocationList(normalizeWireBytes(options.revocationList));
+      try {
+        this.context.loadRevocationList(normalizeWireBytes(options.revocationList));
+      } catch (error) {
+        throw revocationLoadError(error);
+      }
     }
     this.decide = (decision, tool, native, args) => {
       this.applyDecision(decision, tool, native, args);
@@ -384,24 +417,36 @@ class TenuoClient implements Tenuo {
     if (toolPolicies.has(inner) || wrappedInners.has(inner)) {
       throw new TenuoConfigurationError("tenuo.tool() already wrapped this tool");
     }
+    const { nonceStore, onNonceStoreError } = validateToolPolicy(policy);
     const capability = capabilityName(inner, policy);
     const original = inner.execute as (
       args: Record<string, unknown>,
       options?: unknown,
     ) => unknown;
     const execute = async (args: never, callOptions?: unknown) => {
+      assertExecuteOptions(callOptions);
       const session = resolveSession(callOptions);
       const native = nativeSession(session);
+      const approvals = snapshotApprovals(approvalsFrom(callOptions));
       const decision = this.context.authorize(
         native,
         capability,
         args,
-        approvalsFrom(callOptions),
+        approvals,
         policy.allow,
         requestIdFrom(callOptions),
       );
       emitReceipt(callOptions, decision.receipt, session, this);
       if (decision.outcome === "allow") {
+        if (nonceStore !== undefined) {
+          await consumeApprovals(
+            nonceStore,
+            approvals,
+            this.requestHash(native, capability, decision.args),
+            capability,
+            onNonceStoreError,
+          );
+        }
         return original(plainArgs(decision.args), forwardExecuteOptions(callOptions));
       }
       this.applyDecision(decision, capability, native, plainArgs(args));
@@ -416,7 +461,20 @@ class TenuoClient implements Tenuo {
     return wrapped;
   }
 
+  /** The approval request hash for this call; approvals are bound to it. */
+  private requestHash(native: ReturnType<typeof nativeSession>, tool: string, args: unknown): string {
+    try {
+      return this.context.approvalRequest(native, tool, plainArgs(args)).request_hash;
+    } catch (error) {
+      throw new TenuoConfigurationError(`could not bind approvals to this call: ${errorMessage(error)}`);
+    }
+  }
+
   session(input: SessionInput): Session {
+    if (input === null || typeof input !== "object") {
+      throw new TenuoConfigurationError("tenuo.session() requires an options object");
+    }
+    assertKnownInputKeys(input, SESSION_INPUT_KEYS, "tenuo.session()");
     const allow = collectSessionAllow(input);
     const kind = input.kind ?? "execution";
     if (kind !== "execution" && kind !== "issuer") {
@@ -434,7 +492,7 @@ class TenuoClient implements Tenuo {
     }
     const options: WasmMintOptions = { kind, allow };
     if (input.ttlSeconds !== undefined) {
-      options.ttlSeconds = requireTtl(input.ttlSeconds, "session().ttlSeconds");
+      options.ttlSeconds = requireTtl(input.ttlSeconds, "session().ttlSeconds", 1);
     }
     if (input.holder !== undefined) {
       options.holder = requirePublicKey(input.holder, "session().holder").hex;
@@ -477,6 +535,7 @@ class TenuoClient implements Tenuo {
     if (input === null || typeof input !== "object" || input.allow === undefined || Object.keys(input.allow).length === 0) {
       throw new TenuoConfigurationError("issue() requires at least one capability in allow");
     }
+    assertKnownInputKeys(input, ISSUE_INPUT_KEYS, "issue()");
     const options: WasmIssueOptions = {
       allow: input.allow,
       holder: requirePublicKey(input.holder, "issue().holder").hex,
@@ -522,6 +581,12 @@ class TenuoClient implements Tenuo {
     if (typeof input.warrant === "string" && input.warrant.trim().length === 0) {
       throw new TenuoConfigurationError("sessionFromWire() requires a warrant");
     }
+    // Warrant strings are hex or base64; none of these characters occur in one.
+    if (typeof input.warrant === "string" && /^\[|[\s,.;]/.test(input.warrant.trim())) {
+      throw new TenuoConfigurationError(
+        "sessionFromWire() got a string that looks like several warrant tokens joined together. Pass the array from session.toWire(), or the single string from session.toWireString().",
+      );
+    }
     try {
       if (typeof input.warrant === "string") {
         return new Session(importSessionFromWire(input.warrant, input.holderKey));
@@ -550,6 +615,14 @@ class TenuoClient implements Tenuo {
       throw new TenuoConfigurationError("narrow() requires a Tenuo Session, not a plain object");
     }
     const native = options === undefined ? undefined : narrowOptionsJson(options);
+    if (native?.minApprovals !== undefined) {
+      const parentMin = session.inspect().minApprovals;
+      if (parentMin !== undefined && native.minApprovals < parentMin) {
+        throw new TenuoConfigurationError(
+          `narrow().minApprovals ${native.minApprovals} is below the parent's ${parentMin}. The approval threshold can only go up.`,
+        );
+      }
+    }
     try {
       const child = new Session(this.context.narrow(nativeSession(session), allow, native));
       inheritSessionCollector(session, child);
@@ -697,7 +770,11 @@ class TenuoClient implements Tenuo {
   }
 
   revoke(list: string | Uint8Array): void {
-    this.context.loadRevocationList(normalizeWireBytes(list));
+    try {
+      this.context.loadRevocationList(normalizeWireBytes(list));
+    } catch (error) {
+      throw revocationLoadError(error);
+    }
   }
 
   ready(): void {
@@ -710,6 +787,114 @@ function requireLabel(value: string, name: string): string {
     throw new TenuoConfigurationError(`${name} must be a non-empty string`);
   }
   return value;
+}
+
+function validateToolPolicy(policy: unknown): {
+  nonceStore?: NonceStore;
+  onNonceStoreError?: (error: unknown) => void | Promise<void>;
+} {
+  if (policy === null || typeof policy !== "object" || Array.isArray(policy)) {
+    throw new TenuoConfigurationError("tenuo.tool() requires a policy object: { allow, capability? }");
+  }
+  assertKnownInputKeys(policy, TOOL_POLICY_KEYS, "tenuo.tool() policy");
+  const record = policy as { allow?: unknown; nonceStore?: unknown; onNonceStoreError?: unknown };
+  if (record.allow === undefined) {
+    throw new TenuoConfigurationError(
+      "tenuo.tool() policy requires allow: name each argument with a constraint, or pass {} for no host ceiling",
+    );
+  }
+  if (record.allow === null || typeof record.allow !== "object" || Array.isArray(record.allow)) {
+    throw new TenuoConfigurationError("tenuo.tool() policy.allow must be an object of per-argument constraints");
+  }
+  const out: { nonceStore?: NonceStore; onNonceStoreError?: (error: unknown) => void | Promise<void> } = {};
+  if (record.nonceStore !== undefined) {
+    const store = record.nonceStore as { checkAndRecord?: unknown } | null;
+    if (store === null || typeof store !== "object" || typeof store.checkAndRecord !== "function") {
+      throw new TenuoConfigurationError("tenuo.tool() policy.nonceStore must implement checkAndRecord()");
+    }
+    out.nonceStore = record.nonceStore as NonceStore;
+  }
+  if (record.onNonceStoreError !== undefined) {
+    if (typeof record.onNonceStoreError !== "function") {
+      throw new TenuoConfigurationError("tenuo.tool() policy.onNonceStoreError must be a function");
+    }
+    out.onNonceStoreError = record.onNonceStoreError as (error: unknown) => void | Promise<void>;
+  }
+  return out;
+}
+
+function assertKnownInputKeys(value: object, known: readonly string[], label: string): void {
+  for (const key of Object.keys(value)) {
+    if (!known.includes(key)) {
+      throw new TenuoConfigurationError(`${label}: unknown key '${key}' (expected ${known.join(", ")})`);
+    }
+  }
+}
+
+/**
+ * Execute options are shared with the wrapped tool, so unknown keys pass
+ * through. A key that is a near miss of a Tenuo option is a typo that would
+ * otherwise drop that option silently (`sesion` falls back to the ambient
+ * session), so it throws.
+ */
+function assertExecuteOptions(callOptions: unknown): void {
+  if (callOptions === null || typeof callOptions !== "object") {
+    return;
+  }
+  for (const key of Object.keys(callOptions)) {
+    if ((EXECUTE_OPTION_KEYS as readonly string[]).includes(key)) {
+      continue;
+    }
+    const lower = key.toLowerCase();
+    for (const known of EXECUTE_OPTION_KEYS) {
+      const target = known.toLowerCase();
+      const limit = known.length <= 7 ? 1 : 2;
+      if (lower === target || editDistance(lower, target) <= limit) {
+        throw new TenuoConfigurationError(
+          `execute() options: unknown key '${key}'. Did you mean '${known}'? Tenuo options are ${EXECUTE_OPTION_KEYS.join(", ")}.`,
+        );
+      }
+    }
+  }
+}
+
+/** Optimal string alignment distance (adjacent transpositions count once). */
+function editDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 2) {
+    return 3;
+  }
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let best = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        best = Math.min(best, d[i - 2]![j - 2]! + 1);
+      }
+      d[i]![j] = best;
+    }
+  }
+  return d[a.length]![b.length]!;
+}
+
+function revocationLoadError(error: unknown): TenuoError {
+  if (error instanceof TenuoError) {
+    return error;
+  }
+  // Strip the prefix the core adds so the code reflects the actual cause.
+  const message = errorMessage(error).replace(/^TENUO_[A-Z_]+:\s*/, "");
+  if (/rollback/i.test(message)) {
+    return new TenuoConfigurationError(message);
+  }
+  if (/issuer does not match|untrusted|not trusted/i.test(message)) {
+    return new TenuoConfigurationError(message, "TENUO_UNTRUSTED_ROOT");
+  }
+  if (/signature/i.test(message)) {
+    return new TenuoConfigurationError(message, "TENUO_SIGNATURE_INVALID");
+  }
+  return new TenuoConfigurationError(message);
 }
 
 function errorMessage(error: unknown): string {
@@ -992,6 +1177,11 @@ function collectSessionAllow(input: SessionInput): { [capability: string]: Allow
     if (policy === undefined) {
       throw new TenuoConfigurationError("session({ tools }) requires tools from tenuo.tool()");
     }
+    if (Object.keys(policy.allow).length === 0 && !Object.prototype.hasOwnProperty.call(input.allow ?? {}, policy.capability)) {
+      throw new TenuoConfigurationError(
+        `session({ tools }): ${policy.capability} has allow: {}, which would put a capability that accepts any arguments in the warrant. Name its arguments in tenuo.tool({ allow }), or opt in explicitly with session({ tools, allow: { ${policy.capability}: {} } }).`,
+      );
+    }
     const existing = allow[policy.capability];
     if (existing !== undefined && !sameAllow(existing, policy.allow)) {
       throw new TenuoConfigurationError(
@@ -1064,10 +1254,9 @@ export function signApproval(
 
 /** Decode an approval envelope. Not authorization: the call path still decides. */
 export function inspectApproval(envelope: string | Uint8Array): ApprovalInfo {
-  const text = typeof envelope === "string" ? envelope : Buffer.from(envelope).toString("base64");
   let raw;
   try {
-    raw = loadWasm().sdkInspectApproval(text);
+    raw = loadWasm().sdkInspectApproval(envelope);
   } catch (error) {
     throw new TenuoConfigurationError(errorMessage(error));
   }

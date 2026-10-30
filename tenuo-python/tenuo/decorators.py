@@ -215,7 +215,7 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
         if hasattr(constraint, "matches") and constraint_type == "Pattern":
             return constraint.matches(value)
 
-        # Shlex - shell command validation (Python full shlex parsing)
+        # Shlex - shell command validation (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Shlex":
             return constraint.matches(str(value))
 
@@ -657,22 +657,10 @@ def _map_result_to_guard_error(
         )
     )
 
-    # Build explorer URL for debugging
-    warrant_b64 = warrant_to_use.to_base64() if hasattr(warrant_to_use, "to_base64") else ""
-    if warrant_b64:
-        import base64 as b64_mod
-        import json as json_mod
-        import urllib.parse
-
-        state = {"warrant": warrant_b64, "tool": tool_name, "args": json_mod.dumps(auth_args)}
-        state_b64 = b64_mod.b64encode(json_mod.dumps(state).encode()).decode()
-        explorer_url = f"https://tenuo.ai/explorer/?s={urllib.parse.quote(state_b64)}"
-    else:
-        explorer_url = None
-
+    # The hint ends up in logs and tool output, so it never embeds the
+    # warrant or argument values; why_denied().explorer_url has the
+    # pre-filled Explorer link for local debugging.
     hint = why.suggestion if hasattr(why, "suggestion") else None
-    if explorer_url:
-        hint = f"{hint}\n\n🔗 Debug: {explorer_url}" if hint else f"🔗 Debug: {explorer_url}"
 
     raise AuthorizationDenied(
         tool=tool_name,

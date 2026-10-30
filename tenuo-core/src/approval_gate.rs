@@ -606,6 +606,14 @@ pub fn evaluate_approval_gates(
 /// Gates for tools the child doesn't have are dropped (the tool is gone,
 /// the gate is irrelevant). Gates for tools the child does have are
 /// preserved exactly.
+/// A gate stays in scope while the child holds its tool, by name or through `*`.
+fn gate_in_scope(
+    tool: &str,
+    child_tools: &BTreeMap<String, crate::constraints::ConstraintSet>,
+) -> bool {
+    child_tools.contains_key(tool) || child_tools.contains_key("*")
+}
+
 pub fn propagate_approval_gates(
     parent_gates: &ApprovalGateMap,
     child_tools: &BTreeMap<String, crate::constraints::ConstraintSet>,
@@ -613,7 +621,7 @@ pub fn propagate_approval_gates(
     let mut child_gates = ApprovalGateMap::new();
 
     for (tool, gate) in parent_gates.iter() {
-        if child_tools.contains_key(tool) {
+        if gate_in_scope(tool, child_tools) {
             child_gates.insert(tool.clone(), gate.clone());
         }
     }
@@ -761,7 +769,7 @@ pub(crate) fn verify_approval_gate_monotonicity(
             // the parent's gated tools (capability + gate removed together).
             if parent_gates
                 .iter()
-                .any(|(tool, _)| child_tools.contains_key(tool))
+                .any(|(tool, _)| gate_in_scope(tool, child_tools))
             {
                 return Err(ApprovalGateError::GatesStripped);
             }
@@ -772,7 +780,7 @@ pub(crate) fn verify_approval_gate_monotonicity(
 
     for (tool, parent_gate) in parent_gates.iter() {
         // Only check tools the child has
-        if !child_tools.contains_key(tool) {
+        if !gate_in_scope(tool, child_tools) {
             continue;
         }
 
@@ -1601,7 +1609,7 @@ mod tests {
             "amount".into(),
             ArgApprovalGate::Constraint(Constraint::Unknown {
                 type_id: 255,
-                payload: Vec::new(),
+                payload: vec![0xa0], // A valid single CBOR item: {}.
             }),
         );
         let mut gm = ApprovalGateMap::new();

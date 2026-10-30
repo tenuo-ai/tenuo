@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "tenuo"
-version = "0.3.2"
+version = "0.3.3"
 description = "Task-scoped authorization for AI agents: signed warrants limit which tools an agent can call, with which arguments, and for how long. Adapters for LangChain, LangGraph, CrewAI, OpenAI Agents SDK, Google ADK, AutoGen, MCP, FastMCP, A2A, FastAPI, and Temporal."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -49,7 +49,7 @@ dependencies = [
 # See docs/compatibility-matrix.md for recommended versions
 openai = [
     "openai>=1.0",
-    "openai-agents>=0.1; python_version >= '3.10'",
+    "openai-agents>=0.3.3; python_version >= '3.10'",  # guard_agent() needs tool guardrails
 ]
 autogen = [
     # AutoGen AgentChat requires Python 3.10+

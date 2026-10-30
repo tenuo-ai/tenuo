@@ -1,6 +1,6 @@
 [package]
 name = "tenuo"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Task-scoped authorization for AI agents: signed warrants that constrain tools and arguments, narrow on delegation, and verify offline. Rust core of Tenuo."
@@ -139,7 +139,7 @@ matchit = "0.9"
 smallvec = { version = "1.13", features = ["union"] }
 
 # CEL expression evaluation (optional - reduces dependencies for most users)
-cel-interpreter = { version = "0.10", optional = true }
+cel-interpreter = { package = "cel", version = "0.13", optional = true }
 
 # Caching for CEL compiled programs (optional - only with CEL)
 moka = { version = "0.12", features = ["sync"], optional = true }

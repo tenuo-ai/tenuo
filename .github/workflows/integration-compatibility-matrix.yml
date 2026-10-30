@@ -106,7 +106,8 @@ jobs:
             mcp)
               # 1.9.4: first release whose streamable-HTTP transport yields the
               # (read, write, get_session_id) triple tenuo.mcp unpacks
-              pip install "mcp==1.9.4"
+              # pydantic 2.14 removed a private helper mcp 1.9.4 imports
+              pip install "mcp==1.9.4" "pydantic<2.14"
               ;;
             fastmcp)
               # Explicit dual-line floors: FastMCP 3 + MCP 1.x
@@ -194,6 +195,8 @@ jobs:
               pytest tenuo-python/tests/adapters/test_fastapi_integration.py \
                 tenuo-python/tests/adapters/test_fastapi_delegation.py \
                 tenuo-python/tests/adapters/test_fastapi_secure_router.py \
+                tenuo-python/tests/adapters/test_fastapi_strict.py \
+                tenuo-python/tests/adapters/test_fastapi_router_guard_all.py \
                 -v --tb=short
               ;;
             google_adk)
@@ -258,7 +261,7 @@ jobs:
             }
 
   # Temporal — needs Rust toolchain + test server, so runs as a separate job.
-  # Tests both minimum (1.23.0, where SimplePlugin was introduced) and latest.
+  # Tests both minimum (1.33.0, the tenuo[temporal] extra's floor) and latest.
   # Replay safety: records workflow history on one version, replays on both.
   # ==========================================================================
   temporal-compatibility:
@@ -310,7 +313,7 @@ jobs:
       - name: Install temporalio (minimum)
         if: matrix.version == 'minimum'
         run: |
-          uv pip install --system "temporalio==1.23.0" "protobuf>=6.0"
+          uv pip install --system "temporalio==1.33.0" "protobuf>=6.0"
 
       - name: Install temporalio (latest)
         if: matrix.version == 'latest'
