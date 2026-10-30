@@ -1934,8 +1934,17 @@ impl<'de> Deserialize<'de> for UrlPattern {
     where
         D: serde::Deserializer<'de>,
     {
+        let human_readable = deserializer.is_human_readable();
         let s = String::deserialize(deserializer)?;
-        UrlPattern::new(&s).map_err(serde::de::Error::custom)
+        if human_readable {
+            // JSON/YAML are authoring surfaces, so new inputs must get the same
+            // validation as the public constructor.
+            UrlPattern::new(&s).map_err(serde::de::Error::custom)
+        } else {
+            // Signed CBOR warrants issued before bare wildcard hosts were
+            // rejected still decode; such a pattern matches no URL, as always.
+            UrlPattern::parse(&s, false).map_err(serde::de::Error::custom)
+        }
     }
 }
 
@@ -1959,8 +1968,13 @@ impl UrlPattern {
     /// `https://example.com/` parses as "any path". Use `https://example.com/*` to restrict to root.
     ///
     /// # Errors
-    /// Returns error if the pattern is not a valid URL pattern.
+    /// Returns error if the pattern is not a valid URL pattern, including a
+    /// bare wildcard host such as `https://*` or `https://*/*`.
     pub fn new(pattern: &str) -> Result<Self> {
+        Self::parse(pattern, true)
+    }
+
+    fn parse(pattern: &str, reject_bare_wildcard_host: bool) -> Result<Self> {
         // Internal placeholders for URL parsing
         const HOST_PLACEHOLDER: &str = "__tenuo_host_wildcard__";
         const PATH_PLACEHOLDER: &str = "__tenuo_path_wildcard__";
@@ -2005,6 +2019,24 @@ impl UrlPattern {
         let host_pattern = parsed
             .host_str()
             .map(|h| h.replace(&format!("{}.", HOST_PLACEHOLDER), "*."));
+
+        // A `*` host is parsed as the path placeholder (the `/*` in `//*`), so
+        // it would otherwise match no URL at all without any error.
+        if reject_bare_wildcard_host {
+            if let Some(host) = &host_pattern {
+                let rest = host.strip_prefix("*.").unwrap_or(host);
+                if rest.contains(PATH_PLACEHOLDER)
+                    || rest.contains(HOST_PLACEHOLDER)
+                    || rest.contains('*')
+                {
+                    return Err(Error::InvalidUrl {
+                        url: pattern.to_string(),
+                        reason: "wildcard host is not supported; name the host, use *.example.com, or use UrlSafe"
+                            .to_string(),
+                    });
+                }
+            }
+        }
 
         // Extract port (None means default for scheme)
         let port = parsed.port();
@@ -5542,17 +5574,41 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "URLP-001: Bare wildcard host not yet supported - see UrlPattern::new() for details"]
-    fn test_url_pattern_bare_wildcard_host() {
-        // SECURITY: Bare wildcard hosts (https://*/*) are intentionally unsupported.
-        // This pattern would match ANY domain, bypassing SSRF protection.
-        // Users must use either:
-        //   - Explicit domains: UrlPattern("https://*.example.com/*")
-        //   - UrlSafe() for SSRF-protected URL matching
-        let pattern = UrlPattern::new("https://*/*").unwrap();
+    fn test_url_pattern_bare_wildcard_host_rejected() {
+        // SECURITY: Bare wildcard hosts are intentionally unsupported: they would
+        // match any domain. Use explicit domains, *.example.com, or UrlSafe().
+        for pattern in [
+            "https://*",
+            "https://*/",
+            "https://*/*",
+            "*://*/*",
+            "https://*:8443/api/*",
+            "https://a*b.example.com/*",
+            "https://*.*.example.com/*",
+        ] {
+            let err = UrlPattern::new(pattern).expect_err(pattern);
+            assert!(
+                err.to_string().contains("wildcard host"),
+                "{pattern}: {err}"
+            );
+        }
+        assert!(UrlPattern::new("https://*.example.com/*").is_ok());
+        assert!(UrlPattern::new("https://example.com/*").is_ok());
+    }
 
-        // The parser sets host_pattern incorrectly due to replacement order,
-        // but this is actually a security feature - bare wildcard hosts should not match.
+    #[test]
+    fn test_url_pattern_bare_wildcard_host_rejected_by_human_readable_deserializers() {
+        let err = serde_json::from_str::<UrlPattern>("\"https://*/*\"").unwrap_err();
+        assert!(err.to_string().contains("wildcard host"));
+    }
+
+    #[test]
+    fn test_url_pattern_bare_wildcard_host_still_decodes_from_cbor() {
+        // Signed warrants use CBOR. Preserve decode compatibility without
+        // reopening JSON/YAML authoring paths for an invalid new pattern.
+        let mut encoded = Vec::new();
+        ciborium::ser::into_writer("https://*/*", &mut encoded).unwrap();
+        let pattern: UrlPattern = ciborium::de::from_reader(encoded.as_slice()).unwrap();
         assert!(!pattern.matches_url("https://example.com/path").unwrap());
         assert!(!pattern.matches_url("https://evil.com/attack").unwrap());
     }
