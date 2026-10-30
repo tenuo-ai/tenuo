@@ -392,6 +392,18 @@ class MCPVerificationResult:
     error_type: Optional[str] = field(default=None)
     """PEP ``error_type`` (``invalid_pop``, ``constraint_violation``, …)."""
 
+    observed: bool = field(default=False)
+    """Whether observe mode allowed this otherwise denied call to continue."""
+
+    constraint_violated: Optional[str] = field(default=None)
+    """Constraint field reported by the shared enforcement result."""
+
+    verified_pop: Optional[bytes] = field(default=None, repr=False)
+    """Verified proof bytes retained for receipt emission."""
+
+    pop_auth_args: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    """Canonical arguments covered by the proof, retained for receipts."""
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -526,6 +538,8 @@ def _mcp_result_from_enforcement(
     error_type = getattr(enforcement, "error_type", None) or ""
     meta = getattr(enforcement, "approval_metadata", None) or {}
     reason = getattr(enforcement, "denial_reason", None) or "Authorization denied"
+    observed = bool(getattr(enforcement, "observed", False))
+    allowed = bool(getattr(enforcement, "allowed", False))
     if error_type == "invalid_pop":
         reason = (
             f"Access denied: {reason} PoP covers the core's reading of the "
@@ -540,7 +554,7 @@ def _mcp_result_from_enforcement(
         )
     if error_type in ("insufficient_approvals", "approval_required", "approval_gate_misconfigured"):
         return MCPVerificationResult(
-            allowed=False,
+            allowed=allowed,
             tool=tool_name,
             clean_arguments=clean_arguments,
             constraints=constraints,
@@ -550,9 +564,13 @@ def _mcp_result_from_enforcement(
             request_hash=meta.get("request_hash") or getattr(enforcement, "request_hash", None),
             approval_metadata=meta or None,
             error_type=error_type or None,
+            observed=observed,
+            constraint_violated=getattr(enforcement, "constraint_violated", None),
+            verified_pop=getattr(enforcement, "verified_pop", None),
+            pop_auth_args=getattr(enforcement, "pop_auth_args", None),
         )
     return MCPVerificationResult(
-        allowed=False,
+        allowed=allowed,
         tool=tool_name,
         clean_arguments=clean_arguments,
         constraints=constraints,
@@ -560,6 +578,10 @@ def _mcp_result_from_enforcement(
         denial_reason=reason,
         jsonrpc_error_code=-32001,
         error_type=error_type or None,
+        observed=observed,
+        constraint_violated=getattr(enforcement, "constraint_violated", None),
+        verified_pop=getattr(enforcement, "verified_pop", None),
+        pop_auth_args=getattr(enforcement, "pop_auth_args", None),
     )
 
 
@@ -1081,7 +1103,7 @@ class MCPVerifier:
                     pop_args=pop_args,
                     constraint_args=constraints,
                 )
-            if not enforcement.allowed:
+            if not enforcement.allowed or enforcement.observed:
                 result = _mcp_result_from_enforcement(
                     enforcement,
                     tool_name=tool_name,
