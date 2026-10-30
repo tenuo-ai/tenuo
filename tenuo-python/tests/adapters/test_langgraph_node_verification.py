@@ -17,6 +17,7 @@ from langgraph.graph import END, START, StateGraph  # noqa: E402
 from langgraph.graph.message import add_messages  # noqa: E402
 
 from tenuo import Pattern, SigningKey, Warrant, configure  # noqa: E402
+from tenuo_core import Clearance  # noqa: E402
 from tenuo.config import reset_config  # noqa: E402
 from tenuo.exceptions import ConfigurationError  # noqa: E402
 from tenuo.keys import KeyRegistry  # noqa: E402
@@ -122,6 +123,20 @@ def test_guard_node_required_tools_accepts_constrained_capability():
 def test_guard_node_required_tools_accepts_wildcard_grant():
     warrant = Warrant.mint_builder().holder(holder.public_key).capability("*").ttl(600).mint(issuer)
     assert run_guarded(warrant, required_tools=["search", "delete_record"])["result"] == "done"
+
+
+def test_guard_node_required_tools_rejects_issuer_authority():
+    warrant = (
+        Warrant.mint_builder()
+        .issuer()
+        .issuable_tools(["search"])
+        .clearance(Clearance.INTERNAL)
+        .holder(holder.public_key)
+        .ttl(600)
+        .mint(issuer)
+    )
+    with pytest.raises(ConfigurationError, match="does not grant required tool"):
+        run_guarded(warrant, required_tools=["search"])
 
 
 def test_guard_node_required_tools_blocks_missing_tool():

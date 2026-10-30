@@ -224,6 +224,11 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             # the holder key in scope, the same as a context warrant.
             signing_key = key_scope()
             if signing_key is None:
+                if self._observe_unauthorized(
+                    "no signing key in scope to bind the explicit warrant",
+                    tool_input,
+                ):
+                    return None  # type: ignore[return-value]
                 raise ConfigurationError(
                     f"Tool '{self.name}' was given an unbound warrant; bind it with "
                     "warrant.bind(key) or run inside key_scope(key)."
@@ -838,6 +843,12 @@ def auto_protect(
     if get_config().mode == EnforcementMode.OBSERVE:
         logger.warning("auto_protect: observe mode is active process-wide; tool calls are logged, not blocked")
 
+    # Mode is process-wide. SDK-owned wrappers are already protected, so a
+    # second call only needs the configuration update above; rebuilding them
+    # would either discard their capabilities or fail the executor type check.
+    if isinstance(agent_or_tools, (_TenuoAgentExecutor, SecureAgentExecutor)):
+        return agent_or_tools
+
     # Detect type and protect. A compiled graph (create_agent) also has
     # .name and .invoke; refuse it rather than wrapping it as a single tool.
     if _is_compiled_graph(agent_or_tools):
@@ -894,6 +905,14 @@ class SecureAgentExecutor:
     ):
         if not LANGCHAIN_AVAILABLE:
             raise ImportError("LangChain not installed. Run: uv pip install langchain-core")
+
+        if _is_compiled_graph(agent):
+            raise ConfigurationError(
+                "SecureAgentExecutor cannot protect a compiled LangGraph graph "
+                "such as a create_agent() agent because it can execute its own "
+                "unguarded tools. Pass middleware=[tenuo.langgraph.TenuoMiddleware()] "
+                "to create_agent() instead."
+            )
 
         classes = _agent_executor_classes()
         if not classes:

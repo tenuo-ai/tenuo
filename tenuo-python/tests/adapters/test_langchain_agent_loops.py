@@ -20,10 +20,10 @@ from langchain_core.outputs import ChatGenerationChunk  # noqa: E402
 from langchain_core.prompts import ChatPromptTemplate  # noqa: E402
 from langchain_core.tools import tool  # noqa: E402
 
-from tenuo import Capability, Pattern, SigningKey, configure, mint_sync  # noqa: E402
+from tenuo import Capability, Pattern, SigningKey, Warrant, configure, mint_sync  # noqa: E402
 from tenuo.config import reset_config  # noqa: E402
 from tenuo.exceptions import ConfigurationError, ToolNotAuthorized  # noqa: E402
-from tenuo.langchain import SecureAgentExecutor, auto_protect, guard_agent  # noqa: E402
+from tenuo.langchain import SecureAgentExecutor, TenuoTool, auto_protect, guard_agent  # noqa: E402
 
 RAN: List[tuple] = []
 
@@ -110,6 +110,11 @@ def test_auto_protect_enforce_executor_without_warrant_runs_nothing():
     assert RAN == []
 
 
+def test_auto_protect_can_change_mode_on_its_own_wrapper():
+    protected = auto_protect(classic_executor())
+    assert auto_protect(protected, mode="enforce") is protected
+
+
 def test_secure_agent_executor_works_with_classic_agent():
     issuer = SigningKey.generate()
     configure(issuer_key=issuer, dev_mode=True, trusted_roots=[issuer.public_key])
@@ -145,6 +150,14 @@ def test_auto_protect_refuses_create_agent_graph():
         auto_protect(graph, mode="enforce")
 
 
+def test_secure_agent_executor_refuses_create_agent_graph():
+    from langchain.agents import create_agent
+
+    graph = create_agent(model=scripted(CALLS), tools=TOOLS)
+    with pytest.raises(ConfigurationError, match="TenuoMiddleware"):
+        SecureAgentExecutor(agent=graph, tools=TOOLS)
+
+
 def test_guard_agent_refuses_unknown_agent_type():
     class LooksLikeAnAgent:
         tools = TOOLS
@@ -171,6 +184,18 @@ def test_auto_protect_observe_runs_without_warrant_and_logs(caplog):
     assert sorted(RAN) == [("delete_record", "42"), ("search", "customers:acme")]
     observed = [r.getMessage() for r in caplog.records if r.getMessage().startswith("OBSERVE: would deny")]
     assert len(observed) == 2
+
+
+def test_observe_allows_explicit_unbound_warrant_without_key_scope():
+    warrant, _holder = Warrant.quick_mint(tools=["search"], ttl=600)
+    configure(trusted_roots=[warrant.issuer], mode="observe")
+    protected = TenuoTool(
+        search,
+        bound_warrant=warrant,
+        trusted_roots=[warrant.issuer],
+    )
+    assert protected.invoke({"query": "customers:acme"}) == "results for customers:acme"
+    assert RAN == [("search", "customers:acme")]
 
 
 def test_auto_protect_enforce_tools_without_warrant_run_nothing():

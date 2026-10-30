@@ -889,7 +889,12 @@ def _verify_node_warrant(
             reason = "the bound signing key is not the warrant holder"
         elif required_tools:
             allowed = _get_allowed_tools(bw)
-            if allowed is None or "*" in allowed:
+            # Issuer warrants expose ``tools=None`` because they carry issuance
+            # authority, not execution capabilities. Only an explicit wildcard
+            # execution capability satisfies arbitrary required tools.
+            if allowed is None:
+                allowed = []
+            elif "*" in allowed:
                 allowed = list(required_tools)
             missing = [t for t in required_tools if t not in allowed]
             if missing:
