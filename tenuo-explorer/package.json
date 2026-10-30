@@ -19,7 +19,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "postcss": "8.5.28",
+    "postcss": "8.5.31",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
@@ -36,7 +36,7 @@
     "autoprefixer": "^10.5.4",
     "jsdom": "^29.0.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.2",
+    "vite": "^8.3.5",
     "vitest": "^4.1.9"
   },
   "overrides": {
