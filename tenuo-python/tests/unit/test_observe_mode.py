@@ -186,6 +186,41 @@ def test_guard_decorator_observes_expired_warrant(caplog):
     assert record.error_type == "expired"
 
 
+def test_guard_decorator_collects_expired_warrant_denial_receipt():
+    from tenuo import HolderIdentity, Runtime
+    from tenuo.decorators import guard
+
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    expired = (
+        Warrant.mint_builder()
+        .capability("expired_tool", value=Exact("ok"))
+        .holder(holder.public_key)
+        .ttl(0)
+        .mint(root)
+    )
+    runtime = Runtime(
+        identity=holder,
+        trusted_roots=[root.public_key],
+        receipts="collect",
+    )
+    configure(trusted_roots=[root.public_key], mode="observe")
+
+    @guard(
+        expired,
+        tool="expired_tool",
+        keypair=holder.signing_key,
+        trusted_roots=[root.public_key],
+    )
+    def expired_tool(value):
+        return value
+
+    with runtime.bind():
+        assert expired_tool("ok") == "ok"
+
+    assert len(runtime.peek_receipts()) == 1
+
+
 def test_receipt_collected_as_denial(monkeypatch):
     """The runtime receipt sees the denial, not the observe-mode allow."""
     import tenuo.receipts as receipts

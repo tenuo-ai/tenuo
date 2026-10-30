@@ -796,18 +796,33 @@ def guard(
                     observed_args = dict(inspect.signature(func).bind_partial(*args, **kwargs).arguments)
                 except (TypeError, ValueError):
                     observed_args = dict(kwargs)
-                _log_observed_denial(
-                    EnforcementResult(
-                        allowed=False,
-                        observed=True,
-                        warrant_id=str(warrant_id) if warrant_id is not None else None,
-                        tool=tool_name,
-                        arguments=observed_args,
-                        denial_reason=reason,
-                        error_type=error_type,
-                        constraint_violated=constraint_violated,
-                    )
+                observed_result = EnforcementResult(
+                    allowed=False,
+                    observed=True,
+                    warrant_id=str(warrant_id) if warrant_id is not None else None,
+                    tool=tool_name,
+                    arguments=observed_args,
+                    denial_reason=reason,
+                    error_type=error_type,
+                    constraint_violated=constraint_violated,
+                    pop_auth_args=observed_args,
                 )
+                if warrant_to_use is not None:
+                    observed_result.presented_chain = [*(chain_scope() or []), warrant_to_use]
+                    from .config import resolve_trusted_roots
+
+                    roots = list(trusted_roots) if trusted_roots else resolve_trusted_roots(None)
+                    if roots:
+                        from tenuo_core import Authorizer
+
+                        observed_result.authorizer = Authorizer(trusted_roots=roots)
+                        from .runtime import apply_runtime_revocation
+
+                        apply_runtime_revocation(observed_result.authorizer)
+                from .receipts import collect_enforcement_receipt
+
+                collect_enforcement_receipt(observed_result)
+                _log_observed_denial(observed_result)
                 return func(*args, **kwargs)
 
             if warrant_to_use is None:
