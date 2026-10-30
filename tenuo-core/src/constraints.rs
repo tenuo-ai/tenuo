@@ -1934,10 +1934,17 @@ impl<'de> Deserialize<'de> for UrlPattern {
     where
         D: serde::Deserializer<'de>,
     {
+        let human_readable = deserializer.is_human_readable();
         let s = String::deserialize(deserializer)?;
-        // Signed warrants issued before bare wildcard hosts were rejected still
-        // decode; such a pattern matches no URL, as it always has.
-        UrlPattern::parse(&s, false).map_err(serde::de::Error::custom)
+        if human_readable {
+            // JSON/YAML are authoring surfaces, so new inputs must get the same
+            // validation as the public constructor.
+            UrlPattern::new(&s).map_err(serde::de::Error::custom)
+        } else {
+            // Signed CBOR warrants issued before bare wildcard hosts were
+            // rejected still decode; such a pattern matches no URL, as always.
+            UrlPattern::parse(&s, false).map_err(serde::de::Error::custom)
+        }
     }
 }
 
@@ -5590,9 +5597,18 @@ mod tests {
     }
 
     #[test]
-    fn test_url_pattern_bare_wildcard_host_still_decodes() {
-        // Signed warrants carrying the old pattern still decode and still match nothing.
-        let pattern: UrlPattern = serde_json::from_str("\"https://*/*\"").unwrap();
+    fn test_url_pattern_bare_wildcard_host_rejected_by_human_readable_deserializers() {
+        let err = serde_json::from_str::<UrlPattern>("\"https://*/*\"").unwrap_err();
+        assert!(err.to_string().contains("wildcard host"));
+    }
+
+    #[test]
+    fn test_url_pattern_bare_wildcard_host_still_decodes_from_cbor() {
+        // Signed warrants use CBOR. Preserve decode compatibility without
+        // reopening JSON/YAML authoring paths for an invalid new pattern.
+        let mut encoded = Vec::new();
+        ciborium::ser::into_writer("https://*/*", &mut encoded).unwrap();
+        let pattern: UrlPattern = ciborium::de::from_reader(encoded.as_slice()).unwrap();
         assert!(!pattern.matches_url("https://example.com/path").unwrap());
         assert!(!pattern.matches_url("https://evil.com/attack").unwrap());
     }

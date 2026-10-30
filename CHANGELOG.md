@@ -61,6 +61,12 @@ Two checks are stricter, and some calls that used to pass now fail:
 
 ### Fixed
 
+- **`UrlPattern` rejects ambiguous wildcard hosts when authoring.** Patterns
+  such as `https://*/*` previously constructed successfully but matched no
+  URL. Constructors and human-readable config inputs now reject them with
+  guidance to name a host, use `*.example.com`, or use `UrlSafe`. Existing
+  signed CBOR warrants remain decodable and continue to deny every URL.
+
 - **Issuer warrants keep their approval settings.** `mint_builder().issuer()`
   silently dropped `approval_gates`, `required_approvers` and
   `min_approvals`. They are now signed into the issuer warrant, and execution
