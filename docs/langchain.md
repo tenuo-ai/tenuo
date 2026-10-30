@@ -493,7 +493,7 @@ protected_executor = auto_protect(executor, mode="enforce")
 
 ### `SecureAgentExecutor` (Drop-in Replacement)
 
-A drop-in replacement for LangChain's `AgentExecutor` with built-in protection:
+A drop-in replacement for LangChain's `AgentExecutor` with built-in protection. On LangChain 1.x, `AgentExecutor` lives in the `langchain-classic` package (`uv pip install langchain-classic`):
 
 ```python
 from tenuo.langchain import SecureAgentExecutor
@@ -575,7 +575,7 @@ result = protected.invoke({"input": "Read /data/report.txt"})
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `agent_or_executor` | `Any` | AgentExecutor, RunnableAgent, or agent with tools |
+| `agent_or_executor` | `Any` | An `AgentExecutor` (from `langchain_classic.agents` on LangChain 1.x). Other agents, including `create_agent()` graphs, raise `ConfigurationError`; use `TenuoMiddleware` for those |
 | `issuer_key` | `SigningKey` | Signing key (enables dev_mode if provided) |
 | `capabilities` | `List[Capability]` | Capabilities to scope the agent to |
 | `strict` | `bool` | Require constraints for critical tools |
