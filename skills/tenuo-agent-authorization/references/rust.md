@@ -1,5 +1,7 @@
 # Rust integration
 
+Apply the [freshness contract](../SKILL.md#freshness-contract) first. Consult [framework status](framework-status.md) before choosing a path. These references describe invariants and version-conditional options; an API name here is not evidence that the target exports it.
+
 Use this reference for projects using the `tenuo` crate directly, embedding verification in a Rust service, or building a Rust enforcement component. Confirm the resolved crate version, enabled features, and docs.rs API before editing code.
 
 Do not treat this reference as an API specification. Use `cargo metadata` to locate the resolved crate source. Registry and vendored crate sources include the crate README and declared examples; inspect those exact-version files first. If local source is insufficient, compare the resolved crate with the Rust entry in the [release contract](../release.json). Use these immutable sources only when the versions match:

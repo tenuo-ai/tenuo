@@ -1,5 +1,7 @@
 # Native agent tool integration
 
+Apply the [freshness contract](../SKILL.md#freshness-contract) first. Consult [framework status](framework-status.md) before choosing a path. These references describe invariants and version-conditional options; an API name here is not evidence that the target exports it.
+
 Use this workflow when an agent invokes framework function tools, local shell or computer tools, handoffs, or application functions without crossing an MCP boundary. Read [Integration trust levels](trust-levels.md) before reporting the result, and read the applicable language reference before selecting Tenuo APIs.
 
 ## Required outcome

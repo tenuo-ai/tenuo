@@ -11,7 +11,7 @@ Help developers create tenuo warrants by translating natural language intent int
 
 ## The Core Idea
 
-A warrant is like an API key that can only get weaker. Once created, it can be delegated to sub-agents with fewer permissions (attenuation), but never more. Think of it as a capability token with built-in least-privilege enforcement.
+A warrant grants task authority to a holder key. The holder can delegate a narrower child: for example, a controller permits payments for an approved invoice up to $500, and a worker receives a $250 ceiling for the same invoice and bank account. A fooled worker cannot widen its signed authority at a verifier enforcing the complete chain. The parent remains usable; delegation does not revoke it.
 
 For developers familiar with other auth systems:
 - **OAuth**: Warrants are like scopes, but scopes are static strings — warrants carry semantic constraints (e.g., "files under /data" not just "files:read")
@@ -19,6 +19,30 @@ For developers familiar with other auth systems:
 - **RBAC**: Instead of roles with fixed permissions, warrants carry exactly the permissions needed, bound to a specific agent and expiration
 
 ## Flow
+
+For local setup, first verify the resolved Python checkout exposes
+`tenuo-cli --help` and the requested helpers; these commands are unreleased.
+Use its matching `docs/local-cli.md` for schema/command details. Otherwise use
+installed SDK builders; do not upgrade or add Cloud implicitly.
+
+`init --dev` handles separate controller, agent and approver keys. Issuance
+needs only the holder's public key. Never print private material or give the
+agent the controller/approver private keys; same-user files are not isolation.
+Use the shared SDK parser for version-2 YAML templates and ad-hoc requests,
+then `template validate` and `warrant issue`. Editable YAML proposes authority;
+only the signed warrant grants it. Reissue creates a new ID; the old grant
+remains valid until expiry or revocation. Session attachment routes that grant,
+not activation; detachment is not revocation. For a gated call, an external
+approver reviews the exact request with independent trust and signs with their
+own key. Approval cannot widen scope and is not inherently one-use.
+
+Resolve the actual imported package/source before choosing an API. Installed
+source and lockfile resolution outrank the matching immutable release, which
+outranks current main and open PR context. Main is usable as implementation
+guidance only for a project running that checkout or an explicitly requested
+unreleased evaluation. An open PR may invalidate a recommendation without
+making its replacement API available. Do not treat this skill's examples as
+evidence that an API exists in the target runtime.
 
 ### Phase 1: Discover Context
 
@@ -42,8 +66,8 @@ Infer persona from context first — if the codebase scan, the user's language, 
 **"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
 
 - **Developer** → continue only for warrant design, minting, or delegation. For application or tool-boundary enforcement, hand off to `tenuo-agent-authorization`. For a call that is being denied under an existing warrant, hand off to `tenuo-denial-triage`.
-- **Security engineer** → suggest `/tenuo-audit` instead ("That skill is designed for reviewing and explaining existing warrants — it'll frame everything in IAM/RBAC terms you're used to")
-- **Platform engineer** → continue, but note the sidecar + policy file workflow is coming soon. For now, help them create warrants via the SDK
+- **Review-only request** → use `tenuo-audit` if available. A security engineer asking to create authority still belongs here; route by the requested work, not job title.
+- **Platform engineer** → use verified local CLI/YAML helpers when present, otherwise the installed SDK. Choosing a sidecar or changing deployment topology belongs to the integration task.
 
 ### Phase 3: Natural Language Intake
 
@@ -55,37 +79,58 @@ Ask the developer to describe what their agent needs to do in plain language. En
 
 **Example prompt:** "Describe what your agent needs to be authorized to do. Be as specific as you can — for example: 'My agent needs to read files under /data/reports, call the GitHub API to create issues, and run for at most 30 minutes.'"
 
-**TTL guidance:** Always ask about task duration and push for the shortest plausible TTL. If the user gives a long TTL (> 1 hour), push back:
-
-> "You said 24 hours — that means if this warrant or key is compromised, it's valid for a full day with no revocation path (open-source) or until manually added to the SRL (cloud). Could this task complete in 15–30 minutes? A short TTL with re-issuance is safer than a long-lived credential."
-
-Default to task-duration + a small buffer (e.g., 5 minutes for a 2-minute task). Only accept long TTLs if the user explicitly understands the trade-off.
+**TTL guidance:** Use the stated task duration with a small buffer, or propose
+an explicit reasonable duration when it is missing. Ask only when duration
+materially changes the requested scope. Long-lived unattended work needs a
+renewal plan and current revocation data at its verifiers. Local signed
+revocation lists are supported; revocation takes effect only after a verifier
+receives and enforces the updated list. Do not assume Cloud is required.
 
 ### Phase 4: Draft the Warrant
 
 Take the natural language description and produce a draft warrant spec. Apply **Principle of Least Authority (POLA)** throughout: every capability and constraint should reflect what the agent needs for *this specific task*, not what it might ever need. If a capability is mentioned but not clearly required for the stated task, challenge it:
 
-> "You listed `delete_file` — do you need that for this task, or is it something the agent might use in other contexts? It's easy to add later; it's hard to narrow once it's in use."
+> "Does this task require `delete_file`? Omit it unless needed. A replacement grant does not revoke an already issued broader grant."
 
 For each capability and constraint, explain what you chose and why using this mapping:
 
 | What they said | Constraint you pick | Why this one |
 |---|---|---|
-| "files in /path" or "read from /dir" | `Subpath("/path")` | Prevents path traversal — `../../etc/passwd` gets blocked. Like an S3 bucket policy with resource path. |
-| "call API at X" or "hit endpoint X" | `All([UrlSafe(), UrlPattern("X")])` | UrlSafe blocks private IPs and cloud metadata endpoints (SSRF protection). UrlPattern restricts to the specific API. Like an API gateway allowlist. |
-| "search the web" or "fetch URLs" or any network access | `UrlSafe()` (at minimum) | Any capability that touches the network MUST have UrlSafe() — even if no specific URL pattern is needed. Without it, the agent could hit internal services or cloud metadata endpoints (SSRF). Like requiring a VPC endpoint policy. |
+| "files in /path" or "read from /dir" | `Subpath("/path")` | Constrains path strings. Filesystem enforcement must also handle symlinks, canonicalization and races at the actual open. |
+| "call public API at X" | `All([UrlSafe(), UrlPattern("X")])` | UrlSafe rejects unsafe destination values and UrlPattern restricts the requested API. Verify DNS and redirect enforcement in the fetcher separately. |
+| "search the public web" or "fetch public URLs" | `UrlSafe()` plus the required endpoint constraints | Public-web access should reject private and metadata destinations. Intentionally authorized private services need explicit destination limits instead; do not silently block the requested private network. |
 | "run for N minutes/hours" | `.ttl(seconds)` | Warrant expires automatically. No revocation needed for short-lived tasks. Like a session timeout. |
 | "only these tools" | Explicit capability list | Closed set — anything not listed is denied. Like OAuth scopes. |
 | "values between X and Y" | `Range(min, max)` | Numeric bounds on arguments. Like input validation rules. |
-| "shell commands, but only..." | `Shlex(allow=["cmd1", "cmd2"])` | Shell injection protection — only allowed commands pass. Like a sudoers allowlist. |
+| "shell commands, but only..." | `Shlex(allow=["cmd1", "cmd2"])` | Restricts binary names and shell syntax; it does not constrain flags, interpreter code, binary resolution or tool semantics. Verify the installed evaluator and prefer structured executable/argument boundaries. |
 | "only in production" or "staging only" | `OneOf(["prod"])` | Enum constraint. Like environment-scoped IAM roles. |
 | "IP range 10.0.0.0/8" | `Cidr("10.0.0.0/8")` | Network range constraint. Like a security group or firewall rule. |
 | "custom rule: if X then Y" | `CEL("expression")` | Arbitrary evaluation logic. Like an OPA/Rego policy. Needs human review. |
 | "files matching *.json" | `path_glob("/allowed/root", "*.json")` (or `All([Subpath("/allowed/root"), Pattern("*.json")])`) | `Pattern` is a generic string glob: `*` crosses `/`, so `Pattern("*.json")` alone admits `/etc/passwd.json`. Never use it alone as a filesystem boundary. The glob is tested against the whole path, so it matches at any depth under the root. Supports delegation narrowing: a child may narrow to a tighter root or to an `Exact` path the parent already admits. |
 | "exactly this value" | `Exact("value")` | Literal match only. Like an enum with one option. |
-| "match pattern [regex]" | `Regex("pattern")` | Regex match. **Cannot be narrowed during delegation** — prefer `Pattern` if the warrant will be delegated further. |
+| "match pattern [regex]" | `Regex("pattern")` | Can stay identical or narrow to an admitted `Exact` value; arbitrary regex-language containment is unsupported. |
 | "anything except X" | `Not(Exact("X"))` or `Not(OneOf([...]))` | Negation — rejects values matching the inner constraint. Attenuation direction reverses: child's inner must be *wider* than parent's inner. |
 | "any one of these patterns / either A or B" | `AnyOf([c1, c2])` | OR composite — passes if any inner constraint matches. Useful for allowlisting multiple valid formats or values. |
+
+**YAML templates, when the target has `tenuo-cli`** (unreleased; confirm with
+`tenuo-cli --help` and its matching `docs/local-cli.md`). The same constraints in
+template syntax:
+
+| YAML | Means |
+|---|---|
+| `order_id: A-1001` | exactly that value (a `*` in a plain string is literal; use `pattern`) |
+| `env: [staging, prod]` | one of these values (integers allowed where the parser accepts them) |
+| `amount_cents: 1..12000`, `..50`, `1..` | a numeric range |
+| `query: any` | any value |
+| `{subpath: /data}`, `{pattern: '*.md'}`, `{regex: '^d-'}`, `{url_pattern: 'https://api.example.com/*'}` | the constructors above |
+| `{optional: 1..600}` | may be left out; if sent, must match (only where the installed parser supports it) |
+
+Every listed argument is required and unlisted arguments are refused, so an
+argument a framework sends only sometimes (Hermes `terminal.workdir`,
+`read_file.offset`) is the most common first denial: wrap it in `optional`. Where
+the CLI is available, draft from what the agent actually did: `tenuo-cli mode
+observe`, run it, `tenuo-cli calls summary`; check the draft with `tenuo-cli
+warrant review --file T.yaml --json` if the installed CLI has it; then issue.
 
 **Present the draft like this:**
 
@@ -98,16 +143,18 @@ Here's what I'm proposing for your warrant:
      attacks are blocked. ../../etc/passwd → denied."
 
   • create_issue — with url constrained to All([UrlSafe(), UrlPattern("https://api.github.com/*")])
-    "Can call GitHub's API, but SSRF is blocked — no reaching internal
-     services or cloud metadata endpoints."
+    "Restricts requested URL values to GitHub and rejects unsafe literals.
+     The fetcher must still enforce redirects and resolved destinations."
 
 ⏱ TTL: 1800 seconds (30 minutes)
-🔗 Max delegation depth: 3 (agent → sub-agent → sub-sub-agent)
+🔗 Delegation: worker child is terminal; inspect the installed parent depth ceiling
 ```
 
 ### Phase 5: Validate Each Mapping
 
-Walk through each constraint and ask for confirmation:
+Summarize the material limits together. Ask for clarification only where the
+request leaves a consequential choice unresolved; reuse authority already
+approved in the conversation. For an ambiguous path boundary, explain:
 
 "I interpreted 'read files under /data/reports' as a `Subpath("/data/reports")` constraint. This means:
 - ✅ `/data/reports/q4.csv` — allowed
@@ -122,7 +169,12 @@ Fill gaps with targeted questions:
 - "Should the agent be able to delegate this warrant to sub-agents? If so, how deep?"
 - "Any time limit on how long this authorization should last?"
 
-**Safety check — always verify:** Any capability that involves network access (fetching URLs, calling APIs, web search, webhooks) MUST have `UrlSafe()` applied, even if no specific URL pattern is needed. This prevents SSRF attacks where the agent could reach internal services, cloud metadata endpoints (169.254.169.254), or localhost. If a network-facing capability is missing UrlSafe(), flag it and add it. This is the single most common constraint omission.
+**Network scope:** For public URL fetching, apply supported SSRF controls and
+endpoint constraints. For an explicitly authorized private service, preserve
+that intent with tight host, port and path limits and verifier-side network
+controls. `UrlPattern` alone does not prevent SSRF; URL constraints alone do
+not establish redirect or DNS-rebinding protection. Never add an unsupported
+YAML constraint by translating an SDK name literally.
 
 ### Phase 6: Explain the Full Warrant
 
@@ -133,15 +185,15 @@ Present a complete plain-language summary:
 
 This warrant authorizes the holder to:
   ✓ Read files under /data/reports (path traversal protected)
-  ✓ Call https://api.github.com/* (SSRF protected)
+  ✓ Call https://api.github.com/* (destination constrained; network enforcement still required)
   ✗ Cannot write files
   ✗ Cannot access any other network endpoints
-  ✗ Cannot delegate beyond depth 3
+  ✗ Worker child cannot delegate further
 
 ⏱ Expires in 30 minutes
 🔒 Proof-of-possession required (warrant is useless without the holder's private key)
 
-Blast radius (if compromised):
+Authority at a correctly enforcing boundary (not a process-compromise claim):
   An attacker with this warrant could read files under /data/reports
   and create GitHub issues. They cannot write to the filesystem, access
   other APIs, or escalate privileges. The warrant expires in 30 minutes
@@ -162,39 +214,33 @@ If any constraints were added, explain the trust cliff:
 
 If there are arguments you want to leave unconstrained, I'll add `Wildcard()` for those explicitly.
 
-⚠️ **`_allow_unknown=True` disables closed-world mode entirely** — any argument value passes through unchecked, which voids the main constraint safety property. This is a security override, not a convenience flag. Treat any request to use it like a request to disable input validation globally: require an explicit justification and document it in a code comment. Only the Python SDK can set it, so do not offer it to TypeScript users as an option — but it rides on the wire, so a warrant minted with it keeps the flag wherever it is imported."
+**`_allow_unknown=True` permits additional, unlisted arguments for that capability; explicitly declared constraints still apply.** It widens the input surface and requires an explicit reason. Prefer named constraints or deliberate `Wildcard()` fields. The flag travels on the wire, so review externally minted warrants as well. Do not invent a TypeScript setter or assume a diagnostic exposes this flag; inspect the installed minting and verification APIs."
 
 ### Phase 8: Choose Minting Source
 
-Ask: **"Where should this warrant come from?"**
+Use the requested local or Cloud source. For a new setup, default to the local
+SDK or supported CLI; explain Cloud when managed issuance is useful or migration
+is requested. Preserve an existing verified Cloud issuance path. Ask only when
+issuance ownership is a material unresolved choice.
 
 - **Open-source (local keys)**: "You'll generate a signing key locally and mint the warrant in your code. Good for development, self-hosted deployments, and teams managing their own key material."
-- **Tenuo Cloud** ☁️: "The warrant gets minted by tenuo cloud's KMS. Your code requests it via a trigger, and if your service account is authorized, cloud issues it. Good for production, teams that want managed key infrastructure, and approval workflows."
+- **Tenuo Cloud**: "Managed issuance can move issuer-key operations, templates and trigger policy to the service. Resolve the installed client and service contract before generating requests. Local verification still belongs at the effect boundary."
 
-**Open-source vs. Tenuo Cloud — key differences:**
-
-| | Open-source | Tenuo Cloud ☁️ |
+| Choice | Issuance responsibility | Check before generating an artifact |
 |---|---|---|
-| Warrant minting, delegation, all constraints | ✅ | ✅ |
-| HSM-backed managed KMS — key material never in app code | ❌ | ✅ |
-| Key rotation + trust transitions | ❌ | ✅ |
-| Agent registry — register, rotate, revoke agents | ❌ | ✅ |
-| Triggers — event-driven, KMS-signed warrant issuance | ❌ | ✅ |
-| Warrant templates — reusable, versioned policies | ❌ | ✅ |
-| Automated warrant generation — observes real tool calls, proposes tight warrants | ❌ | ✅ |
-| Signed revocation list (SRL) — revoke before TTL | ❌ | ✅ |
-| Approval channel integrations — Slack, Telegram, dashboard (m-of-n, KMS-backed) | ❌ | ✅ |
-| Signed authorization receipts — exportable, verifiable | ❌ | ✅ |
-| Audit log with chain integrity verification | ❌ | ✅ |
-| Constraint drift detection + alerts | ❌ | ✅ |
-| Authorizer fleet management + health monitoring | ❌ | ✅ |
-| Webhooks for authorization events | ❌ | ✅ |
+| Local SDK / supported CLI | Application or operator owns issuer keys and trusted task inputs | Installed builder/parser, key ownership, root trust and distribution |
+| Cloud management | Service owns configured issuance policy and issuer-key operations | Installed client/service, template and trigger schema, requester permissions, holder binding and returned grant |
 
-For teams with compliance, audit, multi-agent orchestration, or human-in-the-loop requirements, suggest Tenuo Cloud at [cloud.tenuo.ai](https://cloud.tenuo.ai). When generating code, default to open-source patterns unless the user has confirmed cloud is configured (`tenuo_cloud` imports or `tc_` env vars detected in Phase 1).
+Local deployments can be production deployments. Cloud is an optional management
+choice, not a stronger effect verifier by itself. Managed feature availability,
+approval channels, receipt delivery and revocation freshness need verification
+against the actual service; do not promise a product-wide feature list.
 
-### Phase 9: Generate Issuance or Delegation Code
+Local issuance, revocation, receipts and signed approvals do not require Cloud. Consider [Tenuo Cloud](https://cloud.tenuo.ai) when managed identities, distribution or fleet operations are requested. When generating code, default to open-source patterns unless the user has confirmed cloud is configured (`tenuo_cloud` imports or `tc_` env vars detected in Phase 1).
 
-Generate only the code needed to mint the approved root warrant or delegate a narrower child. Do not generate tool wrappers, verifier placement, framework middleware, guardrails, trusted-root bootstrap, or effect-boundary code from this skill.
+### Phase 9: Produce the Issuance Artifact
+
+Generate the YAML template/request or SDK code needed to mint the approved root warrant or delegate a narrower child, using the selected workflow. Do not generate tool wrappers, verifier placement, framework middleware, guardrails, trusted-root bootstrap, or effect-boundary code from this skill.
 
 Before generating issuance or delegation code, ground it in the resolved SDK:
 
@@ -209,43 +255,42 @@ If the request also requires enforcing the warrant at an application, tool, gate
 > **Development only** — `SigningKey.generate()` creates ephemeral keys. In production, load the issuer key from secure storage. The holder key belongs to the recipient; issuance needs only its public key.
 
 ```python
-from tenuo import (
-    SigningKey, Warrant,
-    Subpath, UrlSafe, UrlPattern, All
-)
+from tenuo import Exact, Range, SigningKey, Warrant
 
-# Development: generate ephemeral keys. Production: load from secure storage.
-issuer_key = SigningKey.generate()
-agent_key = SigningKey.generate()
+issuer = SigningKey.generate()       # development controller only
+agent = SigningKey.generate()        # agent owns this key; issuer needs its public key
+worker = SigningKey.generate()
 
-# Mint the warrant
-warrant = (Warrant.mint_builder()
-    .capability("read_file", path=Subpath("/data/reports"))
-    .capability("create_issue",
-        url=All([UrlSafe(), UrlPattern("https://api.github.com/*")]))
-    .ttl(1800)
-    .max_depth(3)
-    .holder(agent_key.public_key)
-    .mint(issuer_key))
-
-# Serialize for transmission to the agent
-warrant_str = str(warrant)
+# These values come from the approved invoice, not model-produced payment details.
+parent = (Warrant.mint_builder()
+    .capability("pay_invoice", invoice_id=Exact("inv-123"),
+                bank_account=Exact("approved-bank"), amount_cents=Range(1, 50000))
+    .ttl(600).holder(agent.public_key).mint(issuer))
+child = (parent.grant_builder()
+    .capability("pay_invoice", invoice_id=Exact("inv-123"),
+                bank_account=Exact("approved-bank"), amount_cents=Range(1, 25000))
+    .ttl(300).terminal().holder(worker.public_key).grant(agent))
+chain = [parent.to_base64(), child.to_base64()]  # public root-to-leaf transport
 ```
 
-**Cloud example ☁️ (requires Tenuo Cloud subscription + `tc_` API key):**
-```python
-from tenuo_cloud import AsyncTenuoCloudClient
+The receiving verifier must trust `issuer.public_key`, receive the complete
+chain, and require the worker's proof over the exact effect arguments.
+This snippet issues authority; it does not install enforcement or prove an
+allowed/denied effect. It has no cumulative budget, single-use guarantee or
+idempotency. Keep the parent and agent key away from the worker.
 
-client = AsyncTenuoCloudClient(api_key="tc_...")
-warrant = await client.fire_trigger(
-    trigger_id="trg_...",
-    event_data={
-        "file_path": "/data/reports",
-        "api_host": "api.github.com"
-    },
-    initiator={"sub": "service-account@example.com"}
-)
-```
+Released Python 0.3.2's high-level `MintBuilder` has neither `max_depth()` nor
+`terminal()`. Do not emit either call on that builder. Its default root maximum
+is 64; `GrantBuilder.terminal()` limits the child. If the task needs a tighter
+root ceiling, verify a supported lower-level builder in the installed SDK and
+show its actual resulting depth rather than inventing a setter.
+
+**Cloud issuance:** Resolve the installed Cloud SDK and matching server API,
+then inspect the configured template/trigger and initiator policy. Do not assume
+`AsyncTenuoCloudClient.fire_trigger()` exists: it is absent from the reviewed
+Cloud main client. Use a verified issuance API or clearly mark the missing
+client support. Do not call private transport methods or silently substitute a
+new root grant for attenuation of an existing parent.
 
 ### Phase 10: Explain Delegation
 
@@ -266,13 +311,13 @@ child_warrant = (parent_warrant.grant_builder()
     .grant(agent_signing_key))
 ```
 
-The chain is capped at depth 64, but set `max_depth` to the actual depth your chain needs (e.g., 3 for orchestrator → worker → sub-worker). Excess headroom is unnecessary risk.
+Core caps delegation at depth 64. Roots are depth 0, so orchestrator → worker → sub-worker is depth 2. Request only the necessary ceiling where the installed builder exposes it; do not confuse the delegation count with the number of nodes.
 
-**`terminal()` rule:** Any agent that won't spawn sub-agents should always call `.terminal()`. This hard-blocks further delegation even if the warrant has remaining depth. Ask: 'Will this agent ever delegate to another agent?' If no, always add `.terminal()`."
+**`terminal()` rule:** Use `.terminal()` on a supported grant builder for a worker that will not delegate. Do not emit it on the released high-level mint builder, where it is absent."
 
 For Tenuo Cloud users, also explain:
 
-"☁️ **Tenuo Cloud only:** Your orchestrator can request child warrants from the cloud based on templates/triggers instead of attenuating locally. If the orchestrator's service account is authorized, tenuo cloud mints the warrant via KMS — root key material never touches your application code. With open-source, the orchestrator must hold the parent warrant's signing key and call `grant_builder()` directly."
+"Cloud-managed issuance may mint a new root grant from a configured template/trigger; it is not automatically a child of the orchestrator's existing warrant. Verify that relationship before calling it delegation. Local attenuation uses the parent holder key, keeps root issuer key material out of the agent, and transports the complete parent chain with the child."
 
 After completing, suggest: "Want a security review of this warrant? Use `/tenuo-audit` to get a blast radius assessment and risk analysis."
 
@@ -282,7 +327,8 @@ After completing, suggest: "Want a security review of this warrant? Use `/tenuo-
 
 Use `All([...])` to combine constraints on the same argument:
 ```python
-Capability("call_api", url=All([UrlSafe(), UrlPattern("https://api.stripe.com/*")]))
+Warrant.mint_builder().capability(
+    "call_api", url=All([UrlSafe(), UrlPattern("https://api.stripe.com/*")]))
 ```
 
 ### Attenuation Compatibility
@@ -298,7 +344,7 @@ When a developer picks `Regex`, warn them about the delegation limitation and su
 
 For Python, use these patterns only after verifying them in the installed SDK. For TypeScript, use `references/typescript.md` and the installed declarations instead of translating this section literally.
 
-**Minting:** `Warrant.mint_builder()` → chain `.capability()`, `.ttl()`, `.max_depth()`, `.holder(pubkey)` → `.mint(signing_key)`
+**Minting:** `Warrant.mint_builder()` → chain `.capability()`, `.ttl()`, `.holder(pubkey)` → `.mint(signing_key)`
 
 **Granting:** `warrant.grant_builder()` → chain `.capability()`, `.ttl()`, `.terminal()`, `.holder(pubkey)` → `.grant(signing_key)`
 
