@@ -84,6 +84,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 import time
 import warnings
 from dataclasses import dataclass, field, replace
@@ -1932,6 +1933,13 @@ _strict_mode: contextvars.ContextVar[bool] = contextvars.ContextVar("tenuo_stric
 # Track unguarded calls in strict mode
 _unguarded_calls: contextvars.ContextVar[List[str]] = contextvars.ContextVar("tenuo_unguarded_calls", default=[])
 
+# CrewAI can execute tools in worker threads that do not inherit ContextVars.
+# Track live scoped guards so those workers fail closed instead of bypassing the
+# decorator.  A worker can safely use the policy only when exactly one scoped
+# guard is live; concurrent ambiguous scopes are denied.
+_scoped_guards_lock = threading.Lock()
+_scoped_guards: Dict[int, "CrewAIGuard"] = {}
+
 
 class UnguardedToolError(TenuoCrewAIError):
     """Raised when strict mode detects unguarded tool calls."""
@@ -1984,15 +1992,39 @@ def _scoped_guard_hook(guard: "CrewAIGuard"):
     authorize = guard._create_hook()
 
     def dispatch(context: Any) -> Optional[bool]:
-        if get_active_guard() is not guard:
+        active_guard = get_active_guard()
+        if active_guard is guard:
+            return authorize(context)
+        if active_guard is not None:
             return None
-        return authorize(context)
 
+        # Some CrewAI execution modes use plain worker threads, which do not
+        # inherit the guarded step's ContextVar.  Do not let that erase the
+        # authorization boundary.  With one live scope the association is
+        # unambiguous; with overlapping scopes, deny rather than apply another
+        # step's policy or allow the call unchecked.
+        with _scoped_guards_lock:
+            live_guards = tuple(_scoped_guards.values())
+        if len(live_guards) == 1 and live_guards[0] is guard:
+            return authorize(context)
+        if len(live_guards) > 1:
+            logger.error(
+                "Denied CrewAI tool call from a worker thread because multiple "
+                "@guarded_step policies are active and the originating scope is ambiguous."
+            )
+            return False
+        return None
+
+    guard_id = id(guard)
+    with _scoped_guards_lock:
+        _scoped_guards[guard_id] = guard
     register_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
     try:
         yield
     finally:
         unregister_before_tool_call_hook(dispatch)
+        with _scoped_guards_lock:
+            _scoped_guards.pop(guard_id, None)
 
 
 def is_strict_mode() -> bool:
@@ -2140,19 +2172,24 @@ def guarded_step(
                 try:
                     with _scoped_guard_hook(guard):
                         result = func(*args, **kwargs)
+                        if inspect.isawaitable(result):
+                            # A sync function that returns an awaitable would run
+                            # its tool calls after the guard is gone.  Stop Tasks
+                            # and Futures while the guard is still installed;
+                            # close bare coroutine objects before rejecting them.
+                            cancel = getattr(result, "cancel", None)
+                            if callable(cancel):
+                                cancel()
+                            close = getattr(result, "close", None)
+                            if callable(close):
+                                close()
+                            raise CrewAIConfigurationError(
+                                f"@guarded_step: '{step_name}' returned an awaitable from a "
+                                "non-async function, so it would run after the guard is removed. "
+                                "Declare the step with 'async def'."
+                            )
                 finally:
                     _finish_step(step_name, step_start)
-            if inspect.isawaitable(result):
-                # A sync function that returns an awaitable would run its tool
-                # calls after the guard is gone. Refuse instead of running unguarded.
-                close = getattr(result, "close", None)
-                if callable(close):
-                    close()
-                raise CrewAIConfigurationError(
-                    f"@guarded_step: '{step_name}' returned an awaitable from a non-async "
-                    "function, so it would run after the guard is removed. Declare the step "
-                    "with 'async def'."
-                )
             return result
 
         return wrapper

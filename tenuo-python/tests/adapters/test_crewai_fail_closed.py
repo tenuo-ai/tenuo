@@ -314,6 +314,42 @@ def test_guarded_step_rejects_sync_function_returning_awaitable():
         step()
 
 
+def test_guarded_step_cancels_task_returned_by_sync_function():
+    returned_task = None
+
+    async def inner():
+        await asyncio.sleep(0)
+        EXECUTED.append(("search", "escaped"))
+
+    @guarded_step(allow={"search": {"query": Pattern("*")}})
+    def step():
+        nonlocal returned_task
+        returned_task = asyncio.create_task(inner())
+        return returned_task
+
+    async def run():
+        with pytest.raises(CrewAIConfigurationError):
+            step()
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert returned_task is not None
+    assert returned_task.cancelled()
+    assert EXECUTED == []
+
+
+def test_guarded_step_enforces_policy_in_worker_thread():
+    from concurrent.futures import ThreadPoolExecutor
+
+    @guarded_step(allow={"read_file": {"path": Subpath("/data")}})
+    def step():
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(_step_crew().kickoff).result()
+
+    step()
+    assert EXECUTED == []
+
+
 # -- Tier 1 closed world -----------------------------------------------------
 
 
