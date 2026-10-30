@@ -2034,6 +2034,7 @@ class GuardBuilder:
         self._signing_key: Optional[SigningKey] = None
         self._approval_handler: Optional[Any] = None
         self._approvals: Optional[list] = None
+        self._trusted_roots: Optional[list] = None
         # Tool schema validation
         self._tool_schemas: Dict[str, Dict[str, Any]] = {}
         self._validate_mode: Literal["warn", "strict", False] = "warn"
@@ -2240,6 +2241,22 @@ class GuardBuilder:
         self._approvals = approvals
         return self
 
+    def with_trusted_roots(self, roots: list) -> "GuardBuilder":
+        """Set the trusted root public keys for Tier 2 warrant verification.
+
+        Only roots belong here. For a delegated warrant, pass its parents with
+        ``with_warrant(..., warrant_chain=...)`` instead of trusting an
+        intermediate key. Defaults to ``tenuo.configure(trusted_roots=...)``.
+
+        Args:
+            roots: Trusted issuer public keys
+
+        Returns:
+            self for chaining
+        """
+        self._trusted_roots = list(roots)
+        return self
+
     def with_tools(self, tools: List[Dict[str, Any]]) -> "GuardBuilder":
         """Register tool schemas for constraint validation.
 
@@ -2423,6 +2440,7 @@ class GuardBuilder:
             audit_callback=self._audit_callback,
             approval_handler=self._approval_handler,
             approvals=self._approvals,
+            trusted_roots=self._trusted_roots,
             warrant_chain=self._warrant_chain,
         )
 
