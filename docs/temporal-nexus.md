@@ -422,7 +422,7 @@ resource from becoming ambient authority across the whole platform.
 
 For a customer-facing walkthrough of these scenarios, including cross-team,
 multi-hop, and cross-organization examples, see
-[Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md).
+[Tenuo for Temporal Nexus](https://tenuo.ai/solutions/temporal-nexus/).
 
 ## Enterprise operating guidance
 
@@ -552,5 +552,5 @@ Ship a Tenuo Nexus worker only when all of these are true:
 
 - [Temporal Nexus overview](https://docs.temporal.io/nexus)
 - [Temporal Python Nexus feature guide](https://docs.temporal.io/develop/python/nexus/feature-guide)
-- [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md)
+- [Tenuo for Temporal Nexus](https://tenuo.ai/solutions/temporal-nexus/)
 - [Tenuo Temporal integration](./temporal.md)
