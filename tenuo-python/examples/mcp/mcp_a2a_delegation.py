@@ -81,7 +81,7 @@ def create_file_worker(key: SigningKey, trusted: list, port: int, mcp_client: Se
         audit_log=io.StringIO(),
     )
 
-    @server.skill("read_file", constraints={"path": Subpath, "max_size": Range})
+    @server.skill("read_file", constraints={"path": Subpath("/tmp/mcp_a2a_test"), "max_size": Range.max_value(100000)})
     async def read_file(path: str, max_size: int = 10000) -> Dict[str, Any]:
         """Read file via MCP tool."""
         # Use MCP client internally
@@ -89,7 +89,7 @@ def create_file_worker(key: SigningKey, trusted: list, port: int, mcp_client: Se
         content = result[0].text if result else ""
         return {"path": path, "content": content, "size": len(content)}
 
-    @server.skill("list_directory", constraints={"path": Subpath})
+    @server.skill("list_directory", constraints={"path": Subpath("/tmp/mcp_a2a_test")})
     async def list_directory(path: str) -> Dict[str, Any]:
         """List directory via MCP tool."""
         result = await mcp_client.tools["list_directory"](path=path)
@@ -115,7 +115,7 @@ def create_search_worker(key: SigningKey, trusted: list, port: int) -> A2AServer
         audit_log=io.StringIO(),
     )
 
-    @server.skill("search_files", constraints={"path": Subpath, "pattern": Pattern})
+    @server.skill("search_files", constraints={"path": Subpath("/tmp/mcp_a2a_test"), "pattern": Pattern("*")})
     async def search_files(path: str, pattern: str) -> Dict[str, Any]:
         """Search files by pattern."""
         # Simulate file search

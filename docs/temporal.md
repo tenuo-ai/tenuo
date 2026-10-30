@@ -29,7 +29,7 @@ only on namespace-level access. For customer-facing scenarios, see
 
 - Familiarity with Temporal Workflows, Activities, and Workers ([What is Temporal](#what-is-temporal) above, or [Temporal learning resources](https://learn.temporal.io/getting_started/)).
 - A running Temporal cluster (local `temporal server start-dev` or Temporal Cloud).
-- Python 3.10+ (inherited from `temporalio>=1.23.0`, which provides `SimplePlugin`).
+- Python 3.10+ (inherited from `temporalio>=1.33.0`, the floor of the `temporal` extra).
 
 If you want the shortest copy-paste path first, start with the
 [Temporal Quickstart](./temporal-quickstart.md). It runs one authorized
@@ -41,7 +41,7 @@ workflow locally and shows both an allowed Activity and a denied Activity.
 uv pip install "tenuo[temporal]"
 ```
 
-This installs `temporalio>=1.23.0` and `tenuo_core`, a compiled Rust extension with prebuilt wheels for common platforms.
+This installs `temporalio>=1.33.0` and `tenuo_core`, a compiled Rust extension with prebuilt wheels for common platforms.
 
 ## Configure Workers to use Tenuo
 
@@ -183,13 +183,14 @@ dispatch. The override is scoped to this call and is safe when workflow tasks
 schedule Activities concurrently:
 
 ```python
+from tenuo import Exact, Range
 from tenuo.temporal import (
     current_key_id, tenuo_execute_activity, workflow_issue_execution,
 )
 
 execution_warrant = await workflow_issue_execution(
     "transfer_funds",
-    constraints={"account": account, "amount": amount},
+    constraints={"account": Exact(account), "amount": Range(max=amount)},
     ttl_seconds=60,
 )
 await tenuo_execute_activity(
@@ -228,6 +229,8 @@ warrants as shown above.
 
 ## Capability constraints
 
+### Zero-trust closed-world rule
+
 Warrants use a **closed-world (zero-trust) model**: every argument the activity receives must be declared in the capability, even if unconstrained. Use `Wildcard()` for arguments that can take any value:
 
 ```python
@@ -252,6 +255,11 @@ warrant = (
 If an activity argument is not listed in the capability, the interceptor rejects the call with `TemporalConstraintViolation` — even if the value would otherwise be valid. This prevents accidental exposure of undeclared parameters.
 
 > **Common mistake:** listing only the constrained fields. If your activity has parameters `path` and `encoding`, the capability needs both — e.g. `.capability("read_file", path=Subpath("/data"), encoding=Wildcard())`.
+
+Prefer `Wildcard()` when the activity's argument names are known: it keeps the
+capability closed to unexpected fields. If a capability intentionally needs to
+accept every additional argument, set `_allow_unknown=True`; this is a broad
+opt-out from closed-world checking, so use it deliberately.
 
 See [Temporal Integration Reference — Constraint Types](./temporal-reference.md#constraint-types-for-ai-agent-workflows) for the full list of constraint types (`Subpath`, `UrlSafe`, `Exact`, `Pattern`, `Range`, `AnyOf`, etc.).
 

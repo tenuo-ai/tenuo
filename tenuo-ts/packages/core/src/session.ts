@@ -44,6 +44,18 @@ export class Session implements SessionContract {
     return tokens;
   }
 
+  toWireString(): string {
+    const native = nativeSessions.get(this) as { toStackWire?: () => unknown } | undefined;
+    if (typeof native?.toStackWire !== "function") {
+      throw new TenuoConfigurationError("session is not bound to the WASM core");
+    }
+    const stack = native.toStackWire();
+    if (typeof stack !== "string" || stack.length === 0) {
+      throw new TenuoConfigurationError("toWireString() did not return a warrant stack");
+    }
+    return stack;
+  }
+
   dedupKey(tool: string, args: Readonly<Record<string, unknown>>): string {
     const native = nativeSessions.get(this) as
       | { dedupKey?: (tool: string, args: unknown) => string }

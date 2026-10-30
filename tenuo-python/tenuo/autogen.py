@@ -246,6 +246,7 @@ class _Guard:
         self._approvals = approvals
 
         from .control_plane import get_or_create
+
         self._control_plane = get_or_create()
 
     # ------------------------------------------------------------------ #
@@ -302,49 +303,52 @@ class _Guard:
         """
         Buffer-verify-emit streaming defense (TOCTOU safe).
         Expects chunks with .choices[].delta.tool_calls[].function.arguments (string).
+
+        Buffered tool calls are verified at end of stream, so tool-call
+        deltas are never emitted unverified. Each allowed call carries its
+        verified arguments exactly once (on its first delta); later deltas
+        for the same call have their argument fragment cleared.
+
+        A tool-call index is scoped to its completion choice, so buffers are
+        keyed by both choice index and tool-call index. Waiting for stream
+        exhaustion also avoids treating one completed choice as the end of
+        another choice that is still producing argument deltas.
         """
         pending_chunks: list[Any] = []
-        arg_buffers: Dict[str, list[str]] = {}
-        tool_names: Dict[str, str] = {}
+        arg_buffers: Dict[Tuple[str, str], list[str]] = {}
+        tool_names: Dict[Tuple[str, str], str] = {}
+        tool_call_ids: Dict[Tuple[str, str], str] = {}
+        malformed_calls: Dict[Tuple[str, str], str] = {}
 
-        def _call_id(tc: Any) -> str:
-            return str(getattr(tc, "id", None) or getattr(tc, "index", "0"))
+        def _call_id(choice: Any, tc: Any) -> Tuple[str, str]:
+            # OpenAI sends ``id`` only on the first delta of a tool call, while
+            # ``index`` is present on every delta, so key on index first. Tool
+            # call indexes are only unique within a completion choice.
+            choice_index = getattr(choice, "index", None)
+            choice_key = f"choice:{choice_index}" if choice_index is not None else "choice:0"
+            index = getattr(tc, "index", None)
+            if index is not None:
+                return choice_key, f"index:{index}"
+            call_id = getattr(tc, "id", None)
+            call_key = f"id:{call_id}" if call_id else "index:0"
+            return choice_key, call_key
 
-        for chunk in stream:
-            pending_chunks.append(chunk)
-
-            # Collect tool call deltas
-            for choice in getattr(chunk, "choices", []) or []:
-                delta = getattr(choice, "delta", None)
-                if delta is None:
-                    continue
-                for tc in getattr(delta, "tool_calls", []) or []:
-                    cid = _call_id(tc)
-                    func = getattr(tc, "function", None)
-                    name = getattr(func, "name", None) if func else None
-                    args_piece = getattr(func, "arguments", "") if func else ""
-                    if name:
-                        tool_names[cid] = name
-                    if cid not in arg_buffers:
-                        arg_buffers[cid] = []
-                    if args_piece:
-                        arg_buffers[cid].append(args_piece)
-
-            finished = any(
-                getattr(choice, "finish_reason", None) == "tool_calls" for choice in getattr(chunk, "choices", []) or []
-            )
-
-            if not finished:
-                continue
-
+        def _verify_and_emit() -> Iterable[Any]:
             # Validate complete args for each buffered tool call
-            invalid_ids: set[str] = set()
-            final_args: Dict[str, Dict[str, Any]] = {}
+            invalid_ids: set[Tuple[str, str]] = set()
+            final_args: Dict[Tuple[str, str], Dict[str, Any]] = {}
             from tenuo.arguments import parse_strict_json
 
             for cid, pieces in arg_buffers.items():
                 complete = "".join(pieces)
                 name = tool_names.get(cid, "")
+                if cid in malformed_calls:
+                    reason = malformed_calls[cid]
+                    if self._on_denial == "skip":
+                        invalid_ids.add(cid)
+                        logger.warning("Malformed tool call %s (%s): %s", cid, name, reason)
+                        continue
+                    raise ConstraintViolation(field="tool_calls", reason=reason, value=cid)
                 try:
                     args_dict = parse_strict_json(complete) if complete else {}
                 except Exception as e:
@@ -376,7 +380,9 @@ class _Guard:
                         logger.warning("Denied tool call %s (%s): %s", cid, name, e)
                     invalid_ids.add(cid)
 
-            # Mutate buffered chunks: drop invalid tool calls on skip/log, set full args on valid ones
+            # Mutate buffered chunks: drop invalid tool calls on skip/log; put the
+            # verified args on the first delta of each valid call and clear the rest
+            emitted_args: set[Tuple[str, str]] = set()
             for buffered in pending_chunks:
                 for choice in getattr(buffered, "choices", []) or []:
                     delta = getattr(choice, "delta", None)
@@ -387,31 +393,62 @@ class _Guard:
                         continue
                     kept_calls = []
                     for tc in tool_calls:
-                        cid = _call_id(tc)
+                        cid = _call_id(choice, tc)
                         if cid in invalid_ids:
                             continue  # filtered out
                         if cid in final_args:
                             func = getattr(tc, "function", None)
                             if func is not None:
-                                full = json.dumps(final_args[cid]["args"])
+                                if cid in emitted_args:
+                                    full = ""
+                                    verified_name = ""
+                                else:
+                                    full = json.dumps(final_args[cid]["args"])
+                                    verified_name = final_args[cid]["name"]
+                                    emitted_args.add(cid)
                                 try:
                                     func.arguments = full
+                                    func.name = verified_name
                                 except Exception:
                                     pass
                         kept_calls.append(tc)
                     delta.tool_calls = kept_calls
 
-            # Emit buffered chunks and reset
+            # Emit buffered chunks
             for buffered in pending_chunks:
                 yield buffered
 
-            pending_chunks = []
-            arg_buffers = {}
-            tool_names = {}
+        for chunk in stream:
+            pending_chunks.append(chunk)
 
-        # Emit any remaining buffered chunks (non-tool content)
-        for buffered in pending_chunks:
-            yield buffered
+            # Collect tool call deltas
+            for choice in getattr(chunk, "choices", []) or []:
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
+                for tc in getattr(delta, "tool_calls", []) or []:
+                    cid = _call_id(choice, tc)
+                    func = getattr(tc, "function", None)
+                    name = getattr(func, "name", None) if func else None
+                    args_piece = getattr(func, "arguments", "") if func else ""
+                    if name:
+                        previous_name = tool_names.setdefault(cid, name)
+                        if previous_name != name:
+                            malformed_calls[cid] = "Conflicting tool names for one tool-call index"
+                    call_id = getattr(tc, "id", None)
+                    if call_id:
+                        previous_call_id = tool_call_ids.setdefault(cid, call_id)
+                        if previous_call_id != call_id:
+                            malformed_calls[cid] = "Conflicting IDs for one tool-call index"
+                    if cid not in arg_buffers:
+                        arg_buffers[cid] = []
+                    if args_piece:
+                        arg_buffers[cid].append(args_piece)
+
+        # Stream exhaustion is the only unambiguous completion signal when a
+        # response has multiple choices: one choice can finish while another
+        # is still producing tool-call arguments.
+        yield from _verify_and_emit()
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -426,7 +463,9 @@ class _Guard:
         if self._bound is not None:
             # Tier 2: Use shared enforcement logic
             result = enforce_tool_call(
-                tool_name, auth_args, self._bound,
+                tool_name,
+                auth_args,
+                self._bound,
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 warrant_chain=self._warrant_chain,
                 approval_handler=self._approval_handler,
@@ -492,7 +531,9 @@ class _Guard:
         """Async variant of _authorize — uses enforce_tool_call_async for Tier 2."""
         if self._bound is not None:
             result = await enforce_tool_call_async(
-                tool_name, auth_args, self._bound,
+                tool_name,
+                auth_args,
+                self._bound,
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 warrant_chain=self._warrant_chain,
                 approval_handler=self._approval_handler,

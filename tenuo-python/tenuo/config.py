@@ -81,7 +81,7 @@ class TenuoConfig:
     # Default TTL for warrants (seconds)
     default_ttl: int = DEFAULT_TTL_SECONDS
 
-    # Clock tolerance for expiration checks (seconds)
+    # Clock tolerance for future-issued timestamps (seconds); expiry is strict
     clock_tolerance: int = DEFAULT_CLOCK_TOLERANCE_SECS
 
     # MCP configuration (for tool discovery and constraint extraction)
@@ -179,7 +179,8 @@ def configure(
         issuer_key: SigningKey for signing warrants (required for mint)
         trusted_roots: Public keys to trust as warrant issuers
         default_ttl: Default warrant TTL in seconds (default: 300)
-        clock_tolerance: Clock tolerance for expiration checks (default: 30)
+        clock_tolerance: Tolerance for future-issued timestamps (default: 30).
+            Expiry remains strict.
         pop_window_secs: PoP window size in seconds (default: 30)
         pop_max_windows: Number of PoP windows to accept (default: 4)
         mcp_config: CompiledMcpConfig for MCP tool authorization (optional)

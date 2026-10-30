@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ApprovalRequiredError,
   AuthorizationDeniedError,
@@ -409,6 +409,45 @@ describe("tenuo.mcp", () => {
       code: "TENUO_INVALID_POP",
       message: expect.stringMatching(/replay/),
     });
+  });
+
+  it("snapshots approvals before async replay admission yields", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { read_file: { path: under("/data") } },
+      requireApproval: {
+        approvers: [createTenuo.publicKeyFromHex(APPROVER1_PUB)],
+        min: 1,
+      },
+    });
+    const args = { path: "/data/q3.pdf" };
+    const approval = signApproval(session, "read_file", args, APPROVER1_SECRET);
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const first = issuer.mcp.attach(session, "read_file", args, { approvals: [approval] });
+    const mutableApprovals = first._meta.tenuo.approvals as string[];
+    const backing = memoryNonceStore();
+    let calls = 0;
+    const store = {
+      checkAndRecord: async (key: string) => {
+        calls += 1;
+        if (calls === 1) {
+          mutableApprovals.length = 0;
+          await Promise.resolve();
+        }
+        return backing.checkAndRecord(key);
+      },
+    };
+    const leaked = exportSession(session);
+    const server = createTenuo({ trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)] });
+
+    await expect(server.mcp.verify(first.name, first.arguments, first._meta, { nonceStore: store })).resolves.toEqual(args);
+    vi.mocked(Date.now).mockReturnValue(now + 30_000);
+    const replay = issuer.mcp.attach(session, "read_file", args, { approvals: [approval] });
+    await expect(
+      server.mcp.verify(replay.name, replay.arguments, replay._meta, { nonceStore: store }),
+    ).rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
+    vi.restoreAllMocks();
   });
 
   it("emits receipts on attach and verify without treating them as allow", async () => {

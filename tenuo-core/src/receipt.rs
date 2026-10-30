@@ -584,6 +584,7 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
 /// before parsing, the opaque signed bytes, the signer's public key extracted
 /// for convenience, and the signature.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Receipt {
     /// Selects the preimage construction before any parsing. Unauthenticated by
     /// necessity, and cross-checked against payload key 0 during verification.

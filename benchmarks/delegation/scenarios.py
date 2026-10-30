@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from tenuo import SigningKey, Warrant, Pattern, Range
+from tenuo import SigningKey, Warrant, Pattern, Range, Regex
 
 
 @dataclass
@@ -88,7 +88,7 @@ class TemporalScopingScenario(BaseDelegationScenario):
         # Warrant for "email team" task - internal only
         internal_email_warrant = (
             Warrant.mint_builder()
-            .capability("send_email", {"to": Pattern("*@company.com")})
+            .capability("send_email", {"to": Regex(r"^[A-Za-z0-9._%+-]+@company\.com$")})
             .holder(self.agent_key.public_key)
             .ttl(300)  # 5 minute task
             .mint(self.issuer_key)
