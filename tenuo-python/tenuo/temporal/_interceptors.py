@@ -1681,19 +1681,38 @@ class TenuoActivityInboundInterceptor:
             if _span_ctx is not None:
                 _span_ctx.__exit__(None, None, None)
 
-        # -- 15. Emit Allow + Dispatch Activity --
-        self._emit_allow_event(
-            info=info,
-            warrant=warrant,
-            tool=tool_name,
-            args=args,
-            start_ns=start_ns,
-            chain_result=chain_result,
-            authorizer=authorizer,
-            presented_chain=list(chain) if chain else [warrant],
-            verified_pop=pop_bytes,
-            pop_auth_args=args,
-        )
+        # -- 15. Emit Decision + Dispatch Activity --
+        # Observe mode executes the activity, but its telemetry and receipt
+        # must remain a denial rather than being rewritten as an ALLOW.
+        if getattr(enforcement, "observed", False):
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=enforcement.denial_reason or "Authorization denied",
+                constraint=enforcement.constraint_violated,
+                start_ns=start_ns,
+                authorizer=enforcement.authorizer or authorizer,
+                presented_chain=list(chain) if chain else [warrant],
+                verified_pop=enforcement.verified_pop or pop_bytes,
+                pop_auth_args=enforcement.pop_auth_args or args,
+                error_type=enforcement.error_type,
+                observed=True,
+            )
+        else:
+            self._emit_allow_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                start_ns=start_ns,
+                chain_result=chain_result,
+                authorizer=authorizer,
+                presented_chain=list(chain) if chain else [warrant],
+                verified_pop=pop_bytes,
+                pop_auth_args=args,
+            )
 
         with _activity_idempotency_context(
             str(warrant.id),
@@ -1972,6 +1991,7 @@ class TenuoActivityInboundInterceptor:
         pop_auth_args: Optional[Dict[str, Any]] = None,
         exc: Optional[BaseException] = None,
         error_type: Optional[str] = None,
+        observed: bool = False,
     ) -> None:
         """Emit audit event for denied action."""
         import time
@@ -1989,7 +2009,7 @@ class TenuoActivityInboundInterceptor:
         from tenuo._enforcement import EnforcementResult
         latency_us = int(latency_s * 1e6)
         res = EnforcementResult(
-            allowed=False,
+            allowed=observed,
             tool=tool,
             # See parity comment in ``_emit_allow_event``.
             arguments=self._redact_args(args),
@@ -2005,6 +2025,7 @@ class TenuoActivityInboundInterceptor:
             error_type=_activity_denial_error_type(
                 exc=exc, constraint=constraint, error_type=error_type
             ),
+            observed=observed,
         )
         try:
             from tenuo.receipts import collect_enforcement_receipt
