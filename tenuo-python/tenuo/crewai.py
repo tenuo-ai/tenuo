@@ -216,7 +216,10 @@ _APPROVAL_ERROR_CODES = (
     (ApprovalRequired, "APPROVAL_REQUIRED"),
     (ApprovalVerificationError, "APPROVAL_VERIFICATION_FAILED"),
 )
-_APPROVAL_ERRORS = tuple(cls for cls, _ in _APPROVAL_ERROR_CODES)
+# Keep this as a literal tuple: older mypy versions cannot prove that a tuple
+# produced by a comprehension contains only exception classes when it appears
+# in an ``except`` clause.
+_APPROVAL_ERRORS = (ApprovalDenied, ApprovalRequired, ApprovalVerificationError)
 
 
 def _normalize_role(role: str) -> str:
