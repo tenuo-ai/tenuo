@@ -1593,7 +1593,8 @@ class WarrantDelegator:
             A new Warrant with narrowed authority
 
         Raises:
-            EscalationAttempt: If attenuation would widen access
+            EscalationAttempt: If the parent is expired or lacks a delegated tool
+            MonotonicityError: If a child constraint would widen the parent's (raised by the core in grant())
             ValueError: If parent_warrant doesn't support delegation
 
         Example:
@@ -1624,9 +1625,13 @@ class WarrantDelegator:
         # Validate parent has tools to delegate
         parent_tools = self._get_parent_tools(parent_warrant)
 
-        # Validate each attenuation
-        for tool_name, constraints in attenuations.items():
-            self._validate_tool_delegation(parent_warrant, parent_tools, tool_name, constraints)
+        # Empty parent_tools means the parent doesn't restrict tools.
+        # Constraint narrowing is checked by the core when grant() builds the child.
+        for tool_name in attenuations:
+            if parent_tools and "*" not in parent_tools and tool_name not in parent_tools:
+                raise EscalationAttempt(
+                    f"Cannot grant '{tool_name}': parent warrant doesn't authorize it. Parent tools: {sorted(parent_tools)}"
+                )
 
         # Build the child warrant via parent's grant_builder
         try:
@@ -1672,81 +1677,6 @@ class WarrantDelegator:
             raise EscalationAttempt(
                 f"Cannot verify parent warrant tools: {e}. Delegation denied (fail-closed)."
             )
-
-    def _validate_tool_delegation(
-        self,
-        parent_warrant: Warrant,
-        parent_tools: set,
-        tool_name: str,
-        constraints: Dict[str, Constraint],
-    ) -> None:
-        """Validate that delegation doesn't escalate privileges.
-
-        Checks:
-        1. Parent must have the tool (if parent restricts tools)
-        2. Each child constraint must be subset of parent's
-
-        Raises:
-            EscalationAttempt: If validation fails
-
-        Note:
-            Empty parent_tools set means parent doesn't restrict tools (no tools() method).
-            Non-empty parent_tools means parent explicitly lists allowed tools.
-        """
-        # Check parent has this tool (only if parent restricts tools)
-        if parent_tools and tool_name not in parent_tools:
-            raise EscalationAttempt(
-                f"Cannot grant '{tool_name}': parent warrant doesn't authorize it. Parent tools: {sorted(parent_tools)}"
-            )
-
-        # For each constraint, verify it's a proper subset
-        for arg_name, child_constraint in constraints.items():
-            self._validate_constraint_subset(parent_warrant, tool_name, arg_name, child_constraint)
-
-    def _validate_constraint_subset(
-        self,
-        parent_warrant: Warrant,
-        tool_name: str,
-        arg_name: str,
-        child_constraint: Constraint,
-    ) -> None:
-        """Validate that child constraint is subset of parent's.
-
-        Raises:
-            EscalationAttempt: If child would widen access or validation fails
-        """
-        # Try to get parent's constraint for this arg
-        parent_constraint = None
-        if hasattr(parent_warrant, "constraint_for"):
-            try:
-                parent_constraint = parent_warrant.constraint_for(tool_name, arg_name)
-            except (AttributeError, KeyError, LookupError):
-                # These exceptions mean the arg doesn't exist in parent - OK to proceed
-                # Parent doesn't constrain this arg, so child can add constraints
-                parent_constraint = None
-            except Exception as e:
-                # SECURITY: Fail-closed - unexpected error means we can't verify safety
-                raise EscalationAttempt(
-                    f"Cannot verify parent constraint for {tool_name}.{arg_name}: {e}. Delegation denied (fail-closed)."
-                )
-
-        # If we can get parent constraint, verify subset relationship
-        if parent_constraint is not None:
-            if hasattr(child_constraint, "is_subset_of"):
-                if not child_constraint.is_subset_of(parent_constraint):
-                    raise EscalationAttempt(
-                        f"Cannot widen constraint on {tool_name}.{arg_name}: "
-                        f"child constraint {child_constraint} is not a subset of "
-                        f"parent constraint {parent_constraint}"
-                    )
-            else:
-                # SECURITY: Fail-closed - if constraint doesn't support is_subset_of,
-                # we cannot verify attenuation. Reject the delegation.
-                raise EscalationAttempt(
-                    f"Cannot validate attenuation for {tool_name}.{arg_name}: "
-                    f"Constraint {type(child_constraint).__name__} does not support "
-                    "is_subset_of() check. Use a constraint type that supports subset validation."
-                )
 
 
 # =============================================================================

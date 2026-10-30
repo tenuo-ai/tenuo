@@ -1339,13 +1339,37 @@ proptest! {
             .build(&parent_kp)
             .unwrap();
 
-        let child = parent
+        let result = parent
             .attenuate()
             .inherit_all()
             .ttl(Duration::from_secs(child_ttl))
             .holder(child_kp.public_key())
-            .build(&child_kp)
-            .unwrap();
+            .build(&child_kp);
+
+        // A child that asks to outlive its parent is rejected; one that fits is
+        // accepted. Within a second of the boundary either is correct, because
+        // the parent's remaining lifetime depends on when the clock ticks.
+        let child = match result {
+            Err(tenuo::Error::MonotonicityViolation(_)) => {
+                prop_assert!(
+                    child_ttl + 1 >= parent_ttl,
+                    "ttl {} fits in parent {} but was rejected",
+                    child_ttl,
+                    parent_ttl
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(TestCaseError::fail(format!("unexpected error {e:?}"))),
+            Ok(child) => {
+                prop_assert!(
+                    child_ttl <= parent_ttl,
+                    "ttl {} exceeds parent {} but was accepted",
+                    child_ttl,
+                    parent_ttl
+                );
+                child
+            }
+        };
 
         // Wire round-trip both
         let parent_decoded = wire::decode(&wire::encode(&parent).unwrap()).unwrap();

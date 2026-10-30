@@ -14,9 +14,9 @@ MCP 2.0 made four changes that reach Tenuo:
   a caller-built ``AsyncClient`` instead of header, timeout, and auth
   arguments, and it yields ``(read, write)`` where 1.x yielded a third
   session-ID accessor.
-- ``ClientSession.call_tool(meta=...)`` is annotated ``RequestParamsMeta``
-  rather than ``dict``. That type is a ``TypedDict``, so a plain ``dict``
-  remains correct on both lines and no bridging is needed.
+- ``ClientSession.call_tool(meta=...)`` exists on newer releases, but not on
+  the supported 1.9.4 floor. Legacy calls with metadata must therefore build
+  and send a ``CallToolRequest`` directly.
 
 Tenuo supports both SDK lines, so each difference is resolved here rather than
 at the call sites.
@@ -24,6 +24,7 @@ at the call sites.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -33,6 +34,7 @@ import mcp.types as mt
 __all__ = [
     "MCP_V2",
     "build_request_params_meta",
+    "call_tool_with_meta",
     "call_tool_result_is_error",
     "call_tool_result_structured_content",
     "make_error_call_tool_result",
@@ -43,6 +45,53 @@ __all__ = [
 
 #: True when the installed SDK is the 2.x line (top-level ``RequestParamsMeta``).
 MCP_V2: bool = hasattr(mt, "RequestParamsMeta")
+
+
+async def call_tool_with_meta(
+    session: Any,
+    name: str,
+    arguments: dict[str, Any],
+    meta: Optional[dict[str, Any]],
+) -> Any:
+    """Call an MCP tool while preserving ``_meta`` across SDK versions.
+
+    MCP 1.9.4, Tenuo's supported floor, does not expose ``meta`` on
+    ``ClientSession.call_tool``. Newer SDKs do. Empty metadata uses the public
+    method on every version; legacy SDKs with real metadata construct the same
+    request their public method does and send it through ``send_request``.
+    """
+    if not meta:
+        return await session.call_tool(name, arguments)
+
+    try:
+        parameters = inspect.signature(session.call_tool).parameters.values()
+        accepts_meta = any(
+            parameter.name == "meta"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        accepts_meta = False
+
+    if accepts_meta:
+        return await session.call_tool(name, arguments, meta=meta)
+
+    params = mt.CallToolRequestParams.model_validate(
+        {
+            "name": name,
+            "arguments": arguments,
+            "_meta": meta,
+        }
+    )
+    call_request = mt.CallToolRequest(method="tools/call", params=params)
+    # MCP 1.x exposes ClientRequest as a RootModel wrapper.  In 2.x it is a
+    # union type and send_request accepts the concrete request directly.
+    request = (
+        mt.ClientRequest(call_request)
+        if isinstance(mt.ClientRequest, type)
+        else call_request
+    )
+    return await session.send_request(request, mt.CallToolResult)
 
 
 def request_params_meta_as_dict(meta: Any) -> dict[str, Any]:

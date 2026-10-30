@@ -352,10 +352,10 @@ strict = UrlSafe(allow_domains=["api.example.com", "*.googleapis.com"])
 Simple glob-style matching for strings:
 
 ```python
-from tenuo.constraints import Pattern
+from tenuo import Pattern, Regex
 
-# Email domain restriction
-guard = GuardBuilder().allow("send_email", to=Pattern("*@company.com")).build()
+# Email recipients: use Regex, since a glob * also matches "," and ";"
+guard = GuardBuilder().allow("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$")).build()
 
 # Query filtering
 guard = GuardBuilder().allow("search", query=Pattern("product:*")).build()

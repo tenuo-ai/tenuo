@@ -21,11 +21,15 @@ Usage:
 """
 
 import base64
+import inspect
 import logging
+import threading
+import types
+import typing
 import uuid
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
@@ -33,6 +37,7 @@ from tenuo._enforcement import EnforcementResult
 from tenuo.approval import ApprovalRequired
 from tenuo.exceptions import (
     ApprovalGateTriggered,
+    ConfigurationError,
     DeserializationError,
     ErrorCode,
     InsufficientApprovals,
@@ -45,7 +50,8 @@ logger = logging.getLogger("tenuo.fastapi")
 # Use string forward refs or try import, FastAPI must be installed
 try:
     from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
-    from fastapi.responses import JSONResponse
+    from fastapi.concurrency import run_in_threadpool
+    from fastapi.responses import JSONResponse, Response
     from fastapi.security import APIKeyHeader
 
     FASTAPI_AVAILABLE = True
@@ -60,6 +66,8 @@ except ImportError:
     Request = Any  # type: ignore
     status = Any  # type: ignore
     JSONResponse = Any  # type: ignore
+    Response = Any  # type: ignore
+    run_in_threadpool = Any  # type: ignore
     APIKeyHeader = Any  # type: ignore
     FASTAPI_AVAILABLE = False
 
@@ -102,6 +110,7 @@ def configure_tenuo(
     trusted_issuers: Optional[List[PublicKey]] = None,
     runtime: Optional[Any] = None,
     strict: bool = False,
+    exempt: Iterable[str] = (),
     error_handler: Optional[Callable[[Exception], Any]] = None,
     expose_error_details: bool = False,
 ) -> None:
@@ -114,8 +123,18 @@ def configure_tenuo(
         runtime: Optional holder ``Runtime``. When set, inbound verify uses its
             authorizer, signed revocation list, and receipt outbox. Roots fall
             back to ``runtime.trusted_roots`` when ``trusted_issuers`` is omitted.
-        strict: If True, require all routes to have Tenuo protection
-        error_handler: Custom error handler for authorization failures
+        strict: If True, the app refuses to start (``ConfigurationError`` at
+            startup) while any route lacks a ``TenuoGuard`` dependency, directly
+            or through ``SecureAPIRouter``, router or app dependencies. Plain
+            Starlette routes and mounts cannot carry a guard, so they fail too.
+            ``require_warrant`` only checks that headers are present and does
+            not count. Checked after startup hooks, before serving requests.
+        exempt: Paths ``strict`` skips, matched exactly (a mount by its mount
+            path). The app's OpenAPI and docs routes are always exempt; add
+            public routes such as ``/health`` here.
+        error_handler: Called with each ``TenuoError`` the app handles. If it
+            returns (or awaits to) a ``Response``, that response is sent;
+            otherwise the default JSON error response is used.
         expose_error_details: If True, include constraint details in error responses.
                               SECURITY: Keep False in production to prevent information leakage.
 
@@ -141,6 +160,10 @@ def configure_tenuo(
 
     if hasattr(app, "state"):
         app.state.tenuo_config = _config
+        app.state.tenuo_strict_enabled = strict
+
+    if strict:
+        _install_strict_route_check(app, exempt)
 
     if not hasattr(app, "exception_handler"):
         return
@@ -149,6 +172,15 @@ def configure_tenuo(
     @app.exception_handler(TenuoError)
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""
+        if error_handler is not None:
+            if _is_async_callable(error_handler):
+                custom = error_handler(exc)
+            else:
+                custom = await run_in_threadpool(error_handler, exc)
+            if inspect.isawaitable(custom):
+                custom = await custom
+            if isinstance(custom, Response):
+                return custom
         wire_code = exc.get_wire_code()
         if wire_code in (ErrorCode.INSUFFICIENT_APPROVALS, ErrorCode.APPROVAL_GATE_TRIGGERED):
             http_status = status.HTTP_409_CONFLICT
@@ -163,6 +195,123 @@ def configure_tenuo(
                 "details": exc.details if expose_error_details else {},
             },
         )
+
+
+def _iter_app_routes(app: Any) -> Iterator[Any]:
+    """Yield every route the app serves, with prefixes and included-router deps applied.
+
+    Newer FastAPI versions include routers lazily, so ``app.routes`` holds router
+    references; ``iter_route_contexts`` expands them. Older versions copy
+    included routes into ``app.routes`` directly.
+    """
+    try:
+        from fastapi.routing import iter_route_contexts  # type: ignore[attr-defined]
+    except ImportError:
+        yield from app.routes
+        return
+    yield from iter_route_contexts(app.routes)
+
+
+def _has_tenuo_guard(dependant: Any) -> bool:
+    """True if a TenuoGuard appears anywhere in the dependency tree."""
+    stack = [dependant]
+    while stack:
+        dep = stack.pop()
+        if isinstance(getattr(dep, "call", None), TenuoGuard):
+            return True
+        stack.extend(getattr(dep, "dependencies", None) or [])
+    return False
+
+
+def _is_builtin_docs_route(app: Any, route: Any) -> bool:
+    """Exempt FastAPI's docs handlers, not arbitrary routes at the same URLs."""
+    endpoint = getattr(route, "endpoint", None)
+    name = getattr(endpoint, "__name__", "")
+    urls = {
+        "openapi": getattr(app, "openapi_url", None),
+        "swagger_ui_html": getattr(app, "docs_url", None),
+        "swagger_ui_redirect": getattr(app, "swagger_ui_oauth2_redirect_url", None),
+        "redoc_html": getattr(app, "redoc_url", None),
+    }
+    methods = set(getattr(route, "methods", None) or ())
+    return (
+        getattr(endpoint, "__module__", None) == FastAPI.__module__
+        and getattr(endpoint, "__qualname__", None) == f"FastAPI.setup.<locals>.{name}"
+        and urls.get(name) is not None
+        and getattr(route, "path", None) == urls[name]
+        and "GET" in methods
+        and methods <= {"GET", "HEAD"}
+    )
+
+
+def _unguarded_routes(app: Any, exempt: Iterable[str]) -> List[str]:
+    """Describe each non-exempt route without a TenuoGuard, e.g. ``"GET /items"``."""
+    skip = {"/" if path == "" else path for path in exempt}
+    found: List[Tuple[str, str]] = []
+    for route in _iter_app_routes(app):
+        path = getattr(route, "path", None)
+        if path == "":
+            path = "/"  # Starlette represents root mounts with an empty path.
+        elif path is None:
+            path = repr(route)
+        if path in skip or _is_builtin_docs_route(app, route):
+            continue
+        dependant = getattr(route, "dependant", None)
+        if dependant is not None and _has_tenuo_guard(dependant):
+            continue
+        methods = getattr(route, "methods", None)
+        if methods:
+            label = ",".join(sorted(m for m in methods if m != "HEAD") or sorted(methods))
+        else:
+            from starlette.routing import WebSocketRoute
+
+            original_route = getattr(route, "original_route", route)
+            label = "WEBSOCKET" if isinstance(original_route, WebSocketRoute) else "MOUNT"
+        found.append((path, label))
+    return [f"{label} {path}" for path, label in sorted(found)]
+
+
+class _StrictRouteCheckMiddleware:
+    """Validate the final route table before ASGI startup completes.
+
+    Checking the completion message includes all app and included-router
+    startup hooks, even routers included after ``configure_tenuo``. Raising
+    here lets the router unwind its lifespans and report startup failure.
+    HTTP and websocket requests pass through unchanged.
+    """
+
+    def __init__(self, app: Any, tenuo_app: Any) -> None:
+        self.app = app
+        self.tenuo_app = tenuo_app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "lifespan":
+            await self.app(scope, receive, send)
+            return
+
+        async def checked_send(message: Any) -> None:
+            if message["type"] == "lifespan.startup.complete" and self.tenuo_app.state.tenuo_strict_enabled:
+                unguarded = _unguarded_routes(self.tenuo_app, self.tenuo_app.state.tenuo_strict_exempt)
+            else:
+                unguarded = []
+            if unguarded:
+                raise ConfigurationError(
+                    "strict=True: these routes have no TenuoGuard (add one, use SecureAPIRouter, "
+                    "or list the path in exempt=): " + "; ".join(unguarded)
+                )
+            await send(message)
+
+        await self.app(scope, receive, checked_send)
+
+
+def _install_strict_route_check(app: Any, exempt: Iterable[str]) -> None:
+    """Fail app startup while any non-exempt route lacks a TenuoGuard."""
+    if not isinstance(app, FastAPI):
+        raise ConfigurationError("strict=True needs a FastAPI app")
+    app.state.tenuo_strict_exempt = list(exempt)
+    if not getattr(app.state, "tenuo_strict_installed", False):
+        app.add_middleware(_StrictRouteCheckMiddleware, tenuo_app=app)
+        app.state.tenuo_strict_installed = True
 
 
 def get_tenuo_config() -> Dict[str, Any]:
@@ -331,17 +480,27 @@ class TenuoGuard:
 
     Args:
         tool: Tool name to authorize
-        extract_args: Optional custom arg extraction function. It receives
-            the request after the framework has parsed it, so a repeated JSON
-            key is not visible. When the handler still has the raw body, parse
-            it with :func:`tenuo.parse_strict_json` first.
+        extract_args: Optional custom arg extraction function. It may be a
+            plain function or an ``async def`` (needed to read a JSON body via
+            ``await request.json()``). It receives the request after the
+            framework has parsed it, so a repeated JSON key is not visible.
+            When the handler still has the raw body, parse it with
+            :func:`tenuo.parse_strict_json` first.
     """
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "TenuoGuard":
+        # FastAPI decides sync vs async from the type's ``__call__``, so an
+        # async extractor gets a subclass whose ``__call__`` is a coroutine.
+        # Guards with sync (or no) extractors keep the sync ``__call__``.
+        if cls is TenuoGuard and _is_async_callable(kwargs.get("extract_args")):
+            cls = _AsyncTenuoGuard
+        return super().__new__(cls)
 
     def __init__(
         self,
         tool: str,
         *,
-        extract_args: Optional[Callable[[Request], Dict[str, Any]]] = None,
+        extract_args: Optional[Callable[[Request], Union[Dict[str, Any], Awaitable[Dict[str, Any]]]]] = None,
         approval_handler: Optional[Any] = None,
     ) -> None:
         self.tool = tool
@@ -430,6 +589,31 @@ class TenuoGuard:
         """
         Verify authorization and return SecurityContext.
         """
+        warrant, x_tenuo_pop = self._check_credentials(warrant, x_tenuo_pop)
+
+        # 3. Extract Args
+        if self.extract_args:
+            auth_args = self.extract_args(request)
+            if inspect.isawaitable(auth_args):
+                # An awaitable reached the sync path (e.g. a sync wrapper that
+                # returns a coroutine). Fail closed rather than authorize junk.
+                if inspect.iscoroutine(auth_args):
+                    auth_args.close()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "error": "configuration_error",
+                        "message": "extract_args returned an awaitable; define it with async def",
+                    },
+                )
+        else:
+            # Default: path params + query params, typed from the endpoint signature
+            auth_args = _default_extract_args(request)
+
+        return self._authorize(request, warrant, x_tenuo_pop, x_tenuo_approvals, auth_args)
+
+    def _check_credentials(self, warrant: Optional[Warrant], x_tenuo_pop: Optional[str]) -> Tuple[Warrant, str]:
+        """Steps 1-2: reject missing headers or an expired warrant before extracting args."""
         # 1. Check Headers - 401 for missing auth
         if not warrant:
             raise HTTPException(
@@ -461,15 +645,17 @@ class TenuoGuard:
                 },
                 headers={"WWW-Authenticate": "Tenuo"},
             )
+        return warrant, x_tenuo_pop
 
-        # 3. Extract Args
-        if self.extract_args:
-            auth_args = self.extract_args(request)
-        else:
-            # Default: combine path params + query params
-            query_params = dict(request.query_params)
-            auth_args = {**request.path_params, **query_params}
-
+    def _authorize(
+        self,
+        request: Request,
+        warrant: Warrant,
+        x_tenuo_pop: str,
+        x_tenuo_approvals: Optional[str],
+        auth_args: Dict[str, Any],
+    ) -> SecurityContext:
+        """Steps 4-5: decode PoP/approvals, enforce, and map the result to HTTP."""
         # 4. Decode PoP Signature
         try:
             pop_sig_bytes = base64.b64decode(x_tenuo_pop)
@@ -561,10 +747,16 @@ class TenuoGuard:
             request_id = str(uuid.uuid4())[:8]
             reason = enforcement.denial_reason or "Authorization denied"
 
-            # Log detailed info for operators (never exposed to clients)
+            # Log detailed info for operators (never exposed to clients).
+            # Argument names and a stable error type only: request values and
+            # free-form denial reasons stay out of logs.
             logger.warning(
-                f"[{request_id}] Authorization denied for tool '{self.tool}' "
-                f"with args {auth_args}. Reason: {reason}. Warrant ID: {warrant.id}"
+                "[%s] Authorization denied for tool '%s' with arg keys %s. Error type: %s. Warrant ID: %s",
+                request_id,
+                self.tool,
+                sorted(auth_args),
+                enforcement.error_type or "authorization_denied",
+                warrant.id,
             )
 
             # Check if detailed errors are allowed (dev mode only)
@@ -639,6 +831,96 @@ class TenuoGuard:
         )
 
 
+_JSON_SCALARS = (bool, int, float, str)
+
+
+def _is_list_annotation(annotation: Any) -> bool:
+    """True for ``list[X]`` / ``List[X]``, optionally wrapped in ``Optional``."""
+    origin = typing.get_origin(annotation)
+    if origin is Union or origin is getattr(types, "UnionType", None):
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        return len(args) == 1 and _is_list_annotation(args[0])
+    return annotation is list or origin is list
+
+
+def _coerce(field: Any, raw: Any) -> Any:
+    """Validate ``raw`` with FastAPI's own Pydantic field adapter.
+
+    Returns ``raw`` unchanged when validation fails (the request is then
+    authorized against the untyped string, which fails closed on numeric
+    constraints, and FastAPI rejects it with 422 after the guard), or when
+    the result is not a plain JSON value that a client can sign.
+
+    ``ModelField.validate`` is the compatibility boundary FastAPI itself
+    maintains across Pydantic 1 and 2. Reconstructing a ``TypeAdapter`` from
+    the annotation both loses ``Query``/``Path`` constraints and crashes on
+    FastAPI 0.100 installations that still use Pydantic 1.
+    """
+    try:
+        value, errors = field.validate(raw, {}, loc=(field.field_info.in_.value, field.alias))
+    except Exception:
+        return raw
+    if errors:
+        return raw
+    if type(value) in _JSON_SCALARS:
+        return value
+    if type(value) is list and all(type(v) in _JSON_SCALARS for v in value):
+        return value
+    return raw
+
+
+def _default_extract_args(request: Request) -> Dict[str, Any]:
+    """Path + query params, typed from the matched endpoint's own signature.
+
+    The guard should authorize exactly what the handler receives, and PoP
+    signs typed values, so ``?limit=5`` for ``limit: int`` is checked as
+    ``5``, not ``"5"``. Params the endpoint does not declare stay strings.
+    """
+    args: Dict[str, Any] = {**request.path_params, **dict(request.query_params)}
+    dependant = getattr(request.scope.get("route"), "dependant", None)
+    if dependant is None:
+        return args
+
+    for field in getattr(dependant, "path_params", []):
+        key = field.alias
+        if key in args:
+            args[key] = _coerce(field, args[key])
+
+    for field in getattr(dependant, "query_params", []):
+        key = field.alias
+        if key not in request.query_params:
+            continue
+        annotation = getattr(field.field_info, "annotation", None) or getattr(field, "outer_type_", None)
+        if _is_list_annotation(annotation):
+            args[key] = _coerce(field, request.query_params.getlist(key))
+        else:
+            args[key] = _coerce(field, args[key])
+    return args
+
+
+def _is_async_callable(fn: Any) -> bool:
+    if fn is None:
+        return False
+    return inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(getattr(fn, "__call__", None))
+
+
+class _AsyncTenuoGuard(TenuoGuard):
+    """TenuoGuard variant used when ``extract_args`` is async (see ``TenuoGuard.__new__``)."""
+
+    async def __call__(  # type: ignore[override]
+        self,
+        request: Request,
+        warrant: Optional[Warrant] = Depends(get_warrant_header),
+        x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
+        x_tenuo_approvals: Optional[str] = Header(None, alias=X_TENUO_APPROVALS),
+    ) -> SecurityContext:
+        warrant, x_tenuo_pop = self._check_credentials(warrant, x_tenuo_pop)
+        assert self.extract_args is not None
+        result = self.extract_args(request)
+        auth_args = await result if inspect.isawaitable(result) else result
+        return self._authorize(request, warrant, x_tenuo_pop, x_tenuo_approvals, auth_args)
+
+
 # Backwards compatibility alias
 TenuoSecurity = TenuoGuard
 
@@ -675,24 +957,144 @@ async def extract_body_args(request: Request) -> Dict[str, Any]:
 # =============================================================================
 
 
+_METHOD_SUFFIX = {"GET": "read", "POST": "create", "PUT": "update", "DELETE": "delete", "PATCH": "update"}
+
+
+def _calls_tenuo_guard(path: str, call: Any) -> bool:
+    """True if ``call`` is a TenuoGuard or depends on one anywhere in its tree."""
+    if isinstance(call, TenuoGuard):
+        return True
+    if not callable(call):
+        return False
+    try:
+        from fastapi.dependencies.utils import get_dependant
+
+        return _has_tenuo_guard(get_dependant(path=path, call=call))
+    except Exception:
+        # Unknown shape: report unguarded so the caller adds a guard.
+        return False
+
+
+def _lazy_include_supported() -> bool:
+    """Detect lazy inclusion by capability rather than a version cutoff."""
+    try:
+        from fastapi.routing import iter_route_contexts  # type: ignore[attr-defined]  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+class _IncludedRoutesGuard(TenuoGuard):
+    """Guards the routes of a router included into a ``SecureAPIRouter``.
+
+    Lazy FastAPI includes keep routers by reference, so their routes never pass
+    through ``SecureAPIRouter.add_api_route``. This guard is attached as an
+    include-level dependency and authorizes each request under the tool name
+    the route would get if it were declared on the ``SecureAPIRouter``
+    (include prefix + route path). Routes that already carry a ``TenuoGuard``
+    are left to it. A route the guard cannot name is denied.
+    """
+
+    def __init__(self, owner: "SecureAPIRouter", router: Any, prefix: str, dependencies: Iterable[Any]) -> None:
+        super().__init__("")
+        self._owner = owner
+        self._included = router
+        self._prefix = prefix
+        self._dependencies = list(dependencies)
+        # id(route) -> (route, tool); tool is None when the route guards itself.
+        self._tools: Dict[int, Tuple[Any, Optional[str]]] = {}
+        self._guards: Dict[str, TenuoGuard] = {}
+        self._lock = threading.Lock()
+
+    def refresh(self) -> None:
+        """Name every route the included router serves (it may have changed since)."""
+        from fastapi.routing import APIRoute, iter_route_contexts  # type: ignore[attr-defined]
+
+        tools: Dict[int, Tuple[Any, Optional[str]]] = {}
+        for context in iter_route_contexts(self._included.routes):
+            route = context.original_route
+            if not isinstance(route, APIRoute):
+                raise ConfigurationError(
+                    "SecureAPIRouter cannot guard websocket, mount, frontend or plain "
+                    f"Starlette routes ({getattr(context, 'path', route)!r}); "
+                    "serve them from a separate router"
+                )
+            path = self._prefix + (context.path or "")
+            tool = None
+            if not (
+                _has_tenuo_guard(context.dependant)
+                or self._owner._is_guarded(path, route.endpoint, self._dependencies)
+            ):
+                tool = self._owner._infer_tool(path, context.methods or ["GET"])
+            previous = tools.get(id(route))
+            if previous is not None and previous[1] != tool:
+                raise ConfigurationError(
+                    "SecureAPIRouter cannot infer distinct authority for aliases of the same "
+                    "route object; add an explicit TenuoGuard to each inclusion or use separate routes"
+                )
+            tools[id(route)] = (route, tool)
+        self._tools = tools
+
+    def __call__(  # type: ignore[override]
+        self,
+        request: Request,
+        warrant: Optional[Warrant] = Depends(get_warrant_header),
+        x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
+        x_tenuo_approvals: Optional[str] = Header(None, alias=X_TENUO_APPROVALS),
+    ) -> Optional[SecurityContext]:
+        route = request.scope.get("route")
+        entry = self._tools.get(id(route))
+        if entry is None or entry[0] is not route:
+            # Route added to the included router after include_router().
+            try:
+                with self._lock:
+                    self.refresh()
+            except ConfigurationError:
+                logger.error("SecureAPIRouter could not name an included route", exc_info=True)
+                entry = None
+            else:
+                entry = self._tools.get(id(route))
+        if entry is None or entry[0] is not route:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "authorization_denied", "message": "Authorization denied"},
+            )
+        tool = entry[1]
+        if tool is None:
+            return None  # The route's own TenuoGuard authorizes it.
+        guard = self._guards.get(tool)
+        if guard is None:
+            guard = self._guards.setdefault(tool, TenuoGuard(tool, approval_handler=self._approval_handler))
+        return guard(request, warrant, x_tenuo_pop, x_tenuo_approvals)
+
+
 class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
     """
     Drop-in replacement for FastAPI APIRouter with automatic Tenuo protection.
 
-    Routes added to this router are automatically protected by Tenuo.
-    The tool name is inferred from the route path or operation name.
+    Every HTTP route this router serves is protected by Tenuo: routes added
+    with the decorators, with ``add_api_route()``, and the routes of routers
+    passed to ``include_router()``. The tool name is inferred from the route
+    path and method unless ``tool=`` is given.
 
     Usage:
         router = SecureAPIRouter()
 
-        @router.get("/users/{user_id}")  # Auto-protected as "users_read" (or similar)
+        @router.get("/users/{user_id}")  # Auto-protected as "users_user_id_read"
         def get_user(user_id: str): ...
 
         app.include_router(router)
 
+    A route that already depends on a ``TenuoGuard`` keeps that guard and gets
+    no second one, except through the decorators, which always add theirs.
+    Websocket routes, mounts, frontends and plain Starlette routes cannot carry
+    a ``TenuoGuard``, so adding one raises ``ConfigurationError``. Two routes
+    whose inferred tool names collide (``/admin_users`` and ``/admin/users``)
+    also raise; pass ``tool=`` for one of them.
+
     This is a real ``APIRouter`` subclass, so ``app.include_router(router)``
     and nested ``router.include_router(...)`` work on every supported FastAPI
-    version. (FastAPI 0.120+ includes routers lazily by reference, which a
+    version. (Newer FastAPI versions include routers lazily by reference, which a
     delegating wrapper cannot satisfy: its routes were silently dropped.)
     """
 
@@ -703,11 +1105,65 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
         super().__init__(*args, **kwargs)
         self.tool_prefix = tool_prefix
         self.require_pop = require_pop
+        # Inferred tool name -> route path it was inferred from.
+        self._inferred_tools: Dict[str, str] = {}
+        self._inferred_lock = threading.Lock()
+        self._included_guards: List[_IncludedRoutesGuard] = []
+        self._validated_routes_version: Optional[int] = None
+        if self.routes:
+            raise ConfigurationError(
+                "SecureAPIRouter(routes=...) would serve those routes unguarded; "
+                "add them with the router's decorators or add_api_route()"
+            )
 
     @property
     def _router(self) -> "SecureAPIRouter":
         """Backwards compatibility: this used to be a wrapper around ``_router``."""
         return self
+
+    async def _validate_dispatch(self, scope: Any, receive: Any, send: Any) -> bool:
+        """Reject late unsafe additions before FastAPI can dispatch their bodies.
+
+        Include-level dependencies do not run for plain Starlette routes or
+        mounts. Validate the include graph at the router boundary as well,
+        including aliases that reuse a previously cached route object.
+        """
+        if scope["type"] not in ("http", "websocket"):
+            return True
+        # Use FastAPI's own graph invalidation when available. Older lazy
+        # implementations without this hook are revalidated on every call.
+        version_fn = getattr(self, "_get_routes_version", None)
+        version = version_fn() if callable(version_fn) else None
+        if version is not None and version == self._validated_routes_version:
+            return True
+        try:
+            for guard in self._included_guards:
+                with guard._lock:
+                    guard.refresh()
+        except ConfigurationError:
+            logger.error("SecureAPIRouter refused an unsafe included route graph", exc_info=True)
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+            else:
+                response = JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": {"error": "authorization_denied", "message": "Authorization denied"}},
+                )
+                await response(scope, receive, send)
+            return False
+        self._validated_routes_version = version
+        return True
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if await self._validate_dispatch(scope, receive, send):
+            await super().__call__(scope, receive, send)
+
+    async def handle(self, scope: Any, receive: Any, send: Any) -> None:
+        # Lazy FastAPI includes dispatch through handle(), not __call__().
+        if await self._validate_dispatch(scope, receive, send):
+            # Eager-inclusion versions have no handle() hook.
+            handler = getattr(super(), "handle", super().__call__)
+            await handler(scope, receive, send)
 
     def _get_tool_name(self, path: str, method: str, name: Optional[str] = None) -> str:
         """Infer tool name from route info."""
@@ -723,10 +1179,91 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
         prefix = f"{self.tool_prefix}_" if self.tool_prefix else ""
 
         # Method suffix
-        method_map = {"GET": "read", "POST": "create", "PUT": "update", "DELETE": "delete", "PATCH": "update"}
-        suffix = method_map.get(method.upper(), method.lower())
+        suffix = _METHOD_SUFFIX.get(method.upper(), method.lower())
 
         return f"{prefix}{clean_path}_{suffix}"
+
+    def _infer_tool(self, path: str, methods: Iterable[str], name: Optional[str] = None) -> str:
+        """Infer one tool name for a route and reject names another path already uses."""
+        if name:
+            return name
+        requested = {m.upper() for m in methods} or {"GET"}
+        # Only the standard GET/HEAD pair shares inferred read authority.
+        considered = {"GET"} if "GET" in requested and requested <= {"GET", "HEAD"} else requested
+        names = {self._get_tool_name(path, method) for method in considered}
+        if len(names) != 1:
+            raise ConfigurationError(
+                f"SecureAPIRouter cannot infer one tool name for {path!r} with methods "
+                f"{sorted(considered)}: pass tool= explicitly"
+            )
+        tool = names.pop()
+        with self._inferred_lock:
+            other = self._inferred_tools.setdefault(tool, path)
+        if other != path:
+            raise ConfigurationError(
+                f"SecureAPIRouter inferred the tool name {tool!r} for both {other!r} and "
+                f"{path!r}; pass tool= explicitly for one of them"
+            )
+        return tool
+
+    def _is_guarded(self, path: str, endpoint: Callable, dependencies: Iterable[Any]) -> bool:
+        calls: List[Any] = [endpoint]
+        calls.extend(getattr(dep, "dependency", None) for dep in (*self.dependencies, *dependencies))
+        return any(_calls_tenuo_guard(path, call) for call in calls)
+
+    def add_api_route(  # type: ignore[override]
+        self,
+        path: str,
+        endpoint: Callable[..., Any],
+        *args: Any,
+        tool: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Add a route, adding a ``TenuoGuard`` unless one already protects it."""
+        dependencies = list(kwargs.pop("dependencies", None) or [])
+        if tool is not None or not self._is_guarded(path, endpoint, dependencies):
+            actual_tool = tool or self._infer_tool(path, kwargs.get("methods") or ["GET"])
+            dependencies.append(Depends(TenuoGuard(actual_tool)))
+        super().add_api_route(path, endpoint, *args, dependencies=dependencies, **kwargs)
+
+    def include_router(self, router: Any, *args: Any, prefix: str = "", **kwargs: Any) -> None:  # type: ignore[override]
+        """Include ``router`` with every one of its HTTP routes guarded.
+
+        Eager inclusion copies routes through ``add_api_route``. With lazy
+        inclusion they stay on ``router``, so an include-level guard names
+        and authorizes each one, including routes added to ``router`` later.
+        """
+        guard: Optional[_IncludedRoutesGuard] = None
+        if _lazy_include_supported():
+            guard = _IncludedRoutesGuard(self, router, prefix, kwargs.get("dependencies") or [])
+            guard.refresh()
+            kwargs["dependencies"] = [*(kwargs.get("dependencies") or []), Depends(guard)]
+        super().include_router(router, *args, prefix=prefix, **kwargs)
+        if guard is not None:
+            self._included_guards.append(guard)
+
+    def _refuse(self, kind: str, path: Any) -> None:
+        raise ConfigurationError(
+            f"SecureAPIRouter cannot guard {kind} ({path!r}); serve it from a separate router"
+        )
+
+    def add_route(self, path: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("plain Starlette routes", path)
+
+    def add_websocket_route(self, path: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("websocket routes", path)
+
+    def add_api_websocket_route(self, path: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("websocket routes", path)
+
+    def mount(self, path: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("mounts", path)
+
+    def host(self, host: str, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._refuse("host routes", host)
+
+    def frontend(self, path: str, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        self._refuse("frontends", path)
 
     def get(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:  # type: ignore[override]
         kwargs.pop("methods", None)  # Remove if present to avoid duplicate
@@ -762,7 +1299,7 @@ class SecureAPIRouter(APIRouter):  # type: ignore[misc,valid-type]
 
         def decorator(func: Callable) -> Callable:
             # Determine tool name
-            actual_tool = tool or self._get_tool_name(path, methods[0], kwargs.get("name"))
+            actual_tool = tool or self._infer_tool(path, methods, kwargs.get("name"))
 
             # The guard runs as a dependency, before the handler. The handler
             # does not have to accept the SecurityContext for it to execute.

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from tenuo_core import PublicKey, SigningKey, Warrant  # type: ignore[import-untyped]
 
+from ._native_patch import patch_native
 from .validation import ValidationResult
 
 try:
@@ -526,44 +527,9 @@ class BoundWarrant:
         return f"<BoundWarrant id={self._warrant.id[:12]}... KEY_BOUND=True>"
 
 
-# ============================================================================
-# Add bind method to Warrant class
-# ============================================================================
-
-
-def _warrant_bind(self: Warrant, key: SigningKey) -> BoundWarrant:
-    """
-    Bind this warrant to a signing key for convenience.
-
-    Returns a BoundWarrant which wraps the warrant and key together.
-    Use for repeated operations, but never store in state/cache.
-
-    Args:
-        key: The signing key to bind
-
-    Returns:
-        BoundWarrant instance
-
-    Example:
-        # Bind once, use multiple times
-        bound = warrant.bind(key)
-
-        # Make multiple API calls
-        headers1 = bound.headers("search", {"query": "test"})
-        headers2 = bound.headers("read", {"path": "/data/file.txt"})
-
-        worker1 = bound.grant(to=w1_key, allow="search", ttl=300)
-        worker2 = bound.grant(to=w2_key, allow="read", ttl=300)
-
-    Security Note:
-        This method performs **lazy validation**. It does not check if the key matches
-        the warrant's authorized holder immediately. Validation happens strictly at
-        usage time (when `authorize()` is called), which verifies the Proof-of-Possession
-        signature. If the wrong key is bound, `authorize()` will fail securely.
-    """
-    return BoundWarrant(self, key)
-
-
-# Attach to Warrant class
-if not hasattr(Warrant, "bind"):
-    Warrant.bind = _warrant_bind  # type: ignore[attr-defined]
+# Install the complete public implementation here, rather than a reduced shim.
+# ``bound_warrant`` can be the first Tenuo module imported by a Temporal sandbox;
+# in that case the sandbox guard keeps this initial patch for the lifetime of the
+# import. It must therefore support every public argument, including
+# ``trusted_roots``.
+patch_native(Warrant, "bind", BoundWarrant.bind_warrant, if_missing=True)

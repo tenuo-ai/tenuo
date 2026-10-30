@@ -55,14 +55,16 @@ def check_constraint(constraint: Constraint, value: Any) -> bool:
             # value passed to Range.  Fail closed — don't call the removed
             # Python reimplementation.
             return False
-        except Exception:
+        except Exception as e:
             # Rust raised an unexpected error (bad IP, invalid URL, CEL syntax
             # error …).  Fail closed and surface the problem in logs so it can
-            # be diagnosed without crashing the caller.
+            # be diagnosed without crashing the caller. Log the value's type,
+            # never the value: arguments can carry secrets.
             logger.warning(
-                "Constraint '%s'.satisfies() raised for value %r — failing closed.",
+                "Constraint '%s'.satisfies() raised %s for a %s value — failing closed.",
                 constraint_type,
-                value,
+                type(e).__name__,
+                type(value).__name__,
             )
             return False
 

@@ -362,7 +362,7 @@ from tenuo.exceptions import InsufficientApprovals, ApprovalGateTriggered
 
 ## Cryptographic Model
 
-Every approval binds to `(warrant_id, tool, args, holder)` via SHA-256 (`compute_request_hash`). `SignedApproval` = Ed25519 over `ApprovalPayload`. Rust verifies signature, hash, expiry (30s clock tolerance), approver trust, deduplication, and threshold.
+Every approval binds to `(warrant_id, tool, args, holder)` via SHA-256 (`compute_request_hash`). `SignedApproval` = Ed25519 over `ApprovalPayload`. Rust verifies signature, hash, strict expiry, future-timestamp clock tolerance, approver trust, deduplication, and threshold.
 
 ---
 

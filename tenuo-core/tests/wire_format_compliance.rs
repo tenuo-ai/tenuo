@@ -62,10 +62,10 @@ fn test_extension_preservation() {
     assert!(decoded.verify(&keypair.public_key()).is_ok());
 }
 
-/// Test: Clock tolerance for expiration (Spec §5)
-/// Requirement: Implementations should allow ±120 seconds clock skew
+/// Test the explicit expiry-tolerance inspection helper.
+/// Authorization does not use this helper: expiry is a strict upper bound.
 #[test]
-fn test_clock_tolerance() {
+fn test_expiry_tolerance_helper() {
     use chrono::Duration as ChronoDuration;
 
     let keypair = SigningKey::generate();

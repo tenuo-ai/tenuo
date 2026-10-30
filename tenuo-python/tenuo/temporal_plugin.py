@@ -4,7 +4,7 @@ Temporal ``SimplePlugin`` integration.
 Registers Tenuo as a first-class plugin: client + worker interceptors and
 workflow sandbox passthrough for ``tenuo`` / ``tenuo_core`` (PyO3).
 
-Requires ``temporalio>=1.23`` (``SimplePlugin`` in ``temporalio.plugin``); the
+Requires ``temporalio>=1.33`` (``SimplePlugin`` in ``temporalio.plugin``); the
 dependency floor is enforced in ``pyproject.toml``. Subclassing Temporal's
 interceptor bases keeps plugin filtering working on newer SDKs.
 
@@ -45,8 +45,8 @@ try:
     from temporalio.plugin import SimplePlugin
 except ImportError as e:  # pragma: no cover - guarded by temporalio version
     raise ImportError(
-        "TenuoTemporalPlugin requires temporalio>=1.23 "
-        "(temporalio.plugin.SimplePlugin). Upgrade: uv pip install 'temporalio>=1.23'"
+        "TenuoTemporalPlugin requires temporalio>=1.33 "
+        "(temporalio.plugin.SimplePlugin). Upgrade: uv pip install 'temporalio>=1.33'"
     ) from e
 
 from tenuo.exceptions import ConfigurationError
@@ -119,11 +119,11 @@ def _simple_plugin_kwargs(
     client_interceptor: TenuoClientInterceptor,
     worker_interceptor: TenuoWorkerInterceptor,
 ) -> dict[str, Any]:
-    """Build ``super().__init__(..., **kwargs)`` for ``SimplePlugin`` (>=1.23).
+    """Build ``super().__init__(..., **kwargs)`` for ``SimplePlugin`` (>=1.33).
 
     Both ``interceptors`` and ``workflow_failure_exception_types`` are
     available on the ``SimplePlugin`` constructor for every SDK version
-    we support (the ``temporalio>=1.23`` pin is enforced in
+    we support (the ``temporalio>=1.33`` pin is enforced in
     ``pyproject.toml`` and at import time in this module).
     """
     return {
@@ -361,6 +361,18 @@ class TenuoTemporalPlugin(SimplePlugin):
             )
         _set_worker_config(self._tenuo_config, task_queue=task_queue)
         return super().configure_worker(config)
+
+    def configure_replayer(self, config: Any) -> Any:  # type: ignore[override]
+        """Preload signing keys before a :class:`~temporalio.worker.Replayer` runs.
+
+        ``Replayer`` never calls the worker ``activities`` hook where keys are
+        normally preloaded. Without this, a resolver that reads ``os.environ``
+        (e.g. :class:`EnvKeyResolver`) is called from inside the workflow
+        sandbox during replay, fails, and the replayed workflow no longer
+        schedules the recorded activity (a false nondeterminism error).
+        """
+        self._preload_keys()
+        return super().configure_replayer(config)
 
     def _preload_keys(self) -> None:
         """Eagerly preload signing keys from the configured resolver.

@@ -43,7 +43,7 @@ uv pip install tenuo
    - Yes -> Tier 2. The verifier checks issuer, holder, and narrowing delegation locally, in one process or across many.
 
 3. **Are you using the OpenAI Agents SDK?**
-   - Yes -> Use `create_tier1_guardrail()` or `create_tier2_guardrail()`
+   - Yes -> Use `guard_agent()`
    - No -> Use `guard()` or `GuardBuilder()`
 
 **TL;DR:** Tier 1 rejects out-of-policy calls in trusted code. Tier 2 adds signed, holder-bound authority an independent verifier can check. Run the check on the path that performs the effect.
@@ -58,12 +58,12 @@ Use the **builder pattern** for semantic constraints that block attacks:
 
 ```python
 import openai
-from tenuo.openai import GuardBuilder, Pattern, Subpath
+from tenuo.openai import GuardBuilder, Regex, Subpath
 
 client = (GuardBuilder(openai.OpenAI())
     .allow("search_web")
     .allow("read_file", path=Subpath("/data"))
-    .allow("send_email", to=Pattern("*@company.com"))
+    .allow("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"))
     .deny("delete_file")
     .build())
 
@@ -422,57 +422,70 @@ for chunk in client.chat.completions.create(..., stream=True):
 
 ## OpenAI Agents SDK Integration
 
-Tenuo integrates with the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) via guardrails.
+`guard_agent()` checks every tool call an [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) agent makes, before the tool runs. It attaches a Tenuo [tool guardrail](https://openai.github.io/openai-agents-python/guardrails/) to each function tool, to each MCP server on the agent, and to every agent reachable through handoffs.
 
-### Tier 1: Constraint-Based Guardrails
+Requires `openai-agents` 0.3.3 or later.
+
+> **Use `guard_agent()`, not `input_guardrails`.** An agent's input guardrails only see the input it is given, never the tool calls the model makes during the run, so they can't enforce tool authorization. `TenuoToolGuardrail` raises a configuration error if you put it in `Agent(input_guardrails=...)`.
+
+### Tier 1: inline constraints
 
 ```python
 from agents import Agent, Runner
-from tenuo.openai import create_tier1_guardrail, Pattern
+from tenuo.openai import Regex, guard_agent
 
-# Create guardrail with inline constraints
-guardrail = create_tier1_guardrail(
-    constraints={"send_email": {"to": Pattern("*@company.com")}}
+agent = guard_agent(
+    Agent(name="Assistant", instructions="Help with email", tools=[send_email, search]),
+    allow_tools=["send_email", "search"],
+    constraints={"send_email": {"to": Regex(r"^[A-Za-z0-9._%+-]+@company\.com$")}},
 )
 
-# Attach to agent
-agent = Agent(
-    name="Assistant",
-    instructions="Help the user with email tasks",
-    input_guardrails=[guardrail],
-)
-
-# Run - unauthorized tool calls trigger tripwire
-result = await Runner.run(agent, "Send email to alice@company.com")
+result = await Runner.run(agent, "Email the Q3 summary to alice@company.com")
 ```
 
-### Tier 2: Warrant-Based Guardrails
+### Tier 2: warrants
 
 ```python
-from tenuo.openai import create_tier2_guardrail
-from tenuo import SigningKey, Warrant, Pattern
+from tenuo import Regex, SigningKey, Warrant
+from tenuo.openai import guard_agent
 
-# Control plane issues warrant to agent
+# The control plane issues a warrant for this task to the agent's key.
 agent_key = SigningKey.generate()
-warrant = (Warrant.mint_builder()
-    .capability("send_email", {"to": Pattern("*@company.com")})
+warrant = (
+    Warrant.mint_builder()
+    .capability("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"))
     .holder(agent_key.public_key)
     .ttl(3600)
-    .mint(control_plane_key))
-
-# Create Tier 2 guardrail with PoP
-guardrail = create_tier2_guardrail(
-    warrant=warrant,
-    signing_key=agent_key,
+    .mint(control_plane_key)
 )
 
-agent = Agent(
-    name="Authorized Assistant",
-    input_guardrails=[guardrail],
+agent = guard_agent(
+    Agent(name="Authorized Assistant", tools=[send_email]),
+    warrant=warrant,
+    signing_key=agent_key,
+    trusted_roots=[control_plane_key.public_key],
 )
 ```
 
-### Guardrail Options
+### What happens on a denial
+
+By default (`on_denial="reject"`), the tool doesn't run and the model receives the denial as the tool result, so the run continues and the model can choose another action. With `on_denial="raise"`, the run halts with `ToolInputGuardrailTripwireTriggered`.
+
+### Policies belong to agents, not tools
+
+Agents often share tool objects and MCP servers. The policy you pass to `guard_agent()` is registered for that agent, and every call is checked against the policy of the agent making it, so two agents built from the same tools keep separate policies. Calling `guard_agent()` again on an agent replaces its policy. A guarded tool denies calls from an agent that has no policy, including a copy made with `agent.clone()`, so guard clones too.
+
+`guard_agent()` guards the tools the agent has when you call it. If you add tools later, call it again. An agent exposed through `agent.as_tool()` runs its own tools inside that call, so guard the inner agent too.
+
+### What `guard_agent()` refuses
+
+It fails closed instead of leaving a tool unchecked:
+
+- **Hosted tools** that run on OpenAI's side (for example `WebSearchTool`) can't be intercepted, so `guard_agent()` raises `OpenAIConfigurationError`. Remove them or use a function tool.
+- **MCP servers** on an `openai-agents` release without MCP server guardrails raise the same error. Upgrade `openai-agents`.
+- **Handoffs** whose target agent can't be resolved raise the same error. Call `guard_agent()` on that agent directly.
+
+### Options
 
 | Parameter | Description |
 |-----------|-------------|
@@ -481,7 +494,9 @@ agent = Agent(
 | `constraints` | Per-tool argument constraints |
 | `warrant` | Tier 2 warrant (optional) |
 | `signing_key` | Required if warrant provided |
-| `tripwire` | If True, halt agent on violation (default: True) |
+| `trusted_roots` | Trusted issuer public keys for Tier 2 |
+| `on_denial` | `"reject"` (default) or `"raise"` |
+| `include_handoffs` | Also guard agents reachable through handoffs (default: True) |
 | `audit_callback` | Optional callback for audit events |
 
 ---
@@ -518,6 +533,8 @@ client = guard(
 | `tier` | "tier1" or "tier2" |
 | `constraint_hash` | Hash of Tier 1 config |
 | `warrant_id` | Warrant ID (Tier 2 only) |
+
+Every decision is recorded, including streamed tool calls, malformed or duplicate-key arguments, and streams cut off by the buffer limit.
 
 ---
 
@@ -578,7 +595,7 @@ except TenuoOpenAIError as e:
 | `OpenAIConstraintViolation` | 1+ | T1_002 | Argument fails constraint |
 | `WarrantDenied` | 2 | T2_001 | Warrant doesn't allow tool/args |
 | `MissingSigningKey` | 2 | T2_002 | Warrant provided without signing_key |
-| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, C1_003 | Invalid guard() configuration |
+| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, CFG_004, CFG_005, CFG_006, C1_003 | Invalid guard() configuration, or an endpoint guard can't verify |
 | `MalformedToolCall` | 1+ | T1_003 | Invalid JSON in tool arguments |
 | `BufferOverflow` | 1+ | T1_004 | Streaming buffer limit exceeded |
 
@@ -598,6 +615,32 @@ client = guard(openai.OpenAI(), allow_tools=["search"])
 # Works with Responses API
 response = client.responses.create(...)
 ```
+
+> [!NOTE]
+> Streaming Responses (`responses.create(..., stream=True)`) isn't supported under guard yet. The call raises `OpenAIConfigurationError` (`CFG_004`) before any request is sent, so you never get an unverified stream.
+
+### Tool calls other than functions
+
+Every output item your app is asked to run is checked, not only `function_call`. Custom (freeform) tools, `local_shell_call`, `shell_call`, `apply_patch_call` and `computer_call` must be allowed by name. A denylist on its own never lets them through.
+
+| Item | Tool name to allow | Arguments checked |
+|------|--------------------|-------------------|
+| custom tool call (chat or Responses) | the tool's name | `input` |
+| `local_shell_call` | `local_shell` | fields of `action` (`command`, `env`, ...) |
+| `shell_call` | `shell` | fields of `action` (`commands`, ...) |
+| `apply_patch_call` | `apply_patch` | fields of `operation` (`type`, `path`, `diff`) |
+| `computer_call` | `computer` | fields of `action` |
+| client-executed `tool_search_call` | `tool_search` | `arguments` and `execution` |
+
+```python
+client = guard(openai.OpenAI(), allow_tools=["search", "local_shell"])
+```
+
+Under Tier 2 the warrant must grant the same tool name. Hosted tools that OpenAI runs itself (web search, file search, code interpreter, image generation, remote MCP, and server-executed tool search) pass through unchanged.
+
+### Client surfaces
+
+`with_options()` and `copy()` return a client with the same guard and session. `chat.completions.parse()`, `beta.chat.completions.parse()` and `responses.parse()` are verified like `create()`. Endpoints guard can't verify fail closed with `OpenAIConfigurationError` (`CFG_005`): `conversations` (whose stored items can include tool calls), `with_raw_response`, `with_streaming_response`, `realtime`, the raw HTTP methods (`get`, `post`, ...), and everything under `beta` except `beta.chat.completions`. Use your unguarded client for endpoints that can't return tool calls.
 
 ---
 
