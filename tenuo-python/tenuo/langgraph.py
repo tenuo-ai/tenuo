@@ -939,6 +939,13 @@ def tenuo_node(func: F) -> F:
             return {"messages": [...], "warrant": child_warrant}
     """
 
+    import inspect
+
+    func_sig = inspect.signature(func)
+    func_accepts_config = "config" in func_sig.parameters or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in func_sig.parameters.values()
+    )
+
     @wraps(func)
     def wrapper(
         state: Union[Dict[str, Any], Any],
@@ -954,7 +961,25 @@ def tenuo_node(func: F) -> F:
 
         kwargs["bound_warrant"] = bw
 
+        if config is not None and func_accepts_config:
+            kwargs["config"] = config
         return func(state, **kwargs)
+
+    # LangGraph decides whether to inject ``config`` by inspecting the node's
+    # signature. ``@wraps`` sets ``__wrapped__``, so inspect.signature() would
+    # report the decorated function's ``(state, bound_warrant)`` and LangGraph
+    # would never pass ``config`` - silently ignoring ``tenuo_key_id``.
+    # Advertise the node's own parameters (so LangGraph still infers the state
+    # schema and injects ``runtime``, ``store``, etc.) plus ``config``, and hide
+    # ``bound_warrant``, which the wrapper supplies.
+    params = [p for p in func_sig.parameters.values() if p.name != "bound_warrant"]
+    if not params:
+        params = [inspect.Parameter("state", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    if "config" not in func_sig.parameters:
+        # Keyword-only so it is valid after any parameter, but it must precede **kwargs.
+        at = -1 if params[-1].kind == inspect.Parameter.VAR_KEYWORD else len(params)
+        params.insert(at, inspect.Parameter("config", inspect.Parameter.KEYWORD_ONLY, default=None))
+    wrapper.__signature__ = func_sig.replace(parameters=params)  # type: ignore[attr-defined]
 
     return wrapper  # type: ignore
 
