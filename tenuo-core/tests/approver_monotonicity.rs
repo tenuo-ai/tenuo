@@ -304,7 +304,7 @@ fn verifier_rejects_child_that_swaps_an_approver() {
 fn verifier_rejects_child_that_lowers_threshold() {
     let k = keys();
     let err = verify_child(&k, &[&k.a, &k.b], Some(1)).unwrap_err();
-    assert!(err.contains("threshold lowered"), "{err}");
+    assert!(err.contains("cannot lower approval threshold"), "{err}");
 }
 
 #[test]
@@ -468,7 +468,8 @@ fn issuance_cannot_dilute_quorum_by_adding_approver_at_same_threshold() {
         .build(&root)
         .unwrap_err();
     assert!(
-        err.to_string().contains("cannot lower approval threshold"),
+        err.to_string()
+            .contains("requires an approval threshold of at least 2"),
         "{err}"
     );
 }
@@ -502,7 +503,10 @@ fn verifier_rejects_child_that_dilutes_quorum_with_extra_approver() {
     let rogue = SigningKey::generate();
     // Root requires 2-of-2 [a, b]; child adds rogue at threshold 2 (2-of-3).
     let err = verify_child(&k, &[&k.a, &k.b, &rogue], Some(2)).unwrap_err();
-    assert!(err.contains("threshold lowered"), "{err}");
+    assert!(
+        err.contains("requires an approval threshold of at least"),
+        "{err}"
+    );
 
     // Raising threshold to 3-of-3 preserves the [a, b] quorum.
     verify_child(&k, &[&k.a, &k.b, &rogue], Some(3)).unwrap();
@@ -603,4 +607,79 @@ fn issuable_tools_on_execution_child_keeps_gates() {
         Some(vec![a.public_key()])
     );
     verify_both(&root, &[parent, child]).unwrap();
+}
+
+#[test]
+fn delegation_raises_minimum_for_added_approver() {
+    let (root, worker, a, b, c) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let parent = Warrant::builder()
+        .tool("transfer", ConstraintSet::new())
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes("transfer"))
+        .required_approvers(vec![a.public_key(), b.public_key()])
+        .min_approvals(1)
+        .ttl(Duration::from_secs(3600))
+        .holder(root.public_key())
+        .build(&root)
+        .unwrap();
+
+    let child = parent
+        .attenuate()
+        .inherit_all()
+        .add_approvers(vec![c.public_key()])
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap();
+    assert_eq!(child.min_approvals(), Some(2));
+    assert_eq!(child.approval_threshold(), 2);
+    verify_both(&root, &[parent, child]).unwrap();
+}
+
+#[test]
+fn delegation_rejects_explicit_approvers_without_a_gate() {
+    let (root, worker, a, c) = (
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+        SigningKey::generate(),
+    );
+    let mut read = ConstraintSet::new();
+    read.insert("path", Constraint::Wildcard(Wildcard));
+    let parent = Warrant::builder()
+        .tool("transfer", ConstraintSet::new())
+        .tool("read_file", read.clone())
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes("transfer"))
+        .required_approvers(vec![a.public_key()])
+        .ttl(Duration::from_secs(3600))
+        .holder(root.public_key())
+        .build(&root)
+        .unwrap();
+
+    // Inherited approvers fall away with the gate.
+    let ungated = parent
+        .attenuate()
+        .tool("read_file", read.clone())
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap();
+    assert!(ungated.required_approvers().is_none());
+
+    // Approvers set on the builder are an error, not silently dropped.
+    let err = parent
+        .attenuate()
+        .tool("read_file", read)
+        .add_approvers(vec![c.public_key()])
+        .holder(worker.public_key())
+        .build(&root)
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("required_approvers requires an approval gate map"),
+        "{err}"
+    );
 }

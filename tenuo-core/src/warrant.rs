@@ -1610,6 +1610,48 @@ fn approval_threshold(approvers: Option<&Vec<PublicKey>>, min: Option<u32>) -> u
     }
 }
 
+/// Approvers in `child` that `parent` does not already list.
+fn delegated_added_approvers(parent: &Warrant, child: Option<&Vec<PublicKey>>) -> u32 {
+    match (parent.payload.required_approvers.as_deref(), child) {
+        (Some(p), Some(c)) => added_approver_count(p, c),
+        _ => 0,
+    }
+}
+
+/// A delegated child's minimum. Left at the parent's value, it rises by one per
+/// added approver, as issuance does, so adding a key never needs a separate
+/// `raise_min_approvals` call.
+fn delegated_min_approvals(
+    parent: &Warrant,
+    approvers: Option<&Vec<PublicKey>>,
+    min: Option<u32>,
+) -> Option<u32> {
+    let parent_min = parent.payload.min_approvals;
+    match (min.or(parent_min), parent_min) {
+        (Some(min), Some(parent_min)) if min == parent_min => {
+            Some(parent_min.saturating_add(delegated_added_approvers(parent, approvers)))
+        }
+        (min, _) => min,
+    }
+}
+
+/// Error text for a child threshold below `base` plus one per added approver.
+pub(crate) fn threshold_violation(base: u32, added: u32, threshold: u32) -> String {
+    if added == 0 {
+        format!(
+            "cannot lower approval threshold from {} to {}",
+            base, threshold
+        )
+    } else {
+        format!(
+            "adding {} approver(s) requires an approval threshold of at least {}, got {}",
+            added,
+            base.saturating_add(added),
+            threshold
+        )
+    }
+}
+
 /// See [`Warrant::approval_gate_scope`].
 fn approval_gate_scope(
     warrant_type: WarrantType,
@@ -2337,22 +2379,19 @@ impl<'a> AttenuationBuilder<'a> {
         // An unset parent minimum still means every parent approver; each added
         // approver must also raise the effective threshold so a new key cannot
         // satisfy the quorum in place of a parent approver.
-        let added = match (
-            self.parent.payload.required_approvers.as_deref(),
-            self.required_approvers.as_deref(),
-        ) {
-            (Some(p), Some(c)) => added_approver_count(p, c),
-            _ => 0,
-        };
-        let required_threshold = self.parent.approval_threshold().saturating_add(added);
+        let added = delegated_added_approvers(&self.parent, self.required_approvers.as_ref());
+        let base = self.parent.approval_threshold();
         let threshold = approval_threshold(
             self.required_approvers.as_ref(),
-            self.min_approvals.or(self.parent.payload.min_approvals),
+            delegated_min_approvals(
+                &self.parent,
+                self.required_approvers.as_ref(),
+                self.min_approvals,
+            ),
         );
-        if threshold < required_threshold {
-            return Err(Error::MonotonicityViolation(format!(
-                "cannot lower approval threshold from {} to {}",
-                required_threshold, threshold
+        if threshold < base.saturating_add(added) {
+            return Err(Error::MonotonicityViolation(threshold_violation(
+                base, added, threshold,
             )));
         }
 
@@ -2524,6 +2563,16 @@ impl<'a> AttenuationBuilder<'a> {
                         );
                     }
                     None => {
+                        // No gate survives: inherited approvers have nothing to
+                        // approve. Approvers set on this builder would be lost.
+                        if self.required_approvers.as_deref()
+                            != self.parent.payload.required_approvers.as_deref()
+                            || self.min_approvals != self.parent.payload.min_approvals
+                        {
+                            return Err(Error::Validation(
+                                "required_approvers requires an approval gate map".to_string(),
+                            ));
+                        }
                         self.extensions
                             .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
                         self.required_approvers = None;
@@ -2588,7 +2637,11 @@ impl<'a> AttenuationBuilder<'a> {
         };
 
         let effective_min = if self.required_approvers.is_some() {
-            self.min_approvals.or(self.parent.payload.min_approvals)
+            delegated_min_approvals(
+                &self.parent,
+                self.required_approvers.as_ref(),
+                self.min_approvals,
+            )
         } else {
             None
         };
@@ -3313,22 +3366,19 @@ impl OwnedAttenuationBuilder {
         // An unset parent minimum still means every parent approver; each added
         // approver must also raise the effective threshold so a new key cannot
         // satisfy the quorum in place of a parent approver.
-        let added = match (
-            self.parent.payload.required_approvers.as_deref(),
-            self.required_approvers.as_deref(),
-        ) {
-            (Some(p), Some(c)) => added_approver_count(p, c),
-            _ => 0,
-        };
-        let required_threshold = self.parent.approval_threshold().saturating_add(added);
+        let added = delegated_added_approvers(&self.parent, self.required_approvers.as_ref());
+        let base = self.parent.approval_threshold();
         let threshold = approval_threshold(
             self.required_approvers.as_ref(),
-            self.min_approvals.or(self.parent.payload.min_approvals),
+            delegated_min_approvals(
+                &self.parent,
+                self.required_approvers.as_ref(),
+                self.min_approvals,
+            ),
         );
-        if threshold < required_threshold {
-            return Err(Error::MonotonicityViolation(format!(
-                "cannot lower approval threshold from {} to {}",
-                required_threshold, threshold
+        if threshold < base.saturating_add(added) {
+            return Err(Error::MonotonicityViolation(threshold_violation(
+                base, added, threshold,
             )));
         }
 
@@ -3486,6 +3536,16 @@ impl OwnedAttenuationBuilder {
                         );
                     }
                     None => {
+                        // No gate survives: inherited approvers have nothing to
+                        // approve. Approvers set on this builder would be lost.
+                        if self.required_approvers.as_deref()
+                            != self.parent.payload.required_approvers.as_deref()
+                            || self.min_approvals != self.parent.payload.min_approvals
+                        {
+                            return Err(Error::Validation(
+                                "required_approvers requires an approval gate map".to_string(),
+                            ));
+                        }
                         self.extensions
                             .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
                         self.required_approvers = None;
@@ -3556,7 +3616,11 @@ impl OwnedAttenuationBuilder {
         };
 
         let effective_min = if self.required_approvers.is_some() {
-            self.min_approvals.or(self.parent.payload.min_approvals)
+            delegated_min_approvals(
+                &self.parent,
+                self.required_approvers.as_ref(),
+                self.min_approvals,
+            )
         } else {
             None
         };
@@ -4082,9 +4146,10 @@ impl<'a> IssuanceBuilder<'a> {
             let threshold =
                 approval_threshold(self.required_approvers.as_ref(), self.min_approvals);
             if threshold < required_threshold {
-                return Err(Error::MonotonicityViolation(format!(
-                    "cannot lower approval threshold from {} to {}",
-                    required_threshold, threshold
+                return Err(Error::MonotonicityViolation(threshold_violation(
+                    self.issuer.approval_threshold(),
+                    added,
+                    threshold,
                 )));
             }
         }

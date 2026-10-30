@@ -615,9 +615,12 @@ fn verify_approval_link(parent: &Warrant, child: &Warrant) -> Result<()> {
             let required_threshold = parent.approval_threshold().saturating_add(added);
             if child.approval_threshold() < required_threshold {
                 return Err(Error::ChainVerificationFailed(format!(
-                    "approval gate monotonicity violation: threshold lowered from {} to {}",
-                    required_threshold,
-                    child.approval_threshold()
+                    "approval gate monotonicity violation: {}",
+                    crate::warrant::threshold_violation(
+                        parent.approval_threshold(),
+                        added,
+                        child.approval_threshold()
+                    )
                 )));
             }
         }
