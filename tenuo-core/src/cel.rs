@@ -610,6 +610,16 @@ mod tests {
     }
 
     #[test]
+    fn test_tenuo_object_policy_fails_closed_without_function() {
+        let program =
+            Program::compile("!has(tenuo_object().approve) || tenuo_object().approve == false")
+                .unwrap();
+        let context = create_context();
+
+        assert!(program.execute(&context).is_err());
+    }
+
+    #[test]
     fn test_object_field_named_value_keeps_legacy_precedence() {
         let value = ConstraintValue::Object(
             [
