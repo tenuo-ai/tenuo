@@ -53,8 +53,9 @@ release runs warn about it. Release automation will never move a prerelease to
 - [ ] Publishing uses npm provenance and the derived dist-tag.
 - [ ] Registry verification confirms both packages resolved on the intended tag.
 
-The named compatibility, security, packaging, and generated-WASM checks above
-are enforced by `.github/workflows/ci.yml`. The version/channel check, packed
+The named compatibility, packaging, and generated-WASM checks above are
+enforced by `.github/workflows/ci.yml`; the three TypeScript security checks
+are enforced by `.github/workflows/security.yml`. The version/channel check, packed
 consumer smoke tests, provenance-enabled publish, publication ordering, and
 registry verification are enforced again by `.github/workflows/release.yml`.
 Before a stable publish, the release workflow also requires successful Node 20,
