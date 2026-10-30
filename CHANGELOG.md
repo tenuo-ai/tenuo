@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
-Two checks are stricter, and some calls that used to pass now fail:
+Check these before upgrading:
 
 - **A delegated warrant that asks to outlive its parent is rejected.**
   Requesting a TTL longer than the parent's remaining lifetime used to be
@@ -58,9 +58,33 @@ Two checks are stricter, and some calls that used to pass now fail:
   their approver said, as warrants already do at authorization. The tolerance
   still covers an approval dated slightly in the future. The `clock_tolerance_secs`
   argument of `verify_approvals` now applies to `approved_at` only.
+- **`mode="audit"` and `mode="permissive"` now stop blocking.** The shared
+  enforcement path ignored them, so calls were still enforced. Both are now
+  aliases of `mode="observe"`, which runs the full check, logs each call it
+  would deny, and lets it run, in every integration. If you set either,
+  including through `TENUO_MODE`, set `enforce` to keep blocking.
+  `auto_protect()` changes the mode of an existing configuration only when
+  `mode` is passed.
 
 ### Fixed
 
+- **CrewAI hooks block every call they cannot authorize.** CrewAI runs the
+  tool when a `before_tool_call` hook raises, so a refused approval, a missing
+  `on_approval` handler, an approval that failed to verify, or an unexpected
+  error let the call through. The hook now returns `False` for all of them,
+  and approval failures are audited as `DENY` with `APPROVAL_DENIED`,
+  `APPROVAL_REQUIRED` or `APPROVAL_VERIFICATION_FAILED`.
+  `CrewAIGuard.as_async_hook()` returned a coroutine function that CrewAI
+  never awaits, which counted as allow; it now returns the synchronous hook
+  and is deprecated. `@guarded_step` on an `async def` Flow step removed the
+  guard before the step ran; it now stays registered until the step finishes.
+- **CrewAI Tier 1 requires constrained arguments and matches roles
+  case-insensitively.** A call that left out a constrained argument ran with
+  the tool's default value unchecked; it is now denied, matching the core.
+  `role::tool` policy keys match the agent role ignoring case and whitespace,
+  so `researcher::search` applies to role `Researcher` instead of falling back
+  to the global `search` policy. Two keys for the same role that differ only
+  in case raise `CrewAIConfigurationError`.
 - **CEL object constraints can test optional fields.** Object-valued arguments
   are now available through the opt-in `tenuo_object()` function, so policies
   can use expressions such as `!has(tenuo_object().approve) ||
@@ -567,23 +591,6 @@ are now denied. Check these before upgrading:
   extension does not export, so every signed request failed before it was
   sent. Arguments are now passed to `Warrant.sign`, which already
   canonicalizes plain values.
-- **CrewAI hooks block every call they cannot authorize.** CrewAI runs the
-  tool when a `before_tool_call` hook raises, so a refused approval, a missing
-  `on_approval` handler, an approval that failed to verify, or an unexpected
-  error let the call through. The hook now returns `False` for all of them,
-  and approval failures are audited as `DENY` with `APPROVAL_DENIED`,
-  `APPROVAL_REQUIRED` or `APPROVAL_VERIFICATION_FAILED`.
-  `CrewAIGuard.as_async_hook()` returned a coroutine function that CrewAI
-  never awaits, which counted as allow; it now returns the synchronous hook
-  and is deprecated. `@guarded_step` on an `async def` Flow step removed the
-  guard before the step ran; it now stays registered until the step finishes.
-- **CrewAI Tier 1 requires constrained arguments and matches roles
-  case-insensitively.** A call that left out a constrained argument ran with
-  the tool's default value unchecked; it is now denied, matching the core.
-  `role::tool` policy keys match the agent role ignoring case and whitespace,
-  so `researcher::search` applies to role `Researcher` instead of falling back
-  to the global `search` policy. Two keys for the same role that differ only
-  in case raise `CrewAIConfigurationError`.
 
 ### Security
 

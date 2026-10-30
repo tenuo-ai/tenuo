@@ -415,3 +415,57 @@ def test_role_keys_differing_only_in_case_are_rejected():
             .allow("Researcher::search", query=Pattern("*"))
             .build()
         )
+
+
+# -- nested steps and observe mode --------------------------------------------
+
+
+def test_nested_guarded_step_keeps_outer_policy():
+    @guarded_step(allow={"delete_file": {"path": Pattern("*")}})
+    def inner():
+        return _crew([delete_file], [("delete_file", {"path": "/tmp/x"})]).kickoff()
+
+    @guarded_step(allow={"search": {"query": Pattern("*")}})
+    def outer():
+        return inner()
+
+    outer()
+    assert EXECUTED == []
+
+
+def test_nested_guarded_step_runs_tool_both_policies_allow():
+    @guarded_step(allow={"search": {"query": Pattern("*")}})
+    def inner():
+        return _crew([search], [("search", {"query": "ok"})]).kickoff()
+
+    @guarded_step(allow={"search": {"query": Pattern("*")}})
+    def outer():
+        return inner()
+
+    outer()
+    assert EXECUTED == [("search", "ok")]
+
+
+def test_observed_tier1_denial_still_runs_tier2(monkeypatch):
+    from tenuo import crewai as crewai_mod
+    from tenuo.config import configure
+
+    control, agent_key, _, warrant = _approval_warrant()
+    configure(trusted_roots=[control.public_key], mode="observe")
+    events = []
+    guard = _approval_guard(control, agent_key, warrant, handler=None, audit=events.append)
+
+    calls = []
+    real = crewai_mod.enforce_tool_call
+
+    def spy(**kwargs):
+        calls.append(kwargs["tool_name"])
+        return real(**kwargs)
+
+    monkeypatch.setattr(crewai_mod, "enforce_tool_call", spy)
+
+    # Outside the Tier 1 range, and gated in the warrant.
+    assert guard._authorize("transfer_funds", {"amount": 200_000}) is None
+    assert calls == ["transfer_funds"]
+    assert [e.decision for e in events] == ["DENY", "DENY"]
+    assert all(e.observed for e in events)

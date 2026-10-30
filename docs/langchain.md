@@ -471,7 +471,7 @@ result = executor.invoke({"input": "Read /tmp/test.txt"})
 
 ### `auto_protect()` (Zero Config)
 
-The fastest way to add protection - defaults to **audit mode** so you can deploy without breaking anything:
+The fastest way to add protection - when Tenuo is not configured yet, it defaults to **observe mode** so you can deploy without breaking anything. The mode applies to the whole process, and an existing configuration keeps its mode unless you pass `mode`:
 
 ```python
 from tenuo.langchain import auto_protect
@@ -489,7 +489,7 @@ protected_executor = auto_protect(executor, mode="enforce")
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `agent_or_tools` | `Any` | required | AgentExecutor, list of tools, or single tool |
-| `mode` | `str` | `"audit"` | `"audit"` (log only), `"enforce"` (block), `"permissive"` (warn) |
+| `mode` | `str` | `None` | `"observe"` (log only) or `"enforce"` (block); `"audit"` and `"permissive"` are aliases of `"observe"`. `None` keeps the configured mode, or uses `"observe"` when Tenuo is not configured |
 
 ### `SecureAgentExecutor` (Drop-in Replacement)
 

@@ -1180,7 +1180,11 @@ class CrewAIGuard:
         # Steps 1-3: Tier 1 policy (tool allowlist, closed-world arguments)
         tier1_error = self._tier1_error(tool_name, args, agent_role)
         if tier1_error is not None:
-            return self._handle_denial(tier1_error, tool_name, args, agent_role)
+            denial = self._handle_denial(tier1_error, tool_name, args, agent_role)
+            if should_block_violation():
+                return denial
+            # Observe mode: the DENY is audited; still run Tier 2 so its
+            # would-deny result and receipt are recorded too.
 
         # Step 4: Tier 2 - Warrant authorization with PoP (Unified Enforcement)
         observed_result: Optional[EnforcementResult] = None
@@ -1237,7 +1241,7 @@ class CrewAIGuard:
                 warrant_id=observed_result.warrant_id,
                 constraint_violated=observed_result.constraint_violated,
             )
-        else:
+        elif tier1_error is None:
             self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized {tool_name}")
         return None
@@ -1266,7 +1270,11 @@ class CrewAIGuard:
         # Steps 1-3: Tier 1 policy (tool allowlist, closed-world arguments)
         tier1_error = self._tier1_error(tool_name, args, agent_role)
         if tier1_error is not None:
-            return self._handle_denial(tier1_error, tool_name, args, agent_role)
+            denial = self._handle_denial(tier1_error, tool_name, args, agent_role)
+            if should_block_violation():
+                return denial
+            # Observe mode: the DENY is audited; still run Tier 2 so its
+            # would-deny result and receipt are recorded too.
 
         # Step 4: Tier 2 — async warrant authorization with PoP
         observed_result: Optional[EnforcementResult] = None
@@ -1323,7 +1331,7 @@ class CrewAIGuard:
                 warrant_id=observed_result.warrant_id,
                 constraint_violated=observed_result.constraint_violated,
             )
-        else:
+        elif tier1_error is None:
             self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized (async) {tool_name}")
         return None
@@ -1940,6 +1948,12 @@ _unguarded_calls: contextvars.ContextVar[List[str]] = contextvars.ContextVar("te
 _scoped_guards_lock = threading.Lock()
 _scoped_guards: Dict[int, "CrewAIGuard"] = {}
 
+# Scoped guards entered in this context, outermost first.  Nested steps keep
+# every enclosing step's policy in force, as when each registered its own hook.
+_scoped_guard_stack: contextvars.ContextVar["tuple[CrewAIGuard, ...]"] = contextvars.ContextVar(
+    "tenuo_scoped_guard_stack", default=()
+)
+
 
 class UnguardedToolError(TenuoCrewAIError):
     """Raised when strict mode detects unguarded tool calls."""
@@ -1992,10 +2006,10 @@ def _scoped_guard_hook(guard: "CrewAIGuard"):
     authorize = guard._create_hook()
 
     def dispatch(context: Any) -> Optional[bool]:
-        active_guard = get_active_guard()
-        if active_guard is guard:
-            return authorize(context)
-        if active_guard is not None:
+        scopes = _scoped_guard_stack.get()
+        if scopes:
+            return authorize(context) if any(g is guard for g in scopes) else None
+        if get_active_guard() is not None:
             return None
 
         # Some CrewAI execution modes use plain worker threads, which do not
@@ -2018,11 +2032,13 @@ def _scoped_guard_hook(guard: "CrewAIGuard"):
     guard_id = id(guard)
     with _scoped_guards_lock:
         _scoped_guards[guard_id] = guard
+    stack_token = _scoped_guard_stack.set(_scoped_guard_stack.get() + (guard,))
     register_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
     try:
         yield
     finally:
         unregister_before_tool_call_hook(dispatch)
+        _scoped_guard_stack.reset(stack_token)
         with _scoped_guards_lock:
             _scoped_guards.pop(guard_id, None)
 

@@ -560,7 +560,9 @@ def _mcp_result_from_enforcement(
             constraints=constraints,
             warrant_id=warrant_id,
             denial_reason=reason,
-            jsonrpc_error_code=-32002,
+            # An observed call proceeds, so it carries no JSON-RPC error code:
+            # callers branch on is_approval_required before checking allowed.
+            jsonrpc_error_code=None if allowed else -32002,
             request_hash=meta.get("request_hash") or getattr(enforcement, "request_hash", None),
             approval_metadata=meta or None,
             error_type=error_type or None,
@@ -576,7 +578,7 @@ def _mcp_result_from_enforcement(
         constraints=constraints,
         warrant_id=warrant_id,
         denial_reason=reason,
-        jsonrpc_error_code=-32001,
+        jsonrpc_error_code=None if allowed else -32001,
         error_type=error_type or None,
         observed=observed,
         constraint_violated=getattr(enforcement, "constraint_violated", None),
@@ -1103,7 +1105,7 @@ class MCPVerifier:
                     pop_args=pop_args,
                     constraint_args=constraints,
                 )
-            if not enforcement.allowed or enforcement.observed:
+            if not enforcement.allowed:
                 result = _mcp_result_from_enforcement(
                     enforcement,
                     tool_name=tool_name,
@@ -1125,7 +1127,24 @@ class MCPVerifier:
             if _ns is None:
                 from ..nonce import get_default_nonce_store as _get_ns
                 _ns = _get_ns()
-            if _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig):
+            replayed = _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig)
+
+            if enforcement.observed:
+                # Observe mode lets the call through; still report a replay
+                # alongside the denial it would have added.
+                if replayed:
+                    logger.warning("OBSERVE: would deny %s (pop_replay)", tool_name)
+                result = _mcp_result_from_enforcement(
+                    enforcement,
+                    tool_name=tool_name,
+                    clean_arguments=clean_arguments,
+                    constraints=constraints,
+                    warrant_id=warrant_id,
+                )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                return _emit_and_return(result, chain_result=chain_result, latency_us=latency_us)
+
+            if replayed:
                 logger.warning(
                     "PoP replay rejected for '%s' (warrant=%s)",
                     tool_name,

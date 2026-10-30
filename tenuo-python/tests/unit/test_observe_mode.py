@@ -348,3 +348,101 @@ def test_enforce_approval_gate_still_asks():
     )
     assert result.allowed and not result.observed
     assert len(asked) == 1
+
+
+# -- MCP observed results -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("error_type", "denied_code"),
+    [("approval_required", -32002), ("constraint_violation", -32001)],
+)
+def test_mcp_observed_result_has_no_error_code(error_type, denied_code):
+    """An observed call proceeds, so callers that branch on the code must not block it."""
+    from tenuo._enforcement import EnforcementResult
+    from tenuo.mcp.server import _mcp_result_from_enforcement
+
+    def convert(allowed: bool):
+        return _mcp_result_from_enforcement(
+            EnforcementResult(
+                allowed=allowed,
+                observed=allowed,
+                tool="issue_payout",
+                arguments=GATED_ARGS,
+                denial_reason="denied",
+                error_type=error_type,
+            ),
+            tool_name="issue_payout",
+            clean_arguments=GATED_ARGS,
+            constraints=GATED_ARGS,
+            warrant_id="w1",
+        )
+
+    observed = convert(True)
+    assert observed.allowed and observed.observed
+    assert observed.jsonrpc_error_code is None
+    assert not observed.is_approval_required
+    assert observed.error_type == error_type
+
+    denied = convert(False)
+    assert not denied.allowed
+    assert denied.jsonrpc_error_code == denied_code
+
+
+def test_mcp_observed_replay_is_logged(caplog):
+    """A replayed PoP on an observed call is reported, not skipped."""
+    import base64
+
+    from tenuo.mcp.server import MCPVerifier
+    from tenuo.nonce import NonceStore
+    from tenuo_core import Authorizer
+
+    _observe()
+    verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=ROOTS), nonce_store=NonceStore(ttl_seconds=120))
+    sig = WARRANT.sign(AGENT, "issue_payout", BAD_ARGS, int(time.time()))
+    meta = {"tenuo": {"warrant": WARRANT.to_base64(), "signature": base64.b64encode(bytes(sig)).decode()}}
+
+    first = verifier.verify("issue_payout", dict(BAD_ARGS), meta=meta)
+    assert first.allowed and first.observed
+    with caplog.at_level(logging.WARNING, logger="tenuo"):
+        second = verifier.verify("issue_payout", dict(BAD_ARGS), meta=meta)
+    assert second.allowed and second.observed
+    assert any("pop_replay" in r.getMessage() for r in _observe_records(caplog))
+
+
+def test_observe_integrity_check_does_not_swallow_cancellation():
+    from tenuo._enforcement import _approval_gate_integrity_error
+
+    class _CancellingAuthorizer:
+        def check_chain(self, *args: Any, **kwargs: Any) -> None:
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        _approval_gate_integrity_error(
+            _CancellingAuthorizer(), [GATED], "issue_payout", GATED_ARGS, GATED_ARGS, b"",
+        )
+
+
+# -- LangChain auto_protect ---------------------------------------------------
+
+
+def test_auto_protect_keeps_configured_mode():
+    pytest.importorskip("langchain_core")
+    from tenuo.langchain import auto_protect
+
+    configure(trusted_roots=ROOTS)
+    auto_protect([])
+    assert get_config().mode == EnforcementMode.ENFORCE
+
+    auto_protect([], mode="observe")
+    assert get_config().mode == EnforcementMode.OBSERVE
+
+
+def test_auto_protect_rejects_unknown_mode():
+    pytest.importorskip("langchain_core")
+    from tenuo.langchain import auto_protect
+
+    configure(trusted_roots=ROOTS)
+    with pytest.raises(ConfigurationError):
+        auto_protect([], mode="enforced")
+    assert get_config().mode == EnforcementMode.ENFORCE

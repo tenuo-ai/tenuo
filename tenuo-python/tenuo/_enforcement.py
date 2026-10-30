@@ -679,20 +679,50 @@ def _observed_approval_gate(
     warrant_id: Optional[str],
     threshold: int,
     approvals: Optional[List[Any]],
-    presented_chain: Optional[Any],
-    pop_auth_args: Optional[Dict[str, Any]],
+    presented_chain: List[Any],
+    pop_auth_args: Dict[str, Any],
+    constraint_auth_args: Dict[str, Any],
     authorizer: Optional[Any],
+    *,
+    warrant: Any,
+    bound_warrant: Any,
+    verify_mode: str,
+    precomputed_signature: Optional[Any],
 ) -> Optional[EnforcementResult]:
     """In observe mode, record would-require-approval instead of prompting.
 
     Mirrors Rust ``WouldRequireApproval``: no handler is called and nothing
-    blocks. Approvals already presented with the call are still verified
-    normally, so ``None`` is returned for them and in enforce mode.
+    blocks. Chain and PoP are still verified, so an integrity failure is
+    reported instead of the missing approval. Approvals already presented with
+    the call are verified normally, so ``None`` is returned for them and in
+    enforce mode.
     """
     from .config import should_block_violation
 
     if approvals or should_block_violation():
         return None
+    if verify_mode == "sign":
+        import time as _time
+
+        pop = bytes(warrant.sign(bound_warrant._key, tool_name, pop_auth_args, int(_time.time())))
+    else:
+        pop = bytes(precomputed_signature or b"")
+    integrity_error = _approval_gate_integrity_error(
+        authorizer, presented_chain, tool_name, pop_auth_args, constraint_auth_args, pop,
+    )
+    if integrity_error is not None:
+        return _enforcement_result_from_chain_error_with_logging(
+            integrity_error,
+            tool_name,
+            tool_args,
+            warrant_id,
+            constraint_auth_args=constraint_auth_args,
+            warrant=warrant,
+            presented_chain=presented_chain,
+            authorizer=authorizer,
+            pop_auth_args=pop_auth_args,
+            verified_pop=pop,
+        )
     return EnforcementResult(
         allowed=False,
         tool=tool_name,
@@ -704,6 +734,7 @@ def _observed_approval_gate(
         pop_auth_args=pop_auth_args,
         authorizer=authorizer,
         approval_metadata={"min_approvals": threshold},
+        verified_pop=pop,
     )
 
 
@@ -825,7 +856,7 @@ def _approval_gate_integrity_error(
             )
     except (ApprovalGateTriggered, ApprovalRequired, InsufficientApprovals):
         return None
-    except BaseException as exc:
+    except Exception as exc:
         return exc
     return None
 
@@ -1319,45 +1350,14 @@ def _enforce_tool_call_impl(
             # Returns verified SignedApproval objects to pass to validate().
             _would_require = _observed_approval_gate(
                 tool_name, tool_args, warrant_id, _gate_threshold, approvals,
-                _presented_chain, _pop_auth_args,
+                _presented_chain, _pop_auth_args, _constraint_auth_args,
                 _preflight_auth,
+                warrant=_warrant_obj,
+                bound_warrant=bound_warrant,
+                verify_mode=verify_mode,
+                precomputed_signature=precomputed_signature,
             )
             if _would_require is not None:
-                if verify_mode == "sign":
-                    import time as _time
-
-                    _pop = bytes(
-                        _warrant_obj.sign(
-                            bound_warrant._key,
-                            tool_name,
-                            _pop_auth_args,
-                            int(_time.time()),
-                        )
-                    )
-                else:
-                    _pop = bytes(precomputed_signature or b"")
-                _integrity_error = _approval_gate_integrity_error(
-                    _preflight_auth,
-                    _presented_chain,
-                    tool_name,
-                    _pop_auth_args,
-                    _constraint_auth_args,
-                    _pop,
-                )
-                if _integrity_error is not None:
-                    return _enforcement_result_from_chain_error_with_logging(
-                        _integrity_error,
-                        tool_name,
-                        tool_args,
-                        warrant_id,
-                        constraint_auth_args=_constraint_auth_args,
-                        warrant=_warrant_obj,
-                        presented_chain=_presented_chain,
-                        authorizer=_preflight_auth,
-                        pop_auth_args=_pop_auth_args,
-                        verified_pop=_pop,
-                    )
-                _would_require.verified_pop = _pop
                 return _would_require
 
             _gate_approvals = _collect_approvals_for_approval_gate(
@@ -1397,10 +1397,9 @@ def _enforce_tool_call_impl(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                if _pop is None:
-                    _pop = bytes(
-                        _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
-                    )
+                _pop = bytes(
+                    _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
+                )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
                 from .runtime import apply_runtime_revocation
                 apply_runtime_revocation(_auth)
@@ -1870,45 +1869,14 @@ async def _enforce_tool_call_async_impl(
 
             _would_require = _observed_approval_gate(
                 tool_name, tool_args, warrant_id, _gate_threshold, approvals,
-                _presented_chain, _pop_auth_args,
+                _presented_chain, _pop_auth_args, _constraint_auth_args,
                 _preflight_auth,
+                warrant=_warrant_obj,
+                bound_warrant=bound_warrant,
+                verify_mode=verify_mode,
+                precomputed_signature=precomputed_signature,
             )
             if _would_require is not None:
-                if verify_mode == "sign":
-                    import time as _time
-
-                    _pop = bytes(
-                        _warrant_obj.sign(
-                            bound_warrant._key,
-                            tool_name,
-                            _pop_auth_args,
-                            int(_time.time()),
-                        )
-                    )
-                else:
-                    _pop = bytes(precomputed_signature or b"")
-                _integrity_error = _approval_gate_integrity_error(
-                    _preflight_auth,
-                    _presented_chain,
-                    tool_name,
-                    _pop_auth_args,
-                    _constraint_auth_args,
-                    _pop,
-                )
-                if _integrity_error is not None:
-                    return _enforcement_result_from_chain_error_with_logging(
-                        _integrity_error,
-                        tool_name,
-                        tool_args,
-                        warrant_id,
-                        constraint_auth_args=_constraint_auth_args,
-                        warrant=_warrant_obj,
-                        presented_chain=_presented_chain,
-                        authorizer=_preflight_auth,
-                        pop_auth_args=_pop_auth_args,
-                        verified_pop=_pop,
-                    )
-                _would_require.verified_pop = _pop
                 return _would_require
 
             _gate_approvals = await _collect_approvals_for_approval_gate_async(
@@ -1938,10 +1906,9 @@ async def _enforce_tool_call_async_impl(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                if _pop is None:
-                    _pop = bytes(
-                        _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
-                    )
+                _pop = bytes(
+                    _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
+                )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
                 from .runtime import apply_runtime_revocation
                 apply_runtime_revocation(_auth)
