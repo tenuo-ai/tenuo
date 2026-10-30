@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import sys
 import os
 import tempfile
@@ -76,6 +77,7 @@ def test_extract_constraints(mcp_config_file):
     constraints = dict(result.constraints)
     assert constraints["path"] == "/var/log/syslog"
     assert constraints["max_size"] == 5000
+    assert result.defaulted_fields == []
 
 
 def test_extract_constraints_default_value(mcp_config_file):
@@ -90,6 +92,7 @@ def test_extract_constraints_default_value(mcp_config_file):
     constraints = dict(result.constraints)
     assert constraints["path"] == "/var/log/syslog"
     assert constraints["max_size"] == 1048576  # Default value
+    assert result.defaulted_fields == ["max_size"]
 
 
 def test_extract_constraints_missing_required(mcp_config_file):
@@ -169,6 +172,21 @@ def _make_client() -> "SecureMCPClient":
 
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(return_value=MagicMock(content="result"))
+    # These client tests exercise the modern public call path.  Give the mock
+    # an explicit signature so capability detection is stable across Python's
+    # changing AsyncMock introspection (the legacy SDK path is covered in
+    # test_mcp_sdk_compat.py).
+    mock_session.call_tool.__signature__ = inspect.Signature(
+        [
+            inspect.Parameter("name", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("arguments", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter(
+                "meta",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+            ),
+        ]
+    )
     client.session = mock_session
     return client
 
@@ -391,7 +409,7 @@ class TestCallToolArgumentInjection:
         envelope = forwarded["_tenuo"]
         assert envelope["warrant"] == "warrant_b64"
         assert envelope["signature"] == "c2ln"
-        assert client.session.call_tool.call_args.kwargs["meta"] is None
+        assert "meta" not in client.session.call_tool.call_args.kwargs
         assert "encoding" in sign_meta.call_args.args[3]
         assert original == {"path": "/data/file.txt", "encoding": None}
 
@@ -618,6 +636,101 @@ class TestSchemaStrippingEmptyProperties:
         forwarded = client.session.call_tool.call_args[0][1]
         assert forwarded == {"path": "/data/f.txt"}
         assert "injected_evil" not in forwarded
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestProtectedToolNoContextFailsClosed:
+    """client.tools[...] with no warrant/key in scope must deny unless dev passthrough is on."""
+
+    @staticmethod
+    def _protected(client):
+        fake_mcp_tool = MagicMock()
+        fake_mcp_tool.name = "read_file"
+        fake_mcp_tool.description = "Read"
+        fake_mcp_tool.inputSchema = {"properties": {"path": {"type": "string"}}}
+        return client.create_protected_tool(fake_mcp_tool)
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        from tenuo.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_no_context_raises_and_does_not_call_server(self):
+        from tenuo import SigningKey, configure
+        from tenuo.exceptions import ConfigurationError
+
+        configure(issuer_key=SigningKey.generate(), dev_mode=True)
+        client = _make_client()
+        protected = self._protected(client)
+
+        with pytest.raises(ConfigurationError, match="No authorization context"):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_raises_and_does_not_call_server(self):
+        from tenuo.exceptions import ConfigurationError
+
+        client = _make_client()
+        protected = self._protected(client)
+
+        with pytest.raises(ConfigurationError, match="Tenuo not configured"):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dev_mode_without_passthrough_still_raises(self):
+        from tenuo import SigningKey, configure
+        from tenuo.exceptions import ConfigurationError
+
+        configure(issuer_key=SigningKey.generate(), dev_mode=True, allow_passthrough=False)
+        client = _make_client()
+        protected = self._protected(client)
+
+        with pytest.raises(ConfigurationError):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_passthrough_opt_in_calls_server_with_warning(self, caplog):
+        import logging
+
+        from tenuo import SigningKey, configure
+
+        configure(issuer_key=SigningKey.generate(), dev_mode=True, allow_passthrough=True)
+        client = _make_client()
+        protected = self._protected(client)
+
+        with caplog.at_level(logging.WARNING, logger="tenuo.mcp.client"):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_called_once()
+        assert client.session.call_tool.call_args[0][1] == {"path": "/data/f.txt"}
+        assert any("PASSTHROUGH" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_warrant_and_key_in_scope_unchanged(self):
+        from tenuo import SigningKey, configure
+        from tenuo.decorators import key_scope, warrant_scope
+        from tenuo_core import Warrant
+
+        keypair = SigningKey.generate()
+        configure(issuer_key=keypair, dev_mode=True)
+        warrant = Warrant.issue(keypair, capabilities={"read_file": {}})
+        client = _make_client()
+        protected = self._protected(client)
+
+        with warrant_scope(warrant), key_scope(keypair):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

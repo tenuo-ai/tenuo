@@ -11,13 +11,13 @@ import re
 import sys
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Callable, Dict, List, Literal, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
 from ..meta import argument_json, signed_arguments
 from ..approval import ApprovalHandler
-from ..config import is_configured
+from ..config import allow_passthrough, is_configured
 from ..decorators import key_scope, warrant_scope
 from ..exceptions import (
     RevokedError,
@@ -52,6 +52,7 @@ try:
     from mcp.types import Tool as MCPTool  # type: ignore[import-not-found]
 
     from ._compat import (
+        call_tool_with_meta,
         tool_input_schema,
         call_tool_result_is_error,
         call_tool_result_structured_content,
@@ -750,11 +751,10 @@ class SecureMCPClient:
             for attempt in range(2):
                 try:
                     response = await asyncio.wait_for(
-                        # meta is annotated dict on MCP 1.x and RequestParamsMeta
-                        # on 2.x; that type is a TypedDict, so a plain dict is
-                        # correct at runtime on both.
-                        self.session.call_tool(
-                            tool_name, call_args, meta=cast(Any, meta_payload)
+                        # The compatibility helper uses the public call on
+                        # modern SDKs and a wire request on the 1.9.4 floor.
+                        call_tool_with_meta(
+                            self.session, tool_name, call_args, meta_payload
                         ),
                         timeout=timeout,
                     )
@@ -930,14 +930,25 @@ class SecureMCPClient:
             elif w is not None or k is not None:
                 raise ConfigurationError(
                     f"Incomplete authorization context for MCP tool '{tool_name}': "
-                    f"warrant={'set' if w else 'missing'}, "
-                    f"signing_key={'set' if k else 'missing'}. "
+                    f"warrant={'set' if w is not None else 'missing'}, "
+                    f"signing_key={'set' if k is not None else 'missing'}. "
                     f"Both must be provided via warrant_scope/key_scope."
                 )
-            else:
+            elif not is_configured():
+                raise ConfigurationError(
+                    "Tenuo not configured. Call configure() before using "
+                    f"protected MCP tool '{tool_name}'."
+                )
+            elif allow_passthrough():
                 logger.warning(
-                    "MCP tool '%s' executed without authorization context "
-                    "(no warrant/key in scope)", tool_name,
+                    "PASSTHROUGH: MCP tool '%s' executed without authorization context (no warrant/key in scope)",
+                    tool_name,
+                )
+            else:
+                raise ConfigurationError(
+                    f"No authorization context for MCP tool '{tool_name}': "
+                    "no warrant or signing key in scope. Wrap the call in "
+                    "`mint(...)`/`grant(...)` or `with warrant_scope(w), key_scope(k):`."
                 )
 
             if allowed_keys is not None:

@@ -4,7 +4,7 @@
 **Status:** Normative  
 **Date:** 2026-01-01  
 
-**Documentation Revision:** 4 (2026-03-06)
+**Documentation Revision:** 5 (2026-10-20)
 
 **Related Documents:**
 - [protocol-spec-v1.md](protocol-spec-v1.md) - Protocol Specification (concepts, invariants, algorithms)
@@ -14,6 +14,10 @@
 
 ## Revision History
 
+- **Rev 5** (2026-10-20): Security erratum for `UrlSafe` host policy. Clarified
+  that `allow_domains` constrains every host, including IP literals; domain
+  patterns are canonicalized with the URL host parser; and malformed patterns
+  invalidate the policy and fail closed. No wire bytes or type IDs changed.
 - **Rev 4** (2026-03-06): Added MCP JSON-RPC error code mappings and `params._meta` warrant transport to §A.2. Clarified `PopExpired` description.
 - **Rev 3** (2026-01-21): Verification and enforcement. Fixed `MAX_CONSTRAINT_DEPTH` (16-->32), added Size Limits table, and added test vector cross-references.
 - **Rev 2** (2026-01-10): Normative specification updates.
@@ -23,7 +27,11 @@
 
 ## Overview
 
-This specification defines the wire format for Tenuo warrants. These decisions are baked into v0.1 and cannot change without a major version bump.
+This specification defines the wire format for Tenuo warrants. Encoding and
+schema decisions are baked into v0.1 and cannot change without a major version
+bump. A revision may issue a security erratum that only narrows authority
+without changing the encoded representation; implementations claiming v1
+conformance MUST implement the latest revision's errata.
 
 **Design principles:**
 
@@ -568,7 +576,7 @@ pub enum Constraint {
         block_internal_tlds: bool,      // Default: false
     },
 
-    /// Shell command safety -- extension constraint (conservative approximation)
+    /// Shell command safety -- extension constraint (shell word rules)
     Shlex {
         allow: Vec<String>,             // Allowed binary names or paths (literal, no globs)
     },
@@ -576,14 +584,16 @@ pub enum Constraint {
     /// Unknown constraint type (deserialized but not understood)
     Unknown {
         type_id: u8,
-        payload: Vec<u8>,
+        payload: Vec<u8>,  // CBOR encoding of the unknown value
     },
 }
 ```
 
 **Wire type IDs and serialization (standard 1–127):**
 
-All constraints serialize as `[type_id, value]` tuples. The `value` is the serde serialization of the constraint struct.
+All constraints serialize as exactly two-element `[type_id, value]` tuples. The
+`value` is the serde serialization of the constraint struct. Verifiers MUST reject
+missing or trailing tuple elements rather than silently ignoring them.
 
 | ID | Type | Value Shape | Notes |
 |----|------|-------------|-------|
@@ -658,13 +668,23 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 | **Not** | Not | NO | Negation reverses the subset direction (`Not(B) ⊆ Not(A)` requires `A ⊆ B`, not `B ⊆ A`), making safe attenuation infeasible. |
 | **Cel** | Cel | IFF | `child.expr == "(parent.expr) && (extra)"` (parenthesized conjunction only; bare `||` after `&&` is rejected) |
 | **Subpath** | Subpath | IFF | `child.root` is subpath of `parent.root` |
-| **Subpath** | Exact | IFF | `parent.contains(child.path)` |
+| **Subpath** | Subset | IFF | Every allowed item is a string satisfying the parent Subpath |
+| **Subpath** | Exact | IFF | Child is a contained path string, or a list in which every item is a contained path string |
 | **UrlSafe** | UrlSafe | IFF | All child restrictions ≥ parent restrictions (see field rules) |
 | **UrlSafe** | Exact | IFF | `parent.is_safe(child.url)` |
 | **Shlex** | Shlex | IFF | `child.allow ⊆ parent.allow` |
 | **Shlex** | Exact | IFF | `parent.matches(child.value)` |
 
 **All unlisted (Parent, Child) pairs are INVALID and MUST be rejected.**
+
+Subpath (type 17) accepts a path string or a list of path strings. Every list
+element MUST satisfy the same scalar containment check; nested lists and
+non-string elements MUST fail. An empty list matches vacuously. An executor
+whose operation has implicit paths MUST authorize that actual scope rather than
+substituting an empty list. These rules and Subpath-to-Subset/Exact attenuation
+are shared across SDKs in `tests/vectors/subpath-lists.json`. Older verifiers
+reject list-valued Subpath arguments and these new attenuation pairs, so all
+participants in those calls must support list matching before deployment.
 
 #### Pattern Attenuation Rules
 
@@ -806,14 +826,24 @@ child:  Pattern("/data/reports/file.txt")  # More specific but different type
 | `block_metadata` | `false` to `true` only |
 | `block_reserved` | `false` to `true` only |
 
-#### UrlSafe `deny_domains` Evaluation Order (Normative)
+#### UrlSafe Host-Policy Evaluation Order (Normative)
 
 Implementations MUST evaluate UrlSafe fields in this order:
 
 1. Scheme check, host extraction, port check, loopback/metadata/internal TLD checks.
 2. If host is an IP address: check against `block_private`, `block_loopback`, `block_metadata`, `block_reserved`.
-3. If host is a hostname: check `allow_domains` (reject if not matched).
-4. **`deny_domains` check (MUST run for both IPs and hostnames):** If `deny_domains` is set and the host matches any denied pattern, **REJECT**. Patterns are matched as strings against the host, so `deny_domains: ["169.254.169.254"]` blocks that IP address and `deny_domains: ["*.evil.com"]` blocks hostnames.
+3. **`allow_domains` check (MUST run for every host):** If `allow_domains` is set and the host, including an IP literal, does not match an allowed pattern, **REJECT**.
+4. **`deny_domains` check (MUST run for every host):** If `deny_domains` is set and the host matches any denied pattern, **REJECT**.
+
+Before evaluation, every allow- and deny-list pattern MUST be canonicalized by
+the same host parser used for URL hosts, including case folding, IDNA handling,
+and canonical IP formatting. A pattern is either one exact host or a single
+leading `*.` followed by a domain suffix. A bare `*`, an empty suffix, a
+wildcard IP address, a URL rather than a host, or a wildcard anywhere else is
+invalid. A malformed pattern invalidates the policy; implementations MUST fail
+closed rather than skip it. `*.example.com` matches both `example.com` and its
+subdomains. Exact IP patterns are allowed, but the `block_*` checks above still
+take precedence.
 
 **Deny wins on overlap:** A host that matches both `allow_domains` and `deny_domains` is blocked. This is a security-critical invariant -- implementations that skip `deny_domains` checking or only run it for hostnames silently widen the constraint's authority.
 
@@ -823,7 +853,19 @@ Implementations MUST evaluate UrlSafe fields in this order:
 |-------|------|
 | `allow` | Child must be subset of parent (fewer binaries allowed). Entries are literal strings, no globs. |
 
-**Shlex evaluation model:** Shlex is an extension constraint with implementation-specific evaluation behavior. The Rust `matches()` performs whitespace tokenization and rejects any shell metacharacter (`|`, `&`, `;`, `$`, `` ` ``, `<`, `>`, `(`, `)`, control chars). It does NOT handle POSIX quoting rules. Python's full `shlex` parsing with `punctuation_chars=True` accepts safely-quoted operators (e.g., `ls "foo; bar"`). The Rust layer is intentionally more restrictive, acting as a fail-closed pre-filter in the warrant verification path. Python's full evaluation is the authoritative runtime gate for annotated `@guard` constraints. Verifiers that do not implement Shlex MUST reject warrants containing it (fail closed via Unknown variant).
+**Shlex evaluation model:** One tokenizer, implemented in the Rust core and used by every SDK. The decisions in `tests/vectors/shlex.json` are normative. Verifiers that do not implement Shlex MUST reject warrants containing it (fail closed via Unknown variant).
+
+A command matches only when all of the following hold:
+
+1. The value is a non-empty string. Control characters (`NUL`, `LF`, `CR`, `VT`, `FF`, `BEL`, `BS`, `DEL`) reject the command before tokenization. `$` and backticks reject the command wherever they appear, including inside quotes and backslash escapes. A double-quoted `$` still expands in a POSIX shell; the raw scan also refuses the single-quoted and escaped forms.
+2. Words follow POSIX shell rules. This is not Python's `shlex` module. Unquoted spaces and tabs separate words. A word also ends immediately before an unquoted operator. Operators, longest match first, are `<<-`, `&&`, `||`, `;;`, `|&`, `<<`, `>>`, `<&`, `>&`, `<>`, `|`, `&`, `;`, `<`, `>`, `(`, and `)`. Single quotes are literal. Double quotes are literal except that a backslash before `$`, a backtick, `"`, or `\` escapes that character, and a backslash-newline pair is removed as a line continuation. A backslash outside quotes makes the next character literal, including an operator and `#`, and removes a following newline as a line continuation (raw `LF` is rejected by rule 1 before `check` tokenizes). An unbalanced quote or a trailing backslash rejects the command. An empty `""` is an empty argument.
+   `#` is an ordinary word character, never a comment, so a shell that does not recognize comments cannot run an operator hidden after `#`. Both `ls #; rm` and `ls foo#; rm` contain the operator `;` and are rejected, while `ls -la # note` has no operators and is allowed. A comma, bracket, brace, or other non-operator character stays in the word, so `./ls,evil` is one command name.
+3. The first token is the binary. Any binary token containing `..` is rejected so symlinks cannot combine with `..` to escape a pinned path. The binary token must equal an entry of `allow` literally: a bare entry such as `ls` matches the word `ls` only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and a path entry such as `/usr/bin/ls` matches `/usr/bin/ls` only. Entries are literal strings, no globs.
+4. No token is an unquoted operator. A quoted or escaped operator character is a literal argument: `echo ";"`, `ls "foo; bar"`, and `find . -exec rm {} \;` match when the binary is allowlisted. `find -exec` still runs that argument; tool semantics are outside this check.
+
+Tabs are whitespace. `*` and `?` are literal arguments to this check; a shell that later runs the command may still expand them. Bash brace expansion is not POSIX word splitting: this check keeps `{a,b,c}` as one word, and a bash host may still expand it.
+
+Type 128 accepts some commands older verifiers rejected (quoted and escaped operator characters) and rejects some that older verifiers accepted (a path such as `/tmp/attacker/ls` when `allow` only lists bare `ls`, a `#` that does not start a word, and command names that contain commas or brackets). Because type ID 128 is unchanged on the wire, older Rust verifiers in a mixed fleet still accept path-qualified binaries for bare `allow` entries; every enforcement point MUST be upgraded before relying on literal command-word matching.
 
 **Implementations MUST reject attenuations not explicitly permitted in this matrix.**
 
@@ -852,7 +894,7 @@ Implementations MUST evaluate UrlSafe fields in this order:
 
 **Extension range (128–255):** For constraints with implementation-specific behavior, proprietary extensions, or experimental types. Verifiers that do not implement a given extension type MUST reject warrants containing it (fail closed via Unknown variant). Use for:
 
-- Constraints where evaluation semantics vary by implementation (e.g., Shlex)
+- Extension constraints with a defined evaluation (Shlex is type 128; see Shlex Attenuation Rules)
 - Proprietary extensions that don't need interoperability
 - Testing new constraint types before proposing standardization
 
@@ -1856,14 +1898,15 @@ See [Appendix A](#appendix-a-error-code-reference) for the complete error code l
 ### 20.4 Clock Skew and Time Validation
 
 **Time comparisons:**
-- Use clock tolerance (±30s for TTL, ±60s default for PoP) to handle legitimate skew
+- Use clock tolerance for future-issued timestamps (30s by default) and PoP
+  (±60s by default); do not extend `expires_at`
 - Reject warrants with `issued_at` far in the future (recommend: >5 minutes)
 - Log excessive clock skew for monitoring
 
 **Timestamp validation order:**
 1. Check `issued_at` is not too far in future
 2. Check `expires_at > issued_at`
-3. Check current time is within `[issued_at, expires_at]` ± tolerance
+3. Check `issued_at <= current time + tolerance` and `current time < expires_at`
 
 ### 20.5 Constraint Validation
 

@@ -858,8 +858,6 @@ pub struct HeartbeatConfig {
     /// When set, fetched SRLs go through the tracker (freshness + file floor)
     /// before they are installed on the authorizer.
     pub revocation_tracker: Option<Arc<crate::revocation_tracker::RevocationTracker>>,
-    /// Connection state and audit delivery counters, shared with the caller.
-    pub status: Arc<ControlPlaneStatus>,
 }
 
 impl Default for HeartbeatConfig {
@@ -883,7 +881,6 @@ impl Default for HeartbeatConfig {
             agent_id: None,
             connect_token: None,
             revocation_tracker: None,
-            status: Arc::default(),
         }
     }
 }
@@ -990,6 +987,24 @@ struct SrlResponse {
     version: u64,
 }
 
+/// A [`HeartbeatConfig`] plus the status handle the loops report into.
+///
+/// The handle lives here rather than on [`HeartbeatConfig`] so the public
+/// struct keeps the fields it had in 0.3.2 and struct literals still compile.
+#[derive(Clone)]
+struct LoopConfig {
+    inner: HeartbeatConfig,
+    status: Arc<ControlPlaneStatus>,
+}
+
+impl std::ops::Deref for LoopConfig {
+    type Target = HeartbeatConfig;
+
+    fn deref(&self) -> &HeartbeatConfig {
+        &self.inner
+    }
+}
+
 /// Start the heartbeat loop in the background (legacy signature for backwards compatibility).
 ///
 /// This function will:
@@ -1046,8 +1061,34 @@ pub async fn start_heartbeat_loop_until(
     config: HeartbeatConfig,
     audit_rx: Option<mpsc::Receiver<AuthorizationEvent>>,
     shared_authorizer_id: Arc<RwLock<Option<String>>>,
-    mut shutdown: Option<oneshot::Receiver<()>>,
+    shutdown: Option<oneshot::Receiver<()>>,
 ) {
+    start_heartbeat_loop_with_status(
+        config,
+        audit_rx,
+        shared_authorizer_id,
+        shutdown,
+        Arc::default(),
+    )
+    .await;
+}
+
+/// Same as [`start_heartbeat_loop_until`], reporting into `status`.
+///
+/// Keep a clone of `status` to read the connection state and audit delivery
+/// counters ([`ControlPlaneStatus`]) while the loop runs. It does no I/O, so a
+/// health check can read it.
+pub async fn start_heartbeat_loop_with_status(
+    config: HeartbeatConfig,
+    audit_rx: Option<mpsc::Receiver<AuthorizationEvent>>,
+    shared_authorizer_id: Arc<RwLock<Option<String>>>,
+    mut shutdown: Option<oneshot::Receiver<()>>,
+    status: Arc<ControlPlaneStatus>,
+) {
+    let config = LoopConfig {
+        inner: config,
+        status,
+    };
     let client = Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -1277,7 +1318,7 @@ async fn wait_shutdown(shutdown: &mut Option<oneshot::Receiver<()>>) {
 /// [`audit_buffer_cap`]; past that the oldest are dropped and counted.
 async fn run_audit_flush_loop(
     client: Client,
-    config: HeartbeatConfig,
+    config: LoopConfig,
     mut target: tokio::sync::watch::Receiver<AuditTarget>,
     mut rx: mpsc::Receiver<AuthorizationEvent>,
 ) {
@@ -1513,7 +1554,7 @@ fn flush_backoff(failures: u32) -> Duration {
 /// If a signing key is configured, events are signed before sending.
 async fn flush_audit_events(
     client: &Client,
-    config: &HeartbeatConfig,
+    config: &LoopConfig,
     authorizer_id: &str,
     events: Vec<AuthorizationEvent>,
     last_attempt: bool,
@@ -1659,7 +1700,7 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 /// per-attempt detail goes to `tracing` and [`ControlPlaneStatus::last_error`].
 async fn register_with_retry(
     client: &Client,
-    config: &HeartbeatConfig,
+    config: &LoopConfig,
     shutdown: &mut Option<oneshot::Receiver<()>>,
 ) -> Registration {
     let mut attempt = 0u32;
@@ -1982,7 +2023,6 @@ mod tests {
             agent_id: None,
             connect_token: None,
             revocation_tracker: None,
-            status: Arc::default(),
         }
     }
 
@@ -2679,14 +2719,15 @@ mod tests {
     async fn events_emitted_before_registration_are_delivered() {
         let cp = Arc::new(MockCp::default());
         let config = outage_config(start_mock(cp.clone()).await);
-        let status = config.status.clone();
+        let status: Arc<ControlPlaneStatus> = Arc::default();
         let (tx, rx) = create_audit_channel(config.audit_batch_size);
         let (stop_tx, stop_rx) = oneshot::channel();
-        let task = tokio::spawn(start_heartbeat_loop_until(
+        let task = tokio::spawn(start_heartbeat_loop_with_status(
             config,
             Some(rx),
             Arc::new(RwLock::new(None)),
             Some(stop_rx),
+            status.clone(),
         ));
 
         // More than the channel holds: only works if something is consuming
@@ -2726,16 +2767,17 @@ mod tests {
         let cp = Arc::new(MockCp::default());
         cp.register_reject.store(true, Ordering::SeqCst);
         let config = outage_config(start_mock(cp.clone()).await);
-        let status = config.status.clone();
+        let status: Arc<ControlPlaneStatus> = Arc::default();
         let (tx, rx) = create_audit_channel(config.audit_batch_size);
         for _ in 0..5 {
             tx.try_send(event()).unwrap();
         }
-        let task = tokio::spawn(start_heartbeat_loop_until(
+        let task = tokio::spawn(start_heartbeat_loop_with_status(
             config,
             Some(rx),
             Arc::new(RwLock::new(None)),
             None,
+            status.clone(),
         ));
         tokio::time::timeout(Duration::from_secs(5), task)
             .await
@@ -2751,17 +2793,18 @@ mod tests {
     async fn shutdown_while_registering_stops_and_counts_drops() {
         let cp = Arc::new(MockCp::default());
         let config = outage_config(start_mock(cp.clone()).await);
-        let status = config.status.clone();
+        let status: Arc<ControlPlaneStatus> = Arc::default();
         let (tx, rx) = create_audit_channel(config.audit_batch_size);
         for _ in 0..5 {
             tx.try_send(event()).unwrap();
         }
         let (stop_tx, stop_rx) = oneshot::channel();
-        let task = tokio::spawn(start_heartbeat_loop_until(
+        let task = tokio::spawn(start_heartbeat_loop_with_status(
             config,
             Some(rx),
             Arc::new(RwLock::new(None)),
             Some(stop_rx),
+            status.clone(),
         ));
         wait_for("first registration failure", || {
             status.last_error().is_some()
@@ -2781,13 +2824,14 @@ mod tests {
         let cp = Arc::new(MockCp::default());
         cp.register_open.store(true, Ordering::SeqCst);
         let config = outage_config(start_mock(cp.clone()).await);
-        let status = config.status.clone();
+        let status: Arc<ControlPlaneStatus> = Arc::default();
         let (stop_tx, stop_rx) = oneshot::channel();
-        let task = tokio::spawn(start_heartbeat_loop_until(
+        let task = tokio::spawn(start_heartbeat_loop_with_status(
             config,
             None,
             Arc::new(RwLock::new(None)),
             Some(stop_rx),
+            status.clone(),
         ));
         wait_for("connected", || status.state() == ConnectionState::Connected).await;
         cp.heartbeat_down.store(true, Ordering::SeqCst);
@@ -2886,17 +2930,18 @@ mod flush_failure_tests {
             audit_flush_interval_secs: 1,
             ..Default::default()
         };
-        let status = config.status.clone();
+        let status: Arc<ControlPlaneStatus> = Arc::default();
         let (tx, rx) = create_audit_channel(1000);
         for _ in 0..n {
             tx.try_send(event()).unwrap();
         }
         let (stop_tx, stop_rx) = oneshot::channel();
-        let task = tokio::spawn(start_heartbeat_loop_until(
+        let task = tokio::spawn(start_heartbeat_loop_with_status(
             config,
             Some(rx),
             Arc::new(RwLock::new(None)),
             Some(stop_rx),
+            status.clone(),
         ));
         for _ in 0..50 {
             if cp.calls.load(Ordering::SeqCst) > 0 {

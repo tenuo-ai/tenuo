@@ -123,7 +123,9 @@ class TestBypassSecurity:
             # (``ValueError: embedded null byte``); filter them out at the
             # strategy level so Hypothesis doesn't shrink to ``"\x00"`` and
             # report a fixture failure instead of a real property break.
-            alphabet=st.characters(blacklist_characters="\x00"),
+            # Lone surrogates (category Cs) can't be UTF-8 encoded for the
+            # environment either; older Hypothesis versions generate them.
+            alphabet=st.characters(blacklist_characters="\x00", blacklist_categories=("Cs",)),
             min_size=1,
             max_size=30,
         ).filter(lambda s: s.lower() != "test")

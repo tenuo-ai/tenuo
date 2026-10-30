@@ -175,6 +175,221 @@ class TestFastAPIIntegration:
         resp = client.get("/custom", headers=headers)
         assert resp.status_code == 200
 
+    def _transfer_app(self, app, key, extract_args):
+        """POST /transfer guarded by a warrant constraining body field `amount` <= 100."""
+        from tenuo import Range
+
+        @app.post("/transfer")
+        async def transfer(ctx: SecurityContext = Depends(TenuoGuard("transfer", extract_args=extract_args))):
+            return {"args": ctx.args}
+
+        return Warrant.mint_builder().capability("transfer", amount=Range.max_value(100)).mint(key)
+
+    def _post_transfer(self, client, key, warrant, body):
+        pop_sig = warrant.sign(key, "transfer", body, int(time.time()))
+        headers = {
+            X_TENUO_WARRANT: warrant.to_base64(),
+            X_TENUO_POP: base64.b64encode(pop_sig).decode("ascii"),
+        }
+        return client.post("/transfer", json=body, headers=headers)
+
+    def test_async_extractor_enforces_body_constraint(self, app, client, key):
+        """An async extract_args reading the JSON body is awaited and its fields enforced."""
+
+        async def extract_body(request: Request) -> Dict[str, Any]:
+            return await request.json()
+
+        warrant = self._transfer_app(app, key, extract_body)
+
+        resp = self._post_transfer(client, key, warrant, {"amount": 50})
+        assert resp.status_code == 200
+        assert resp.json()["args"] == {"amount": 50}
+
+        resp = self._post_transfer(client, key, warrant, {"amount": 5000})
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error"] == "authorization_denied"
+
+    def test_extract_body_args_helper_works_as_extractor(self, app, client, key):
+        """The documented extract_body_args helper can be passed directly."""
+        from tenuo.fastapi import extract_body_args
+
+        warrant = self._transfer_app(app, key, extract_body_args)
+
+        assert self._post_transfer(client, key, warrant, {"amount": 100}).status_code == 200
+        assert self._post_transfer(client, key, warrant, {"amount": 101}).status_code == 403
+
+    def test_async_extractor_still_checks_headers_first(self, app, client, key):
+        """Missing credentials are rejected with 401 before the body extractor runs."""
+        called = []
+
+        async def extract_body(request: Request) -> Dict[str, Any]:
+            called.append(True)
+            return await request.json()
+
+        self._transfer_app(app, key, extract_body)
+        resp = client.post("/transfer", json={"amount": 1})
+        assert resp.status_code == 401
+        assert called == []
+
+    def test_sync_extractor_returning_awaitable_fails_closed(self, app, client, key):
+        """A sync callable that returns a coroutine must not be authorized against."""
+
+        async def _read(request: Request) -> Dict[str, Any]:
+            return await request.json()
+
+        warrant = self._transfer_app(app, key, lambda request: _read(request))
+        resp = self._post_transfer(client, key, warrant, {"amount": 50})
+        assert resp.status_code == 500
+        assert resp.json()["detail"]["error"] == "configuration_error"
+
+    def test_sync_extractor_guard_stays_directly_callable(self):
+        """Guards with sync extractors keep a sync __call__ (no coroutine returned)."""
+        import inspect as _inspect
+
+        sync_guard = TenuoGuard("search", extract_args=lambda r: {})
+        assert isinstance(sync_guard, TenuoGuard)
+        assert not _inspect.iscoroutinefunction(type(sync_guard).__call__)
+        assert not _inspect.iscoroutinefunction(type(TenuoGuard("search")).__call__)
+
+        async def extract(request: Request) -> Dict[str, Any]:
+            return {}
+
+        async_guard = TenuoGuard("search", extract_args=extract)
+        assert isinstance(async_guard, TenuoGuard)
+        assert _inspect.iscoroutinefunction(type(async_guard).__call__)
+
+    # -- Default extraction: values typed from the endpoint signature ----------
+
+    def _headers(self, key, warrant, tool, args):
+        pop_sig = warrant.sign(key, tool, args, int(time.time()))
+        return {
+            X_TENUO_WARRANT: warrant.to_base64(),
+            X_TENUO_POP: base64.b64encode(pop_sig).decode("ascii"),
+        }
+
+    def _limit_app(self, app, key):
+        from tenuo import Range
+
+        @app.get("/items")
+        def items(limit: int, ctx: SecurityContext = Depends(TenuoGuard("list_items"))):
+            return {"limit": limit, "args": ctx.args}
+
+        return Warrant.mint_builder().capability("list_items", limit=Range.max_value(100)).mint(key)
+
+    def test_declared_int_query_param_is_typed(self, app, client, key):
+        """`limit: int` + Range(max=100): ?limit=5 is checked as int 5, not "5"."""
+        warrant = self._limit_app(app, key)
+
+        resp = client.get("/items?limit=5", headers=self._headers(key, warrant, "list_items", {"limit": 5}))
+        assert resp.status_code == 200, resp.json()
+        assert resp.json() == {"limit": 5, "args": {"limit": 5}}
+
+        resp = client.get("/items?limit=500", headers=self._headers(key, warrant, "list_items", {"limit": 500}))
+        assert resp.status_code == 403
+
+    def test_declared_int_query_param_rejects_string_signature(self, app, client, key):
+        """The client must sign the typed value: a PoP over "5" no longer matches."""
+        warrant = self._limit_app(app, key)
+        resp = client.get("/items?limit=5", headers=self._headers(key, warrant, "list_items", {"limit": "5"}))
+        assert resp.status_code == 403
+
+    def test_uncoercible_value_is_never_authorized(self, app, client, key):
+        """?limit=abc for `limit: int` is not guessed into a number."""
+        warrant = self._limit_app(app, key)
+        for signed in ({"limit": "abc"}, {"limit": 0}):
+            resp = client.get("/items?limit=abc", headers=self._headers(key, warrant, "list_items", signed))
+            assert resp.status_code in (403, 422), resp.json()
+
+    def test_declared_int_path_param_is_typed(self, app, client, key):
+        from tenuo import Range
+
+        @app.get("/items/{item_id}")
+        def item(item_id: int, ctx: SecurityContext = Depends(TenuoGuard("get_item"))):
+            return {"args": ctx.args}
+
+        warrant = Warrant.mint_builder().capability("get_item", item_id=Range.max_value(10)).mint(key)
+
+        resp = client.get("/items/7", headers=self._headers(key, warrant, "get_item", {"item_id": 7}))
+        assert resp.status_code == 200, resp.json()
+        assert resp.json()["args"] == {"item_id": 7}
+
+        resp = client.get("/items/11", headers=self._headers(key, warrant, "get_item", {"item_id": 11}))
+        assert resp.status_code == 403
+
+    def test_typed_float_bool_and_list_params(self, app, client, key):
+        from typing import List
+
+        from fastapi import Query
+
+        @app.get("/search")
+        def search(
+            price: float,
+            enabled: bool,
+            tag: List[str] = Query([]),
+            ctx: SecurityContext = Depends(TenuoGuard("search")),
+        ):
+            return {"args": ctx.args}
+
+        warrant = Warrant.mint_builder().tool("search").mint(key)
+        args = {"price": 2.5, "enabled": True, "tag": ["a", "b"], "extra": "x"}
+        resp = client.get(
+            "/search?price=2.5&enabled=true&tag=a&tag=b&extra=x",
+            headers=self._headers(key, warrant, "search", args),
+        )
+        assert resp.status_code == 200, resp.json()
+        assert resp.json()["args"] == args
+
+    def test_undeclared_query_param_stays_string(self, app, client, key):
+        @app.get("/search")
+        def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
+            return {"args": ctx.args}
+
+        warrant = Warrant.mint_builder().tool("search").mint(key)
+        resp = client.get("/search?page=3", headers=self._headers(key, warrant, "search", {"page": "3"}))
+        assert resp.status_code == 200, resp.json()
+        assert resp.json()["args"] == {"page": "3"}
+
+    def test_secure_router_numeric_constraint(self, app, client, key):
+        from tenuo import Range
+        from tenuo.fastapi import SecureAPIRouter
+
+        router = SecureAPIRouter()
+
+        @router.get("/orders", tool="list_orders")
+        def orders(limit: int):
+            return {"limit": limit}
+
+        app.include_router(router)
+        warrant = Warrant.mint_builder().capability("list_orders", limit=Range.max_value(100)).mint(key)
+
+        resp = client.get("/orders?limit=5", headers=self._headers(key, warrant, "list_orders", {"limit": 5}))
+        assert resp.status_code == 200, resp.json()
+        resp = client.get("/orders?limit=500", headers=self._headers(key, warrant, "list_orders", {"limit": 500}))
+        assert resp.status_code == 403
+
+    def test_custom_extractors_are_not_coerced(self, app, client, key):
+        """Custom sync and async extract_args return exactly what they produce."""
+
+        def sync_extract(request: Request) -> Dict[str, Any]:
+            return dict(request.query_params)
+
+        async def async_extract(request: Request) -> Dict[str, Any]:
+            return dict(request.query_params)
+
+        @app.get("/sync")
+        def sync_route(limit: int, ctx: SecurityContext = Depends(TenuoGuard("q", extract_args=sync_extract))):
+            return {"args": ctx.args}
+
+        @app.get("/async")
+        async def async_route(limit: int, ctx: SecurityContext = Depends(TenuoGuard("q", extract_args=async_extract))):
+            return {"args": ctx.args}
+
+        warrant = Warrant.mint_builder().tool("q").mint(key)
+        for path in ("/sync", "/async"):
+            resp = client.get(f"{path}?limit=5", headers=self._headers(key, warrant, "q", {"limit": "5"}))
+            assert resp.status_code == 200, resp.json()
+            assert resp.json()["args"] == {"limit": "5"}
+
     def test_expired_warrant_returns_401(self, app, client, key):
         @app.get("/search")
         def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):

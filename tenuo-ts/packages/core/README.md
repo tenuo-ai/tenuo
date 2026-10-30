@@ -16,7 +16,7 @@ npm i @tenuo/core@beta
 ```
 
 ```ts
-import { createTenuo, under } from "@tenuo/core";
+import { AuthorizationDeniedError, createTenuo, under } from "@tenuo/core";
 
 const tenuo = createTenuo({ root: createTenuo.devRoot() });
 const readFile = tenuo.tool(
@@ -26,15 +26,22 @@ const readFile = tenuo.tool(
 const session = tenuo.session({ tools: [readFile] });
 
 await tenuo.withSession(session, async () => {
-  await readFile.execute({ path: "/data/q3.pdf" }); // allowed
-  await readFile.execute({ path: "/etc/passwd" }); // denied — execute does not run
+  console.log(await readFile.execute({ path: "/data/q3.pdf" })); // allowed
+  try {
+    await readFile.execute({ path: "/etc/passwd" }); // denied — execute does not run
+  } catch (error) {
+    if (!(error instanceof AuthorizationDeniedError)) throw error;
+    console.log("denied:", error.code);
+  }
 });
 ```
 
 Host schemas (Zod or otherwise) answer **valid**. Tool `allow` is the host ceiling.
 The session is what this agent may do. Rust AND's both. `allow` is zero-trust:
 every call argument must be named in the policy. `allow: {}` adds no extra
-ceiling. `devRoot()` requires `NODE_ENV=development` or `test`,
+ceiling, and `session({ tools })` refuses such a tool unless the session's own
+`allow` names it (`allow: { read_file: {} }`), because an empty capability in
+a warrant accepts any arguments. Unknown policy and option keys throw. `devRoot()` requires `NODE_ENV=development` or `test`,
 `devRoot({ allowInProduction: true })`, or `TENUO_ALLOW_DEV=1`. Unset
 `NODE_ENV` is not treated as development.
 
@@ -49,6 +56,8 @@ const runtime = createTenuo.runtime({
   trustedRoots: [createTenuo.publicKeyFromEnv("TENUO_ROOT_PUBLIC_KEY")],
   receipts: "collect",
 });
+// TENUO_WARRANT holds session.toWireString() from the issuer: the whole chain
+// as one string. sessionFromWire() also accepts the toWire() array.
 const session = runtime.sessionFromWire(process.env.TENUO_WARRANT!);
 await readFile.execute({ path: "/data/q3.pdf" }, { session });
 const receipts = session.drainReceipts(); // persist, then upload
@@ -59,7 +68,7 @@ read environment variables or invent an origin. Relative `/v1` endpoints need
 `token.resolveEndpoint({ localBase })`. Callers append `/v1/…` to the bare
 origin.
 
-See [Receipt delivery](../../README.md#receipt-delivery) for peek / drain / ack
+See [Receipt delivery](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts#receipt-delivery) for peek / drain / ack
 guarantees. This package does not perform HTTP, discovery, or upload.
 
 Delegation to another agent rebinds a narrower child to that agent's key. The
@@ -96,11 +105,13 @@ MCP wire helpers live on `tenuo.mcp` (`attach` / `verify` / `handler`). They do
 not depend on an MCP framework. For the official v2 server, use `@tenuo/mcp`.
 For `@modelcontextprotocol/sdk` v1, copy the recipe in `examples/mcp/host.ts`.
 `verify` / `handler` can take an optional `nonceStore` (`memoryNonceStore()`,
-or an async Redis `checkAndRecord`) to reject an exact replayed PoP; that is
-opt-in. PoP v1 is otherwise replayable in-window, including approval-gated
-calls. Pass `nonceStore` on those tools if an approval must be one-use.
+or an async Redis `checkAndRecord`) to reject an exact replayed PoP and to
+consume the approvals an allowed call carried; that is opt-in. PoP v1 is
+otherwise replayable in-window, including approval-gated calls. For
+in-process tools, pass the same `nonceStore` to `tenuo.tool()` to make
+approvals one-use there.
 `memoryNonceStore({ ttlSeconds })` defaults to 180 seconds; an explicit TTL must
 be positive, finite, and small enough to represent in milliseconds.
 
-See the [workspace README](../../README.md) for the full API, refuse list, and
+See the [workspace README](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts) for the full API, refuse list, and
 how to rebuild WASM from this monorepo.

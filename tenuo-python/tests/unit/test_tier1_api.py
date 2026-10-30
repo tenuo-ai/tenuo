@@ -752,6 +752,30 @@ def test_scoped_task_enforces_containment(setup_config):
     asyncio.run(_test())
 
 
+def test_scoped_task_ttl_beyond_parent_inherits_parent_expiry(setup_config):
+    """grant(ttl=...) longer than the parent has left inherits the parent's expiry, as preview() reports.
+
+    Low-level builders reject a child that would outlive its parent; the scoped API
+    asks the core to atomically cap the request instead of raising.
+    """
+    from tenuo_core import Pattern
+
+    from tenuo import Capability
+
+    async def _test():
+        async with mint(Capability("read_file", path=Pattern("/data/*")), ttl=60) as parent:
+            scope = grant(Capability("read_file", path=Pattern("/data/reports/*")), ttl=3600)
+            assert scope.preview().error is None
+            assert scope.preview().ttl <= 60
+            async with scope as child:
+                assert child.expires_at() == parent.expires_at()
+
+            async with grant(Capability("read_file", path=Pattern("/data/reports/*")), ttl=30) as shorter:
+                assert shorter.expires_at() <= parent.expires_at()
+
+    asyncio.run(_test())
+
+
 def test_scoped_task_preview(setup_config):
     from tenuo_core import Pattern
 

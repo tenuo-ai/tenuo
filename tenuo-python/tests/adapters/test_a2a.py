@@ -283,10 +283,41 @@ class TestServerValidation:
         assert server.require_warrant is True
 
     @pytest.mark.asyncio
-    async def test_audience_validation_enabled(self, server):
-        """Audience validation is on by default."""
-        assert server.require_audience is True
+    async def test_audience_validation_off_by_default(self, monkeypatch, server):
+        """Audience validation is off by default: core warrants carry no aud claim."""
+        monkeypatch.delenv("TENUO_A2A_REQUIRE_AUDIENCE", raising=False)
+        assert server.require_audience is False
         assert server.url == "https://test.example.com"
+
+    def test_audience_validation_opt_in(self, mock_key, trusted_issuer, monkeypatch):
+        """Explicit True and the env var still turn audience validation on."""
+        kwargs = dict(name="A", url="https://a.example.com", public_key=mock_key, trusted_issuers=[trusted_issuer])
+        assert A2AServer(**kwargs, require_audience=True).require_audience is True
+        monkeypatch.setenv("TENUO_A2A_REQUIRE_AUDIENCE", "true")
+        assert A2AServer(**kwargs).require_audience is True
+        assert A2AServer(**kwargs, require_audience=False).require_audience is False
+
+    @pytest.mark.asyncio
+    async def test_default_server_accepts_real_warrant(self, monkeypatch):
+        """A real warrant (no aud claim) passes a server built with default settings."""
+        monkeypatch.delenv("TENUO_A2A_REQUIRE_AUDIENCE", raising=False)
+        core = pytest.importorskip("tenuo_core")
+        key = core.SigningKey.generate()
+        warrant = core.Warrant.mint(keypair=key, holder=key.public_key, capabilities={"ping": {}}, ttl_seconds=300)
+        server = A2AServer(
+            name="Default Agent",
+            url="https://default.example.com",
+            public_key="z6MkServer",
+            trusted_issuers=[key.public_key.to_bytes().hex()],
+            audit_log=None,
+        )
+
+        @server.skill("ping")
+        async def ping() -> str:
+            return "pong"
+
+        pop = warrant.sign(key, "ping", {}, int(time.time()))
+        assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=bytes(pop)) is not None
 
 
 # =============================================================================
@@ -764,9 +795,10 @@ class TestA2AInvariants:
     # Invariant: Audience Binding
     # -------------------------------------------------------------------------
 
-    def test_invariant_audience_binding_default(self, server):
-        """Invariant: Audience binding is enabled by default."""
-        assert server.require_audience is True
+    def test_invariant_audience_binding_default(self, monkeypatch, server):
+        """Audience binding is opt-in: core warrants carry no aud claim."""
+        monkeypatch.delenv("TENUO_A2A_REQUIRE_AUDIENCE", raising=False)
+        assert server.require_audience is False
 
     def test_invariant_audience_mismatch_error(self):
         """Invariant: Audience mismatch raises specific error."""
@@ -1896,6 +1928,240 @@ class TestAdversarialConstraintBypass:
 
         except ImportError:
             pytest.skip("tenuo_core not available")
+
+
+class TestServerConstraintsWithPoP:
+    """Server-level skill constraints are enforced when require_pop=True (the default)."""
+
+    @staticmethod
+    def _server_and_warrant(require_pop=True):
+        core = pytest.importorskip("tenuo_core")
+        key = core.SigningKey.generate()
+        # Warrant allows any path; only the server-level constraint narrows it.
+        warrant = core.Warrant.mint(
+            keypair=key,
+            holder=key.public_key,
+            capabilities={"read_file": {"path": core.Subpath("/")}},
+            ttl_seconds=300,
+        )
+        server = A2AServer(
+            name="PoP Constraint Agent",
+            url="https://pop-constraints.example.com",
+            public_key="z6MkServer",
+            trusted_issuers=[key.public_key.to_bytes().hex()],
+            require_warrant=True,
+            require_audience=False,
+            require_pop=require_pop,
+            check_replay=False,
+            audit_log=None,
+        )
+        return core, server, warrant, key
+
+    @staticmethod
+    async def _call(server, warrant, key, args, skill_id="read_file"):
+        pop = warrant.sign(key, skill_id, args, int(time.time()))
+        return await server.validate_warrant(warrant.to_base64(), skill_id, args, pop_signature=bytes(pop))
+
+    @pytest.mark.asyncio
+    async def test_server_constraint_rejects_out_of_bounds_path(self):
+        core, server, warrant, key = self._server_and_warrant()
+
+        @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+        async def read_file(path: str) -> str:
+            return path
+
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"path": "/etc/passwd"})
+
+    @pytest.mark.asyncio
+    async def test_server_constraint_allows_in_bounds_path(self):
+        core, server, warrant, key = self._server_and_warrant()
+
+        @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+        async def read_file(path: str) -> str:
+            return path
+
+        assert await self._call(server, warrant, key, {"path": "/data/report.txt"}) is not None
+
+    @pytest.mark.asyncio
+    async def test_server_constraint_denial_receipts_deny_not_allow(self):
+        """The Authorizer's allow is held until the server constraint passes."""
+        core = pytest.importorskip("tenuo_core")
+        from tenuo import HolderIdentity, Runtime
+
+        root = core.SigningKey.generate()
+        holder = HolderIdentity.generate()
+        warrant = core.Warrant.mint(
+            keypair=root,
+            holder=holder.public_key,
+            capabilities={"read_file": {"path": core.Subpath("/")}},
+            ttl_seconds=300,
+        )
+        runtime = Runtime(identity=holder, trusted_roots=[root.public_key], receipts="collect")
+        server = A2AServer(
+            name="Receipt Agent",
+            url="https://receipts.example.com",
+            public_key=holder.public_key.to_bytes().hex(),
+            trusted_issuers=[root.public_key.to_bytes().hex()],
+            require_audience=False,
+            check_replay=False,
+            audit_log=None,
+            runtime=runtime,
+        )
+
+        @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+        async def read_file(path: str) -> str:
+            return path
+
+        def outcomes():
+            return [core.verify_receipt(r).outcome for r in runtime.peek_receipts()]
+
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, holder.signing_key, {"path": "/etc/passwd"})
+        assert outcomes() == ["deny"]
+
+        await self._call(server, warrant, holder.signing_key, {"path": "/data/report.txt"})
+        assert outcomes() == ["deny", "allow"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("constraint", "allowed", "denied"),
+        [
+            pytest.param(
+                lambda core: core.UrlPattern("https://api.example.com/*"),
+                "https://api.example.com/report",
+                "https://evil.example/report",
+                id="url-pattern",
+            ),
+            pytest.param(
+                lambda core: core.AnyOf([core.Pattern("alpha-*"), core.Pattern("beta-*")]),
+                "alpha-report",
+                "gamma-report",
+                id="composite-any-of",
+            ),
+        ],
+    )
+    async def test_core_satisfies_constraints_are_enforced_with_pop(self, constraint, allowed, denied):
+        """Core constraints using satisfies() work in the A2A-local gate."""
+        core = pytest.importorskip("tenuo_core")
+        key = core.SigningKey.generate()
+        warrant = core.Warrant.mint(
+            keypair=key,
+            holder=key.public_key,
+            capabilities={"fetch": {"target": core.Pattern("*")}},
+            ttl_seconds=300,
+        )
+        server = A2AServer(
+            name="Core Constraint Agent",
+            url="https://core-constraints.example.com",
+            public_key="z6MkServer",
+            trusted_issuers=[key.public_key.to_bytes().hex()],
+            require_audience=False,
+            require_pop=True,
+            check_replay=False,
+            audit_log=None,
+        )
+
+        @server.skill("fetch", constraints={"target": constraint(core)})
+        async def fetch(target: str) -> str:
+            return target
+
+        assert await self._call(server, warrant, key, {"target": allowed}, "fetch") is not None
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"target": denied}, "fetch")
+
+    @pytest.mark.asyncio
+    async def test_malformed_core_constraint_input_records_deny_receipt(self):
+        """Invalid request data is a constraint denial, not an internal error."""
+        core = pytest.importorskip("tenuo_core")
+        from tenuo import HolderIdentity, Runtime
+
+        root = core.SigningKey.generate()
+        holder = HolderIdentity.generate()
+        warrant = core.Warrant.mint(
+            keypair=root,
+            holder=holder.public_key,
+            capabilities={"ping": {"ip": core.Pattern("*")}},
+            ttl_seconds=300,
+        )
+        runtime = Runtime(identity=holder, trusted_roots=[root.public_key], receipts="collect")
+        server = A2AServer(
+            name="Cidr Receipt Agent",
+            url="https://cidr-receipts.example.com",
+            public_key=holder.public_key.to_bytes().hex(),
+            trusted_issuers=[root.public_key.to_bytes().hex()],
+            require_audience=False,
+            check_replay=False,
+            audit_log=None,
+            runtime=runtime,
+        )
+
+        @server.skill("ping", constraints={"ip": core.Cidr("10.0.0.0/8")})
+        async def ping(ip: str) -> str:
+            return ip
+
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, holder.signing_key, {"ip": "not-an-ip"}, "ping")
+        assert [core.verify_receipt(r).outcome for r in runtime.peek_receipts()] == ["deny"]
+
+
+class TestBareConstraintClasses:
+    """A bare constraint class has no bounds and is refused; instances are enforced."""
+
+    _setup = staticmethod(TestServerConstraintsWithPoP._server_and_warrant)
+    _call = staticmethod(TestServerConstraintsWithPoP._call)
+
+    @pytest.mark.parametrize("name", ["Subpath", "UrlSafe", "Pattern"])
+    def test_bare_class_is_refused_at_registration(self, name):
+        core, server, _, _ = self._setup()
+        cls = getattr(core, name)
+
+        with pytest.raises(TypeError, match=rf"Skill 'read_file': constraint for 'path' is the class {name}"):
+
+            @server.skill("read_file", constraints={"path": cls})
+            async def read_file(path: str) -> str:
+                return path
+
+        assert "read_file" not in server._skills
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("require_pop", [True, False])
+    async def test_instance_is_enforced(self, require_pop):
+        core, server, warrant, key = self._setup(require_pop)
+
+        @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+        async def read_file(path: str) -> str:
+            return path
+
+        assert await self._call(server, warrant, key, {"path": "/data/a.txt"}) is not None
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"path": "/etc/passwd"})
+
+    @pytest.mark.asyncio
+    async def test_plain_type_is_still_an_isinstance_check(self):
+        core, server, warrant, key = self._setup(require_pop=False)
+
+        @server.skill("read_file", constraints={"path": int})
+        async def read_file(path: int) -> int:
+            return path
+
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"path": "/data/a.txt"})
+
+    def test_agent_card_advertises_type_for_instances_and_plain_types(self, server):
+        from tenuo_core import Subpath
+
+        @server.skill("inst", constraints={"path": Subpath("/data")})
+        async def inst(path: str) -> str:
+            return path
+
+        @server.skill("typed", constraints={"count": int})
+        async def typed(count: int) -> int:
+            return count
+
+        skills = {s["id"]: s for s in server.get_agent_card_dict()["skills"]}
+        assert skills["inst"]["x-tenuo-constraints"]["path"]["type"] == "Subpath"
+        assert skills["typed"]["x-tenuo-constraints"]["count"]["type"] == "int"
 
 
 class TestAdversarialPoP:

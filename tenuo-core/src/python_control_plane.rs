@@ -2,7 +2,7 @@
 use crate::connect_token::ConnectToken;
 #[cfg(feature = "python-server")]
 use crate::heartbeat::{
-    create_audit_channel, start_heartbeat_loop_until, ApprovalRecord, AuditEventSender,
+    create_audit_channel, start_heartbeat_loop_with_status, ApprovalRecord, AuditEventSender,
     AuthorizationEvent, ControlPlaneStatus, EnvironmentInfo, HeartbeatConfig,
 };
 #[cfg(feature = "python-server")]
@@ -511,7 +511,6 @@ impl PyControlPlaneClient {
             agent_id,
             connect_token: parsed_token,
             revocation_tracker: None,
-            status: status.clone(),
         };
 
         let authorizer_id_async = Arc::new(RwLock::new(None::<String>));
@@ -525,11 +524,12 @@ impl PyControlPlaneClient {
         let mut config = config;
         config.id_notify = Some(id_tx);
 
-        let handle = runtime().spawn(start_heartbeat_loop_until(
+        let handle = runtime().spawn(start_heartbeat_loop_with_status(
             config,
             Some(audit_rx),
             shared_id,
             Some(stop_rx),
+            status.clone(),
         ));
 
         runtime().spawn(async move {

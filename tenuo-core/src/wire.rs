@@ -53,6 +53,17 @@ pub fn to_vec<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Reject input whose bytes differ from the canonical encoding of the decoded value.
+fn ensure_canonical<T: Serialize>(value: &T, input: &[u8], what: &str) -> Result<()> {
+    if to_vec(value)? != input {
+        return Err(Error::DeserializationError(format!(
+            "non-canonical {} encoding",
+            what
+        )));
+    }
+    Ok(())
+}
+
 /// Decode a warrant from binary format.
 ///
 /// Returns `PayloadTooLarge` if the input exceeds [`MAX_WARRANT_SIZE`].
@@ -67,16 +78,18 @@ pub fn decode(data: &[u8]) -> Result<Warrant> {
 
     let warrant: Warrant = ciborium::de::from_reader(data)?;
 
-    // Validate constraint depth to prevent stack overflow attacks
-    warrant.validate_constraint_depth()?;
+    // Accept only the canonical encoding. The signature covers the payload
+    // bytes, not the envelope, so a decoder that tolerates a different array
+    // header or trailing bytes would accept several byte strings for one
+    // warrant. Anything that dedups, caches or hashes raw tokens relies on
+    // there being exactly one.
+    ensure_canonical(&warrant, data, "warrant")?;
 
-    // Validate semantic rules (including temporal checks)
-    warrant.validate()?;
-
-    // Validate payload version early (reject unknown versions)
-    if warrant.payload.version != crate::warrant::WARRANT_VERSION as u8 {
-        return Err(Error::UnsupportedVersion(warrant.payload.version));
-    }
+    // Decoding is deliberately clock-neutral. Callers such as Authorizer may
+    // configure their own tolerance for future-issued timestamps; applying the
+    // library default here would reject a token before that policy is reached.
+    // Structural validation still rejects malformed or unsupported warrants.
+    warrant.validate_structural()?;
 
     Ok(warrant)
 }
@@ -203,11 +216,15 @@ pub fn decode_stack(data: &[u8]) -> Result<WarrantStack> {
         });
     }
     let stack: WarrantStack = ciborium::de::from_reader(data)?;
+    ensure_canonical(&stack, data, "warrant stack")?;
     // Basic validation?
     if stack.0.is_empty() {
         return Err(Error::DeserializationError(
             "Warrant stack cannot be empty".to_string(),
         ));
+    }
+    for warrant in &stack.0 {
+        warrant.validate_structural()?;
     }
     Ok(stack)
 }
@@ -352,6 +369,104 @@ mod tests {
 
         assert_eq!(decoded.id(), warrant.id());
         assert_eq!(decoded.tools(), warrant.tools()); // Both return Option<Vec<String>>
+    }
+
+    fn canonical_test_warrant() -> Warrant {
+        let keypair = SigningKey::generate();
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("arg", Pattern::new("value-*").unwrap());
+        Warrant::builder()
+            .capability("test_tool", constraints)
+            .ttl(Duration::from_secs(300))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap()
+    }
+
+    fn encoded_bstr_header_len(len: usize) -> usize {
+        match len {
+            0..=23 => 1,
+            24..=0xff => 2,
+            0x100..=0xffff => 3,
+            _ => 5,
+        }
+    }
+
+    #[test]
+    fn test_decode_rejects_overlong_signature_tuple() {
+        let warrant = canonical_test_warrant();
+        let encoded = encode(&warrant).unwrap();
+        // The envelope is [version, payload bstr, [alg, sig bstr]]. The signature
+        // array header (0x82, array of 2) directly follows the payload bytes.
+        let payload_len = warrant.payload_bytes.len();
+        let header = 1 + 1 + encoded_bstr_header_len(payload_len) + payload_len;
+        assert_eq!(encoded[header], 0x82);
+        let mut mutated = encoded.clone();
+        mutated[header] = 0x83;
+        mutated.push(0x00); // actual third signature-tuple element
+        assert!(decode(&mutated).is_err());
+    }
+
+    #[test]
+    fn decoding_defers_future_skew_policy_to_the_authorizer() {
+        let keypair = SigningKey::generate();
+        let mut warrant = Warrant::builder()
+            .capability("test", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now + 45;
+        warrant.payload.expires_at = now + 300;
+        warrant.payload_bytes = to_vec(&warrant.payload).unwrap();
+        warrant.signature = keypair.sign_raw(&warrant.signed_message());
+
+        let encoded = encode(&warrant).unwrap();
+        let decoded = decode(&encoded).expect("wire decoding must be clock-neutral");
+        let stack = WarrantStack::new(vec![warrant]);
+        assert!(decode_stack(&encode_stack(&stack).unwrap()).is_ok());
+
+        let accepts = crate::planes::Authorizer::new()
+            .with_trusted_root(keypair.public_key())
+            .with_clock_tolerance(chrono::Duration::seconds(60));
+        assert!(accepts.verify_chain(std::slice::from_ref(&decoded)).is_ok());
+
+        let rejects = crate::planes::Authorizer::new()
+            .with_trusted_root(keypair.public_key())
+            .with_clock_tolerance(chrono::Duration::seconds(30));
+        assert!(matches!(
+            rejects.verify_chain(&[decoded]),
+            Err(Error::IssuedInFuture)
+        ));
+    }
+
+    #[test]
+    fn test_decode_rejects_trailing_bytes() {
+        let mut encoded = encode(&canonical_test_warrant()).unwrap();
+        encoded.push(0x00);
+        assert!(decode(&encoded).is_err());
+    }
+
+    #[test]
+    fn test_every_single_bit_change_is_rejected() {
+        let encoded = encode(&canonical_test_warrant()).unwrap();
+        for i in 0..encoded.len() {
+            for bit in 0..8 {
+                let mut mutated = encoded.clone();
+                mutated[i] ^= 1 << bit;
+                assert!(decode(&mutated).is_err(), "byte {i} bit {bit} accepted");
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_stack_rejects_noncanonical_encoding() {
+        let stack = WarrantStack(vec![canonical_test_warrant()]);
+        let mut encoded = encode_stack(&stack).unwrap();
+        assert!(decode_stack(&encoded).is_ok());
+        encoded.push(0x00);
+        assert!(decode_stack(&encoded).is_err());
     }
 
     #[test]
@@ -630,7 +745,7 @@ mod tests {
         // Manual construction of Unknown constraint
         let unknown = Constraint::Unknown {
             type_id: 99,
-            payload: vec![1, 2, 3],
+            payload: vec![0xa0], // A valid single CBOR item: {}.
         };
 
         let value = ConstraintValue::String("anything".to_string());

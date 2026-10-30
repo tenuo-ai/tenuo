@@ -130,8 +130,8 @@ except (ImportError, TypeError):
     BaseTool = object  # type: ignore
     RunnableConfig = dict  # type: ignore
 
-# wrap_tool_call / awrap_tool_call were added in LangGraph 0.3+ (requires Python 3.10+).
-# On Python 3.9, uv/pip resolves to LangGraph 0.2.x which lacks this API.
+# wrap_tool_call / awrap_tool_call need langgraph-prebuilt >= 1.0.2 (Python 3.10+).
+# Older installs (e.g. LangGraph 0.2.x, the Python 3.9 resolution) lack this API.
 # TenuoToolNode requires this hook to enforce authorization; construction raises RuntimeError
 # when unsupported. This flag lets callers and tests detect support ahead of time.
 if LANGGRAPH_AVAILABLE:
@@ -845,6 +845,13 @@ def guard_node(
         graph.add_node("researcher", guard_node(researcher, required_tools=["search", "read"]))
     """
 
+    import inspect
+
+    sig = inspect.signature(node)
+    accepts_config = "config" in sig.parameters or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+
     @wraps(node)
     def wrapper(
         state: Union[Dict[str, Any], Any],
@@ -877,17 +884,20 @@ def guard_node(
         if inject_warrant:
             kwargs["bound_warrant"] = bw
 
-        import inspect
-
-        sig = inspect.signature(node)
-        accepts_config = "config" in sig.parameters or any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        )
-
         if config and accepts_config:
             return node(state, config=config, **kwargs)
         else:
             return node(state, **kwargs)
+
+    # LangGraph injects config, runtime, store, etc. only for parameters in
+    # inspect.signature(), which ``@wraps`` points at the node. Add ``config`` so
+    # pure nodes still honor ``tenuo_key_id``; hide the injected ``bound_warrant``.
+    params = [p for p in sig.parameters.values() if not (inject_warrant and p.name == "bound_warrant")]
+    if "config" not in sig.parameters:
+        # Keyword-only so it is valid after any parameter, but it must precede **kwargs.
+        at = -1 if params and params[-1].kind == inspect.Parameter.VAR_KEYWORD else len(params)
+        params.insert(at, inspect.Parameter("config", inspect.Parameter.KEYWORD_ONLY, default=None))
+    wrapper.__signature__ = sig.replace(parameters=params)  # type: ignore[attr-defined]
 
     return wrapper
 
@@ -1105,7 +1115,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             self._tenuo_hooks_active = True
         except TypeError as exc:
             raise RuntimeError(
-                "TenuoToolNode requires LangGraph >= 0.2.35 (wrap_tool_call support). "
+                "TenuoToolNode requires langgraph-prebuilt >= 1.0.2 (wrap_tool_call support). "
                 "Authorization enforcement cannot be applied on this version. "
                 "Upgrade langgraph or use TenuoMiddleware instead."
             ) from exc
