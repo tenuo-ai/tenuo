@@ -4369,6 +4369,51 @@ class TestApprovalGates:
         assert "replicas" in str(exc_info.value)
         assert calls == []
 
+    def test_runtime_revocation_is_denied_without_asking_approvers(self):
+        """The configured Runtime's SRL is authoritative during preflight."""
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import HolderIdentity, Runtime, SigningKey
+        from tenuo_core import SignedRevocationList
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+        warrant = self._mint_gated_warrant(
+            control_key, agent_key, approver_key=approver_key,
+        )
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+
+        revocations = SignedRevocationList.builder()
+        revocations.revoke(warrant.id)
+        revocations.version(1)
+        runtime = Runtime(
+            identity=HolderIdentity.from_signing_key(agent_key),
+            trusted_roots=[control_key.public_key],
+            revocation_list=revocations.build(control_key),
+        )
+        calls: list = []
+
+        def handler(request):
+            calls.append(request)
+            return self._sign_approval(warrant, approver_key, "deploy", {})
+
+        plugin = TenuoWorkerInterceptor(TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            runtime=runtime,
+            approval_handler=handler,
+        ))
+        info, inp = self._build_activity_inputs(warrant, pop)
+
+        with pytest.raises(ApplicationError) as exc_info:
+            self._run(plugin, info, inp)
+        assert exc_info.value.non_retryable
+        assert "revok" in str(exc_info.value).lower()
+        assert calls == []
+
     def test_malformed_approvals_header_raises_invalid_approval(self):
         """Malformed x-tenuo-approvals must raise InvalidApproval, not be ignored."""
         import time as _time
