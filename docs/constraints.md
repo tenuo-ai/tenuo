@@ -1037,8 +1037,9 @@ CEL("budget < revenue * 0.1 && currency == 'USD'")
 - CEL expressions evaluate to **boolean** (true/false)
 - For **object values**, each field becomes a top-level variable, and the whole object is also
   available as `value`. Use `has(value.field)` to test an optional field, for example
-  `amount <= 4000 && (!has(value.approve) || value.approve == false)`. A field named `value`
-  takes precedence over the object binding.
+  `amount <= 4000 && (!has(value.approve) || value.approve == false)`. Because `value` is a
+  reserved root binding, object inputs containing a field named `value` are rejected rather
+  than allowed to shadow it.
 - For **primitive values**, the value is available as `value`
 - Expressions are **compiled once** and cached for performance (max 1000 entries)
 

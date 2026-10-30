@@ -252,7 +252,8 @@ pub fn evaluate(
 ///
 /// For object values, each field becomes a top-level variable, and the whole
 /// object is also available as `value` so expressions can test optional fields
-/// with `has(value.field)`. A field named `value` takes precedence.
+/// with `has(value.field)`. Objects with a field named `value` are rejected so
+/// caller input cannot shadow the root binding.
 /// For other values, the value is available as `value`.
 ///
 /// # Feature Flag
@@ -266,11 +267,14 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
 
     match value {
         ConstraintValue::Object(map) => {
-            if !map.contains_key("value") {
-                context
-                    .add_variable("value", constraint_value_to_cel(value)?)
-                    .map_err(|e| Error::CelError(format!("failed to add variable: {}", e)))?;
+            if map.contains_key("value") {
+                return Err(Error::CelError(
+                    "object field 'value' conflicts with the reserved root binding".to_string(),
+                ));
             }
+            context
+                .add_variable("value", constraint_value_to_cel(value)?)
+                .map_err(|e| Error::CelError(format!("failed to add variable: {}", e)))?;
             for (key, val) in map {
                 context
                     .add_variable(key, constraint_value_to_cel(val)?)
@@ -604,16 +608,26 @@ mod tests {
     }
 
     #[test]
-    fn test_object_field_named_value_takes_precedence() {
+    fn test_object_field_named_value_cannot_shadow_root() {
         let value = ConstraintValue::Object(
             [
-                ("value".to_string(), ConstraintValue::Integer(7)),
+                (
+                    "value".to_string(),
+                    ConstraintValue::Object(
+                        [("approve".to_string(), ConstraintValue::Boolean(true))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
                 ("approve".to_string(), ConstraintValue::Boolean(false)),
             ]
             .into_iter()
             .collect(),
         );
-        assert!(evaluate_with_value_context("value == 7 && approve == false", &value).unwrap());
+        let result = evaluate_with_value_context("value.approve", &value);
+        assert!(
+            matches!(result, Err(Error::CelError(message)) if message.contains("reserved root binding"))
+        );
     }
 
     #[test]
