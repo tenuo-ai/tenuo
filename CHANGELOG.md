@@ -61,6 +61,12 @@ Two checks are stricter, and some calls that used to pass now fail:
 
 ### Fixed
 
+- **CEL object constraints can test optional fields.** Object-valued arguments
+  are now also exposed as `value`, so policies can use expressions such as
+  `!has(value.approve) || value.approve == false`. Existing top-level field
+  bindings are unchanged, including the precedence of a field literally named
+  `value`. Older verifiers fail closed on expressions using the new binding.
+
 - **Issuer warrants keep their approval settings.** `mint_builder().issuer()`
   silently dropped `approval_gates`, `required_approvers` and
   `min_approvals`. They are now signed into the issuer warrant, and execution

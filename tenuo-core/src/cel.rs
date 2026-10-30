@@ -604,11 +604,14 @@ mod tests {
     #[test]
     fn test_object_field_named_value_takes_precedence() {
         let value = ConstraintValue::Object(
-            [("value".to_string(), ConstraintValue::Integer(7))]
-                .into_iter()
-                .collect(),
+            [
+                ("value".to_string(), ConstraintValue::Integer(7)),
+                ("approve".to_string(), ConstraintValue::Boolean(false)),
+            ]
+            .into_iter()
+            .collect(),
         );
-        assert!(evaluate_with_value_context("value == 7", &value).unwrap());
+        assert!(evaluate_with_value_context("value == 7 && approve == false", &value).unwrap());
     }
 
     #[test]
