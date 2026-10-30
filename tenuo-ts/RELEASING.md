@@ -58,8 +58,9 @@ are enforced by `.github/workflows/ci.yml`. The version/channel check, packed
 consumer smoke tests, provenance-enabled publish, publication ordering, and
 registry verification are enforced again by `.github/workflows/release.yml`.
 Before a stable publish, the release workflow also requires successful Node 20,
-Node 22, Node 24, Windows pack-smoke, and TypeScript security check runs for the
-exact tagged commit.
+Node 22, Node 24, Windows pack-smoke, and TypeScript security check runs from
+GitHub Actions for the exact tagged commit, waiting up to 30 minutes for them
+to finish.
 
 ## Additional stable-release gate
 

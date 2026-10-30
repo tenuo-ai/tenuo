@@ -328,9 +328,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          passed=$(gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?filter=latest&per_page=100" \
-            --jq '.check_runs[] | select(.conclusion == "success") | .name')
           required_checks=(
             "TypeScript SDK"
             "TypeScript SDK (Node 22)"
@@ -340,12 +337,35 @@ jobs:
             "TypeScript Differential Security"
             "TypeScript Mutation Security"
           )
-          for check_name in "${required_checks[@]}"; do
-            if ! grep -Fxq -- "$check_name" <<< "$passed"; then
-              echo "Required successful check missing for ${GITHUB_SHA}: $check_name" >&2
-              exit 1
+          # A release can be published while CI is still running on the
+          # tagged commit, so wait for the required checks to finish.
+          for attempt in {1..60}; do
+            if ! runs=$(gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?filter=latest&per_page=100" \
+              --jq '.check_runs[] | select(.app.slug == "github-actions") | [.name, .status, (.conclusion // "")] | @tsv'); then
+              echo "Check-run query failed (attempt ${attempt}/60)" >&2
+              sleep 30
+              continue
             fi
+            pending=()
+            for check_name in "${required_checks[@]}"; do
+              run=$(awk -F'\t' -v name="$check_name" '$1 == name' <<< "$runs" | head -n 1)
+              IFS=$'\t' read -r _ status conclusion <<< "$run"
+              if [ "${status:-}" != "completed" ]; then
+                pending+=("$check_name")
+              elif [ "$conclusion" != "success" ]; then
+                echo "Required check did not succeed for ${GITHUB_SHA}: $check_name ($conclusion)" >&2
+                exit 1
+              fi
+            done
+            if [ "${#pending[@]}" -eq 0 ]; then
+              exit 0
+            fi
+            echo "Waiting for ${pending[*]} (attempt ${attempt}/60)"
+            sleep 30
           done
+          echo "Required checks did not finish for ${GITHUB_SHA}: ${pending[*]}" >&2
+          exit 1
 
       - name: Build WASM
         if: steps.npm-policy.outputs.publish == 'true'
