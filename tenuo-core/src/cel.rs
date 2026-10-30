@@ -251,9 +251,9 @@ pub fn evaluate(
 /// Evaluate a CEL expression with the value as the root context.
 ///
 /// For object values, each field becomes a top-level variable, and the whole
-/// object is also available as `value` so expressions can test optional fields
-/// with `has(value.field)`. Objects with a field named `value` are rejected so
-/// caller input cannot shadow the root binding.
+/// object is available through the opt-in `tenuo_object()` function so
+/// expressions can test optional fields with `has(tenuo_object().field)`.
+/// Keeping the object out of `value` preserves existing list-only policies.
 /// For other values, the value is available as `value`.
 ///
 /// # Feature Flag
@@ -267,14 +267,13 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
 
     match value {
         ConstraintValue::Object(map) => {
-            if map.contains_key("value") {
-                return Err(Error::CelError(
-                    "object field 'value' conflicts with the reserved root binding".to_string(),
-                ));
-            }
-            context
-                .add_variable("value", constraint_value_to_cel(value)?)
-                .map_err(|e| Error::CelError(format!("failed to add variable: {}", e)))?;
+            let object = constraint_value_to_cel(value)?;
+            let object_function: Box<
+                dyn Fn(&mut cel_interpreter::FunctionContext) -> cel_interpreter::ResolveResult
+                    + Send
+                    + Sync,
+            > = Box::new(move |_| Ok(object.clone()));
+            context.add_function("tenuo_object", object_function);
             for (key, val) in map {
                 context
                     .add_variable(key, constraint_value_to_cel(val)?)
@@ -495,27 +494,27 @@ mod tests {
     }
 
     #[test]
-    fn test_list_macros_deny_on_non_lists_without_panicking() {
+    fn test_list_macros_fail_closed_on_non_lists() {
         let values = [
             ConstraintValue::String("admin".to_string()),
             ConstraintValue::Integer(5),
             ConstraintValue::Boolean(true),
-            ConstraintValue::Object(std::collections::BTreeMap::from([(
-                "role".to_string(),
-                ConstraintValue::String("admin".to_string()),
-            )])),
+            ConstraintValue::Object(std::collections::BTreeMap::from([
+                ("admin".to_string(), ConstraintValue::Boolean(false)),
+                (
+                    "role".to_string(),
+                    ConstraintValue::String("admin".to_string()),
+                ),
+            ])),
         ];
 
         for value in &values {
             let all = evaluate_with_value_context("value.all(item, item == 'admin')", value);
-            assert!(
-                matches!(all, Err(_) | Ok(false)),
-                "all over {value:?} must deny instead of panicking: {all:?}"
-            );
+            assert!(all.is_err(), "all over {value:?} must fail closed: {all:?}");
             let exists = evaluate_with_value_context("value.exists(item, item == 'admin')", value);
             assert!(
-                matches!(exists, Err(_) | Ok(false)),
-                "exists over {value:?} must deny instead of panicking: {exists:?}"
+                exists.is_err(),
+                "exists over {value:?} must fail closed: {exists:?}"
             );
         }
     }
@@ -591,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn test_object_context_binds_value_for_optional_fields() {
+    fn test_object_context_exposes_optional_fields_opt_in() {
         let obj = |approve: Option<bool>| {
             let mut fields = vec![("amount".to_string(), ConstraintValue::Integer(3600))];
             if let Some(a) = approve {
@@ -599,35 +598,32 @@ mod tests {
             }
             ConstraintValue::Object(fields.into_iter().collect())
         };
-        let expr = "amount <= 4000 && (!has(value.approve) || value.approve == false)";
+        let expr =
+            "amount <= 4000 && (!has(tenuo_object().approve) || tenuo_object().approve == false)";
         assert!(evaluate_with_value_context(expr, &obj(None)).unwrap());
         assert!(evaluate_with_value_context(expr, &obj(Some(false))).unwrap());
         assert!(!evaluate_with_value_context(expr, &obj(Some(true))).unwrap());
         // Fields stay available as top-level variables.
-        assert!(evaluate_with_value_context("value.amount == amount", &obj(None)).unwrap());
+        assert!(
+            evaluate_with_value_context("tenuo_object().amount == amount", &obj(None)).unwrap()
+        );
     }
 
     #[test]
-    fn test_object_field_named_value_cannot_shadow_root() {
+    fn test_object_field_named_value_keeps_legacy_precedence() {
         let value = ConstraintValue::Object(
             [
-                (
-                    "value".to_string(),
-                    ConstraintValue::Object(
-                        [("approve".to_string(), ConstraintValue::Boolean(true))]
-                            .into_iter()
-                            .collect(),
-                    ),
-                ),
+                ("value".to_string(), ConstraintValue::Integer(7)),
                 ("approve".to_string(), ConstraintValue::Boolean(false)),
             ]
             .into_iter()
             .collect(),
         );
-        let result = evaluate_with_value_context("value.approve", &value);
-        assert!(
-            matches!(result, Err(Error::CelError(message)) if message.contains("reserved root binding"))
-        );
+        assert!(evaluate_with_value_context(
+            "value == 7 && approve == false && tenuo_object().approve == false",
+            &value
+        )
+        .unwrap());
     }
 
     #[test]

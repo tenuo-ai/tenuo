@@ -62,11 +62,11 @@ Two checks are stricter, and some calls that used to pass now fail:
 ### Fixed
 
 - **CEL object constraints can test optional fields.** Object-valued arguments
-  are now also exposed as `value`, so policies can use expressions such as
-  `!has(value.approve) || value.approve == false`. Existing top-level field
-  bindings are unchanged. Inputs with a field literally named `value` are
-  rejected to prevent shadowing the root binding. Older verifiers fail closed
-  on expressions using the new binding.
+  are now available through the opt-in `tenuo_object()` function, so policies
+  can use expressions such as `!has(tenuo_object().approve) ||
+  tenuo_object().approve == false`. Existing top-level field bindings and
+  list-only `value` semantics are unchanged. Older verifiers fail closed on
+  expressions using the new function.
 
 - **Issuer warrants keep their approval settings.** `mint_builder().issuer()`
   silently dropped `approval_gates`, `required_approvers` and
