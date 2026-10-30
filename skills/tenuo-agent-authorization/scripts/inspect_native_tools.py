@@ -69,7 +69,7 @@ PATTERNS = {
     ),
     "interceptor": re.compile(
         r"\btool_input_guardrails\b|\bbefore_tool_call\b|\bpreToolUse\b|"
-        r"\bTenuoToolNode\b|\bTenuoMiddleware\b|\bcreate_tier[12]_guardrail\b|"
+        r"\bTenuoToolNode\b|\bTenuoMiddleware\b|\bcreate_tier[12]_guardrail\b|\bguard_agent\s*\(|"
         r"\bguard_tools?\s*\(|\b_authorize\s*\(|"
         r"\btenuo\.tool\s*\(|\bwithSession\s*\(|\bguardTools\s*\(|"
         r"\bGuard::\w+\s*\(|\bTenuoGuard\b|\bbefore_tool\w*\b|\bpre_tool\w*\b"

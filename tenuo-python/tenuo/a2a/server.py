@@ -25,7 +25,7 @@ Runtime Validation (_check_constraint):
 - Subpath: tenuo_core.Subpath.contains() - Rust path normalization & containment
 - UrlSafe: tenuo_core.UrlSafe.is_safe() - Rust URL parsing & SSRF protection
 - Pattern: tenuo_core.Pattern.matches() - Rust glob matching (NO Python fallback)
-- Shlex: tenuo.constraints.Shlex.matches() - Python only (shell parsing)
+- Shlex: tenuo_core.Shlex.matches() - Rust POSIX tokenization
 
 Attenuation Validation (_constraint_is_narrower):
 All constraints with validate_attenuation() use Rust core:
@@ -36,14 +36,12 @@ All constraints with validate_attenuation() use Rust core:
 - Cidr: tenuo_core.Cidr.validate_attenuation() - checks subnet containment
 - OneOf/NotOneOf: tenuo_core validate_attenuation() - checks value sets
 - All/Contains/Subset: tenuo_core validate_attenuation() - checks constraint sets
-- Shlex: Python set comparison on allowed_bins (no Rust implementation)
+- Shlex: tenuo_core.Shlex.validate_attenuation() - child allowlist must be a subset
 
 SECURITY: All checks fail-closed. If tenuo_core is not available for a constraint
 type that requires it, validation fails rather than falling back to Python.
 
-The only Python-native constraint is Shlex, which uses Python's shlex module
-for shell parsing. This is intentional - shell syntax parsing is complex and
-the Rust core doesn't implement it.
+Shlex tokenization lives in the Rust core, the same check the other SDKs run.
 """
 
 from __future__ import annotations
@@ -299,6 +297,18 @@ ReplayCache = InMemoryReplayBackend
 # =============================================================================
 
 
+def _is_constraint_class_marker(constraint: Any) -> bool:
+    """True for an uninstantiated constraint class such as ``Subpath``.
+
+    Plain Python types (``str``, ``int``) are not markers: they are real
+    isinstance checks. Constraint classes are recognised by the same duck-typed
+    methods ``A2AServer._check_constraint`` dispatches on.
+    """
+    return isinstance(constraint, type) and any(
+        hasattr(constraint, m) for m in ("contains", "is_safe", "matches", "matches_url", "allows")
+    )
+
+
 class SkillDefinition:
     """Internal representation of a registered skill."""
 
@@ -329,7 +339,8 @@ class SkillDefinition:
 
         constraint_infos = {}
         for key, constraint in self.constraints.items():
-            type_name = type(constraint).__name__
+            # A plain type such as ``str`` advertises its own name.
+            type_name = constraint.__name__ if isinstance(constraint, type) else type(constraint).__name__
             constraint_infos[key] = ConstraintInfo(type=type_name, required=True)
 
         return SkillInfo(
@@ -481,7 +492,7 @@ class A2AServerBuilder:
         return self
 
     def require_audience(self, enabled: bool = True) -> "A2AServerBuilder":
-        """Require aud claim matches our URL (default: True via env)."""
+        """Require aud claim matches our URL (default: False, env: TENUO_A2A_REQUIRE_AUDIENCE)."""
         self._require_audience = enabled
         return self
 
@@ -704,7 +715,9 @@ class A2AServer:
                 (accepts PublicKey objects, multibase strings, or DIDs)
             trust_delegated: Accept warrants attenuated from trusted issuers
             require_warrant: Reject tasks without warrant (env: TENUO_A2A_REQUIRE_WARRANT)
-            require_audience: Require aud claim matches our URL (env: TENUO_A2A_REQUIRE_AUDIENCE)
+            require_audience: Require aud claim matches our URL (env: TENUO_A2A_REQUIRE_AUDIENCE).
+                Default False: tenuo-core warrants carry no audience claim, so enabling
+                this rejects them unless the warrant object exposes ``aud``/``audience``.
             require_pop: Require Proof-of-Possession signature (env: TENUO_A2A_REQUIRE_POP)
             check_replay: Enforce jti uniqueness (env: TENUO_A2A_CHECK_REPLAY)
             replay_window: Seconds to remember jti values (env: TENUO_A2A_REPLAY_WINDOW)
@@ -739,7 +752,7 @@ class A2AServer:
         # Apply environment variable defaults
         # Explicit args take precedence over env vars
         self.require_warrant = self._get_bool_config(require_warrant, "TENUO_A2A_REQUIRE_WARRANT", default=True)
-        self.require_audience = self._get_bool_config(require_audience, "TENUO_A2A_REQUIRE_AUDIENCE", default=True)
+        self.require_audience = self._get_bool_config(require_audience, "TENUO_A2A_REQUIRE_AUDIENCE", default=False)
         self.require_pop = self._get_bool_config(require_pop, "TENUO_A2A_REQUIRE_POP", default=True)
         self.check_replay = self._get_bool_config(check_replay, "TENUO_A2A_CHECK_REPLAY", default=True)
         self.replay_window = self._get_int_config(replay_window, "TENUO_A2A_REPLAY_WINDOW", default=3600)
@@ -1008,15 +1021,26 @@ class A2AServer:
 
         Args:
             skill_id: Unique identifier for this skill
-            constraints: Map of parameter names to constraint types
+            constraints: Map of parameter names to constraint instances, enforced
+                on every call in addition to the warrant. A bare constraint class
+                (``Subpath`` rather than ``Subpath("/data")``) has no bounds and
+                raises ``TypeError``.
             name: Display name (defaults to skill_id)
 
         Example:
-            @server.skill("read_file", constraints={"path": Subpath})
+            @server.skill("read_file", constraints={"path": Subpath("/data")})
             async def read_file(path: str) -> str:
                 ...
         """
         constraints = constraints or {}
+
+        for param, constraint in constraints.items():
+            if _is_constraint_class_marker(constraint):
+                cls = constraint.__name__
+                raise TypeError(
+                    f"Skill '{skill_id}': constraint for '{param}' is the class {cls}, which has "
+                    f"no bounds. Pass an instance such as {cls}(...)."
+                )
 
         def decorator(func: Callable) -> Callable:
             # Register skill
@@ -1163,8 +1187,9 @@ class A2AServer:
         _resolved_chain_parents: Optional[List[Any]] = None
 
         if issuer_normalized and issuer_normalized not in self.trusted_issuers:
-            if _preloaded_parents is not None and len(_preloaded_parents) > 0:
+            if self.trust_delegated and _preloaded_parents is not None and len(_preloaded_parents) > 0:
                 # WarrantStack path: parents already decoded by the HTTP handler.
+                # Gated on trust_delegated exactly like the legacy path below.
                 # Verify chain structure now; PoP (if required) is done below
                 # via check_chain so the full chain is validated atomically.
                 if not self.require_pop:
@@ -1195,13 +1220,20 @@ class A2AServer:
                 if not is_new:
                     raise ReplayDetectedError(jti)
 
+        # Set when the shared PEP allowed the call. Its receipt is collected only
+        # after the A2A-local gates below pass, so a later local denial never
+        # leaves a signed allow behind.
+        enforcement = None
+        runtime = None
+
         # Verify Proof-of-Possession (I6)
         if self.require_pop:
             if pop_signature is None:
                 raise PopRequiredError()
 
             # Shared inbound PEP — same Authorizer + receipt path as MCP/FastAPI.
-            from tenuo._enforcement import verify_inbound_call
+            from tenuo._enforcement import EnforcementResult, verify_inbound_call
+            from tenuo.receipts import collect_enforcement_receipt
             from tenuo.runtime import bind_runtime, get_runtime
 
             runtime = self._runtime or get_runtime()
@@ -1216,15 +1248,10 @@ class A2AServer:
                         warrant_chain=_resolved_chain_parents or [],
                         approvals=approvals,
                     )
-                    from tenuo.receipts import collect_enforcement_receipt
-                    collect_enforcement_receipt(
-                        enforcement,
-                        getattr(enforcement, "chain_result", None),
-                        runtime=runtime,
-                    )
                 if enforcement.allowed:
                     logger.debug(f"PoP verified for skill '{skill_id}'")
                 else:
+                    collect_enforcement_receipt(enforcement, None, runtime=runtime)
                     _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
             except (
                 ApprovalRequiredError,
@@ -1312,21 +1339,59 @@ class A2AServer:
                 if skill_id not in granted_skills:
                     raise SkillNotGrantedError(skill_id, granted_skills)
 
-            # Always check server-level constraints (declared on SkillDefinition).
-            # These represent the skill's own input requirements and are NOT encoded
-            # in the warrant — why_denied() cannot see them.
-            skill_def = self._skills.get(skill_id)
-            if skill_def:
-                for param, server_constraint in skill_def.constraints.items():
-                    if param in arguments:
-                        value = arguments[param]
-                        if not self._check_constraint(server_constraint, value, param):
-                            raise ConstraintViolationError(
-                                param=param,
-                                constraint_type=type(server_constraint).__name__,
-                                value=value,
-                                reason="Value does not satisfy server constraint",
+        # Always check server-level constraints (declared on SkillDefinition),
+        # regardless of require_pop. These represent the skill's own input
+        # requirements and are NOT encoded in the warrant, so neither
+        # why_denied() nor the Authorizer above can see them.
+        skill_def = self._skills.get(skill_id)
+        if skill_def:
+            for param, server_constraint in skill_def.constraints.items():
+                if param in arguments:
+                    value = arguments[param]
+                    try:
+                        constraint_satisfied = self._check_constraint(server_constraint, value, param)
+                    except Exception as exc:
+                        # Core constraints use ValidationError for malformed input
+                        # (for example, a non-IP value passed to Cidr). That is an
+                        # authorization denial, not an adapter failure. Keep
+                        # configuration/programming errors such as
+                        # UnknownConstraintError distinct and fail closed.
+                        from tenuo.exceptions import ValidationError as _ValidationError
+
+                        if not isinstance(exc, _ValidationError):
+                            raise
+                        constraint_satisfied = False
+                    if not constraint_satisfied:
+                        if enforcement is not None:
+                            # The Authorizer allowed the call, so its receipt was
+                            # held back; record this refusal instead.
+                            collect_enforcement_receipt(
+                                EnforcementResult(
+                                    allowed=False,
+                                    tool=skill_id,
+                                    arguments=arguments,
+                                    denial_reason="Value does not satisfy server constraint",
+                                    constraint_violated=param,
+                                    error_type="constraint_violation",
+                                    warrant_id=enforcement.warrant_id,
+                                    authorizer=enforcement.authorizer,
+                                    presented_chain=[*(_resolved_chain_parents or []), warrant],
+                                    verified_pop=pop_signature,
+                                    pop_auth_args=arguments,
+                                ),
+                                None,
+                                runtime=runtime,
                             )
+                        raise ConstraintViolationError(
+                            param=param,
+                            constraint_type=type(server_constraint).__name__,
+                            value=value,
+                            reason="Value does not satisfy server constraint",
+                        )
+
+        # Every A2A gate has passed: only now record the Authorizer's allow.
+        if enforcement is not None:
+            collect_enforcement_receipt(enforcement, enforcement.chain_result, runtime=runtime)
 
         # Log audit event
         latency_ms = int((time.time() - start_time) * 1000)
@@ -1622,7 +1687,7 @@ class A2AServer:
 
         # PREFERRED: Use tenuo_core's validate_attenuation() method (Rust)
         # This is available for: Subpath, UrlSafe, Pattern, Range, Cidr, OneOf,
-        # NotOneOf, Contains, Subset, All, Regex, UrlPattern, CEL
+        # NotOneOf, Contains, Subset, All, Regex, UrlPattern, CEL, Shlex
         if hasattr(parent, "validate_attenuation"):
             try:
                 parent.validate_attenuation(child)
@@ -1631,8 +1696,7 @@ class A2AServer:
                 logger.warning(f"Attenuation violation: field='{field}' - {e}")
                 return False
 
-        # Shlex: Python-only constraint (no Rust implementation)
-        # Uses allowed_bins attribute for attenuation check
+        # Allowlist fallback for a constraint object with no validate_attenuation.
         if hasattr(parent, "matches") and hasattr(parent, "allowed_bins"):
             try:
                 parent_exec = set(getattr(parent, "allowed_bins", []))
@@ -1713,7 +1777,7 @@ class A2AServer:
         if hasattr(constraint, "matches") and constraint_type == "Pattern":
             return constraint.matches(value)
 
-        # Shlex - shell command validation (Rust core via Python shlex)
+        # Shlex - shell command validation (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Shlex":
             return constraint.matches(str(value))
 
@@ -1747,6 +1811,14 @@ class A2AServer:
         # Regex - regex matching (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Regex":
             return constraint.matches(value)
+
+        # The core's common constraint protocol. This covers constraints whose
+        # specialized Python method differs from the historical A2A dispatcher,
+        # including UrlPattern and composites such as AnyOf/All/Not. Keep this
+        # after the cases above so UrlSafe's list handling and existing type
+        # coercions remain backward compatible.
+        if hasattr(constraint, "satisfies"):
+            return bool(constraint.satisfies(value))
 
         # Type constraint (e.g., str, int)
         if isinstance(constraint, type):
@@ -1811,9 +1883,9 @@ class A2AServer:
 
                 return UrlSafe(allow_domains=data.get("allow_domains"))
 
-            # Shell command validation (Python-only)
+            # Shell command validation
             elif constraint_type == "Shlex":
-                from tenuo.constraints import Shlex
+                from tenuo_core import Shlex
 
                 return Shlex(allow=data.get("allow", []))
 

@@ -351,8 +351,15 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # =========================================================================
     if parent_type == "Shlex":
         if child_type == "Shlex":
-            p_bins: set = getattr(parent_value, "allowed_bins", set())
-            c_bins: set = getattr(child_value, "allowed_bins", set())
+            validate = getattr(parent_value, "validate_attenuation", None)
+            if callable(validate):
+                try:
+                    validate(child_value)
+                    return True
+                except Exception:
+                    return False
+            p_bins = set(getattr(parent_value, "allow", None) or ())
+            c_bins = set(getattr(child_value, "allow", None) or ())
             return c_bins.issubset(p_bins)
         elif child_type == "Exact":
             # Exact command must pass parent's matches check
@@ -616,9 +623,10 @@ class GrantScope:
 
             builder.capability(tool, merged_constraints)
 
-        # Apply TTL
+        # Apply TTL with atomic core-side clamping. Computing parent remaining
+        # here would race the clock read used to build the child.
         if self.ttl:
-            builder.ttl(self.ttl)
+            builder._ttl_capped_to_parent(self.ttl)
 
         # Build child warrant
         try:

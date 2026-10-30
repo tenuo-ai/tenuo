@@ -27,6 +27,8 @@ from tenuo_core import (
     DelegationDiff as RustDelegationDiff,
 )
 
+from ._native_patch import patch_native
+
 
 class MintBuilder:
     """Fluent builder for creating new root warrants.
@@ -337,6 +339,9 @@ class MintBuilder:
             holder=self._holder,
             session_id=self._session_id,
             clearance=self._clearance,
+            required_approvers=self._required_approvers,
+            min_approvals=self._min_approvals,
+            approval_gates=getattr(self, "_approval_gates", None),
         )
 
     def preview(self) -> Dict[str, Any]:
@@ -387,10 +392,8 @@ def _mint_builder_impl() -> "MintBuilder":
 
 def _add_builder_to_warrant():
     """Add the mint_builder() class method to Warrant."""
-    # Only add if not already present
-    if not hasattr(Warrant, "mint_builder"):
-        # Use staticmethod since we don't need cls
-        Warrant.mint_builder = staticmethod(_mint_builder_impl)
+    # Only add if not already present. Use staticmethod since we don't need cls.
+    patch_native(Warrant, "mint_builder", staticmethod(_mint_builder_impl), if_missing=True)
 
 
 # Initialize on module load
@@ -461,6 +464,11 @@ class GrantBuilder:
         if seconds is self._NOT_SET:
             return self._rust_builder.ttl_seconds
         self._rust_builder.with_ttl(seconds)
+        return self
+
+    def _ttl_capped_to_parent(self, seconds: int) -> "GrantBuilder":
+        """Set TTL with atomic parent-expiry clamping in the Rust core."""
+        self._rust_builder.with_ttl_capped_to_parent(seconds)
         return self
 
     def holder(self, public_key: Any = _NOT_SET) -> Union["GrantBuilder", Optional[PublicKey]]:

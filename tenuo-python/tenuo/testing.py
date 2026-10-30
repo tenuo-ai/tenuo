@@ -23,6 +23,7 @@ try:
 except ImportError:
     _WARRANT_HEADER = "X-Tenuo-Warrant"
 
+from ._native_patch import patch_native
 from .exceptions import (
     AuthorizationDenied,
     ClearanceViolation,
@@ -229,11 +230,9 @@ def _warrant_for_testing(tools: List[str]) -> Warrant:
 
 
 # Attach to Warrant class as static methods
-if not hasattr(Warrant, "quick_issue"):
-    Warrant.quick_mint = staticmethod(_warrant_quick_mint)  # type: ignore[attr-defined]
+patch_native(Warrant, "quick_mint", staticmethod(_warrant_quick_mint), if_missing=True)
 
-if not hasattr(Warrant, "for_testing"):
-    Warrant.for_testing = staticmethod(_warrant_for_testing)  # type: ignore[attr-defined]
+patch_native(Warrant, "for_testing", staticmethod(_warrant_for_testing), if_missing=True)
 
 
 # ============================================================================

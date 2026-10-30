@@ -362,7 +362,7 @@ For CrewAI Flows, use the `@guarded_step` decorator to scope authorization to in
 
 ```python
 from crewai import Flow, step
-from tenuo.crewai import guarded_step, Pattern, Wildcard
+from tenuo.crewai import guarded_step, CEL, Wildcard
 
 class ResearchFlow(Flow):
     
@@ -375,7 +375,8 @@ class ResearchFlow(Flow):
         return self.research_crew.kickoff(state)
     
     @guarded_step(
-        allow={"send_email": {"recipients": Pattern("*@company.com")}},
+        # recipients is a list, so check every address
+        allow={"send_email": {"recipients": CEL(r"value.all(r, r.matches('^[A-Za-z0-9._%+-]+@company\\.com$'))")}},
         ttl="5m"
     )
     def notify_step(self, state):

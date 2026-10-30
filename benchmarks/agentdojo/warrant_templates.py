@@ -26,7 +26,7 @@ AgentDojo Environments:
 Total: 97 user tasks, 629 security cases
 """
 
-from tenuo import Pattern, Exact, Range, OneOf, AnyOf, NotOneOf, CEL
+from tenuo import Pattern, Exact, Range, OneOf, AnyOf, NotOneOf, CEL, Regex
 
 
 # =============================================================================
@@ -239,7 +239,7 @@ WORKSPACE_CONSTRAINTS = {
     },
     # AgentDojo: share_file(file_id, email: str, permission)
     "share_file": {
-        "email": Pattern("*@company.com"),  # Only internal sharing (scalar, not list)
+        "email": Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"),  # Only internal sharing (scalar, not list)
         "_allow_unknown": True,
     },
     # === HIGH-RISK: File write operations ===
