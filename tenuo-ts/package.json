@@ -4,7 +4,9 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build:wasm": "wasm-pack build --release --target nodejs --out-dir ../tenuo-ts/packages/core/src/generated ../tenuo-wasm && rm -f packages/core/src/generated/.gitignore packages/core/src/generated/README.md packages/core/src/generated/.npmignore && printf '%s\\n' '{\"type\":\"commonjs\"}' > packages/core/src/generated/package.json",
-    "test": "pnpm build:wasm && pnpm --filter @tenuo/core test && pnpm --filter @tenuo/mcp test",
+    "test": "pnpm test:release-policy && pnpm build:wasm && pnpm --filter @tenuo/core test && pnpm --filter @tenuo/mcp test",
+    "test:release-policy": "node --test scripts/npm-release-policy.test.mjs",
+    "release:check": "node scripts/npm-release-policy.mjs check-workspace",
     "typecheck": "pnpm --filter @tenuo/core typecheck && pnpm --filter @tenuo/mcp typecheck",
     "example:mcp": "pnpm --filter @tenuo/core exec vitest run test/mcp.test.ts -t quarterly-close",
     "example:mcp:host": "pnpm --filter @tenuo/core exec vitest run test/mcp-host.smoke.test.ts",
@@ -20,6 +22,7 @@
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",
-    "@stryker-mutator/vitest-runner": "10.0.0"
+    "@stryker-mutator/vitest-runner": "10.0.0",
+    "semver": "7.8.5"
   }
 }

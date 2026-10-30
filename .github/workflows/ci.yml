@@ -263,7 +263,7 @@ jobs:
           echo "=== Site packages ==="
           ls -la $(python -c "import site; print(site.getsitepackages()[0])") | head -20
           echo "=== Installing other deps ==="
-          uv pip install --system pytest pytest-asyncio ruff mypy
+          uv pip install --system pytest pytest-asyncio hypothesis ruff mypy
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
           uv pip install --system types-PyYAML types-requests
@@ -317,6 +317,8 @@ jobs:
 
       - name: Test
         working-directory: tenuo-python
+        env:
+          HYPOTHESIS_PROFILE: ci
         run: |
           if [ "${{ matrix.python-version }}" = "3.14" ]; then
             pytest -v -m "not temporal_live" \
@@ -822,7 +824,7 @@ jobs:
           fi
           needed=false
           rust=false
-          if grep -Eq '^(tenuo-core/|tenuo-wasm/|tenuo-ts/|tenuo-python/|\.github/workflows/ci\.yml$)' <<<"$files"; then
+          if grep -Eq '^(tenuo-core/|tenuo-wasm/|tenuo-ts/|tenuo-python/|\.github/workflows/(ci|release)\.yml$)' <<<"$files"; then
             needed=true
           fi
           if grep -Eq '^(tenuo-core/|tenuo-wasm/|\.github/workflows/ci\.yml$)' <<<"$files"; then
@@ -905,6 +907,18 @@ jobs:
         if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: pnpm typecheck
+
+      - name: Test npm release policy
+        if: steps.lane.outputs.needed == 'true'
+        working-directory: tenuo-ts
+        run: pnpm test:release-policy
+
+      # Exercise the checked-in binary before `pnpm test` rebuilds it. This is
+      # the artifact copied into the published @tenuo/core package.
+      - name: Test committed WASM security regressions
+        if: steps.lane.outputs.rust == 'true'
+        working-directory: tenuo-ts
+        run: pnpm --filter @tenuo/core exec vitest run test/parity.test.ts -t "cidr, urlPattern, and urlSafe"
 
       - name: Test (rebuilt WASM)
         if: steps.lane.outputs.rust == 'true'

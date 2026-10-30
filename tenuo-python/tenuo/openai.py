@@ -445,9 +445,15 @@ class OpenAIConstraintViolation(TenuoOpenAIError):
             expected = _constraint_expected_type(constraint)
             self.reason = f"expected {expected}, got {type(value).__name__}"
         else:
-            self.reason = f"value does not satisfy constraint {constraint}"
+            # Constraint representations can contain policy values.  In
+            # particular, NotOneOf([value]) can echo the rejected value back
+            # into logs, model-visible denial text, and control-plane events.
+            self.reason = f"value does not satisfy {type(constraint).__name__} constraint"
 
-        message = f"Tool '{tool_name}' argument '{param}' = {value!r}: {self.reason}"
+        # The value stays on the exception for callers, but never in its text:
+        # the message is logged, returned to the model, and sent as a denial
+        # reason to the control plane.
+        message = f"Tool '{tool_name}' argument '{param}': {self.reason}"
         super().__init__(message, "T1_002")
 
 
@@ -640,9 +646,18 @@ def verify_tool_call(
                 raise
             except Exception as e:
                 # Fail Closed: Internal error during validation = DENY
-                logger.error(f"Internal validation error for {tool_name}.{arg_name}: {e}")
+                logger.error(
+                    "Internal validation error for %s.%s: %s",
+                    tool_name,
+                    arg_name,
+                    type(e).__name__,
+                )
                 raise OpenAIConstraintViolation(
-                    tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
+                    tool_name,
+                    arg_name,
+                    value,
+                    constraint=Wildcard(),
+                    reason=f"internal validation error ({type(e).__name__})",
                 )
 
 
@@ -718,7 +733,11 @@ async def verify_tool_call_async(
                 raise
             except Exception as e:
                 raise OpenAIConstraintViolation(
-                    tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
+                    tool_name,
+                    arg_name,
+                    value,
+                    constraint=Wildcard(),
+                    reason=f"internal validation error ({type(e).__name__})",
                 )
 
 
@@ -797,8 +816,34 @@ def _field(obj: Any, name: str) -> Any:
 
 def _stream_index(obj: Any) -> int:
     """Index of a streamed choice or tool call delta (0 when absent)."""
-    index = getattr(obj, "index", 0)
-    return index if isinstance(index, int) else 0
+    if isinstance(obj, dict):
+        if "index" not in obj:
+            return 0
+        index = obj["index"]
+    else:
+        fields_set = getattr(obj, "model_fields_set", None)
+        if fields_set is None:
+            fields_set = getattr(obj, "__fields_set__", None)
+        if fields_set is not None and "index" not in fields_set:
+            return 0
+        missing = object()
+        index = getattr(obj, "index", missing)
+        if index is missing:
+            return 0
+
+    # An omitted index uses the backwards-compatible default above, but an
+    # explicit null is malformed. Treating it as zero would alias it with a
+    # real index-0 call in the authorization buffer.
+    if index is None:
+        raise MalformedToolCall("", "stream index must be a non-negative integer")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise MalformedToolCall("", "stream index must be a non-negative integer")
+    return index
+
+
+# Buffer key slot for a legacy ``function_call`` delta (``functions=`` API),
+# which has no tool call index. Real indexes are validated as non-negative.
+_LEGACY_FUNCTION_CALL = -1
 
 
 def _plain_args(obj: Any) -> Dict[str, Any]:
@@ -996,6 +1041,21 @@ class GuardedCompletions:
                 continue
 
             message = choice.message
+            # Legacy ``functions=`` API: one call on message.function_call.
+            function_call = getattr(message, "function_call", None)
+            if function_call:
+                try:
+                    self._verify_call(
+                        getattr(function_call, "name", None) or "",
+                        "function",
+                        getattr(function_call, "arguments", None),
+                    )
+                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
+                    self._handle_denial(e)
+                    if self._on_denial == "raise":
+                        raise
+                    message.function_call = None
+
             if not hasattr(message, "tool_calls") or not message.tool_calls:
                 continue
 
@@ -1005,7 +1065,7 @@ class GuardedCompletions:
                 try:
                     self._verify_single_tool_call(tool_call)
                     verified_calls.append(tool_call)
-                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
+                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
                         raise
@@ -1232,12 +1292,36 @@ class GuardedCompletions:
                 continue
 
             delta = choice.delta
+            choice_index = self._stream_index_or_record(choice)
+
+            function_call = getattr(delta, "function_call", None)
+            if function_call:
+                key = (choice_index, _LEGACY_FUNCTION_CALL)
+                if key not in buffers:
+                    buffers[key] = ToolCallBuffer(id=f"fc_{choice_index}")
+                self._append_stream_fragment(
+                    buffers[key],
+                    getattr(function_call, "name", None),
+                    getattr(function_call, "arguments", None),
+                )
+
             if not hasattr(delta, "tool_calls") or not delta.tool_calls:
                 continue
 
-            choice_index = _stream_index(choice)
             for tc_delta in delta.tool_calls:
-                key = (choice_index, _stream_index(tc_delta))
+                call_type = getattr(tc_delta, "type", None)
+                custom = _field(tc_delta, "custom")
+                if custom is not None or call_type == "custom":
+                    kind: Optional[str] = "custom"
+                    name_part = _field(custom, "name") if custom is not None else None
+                    data_part = _field(custom, "input") if custom is not None else None
+                else:
+                    kind = call_type if isinstance(call_type, str) and call_type != "function" else None
+                    func = getattr(tc_delta, "function", None)
+                    name_part = getattr(func, "name", None) if func else None
+                    data_part = getattr(func, "arguments", None) if func else None
+
+                key = (choice_index, self._stream_index_or_record(tc_delta, name_part))
 
                 # Initialize buffer if new tool call
                 if key not in buffers:
@@ -1245,39 +1329,43 @@ class GuardedCompletions:
                     buffers[key] = ToolCallBuffer(id=tc_id)
 
                 buffer = buffers[key]
+                if kind is not None:
+                    buffer.kind = kind
+                self._append_stream_fragment(buffer, name_part, data_part)
 
-                call_type = getattr(tc_delta, "type", None)
-                custom = _field(tc_delta, "custom")
-                if custom is not None or call_type == "custom":
-                    buffer.kind = "custom"
-                    name_part = _field(custom, "name") if custom is not None else None
-                    data_part = _field(custom, "input") if custom is not None else None
-                else:
-                    if isinstance(call_type, str) and call_type != "function":
-                        buffer.kind = call_type
-                    func = getattr(tc_delta, "function", None)
-                    name_part = getattr(func, "name", None) if func else None
-                    data_part = getattr(func, "arguments", None) if func else None
+    def _stream_index_or_record(self, obj: Any, tool_name: Optional[str] = None) -> int:
+        """Validate a stream index and record malformed inputs before failing closed."""
+        try:
+            return _stream_index(obj)
+        except MalformedToolCall as error:
+            name = tool_name or "unknown"
+            recorded_error = MalformedToolCall(name, error.error)
+            self._record_decision(name, {}, recorded_error)
+            raise recorded_error
 
-                if name_part:
-                    buffer.name += name_part
-                if data_part:
-                    buffer.append_arguments(data_part)
+    def _append_stream_fragment(self, buffer: ToolCallBuffer, name_part: Any, data_part: Any) -> None:
+        """Append one streamed name/arguments fragment, enforcing the size limit."""
+        if name_part:
+            buffer.name += name_part
+        if data_part:
+            buffer.append_arguments(data_part)
 
-                    # Check buffer size
-                    if buffer.size() > self._stream_buffer_limit:
-                        overflow = BufferOverflow(buffer.name, buffer.size(), self._stream_buffer_limit)
-                        self._record_decision(buffer.name, {}, overflow)
-                        raise overflow
+            # Check buffer size
+            if buffer.size() > self._stream_buffer_limit:
+                overflow = BufferOverflow(buffer.name, buffer.size(), self._stream_buffer_limit)
+                self._record_decision(buffer.name, {}, overflow)
+                raise overflow
 
     def _has_tool_call_delta(self, chunk: Any) -> bool:
-        """Check if chunk contains tool call data."""
+        """Check if chunk contains tool call data (tool_calls or legacy function_call)."""
         if not hasattr(chunk, "choices") or not chunk.choices:
             return False
         for choice in chunk.choices:
-            if hasattr(choice, "delta") and hasattr(choice.delta, "tool_calls"):
-                if choice.delta.tool_calls:
-                    return True
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                continue
+            if getattr(delta, "tool_calls", None) or getattr(delta, "function_call", None):
+                return True
         return False
 
     def _is_stream_end(self, chunk: Any) -> bool:
@@ -1296,23 +1384,26 @@ class GuardedCompletions:
     ) -> Optional[Any]:
         """Filter out denied tool calls from a chunk.
 
-        Returns None if the entire chunk should be dropped.
+        The remaining deltas must be preserved exactly: dropping an entire
+        mixed chunk could remove a fragment from an allowed call, causing the
+        application to reconstruct different arguments than were authorized.
         """
         if not self._has_tool_call_delta(chunk):
             return chunk
 
-        # For simplicity, if any tool call in chunk is denied, drop the whole chunk
-        # A more sophisticated impl would surgically remove just the denied calls
         for choice in chunk.choices:
             if not hasattr(choice, "delta") or not choice.delta:
                 continue
             delta = choice.delta
-            if not hasattr(delta, "tool_calls") or not delta.tool_calls:
-                continue
             choice_index = _stream_index(choice)
-            for tc_delta in delta.tool_calls:
-                if (choice_index, _stream_index(tc_delta)) in denied_indices:
-                    return None
+            if getattr(delta, "function_call", None) and (choice_index, _LEGACY_FUNCTION_CALL) in denied_indices:
+                delta.function_call = None
+            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                delta.tool_calls = [
+                    tc_delta
+                    for tc_delta in delta.tool_calls
+                    if (choice_index, _stream_index(tc_delta)) not in denied_indices
+                ] or None
 
         return chunk
 
@@ -3111,6 +3202,10 @@ def guard_agent(
     guard_agent() again on an agent replaces its policy. A tool that has been
     guarded denies calls from any agent without a policy, including copies
     made with ``agent.clone()``; guard those too.
+
+    Only tools present when guard_agent() runs are guarded: call it again
+    after adding tools. An agent wrapped with ``agent.as_tool()`` runs its own
+    tools inside that call, so guard the inner agent as well.
 
     Raises:
         OpenAIConfigurationError: A tool can't be checked (for example a hosted

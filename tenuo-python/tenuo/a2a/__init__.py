@@ -15,7 +15,7 @@ Server usage (builder pattern):
         .trust(orchestrator_key)
         .build())
 
-    @server.skill("read_file", constraints={"path": Subpath})
+    @server.skill("read_file", constraints={"path": Subpath("/data")})
     async def read_file(path: str) -> str:
         with open(path) as f:
             return f.read()

@@ -10,7 +10,7 @@ use tenuo::{
     },
     constraints::{
         Any, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains, Exact, NotOneOf, OneOf,
-        Pattern, Range, RegexConstraint, Shlex, Subpath, UrlPattern, UrlSafe,
+        Pattern, Range, RegexConstraint, Subpath, UrlPattern, UrlSafe,
     },
     wire, Authorizer, PublicKey, SignedRevocationList, SigningKey, Warrant,
 };
@@ -22,6 +22,19 @@ mod sdk_ext;
 #[wasm_bindgen]
 pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
+}
+
+/// The core's Shlex decision for `command`.
+///
+/// `allow` is a list of binary names or paths. The returned object has
+/// `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
+/// `binary_allowed`.
+#[wasm_bindgen]
+pub fn shlex_inspect(allow: JsValue, command: &str) -> Result<JsValue, JsError> {
+    let allow: Vec<String> = serde_wasm_bindgen::from_value(allow)
+        .map_err(|err| JsError::new(&format!("allow must be a list of strings: {err}")))?;
+    let report = tenuo::shell_words::check(&allow, command);
+    serde_wasm_bindgen::to_value(&report).map_err(|err| JsError::new(&err.to_string()))
 }
 
 /// Convert a Constraint to a human-readable JSON value
@@ -211,8 +224,45 @@ fn approval_gate_map_to_json(gm: &ApprovalGateMap) -> JsonValue {
                 map.insert(tool.clone(), json!({ "args": JsonValue::Object(args_map) }));
             }
         }
+        if let Some(message) = &gate.message {
+            map.get_mut(tool).and_then(JsonValue::as_object_mut)
+                .expect("gate object was just inserted")
+                .insert("message".into(), json!(message));
+        }
     }
     JsonValue::Object(map)
+}
+
+/// Parse Shlex without discarding options or list items.
+fn parse_shlex_json(value: &JsonValue, typed: bool) -> Result<Constraint, String> {
+    let obj = value.as_object().ok_or("Shlex must be an object")?;
+    for key in obj.keys() {
+        if key != "allow" && key != "allowed" && !(typed && key == "type") {
+            return Err(format!("unknown Shlex option '{key}'"));
+        }
+    }
+    if obj.contains_key("allow") && obj.contains_key("allowed") {
+        return Err("Shlex cannot contain both 'allow' and 'allowed'".into());
+    }
+    let items = obj
+        .get("allow")
+        .or_else(|| obj.get("allowed"))
+        .and_then(JsonValue::as_array)
+        .ok_or("Shlex requires an 'allow' array")?;
+    if items.is_empty() {
+        return Err("Shlex requires at least one allowed command".into());
+    }
+    let allow = items
+        .iter()
+        .map(|item| {
+            let command = item.as_str().ok_or("Shlex allow entries must be strings")?;
+            if command.trim().is_empty() {
+                return Err("Shlex allow entries must be non-empty".to_string());
+            }
+            Ok(command.to_string())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(Constraint::Shlex(tenuo::constraints::Shlex::new(allow)))
 }
 
 /// Reconstruct a `Constraint` from the human-readable JSON produced by `constraint_to_readable`.
@@ -221,10 +271,17 @@ fn approval_gate_map_to_json(gm: &ApprovalGateMap) -> JsonValue {
 fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
     use tenuo::constraints::{
         All, Any, Cidr, Contains, Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint,
-        Shlex, Subpath, Subset, UrlPattern, UrlSafe, Wildcard,
+        Subpath, Subset, UrlPattern, UrlSafe, Wildcard,
     };
 
     let obj = val.as_object()?;
+
+    // Each wrapper names exactly one constraint. Otherwise a valid sibling
+    // could hide a malformed constraint earlier/later in the dispatch order.
+    let is_range = obj.keys().all(|key| key == "min" || key == "max");
+    if obj.len() != 1 && !is_range {
+        return None;
+    }
 
     if let Some(p) = obj.get("pattern").and_then(|v| v.as_str()) {
         return Pattern::new(p).ok().map(Constraint::Pattern);
@@ -233,19 +290,27 @@ fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
         return Some(Constraint::Exact(Exact::new(json_to_constraint_value(e))));
     }
     if let Some(arr) = obj.get("oneof").and_then(|v| v.as_array()) {
-        return Some(Constraint::OneOf(OneOf::from_values(arr.iter().map(json_to_constraint_value))));
+        return Some(Constraint::OneOf(OneOf::from_values(
+            arr.iter().map(json_to_constraint_value),
+        )));
     }
     if let Some(arr) = obj.get("notoneof").and_then(|v| v.as_array()) {
-        return Some(Constraint::NotOneOf(NotOneOf::from_values(arr.iter().map(json_to_constraint_value))));
+        return Some(Constraint::NotOneOf(NotOneOf::from_values(
+            arr.iter().map(json_to_constraint_value),
+        )));
     }
     if let Some(r) = obj.get("regex").and_then(|v| v.as_str()) {
         return RegexConstraint::new(r).ok().map(Constraint::Regex);
     }
     if let Some(arr) = obj.get("contains").and_then(|v| v.as_array()) {
-        return Some(Constraint::Contains(Contains::new(arr.iter().map(json_to_constraint_value))));
+        return Some(Constraint::Contains(Contains::new(
+            arr.iter().map(json_to_constraint_value),
+        )));
     }
     if let Some(arr) = obj.get("subset").and_then(|v| v.as_array()) {
-        return Some(Constraint::Subset(Subset::new(arr.iter().map(json_to_constraint_value))));
+        return Some(Constraint::Subset(Subset::new(
+            arr.iter().map(json_to_constraint_value),
+        )));
     }
     if let Some(c) = obj.get("cidr").and_then(|v| v.as_str()) {
         return Cidr::new(c).ok().map(Constraint::Cidr);
@@ -254,19 +319,37 @@ fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
         return UrlPattern::new(u).ok().map(Constraint::UrlPattern);
     }
     if let Some(arr) = obj.get("all").and_then(|v| v.as_array()) {
-        let inner: Vec<Constraint> = arr.iter().filter_map(json_to_constraint).collect();
+        let inner: Vec<Constraint> = arr
+            .iter()
+            .map(json_to_constraint)
+            .collect::<Option<Vec<_>>>()?;
+        if inner.is_empty() {
+            return None;
+        }
         return Some(Constraint::All(All { constraints: inner }));
     }
     if let Some(arr) = obj.get("any").and_then(|v| v.as_array()) {
-        let inner: Vec<Constraint> = arr.iter().filter_map(json_to_constraint).collect();
+        let inner: Vec<Constraint> = arr
+            .iter()
+            .map(json_to_constraint)
+            .collect::<Option<Vec<_>>>()?;
+        if inner.is_empty() {
+            return None;
+        }
         return Some(Constraint::Any(Any { constraints: inner }));
     }
     if let Some(inner) = obj.get("not") {
-        return json_to_constraint(inner)
-            .map(|c| Constraint::Not(Not { constraint: Box::new(c) }));
+        return json_to_constraint(inner).map(|c| {
+            Constraint::Not(Not {
+                constraint: Box::new(c),
+            })
+        });
     }
     // Range: stored as bare {"min": f64, "max": f64} (no type-discriminator key).
     if obj.contains_key("min") || obj.contains_key("max") {
+        if !is_range || obj.values().any(|v| !v.is_null() && !v.is_number()) {
+            return None;
+        }
         let min = obj.get("min").and_then(|v| v.as_f64());
         let max = obj.get("max").and_then(|v| v.as_f64());
         return Range::new(min, max).ok().map(Constraint::Range);
@@ -282,11 +365,8 @@ fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
     if obj.get("wildcard").and_then(|v| v.as_str()) == Some("*") {
         return Some(Constraint::Wildcard(Wildcard));
     }
-    if let Some(sh) = obj.get("shlex").and_then(|v| v.as_object()) {
-        if let Some(arr) = sh.get("allow").and_then(|v| v.as_array()) {
-            let allow: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
-            return Some(Constraint::Shlex(Shlex { allow }));
-        }
+    if let Some(sh) = obj.get("shlex") {
+        return parse_shlex_json(sh, false).ok();
     }
     None
 }
@@ -319,35 +399,48 @@ fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap>
     let obj = val.as_object()?;
     let mut gm = ApprovalGateMap::new();
     for (tool, gate_val) in obj {
-        if let Some(gate_obj) = gate_val.as_object() {
-            if gate_obj.get("args").map(|v| v.is_null()).unwrap_or(false) {
-                gm.insert(tool.clone(), ToolApprovalGate::whole_tool());
-            } else if let Some(args_val) = gate_obj.get("args").and_then(|v| v.as_object()) {
-                let mut args = BTreeMap::new();
-                for (arg, ag_val) in args_val {
-                    if ag_val.as_str() == Some("all") {
-                        args.insert(arg.clone(), ArgApprovalGate::All);
-                    } else if let Some(inner) = ag_val.as_object().and_then(|o| o.get("exempt")) {
-                        // If the inner constraint is unrecognised or rejected by ArgApprovalGate::exempt
-                        // (e.g. Wildcard, Any, Not, Cel, Unknown), the gate is silently skipped and
-                        // the argument is left ungated. This is intentional for the WASM builder path:
-                        // invalid exempt constraints are caught here at warrant-creation time rather than
-                        // propagating a broken gate to the enforcer. The Python binding raises ValueError
-                        // for the same invalid inner constraint types.
-                        if let Some(c) = json_to_constraint(inner) {
-                            if let Ok(gate) = ArgApprovalGate::exempt(c) {
-                                args.insert(arg.clone(), gate);
-                            }
-                        }
-                    } else if let Some(c) = json_to_constraint(ag_val) {
-                        args.insert(arg.clone(), ArgApprovalGate::Constraint(c));
-                    }
-                }
-                gm.insert(tool.clone(), ToolApprovalGate::with_args(args));
-            }
+        let gate_obj = gate_val.as_object()?;
+        if gate_obj.keys().any(|key| key != "args" && key != "message") {
+            return None;
         }
+        let message = match gate_obj.get("message") {
+            None | Some(JsonValue::Null) => None,
+            Some(value) => Some(value.as_str()?),
+        };
+        let args_value = gate_obj.get("args")?;
+        if args_value.is_null() {
+            let mut gate = ToolApprovalGate::whole_tool();
+            if let Some(message) = message {
+                gate = gate.with_message(message);
+            }
+            gm.insert(tool.clone(), gate);
+            continue;
+        }
+        let mut args = BTreeMap::new();
+        for (arg, ag_val) in args_value.as_object()? {
+            let gate = if ag_val.as_str() == Some("all") {
+                ArgApprovalGate::All
+            } else if let Some(inner) = ag_val.as_object().and_then(|o| o.get("exempt")) {
+                if ag_val.as_object()?.len() != 1 {
+                    return None;
+                }
+                ArgApprovalGate::exempt(json_to_constraint(inner)?).ok()?
+            } else {
+                ArgApprovalGate::Constraint(json_to_constraint(ag_val)?)
+            };
+            args.insert(arg.clone(), gate);
+        }
+        let mut gate = ToolApprovalGate::with_args(args);
+        if let Some(message) = message {
+            gate = gate.with_message(message);
+        }
+        gm.insert(tool.clone(), gate);
     }
-    if gm.is_empty() { None } else { Some(gm) }
+    if gm.is_empty() {
+        None
+    } else {
+        Some(gm)
+    }
 }
 
 /// Extract decoded warrant fields including extensions and approval gates.
@@ -1663,6 +1756,40 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         }
     };
 
+    let invalid_config = |error: String| {
+        serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+            warrant_b64: String::new(),
+            issuer_public_key_hex: String::new(),
+            issuer_private_key_hex: String::new(),
+            holder_public_key_hex: String::new(),
+            holder_private_key_hex: String::new(),
+            tools: vec![],
+            error: Some(error),
+        }).unwrap()
+    };
+    // Validate supplied policy before either minting path. Delegation inherits
+    // policy from its parent; this legacy builder cannot apply replacements.
+    let approval_gate_bytes = if let Some(gates_json) = &config.approval_gates {
+        let Some(gates) = parse_approval_gates_json(gates_json) else {
+            return invalid_config("Invalid approval_gates configuration".into());
+        };
+        match approval_gate::encode_approval_gate_map(&gates) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => return invalid_config(format!("Failed to encode approval gates: {e}")),
+        }
+    } else {
+        None
+    };
+    if config.parent_warrant_b64.is_some()
+        && (config.approval_gates.is_some()
+            || config.required_approvers.is_some()
+            || config.min_approvals.is_some())
+    {
+        return invalid_config(
+            "Delegated builder inherits approval policy; supplied approval_gates, required_approvers, or min_approvals cannot be applied".into(),
+        );
+    }
+
     // Generate or parse keypairs
     let issuer_key = if let Some(hex_str) = &config.signing_key_hex {
         match hex::decode(hex_str) {
@@ -1697,6 +1824,21 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
             let mut constraint_set = ConstraintSet::new();
             for (field, constraint_value) in constraints {
                 if let Some(obj) = constraint_value.as_object() {
+                    // Dispatch Shlex first so a valid sibling cannot hide a
+                    // malformed Shlex or an unsupported boundary option.
+                    if obj.contains_key("shlex") {
+                        if obj.len() != 1 {
+                            return Err(format!("ambiguous Shlex constraint for field '{field}'"));
+                        }
+                        let constraint = parse_shlex_json(&obj["shlex"], false)?;
+                        constraint_set.insert(field.clone(), constraint);
+                        continue;
+                    }
+                    if obj.get("type").and_then(JsonValue::as_str) == Some("Shlex") {
+                        let constraint = parse_shlex_json(constraint_value, true)?;
+                        constraint_set.insert(field.clone(), constraint);
+                        continue;
+                    }
                     // Pattern constraint
                     if let Some(pattern_val) = obj.get("pattern").and_then(|v| v.as_str()) {
                         if let Ok(p) = Pattern::new(pattern_val) {
@@ -1903,27 +2045,6 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                             constraint_set.insert(field.clone(), Constraint::UrlSafe(UrlSafe::new()));
                         }
                     }
-                    // Shlex constraint (shell command safety)
-                    else if obj.contains_key("shlex") {
-                        let shlex_obj = obj.get("shlex");
-                        if let Some(inner) = shlex_obj.and_then(|v| v.as_object()) {
-                            // Accept both "allow" (canonical) and "allowed" (openclaw SDK alias)
-                            let allow_arr = inner.get("allow")
-                                .or_else(|| inner.get("allowed"))
-                                .and_then(|v| v.as_array());
-                            if let Some(arr) = allow_arr {
-                                let allow: Vec<String> = arr.iter()
-                                    .filter_map(|a| a.as_str().map(|s| s.to_string()))
-                                    .collect();
-                                if !allow.is_empty() {
-                                    constraint_set.insert(
-                                        field.clone(),
-                                        Constraint::Shlex(Shlex { allow }),
-                                    );
-                                }
-                            }
-                        }
-                    }
                     // Type-keyed dispatch: handles { "type": "Shlex", "allowed": [...] } etc.
                     // Accepts the openclaw SDK's typed format directly (camelCase and snake_case).
                     else if let Some(type_str) = obj.get("type").and_then(|v| v.as_str()) {
@@ -2021,23 +2142,6 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                 if let Some(root_path) = root {
                                     if let Ok(s) = Subpath::new(root_path) {
                                         constraint_set.insert(field.clone(), Constraint::Subpath(s));
-                                    }
-                                }
-                            }
-                            "Shlex" => {
-                                // Accepts both "allowed" (openclaw) and "allow" (canonical)
-                                let allow_arr = obj.get("allowed")
-                                    .or_else(|| obj.get("allow"))
-                                    .and_then(|v| v.as_array());
-                                if let Some(arr) = allow_arr {
-                                    let cmds: Vec<String> = arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect();
-                                    if !cmds.is_empty() {
-                                        constraint_set.insert(
-                                            field.clone(),
-                                            Constraint::Shlex(Shlex { allow: cmds }),
-                                        );
                                     }
                                 }
                             }
@@ -2216,30 +2320,9 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         builder = builder.capability(tool_name, constraint_set);
     }
 
-    // Wire approval gates into extensions
-    if let Some(gates_json) = &config.approval_gates {
-        if let Some(gm) = parse_approval_gates_json(gates_json) {
-            match approval_gate::encode_approval_gate_map(&gm) {
-                Ok(encoded) => {
-                    builder = builder.extension(
-                        approval_gate::APPROVAL_GATE_EXTENSION_KEY,
-                        encoded,
-                    );
-                }
-                Err(e) => {
-                    return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
-                        warrant_b64: String::new(),
-                        issuer_public_key_hex: String::new(),
-                        issuer_private_key_hex: String::new(),
-                        holder_public_key_hex: String::new(),
-                        holder_private_key_hex: String::new(),
-                        tools: tool_names,
-                        error: Some(format!("Failed to encode approval gates: {}", e)),
-                    })
-                    .unwrap();
-                }
-            }
-        }
+    // Policy was validated before the root/delegation split.
+    if let Some(encoded) = approval_gate_bytes {
+        builder = builder.extension(approval_gate::APPROVAL_GATE_EXTENSION_KEY, encoded);
     }
 
     // Wire required approvers
@@ -2930,9 +3013,115 @@ mod tests {
     }
 
     #[test]
+    fn gate_messages_survive_readable_and_wire_roundtrips() {
+        for args in [json!(null), json!({"cmd": "all"})] {
+            let input = json!({"exec": {"args": args, "message": "  Confirm execution  "}});
+            let gates = parse_approval_gates_json(&input).unwrap();
+            assert_eq!(gates.get("exec").unwrap().message.as_deref(), Some("Confirm execution"));
+            let readable = approval_gate_map_to_json(&gates);
+            let reparsed = parse_approval_gates_json(&readable).unwrap();
+            assert_eq!(reparsed.get("exec").unwrap().message, gates.get("exec").unwrap().message);
+            let encoded = approval_gate::encode_approval_gate_map(&gates).unwrap();
+            let decoded = approval_gate::parse_approval_gate_map(Some(&encoded)).unwrap().unwrap();
+            assert_eq!(decoded.get("exec").unwrap().message.as_deref(), Some("Confirm execution"));
+        }
+        for message in [json!(1), json!([]), json!({}), json!(true)] {
+            assert!(parse_approval_gates_json(&json!({"exec": {"args": null, "message": message}})).is_none());
+        }
+        for message in [json!(null), json!("   ")] {
+            let gates = parse_approval_gates_json(&json!({"exec": {"args": null, "message": message}})).unwrap();
+            assert_eq!(gates.get("exec").unwrap().message, None);
+        }
+    }
+
+    #[test]
     fn parse_invalid_json_returns_none() {
         let input = json!("not an object");
         assert!(parse_approval_gates_json(&input).is_none());
+    }
+
+    #[test]
+    fn unsupported_shlex_options_in_approval_gates_fail_closed() {
+        let bad_type = json!({
+            "exec": {
+                "args": {
+                    "cmd": { "exempt": { "shlex": { "allow": ["cat"], "within": ["/work"] } } }
+                }
+            }
+        });
+        assert!(parse_approval_gates_json(&bad_type).is_none());
+
+        let relative = json!({
+            "exec": {
+                "args": {
+                    "cmd": { "exempt": { "shlex": { "allow": ["cat"], "within": "relative" } } }
+                }
+            }
+        });
+        assert!(parse_approval_gates_json(&relative).is_none());
+
+        let nested_in_all = json!({
+            "exec": {
+                "args": {
+                    "cmd": {
+                        "exempt": {
+                            "all": [
+                                { "pattern": "*" },
+                                { "shlex": { "allow": ["cat"], "within": ["/work"] } }
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+        assert!(parse_approval_gates_json(&nested_in_all).is_none());
+    }
+
+    #[test]
+    fn shlex_builder_forms_reject_malformed_inputs() {
+        for typed in [false, true] {
+            for bad in [
+                json!({"allow": []}),
+                json!({"allow": "cat"}),
+                json!({"allow": ["cat", 42]}),
+                json!({"allow": [""]}),
+                json!({"allow": ["cat"], "allowed": ["grep"]}),
+                json!({"allow": ["cat"], "within": "/work"}),
+                json!({"allow": ["cat"], "withn": "/work"}),
+            ] {
+                assert!(parse_shlex_json(&bad, typed).is_err(), "{bad}");
+            }
+            let mut good = json!({"allow": ["cat"]});
+            if typed {
+                good["type"] = json!("Shlex");
+            }
+            assert!(parse_shlex_json(&good, typed).is_ok());
+        }
+    }
+
+    #[test]
+    fn malformed_gate_siblings_and_combinators_fail_closed() {
+        assert!(json_to_constraint(&json!({"min": 0, "shlex": {"allow": [1]}})).is_none());
+        for malformed in [
+            json!({"args": []}),
+            json!(false),
+            json!({"argz": null}),
+            json!({"args": null, "ignored": true}),
+        ] {
+            let input = json!({"safe": {"args": null}, "broken": malformed});
+            assert!(parse_approval_gates_json(&input).is_none(), "{input}");
+        }
+        for kind in ["all", "any"] {
+            let mut inner = serde_json::Map::new();
+            inner.insert(
+                kind.into(),
+                json!([
+                    {"pattern": "*"}, {"shlex": {"allow": ["cat", 1]}}
+                ]),
+            );
+            let input = json!({"exec": {"args": {"cmd": {"exempt": inner}}}});
+            assert!(parse_approval_gates_json(&input).is_none(), "{input}");
+        }
     }
 
     // --- approval_gate_map_to_json round-trip ---

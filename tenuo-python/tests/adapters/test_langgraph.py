@@ -1440,7 +1440,7 @@ class TestLangGraphApproval:
         assert middleware._approval_handler is None
         assert middleware._approvals is None
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_toolnode_stores_approval_params(self, registry):
         """TenuoToolNode accepts and stores approval_handler."""
         try:
@@ -1581,7 +1581,7 @@ class TestMultiAgentDelegation:
     # D2 — Sub-agent's TenuoToolNode accepts delegated warrant
     # ------------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_D2_toolnode_accepts_attenuated_warrant(
         self, multi_agent_keys, registry, tool_node_tools
     ):
@@ -1631,7 +1631,7 @@ class TestMultiAgentDelegation:
     # D3 — Sub-agent cannot exceed delegated scope
     # ------------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_D3_subagent_cannot_exceed_scope(
         self, multi_agent_keys, registry, tool_node_tools
     ):
@@ -1688,7 +1688,7 @@ class TestMultiAgentDelegation:
     # D4 — Warrant flows through state to downstream TenuoToolNode
     # ------------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_D4_attenuated_warrant_in_state_enforced(
         self, multi_agent_keys, registry, tool_node_tools
     ):
@@ -1794,7 +1794,7 @@ class TestMultiAgentDelegation:
     # D6 — Three-level delegation chain
     # ------------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_D6_three_level_delegation_chain(self, registry, tool_node_tools):
         """D6: orchestrator → researcher → executor — each level narrows scope."""
         from langchain_core.messages import AIMessage
@@ -2084,7 +2084,7 @@ class TestDelegatedWarrantChain:
 
     # C1 ---------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_delegated_leaf_without_chain_is_denied(self, delegation, search_tool, caplog):
         """C1: the leaf alone does not chain to a trusted root."""
         node = self._node(search_tool, delegation["root_key"])
@@ -2095,7 +2095,7 @@ class TestDelegatedWarrantChain:
 
     # C2 ---------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_chain_in_state_authorizes_delegated_leaf(self, delegation, search_tool):
         """C2: presenting the parents makes the same call succeed."""
         node = self._node(search_tool, delegation["root_key"])
@@ -2108,7 +2108,7 @@ class TestDelegatedWarrantChain:
 
     # C3 ---------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_chain_accepts_base64_tokens(self, delegation, search_tool):
         """C3: state survives checkpoint serialization as base64 tokens."""
         node = self._node(search_tool, delegation["root_key"])
@@ -2123,7 +2123,7 @@ class TestDelegatedWarrantChain:
 
     # C4 ---------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_chain_not_linking_to_leaf_is_denied(self, delegation, search_tool, caplog):
         """C4: a sibling warrant from the same trusted root does not substitute."""
         sibling = Warrant.issue(
@@ -2142,7 +2142,7 @@ class TestDelegatedWarrantChain:
 
     # C5 ---------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     @pytest.mark.parametrize(
         "bad_chain",
         ["not-a-warrant-token", [42], ["not-valid-base64!!"], "a-bare-string"],
@@ -2162,7 +2162,7 @@ class TestDelegatedWarrantChain:
 
     # C6 ---------------------------------------------------------------
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_constructor_chain_applies_when_state_has_none(self, delegation, search_tool):
         """C6: graphs that cannot thread state can pin the chain at construction."""
         node = self._node(
@@ -2171,7 +2171,7 @@ class TestDelegatedWarrantChain:
         message = self._run(node, {"warrant": delegation["child"]})
         assert "Authorization denied" not in message.content
 
-    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
     def test_empty_state_chain_falls_back_to_constructor(self, delegation, search_tool):
         """C6: a default-initialized empty field is 'no chain', not 'suppress'."""
         node = self._node(

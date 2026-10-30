@@ -170,6 +170,7 @@ use serde::{Deserialize, Serialize};
 /// replay attacks even for identical requests within the TTL window.
 /// Inner approval payload (what gets signed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApprovalPayload {
     /// Payload version (currently 1)
     pub version: u8,
@@ -201,6 +202,7 @@ pub struct ApprovalPayload {
 /// 2. Verify signature over raw payload bytes
 /// 3. Only then deserialize the payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SignedApproval {
     /// Envelope version (currently 1)
     pub approval_version: u8,
@@ -275,6 +277,13 @@ impl SignedApproval {
     ///
     /// The verified and deserialized ApprovalPayload
     pub fn verify(&self) -> Result<ApprovalPayload> {
+        self.verify_with_skew(crate::warrant::CLOCK_SKEW_TOLERANCE_SECS)
+    }
+
+    /// [`SignedApproval::verify`] with a caller-chosen tolerance for an
+    /// approver whose clock runs ahead: an approval dated more than
+    /// `skew_tolerance_secs` in the future is rejected.
+    pub fn verify_with_skew(&self, skew_tolerance_secs: u64) -> Result<ApprovalPayload> {
         // 1. Check envelope version
         if self.approval_version != 1 {
             return Err(Error::UnsupportedVersion(self.approval_version));
@@ -299,11 +308,10 @@ impl SignedApproval {
         // Check A: Approved in future (Clock Skew)
         // Prevent "time travel" attacks where an attacker creates an approval valid in the future
         // to bypass current valid-time checks or replay protections.
-        use crate::warrant::CLOCK_SKEW_TOLERANCE_SECS;
-        if payload.approved_at > now.saturating_add(CLOCK_SKEW_TOLERANCE_SECS) {
+        if payload.approved_at > now.saturating_add(skew_tolerance_secs) {
             return Err(Error::InvalidApproval(format!(
                 "approval timestamp is in the future (skew > {}s)",
-                CLOCK_SKEW_TOLERANCE_SECS
+                skew_tolerance_secs
             )));
         }
 
@@ -314,7 +322,7 @@ impl SignedApproval {
             ));
         }
 
-        // Note: Actual expiration checking (is now > expires_at) is done by the caller
+        // Note: Actual expiration checking (is now >= expires_at) is done by the caller
         // (e.g., authorizer) because an expired approval is cryptographically valid
         // but semantically stale.
         // verify() checks inherent structure and cryptographic integrity.
@@ -385,7 +393,11 @@ impl ApprovalPayload {
     /// Check if the approval is expired.
     pub fn is_expired(&self) -> bool {
         let now = Utc::now().timestamp() as u64;
-        now > self.expires_at
+        self.is_expired_at(now)
+    }
+
+    fn is_expired_at(&self, now: u64) -> bool {
+        now >= self.expires_at
     }
 }
 
@@ -1580,6 +1592,22 @@ mod tests {
     use super::*;
     use crate::crypto::SigningKey;
     use std::collections::HashMap;
+
+    #[test]
+    fn approval_is_expired_at_exact_expiry_second() {
+        let payload = ApprovalPayload {
+            version: 1,
+            request_hash: [0; 32],
+            nonce: [0; 16],
+            external_id: "approver".to_string(),
+            approved_at: 99,
+            expires_at: 100,
+            extensions: None,
+        };
+
+        assert!(!payload.is_expired_at(99));
+        assert!(payload.is_expired_at(100));
+    }
 
     #[test]
     fn test_request_hash_deterministic() {

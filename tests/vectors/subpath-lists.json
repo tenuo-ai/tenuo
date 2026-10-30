@@ -1,0 +1,24 @@
+{
+  "description": "Subpath matches an absolute path or a list in which every element matches. Empty lists are vacuously valid; executors must authorize their actual implicit scope when paths are omitted.",
+  "matching": [
+    {"name":"single path","root":"/data","value":"/data/a","allowed":true},
+    {"name":"contained list","root":"/data","value":["/data/a","/data/sub/b"],"allowed":true},
+    {"name":"root equality","root":"/data","value":["/data"],"allowed":true},
+    {"name":"lexical normalization","root":"/data","value":["/data/sub/../a"],"allowed":true},
+    {"name":"one outside path","root":"/data","value":["/data/a","/etc/passwd"],"allowed":false},
+    {"name":"traversal outside","root":"/data","value":["/data/../etc/passwd"],"allowed":false},
+    {"name":"relative path","root":"/data","value":["a"],"allowed":false},
+    {"name":"mixed types","root":"/data","value":["/data/a",1],"allowed":false},
+    {"name":"nested list","root":"/data","value":[["/data/a"]],"allowed":false},
+    {"name":"null","root":"/data","value":null,"allowed":false},
+    {"name":"empty list","root":"/data","value":[],"allowed":true}
+  ],
+  "attenuation": [
+    {"name":"contained subset","root":"/data","kind":"subset","value":["/data/a","/data/b"],"allowed":true},
+    {"name":"outside subset","root":"/data","kind":"subset","value":["/data/a","/etc/passwd"],"allowed":false},
+    {"name":"mixed subset","root":"/data","kind":"subset","value":["/data/a",1],"allowed":false},
+    {"name":"empty subset","root":"/data","kind":"subset","value":[],"allowed":true},
+    {"name":"exact path","root":"/data","kind":"exact","value":"/data/a","allowed":true},
+    {"name":"outside exact path","root":"/data","kind":"exact","value":"/etc/passwd","allowed":false}
+  ]
+}

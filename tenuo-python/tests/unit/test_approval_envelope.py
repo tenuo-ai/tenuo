@@ -12,12 +12,43 @@ Tests cover:
 import os
 import time
 
+import pytest
+from tenuo_core import verify_approvals
+
 from tenuo import (
     ApprovalMetadata,
     ApprovalPayload,
     SignedApproval,
     SigningKey,
 )
+
+
+def test_verify_approvals_names_future_dated_m_of_n_rejections():
+    request_hash = os.urandom(32)
+    approvers = [SigningKey.generate(), SigningKey.generate()]
+    now = int(time.time())
+    approvals = [
+        SignedApproval.create(
+            ApprovalPayload(
+                request_hash=request_hash,
+                nonce=os.urandom(16),
+                external_id=f"approver-{index}",
+                approved_at=now + 600,
+                expires_at=now + 1200,
+            ),
+            approver,
+        )
+        for index, approver in enumerate(approvers)
+    ]
+
+    with pytest.raises(Exception, match="2 dated in the future"):
+        verify_approvals(
+            request_hash,
+            approvals,
+            [approver.public_key for approver in approvers],
+            2,
+            30,
+        )
 
 
 def test_approval_payload_creation():

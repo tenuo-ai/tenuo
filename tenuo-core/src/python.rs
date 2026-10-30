@@ -35,7 +35,7 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySequence, PyTuple};
+use pyo3::types::{PyDict, PyFloat, PyInt, PyList, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -477,6 +477,16 @@ pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
             }
             Err(e) => py_validation_err(e.to_string()),
         }
+    })
+}
+
+/// Seconds to a chrono tolerance without panicking: chrono's range is
+/// narrower than i64 seconds, so out-of-range values saturate.
+fn clock_tolerance_from_secs(seconds: i64) -> chrono::Duration {
+    chrono::Duration::try_seconds(seconds).unwrap_or(if seconds < 0 {
+        chrono::Duration::zero()
+    } else {
+        chrono::Duration::MAX
     })
 }
 
@@ -1631,12 +1641,21 @@ impl PySubpath {
     /// Alias for contains() for consistency with other constraints.
     ///
     /// Args:
-    ///     path: The path to check.
+    ///     path: The path string or list of path strings to check.
     ///
     /// Returns:
-    ///     True if the path is safely contained, False otherwise.
-    fn matches(&self, path: &str) -> PyResult<bool> {
-        self.contains(path)
+    ///     True if the path(s) are safely contained, False otherwise.
+    fn matches(&self, path: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Ok(s) = path.extract::<String>() {
+            return self.contains(&s);
+        }
+        if let Ok(list) = path.extract::<Vec<String>>() {
+            let cv = ConstraintValue::List(list.into_iter().map(ConstraintValue::String).collect());
+            return self.inner.matches(&cv).map_err(to_py_err);
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "path must be a string or list of strings",
+        ))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -1785,20 +1804,20 @@ impl PyUrlSafe {
         block_metadata: bool,
         block_reserved: bool,
         block_internal_tlds: bool,
-    ) -> Self {
-        Self {
-            inner: UrlSafe {
-                schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
-                allow_domains,
-                deny_domains,
-                allow_ports,
-                block_private,
-                block_loopback,
-                block_metadata,
-                block_reserved,
-                block_internal_tlds,
-            },
-        }
+    ) -> PyResult<Self> {
+        let inner = UrlSafe {
+            schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
+            allow_domains,
+            deny_domains,
+            allow_ports,
+            block_private,
+            block_loopback,
+            block_metadata,
+            block_reserved,
+            block_internal_tlds,
+        };
+        inner.validate().map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Check if a URL is safe to fetch.
@@ -1807,7 +1826,9 @@ impl PyUrlSafe {
     ///     url: URL string to check.
     ///
     /// Returns:
-    ///     True if the URL passes all SSRF checks, False otherwise.
+    ///     True if the URL passes stateless URL and literal-IP checks, False
+    ///     otherwise. Hostname DNS results must also be validated and pinned
+    ///     by the HTTP execution layer to prevent DNS rebinding.
     fn is_safe(&self, url: &str) -> PyResult<bool> {
         self.inner.is_safe(url).map_err(to_py_err)
     }
@@ -1818,7 +1839,8 @@ impl PyUrlSafe {
     ///     url: URL string to check.
     ///
     /// Returns:
-    ///     True if the URL passes all SSRF checks, False otherwise.
+    ///     True if the URL passes stateless URL and literal-IP checks, False
+    ///     otherwise. See ``is_safe`` for the DNS-rebinding limitation.
     fn matches(&self, url: &str) -> PyResult<bool> {
         self.is_safe(url)
     }
@@ -1951,12 +1973,34 @@ impl PyUrlSafe {
     }
 }
 
-/// Shell command safety constraint (Rust core).
+/// Python `repr` of a string, using single quotes. Binary names in `Shlex`
+/// reprs are ordinary path text; control characters are escaped so the result
+/// stays a single line.
+fn python_single_quoted(value: &str) -> String {
+    let mut out = String::from("'");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if (ch as u32) < 0x20 || ch == '\u{7f}' => {
+                out.push_str(&format!("\\x{:02x}", u32::from(ch)));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Shell command safety constraint.
 ///
-/// Validates that a command uses only allowed binaries and contains no shell
-/// metacharacters. The Rust implementation is a conservative approximation
-/// (whitespace tokenization, no quoting). Python's ``Shlex`` class provides
-/// full POSIX shlex parsing for annotated ``@guard`` constraints.
+/// One POSIX tokenizer for every SDK. Quoted operators are literal arguments.
+/// ``$`` and backticks are rejected anywhere in the command, including inside
+/// double quotes. Unquoted operator runs (``|``, ``&&``, ``;``, ``<>``, …) are
+/// rejected.
 ///
 /// Example (Python):
 ///
@@ -1964,6 +2008,7 @@ impl PyUrlSafe {
 /// shlex = Shlex(allow=["npm", "docker"])
 /// shlex.matches("npm install express")   # True
 /// shlex.matches("npm install; rm -rf /") # False (semicolon)
+/// shlex.matches('npm install "a;b"')     # True (quoted semicolon)
 /// shlex.matches("bash -c 'evil'")        # False (not in allowlist)
 /// ```
 #[pyclass(name = "Shlex")]
@@ -1990,7 +2035,7 @@ impl PyShlex {
     #[pyo3(signature = (allow))]
     fn new(allow: Vec<String>) -> PyResult<Self> {
         if allow.is_empty() {
-            return Err(py_validation_err(
+            return Err(PyValueError::new_err(
                 "Shlex requires at least one allowed binary",
             ));
         }
@@ -1999,38 +2044,96 @@ impl PyShlex {
         })
     }
 
-    /// Check if a command string is safe to execute (conservative approximation).
+    /// Check if a command string is safe to execute.
     ///
-    /// Rejects any command containing shell metacharacters (|, &, ;, $, `, etc.),
-    /// then checks the first whitespace-delimited token against the allowlist.
+    /// Non-strings return False. Parse errors, control characters, ``$``,
+    /// backticks, and unquoted operators return False.
     ///
     /// Args:
     ///     command: Shell command string to validate.
     ///
     /// Returns:
-    ///     True if the command passes the conservative check, False otherwise.
-    fn matches(&self, command: &str) -> PyResult<bool> {
-        let cv = ConstraintValue::String(command.to_string());
+    ///     True if the command is one allowlisted binary with literal arguments.
+    fn matches(&self, command: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let Ok(command) = command.extract::<String>() else {
+            return Ok(false);
+        };
+        let cv = ConstraintValue::String(command);
         self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// The core's decision for `command`.
+    ///
+    /// Returns a dict with `allowed`, `reason`, `tokens`, `operators`,
+    /// `expansion`, `controls`, and `binary_allowed`. A non-string is not
+    /// allowed. Explanations should use this instead of a second parser.
+    fn check<'py>(
+        &self,
+        py: Python<'py>,
+        command: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        let Ok(command) = command.extract::<String>() else {
+            dict.set_item("allowed", false)?;
+            dict.set_item("reason", "value is not a string")?;
+            dict.set_item("tokens", Vec::<String>::new())?;
+            dict.set_item("operators", Vec::<String>::new())?;
+            dict.set_item("expansion", Vec::<String>::new())?;
+            dict.set_item("controls", Vec::<String>::new())?;
+            dict.set_item("binary_allowed", false)?;
+            return Ok(dict);
+        };
+        let report = crate::shell_words::check(&self.inner.allow, &command);
+        dict.set_item("allowed", report.allowed)?;
+        dict.set_item("reason", &report.reason)?;
+        dict.set_item("tokens", report.tokens)?;
+        dict.set_item("operators", report.operators)?;
+        dict.set_item("expansion", report.expansion)?;
+        dict.set_item("controls", report.controls)?;
+        dict.set_item("binary_allowed", report.binary_allowed)?;
+        Ok(dict)
+    }
+
+    /// Split a command the way [`matches`](Self::matches) does.
+    ///
+    /// Raises:
+    ///     ValueError: Unbalanced quotes or a trailing backslash.
+    #[staticmethod]
+    fn tokenize(command: &str) -> PyResult<Vec<String>> {
+        crate::shell_words::tokenize(command)
+            .map(|tokens| tokens.into_iter().map(|token| token.text).collect())
+            .map_err(|err| PyValueError::new_err(err.to_string()))
     }
 
     /// Unified constraint check.
     fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let cv = py_to_constraint_value(value)?;
-        self.inner.matches(&cv).map_err(to_py_err)
+        self.matches(value)
     }
 
     fn __repr__(&self) -> String {
-        format!("Shlex(allow={:?})", self.inner.allow)
+        let mut allow = self.inner.allow.clone();
+        allow.sort();
+        let parts: Vec<String> = allow
+            .iter()
+            .map(|item| python_single_quoted(item))
+            .collect();
+        format!("Shlex(allow=[{}])", parts.join(", "))
     }
 
     fn __str__(&self) -> String {
         self.__repr__()
     }
 
-    /// Allowed binaries.
+    /// Allowed binaries, in the order they were given.
     #[getter]
     fn allow(&self) -> Vec<String> {
+        self.inner.allow.clone()
+    }
+
+    /// Allowed binaries. Same list as ``allow``, kept for callers that read
+    /// the previous Python attribute.
+    #[getter]
+    fn allowed_bins(&self) -> Vec<String> {
         self.inner.allow.clone()
     }
 
@@ -2429,10 +2532,13 @@ pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<Constra
         Ok(ConstraintValue::String(s))
     } else if let Ok(b) = obj.extract::<bool>() {
         Ok(ConstraintValue::Boolean(b))
-    } else if let Ok(i) = obj.extract::<i64>() {
+    } else if obj.cast::<PyInt>().is_ok() {
+        let i = obj.extract::<i64>().map_err(|_| {
+            py_validation_err("integer argument is outside the signed 64-bit range")
+        })?;
         Ok(ConstraintValue::Integer(i))
-    } else if let Ok(f) = obj.extract::<f64>() {
-        Ok(ConstraintValue::Float(f))
+    } else if obj.cast::<PyFloat>().is_ok() {
+        Ok(ConstraintValue::Float(obj.extract::<f64>()?))
     } else if let Ok(l) = obj.extract::<Vec<Py<PyAny>>>() {
         // Recursively convert list items
         let py = obj.py();
@@ -3367,6 +3473,15 @@ impl PyAttenuationBuilder {
         self.inner.set_ttl(Duration::from_secs(seconds));
     }
 
+    /// Set a TTL, atomically capped at the parent's expiry.
+    ///
+    /// High-level scoping helpers use this to avoid a wall-clock race between
+    /// inspecting the parent's remaining lifetime and building the child.
+    fn with_ttl_capped_to_parent(&mut self, seconds: u64) {
+        self.inner
+            .set_ttl_capped_to_parent(Duration::from_secs(seconds));
+    }
+
     /// Set the authorized holder for the child warrant.
     fn with_holder(&mut self, holder: &PyPublicKey) {
         self.inner.set_holder(holder.inner.clone());
@@ -3842,7 +3957,7 @@ impl PyWarrant {
     /// Issuer warrants can issue execution warrants but cannot execute tools themselves.
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None))]
+    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None))]
     fn issue_issuer(
         issuable_tools: Vec<String>,
         keypair: &PySigningKey,
@@ -3852,6 +3967,9 @@ impl PyWarrant {
         holder: Option<&PyPublicKey>,
         session_id: Option<&str>,
         clearance: Option<&PyClearance>,
+        required_approvers: Option<Vec<PyPublicKey>>,
+        min_approvals: Option<u32>,
+        approval_gates: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .r#type(WarrantType::Issuer)
@@ -3884,6 +4002,27 @@ impl PyWarrant {
                 let constraint = py_to_constraint(&value)?;
                 builder = builder.constraint_bound(field, constraint);
             }
+        }
+
+        // Approval template: issued execution warrants inherit these
+        if let Some(approvers) = required_approvers {
+            let rust_approvers: Vec<crate::crypto::PublicKey> =
+                approvers.into_iter().map(|pk| pk.inner).collect();
+            builder = builder.required_approvers(rust_approvers);
+        }
+
+        if let Some(min) = min_approvals {
+            builder = builder.min_approvals(min);
+        }
+
+        if let Some(approval_gates_dict) = approval_gates {
+            let approval_gate_map = py_dict_to_approval_gate_map(approval_gates_dict)?;
+            let bytes = crate::approval_gate::encode_approval_gate_map(&approval_gate_map)
+                .map_err(to_py_err)?;
+            builder = builder.extension(
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                bytes,
+            );
         }
 
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;
@@ -4221,6 +4360,45 @@ impl PyWarrant {
             }
             Err(e) => Ok(Some(("_error".to_string(), format!("{}", e)))),
         }
+    }
+
+    /// Diagnose all constraint failures (DIAGNOSTIC USE ONLY).
+    ///
+    /// Returns a dictionary containing ``closed_world`` and a deterministic
+    /// ``violations`` list. Each violation has stable ``kind`` and ``field``
+    /// values plus a human-readable ``reason``. Argument values are never
+    /// included. This does not perform authorization or any cryptographic,
+    /// temporal, revocation, approval, or PoP check.
+    fn diagnose_constraints<'py>(
+        &self,
+        py: Python<'py>,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let diagnostics = self
+            .inner
+            .diagnose_constraints(tool, &rust_args)
+            .map_err(to_py_err)?;
+        let result = PyDict::new(py);
+        result.set_item("closed_world", diagnostics.closed_world)?;
+
+        let violations = PyList::empty(py);
+        for violation in diagnostics.violations {
+            let item = PyDict::new(py);
+            item.set_item("field", violation.field)?;
+            item.set_item("kind", violation.kind.as_str())?;
+            item.set_item("reason", violation.reason)?;
+            violations.append(item)?;
+        }
+        result.set_item("violations", violations)?;
+        Ok(result)
     }
 
     // ========================================================================
@@ -5551,7 +5729,7 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///   - Signature validity (verify-before-deserialize pattern)
 ///   - Approver is in the required set
 ///   - Request hash matches the expected value
-///   - Expiration with configurable clock tolerance
+///   - Strict expiration and configurable tolerance for future-approved timestamps
 ///   - Duplicate detection (one approval per approver key)
 ///   - DoS protection (max 2× approver count)
 ///   - Threshold satisfaction (m-of-n)
@@ -5561,7 +5739,8 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///     approvals: List of SignedApproval objects to verify
 ///     trusted_approvers: Public keys of accepted approvers
 ///     threshold: Minimum number of valid approvals required (default 1)
-///     clock_tolerance_secs: Tolerance for clock skew on expiration (default 30)
+///     clock_tolerance_secs: Tolerance for an approver whose clock runs ahead, applied to
+///         approved_at (default 30). Expiry itself is strict.
 ///
 /// Returns:
 ///     List of verified ApprovalPayload objects (one per valid approval)
@@ -5607,6 +5786,7 @@ fn py_verify_approvals(
         NotTrusted,
         Duplicate,
         Expired,
+        NotYetValid,
         HashMismatch,
     }
 
@@ -5616,7 +5796,8 @@ fn py_verify_approvals(
     let mut rejections: Vec<Rejection> = Vec::new();
 
     for approval in &approvals {
-        let payload = match approval.inner.verify() {
+        // Signature and structure here; the time checks below give precise reasons.
+        let payload = match approval.inner.verify_with_skew(u64::MAX) {
             Ok(p) => p,
             Err(_) => {
                 rejections.push(Rejection::InvalidSignature);
@@ -5638,8 +5819,14 @@ fn py_verify_approvals(
             continue;
         }
 
-        if payload.expires_at + clock_tolerance_secs < now {
+        // Expiry is strict, as for warrants at authorization. The tolerance
+        // only covers an approver whose clock runs ahead.
+        if now >= payload.expires_at {
             rejections.push(Rejection::Expired);
+            continue;
+        }
+        if payload.approved_at > now.saturating_add(clock_tolerance_secs) {
+            rejections.push(Rejection::NotYetValid);
             continue;
         }
 
@@ -5662,7 +5849,8 @@ fn py_verify_approvals(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotTrusted => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::Expired => "approval expired",
+            Rejection::NotYetValid => "approval dated in the future beyond clock tolerance",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }
@@ -5674,7 +5862,7 @@ fn py_verify_approvals(
 
     // m-of-n: include rejection summary for diagnostics
     let mut parts = Vec::new();
-    let counts: [(usize, &str); 5] = [
+    let counts: [(usize, &str); 6] = [
         (
             rejections
                 .iter()
@@ -5702,6 +5890,13 @@ fn py_verify_approvals(
                 .filter(|r| matches!(r, Rejection::Expired))
                 .count(),
             "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotYetValid))
+                .count(),
+            "dated in the future",
         ),
         (
             rejections
@@ -6129,7 +6324,7 @@ impl PyAuthorizer {
     ///
     /// Args:
     ///     trusted_roots: List of trusted root public keys. At least one required.
-    ///     clock_tolerance_secs: Clock tolerance in seconds (default: 30)
+    ///     clock_tolerance_secs: Tolerance for future-issued timestamps in seconds (default: 30)
     ///     pop_window_secs: PoP window size in seconds (default: 30)
     ///     pop_max_windows: Number of PoP windows to accept (default: 4)
     ///
@@ -6164,7 +6359,7 @@ impl PyAuthorizer {
         }
 
         let mut authorizer = RustAuthorizer::new()
-            .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
+            .with_clock_tolerance(clock_tolerance_from_secs(clock_tolerance_secs))
             .with_pop_window(pop_window_secs, pop_max_windows);
 
         let mut root_bytes = Vec::new();
@@ -6231,13 +6426,13 @@ impl PyAuthorizer {
         Ok(())
     }
 
-    /// Set the clock tolerance for expiration checks.
+    /// Set the clock tolerance for future-issued timestamps. Expiry remains strict.
     ///
     /// Args:
     ///     seconds: Clock tolerance in seconds
     fn set_clock_tolerance(&mut self, seconds: i64) {
         self.inner
-            .set_clock_tolerance(chrono::Duration::seconds(seconds));
+            .set_clock_tolerance(clock_tolerance_from_secs(seconds));
     }
 
     /// Set the PoP window configuration.

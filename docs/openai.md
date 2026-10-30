@@ -58,12 +58,12 @@ Use the **builder pattern** for semantic constraints that block attacks:
 
 ```python
 import openai
-from tenuo.openai import GuardBuilder, Pattern, Subpath
+from tenuo.openai import GuardBuilder, Regex, Subpath
 
 client = (GuardBuilder(openai.OpenAI())
     .allow("search_web")
     .allow("read_file", path=Subpath("/data"))
-    .allow("send_email", to=Pattern("*@company.com"))
+    .allow("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"))
     .deny("delete_file")
     .build())
 
@@ -432,12 +432,12 @@ Requires `openai-agents` 0.3.3 or later.
 
 ```python
 from agents import Agent, Runner
-from tenuo.openai import Pattern, guard_agent
+from tenuo.openai import Regex, guard_agent
 
 agent = guard_agent(
     Agent(name="Assistant", instructions="Help with email", tools=[send_email, search]),
     allow_tools=["send_email", "search"],
-    constraints={"send_email": {"to": Pattern("*@company.com")}},
+    constraints={"send_email": {"to": Regex(r"^[A-Za-z0-9._%+-]+@company\.com$")}},
 )
 
 result = await Runner.run(agent, "Email the Q3 summary to alice@company.com")
@@ -446,14 +446,14 @@ result = await Runner.run(agent, "Email the Q3 summary to alice@company.com")
 ### Tier 2: warrants
 
 ```python
-from tenuo import Pattern, SigningKey, Warrant
+from tenuo import Regex, SigningKey, Warrant
 from tenuo.openai import guard_agent
 
 # The control plane issues a warrant for this task to the agent's key.
 agent_key = SigningKey.generate()
 warrant = (
     Warrant.mint_builder()
-    .capability("send_email", to=Pattern("*@company.com"))
+    .capability("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"))
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_plane_key)
@@ -474,6 +474,8 @@ By default (`on_denial="reject"`), the tool doesn't run and the model receives t
 ### Policies belong to agents, not tools
 
 Agents often share tool objects and MCP servers. The policy you pass to `guard_agent()` is registered for that agent, and every call is checked against the policy of the agent making it, so two agents built from the same tools keep separate policies. Calling `guard_agent()` again on an agent replaces its policy. A guarded tool denies calls from an agent that has no policy, including a copy made with `agent.clone()`, so guard clones too.
+
+`guard_agent()` guards the tools the agent has when you call it. If you add tools later, call it again. An agent exposed through `agent.as_tool()` runs its own tools inside that call, so guard the inner agent too.
 
 ### What `guard_agent()` refuses
 

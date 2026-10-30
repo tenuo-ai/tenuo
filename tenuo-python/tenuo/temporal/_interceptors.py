@@ -13,7 +13,6 @@ import binascii
 import inspect as _inspect
 import json
 import logging
-import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
@@ -24,7 +23,9 @@ from tenuo.exceptions import (
     ConstraintViolation,
     InsufficientApprovals,
     InvalidApproval,
+    MissingSignature,
     RevokedError,
+    SignatureInvalid,
     ToolNotAuthorized,
 )
 from tenuo.temporal._constants import (
@@ -43,13 +44,19 @@ from tenuo.temporal._headers import (
     _extract_warrant_from_headers,
     _validate_chain_ends_with_warrant,
 )
-from tenuo.temporal._observability import TemporalAuditEvent
+from tenuo.temporal._idempotency import _activity_idempotency_context
+from tenuo.temporal._observability import (
+    TemporalAuditEvent,
+    _install_dropped_signal_audit_dispatcher,
+)
 from tenuo.temporal._pop import (
+    _add_workflow_scope,
     _args_dict_uses_only_positional_fallback_keys,
     _args_to_dict_by_fn,
     _normalize_args_for_pop,
     _positional_pop_mismatch_message,
     _prevalidate_args_against_warrant,
+    _validate_no_reserved_workflow_parameters,
     _warrant_tool_has_non_empty_field_constraints,
 )
 from tenuo.temporal._state import (
@@ -68,12 +75,14 @@ from tenuo.temporal.exceptions import (
     ChainValidationError,
     LocalActivityError,
     PopVerificationError,
+    RevocationStateStale,
     TemporalConstraintViolation,
     TenuoArgNormalizationError,
     TenuoContextError,
     TenuoTemporalError,
     WarrantExpired,
     _build_non_retryable_application_error,
+    _build_retryable_application_error,
     _error_type_for_wire,  # noqa: F401 — re-exported for back-compat (tests import from here)
 )
 
@@ -254,6 +263,7 @@ class _TenuoWorkflowOutboundInterceptor:
                         activity_fn = self._config._activity_registry.get(activity_type)
 
                     raw_args = getattr(input, "args", ()) or ()
+                    _validate_no_reserved_workflow_parameters(activity_fn)
                     args_dict = _args_to_dict_by_fn(raw_args, activity_fn)
 
                     pop_tool_name = _warrant_tool_name_for_activity_type(
@@ -276,6 +286,17 @@ class _TenuoWorkflowOutboundInterceptor:
                         logger.warning(msg)
 
                     args_dict = _normalize_args_for_pop(args_dict)
+                    # Only the Activity's own argument names go in this header;
+                    # the worker obtains the reserved workflow scope from Temporal.
+                    arg_keys_csv = ",".join(args_dict.keys())
+                    workflow_info = workflow.info()
+                    args_dict = _add_workflow_scope(
+                        warrant,
+                        pop_tool_name,
+                        args_dict,
+                        getattr(workflow_info, "namespace", None),
+                        getattr(workflow_info, "workflow_id", None),
+                    )
                     _prevalidate_args_against_warrant(warrant, pop_tool_name, args_dict)
 
                     timestamp = int(workflow.now().timestamp())
@@ -287,7 +308,6 @@ class _TenuoWorkflowOutboundInterceptor:
                         activity_headers[k] = Payload(data=v)
                     activity_headers[TENUO_POP_HEADER] = Payload(data=pop_encoded)
 
-                    arg_keys_csv = ",".join(args_dict.keys())
                     activity_headers[TENUO_ARG_KEYS_HEADER] = Payload(
                         data=arg_keys_csv.encode("utf-8")
                     )
@@ -377,6 +397,64 @@ class _TenuoWorkflowOutboundInterceptor:
 
 
 # ── Inbound Workflow Interceptor ─────────────────────────────────────────
+
+def _record_dropped_signal(config: "TenuoPluginConfig", tool: str, warrant_id: str) -> None:
+    """Audit and count a dropped signal once.
+
+    This runs in workflow code, which re-runs on every replay, so it skips
+    replays. A raising callback or metric is logged and never changes the drop.
+    The metric label is fixed: the sender picks the signal name, so one label
+    per name would let them grow metric cardinality without bound.
+    """
+    callback = config.audit_callback if config.audit_deny else None
+    if config.metrics is None and callback is None:
+        return
+    from temporalio import workflow  # type: ignore[import-not-found]
+
+    if workflow.unsafe.is_replaying():
+        return
+    info = workflow.info()
+    reason = "signal not in authorized_signals"
+    if config.metrics is not None:
+        try:
+            config.metrics.record_denied(
+                tool="signal:<unlisted>", reason=reason, workflow_type=info.workflow_type, latency_seconds=0.0
+            )
+        except Exception:
+            logger.error("Metrics failed for dropped %s", tool, exc_info=True)
+    if callback is not None:
+        from tenuo import __version__
+
+        event = TemporalAuditEvent(
+            workflow_id=info.workflow_id,
+            workflow_type=info.workflow_type,
+            workflow_run_id=info.run_id,
+            activity_name="",
+            activity_id="",
+            task_queue=info.task_queue,
+            decision="DENY",
+            tool=tool,
+            arguments={},
+            warrant_id=warrant_id,
+            warrant_expires_at=None,
+            warrant_capabilities=[],
+            denial_reason=reason,
+            constraint_violated="authorized_signals",
+            timestamp=workflow.now(),
+            tenuo_version=__version__,
+        )
+        dispatcher = getattr(config, "_dropped_signal_audit_dispatcher", None)
+        if dispatcher is None:
+            # Configuring the callback after worker construction is unsupported;
+            # never fall back to invoking arbitrary user code in the sandbox.
+            logger.error(
+                "Dropped-signal audit dispatcher is not initialized; event lost "
+                "for %s. Configure audit_callback before constructing the worker.",
+                tool,
+            )
+        else:
+            dispatcher.submit(callback, event)
+
 
 class _TenuoWorkflowInboundInterceptor:
     """Workflow interceptor — extracts Tenuo headers and cleans up on completion.
@@ -533,11 +611,17 @@ class _TenuoWorkflowInboundInterceptor:
             if signal_name not in config.authorized_signals:
                 # Drop, don't raise: a raised denial fails the run, so any
                 # caller who can signal could end the workflow.
-                logger.warning(
-                    "Signal '%s' dropped (warrant_id=%s): not in authorized_signals",
-                    signal_name,
-                    self._resolve_warrant_id(),
-                )
+                from temporalio import workflow  # type: ignore[import-not-found]
+
+                warrant_id = self._resolve_warrant_id()
+                # Workflow code re-runs on every replay; log the drop once.
+                if not workflow.unsafe.is_replaying():
+                    logger.warning(
+                        "Signal '%s' dropped (warrant_id=%s): not in authorized_signals",
+                        signal_name,
+                        warrant_id,
+                    )
+                _record_dropped_signal(config, f"signal:{signal_name}", warrant_id)
                 return
         return await self.next.handle_signal(input)
 
@@ -642,6 +726,8 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
             config.control_plane = get_or_create()
         self._config = config
         self._version = self._get_version()
+        if config.audit_callback is not None and config.audit_deny:
+            _install_dropped_signal_audit_dispatcher(config)
 
         if task_queue:
             # Self-register so manual users (not using
@@ -828,6 +914,8 @@ def _activity_denial_error_type(
             return "chain_invalid"
         if isinstance(exc, WarrantExpired):
             return "expired"
+        if isinstance(exc, RevocationStateStale):
+            return "revocation_state_stale"
         from tenuo._enforcement import _enforcement_result_from_chain_error
 
         return _enforcement_result_from_chain_error(exc, "", {}, None).error_type
@@ -855,30 +943,15 @@ class TenuoActivityInboundInterceptor:
         )
         self._trusted_roots_provider = config.trusted_roots_provider
         self._trusted_roots_refresh_interval = config.trusted_roots_refresh_interval_secs
-        import time as _time
-
-        self._last_trusted_roots_refresh = _time.monotonic()
-        self._last_srl_refresh: float = _time.monotonic()
-        self._authorizer_lock = threading.Lock()
         self._authorizer: Optional[Any] = None
         self._retry_authorizer: Optional[Any] = None
         try:
-            from tenuo_core import Authorizer
-            initial_revocation_list = config._last_good_revocation_list
-            self._authorizer = _build_authorizer(
-                Authorizer,
-                config.trusted_roots,
-                config,
-                revocation_list=initial_revocation_list,
+            snapshot = config._provider_snapshot()
+            self._authorizer, self._retry_authorizer = self._build_authorizers(
+                snapshot.trusted_roots,
+                snapshot.revocation_list,
             )
-            if config.retry_pop_max_windows is not None:
-                self._retry_authorizer = _build_authorizer(
-                    Authorizer,
-                    config.trusted_roots,
-                    config,
-                    revocation_list=initial_revocation_list,
-                    pop_max_windows=config.retry_pop_max_windows,
-                )
+            self._installed_provider_snapshot = snapshot
         except ImportError as e:
             from tenuo.exceptions import ConfigurationError
             raise ConfigurationError(
@@ -886,6 +959,44 @@ class TenuoActivityInboundInterceptor:
                 "Install tenuo with the native extension, or ensure the "
                 "interpreter can import tenuo_core."
             ) from e
+
+    def _build_authorizers(
+        self,
+        roots: Any,
+        revocation_list: Any,
+    ) -> tuple[Any, Optional[Any]]:
+        """Build both authorizers from one coherent provider snapshot."""
+        from tenuo_core import Authorizer
+
+        authorizer = _build_authorizer(
+            Authorizer,
+            roots,
+            self._config,
+            revocation_list=revocation_list,
+        )
+        retry_authorizer = None
+        if self._config.retry_pop_max_windows is not None:
+            retry_authorizer = _build_authorizer(
+                Authorizer,
+                roots,
+                self._config,
+                revocation_list=revocation_list,
+                pop_max_windows=self._config.retry_pop_max_windows,
+            )
+        return authorizer, retry_authorizer
+
+    def _sync_authorizers_from_provider_snapshot(self) -> None:
+        """Install provider state published by another Activity interceptor."""
+        snapshot = self._config._provider_snapshot()
+        if snapshot is self._installed_provider_snapshot:
+            return
+        authorizer, retry_authorizer = self._build_authorizers(
+            snapshot.trusted_roots,
+            snapshot.revocation_list,
+        )
+        self._authorizer = authorizer
+        self._retry_authorizer = retry_authorizer
+        self._installed_provider_snapshot = snapshot
 
     def _maybe_refresh_trusted_roots(self) -> None:
         """Rebuild Authorizer from ``trusted_roots_provider`` on a fixed interval."""
@@ -896,53 +1007,44 @@ class TenuoActivityInboundInterceptor:
         if p is None or interval is None:
             return
         now = _time.monotonic()
-        if (now - self._last_trusted_roots_refresh) < interval:
+        if (
+            now - self._config._last_trusted_roots_refresh_attempt_monotonic
+        ) < interval:
+            self._sync_authorizers_from_provider_snapshot()
             return
-        with self._authorizer_lock:
+        with self._config._provider_state_lock:
             now2 = _time.monotonic()
-            if (now2 - self._last_trusted_roots_refresh) < interval:
-                return
-            try:
-                roots = list(p())
-            except Exception as e:
-                logger.warning("trusted_roots_provider failed during refresh: %s", e)
-                return
-            if not roots:
-                logger.warning(
-                    "trusted_roots_provider returned empty during refresh; "
-                    "keeping prior Authorizer"
-                )
-                return
-            try:
-                from tenuo_core import Authorizer
-
-                # NB: ``_build_authorizer`` uses its explicit ``trusted_roots``
-                # argument and re-reads ``clearance_requirements`` / the latest
-                # SRL from ``self._config``; we deliberately do not resync
-                # ``self._config.trusted_roots`` because ``dataclasses.replace``
-                # would re-run ``__post_init__`` and fail the either/or check
-                # when ``trusted_roots_provider=`` is set.
-                self._authorizer = _build_authorizer(
-                    Authorizer,
-                    roots,
-                    self._config,
-                    revocation_list=self._config._last_good_revocation_list,
-                )
-                if self._config.retry_pop_max_windows is not None:
-                    self._retry_authorizer = _build_authorizer(
-                        Authorizer,
-                        roots,
-                        self._config,
-                        revocation_list=self._config._last_good_revocation_list,
-                        pop_max_windows=self._config.retry_pop_max_windows,
+            if (
+                now2 - self._config._last_trusted_roots_refresh_attempt_monotonic
+            ) >= interval:
+                try:
+                    roots = list(p())
+                    if not roots:
+                        logger.warning(
+                            "trusted_roots_provider returned empty during refresh; "
+                            "keeping prior Authorizer"
+                        )
+                    else:
+                        snapshot = self._config._provider_snapshots
+                        authorizer, retry_authorizer = self._build_authorizers(
+                            roots,
+                            snapshot.revocation_list,
+                        )
+                        self._config._record_provider_snapshot(trusted_roots=roots)
+                        self._authorizer = authorizer
+                        self._retry_authorizer = retry_authorizer
+                        self._installed_provider_snapshot = (
+                            self._config._provider_snapshots
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "trusted_roots_provider failed during refresh: %s", e
                     )
-            except Exception as e:
-                logger.warning(
-                    "Authorizer rebuild failed during trusted root refresh: %s", e
-                )
-                return
-            self._config._record_provider_snapshot(trusted_roots=roots)
-            self._last_trusted_roots_refresh = _time.monotonic()
+                finally:
+                    self._config._last_trusted_roots_refresh_attempt_monotonic = (
+                        _time.monotonic()
+                    )
+        self._sync_authorizers_from_provider_snapshot()
 
     def _maybe_refresh_revocation_list(self) -> None:
         """Refresh the SRL from ``revocation_list_provider`` on a fixed interval."""
@@ -951,40 +1053,69 @@ class TenuoActivityInboundInterceptor:
         provider = self._config.revocation_list_provider
         interval = self._config.revocation_refresh_secs
         if provider is None or interval is None:
+            self._raise_if_revocation_state_stale(_time.monotonic())
             return
         now = _time.monotonic()
-        if (now - self._last_srl_refresh) < interval:
+        if (
+            now - self._config._last_revocation_refresh_attempt_monotonic
+        ) >= interval:
+            with self._config._provider_state_lock:
+                now2 = _time.monotonic()
+                if (
+                    now2 - self._config._last_revocation_refresh_attempt_monotonic
+                ) >= interval:
+                    try:
+                        try:
+                            srl = provider()
+                        except Exception as e:
+                            logger.warning(
+                                "revocation_list_provider failed during refresh: %s", e
+                            )
+                        else:
+                            if srl is None:
+                                logger.warning(
+                                    "revocation_list_provider returned None during "
+                                    "refresh; keeping prior revocation list"
+                                )
+                            else:
+                                snapshot = self._config._provider_snapshots
+                                authorizer, retry_authorizer = self._build_authorizers(
+                                    snapshot.trusted_roots,
+                                    srl,
+                                )
+                                self._config._record_provider_snapshot(
+                                    revocation_list=srl
+                                )
+                                self._authorizer = authorizer
+                                self._retry_authorizer = retry_authorizer
+                                self._installed_provider_snapshot = (
+                                    self._config._provider_snapshots
+                                )
+                    except Exception as e:
+                        logger.warning("SRL refresh failed: %s", e)
+                    finally:
+                        # Advance on every attempt so a broken source retries on
+                        # interval instead of on every subsequent activity.
+                        self._config._last_revocation_refresh_attempt_monotonic = (
+                            _time.monotonic()
+                        )
+
+        self._sync_authorizers_from_provider_snapshot()
+        self._raise_if_revocation_state_stale(_time.monotonic())
+
+    def _raise_if_revocation_state_stale(self, now: float) -> None:
+        max_staleness = self._config.max_revocation_refresh_staleness_secs
+        if max_staleness is None:
             return
-        with self._authorizer_lock:
-            now2 = _time.monotonic()
-            if (now2 - self._last_srl_refresh) < interval:
-                return
-            try:
-                try:
-                    srl = provider()
-                except Exception as e:
-                    logger.warning("revocation_list_provider failed during refresh: %s", e)
-                    return
-                if srl is None:
-                    logger.warning(
-                        "revocation_list_provider returned None during refresh; "
-                        "keeping prior revocation list"
-                    )
-                    return
-                authorizers = [
-                    auth
-                    for auth in (self._authorizer, self._retry_authorizer)
-                    if auth is not None
-                ]
-                for auth in authorizers:
-                    auth.set_revocation_list(srl)
-                self._config._record_provider_snapshot(revocation_list=srl)
-            except Exception as e:
-                logger.warning("SRL refresh failed: %s", e)
-            finally:
-                # Advance on every attempt so a broken source retries on
-                # interval instead of on every subsequent activity.
-                self._last_srl_refresh = _time.monotonic()
+        snapshot = self._config._provider_snapshot()
+        refreshed_at = snapshot.revocation_refreshed_at
+        stale_for = (
+            float("inf")
+            if refreshed_at is None
+            else max(0.0, now - refreshed_at)
+        )
+        if stale_for >= max_staleness:
+            raise RevocationStateStale(stale_for, max_staleness)
 
     def init(self, outbound: Any) -> None:
         """Called by Temporal to initialize the interceptor with an outbound impl."""
@@ -1001,6 +1132,14 @@ class TenuoActivityInboundInterceptor:
         """
         try:
             return _build_non_retryable_application_error(exc)
+        except ImportError:
+            return exc
+
+    @staticmethod
+    def _wrap_as_retryable(exc: Exception) -> Exception:
+        """Wrap a transient authorization dependency failure for Temporal retry."""
+        try:
+            return _build_retryable_application_error(exc)
         except ImportError:
             return exc
 
@@ -1105,6 +1244,51 @@ class TenuoActivityInboundInterceptor:
         )
 
         args = self._extract_arguments(input, headers)
+        try:
+            _validate_no_reserved_workflow_parameters(activity_fn)
+            args = _add_workflow_scope(
+                warrant,
+                tool_name,
+                args,
+                getattr(info, "workflow_namespace", None),
+                getattr(info, "workflow_id", None),
+            )
+            # Authorize the same values the workflow signed: structured
+            # arguments (dicts, dataclasses, Pydantic models) are normalized
+            # exactly as for PoP. The activity itself still receives ``input``.
+            args = _normalize_args_for_pop(args)
+        except TenuoArgNormalizationError as exc:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args={k: "[UNSUPPORTED]" for k in args},
+                reason=str(exc),
+                constraint="unsupported_argument",
+                start_ns=start_ns,
+                authorizer=self._authorizer,
+                presented_chain=[warrant],
+                pop_auth_args={},
+            )
+            if self._config.on_denial == "raise" and not self._config.dry_run:
+                raise self._wrap_as_non_retryable(exc) from exc
+            return await _deny_or_continue(tool=tool_name, reason=str(exc))
+        except TenuoContextError as exc:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=str(exc),
+                constraint="reserved_argument",
+                start_ns=start_ns,
+                authorizer=self._authorizer,
+                presented_chain=[warrant],
+                pop_auth_args=args,
+            )
+            if self._config.on_denial == "raise" and not self._config.dry_run:
+                raise self._wrap_as_non_retryable(exc) from exc
+            return await _deny_or_continue(tool=tool_name, reason=str(exc))
 
         # -- 6. Delegation Depth Limit --
         chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
@@ -1167,7 +1351,22 @@ class TenuoActivityInboundInterceptor:
 
         # -- 7. Trusted-Root & Revocation Refresh --
         self._maybe_refresh_trusted_roots()
-        self._maybe_refresh_revocation_list()
+        try:
+            self._maybe_refresh_revocation_list()
+        except RevocationStateStale as exc:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=str(exc),
+                constraint="revocation_state_stale",
+                start_ns=start_ns,
+                authorizer=self._authorizer,
+                presented_chain=list(chain) if chain else [warrant],
+                exc=exc,
+            )
+            raise self._wrap_as_retryable(exc) from exc
 
         if self._authorizer is None:
             from tenuo.exceptions import ConfigurationError
@@ -1206,7 +1405,8 @@ class TenuoActivityInboundInterceptor:
                     logger.debug(
                         "Activity '%s' is a retry (attempt=%d). If this fails with "
                         "PopVerificationError, set TenuoPluginConfig.retry_pop_max_windows "
-                        "to accommodate Temporal's retry time offset (e.g. 120 for 1 hour).",
+                        "to accommodate Temporal's retry time offset "
+                        "(e.g. 240 for about an hour on the past side).",
                         tool_name, info.attempt,
                     )
                 authorizer = self._authorizer
@@ -1225,31 +1425,117 @@ class TenuoActivityInboundInterceptor:
                         activity_name=tool_name,
                     ) from _e
 
-            # -- 11. Multi-Sig Approval Resolution --
-            gate_approvals = await self._resolve_approval_gate_approvals(
-                warrant, tool_name, args, headers,
-            )
+            # A task without PoP is denied before the approval step, so a
+            # copied warrant header alone can never reach approval_handler.
+            # Same wire category as every other PoP failure; the signature
+            # itself is verified in step 11.
+            if pop_bytes is None:
+                raise PopVerificationError(
+                    reason="Missing proof-of-possession signature",
+                    activity_name=tool_name,
+                )
 
-            # -- 12. Cryptographic Authorization Evaluation --
+            # -- 11. Cryptographic PoP Preflight --
+            # A syntactically valid PoP header is not proof of possession. Go
+            # directly to the Rust authorizer first: ``verify_inbound_call``
+            # evaluates approval gates before entering the core, so using it
+            # alone as a preflight would let an invalid signature look like an
+            # approval-required call.
             from tenuo._enforcement import parents_from_presented_chain, verify_inbound_call
+            from tenuo._pop_canonicalize import strip_none_values
             from tenuo.runtime import bind_runtime, get_runtime
+            from tenuo.runtime import apply_runtime_revocation
 
             runtime = getattr(self._config, "runtime", None) or get_runtime()
+            presented_parents = parents_from_presented_chain(chain, warrant)
+            full_chain = list(presented_parents) + [warrant]
+            constraint_args = strip_none_values(args)
             with bind_runtime(runtime):
-                enforcement = verify_inbound_call(
+                apply_runtime_revocation(authorizer)
+                try:
+                    # Verify the chain separately so a bad warrant signature is
+                    # not mislabeled as a bad holder PoP (both use the core's
+                    # SignatureInvalid exception type).
+                    authorizer.verify_chain(full_chain)
+                    if constraint_args != args:
+                        authorizer.check_chain_with_pop_args(
+                            full_chain,
+                            tool_name,
+                            args,
+                            constraint_args,
+                            signature=pop_bytes,
+                            approvals=[],
+                        )
+                    else:
+                        authorizer.check_chain(
+                            full_chain,
+                            tool_name,
+                            args,
+                            signature=pop_bytes,
+                            approvals=[],
+                        )
+                except (ApprovalGateTriggered, InsufficientApprovals):
+                    # Reaching the approval gate proves that all preceding core
+                    # checks, including holder PoP verification, succeeded.
+                    pass
+                except (SignatureInvalid, MissingSignature) as pop_exc:
+                    raise PopVerificationError(
+                        reason=str(pop_exc),
+                        activity_name=tool_name,
+                    ) from pop_exc
+
+                # Preserve the shared Python policy checks and its structured
+                # result mapping after cryptographic identity is established.
+                preflight = verify_inbound_call(
                     tool_name=tool_name,
                     tool_args=args,
                     warrant=warrant,
                     pop_signature=pop_bytes,
                     authorizer=authorizer,
-                    warrant_chain=parents_from_presented_chain(chain, warrant),
-                    approvals=gate_approvals,
+                    warrant_chain=presented_parents,
+                    approvals=[],
                 )
+
+            approval_needed = preflight.error_type in ("approval_required", "insufficient_approvals")
+            if not preflight.allowed and not approval_needed:
+                if preflight.error_type == "invalid_pop":
+                    raise PopVerificationError(
+                        reason=preflight.denial_reason or "Invalid proof-of-possession",
+                        activity_name=tool_name,
+                    )
+                preflight.raise_if_denied()
+
+            # -- 12. Multi-Sig Approval Resolution --
+            # Only a cryptographically authenticated caller can reach an
+            # approval handler or cause supplied approvals to be parsed.
+            if approval_needed:
+                gate_approvals = await self._resolve_approval_gate_approvals(
+                    warrant, tool_name, args, headers,
+                )
+                with bind_runtime(runtime):
+                    enforcement = verify_inbound_call(
+                        tool_name=tool_name,
+                        tool_args=args,
+                        warrant=warrant,
+                        pop_signature=pop_bytes,
+                        authorizer=authorizer,
+                        warrant_chain=presented_parents,
+                        approvals=gate_approvals,
+                    )
+            else:
+                enforcement = preflight
+
+            # -- 13. Final Authorization Evaluation --
             if not enforcement.allowed:
+                if enforcement.error_type == "invalid_pop":
+                    raise PopVerificationError(
+                        reason=enforcement.denial_reason or "Invalid proof-of-possession",
+                        activity_name=tool_name,
+                    )
                 enforcement.raise_if_denied()
             chain_result = enforcement.chain_result
 
-            # -- 13. Replay Deduplication --
+            # -- 14. Replay Deduplication --
             if info.attempt <= 1:
                 base_dedup = warrant.dedup_key(tool_name, args)
                 dedup_key = (
@@ -1266,7 +1552,7 @@ class TenuoActivityInboundInterceptor:
                 _active_span.set_attribute("tenuo.decision", "allow")
                 _active_span.set_attribute("tenuo.constraint_violated", "")
 
-        # -- 14. Fail-Closed Error Mapping & Tracing --
+        # -- 15. Fail-Closed Error Mapping & Tracing --
         except (
             TemporalConstraintViolation,
             PopVerificationError,
@@ -1409,7 +1695,12 @@ class TenuoActivityInboundInterceptor:
             pop_auth_args=args,
         )
 
-        return await self._next.execute_activity(input)
+        with _activity_idempotency_context(
+            str(warrant.id),
+            str(info.workflow_run_id),
+            str(info.activity_id),
+        ):
+            return await self._next.execute_activity(input)
 
     async def _resolve_approval_gate_approvals(
         self,

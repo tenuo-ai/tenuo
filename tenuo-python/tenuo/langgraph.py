@@ -130,8 +130,8 @@ except (ImportError, TypeError):
     BaseTool = object  # type: ignore
     RunnableConfig = dict  # type: ignore
 
-# wrap_tool_call / awrap_tool_call were added in LangGraph 0.3+ (requires Python 3.10+).
-# On Python 3.9, uv/pip resolves to LangGraph 0.2.x which lacks this API.
+# wrap_tool_call / awrap_tool_call need langgraph-prebuilt >= 1.0.2 (Python 3.10+).
+# Older installs (e.g. LangGraph 0.2.x, the Python 3.9 resolution) lack this API.
 # TenuoToolNode requires this hook to enforce authorization; construction raises RuntimeError
 # when unsupported. This flag lets callers and tests detect support ahead of time.
 if LANGGRAPH_AVAILABLE:
@@ -1115,7 +1115,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             self._tenuo_hooks_active = True
         except TypeError as exc:
             raise RuntimeError(
-                "TenuoToolNode requires LangGraph >= 0.2.35 (wrap_tool_call support). "
+                "TenuoToolNode requires langgraph-prebuilt >= 1.0.2 (wrap_tool_call support). "
                 "Authorization enforcement cannot be applied on this version. "
                 "Upgrade langgraph or use TenuoMiddleware instead."
             ) from exc
