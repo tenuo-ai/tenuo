@@ -1610,6 +1610,17 @@ fn approval_threshold(approvers: Option<&Vec<PublicKey>>, min: Option<u32>) -> u
     }
 }
 
+/// Approvers sorted and deduplicated, as the builders store them, so an
+/// inherited list compares equal to the parent's however the parent wrote it.
+fn canonical_approvers(approvers: Option<&Vec<PublicKey>>) -> Option<Vec<PublicKey>> {
+    approvers.map(|approvers| {
+        let mut approvers = approvers.clone();
+        approvers.sort_by_key(|a| a.to_bytes());
+        approvers.dedup();
+        approvers
+    })
+}
+
 /// Approvers in `child` that `parent` does not already list.
 fn delegated_added_approvers(parent: &Warrant, child: Option<&Vec<PublicKey>>) -> u32 {
     match (parent.payload.required_approvers.as_deref(), child) {
@@ -2565,8 +2576,8 @@ impl<'a> AttenuationBuilder<'a> {
                     None => {
                         // No gate survives: inherited approvers have nothing to
                         // approve. Approvers set on this builder would be lost.
-                        if self.required_approvers.as_deref()
-                            != self.parent.payload.required_approvers.as_deref()
+                        if canonical_approvers(self.required_approvers.as_ref())
+                            != canonical_approvers(self.parent.payload.required_approvers.as_ref())
                             || self.min_approvals != self.parent.payload.min_approvals
                         {
                             return Err(Error::Validation(
@@ -3538,8 +3549,8 @@ impl OwnedAttenuationBuilder {
                     None => {
                         // No gate survives: inherited approvers have nothing to
                         // approve. Approvers set on this builder would be lost.
-                        if self.required_approvers.as_deref()
-                            != self.parent.payload.required_approvers.as_deref()
+                        if canonical_approvers(self.required_approvers.as_ref())
+                            != canonical_approvers(self.parent.payload.required_approvers.as_ref())
                             || self.min_approvals != self.parent.payload.min_approvals
                         {
                             return Err(Error::Validation(

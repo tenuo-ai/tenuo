@@ -683,3 +683,27 @@ fn delegation_rejects_explicit_approvers_without_a_gate() {
         "{err}"
     );
 }
+
+#[test]
+fn inherited_unsorted_or_repeated_approvers_clear_with_their_gate() {
+    let k = keys();
+    let mut read = ConstraintSet::new();
+    read.insert("path", Constraint::Wildcard(Wildcard));
+    let mut root = gated_payload(1, &k.orch, &k.cp, k.now, 0, None, &[], Some(1));
+    root.tools.insert("read_file".to_string(), read.clone());
+    // Written by hand: repeated and in reverse byte order.
+    let mut approvers = sorted(vec![k.a.public_key(), k.b.public_key()]);
+    approvers.reverse();
+    approvers.push(approvers[0].clone());
+    root.required_approvers = Some(approvers);
+    let root = forge(root, &k.cp);
+
+    let child = root
+        .attenuate()
+        .tool("read_file", read)
+        .holder(k.worker.public_key())
+        .build(&k.orch)
+        .unwrap();
+    assert!(child.required_approvers().is_none());
+    assert!(child.extension(APPROVAL_GATE_EXTENSION_KEY).is_none());
+}
