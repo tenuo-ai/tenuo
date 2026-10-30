@@ -105,6 +105,16 @@ Two checks are stricter, and some calls that used to pass now fail:
 
 ### Security
 
+- **`UrlSafe` judges an address by where it points, not how it is spelled.**
+  IP literals are classified against the IANA special-purpose registries:
+  `::` is blocked like `0.0.0.0`, 6to4, NAT64 and Teredo addresses are judged
+  by the IPv4 address they carry, and `block_private` / `block_reserved` now
+  cover RFC 6598 shared space, benchmarking, IPv6 site-local, IPv6 multicast,
+  documentation ranges and class E. A fully-qualified host (`localhost.`) is
+  the same name as `localhost` for every host policy, including allow and deny
+  lists; a host ending in more than one dot is rejected.
+  ([GHSA-mxh3-hvjr-h242](https://github.com/tenuo-ai/tenuo/security/advisories/GHSA-mxh3-hvjr-h242))
+
 - **Shlex (type 128) uses one POSIX-quoting tokenizer across every SDK.**
   Quoted and escaped operator characters are literal arguments
   (`ls "foo; bar"`, `echo ";"`, `find . -exec rm {} \;`). A 0.3.2/0.3.3

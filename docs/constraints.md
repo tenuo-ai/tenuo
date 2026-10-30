@@ -567,8 +567,8 @@ constraint = UrlSafe(deny_domains=["169.254.169.254"])
 # Custom configuration
 constraint = UrlSafe(
     allow_schemes=["https"],           # HTTPS only
-    block_private=True,                # Block 10.x, 172.16.x, 192.168.x
-    block_loopback=True,               # Block 127.x, ::1, localhost
+    block_private=True,                # Block 10.x, 172.16.x, 192.168.x, 100.64.x, fc00::/7, ...
+    block_loopback=True,               # Block 127.x, ::1, 0.0.0.0, ::, localhost
     block_metadata=True,               # Block cloud metadata endpoints
     block_internal_tlds=True,          # Block .internal, .local, .svc, .default, etc.
 )
@@ -577,10 +577,13 @@ constraint = UrlSafe(
 **Security Features:**
 
 - Validates URL scheme (default: http, https)
-- Blocks private IPs (RFC1918: 10.x, 172.16.x, 192.168.x)
-- Blocks loopback (127.x, ::1, localhost)
+- Blocks private IPs (RFC 1918, RFC 6598 shared space, benchmarking, IPv6 unique-local, link-local and site-local)
+- Blocks loopback (127.x, ::1, localhost) and the unspecified addresses (0.0.0.0, ::)
 - Blocks cloud metadata endpoints (169.254.169.254, metadata.google.internal)
+- Blocks reserved ranges: everything the IANA special-purpose registries mark as not globally reachable, such as multicast, documentation and class E
 - Blocks IP encoding bypasses (decimal, hex, octal, IPv6-mapped)
+- Judges an IPv6 address that carries an IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, Teredo) by the IPv4 address too
+- Treats a fully-qualified name (`localhost.`) as the same name as `localhost` for every host policy
 - `deny_domains` explicitly blocks domains/IPs (checked for both hostnames and IPs; deny wins over allow on overlap)
 - Decodes URL-encoded hostnames
 - Optional domain allowlist for maximum restriction
@@ -600,6 +603,10 @@ constraint = UrlSafe(
 | URL Encoded | `http://%31%32%37%2e%30%2e%30%2e%31/` | Yes |
 | File Scheme | `file:///etc/passwd` | Yes |
 | localhost | `http://localhost/` | Yes |
+| Fully-qualified name | `http://localhost./` | Yes |
+| IPv6 unspecified | `http://[::]/` | Yes |
+| 6to4 / NAT64 wrapper | `http://[64:ff9b::a9fe:a9fe]/` (=169.254.169.254) | Yes |
+| Shared address space | `http://100.64.0.1/` | Yes |
 
 **Attenuation:** Child must be at least as restrictive as parent.
 
@@ -625,8 +632,10 @@ child = UrlSafe(block_private=False)  # FAILS
 > UrlSafe blocks several IPv6-based bypass attempts:
 > - **IPv6-mapped IPv4**: `[::ffff:127.0.0.1]` --> blocked (normalized to 127.0.0.1)
 > - **IPv4-compatible IPv6**: `[::127.0.0.1]` --> blocked (deprecated format but still parsed by some libraries)
-> - **IPv6 loopback**: `[::1]` --> blocked
-> - **IPv6 private ranges**: `fc00::/7`, `fe80::/10` --> blocked when `block_private=True`
+> - **IPv6 loopback and unspecified**: `[::1]`, `[::]` --> blocked
+> - **Transition addresses**: 6to4 `2002::/16`, NAT64 `64:ff9b::/96` and Teredo `2001::/32` --> judged by the IPv4 address they carry; local-use NAT64 `64:ff9b:1::/48` --> blocked when `block_private=True`
+> - **IPv6 private ranges**: `fc00::/7`, `fe80::/10`, `fec0::/10` --> blocked when `block_private=True`
+> - **IPv6 reserved ranges**: multicast `ff00::/8`, documentation and other non-global IANA ranges --> blocked when `block_reserved=True`
 
 > [!NOTE]
 > **Octal IP Normalization**

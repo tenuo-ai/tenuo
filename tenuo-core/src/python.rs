@@ -1768,7 +1768,7 @@ impl PyUrlSafe {
     ///     allow_domains: If set, only these domains are allowed.
     ///         Supports wildcards: "*.example.com"
     ///     allow_ports: If set, only these ports are allowed.
-    ///     block_private: Block RFC1918 private IPs. Default: True.
+    ///     block_private: Block private IPs (RFC 1918, RFC 6598, fc00::/7, ...). Default: True.
     ///     block_loopback: Block loopback (127.x, ::1). Default: True.
     ///     block_metadata: Block cloud metadata endpoints. Default: True.
     ///     block_reserved: Block reserved IP ranges. Default: True.

@@ -832,6 +832,16 @@ Implementations MUST evaluate UrlSafe fields in this order:
 
 1. Scheme check, host extraction, port check, loopback/metadata/internal TLD checks.
 2. If host is an IP address: check against `block_private`, `block_loopback`, `block_metadata`, `block_reserved`.
+
+Before step 1, a single trailing `.` (the DNS root label) MUST be removed from
+a domain host, and a host that still ends in `.` MUST be rejected; the same
+removal applies to allow- and deny-list patterns. In step 2, `block_reserved`
+covers every address the IANA IPv4 and IPv6 Special-Purpose Address Registries
+mark as not globally reachable and that no other flag covers; the unspecified
+addresses `0.0.0.0` and `::` are blocked by `block_reserved` or, when it is
+off, by `block_loopback`. An IPv6 address that embeds an IPv4 address
+(IPv4-mapped, IPv4-compatible, 6to4, NAT64 well-known prefix, Teredo) MUST be
+rejected when the embedded IPv4 address would be.
 3. **`allow_domains` check (MUST run for every host):** If `allow_domains` is set and the host, including an IP literal, does not match an allowed pattern, **REJECT**.
 4. **`deny_domains` check (MUST run for every host):** If `deny_domains` is set and the host matches any denied pattern, **REJECT**.
 

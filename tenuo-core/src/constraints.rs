@@ -2645,8 +2645,10 @@ impl From<Subpath> for Constraint {
 /// SSRF-safe URL constraint.
 ///
 /// Validates URLs to prevent Server-Side Request Forgery attacks by blocking:
-/// - Private IP ranges (RFC1918: 10.x, 172.16.x, 192.168.x)
-/// - Loopback addresses (127.x, ::1, localhost)
+/// - Private IP ranges (RFC 1918, RFC 6598, fc00::/7, fe80::/10, ...)
+/// - Loopback and unspecified addresses (127.x, ::1, 0.0.0.0, ::, localhost)
+/// - Reserved ranges the IANA special-purpose registries mark as not
+///   globally reachable
 /// - Cloud metadata endpoints (169.254.169.254, etc.)
 /// - Dangerous schemes (file://, gopher://, etc.)
 /// - IP encoding bypasses (decimal, hex, octal, IPv6-mapped, URL-encoded)
@@ -2714,16 +2716,19 @@ pub struct UrlSafe {
     /// If set, only these ports are allowed
     #[serde(default)]
     pub allow_ports: Option<Vec<u16>>,
-    /// Block RFC1918 private IPs (10.x, 172.16.x, 192.168.x). Default: true
+    /// Block private IPs (RFC 1918, RFC 6598 shared space, benchmarking,
+    /// fc00::/7, fe80::/10, fec0::/10). Default: true
     #[serde(default = "default_true")]
     pub block_private: bool,
-    /// Block loopback (127.x, ::1, localhost). Default: true
+    /// Block loopback (127.x, ::1, localhost), and the unspecified addresses
+    /// when `block_reserved` is off. Default: true
     #[serde(default = "default_true")]
     pub block_loopback: bool,
     /// Block cloud metadata endpoints (169.254.169.254, etc.). Default: true
     #[serde(default = "default_true")]
     pub block_metadata: bool,
-    /// Block reserved IP ranges (multicast, broadcast). Default: true
+    /// Block other ranges that are not globally reachable (unspecified,
+    /// multicast, broadcast, documentation, class E, ...). Default: true
     #[serde(default = "default_true")]
     pub block_reserved: bool,
     /// Block internal TLDs (.internal, .local, .localhost). Default: false
@@ -2857,6 +2862,17 @@ impl UrlSafe {
                 reason: "domain pattern must be a host name or *.host name".to_string(),
             });
         }
+        // Match the root-label handling in `rejection_reason`.
+        let canonical = match canonical.strip_suffix('.') {
+            Some(name) if name.is_empty() || name.ends_with('.') => {
+                return Err(Error::InvalidUrl {
+                    url: pattern.to_string(),
+                    reason: "invalid domain pattern: empty label".to_string(),
+                });
+            }
+            Some(name) => name.to_string(),
+            None => canonical,
+        };
         Ok(if wildcard {
             format!("*.{canonical}")
         } else {
@@ -2962,6 +2978,16 @@ impl UrlSafe {
 
         // Decode percent-encoded hostname (SSRF bypass prevention)
         let host = urlencoding_decode(host).to_lowercase();
+        // `localhost.` and `localhost` are the same DNS name: strip the root
+        // label so every name policy sees one spelling. Further dots are not
+        // a valid name, so fail closed rather than guess.
+        let host = match host.strip_suffix('.') {
+            Some(name) if name.is_empty() || name.ends_with('.') => {
+                return Ok(Some(UrlSafeRejection::Malformed));
+            }
+            Some(name) => name.to_string(),
+            None => host,
+        };
 
         // Check port
         // Note: url::Url::port() returns None for default ports (80 for http, 443 for https)
@@ -3145,107 +3171,156 @@ impl UrlSafe {
         None
     }
 
-    /// Check if IP address is safe to connect to.
+    /// Classify an IP literal. Ranges follow the IANA IPv4 and IPv6
+    /// Special-Purpose Address Registries: anything not globally reachable
+    /// falls under one of the `block_*` flags, and IPv6 forms that carry an
+    /// IPv4 address are judged by that address too.
     fn ip_rejection_reason(&self, ip: &IpAddr) -> Option<UrlSafeRejection> {
-        // Handle IPv6 addresses that embed IPv4
-        let ip = match ip {
-            IpAddr::V6(v6) => {
-                // 1. IPv6-mapped IPv4: ::ffff:x.x.x.x
-                if let Some(mapped) = v6.to_ipv4_mapped() {
-                    IpAddr::V4(mapped)
-                }
-                // 2. IPv4-compatible IPv6: ::x.x.x.x (deprecated RFC 4291 but still parsed)
-                // These have the first 96 bits as zero and last 32 bits as IPv4
-                // Example: ::127.0.0.1, ::10.0.0.1, [0:0:0:0:0:0:127.0.0.1]
-                else {
-                    let segments = v6.segments();
-                    // Check if first 6 segments are all zero (IPv4-compatible format)
-                    if segments[0..6].iter().all(|&s| s == 0) {
-                        // Extract the IPv4 address from the last 32 bits
-                        let octets = v6.octets();
-                        let ipv4 =
-                            std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
-                        // Don't convert ::0 or ::1 since those are valid IPv6 addresses
-                        // (unspecified and loopback respectively)
-                        if ipv4.octets() != [0, 0, 0, 0] && ipv4.octets() != [0, 0, 0, 1] {
-                            IpAddr::V4(ipv4)
-                        } else {
-                            *ip
-                        }
-                    } else {
-                        *ip
-                    }
-                }
-            }
-            _ => *ip,
-        };
+        match ip {
+            IpAddr::V4(v4) => self.ipv4_rejection_reason(*v4),
+            IpAddr::V6(v6) => self.ipv6_rejection_reason(*v6),
+        }
+    }
 
-        // Check loopback
+    fn ipv4_rejection_reason(&self, ip: std::net::Ipv4Addr) -> Option<UrlSafeRejection> {
+        let [a, b, c, d] = ip.octets();
+
+        // 0.0.0.0 connects to the local host.
+        if ip.is_unspecified() {
+            if self.block_reserved {
+                return Some(UrlSafeRejection::ReservedAddress);
+            }
+            if self.block_loopback {
+                return Some(UrlSafeRejection::Loopback);
+            }
+        }
+        if self.block_loopback && a == 127 {
+            return Some(UrlSafeRejection::Loopback);
+        }
+        // 169.254.0.0/16 (link-local, including 169.254.169.254) and the
+        // Alibaba Cloud endpoint.
+        if self.block_metadata && ((a == 169 && b == 254) || ip.octets() == [100, 100, 100, 200]) {
+            return Some(UrlSafeRejection::Metadata);
+        }
+        if self.block_private {
+            match (a, b) {
+                // RFC 1918, RFC 6598 shared address space, RFC 2544 benchmarking
+                (10, _) | (172, 16..=31) | (192, 168) | (100, 64..=127) | (198, 18..=19) => {
+                    return Some(UrlSafeRejection::PrivateNetwork);
+                }
+                _ => {}
+            }
+        }
+        if self.block_reserved {
+            let reserved = match (a, b, c) {
+                (0, _, _) => true,                                    // "this network"
+                (192, 0, 0) => d != 9 && d != 10,                     // IETF assignments
+                (192, 0, 2) | (198, 51, 100) | (203, 0, 113) => true, // documentation
+                (192, 88, 99) => true,                                // 6to4 relay anycast
+                (224..=255, _, _) => true, // multicast, class E, broadcast
+                _ => false,
+            };
+            if reserved {
+                return Some(UrlSafeRejection::ReservedAddress);
+            }
+        }
+        None
+    }
+
+    fn ipv6_rejection_reason(&self, ip: std::net::Ipv6Addr) -> Option<UrlSafeRejection> {
+        let s = ip.segments();
+
+        // :: connects to the local host, like 0.0.0.0.
+        if ip.is_unspecified() {
+            return self.ipv4_rejection_reason(std::net::Ipv4Addr::UNSPECIFIED);
+        }
         if self.block_loopback && ip.is_loopback() {
             return Some(UrlSafeRejection::Loopback);
         }
 
-        // Check private ranges (requires manual check for IPv4)
-        if self.block_private {
-            if let IpAddr::V4(v4) = ip {
-                let octets = v4.octets();
-                // 10.0.0.0/8
-                if octets[0] == 10 {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
-                // 172.16.0.0/12
-                if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
-                // 192.168.0.0/16
-                if octets[0] == 192 && octets[1] == 168 {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
-            }
-            // IPv6 private ranges
-            if let IpAddr::V6(v6) = ip {
-                let segments = v6.segments();
-                // fc00::/7 (unique local)
-                if (segments[0] & 0xfe00) == 0xfc00 {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
-                // fe80::/10 (link-local)
-                if (segments[0] & 0xffc0) == 0xfe80 {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
+        if let Some(v4) = Self::embedded_ipv4(ip) {
+            if let Some(reason) = self.ipv4_rejection_reason(v4) {
+                return Some(reason);
             }
         }
+        // The local-use NAT64 prefix (RFC 8215) puts the IPv4 address wherever
+        // the operator's prefix length places it, so it cannot be extracted.
+        if self.block_private && s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1 {
+            return Some(UrlSafeRejection::PrivateNetwork);
+        }
 
-        // Check reserved ranges
+        // AWS IPv6 metadata endpoint
+        if self.block_metadata && u128::from(ip) == 0xfd00_0ec2_0000_0000_0000_0000_0000_0254 {
+            return Some(UrlSafeRejection::Metadata);
+        }
+        if self.block_private
+            && ((s[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
+                || (s[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+                || (s[0] & 0xffc0) == 0xfec0)
+        // fec0::/10 deprecated site-local
+        {
+            return Some(UrlSafeRejection::PrivateNetwork);
+        }
         if self.block_reserved {
-            if let IpAddr::V4(v4) = ip {
-                let octets = v4.octets();
-                // 0.0.0.0/8 ("This" network)
-                if octets[0] == 0 {
-                    return Some(UrlSafeRejection::ReservedAddress);
-                }
-                // 224.0.0.0/4 (Multicast)
-                if (224..=239).contains(&octets[0]) {
-                    return Some(UrlSafeRejection::ReservedAddress);
-                }
-                // 255.255.255.255 (Broadcast)
-                if octets == [255, 255, 255, 255] {
-                    return Some(UrlSafeRejection::ReservedAddress);
-                }
+            let reserved = match s {
+                [0x100, 0, 0, 0 | 1, ..] => true,      // discard-only, dummy prefix
+                [0x2001, 0xdb8, ..] => true,           // documentation
+                [0x3fff, b, ..] if b < 0x1000 => true, // documentation
+                [0x2001, b, ..] if b < 0x200 => !Self::is_global_ietf_assignment(ip),
+                [0x5f00, ..] => true,                    // segment routing SIDs
+                [a, ..] if a & 0xff00 == 0xff00 => true, // multicast
+                _ => false,
+            };
+            if reserved {
+                return Some(UrlSafeRejection::ReservedAddress);
             }
         }
-
-        // Check metadata range (169.254.0.0/16 link-local)
-        if self.block_metadata {
-            if let IpAddr::V4(v4) = ip {
-                let octets = v4.octets();
-                if octets[0] == 169 && octets[1] == 254 {
-                    return Some(UrlSafeRejection::Metadata);
-                }
-            }
-        }
-
         None
+    }
+
+    /// The IPv4 address an IPv6 address carries and routes to: IPv4-mapped
+    /// (`::ffff:0:0/96`), IPv4-compatible (`::/96`), 6to4 (`2002::/16`),
+    /// NAT64 well-known (`64:ff9b::/96`) and Teredo (`2001::/32`).
+    fn embedded_ipv4(ip: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+        use std::net::Ipv4Addr;
+
+        let s = ip.segments();
+        let low = Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8);
+        if let Some(mapped) = ip.to_ipv4_mapped() {
+            return Some(mapped);
+        }
+        // ::1 is IPv6 loopback, handled by the caller.
+        if s[..6] == [0; 6] {
+            return Some(low);
+        }
+        if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+            return Some(low);
+        }
+        if s[0] == 0x2002 {
+            return Some(Ipv4Addr::new(
+                (s[1] >> 8) as u8,
+                s[1] as u8,
+                (s[2] >> 8) as u8,
+                s[2] as u8,
+            ));
+        }
+        // Teredo stores the client's IPv4 bit-inverted (RFC 4380).
+        if s[0] == 0x2001 && s[1] == 0 {
+            return Some(Ipv4Addr::from(!u32::from(low)));
+        }
+        None
+    }
+
+    /// The globally reachable exceptions inside 2001::/23.
+    fn is_global_ietf_assignment(ip: std::net::Ipv6Addr) -> bool {
+        let s = ip.segments();
+        let bits = u128::from(ip);
+        bits == 0x2001_0001_0000_0000_0000_0000_0000_0001 // PCP anycast
+            || bits == 0x2001_0001_0000_0000_0000_0000_0000_0002 // TURN anycast
+            || bits == 0x2001_0001_0000_0000_0000_0000_0000_0003 // DNS-SD SRP anycast
+            || s[1] == 3 // AMT
+            || (s[1] == 4 && s[2] == 0x112) // AS112-v6
+            || (0x20..=0x3f).contains(&s[1]) // ORCHIDv2, DRIP
     }
 
     /// Check if hostname matches domain allowlist.
@@ -6240,6 +6315,113 @@ mod tests {
         assert!(!us.is_safe("http://[::1]/").unwrap());
         assert_eq!(
             us.rejection_reason("http://127.0.0.1/").unwrap(),
+            Some(UrlSafeRejection::Loopback)
+        );
+    }
+
+    /// Each pair names one destination two ways. An alternate spelling must
+    /// get the same verdict as the canonical one.
+    #[test]
+    fn test_url_safe_alternate_spellings_judged_alike() {
+        let deny = UrlSafe {
+            deny_domains: Some(vec!["evil.example".into(), "*.evil2.example".into()]),
+            ..UrlSafe::new()
+        };
+        let tlds = UrlSafe {
+            block_internal_tlds: true,
+            ..UrlSafe::new()
+        };
+        let default = UrlSafe::new();
+        let cases: &[(&UrlSafe, &str, &str)] = &[
+            (&default, "http://localhost/", "http://localhost./"),
+            (&default, "http://localhost/", "http://LOCALHOST./"),
+            (&default, "http://localhost/", "http://localhost.:8080/"),
+            (
+                &default,
+                "http://localhost/",
+                "http://localhost.localdomain./",
+            ),
+            (
+                &default,
+                "http://metadata.google.internal/",
+                "http://metadata.google.internal./",
+            ),
+            (&tlds, "http://foo.internal/", "http://foo.internal./"),
+            (&tlds, "http://x.corp/", "http://x.corp./"),
+            (&deny, "http://evil.example/", "http://evil.example./"),
+            (&deny, "http://a.evil2.example/", "http://a.evil2.example./"),
+            (&deny, "http://evil2.example/", "http://evil2.example./"),
+            (&default, "http://0.0.0.0/", "http://[::]/"),
+            (&default, "http://0.0.0.0/", "http://[::0.0.0.0]/"),
+            (
+                &default,
+                "http://169.254.169.254/",
+                "http://[2002:a9fe:a9fe::]/",
+            ),
+            (
+                &default,
+                "http://169.254.169.254/",
+                "http://[64:ff9b::a9fe:a9fe]/",
+            ),
+            (
+                &default,
+                "http://169.254.169.254/",
+                "http://[2001:0:4136:e378:8000:63bf:5601:5601]/",
+            ),
+            (&default, "http://127.0.0.1/", "http://[2002:7f00:1::]/"),
+            (&default, "http://10.0.0.1/", "http://[64:ff9b::a00:1]/"),
+            (&default, "http://10.0.0.1/", "http://100.64.0.1/"),
+            (&default, "http://10.0.0.1/", "http://198.18.0.1/"),
+            (&default, "http://10.0.0.1/", "http://[64:ff9b:1::1]/"),
+            (&default, "http://[fd00::1]/", "http://[fec0::1]/"),
+            (&default, "http://224.0.0.1/", "http://[ff02::1]/"),
+            (&default, "http://255.255.255.255/", "http://[ff01::1]/"),
+            (&default, "http://255.255.255.255/", "http://240.0.0.1/"),
+            (&default, "http://224.0.0.1/", "http://192.0.2.1/"),
+            (&default, "http://224.0.0.1/", "http://[2001:db8::1]/"),
+        ];
+        for (policy, canonical, alternate) in cases {
+            assert_eq!(
+                policy.rejection_reason(canonical).unwrap(),
+                policy.rejection_reason(alternate).unwrap(),
+                "{alternate} must be judged like {canonical}"
+            );
+            assert!(
+                !policy.is_safe(canonical).unwrap(),
+                "{canonical} must be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn test_url_safe_root_label_edge_cases() {
+        let us = UrlSafe::new();
+        assert!(us.is_safe("https://api.github.com./").unwrap());
+        assert!(!us.is_safe("http://localhost../").unwrap());
+        assert!(us.is_safe("http://[2001:4860:4860::8888]/").unwrap());
+        assert!(us.is_safe("http://[2002:808:808::]/").unwrap());
+        assert!(us.is_safe("http://192.0.0.9/").unwrap());
+
+        // An allowlist accepts the fully-qualified spelling of an allowed name
+        // in both directions.
+        let allow = UrlSafe::with_domains(vec!["api.github.com", "*.example.com."]);
+        assert!(allow.is_safe("https://api.github.com./").unwrap());
+        assert!(allow.is_safe("https://a.example.com/").unwrap());
+        assert!(!allow.is_safe("https://api.github.com.evil/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_unspecified_blocked_by_loopback_alone() {
+        let us = UrlSafe {
+            block_reserved: false,
+            ..UrlSafe::new()
+        };
+        assert_eq!(
+            us.rejection_reason("http://[::]/").unwrap(),
+            Some(UrlSafeRejection::Loopback)
+        );
+        assert_eq!(
+            us.rejection_reason("http://0.0.0.0/").unwrap(),
             Some(UrlSafeRejection::Loopback)
         );
     }
