@@ -105,7 +105,7 @@ function publishPackage(packageDirectory) {
 
 function usage() {
   process.stderr.write(
-    "usage: npm-release-policy.mjs tag VERSION | assert VERSION TAG | check-workspace [RELEASE_TAG] | publish PACKAGE_DIR\n",
+    "usage: npm-release-policy.mjs tag VERSION | assert VERSION TAG | release-tag VERSION RELEASE_TAG | check-workspace [RELEASE_TAG] | publish PACKAGE_DIR\n",
   );
 }
 
@@ -116,6 +116,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       process.stdout.write(`${distTagForVersion(args[0])}\n`);
     } else if (command === "assert" && args.length === 2) {
       assertDistTag(args[0], args[1]);
+    } else if (command === "release-tag" && args.length === 2) {
+      assertReleaseTag(args[0], args[1]);
     } else if (command === "check-workspace" && args.length <= 1) {
       const result = checkWorkspace({ releaseTag: args[0] });
       process.stdout.write(`${result.version} ${result.distTag}\n`);

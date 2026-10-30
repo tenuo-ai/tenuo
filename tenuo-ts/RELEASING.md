@@ -17,10 +17,10 @@ contract used by tests, package publish commands, and the release workflow.
 Release versions must not contain build metadata because npm strips it during
 publication, which would make post-publish verification ambiguous.
 
-The registry historically pointed `latest` at a beta. Remove that legacy tag
-before the next npm release if no stable version is available, or replace it
-with the first qualified stable version. Release automation will never move a
-prerelease to `latest` again.
+The registry historically pointed `latest` at a beta. npm cannot delete
+`latest`, so that legacy tag stays until the first stable release replaces it;
+release runs warn about it. Release automation will never move a prerelease to
+`latest` again, and fails if a published prerelease resolves there.
 
 ## Supported runtime and MCP versions
 
@@ -36,7 +36,8 @@ prerelease to `latest` again.
 - [ ] `@tenuo/core` and `@tenuo/mcp` have the same valid semantic version.
 - [ ] `pnpm test:release-policy` passes, including the negative beta-to-latest case.
 - [ ] The coordinated repository release tag matches the package version or its
-      stable base version.
+      stable base version. A release whose tag does not match skips npm only
+      when both packages are already published at their current version.
 - [ ] `TypeScript SDK`, `TypeScript SDK (Node 22)`, `TypeScript SDK (Node 24)`,
       and `TypeScript SDK (Windows pack smoke)` are green.
 - [ ] `TypeScript Red Team Tests`, `TypeScript Differential Security`, and
