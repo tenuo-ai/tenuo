@@ -461,8 +461,12 @@ async def test_plain_decorated_tool_runs_behind_the_middleware(carrier):
             content = await client.call_tool("read_file", {"path": "/data/a.txt"}, warrant_context=False)
             keys_seen = await client.call_tool("argument_keys", {"path": "/data/a.txt"}, warrant_context=False)
     assert content[0].text == "contents of /data/a.txt"
-    # The handler never sees the carrier, whichever way it travelled.
-    assert keys_seen[0].text == "arguments=['path'] meta=[]"
+    # The handler never sees the carrier, whichever way it travelled. Newer
+    # FastMCP releases add W3C tracing metadata independently of Tenuo.
+    assert keys_seen[0].text in {
+        "arguments=['path'] meta=[]",
+        "arguments=['path'] meta=['traceparent']",
+    }
 
 
 @pytestmark_e2e
