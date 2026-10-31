@@ -5,7 +5,9 @@ Generate byte-exact JWS test vectors for draft-niyikiza-oauth-attenuating-agent-
 Design choices (recorded in the emitted document):
   * Keys are Ed25519 from the same 32-byte seeds as docs/spec/test-vectors.md
     (Control Plane / Orchestrator / Worker / Worker2 / Attacker), so each JWS
-    vector is the twin of an existing CBOR vector where a twin exists.
+    vector is the twin of an existing CBOR vector where a twin exists. A second
+    Control Plane key (seed 32 x 0x05), which that suite does not use, is the
+    key of the second trust anchor.
   * AAT and PoP payloads are JCS-canonical (RFC 8785) except where a vector
     deliberately carries other bytes: an inadmissible number, number syntax JCS
     would rewrite, duplicate members, or a non-canonical layout. Each token
@@ -79,18 +81,20 @@ MAX_CHAIN_SIZE = 262144
 POP_WINDOW = 30
 AUDIENCE = "https://tools.example.com"
 ROOT_ISS = "https://auth.example.com"
+ROOT_ISS2 = "https://auth.example.org"  # issuer of the second trust anchor
 
 IAT_ROOT = 1704067200  # 2024-01-01T00:00:00Z
 EXP_ROOT = 1704070800  # 2024-01-01T01:00:00Z
 
 SEEDS = {
     "control_plane": bytes([0x01] * 32),
+    "control_plane2": bytes([0x05] * 32),
     "orchestrator": bytes([0x02] * 32),
     "worker": bytes([0x03] * 32),
     "worker2": bytes([0x04] * 32),
     "attacker": bytes([0xFF] * 32),
 }
-# Public keys as listed in docs/spec/test-vectors.md; asserted below.
+# Public keys as listed in docs/spec/test-vectors.md; asserted below. control_plane2 is not in that suite.
 EXPECTED_PUB_HEX = {
     "control_plane": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
     "orchestrator": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
@@ -297,8 +301,8 @@ class Key:
 
 
 KEYS = {n: Key(n, s) for n, s in SEEDS.items()}
-for n, k in KEYS.items():
-    assert k.pub_raw.hex() == EXPECTED_PUB_HEX[n], n
+for n, pub_hex in EXPECTED_PUB_HEX.items():
+    assert KEYS[n].pub_raw.hex() == pub_hex, n
 
 # -02 proposal (agreed 2026-09-13): explicit typing per RFC 8725 §3.11, DPoP-style.
 HEADER = {"alg": "Ed25519", "typ": "aat+jwt"}
@@ -364,13 +368,17 @@ class Deny(Exception):
 # Every check verify_chain makes, named "<step>:<what>". The wf:, check: and sub:
 # entries are the Section 3.4 and 4.5 rules that steps 3n/4o, 6b and 4p4 apply;
 # norm: and aat: are the empty-map normalization (Section 3.3) and the
-# attenuating_agent_token type filter (steps 3m, 4n, 6a). `--mutation-check`
-# switches each off in turn and requires some vector to change verdict.
+# attenuating_agent_token type filter (steps 3m, 4n, 6a). 3b:anchors is trying the
+# root signature against every trust anchor's key; switched off, only the first
+# trust anchor's key is tried. 3k:verifying is the part of 3k:anchor that ties iss
+# to the trust anchor whose key verified the signature; switched off, the issuer
+# of any trust anchor is accepted. `--mutation-check` switches each off in turn and
+# requires some vector to change verdict.
 CHECKS = (
     "1:empty", "2a:token-size", "2b:chain-size", "2c:extract", "2c:unique",
-    "3a:alg", "3a:typ", "3a:crit", "3b:sig", "3b:dup", "3b:numericdate", "3c:depth", "3d:par_hash",
+    "3a:alg", "3a:typ", "3a:crit", "3b:sig", "3b:anchors", "3b:dup", "3b:numericdate", "3c:depth", "3d:par_hash",
     "3e:exp", "3f:iat", "3g:exp-iat", "3h:lifetime", "3i:integer", "3i:bound", "3j:jti", "3k:uri",
-    "3k:anchor", "3l:jwk", "3l:private", "3m:array", "3m:one", "3m:tools", "3m:maps", "3n:walk",
+    "3k:anchor", "3k:verifying", "3l:jwk", "3l:private", "3m:array", "3m:one", "3m:tools", "3m:maps", "3n:walk",
     "4a:alg", "4a:typ", "4a:crit", "4b:sig", "4b:dup", "4b1:jti", "4b2:jwk", "4b2:private", "4b3:array",
     "4b4:integer", "4b5:strings", "4b5:numericdate", "4c:iss", "4d:depth", "4e:parent-max", "4f:max",
     "4g:max-depth", "4h:exp", "4i:exp", "4j:iat", "4k:iat", "4l:exp-iat", "4m:depth",
@@ -763,7 +771,8 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, dict]], tool: 
 
     # 3: root
     root, anchor_iss, err = None, None, None
-    for ta_iss, ta_jwk in trust_anchors:
+    anchors = trust_anchors[:1] if _off("3b:anchors") else trust_anchors
+    for ta_iss, ta_jwk in anchors:
         try:
             root = _verify_jws(chain[0], ta_jwk, "3a", "3b", "aat+jwt")
             anchor_iss = ta_iss
@@ -788,7 +797,8 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, dict]], tool: 
     _chk("3j:jti", not (isinstance(jti, str) and jti), "root jti missing or not a non-empty string")
     iss = root.get("iss")
     _chk("3k:uri", not (isinstance(iss, str) and _URI.match(iss)), "root iss is not a URI")
-    _chk("3k:anchor", iss != anchor_iss, "root iss does not match the verifying trust anchor")
+    any_anchor = _off("3k:verifying") and iss in [ta_iss for ta_iss, _ in trust_anchors]
+    _chk("3k:anchor", iss != anchor_iss and not any_anchor, "root iss does not match the verifying trust anchor")
     jwk = _jwk_of(root)
     _chk("3l:jwk", not _is_jwk(jwk), "root cnf.jwk missing")
     _chk("3l:private", isinstance(jwk, dict) and "d" in jwk, "root cnf.jwk contains the private key parameter d")
@@ -906,7 +916,8 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, dict]], tool: 
 # Vector construction
 # ---------------------------------------------------------------------------
 CP, ORCH, WK, WK2, ATK = (KEYS[n] for n in ("control_plane", "orchestrator", "worker", "worker2", "attacker"))
-TRUST = [(ROOT_ISS, CP.jwk)]
+CP2 = KEYS["control_plane2"]
+TRUST = [(ROOT_ISS, CP.jwk), (ROOT_ISS2, CP2.jwk)]
 
 Q3, Q4 = "/data/q3-report.pdf", "/data/q4-report.pdf"
 
@@ -1494,6 +1505,26 @@ add("J.16.6", "any: cross-type clause subsumption", None,
     "format: any[one_of[pdf, csv], exact xlsx] -> any[exact pdf]. exact pdf ⊑ one_of[pdf, csv] per the cross-type rules.",
     [CR, cd_], pop_sign(pop_claims(uuid7ish(0xAF6), cd_, "export", {"format": "pdf", "limit": 3}), WK),
     "export", {"format": "pdf", "limit": 3}, "PERMIT")
+# split: parent any[one_of[pdf, csv]] -> derived any[exact pdf, exact csv]
+SR = jws_sign(root_claims(uuid7ish(0xF4), {"export": {"format": ANY({"constraint_type": "one_of", "values": ["pdf", "csv"]}), "limit": WILD}}, ORCH), CP)
+sd_ = jws_sign(derived_claims(uuid7ish(0xF1A), SR, ORCH, WK, {"export": {"format": ANY(ex("pdf"), ex("csv")), "limit": WILD}},
+                              IAT_ROOT + 60, 1704069000, 2), ORCH)
+add("J.16.7", "any: one parent clause split into two derived clauses", None,
+    "format: any[one_of[pdf, csv]] -> any[exact pdf, exact csv]. The derived any has more clauses than its parent, "
+    "and each is subsumed by the one parent clause (§4.5). A verifier that rejects added clauses, or that matches "
+    "derived clauses to parent clauses one to one, would DENY.",
+    [SR, sd_], pop_sign(pop_claims(uuid7ish(0xAFA), sd_, "export", {"format": "csv", "limit": 3}), WK),
+    "export", {"format": "csv", "limit": 3}, "PERMIT")
+# union: parent any[range 0..10, range 5..20] -> derived any[range 0..20]
+UR = jws_sign(root_claims(uuid7ish(0xF5), {"export": {"format": WILD, "limit": ANY(rng(min=0, max=10), rng(min=5, max=20))}}, ORCH), CP)
+ud_ = jws_sign(derived_claims(uuid7ish(0xF1B), UR, ORCH, WK, {"export": {"format": WILD, "limit": ANY(rng(min=0, max=20))}},
+                              IAT_ROOT + 60, 1704069000, 2), ORCH)
+add("J.16.8", "any: derived clause covered only by the union of parent clauses", None,
+    "limit: any[range 0..10, range 5..20] -> any[range 0..20]. The parent's clauses together accept every value "
+    "range 0..20 accepts, but no single parent clause subsumes it, so the clause-wise rule of §4.5 denies at step 4p4. "
+    "A verifier that compares accepted values instead of clauses would PERMIT.",
+    [UR, ud_], pop_sign(pop_claims(uuid7ish(0xAFB), ud_, "export", {"format": "pdf", "limit": 15}), WK),
+    "export", {"format": "pdf", "limit": 15}, "DENY", "4p4")
 
 
 # --- J.8 empty maps, unknown types, flatten ----------------------------------
@@ -1743,8 +1774,9 @@ add("J.21.9", "Root del_depth is false rather than the integer 0", None,
 iss_root = jws_sign(root_claims(uuid7ish(0xE6), {"read_file": {"path": WILD}}, ORCH,
                                iss="https://other-issuer.example.com"), CP)
 add("J.21.6", "Root iss does not match the verifying trust anchor", None,
-    "Signed by the Control Plane key, whose trust anchor issuer is https://auth.example.com, but "
-    "iss names a different issuer (step 3k, RFC 8725 Section 3.8).",
+    "Signed by the Control Plane key, whose trust anchor issuer is https://auth.example.com, but iss is "
+    "https://other-issuer.example.com, which is not the issuer of any trust anchor (step 3k, RFC 8725 Section 3.8). "
+    "Compare J.21.22, whose iss is the issuer of a trust anchor other than the one that verified it.",
     [iss_root], pop_sign(pop_claims(uuid7ish(0xE86), iss_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3k")
 empty_all_root = jws_sign(root_claims(uuid7ish(0xE7), {"read_file": {"path": {"constraint_type": "all",
@@ -2059,6 +2091,16 @@ add("J.8.24", "Malformed constraint in a derived token, on a tool that is not in
     "invocation is read_file; the chain is rejected when the child's constraint trees are walked (step 4o).",
     [L0, bad_l1], pop_of(bad_l1, WK, "read_file", READ_Q3, P(8, 24)), "read_file", READ_Q3, "DENY", "4o")
 
+# --- J.9.6 a grant-shaped claim outside authorization_details (Section 3.3, step 6b) ---
+scope_l1 = jws_sign(child_of_l0(6, scope="read_file search_index delete_file", jti=T(9, 6)), ORCH)
+add("J.9.6", "A tool named only by a scope claim in a derived token", None,
+    "L1 of the J.3 chain carries a scope claim (RFC 8693 Section 4.2), \"read_file search_index delete_file\", "
+    "which names delete_file; neither L1's attenuating_agent_token entry nor the root grants it. The invocation is "
+    "delete_file. Only the leaf's attenuating_agent_token entry authorizes a tool (step 6b), and claims this "
+    "specification does not define carry no authority in a derived token (Section 3.3); a verifier that read scope "
+    "as a grant would accept.",
+    [L0, scope_l1], pop_of(scope_l1, WK, "delete_file", READ_Q3, P(9, 6)), "delete_file", READ_Q3, "DENY", "6b")
+
 # --- J.10.d-J.10.f delegation depth (I2, steps 4d, 4m) -----------------------
 dm = jws_sign(derived_claims(T(10, 4), L0, ORCH, WK, L1_TOOLS, IAT_ROOT + 60, 1704069000, 0), ORCH)
 add("J.10.d", "I2 violation: derived del_max_depth below its del_depth", None,
@@ -2222,7 +2264,7 @@ add("J.20.17", "PoP hta number that does not survive the JCS round trip", None,
     [big_root], jws_sign_raw(POP_HTA_BIG, ORCH, POP_HEADER), "get_account", None, "DENY", "7f",
     args_json='{"id":9007199254740992}', notes=[NUM_NOTE])
 
-# --- J.21.13-J.21.20 root claims (steps 3b, 3g, 3i, 3j) ----------------------
+# --- J.21.13-J.21.23 root claims (steps 3b, 3g, 3i-3l) ----------------------
 solo("J.21.13", "Root exp written with an exponent",
      "Root exp is written 1.7040708e9, the value 1704070800 in exponent form. NumericDate values have no fraction "
      "or exponent part (Section 3.2, step 3b).",
@@ -2269,6 +2311,21 @@ solo("J.21.21", "Root cnf.jwk has a key type inconsistent with Ed25519",
      "The JWK declares kty RSA while retaining a valid Ed25519 crv and x. A verifier that uses x alone would "
      "accept the PoP; step 3l rejects the invalid public JWK.",
      wrong_kty_root, "read_file", READ_Q3, "DENY", "3l", P(21, 21))
+cross_root = jws_sign(root_claims(T(21, 23), WILD_READ, ORCH), CP2)  # iss is ROOT_ISS, the first anchor's issuer
+solo("J.21.22", "Root iss names another trust anchor's issuer",
+     f"The suite's second trust anchor pairs the control_plane2 key with issuer {ROOT_ISS2}. This root is signed "
+     f"by that key, but its iss is {ROOT_ISS}, the first trust anchor's issuer. Step 3k compares iss with the "
+     "issuer of the anchor whose key verified the signature (RFC 8725 Section 3.8); a verifier that accepted the "
+     f"issuer of any trust anchor would accept. Compare J.21.23, a root signed by the same key with iss {ROOT_ISS2}, "
+     "and J.21.6, whose iss is not the issuer of any trust anchor.",
+     cross_root, "read_file", READ_Q3, "DENY", "3k", P(21, 22))
+second_root = jws_sign(root_claims(T(21, 24), WILD_READ, ORCH, iss=ROOT_ISS2), CP2)
+solo("J.21.23", "Root signed by the second trust anchor's key",
+     f"A root signed by the control_plane2 key with iss {ROOT_ISS2}: the key and issuer of the suite's second "
+     "trust anchor. Step 3b verifies the signature against the public key of a trust anchor, here the second one, "
+     "and step 3k compares iss with that anchor's issuer. A verifier that tried only the first trust anchor would "
+     "deny. PERMIT. Compare J.21.22, a root signed by the same key with the first trust anchor's issuer.",
+     second_root, "read_file", READ_Q3, "PERMIT", None, P(21, 23))
 
 # --- J.24 derived-token claims (steps 2c, 4b) ---------------------------------
 num_jti_root = jws_sign(root_claims(2401, ROOT_TOOLS, ORCH), CP)
@@ -2594,10 +2651,12 @@ md.append(f"| MAX_CHAIN_SIZE | {MAX_CHAIN_SIZE} bytes (J.23.2 and J.23.3 use sma
 md.append(f"| PoP clock window | ±{POP_WINDOW} s |")
 md.append(f"| This enforcement point's audience identifier | `{AUDIENCE}`. A chain `aud`, a PoP `aat_aud`, or a "
           "nonce is required only where a vector's **Policy** says so. |")
-md.append(f"| Trust anchors | Control Plane public key, bound to issuer `https://auth.example.com` |")
+md.append(f"| Trust anchors | `control_plane` public key, bound to issuer `{ROOT_ISS}`; `control_plane2` public key, "
+          f"bound to issuer `{ROOT_ISS2}` |")
 md.append("")
 md.append("## Key material\n")
-md.append("Same seeds as `docs/spec/test-vectors.md`.\n")
+md.append("Same seeds as `docs/spec/test-vectors.md`, plus `control_plane2`, the second trust anchor's key, which "
+          "that suite does not use.\n")
 md.append("| Role | Seed (hex) | Public key (hex) | JWK `x` | RFC 7638 thumbprint |\n|---|---|---|---|---|")
 for n, k in KEYS.items():
     md.append(f"| {n} | `{k.seed.hex()}` | `{k.pub_raw.hex()}` | `{k.jwk['x']}` | `{k.thumbprint}` |")
@@ -2687,7 +2746,7 @@ json_out = {
                "pop_window": POP_WINDOW, "audience": AUDIENCE},
     "keys": {n: {"seed_hex": k.seed.hex(), "public_hex": k.pub_raw.hex(), "jwk": k.jwk,
                  "thumbprint": k.thumbprint, "thumbprint_uri": k.thumbprint_uri} for n, k in KEYS.items()},
-    "trust_anchors": [{"iss": ROOT_ISS, "jwk": CP.jwk}],
+    "trust_anchors": [{"iss": iss, "jwk": jwk} for iss, jwk in TRUST],
     "vectors": [{
         "id": v["id"], "title": v["title"], "cbor_twin": v["cbor_twin"], "description": v["description"],
         "notes": v["notes"], "now": v["verification_time"], "tool": v["tool"], "args": v["args"],

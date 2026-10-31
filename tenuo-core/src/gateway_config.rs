@@ -33,6 +33,8 @@
 //!     tool: "manage_infrastructure"
 //! ```
 //!
+//! Unknown keys are rejected, so a misspelled key fails to load instead of being ignored.
+//!
 //! # Performance
 //!
 //! For production use, compile the configuration using [`CompiledGatewayConfig`]:
@@ -60,6 +62,7 @@ use std::sync::Arc;
 
 /// Gateway configuration parsed from YAML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayConfig {
     /// Configuration version
     pub version: String,
@@ -73,6 +76,7 @@ pub struct GatewayConfig {
 
 /// Global gateway settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GatewaySettings {
     /// Header containing the warrant (base64)
     #[serde(default = "default_warrant_header")]
@@ -126,6 +130,7 @@ impl Default for GatewaySettings {
 
 /// Tool configuration with extraction rules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolConfig {
     /// Human-readable description
     pub description: String,
@@ -135,6 +140,7 @@ pub struct ToolConfig {
 
 /// Route matching configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RouteConfig {
     /// URL pattern with placeholders: `/api/{cluster}/{action}`
     pub pattern: String,

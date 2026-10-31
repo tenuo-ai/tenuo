@@ -339,6 +339,9 @@ class MintBuilder:
             holder=self._holder,
             session_id=self._session_id,
             clearance=self._clearance,
+            required_approvers=self._required_approvers,
+            min_approvals=self._min_approvals,
+            approval_gates=getattr(self, "_approval_gates", None),
         )
 
     def preview(self) -> Dict[str, Any]:

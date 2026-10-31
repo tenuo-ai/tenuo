@@ -448,7 +448,6 @@ class TestValidateChainWarrants:
                 capabilities={"ping": {}},
                 signing_key=keys[i - 1],
                 holder=keys[i].public_key,
-                ttl_seconds=900,
             )
             warrants.append(w)
 
@@ -478,7 +477,6 @@ class TestValidateChainWarrants:
                 capabilities={"ping": {}},
                 signing_key=keys[i - 1],
                 holder=keys[i].public_key,
-                ttl_seconds=900,
             )
             warrants.append(w)
 
@@ -745,7 +743,6 @@ class TestWarrantStackEndToEnd:
                 capabilities={"search": {}},
                 signing_key=root_key,
                 holder=next_key.public_key,
-                ttl_seconds=900,
             )
             warrants.append(prev)
             root_key = next_key

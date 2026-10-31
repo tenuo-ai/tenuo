@@ -25,6 +25,7 @@ model.
 - [Receipts and revocation](#receipts-and-revocation)
 - [MCP](#mcp)
 - [Develop the SDK](#develop-the-sdk)
+- [npm release policy](RELEASING.md)
 - [Security boundaries](#security-boundaries)
 
 ## Install

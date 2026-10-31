@@ -170,6 +170,7 @@ use serde::{Deserialize, Serialize};
 /// replay attacks even for identical requests within the TTL window.
 /// Inner approval payload (what gets signed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApprovalPayload {
     /// Payload version (currently 1)
     pub version: u8,
@@ -201,6 +202,7 @@ pub struct ApprovalPayload {
 /// 2. Verify signature over raw payload bytes
 /// 3. Only then deserialize the payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SignedApproval {
     /// Envelope version (currently 1)
     pub approval_version: u8,

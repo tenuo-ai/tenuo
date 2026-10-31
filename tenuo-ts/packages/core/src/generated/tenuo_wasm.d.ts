@@ -323,6 +323,11 @@ export function parse_connect_token(token: string): any;
 export function parse_strict_json(json_text: string): void;
 
 /**
+ * Diagnose all capability-constraint failures without authorizing the call.
+ */
+export function sdkDiagnoseConstraints(wire: string, tool: string, args_json: any): any;
+
+/**
  * Decode and check an approval envelope. Not authorization.
  */
 export function sdkInspectApproval(envelope: any): any;
@@ -392,6 +397,15 @@ export function sdkVerifyReceipt(wire: string): any;
  * does not evaluate those.
  */
 export function sdkVerifyReceiptChain(wire: string, roots: any): any;
+
+/**
+ * The core's Shlex decision for `command`.
+ *
+ * `allow` is a list of binary names or paths. The returned object has
+ * `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
+ * `binary_allowed`.
+ */
+export function shlex_inspect(allow: any, command: string): any;
 
 /**
  * Create a Proof-of-Possession signature for a warrant

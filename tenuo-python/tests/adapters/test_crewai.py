@@ -1019,34 +1019,49 @@ class TestWarrantDelegator:
                 },
             )
 
-    def test_delegation_rejects_widening_constraint(self):
-        """Delegation fails if child constraint would widen access."""
-        from tenuo.crewai import EscalationAttempt, Pattern, WarrantDelegator
+    def test_delegation_narrows_wildcard_tool_to_concrete_tool(self):
+        """A parent wildcard tool can delegate one concrete tool."""
+        from tenuo import SigningKey, Warrant
+        from tenuo.crewai import WarrantDelegator
 
-        delegator = WarrantDelegator()
+        root, manager, worker = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
+        parent = Warrant.mint_builder().capability("*").holder(manager.public_key).ttl(60).mint(root)
 
-        # Create mock parent with narrow constraint
-        mock_parent = MagicMock()
-        mock_parent.tools.return_value = ["search"]
-        mock_parent.constraint_for.return_value = Pattern("arxiv:*")
-        mock_parent.is_expired.return_value = False  # Not expired
+        child = WarrantDelegator().delegate(
+            parent_warrant=parent,
+            parent_key=manager,
+            child_holder=worker.public_key,
+            attenuations={"read": {}},
+        )
 
-        # Child constraint that DOES support is_subset_of
-        child_constraint = MagicMock()
-        child_constraint.is_subset_of.return_value = False  # Widening!
+        assert child.tools == ["read"]
 
-        mock_key = MagicMock()
-        mock_child_holder = MagicMock()
+    def test_delegation_narrows_and_rejects_widening(self):
+        """Narrowing yields a child warrant; widening is rejected by the core in grant()."""
+        from tenuo import Range, SigningKey, Warrant
+        from tenuo.crewai import WarrantDelegator
+        from tenuo.exceptions import RangeExpanded
 
-        with pytest.raises(EscalationAttempt, match="widen"):
-            delegator.delegate(
-                parent_warrant=mock_parent,
-                parent_key=mock_key,
-                child_holder=mock_child_holder,
-                attenuations={
-                    "search": {"query": child_constraint},
-                },
+        root, manager, worker = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
+        parent = (
+            Warrant.mint_builder()
+            .capability("pay", amount=Range.max_value(10))
+            .holder(manager.public_key)
+            .ttl(60)
+            .mint(root)
+        )
+
+        def delegate(max_value):
+            return WarrantDelegator().delegate(
+                parent_warrant=parent,
+                parent_key=manager,
+                child_holder=worker.public_key,
+                attenuations={"pay": {"amount": Range.max_value(max_value)}},
             )
+
+        assert delegate(5).tools == ["pay"]
+        with pytest.raises(RangeExpanded):
+            delegate(20)
 
     def test_delegation_succeeds_with_valid_attenuation(self):
         """Delegation succeeds when child properly narrows scope."""
@@ -1057,7 +1072,6 @@ class TestWarrantDelegator:
         # Mock parent with tools
         mock_parent = MagicMock()
         mock_parent.tools.return_value = ["read", "write"]
-        mock_parent.constraint_for.return_value = None  # No constraint to check
         mock_parent.is_expired.return_value = False  # Not expired
 
         # Mock builder chain
@@ -1097,7 +1111,6 @@ class TestWarrantDelegator:
         mock_parent = MagicMock()
         mock_parent.tools.return_value = ["read"]
         mock_parent.is_expired.return_value = False  # Not expired
-        mock_parent.constraint_for.return_value = None  # No constraint to check (skips is_subset_of)
         del mock_parent.grant_builder  # Remove grant_builder
 
         mock_key = MagicMock()

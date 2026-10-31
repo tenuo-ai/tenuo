@@ -519,6 +519,59 @@ async with Worker(
 
 ---
 
+### Structured activity arguments
+
+Activity arguments are signed by PoP and checked against the warrant as values.
+Primitives (`str`, `int`, `float`, `bool`, `None`) are used as they are. `dict`,
+`list`, `tuple`, `@dataclass` instances and Pydantic models (v1 or v2)
+are normalized first, on both sides. A Pydantic model becomes the plain
+JSON-compatible object produced by the default Temporal Pydantic converter; a
+dataclass or dict stays an object, and a tuple becomes a list. Structured values
+are not converted to JSON text, so the PoP for an object cannot be reused for a
+literal string that happens to contain the same JSON. The worker checks the same
+normalized values the workflow signed; the activity still receives the original
+objects.
+
+Nested values are converted the same way at every depth, so a dataclass inside
+a dict signs as the dict the worker receives. Tenuo fails closed when the wire
+form could be ambiguous or converter-dependent. This includes unordered
+`set`/`frozenset` values, bare `bytes` or `datetime` values, non-finite
+floats, integers outside the signed 64-bit core range, converter-dependent
+dictionary keys such as `None`, colliding JSON dictionary keys, and arbitrary
+classes. Typed Pydantic fields for values such as `bytes` and `datetime` are
+supported because the Pydantic schema defines their JSON representation. Models
+with colliding serialization aliases, exclusion or inclusion filters, custom
+serializers, secret fields, or overridden dump methods are refused because their
+signed view could omit or rewrite a value the activity receives.
+Pass unsafe values as separate supported arguments or replace them with an
+explicitly ordered, JSON-compatible representation.
+
+This matching is defined for Temporal's default JSON converter and the default
+`pydantic_data_converter`. A customized data converter must preserve the same
+JSON-compatible values; otherwise Tenuo rejects the argument instead of signing
+a representation that may differ from the activity payload.
+
+Some frameworks pass every activity an argument of their own, such as a Pydantic
+context saying where to publish events. Under closed-world constraints the
+warrant has to name it. Declare it with `framework_args`, which adds an ordinary
+any-value constraint, so the argument stays signed and in receipts and a narrower
+warrant can still constrain it. Reserved Tenuo metadata names such as
+`_allow_unknown`, `_workflow_id`, and `_workflow_namespace` cannot be declared
+through `framework_args`:
+
+```python
+from tenuo import Pattern, Warrant
+from tenuo.temporal import framework_args
+
+warrant = (
+    Warrant.mint_builder()
+    .capability("search", query=Pattern("docs:*"), **framework_args("tool_ctx"))
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(control_key)
+)
+```
+
 ## Sandbox passthrough explained
 
 Temporal's Python SDK re-imports workflow code in an isolated sandbox on every task. Tenuo signs PoP inside the sandbox at `execute_activity()` dispatch time using `tenuo_core` (a PyO3 Rust extension). Both `tenuo` and `tenuo_core` must be declared passthrough.
@@ -709,6 +762,36 @@ signing authority.
 ### Temporal activity retries and PoP time-drift
 
 PoP is signed at `workflow.now()` when the Activity is first scheduled. Temporal retries reuse that signature from the original `ACTIVITY_TASK_SCHEDULED` event. The first attempt accepts about ±60 s (`pop_max_windows=5`). Retries use `retry_pop_max_windows`, which defaults to **40**: 20 windows of 30 s on the past side, about 10 minutes. Temporal's default backoff (1 s, doubling, capped at 100 s) waits about 7 minutes across ten retries that fail immediately, and that fits. Queue time and attempt runtime use the rest of the window.
+
+### Idempotent downstream side effects
+
+An Activity can commit a side effect at an external service and then fail before
+reporting completion to Temporal. The retry must be allowed to run, so Tenuo's
+PoP replay protection is not a substitute for receiver-side idempotency. Use
+`current_idempotency_key()` inside the Activity and send it as the downstream
+service's idempotency or operation key:
+
+```python
+from temporalio import activity
+from tenuo.temporal import current_idempotency_key
+
+@activity.defn
+async def charge_card(request: ChargeRequest) -> ChargeResult:
+    return await payments.charge(
+        request,
+        idempotency_key=current_idempotency_key(),
+    )
+```
+
+The opaque, versioned key is derived from the warrant ID, Temporal workflow run
+ID, and Activity ID. It is stable across retry attempts of the same scheduled
+Activity, but changes when any of those three identities changes. The attempt
+number is deliberately excluded. Calling the helper outside an authorized
+Activity running behind `TenuoWorkerInterceptor` raises `TenuoContextError`.
+The helper is available to async Activities and synchronous Activities using
+Temporal's thread-pool executor. Python `ContextVar` state does not cross a
+`ProcessPoolExecutor` boundary, so process-pool Activities must pass an
+idempotency key explicitly as part of their input instead.
 
 | Retry pattern | Recommended approach |
 |---------------|---------------------|
@@ -1171,7 +1254,7 @@ Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to 
 | Warning: `positional argument keys (arg0, …)` | Named constraints but no function reference | Set `activity_fns` or use `tenuo_execute_activity()` |
 | `WarrantExpired` | TTL elapsed | Mint with longer `ttl()` |
 | Child has no authorization | Started with `execute_child_workflow()` | Use `tenuo_execute_child_workflow()` |
-| `TenuoArgNormalizationError` | Unsupported arg type (`set`, `datetime`, etc.) | Convert to `@dataclass` or `dict` |
+| `TenuoArgNormalizationError` | Unsupported arg type (`set`, a bare `datetime`, etc.) | Convert to a `@dataclass`, Pydantic model or `dict` ([details](#structured-activity-arguments)) |
 | `TenuoPreValidationError: unknown field` | Warrant has fewer fields than activity | Declare all args with `Wildcard()` for unconstrained fields |
 
 ---

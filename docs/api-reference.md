@@ -425,6 +425,7 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `to_base64()` | `str` | Serialize to base64 |
 | `allows(tool, args=None)` | `bool` | Check if action would be allowed (Logic check) |
 | `check_constraints(tool, args)` | `str \| None` | Validate constraints (Logic check) |
+| `diagnose_constraints(tool, args)` | `dict` | List all constraint failures without exposing argument values |
 | `dedup_key(tool, args)` | `str` | Get deterministic cache key |
 | `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
 | `headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
@@ -459,6 +460,20 @@ reason = warrant.why_denied("write_file", path="/etc/passwd")
 
 if reason.deny_code == DenyCode.TOOL_NOT_ALLOWED:
     print("Tool not in warrant")
+
+# All field-shape/value failures in stable order. This is diagnostic only;
+# it does not verify signatures, expiry, revocation, approvals, or PoP.
+diagnostics = warrant.diagnose_constraints(
+    "transfer", {"amount": 300, "unexpected": True}
+)
+# {
+#   "closed_world": True,
+#   "violations": [
+#     {"field": "unexpected", "kind": "unknown_field", ...},
+#     {"field": "amount", "kind": "constraint_mismatch", ...},
+#     {"field": "currency", "kind": "missing_required", ...},
+#   ],
+# }
 
 # Generate HTTP headers
 headers = warrant.headers(keypair, "read_file", {"path": "/data/x.txt"})

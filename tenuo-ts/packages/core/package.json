@@ -55,7 +55,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-build-assets.mjs && node scripts/write-build-info.mjs",
     "pack:smoke": "node scripts/pack-smoke.mjs",
-    "publish:npm": "npm publish --access public --provenance --tag beta",
+    "publish:npm": "node ../../scripts/npm-release-policy.mjs publish .",
     "build:wasm": "pnpm --dir ../.. build:wasm"
   },
   "engines": {

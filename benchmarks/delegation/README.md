@@ -74,7 +74,7 @@ agent = create_agent()
 # Task 1: Internal email warrant
 internal_warrant = (
     Warrant.mint_builder()
-    .capability("send_email", {"to": Pattern("*@company.com")})
+    .capability("send_email", {"to": Regex(r"^[A-Za-z0-9._%+-]+@company\.com$")})
     .holder(agent_key.public_key)
     .ttl(300)
     .mint(issuer_key)

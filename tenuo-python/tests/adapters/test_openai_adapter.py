@@ -2006,21 +2006,21 @@ class TestSubpathConstraint:
         assert c.matches("../etc/passwd") is False
         assert c.matches("data/file.txt") is False
 
-    def test_non_string_rejected(self):
-        """Non-string values should raise TypeError (Rust FFI type enforcement).
-
-        SECURITY: This is stricter than returning False - type errors are caught
-        at the FFI boundary, preventing any possibility of type confusion.
-        """
+    def test_non_path_values_rejected(self):
+        """Only scalar paths and flat lists of paths are accepted by the FFI."""
         c = Subpath("/data")
 
-        # Rust enforces string type at FFI boundary
+        # Scalars other than strings remain invalid at the FFI boundary.
         with pytest.raises(TypeError):
             c.matches(None)
         with pytest.raises(TypeError):
             c.matches(123)
+        assert c.matches(["/data/file.txt"]) is True
+        assert c.matches(["/data/file.txt", "/etc/passwd"]) is False
         with pytest.raises(TypeError):
-            c.matches(["/data/file.txt"])
+            c.matches(["/data/file.txt", 123])
+        with pytest.raises(TypeError):
+            c.matches([["/data/file.txt"]])
         with pytest.raises(TypeError):
             c.matches({"path": "/data/file.txt"})
 

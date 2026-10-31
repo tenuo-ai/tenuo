@@ -879,6 +879,23 @@ pub fn sdk_inspect_warrant(wire: &str) -> Result<JsValue, JsError> {
     Ok(inspect_js(&warrant))
 }
 
+/// Diagnose all capability-constraint failures without authorizing the call.
+#[wasm_bindgen(js_name = sdkDiagnoseConstraints)]
+pub fn sdk_diagnose_constraints(
+    wire: &str,
+    tool: &str,
+    args_json: JsValue,
+) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let warrant = parse_warrant(wire)?;
+    let args = canonical_args(&args_json).map_err(|e| JsError::new(&e))?;
+    let constraints = constraint_view(&args);
+    let diagnostics = warrant
+        .diagnose_constraints(tool, &constraints)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(to_js_value(&diagnostics))
+}
+
 #[wasm_bindgen(js_name = sdkInspectParts)]
 pub fn sdk_inspect_parts(payload_hex: &str, signature_hex: &str) -> Result<JsValue, JsError> {
     init_panic_hook();

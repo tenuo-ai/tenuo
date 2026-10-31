@@ -25,7 +25,7 @@ tools:
         path: maxSize          # MCP schema name → warrant constraint name
         required: false
         default: 4096
-        value_type: integer
+        type: integer
 
   write_file:
     description: "Write content to a file"
@@ -54,7 +54,7 @@ tools:
         from: body
         path: amount
         required: true
-        value_type: number
+        type: number
       destination:
         from: body
         path: destination

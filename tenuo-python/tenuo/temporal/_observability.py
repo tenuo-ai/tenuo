@@ -9,7 +9,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Deque, Dict, List, Literal, Optional
+from typing import Any, Callable, Deque, Dict, List, Literal, Optional, Union
 
 logger = logging.getLogger("tenuo.temporal")
 
@@ -36,7 +36,11 @@ class TemporalAuditEvent:
 
     # Warrant info
     warrant_id: str
-    warrant_expires_at: Optional[datetime]
+    # ``tenuo_core.Warrant.expires_at()`` returns an RFC 3339 string, while
+    # callers constructing audit events directly have historically supplied a
+    # datetime.  Accept both representations at this public serialization
+    # boundary so real warrants and existing integrations remain compatible.
+    warrant_expires_at: Optional[Union[datetime, str]]
     warrant_capabilities: List[str]
 
     # Denial details (populated if denied)
@@ -49,6 +53,10 @@ class TemporalAuditEvent:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for structured logging."""
+        warrant_expires_at = self.warrant_expires_at
+        if isinstance(warrant_expires_at, datetime):
+            warrant_expires_at = warrant_expires_at.isoformat()
+
         return {
             "workflow_id": self.workflow_id,
             "workflow_type": self.workflow_type,
@@ -60,7 +68,7 @@ class TemporalAuditEvent:
             "tool": self.tool,
             "arguments": self.arguments,
             "warrant_id": self.warrant_id,
-            "warrant_expires_at": (self.warrant_expires_at.isoformat() if self.warrant_expires_at else None),
+            "warrant_expires_at": warrant_expires_at,
             "warrant_capabilities": self.warrant_capabilities,
             "denial_reason": self.denial_reason,
             "constraint_violated": self.constraint_violated,

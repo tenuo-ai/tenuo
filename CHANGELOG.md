@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **FastAPI `configure_tenuo(strict=True)` now does something.** It was
+  accepted since v0.1.0-beta.1 but never read. The app now refuses to start
+  while any route lacks a `TenuoGuard`, listing each one. `exempt=` names
+  public paths; only FastAPI's built-in docs handlers are implicitly exempt,
+  not application routes at the same URLs. Checks include routes registered
+  by startup hooks. `error_handler`, also never called before, now receives
+  each `TenuoError` and can return the response. Sync error handlers run in
+  the framework's thread pool; async handlers are awaited. Strict validation
+  requires ASGI lifespan/startup to be enabled.
+
+- **`tenuo.process`: run the command the warrant authorized.** `run` checks a
+  structured call (`subcommand`, `flags`, `paths`, `cwd`, with `cwd` and
+  `paths` resolved with `realpath`) against the warrant and executes those
+  exact values as argv, without a shell and with a fixed environment.
+  `Subpath` now also validates lists of paths (`paths=Subpath("/workspace")`)
+  and can attenuate to a narrower `Subpath` or `Subset`. `run_command` does the
+  same for tools that take one command string. The `GIT` profile stops
+  repository config and `.gitattributes` from running programs on `status`,
+  `diff`, and `log`; Git 2.41+ is required. Command strings use the core
+  tokenizer's returned tokens, and trusted executor profiles pin binary
+  resolution and copy their environment and safety flags. POSIX only.
+  SHA-1/SHA-256 Git repositories are supported; signed approvals can be passed
+  to both execution entry points and must cover the exact resolved arguments.
+- **Pydantic activity arguments on Temporal.** Pydantic models (v1 and v2),
+  dataclasses, dictionaries, and lists are signed by PoP as typed,
+  JSON-compatible values. The signed representation matches Temporal's default
+  Pydantic converter, including serialization aliases, and rejects lossy custom
+  serialization filters, alias collisions, unordered collections, out-of-range
+  integers, bare bytes, and converter-dependent nested values or dictionary
+  keys.
+  `tenuo.temporal.framework_args("tool_ctx")` declares a framework-owned
+  argument as an any-value constraint so it remains signed and recorded in
+  receipts.
+
 ### Upgrade notes
 
 Two checks are stricter, and some calls that used to pass now fail:
@@ -24,6 +60,85 @@ Two checks are stricter, and some calls that used to pass now fail:
   argument of `verify_approvals` now applies to `approved_at` only.
 
 ### Fixed
+
+- **CEL object constraints can test optional fields.** Object-valued arguments
+  are now available through the opt-in `tenuo_object()` function, so policies
+  can use expressions such as `!has(tenuo_object().approve) ||
+  tenuo_object().approve == false`. Existing top-level field bindings and
+  list-only `value` semantics are unchanged. Older verifiers fail closed on
+  expressions using the new function.
+
+- **`UrlPattern` rejects ambiguous wildcard hosts when authoring.** Patterns
+  such as `https://*/*` previously constructed successfully but matched no
+  URL. Constructors and human-readable config inputs now reject them with
+  guidance to name a host, use `*.example.com`, or use `UrlSafe`. Existing
+  signed CBOR warrants remain decodable and continue to deny every URL.
+
+- **Issuer warrants keep their approval settings.** `mint_builder().issuer()`
+  silently dropped `approval_gates`, `required_approvers` and
+  `min_approvals`. They are now signed into the issuer warrant, and execution
+  warrants issued from it inherit the approvers and threshold wherever a gate
+  applies, including through issuer-to-issuer delegation and `*` tools.
+  Issuance may add approvers (raising the threshold to match) or raise the
+  threshold, not remove or dilute them; an unset minimum counts as every
+  approver. A gate with no approvers stays unapprovable: delegation and
+  issuance cannot name approvers for it. Reported in #1029.
+
+- **FastAPI: `SecureAPIRouter` guards direct and included HTTP routes.**
+  `add_api_route()` and plain included routers no longer run without a warrant.
+  Nested and inclusion-level guards keep their authority. Lazy additions are
+  checked before dispatch, including mounts and plain Starlette routes that
+  do not run FastAPI dependencies. Unsupported route types are refused.
+- **FastAPI: inferred tool names cannot silently share authority.** Colliding
+  path names and ambiguous method groups need an explicit `tool=`. Aliases of
+  one route object under different inferred permissions need explicit
+  `TenuoGuard` dependencies or distinct routes. Only GET/HEAD automatically
+  share inferred read authority; PUT/PATCH retain their shared update name.
+
+- **WASM builders reject malformed Shlex and approval gates.** Invalid command
+  lists, unsupported Shlex options, and malformed nested approval constraints
+  fail warrant creation instead of being silently omitted. Shlex remains a
+  syntax constraint; path authorization uses explicit structured arguments.
+  Valid approval-gate display messages are preserved. The legacy delegated
+  builder inherits parent approval policy and rejects supplied replacements
+  it cannot apply rather than silently ignoring them.
+
+### Security
+
+- **Shlex (type 128) uses one POSIX-quoting tokenizer across every SDK.**
+  Quoted and escaped operator characters are literal arguments
+  (`ls "foo; bar"`, `echo ";"`, `find . -exec rm {} \;`). A 0.3.2/0.3.3
+  verifier still rejects those commands. Words break only at unquoted spaces,
+  tabs, and operators (`./ls,evil` is one command name, and `#` is an ordinary
+  word character so `ls foo#; rm -rf /` and `ls #; rm` are both rejected). `$`
+  and backticks are rejected everywhere in the raw command. Each `allow` entry
+  matches the command word literally (`allow=["ls"]` matches `ls` and does not
+  match `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word
+  containing `..` is rejected. Because older Rust verifiers accepted any path
+  whose basename matched a bare `allow` entry (such as `/tmp/attacker/ls` for
+  `allow=["ls"]`), upgrade every enforcement point before relying on literal
+  command-word matching. The shared decisions are `tests/vectors/shlex.json`.
+
+### Changed
+
+- **Python `Shlex` is the core class, and explanations come from that
+  check.** `DANGEROUS_TOKENS`, `EXPANSION_CHARS`, and `CONTROL_CHARS` are
+  gone. `allowed_bins` is the same list as `allow`, not a set. `isinstance`
+  checks see the core class. `Shlex.check(command)` returns the decision
+  (`allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`,
+  `binary_allowed`). TypeScript `checkShlex(allow, command)` returns the same
+  decision.
+
+### Fixed
+
+- **Temporal structured arguments preserve their type in PoP.** Structured
+  values were previously signed as JSON text, so an object and a literal string
+  containing the same JSON had the same signed form. They now remain objects or
+  lists through core canonicalization, and models that could hide fields from
+  the signed form fail closed.
+- **Python rejects integers outside the core's signed 64-bit argument range.**
+  They previously fell through to floating-point conversion, where distinct
+  large integers could produce the same PoP input.
 
 - **Warrants have exactly one valid encoding.** The decoder accepted an
   envelope whose signature array header claimed three elements but held two,
@@ -46,6 +161,12 @@ Two checks are stricter, and some calls that used to pass now fail:
   finite, and the CLI rejects malformed shorthand ranges as well as
   unknown, mixed, empty, or incorrectly typed constraint JSON instead of silently
   minting a weaker warrant.
+- **Config files and signed payloads reject unknown keys.** Gateway and MCP
+  configs, signed approvals, revocation lists and requests, and receipts now
+  fail to load on a key they do not define instead of ignoring it. Check
+  configs before upgrading: gateway settings that still use the old names
+  `chain_header` or `trusted_issuers` must be renamed to `warrant_header` and
+  `trusted_roots`.
 
 ## [0.3.3] - 2026-10-22
 
@@ -95,7 +216,6 @@ are now denied. Check these before upgrading:
   approvals apply only when a `nonceStore` is passed.
 
 ### Added
-
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,
@@ -210,7 +330,6 @@ are now denied. Check these before upgrading:
 - **Temporal reports PoP failures as `POP_VERIFICATION_FAILED`.** A missing
   or wrong-key PoP was reported as `CONSTRAINT_VIOLATED`. Untrusted issuers
   keep their existing type.
-
 - **Temporal `warrant_chain=` takes one shape everywhere.** The workflow start
   helpers took the parents only and rejected a chain that ended with the leaf,
   while `tenuo_execute_activity`, the Nexus helpers, and

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
@@ -49,6 +50,7 @@ class _ProviderSnapshots:
 
     trusted_roots: Tuple[Any, ...] = ()
     revocation_list: Optional[Any] = None
+    revocation_refreshed_at: Optional[float] = None
 
     @property
     def ready(self) -> bool:
@@ -465,12 +467,37 @@ class TenuoPluginConfig:
     Requires ``revocation_list_provider`` to be set.
     """
 
+    max_revocation_refresh_staleness_secs: Optional[float] = None
+    """Maximum age of the last successful provider refresh.
+
+    When set, activity authorization fails closed once the provider has not
+    returned and installed a non-``None`` revocation list within this many
+    monotonic-clock seconds.  The resulting Temporal failure is retryable so
+    work can resume after the revocation provider recovers.
+
+    ``None`` (default) preserves the availability-oriented behavior of using
+    the last known-good revocation list indefinitely.  A positive
+    ``revocation_refresh_secs`` value and ``revocation_list_provider`` are
+    required, and the staleness bound must be at least the refresh interval.
+    """
+
     _provider_snapshots: _ProviderSnapshots = field(
         default=_EMPTY_PROVIDER_SNAPSHOTS, init=True, repr=False, compare=False
     )
     _provider_state_lock: Any = field(
         default_factory=threading.RLock, init=False, repr=False, compare=False
     )
+    _last_trusted_roots_refresh_attempt_monotonic: float = field(
+        default_factory=time.monotonic, init=False, repr=False, compare=False
+    )
+    _last_revocation_refresh_attempt_monotonic: float = field(
+        default_factory=time.monotonic, init=False, repr=False, compare=False
+    )
+
+    def _provider_snapshot(self) -> _ProviderSnapshots:
+        """Return one coherent immutable provider snapshot."""
+        with self._provider_state_lock:
+            return self._provider_snapshots
 
     @property
     def _provider_snapshots_ready(self) -> bool:
@@ -486,6 +513,11 @@ class TenuoPluginConfig:
     def _last_good_revocation_list(self) -> Optional[Any]:
         """Last-known-good SRL. Update via ``_record_provider_snapshot``."""
         return self._provider_snapshots.revocation_list
+
+    @property
+    def _last_good_revocation_refresh_monotonic(self) -> Optional[float]:
+        """Monotonic timestamp of the last installed provider SRL."""
+        return self._provider_snapshots.revocation_refreshed_at
 
     def _record_provider_snapshot(
         self,
@@ -510,6 +542,11 @@ class TenuoPluginConfig:
                     current.revocation_list
                     if revocation_list is None
                     else revocation_list
+                ),
+                revocation_refreshed_at=(
+                    time.monotonic()
+                    if revocation_list is not None
+                    else current.revocation_refreshed_at
                 ),
             )
 
@@ -598,6 +635,30 @@ class TenuoPluginConfig:
                     "revocation_refresh_secs requires revocation_list_provider."
                 )
 
+        if self.max_revocation_refresh_staleness_secs is not None:
+            from tenuo.exceptions import ConfigurationError
+
+            max_staleness = self.max_revocation_refresh_staleness_secs
+            if max_staleness <= 0:
+                raise ConfigurationError(
+                    "max_revocation_refresh_staleness_secs must be positive when set."
+                )
+            if self.revocation_list_provider is None:
+                raise ConfigurationError(
+                    "max_revocation_refresh_staleness_secs requires "
+                    "revocation_list_provider."
+                )
+            if self.revocation_refresh_secs is None:
+                raise ConfigurationError(
+                    "max_revocation_refresh_staleness_secs requires "
+                    "revocation_refresh_secs so stale state can be refreshed."
+                )
+            if max_staleness < self.revocation_refresh_secs:
+                raise ConfigurationError(
+                    "max_revocation_refresh_staleness_secs must be greater than or "
+                    "equal to revocation_refresh_secs."
+                )
+
         if self.revocation_list_provider is not None:
             if snapshots.ready:
                 initial_srl = snapshots.revocation_list
@@ -615,6 +676,17 @@ class TenuoPluginConfig:
                         "SRL endpoint availability, credentials, and timeout settings, "
                         "or pass a static revocation_list for bootstrap."
                     ) from exc
+            if (
+                initial_srl is None
+                and self.max_revocation_refresh_staleness_secs is not None
+            ):
+                from tenuo.exceptions import ConfigurationError
+
+                raise ConfigurationError(
+                    "TenuoPluginConfig: revocation_list_provider returned None "
+                    "during startup, but max_revocation_refresh_staleness_secs "
+                    "requires an initial revocation snapshot."
+                )
         else:
             # Static values may have been explicitly overridden through
             # dataclasses.replace(), so they take precedence over a carried
@@ -627,6 +699,16 @@ class TenuoPluginConfig:
         self._provider_snapshots = _ProviderSnapshots(
             trusted_roots=tuple(roots),
             revocation_list=initial_srl,
+            revocation_refreshed_at=(
+                snapshots.revocation_refreshed_at
+                if self.revocation_list_provider is not None and snapshots.ready
+                else (
+                    time.monotonic()
+                    if self.revocation_list_provider is not None
+                    and initial_srl is not None
+                    else None
+                )
+            ),
         )
 
         if self.signing_key is not None and self.key_resolver is None:
@@ -642,13 +724,6 @@ class TenuoPluginConfig:
                     return self._sk
 
             self.key_resolver = _StaticSigningKeyResolver(self.signing_key)
-
-        if self.key_resolver is None:
-            from tenuo.exceptions import ConfigurationError
-
-            raise ConfigurationError(
-                "TenuoPluginConfig requires key_resolver= or signing_key= (worker signing material)."
-            )
 
         if self.approval_handler is not None:
             # Only bump for values at-or-below the field default (currently 40).

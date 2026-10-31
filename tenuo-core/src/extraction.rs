@@ -326,6 +326,7 @@ pub enum ExtractionSource {
 
 /// Configuration for extracting a single constraint field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExtractionRule {
     /// Where to extract the value from
     pub from: ExtractionSource,

@@ -367,14 +367,14 @@ Direct protection for OpenAI's Chat Completions and Responses APIs:
 ```python
 import openai
 from tenuo import Shlex
-from tenuo.openai import GuardBuilder, Pattern, Subpath, UrlSafe
+from tenuo.openai import GuardBuilder, Regex, Subpath, UrlSafe
 
 # Tier 1: Guardrails (quick hardening)
 client = (GuardBuilder(openai.OpenAI())
     .allow("read_file", path=Subpath("/data"))        # Path traversal protection
     .allow("fetch_url", url=UrlSafe())                # SSRF protection
     .allow("run_command", cmd=Shlex(allow=["ls"]))    # Shell injection protection
-    .allow("send_email", to=Pattern("*@company.com"))
+    .allow("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"))
     .deny("delete_file")
     .build())
 

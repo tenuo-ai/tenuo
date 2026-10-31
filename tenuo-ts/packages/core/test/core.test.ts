@@ -10,6 +10,7 @@ import {
   cidr,
   contains,
   createTenuo,
+  diagnoseConstraints,
   email,
   evaluateApprovalGates,
   exact,
@@ -377,6 +378,47 @@ describe("actionable delegation diagnostics", () => {
 });
 
 describe("constraints", () => {
+  it("returns deterministic core-owned diagnostics without argument values", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { transfer: { amount: max(200), currency: exact("USD") } },
+    });
+
+    const diagnostics = diagnoseConstraints(session.toWire()[0]!, "transfer", {
+      amount: 300,
+      z_extra: "secret-z",
+      a_extra: "secret-a",
+    });
+
+    expect(diagnostics).toEqual({
+      closedWorld: true,
+      violations: [
+        {
+          field: "a_extra",
+          kind: "unknown_field",
+          reason: "unknown field not allowed (zero-trust mode)",
+        },
+        {
+          field: "z_extra",
+          kind: "unknown_field",
+          reason: "unknown field not allowed (zero-trust mode)",
+        },
+        {
+          field: "amount",
+          kind: "constraint_mismatch",
+          reason: "value does not match constraint",
+        },
+        {
+          field: "currency",
+          kind: "missing_required",
+          reason: "missing required argument",
+        },
+      ],
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain("secret-a");
+    expect(JSON.stringify(diagnostics)).not.toContain("secret-z");
+  });
+
   it("builds marker objects for the WASM mapping", () => {
     expect(under("/data")).toEqual({ kind: "under", root: "/data" });
     expect(email({ domain: "acme.com" })).toEqual({ kind: "email", domain: "acme.com" });

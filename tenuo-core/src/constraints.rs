@@ -106,9 +106,7 @@ pub mod constraint_type_id {
     // 19-127: Future standard types
 
     // Experimental / extension constraints (128-255)
-    /// Shell command safety (binary allowlist + metacharacter rejection).
-    /// Extension constraint: Rust provides conservative approximation,
-    /// Python shlex is authoritative at runtime.
+    /// Shell command safety (binary allowlist + POSIX tokenization).
     /// Wire format: `[128, { "allow": ["npm", "docker"] }]`
     pub const SHLEX: u8 = 128;
 }
@@ -763,23 +761,65 @@ impl Constraint {
             // CEL follows conjunction rule
             (Constraint::Cel(parent), Constraint::Cel(child)) => parent.validate_attenuation(child),
 
-            // Subpath can narrow to Subpath (narrower root) or Exact
+            // Subpath can narrow to Subpath (narrower root), Subset (all paths contained), or Exact
             (Constraint::Subpath(parent), Constraint::Subpath(child)) => {
                 parent.validate_attenuation(child)
             }
+            (Constraint::Subpath(parent), Constraint::Subset(child_subset)) => {
+                for item in &child_subset.allowed {
+                    match item.as_str() {
+                        Some(path_str) => {
+                            if !parent.contains_path(path_str)? {
+                                return Err(Error::PathNotContained {
+                                    path: path_str.to_string(),
+                                    root: parent.root.clone(),
+                                });
+                            }
+                        }
+                        None => {
+                            return Err(Error::IncompatibleConstraintTypes {
+                                parent_type: "Subpath".to_string(),
+                                child_type: "Subset (non-string)".to_string(),
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
             (Constraint::Subpath(parent), Constraint::Exact(child_exact)) => {
-                match child_exact.value.as_str() {
-                    Some(path_str) => {
+                match &child_exact.value {
+                    ConstraintValue::String(path_str) => {
                         if parent.contains_path(path_str)? {
                             Ok(())
                         } else {
                             Err(Error::PathNotContained {
-                                path: path_str.to_string(),
+                                path: path_str.clone(),
                                 root: parent.root.clone(),
                             })
                         }
                     }
-                    None => Err(Error::IncompatibleConstraintTypes {
+                    ConstraintValue::List(items) => {
+                        for item in items {
+                            match item.as_str() {
+                                Some(path_str) => {
+                                    if !parent.contains_path(path_str)? {
+                                        return Err(Error::PathNotContained {
+                                            path: path_str.to_string(),
+                                            root: parent.root.clone(),
+                                        });
+                                    }
+                                }
+                                None => {
+                                    return Err(Error::IncompatibleConstraintTypes {
+                                        parent_type: "Subpath".to_string(),
+                                        child_type: "Exact (non-string list item)".to_string(),
+                                    });
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    _ => Err(Error::IncompatibleConstraintTypes {
                         parent_type: "Subpath".to_string(),
                         child_type: "Exact (non-string)".to_string(),
                     }),
@@ -1894,8 +1934,17 @@ impl<'de> Deserialize<'de> for UrlPattern {
     where
         D: serde::Deserializer<'de>,
     {
+        let human_readable = deserializer.is_human_readable();
         let s = String::deserialize(deserializer)?;
-        UrlPattern::new(&s).map_err(serde::de::Error::custom)
+        if human_readable {
+            // JSON/YAML are authoring surfaces, so new inputs must get the same
+            // validation as the public constructor.
+            UrlPattern::new(&s).map_err(serde::de::Error::custom)
+        } else {
+            // Signed CBOR warrants issued before bare wildcard hosts were
+            // rejected still decode; such a pattern matches no URL, as always.
+            UrlPattern::parse(&s, false).map_err(serde::de::Error::custom)
+        }
     }
 }
 
@@ -1919,8 +1968,13 @@ impl UrlPattern {
     /// `https://example.com/` parses as "any path". Use `https://example.com/*` to restrict to root.
     ///
     /// # Errors
-    /// Returns error if the pattern is not a valid URL pattern.
+    /// Returns error if the pattern is not a valid URL pattern, including a
+    /// bare wildcard host such as `https://*` or `https://*/*`.
     pub fn new(pattern: &str) -> Result<Self> {
+        Self::parse(pattern, true)
+    }
+
+    fn parse(pattern: &str, reject_bare_wildcard_host: bool) -> Result<Self> {
         // Internal placeholders for URL parsing
         const HOST_PLACEHOLDER: &str = "__tenuo_host_wildcard__";
         const PATH_PLACEHOLDER: &str = "__tenuo_path_wildcard__";
@@ -1965,6 +2019,24 @@ impl UrlPattern {
         let host_pattern = parsed
             .host_str()
             .map(|h| h.replace(&format!("{}.", HOST_PLACEHOLDER), "*."));
+
+        // A `*` host is parsed as the path placeholder (the `/*` in `//*`), so
+        // it would otherwise match no URL at all without any error.
+        if reject_bare_wildcard_host {
+            if let Some(host) = &host_pattern {
+                let rest = host.strip_prefix("*.").unwrap_or(host);
+                if rest.contains(PATH_PLACEHOLDER)
+                    || rest.contains(HOST_PLACEHOLDER)
+                    || rest.contains('*')
+                {
+                    return Err(Error::InvalidUrl {
+                        url: pattern.to_string(),
+                        reason: "wildcard host is not supported; name the host, use *.example.com, or use UrlSafe"
+                            .to_string(),
+                    });
+                }
+            }
+        }
 
         // Extract port (None means default for scheme)
         let port = parsed.port();
@@ -2494,11 +2566,23 @@ impl Subpath {
 
     /// Check if a value satisfies the Subpath constraint.
     ///
-    /// The value must be a string containing an absolute path.
+    /// The value must be a string containing an absolute path, or a list of
+    /// strings where every element is an absolute path contained within `root`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        match value.as_str() {
-            Some(path_str) => self.contains_path(path_str),
-            None => Ok(false),
+        match value {
+            ConstraintValue::String(path_str) => self.contains_path(path_str),
+            ConstraintValue::List(list) => {
+                for item in list {
+                    let Some(path_str) = item.as_str() else {
+                        return Ok(false);
+                    };
+                    if !self.contains_path(path_str)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 
@@ -3409,33 +3493,20 @@ impl From<UrlSafe> for Constraint {
 // Shlex Constraint (Shell command safety)
 // ============================================================================
 
-/// Characters that are dangerous in a shell context.
-///
-/// Includes control characters (null, newline, CR, etc.), expansion triggers
-/// ($, backtick), and operator characters (|, &, ;, <, >, parens).
-const SHELL_DANGEROUS_CHARS: &[char] = &[
-    '\0', '\n', '\r', '\x0b', '\x0c', '\x07', '\x08', '\x7f', // Control
-    '$', '`', // Expansion
-    '|', '&', ';', '<', '>', '(', ')', // Operators
-];
-
 /// Shell command safety constraint.
 ///
-/// Validates that a command string uses only allowed binaries and contains
-/// no shell metacharacters. This is a **conservative approximation** that
-/// fails closed on anything a POSIX shell might interpret specially.
+/// Validates that a command string is one allowlisted binary plus literal
+/// arguments. Words follow POSIX shell rules: they end at unquoted spaces,
+/// tabs, and operators, and `#` is an ordinary word character so operators
+/// after `#` are still rejected. A quoted or escaped operator character is a
+/// literal argument. `$` and backticks are rejected anywhere in the raw
+/// command, including inside quotes and escapes.
 ///
-/// # Rust vs Python evaluation
+/// Each `allow` entry matches the command word literally: `ls` matches `ls`
+/// only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command
+/// word containing `..` is rejected.
 ///
-/// The Rust `matches()` performs whitespace tokenization and rejects any
-/// character in `SHELL_DANGEROUS_CHARS`. It does NOT handle POSIX quoting.
-/// Python's `Shlex.matches()` uses full `shlex` parsing with
-/// `punctuation_chars=True`, so it accepts safely-quoted operators like
-/// `ls "foo; bar"` that Rust would reject.
-///
-/// The Rust layer is intentionally more restrictive, acting as a fail-closed
-/// pre-filter in the warrant verification path. Python's full evaluation is
-/// the authoritative runtime gate for annotated constraints in `@guard`.
+/// Every SDK calls [`crate::shell_words::check`]. There is no second evaluator.
 ///
 /// # Wire Format
 ///
@@ -3457,46 +3528,15 @@ impl Shlex {
         }
     }
 
-    /// Conservative command matching (fail-closed approximation).
+    /// Whether `value` is a single allowlisted command with no shell operators.
     ///
-    /// Rejects any command containing shell metacharacters, then whitespace-splits
-    /// and checks the first token against the allowlist. This is strictly more
-    /// restrictive than Python's POSIX shlex parsing.
+    /// Non-strings, parse errors, control characters, and `$` / backticks
+    /// return `Ok(false)`. See [`crate::shell_words::command_allowed`].
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        let cmd = match value.as_str() {
-            Some(s) => s,
-            None => return Ok(false),
+        let Some(cmd) = value.as_str() else {
+            return Ok(false);
         };
-
-        if cmd.is_empty() {
-            return Ok(false);
-        }
-
-        // Reject any shell-dangerous character
-        for ch in cmd.chars() {
-            if SHELL_DANGEROUS_CHARS.contains(&ch) {
-                return Ok(false);
-            }
-        }
-
-        // Whitespace tokenization (no quoting awareness — conservative)
-        let tokens: Vec<&str> = cmd.split_whitespace().collect();
-        if tokens.is_empty() {
-            return Ok(false);
-        }
-
-        // Binary allowlist: check full path and basename.
-        // Reject path traversal (../) to prevent allowlist bypass.
-        let binary = tokens[0];
-        if binary.contains("..") {
-            return Ok(false);
-        }
-        let bin_name = binary.rsplit('/').next().unwrap_or(binary);
-        if !self.allow.iter().any(|a| a == binary || a == bin_name) {
-            return Ok(false);
-        }
-
-        Ok(true)
+        Ok(crate::shell_words::command_allowed(&self.allow, cmd))
     }
 
     /// Validate that `child` is a valid attenuation (child is more restrictive).
@@ -4051,6 +4091,73 @@ impl From<CelConstraint> for Constraint {
 // Constraint Set
 // ============================================================================
 
+/// Stable category for a constraint diagnostic.
+///
+/// Diagnostics are non-authoritative explanations. Authorization continues to
+/// use [`ConstraintSet::matches`], which consumes the same diagnostic result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintViolationKind {
+    /// The warrant does not authorize the requested tool.
+    ToolNotAuthorized,
+    /// Closed-world checking rejected an undeclared argument field.
+    UnknownField,
+    /// A field declared by the capability was absent.
+    MissingRequired,
+    /// A supplied value did not satisfy its declared constraint.
+    ConstraintMismatch,
+}
+
+impl ConstraintViolationKind {
+    /// Stable machine-readable name used by SDK bindings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolNotAuthorized => "tool_not_authorized",
+            Self::UnknownField => "unknown_field",
+            Self::MissingRequired => "missing_required",
+            Self::ConstraintMismatch => "constraint_mismatch",
+        }
+    }
+}
+
+/// One field-level constraint diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConstraintViolation {
+    /// Argument field, or `"tool"` for a tool-level denial.
+    pub field: String,
+    /// Stable machine-readable category.
+    pub kind: ConstraintViolationKind,
+    /// Human-readable explanation. Callers should branch on [`Self::kind`].
+    pub reason: String,
+}
+
+/// Structured, deterministic result of non-authoritative constraint preflight.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConstraintDiagnostics {
+    /// Whether the evaluated constraint set rejects undeclared fields.
+    pub closed_world: bool,
+    /// All violations, ordered deterministically by category and field name.
+    pub violations: Vec<ConstraintViolation>,
+}
+
+impl ConstraintDiagnostics {
+    /// True when no constraint violations were found.
+    pub fn is_satisfied(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    pub(crate) fn tool_not_authorized(tool: &str) -> Self {
+        Self {
+            closed_world: false,
+            violations: vec![ConstraintViolation {
+                field: "tool".to_string(),
+                kind: ConstraintViolationKind::ToolNotAuthorized,
+                reason: format!("warrant does not authorize tool '{tool}'"),
+            }],
+        }
+    }
+}
+
 /// Helper for serde skip_serializing_if
 fn is_false(b: &bool) -> bool {
     !*b
@@ -4133,36 +4240,77 @@ impl ConstraintSet {
     /// - If any constraint exists and `allow_unknown=false`: unknown arguments rejected
     /// - If any constraint exists and `allow_unknown=true`: unknown arguments allowed
     pub fn matches(&self, args: &HashMap<String, ConstraintValue>) -> Result<()> {
-        // Zero-trust: if constraints exist and allow_unknown is false,
-        // reject any arguments not explicitly constrained
-        if !self.constraints.is_empty() && !self.allow_unknown {
-            for key in args.keys() {
-                if !self.constraints.contains_key(key) {
-                    return Err(Error::ConstraintNotSatisfied {
-                        field: key.clone(),
-                        reason: "unknown field not allowed (zero-trust mode)".to_string(),
-                    });
-                }
-            }
-        }
-
-        // Check all defined constraints are satisfied
-        for (field, constraint) in &self.constraints {
-            let value = args
-                .get(field)
-                .ok_or_else(|| Error::ConstraintNotSatisfied {
-                    field: field.clone(),
-                    reason: "missing required argument".to_string(),
-                })?;
-
-            if !constraint.matches(value)? {
-                return Err(Error::ConstraintNotSatisfied {
-                    field: field.clone(),
-                    reason: "value does not match constraint".to_string(),
-                });
-            }
+        let diagnostics = self.diagnose(args)?;
+        if let Some(violation) = diagnostics.violations.into_iter().next() {
+            return Err(Error::ConstraintNotSatisfied {
+                field: violation.field,
+                reason: violation.reason,
+            });
         }
         Ok(())
+    }
+
+    /// Diagnose all constraint failures without performing authorization.
+    ///
+    /// This is intended for developer-facing preflight and error rendering.
+    /// It does not verify signatures, expiry, revocation, approvals, or PoP and
+    /// must never be treated as an authorization verdict.
+    ///
+    /// Results contain field names but never argument values. Unknown fields
+    /// are reported first in lexical order, followed by declared fields in the
+    /// constraint set's canonical order.
+    pub fn diagnose(
+        &self,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<ConstraintDiagnostics> {
+        let closed_world = !self.constraints.is_empty() && !self.allow_unknown;
+        let mut violations = Vec::new();
+
+        if closed_world {
+            let mut unknown_fields: Vec<_> = args
+                .keys()
+                .filter(|field| !self.constraints.contains_key(*field))
+                .cloned()
+                .collect();
+            unknown_fields.sort();
+            violations.extend(unknown_fields.into_iter().map(|field| ConstraintViolation {
+                field,
+                kind: ConstraintViolationKind::UnknownField,
+                reason: "unknown field not allowed (zero-trust mode)".to_string(),
+            }));
+        }
+
+        for (field, constraint) in &self.constraints {
+            let Some(value) = args.get(field) else {
+                violations.push(ConstraintViolation {
+                    field: field.clone(),
+                    kind: ConstraintViolationKind::MissingRequired,
+                    reason: "missing required argument".to_string(),
+                });
+                continue;
+            };
+
+            match constraint.matches(value) {
+                Ok(true) => {}
+                Ok(false) | Err(Error::InvalidIpAddress { .. }) | Err(Error::InvalidUrl { .. }) => {
+                    // Invalid runtime IP/URL strings are ordinary mismatches,
+                    // not diagnostic-system failures. Normalize them here so
+                    // diagnostics can collect every violation without leaking
+                    // argument values carried by the parsing error.
+                    violations.push(ConstraintViolation {
+                        field: field.clone(),
+                        kind: ConstraintViolationKind::ConstraintMismatch,
+                        reason: "value does not match constraint".to_string(),
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(ConstraintDiagnostics {
+            closed_world,
+            violations,
+        })
     }
 
     /// Validate that `child` is a valid attenuation of this constraint set.
@@ -5426,17 +5574,41 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "URLP-001: Bare wildcard host not yet supported - see UrlPattern::new() for details"]
-    fn test_url_pattern_bare_wildcard_host() {
-        // SECURITY: Bare wildcard hosts (https://*/*) are intentionally unsupported.
-        // This pattern would match ANY domain, bypassing SSRF protection.
-        // Users must use either:
-        //   - Explicit domains: UrlPattern("https://*.example.com/*")
-        //   - UrlSafe() for SSRF-protected URL matching
-        let pattern = UrlPattern::new("https://*/*").unwrap();
+    fn test_url_pattern_bare_wildcard_host_rejected() {
+        // SECURITY: Bare wildcard hosts are intentionally unsupported: they would
+        // match any domain. Use explicit domains, *.example.com, or UrlSafe().
+        for pattern in [
+            "https://*",
+            "https://*/",
+            "https://*/*",
+            "*://*/*",
+            "https://*:8443/api/*",
+            "https://a*b.example.com/*",
+            "https://*.*.example.com/*",
+        ] {
+            let err = UrlPattern::new(pattern).expect_err(pattern);
+            assert!(
+                err.to_string().contains("wildcard host"),
+                "{pattern}: {err}"
+            );
+        }
+        assert!(UrlPattern::new("https://*.example.com/*").is_ok());
+        assert!(UrlPattern::new("https://example.com/*").is_ok());
+    }
 
-        // The parser sets host_pattern incorrectly due to replacement order,
-        // but this is actually a security feature - bare wildcard hosts should not match.
+    #[test]
+    fn test_url_pattern_bare_wildcard_host_rejected_by_human_readable_deserializers() {
+        let err = serde_json::from_str::<UrlPattern>("\"https://*/*\"").unwrap_err();
+        assert!(err.to_string().contains("wildcard host"));
+    }
+
+    #[test]
+    fn test_url_pattern_bare_wildcard_host_still_decodes_from_cbor() {
+        // Signed warrants use CBOR. Preserve decode compatibility without
+        // reopening JSON/YAML authoring paths for an invalid new pattern.
+        let mut encoded = Vec::new();
+        ciborium::ser::into_writer("https://*/*", &mut encoded).unwrap();
+        let pattern: UrlPattern = ciborium::de::from_reader(encoded.as_slice()).unwrap();
         assert!(!pattern.matches_url("https://example.com/path").unwrap());
         assert!(!pattern.matches_url("https://evil.com/attack").unwrap());
     }
@@ -5787,6 +5959,115 @@ mod tests {
     }
 
     #[test]
+    fn test_constraint_diagnostics_reports_all_failures_deterministically() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("amount", Range::new(Some(0.0), Some(100.0)).unwrap());
+        cs.insert("currency", Exact::new("USD"));
+        cs.insert("memo", Wildcard::new());
+
+        let mut args = HashMap::new();
+        args.insert("amount".to_string(), ConstraintValue::Float(300.0));
+        args.insert("z_extra".to_string(), ConstraintValue::Boolean(true));
+        args.insert("a_extra".to_string(), ConstraintValue::Boolean(true));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert!(diagnostics.closed_world);
+        assert!(!diagnostics.is_satisfied());
+        assert_eq!(
+            diagnostics
+                .violations
+                .iter()
+                .map(|violation| (violation.field.as_str(), violation.kind.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("a_extra", "unknown_field"),
+                ("z_extra", "unknown_field"),
+                ("amount", "constraint_mismatch"),
+                ("currency", "missing_required"),
+                ("memo", "missing_required"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_honors_allow_unknown_and_wildcard() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("payload", Wildcard::new());
+        cs.set_allow_unknown(true);
+
+        let mut args = HashMap::new();
+        args.insert(
+            "payload".to_string(),
+            ConstraintValue::String("anything".into()),
+        );
+        args.insert("extra".to_string(), ConstraintValue::Integer(1));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert!(!diagnostics.closed_world);
+        assert!(diagnostics.is_satisfied());
+        assert!(cs.matches(&args).is_ok());
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_and_matches_share_first_failure() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("required", Exact::new("value"));
+
+        let mut args = HashMap::new();
+        args.insert("extra".to_string(), ConstraintValue::Integer(1));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        let first = diagnostics.violations.first().unwrap();
+        let error = cs.matches(&args).unwrap_err();
+        match error {
+            Error::ConstraintNotSatisfied { field, reason } => {
+                assert_eq!(field, first.field);
+                assert_eq!(reason, first.reason);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_redacts_and_collects_invalid_network_values() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("ip", Cidr::new("10.0.0.0/8").unwrap());
+        cs.insert("url", UrlPattern::new("https://*.example.com/*").unwrap());
+        cs.insert("required", Exact::new("present"));
+
+        let invalid_ip = "secret-invalid-ip";
+        let invalid_url = "secret invalid url";
+        let mut args = HashMap::new();
+        args.insert(
+            "ip".to_string(),
+            ConstraintValue::String(invalid_ip.to_string()),
+        );
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String(invalid_url.to_string()),
+        );
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert_eq!(diagnostics.violations.len(), 3);
+        assert_eq!(
+            diagnostics
+                .violations
+                .iter()
+                .map(|violation| (violation.field.as_str(), violation.kind.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("ip", "constraint_mismatch"),
+                ("required", "missing_required"),
+                ("url", "constraint_mismatch"),
+            ]
+        );
+        let rendered = format!("{diagnostics:?}");
+        assert!(!rendered.contains(invalid_ip));
+        assert!(!rendered.contains(invalid_url));
+        assert!(cs.matches(&args).is_err());
+    }
+
+    #[test]
     fn test_zero_trust_attenuation_allow_unknown_not_inherited() {
         // Parent has allow_unknown=true, child doesn't specify
         // Child should default to allow_unknown=false (closed world)
@@ -5908,6 +6189,36 @@ mod tests {
         assert!(sp.matches(&"/data/file.txt".into()).unwrap());
         assert!(!sp.matches(&"/etc/passwd".into()).unwrap());
         assert!(!sp.matches(&123.into()).unwrap()); // Non-string returns false
+
+        // List of paths: every item must be a contained string
+        let ok_list = ConstraintValue::List(vec![
+            ConstraintValue::String("/data/a.txt".into()),
+            ConstraintValue::String("/data/sub/b.txt".into()),
+        ]);
+        assert!(sp.matches(&ok_list).unwrap());
+
+        let bad_list = ConstraintValue::List(vec![
+            ConstraintValue::String("/data/a.txt".into()),
+            ConstraintValue::String("/etc/passwd".into()),
+        ]);
+        assert!(!sp.matches(&bad_list).unwrap());
+
+        let non_str_list = ConstraintValue::List(vec![ConstraintValue::Integer(1)]);
+        assert!(!sp.matches(&non_str_list).unwrap());
+
+        // Subpath -> Subset and Subpath -> Exact(List) attenuation
+        let parent = Constraint::Subpath(sp);
+        let child_subset = Constraint::Subset(Subset::new(["/data/a.txt", "/data/b.txt"]));
+        assert!(parent.validate_attenuation(&child_subset).is_ok());
+
+        let bad_subset = Constraint::Subset(Subset::new(["/data/a.txt", "/etc/passwd"]));
+        assert!(parent.validate_attenuation(&bad_subset).is_err());
+
+        let child_exact_list = Constraint::Exact(Exact::new(ok_list));
+        assert!(parent.validate_attenuation(&child_exact_list).is_ok());
+
+        let bad_exact_list = Constraint::Exact(Exact::new(bad_list));
+        assert!(parent.validate_attenuation(&bad_exact_list).is_err());
     }
 
     // -------------------------------------------------------------------------
@@ -6400,21 +6711,19 @@ mod tests {
     }
 
     // ========================================================================
-    // Shlex corner cases (Rust conservative approximation)
+    // Shlex quoting
     // ========================================================================
 
     #[test]
-    fn test_shlex_quoted_operators_rejected_by_rust() {
-        // Python shlex accepts these (operators inside quotes are safe).
-        // Rust's conservative check rejects ANY metacharacter regardless of quoting.
-        // This is the intentional asymmetry documented in the spec.
-        let sh = Shlex::new(vec!["ls"]);
-        assert!(!sh
+    fn test_shlex_quoted_operators_are_literals() {
+        let sh = Shlex::new(vec!["ls", "echo"]);
+        assert!(sh
             .matches(&ConstraintValue::String(r#"ls "foo; bar""#.into()))
             .unwrap());
-        assert!(!sh
-            .matches(&ConstraintValue::String(r#"ls 'foo|bar'"#.into()))
+        assert!(sh
+            .matches(&ConstraintValue::String("ls 'foo|bar'".into()))
             .unwrap());
+        // `$` still expands inside double quotes, so the raw command is refused.
         assert!(!sh
             .matches(&ConstraintValue::String(r#"echo "$(date)""#.into()))
             .unwrap());
@@ -6440,14 +6749,22 @@ mod tests {
 
     #[test]
     fn test_shlex_path_traversal_in_binary() {
-        let sh = Shlex::new(vec!["npm"]);
-        // Path traversal doesn't bypass the allowlist — basename check
-        // matches "npm" but "../npm" is checked as full path first
+        let sh = Shlex::new(vec!["npm", "/usr/bin/npm"]);
+        // Any command word containing `..` is rejected, and a bare allow entry
+        // matches only that bare word.
+        assert!(!sh
+            .matches(&ConstraintValue::String("/usr/../bin/npm install".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String(
+                "/tmp/l/../../usr/bin/npm install".into()
+            ))
+            .unwrap());
         assert!(!sh
             .matches(&ConstraintValue::String("../npm install".into()))
             .unwrap());
         assert!(!sh
-            .matches(&ConstraintValue::String("/usr/../bin/npm install".into()))
+            .matches(&ConstraintValue::String("/usr/../bin/rm install".into()))
             .unwrap());
     }
 
@@ -6471,10 +6788,7 @@ mod tests {
 
     #[test]
     fn test_shlex_backslash_not_rejected() {
-        // Backslash is NOT in SHELL_DANGEROUS_CHARS — it's a quoting mechanism
-        // but not a command separator or expansion trigger. The conservative
-        // approach accepts it, which means `ls foo\ bar` passes Rust but would
-        // need Python's full shlex to determine if it's safe.
+        // A backslash escapes the next character. `ls foo\ bar` is one argument.
         let sh = Shlex::new(vec!["ls"]);
         assert!(sh
             .matches(&ConstraintValue::String(r"ls foo\ bar".into()))
@@ -6503,9 +6817,7 @@ mod tests {
 
     #[test]
     fn test_shlex_exclamation_not_rejected() {
-        // ! is history expansion in interactive bash but NOT in sh/scripts.
-        // Conservative choice: allow it. If needed, callers can use a narrower
-        // constraint or the Python Shlex which handles this.
+        // ! is history expansion in interactive bash, not in sh scripts.
         let sh = Shlex::new(vec!["echo"]);
         assert!(sh
             .matches(&ConstraintValue::String("echo hello!".into()))
@@ -6527,6 +6839,57 @@ mod tests {
         assert!(!sh
             .matches(&ConstraintValue::String("npm install".into()))
             .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_exact_attenuation_accepts_quoted_operators() {
+        let parent = Constraint::Shlex(Shlex::new(vec!["ls"]));
+        let child = Constraint::Exact(Exact::new(r#"ls "foo; bar""#));
+        assert!(parent.validate_attenuation(&child).is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\"b;c""#)))
+            .is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\\b""#)))
+            .is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\b""#)))
+            .is_ok());
+        let chained = Constraint::Exact(Exact::new("ls; rm"));
+        assert!(parent.validate_attenuation(&chained).is_err());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\""; rm"#)))
+            .is_err());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\\"; rm"#)))
+            .is_err());
+        // `#` does not start a comment here, so the shell runs `rm`.
+        let hidden = Constraint::Exact(Exact::new("ls foo#; rm -rf /"));
+        assert!(parent.validate_attenuation(&hidden).is_err());
+    }
+
+    #[test]
+    fn test_shlex_shared_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Suite {
+            cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            allow: Vec<String>,
+            command: String,
+            matches: bool,
+        }
+        let suite: Suite =
+            serde_json::from_str(include_str!("../../tests/vectors/shlex.json")).unwrap();
+        for case in suite.cases {
+            let sh = Shlex::new(case.allow);
+            let got = sh
+                .matches(&ConstraintValue::String(case.command.clone()))
+                .unwrap();
+            assert_eq!(got, case.matches, "{}", case.name);
+        }
     }
 
     // ========================================================================

@@ -495,3 +495,69 @@ class TestTerminalWarrants:
 
         # Should fail due to depth exceeded
         assert "depth" in str(exc_info.value).lower() or "exceed" in str(exc_info.value).lower()
+
+
+class TestIssuerApprovalTemplate:
+    """Approval settings on an issuer warrant carry into issued execution warrants."""
+
+    def _issuer(self, root, approvers, min_approvals):
+        return (
+            Warrant.mint_builder()
+            .issuer()
+            .issuable_tools(["transfer", "read_file"])
+            .approval_gates({"transfer": None})
+            .required_approvers([k.public_key for k in approvers])
+            .min_approvals(min_approvals)
+            .holder(root.public_key)
+            .ttl(3600)
+            .mint(root)
+        )
+
+    def test_issuer_mint_keeps_approval_settings(self):
+        root, a = SigningKey.generate(), SigningKey.generate()
+
+        issuer = self._issuer(root, [a], 1)
+
+        assert issuer.required_approvers() == [a.public_key]
+        assert issuer.min_approvals() == 1
+
+    def test_issued_execution_warrant_inherits_approvers(self):
+        root, worker = SigningKey.generate(), SigningKey.generate()
+        a, b = SigningKey.generate(), SigningKey.generate()
+        issuer = self._issuer(root, [a, b], 2)
+
+        exec_warrant = issuer.issue_execution().tool("transfer").holder(worker.public_key).ttl(60).build(root)
+
+        assert set(k.to_bytes() for k in exec_warrant.required_approvers()) == {
+            a.public_key.to_bytes(),
+            b.public_key.to_bytes(),
+        }
+        assert exec_warrant.approval_threshold() == 2
+
+    def test_issuance_cannot_drop_issuer_approver(self):
+        root, worker = SigningKey.generate(), SigningKey.generate()
+        a, other = SigningKey.generate(), SigningKey.generate()
+        issuer = self._issuer(root, [a], 1)
+
+        builder = issuer.issue_execution().tool("transfer").holder(worker.public_key).ttl(60)
+        builder.required_approvers([other.public_key])
+
+        with pytest.raises(MonotonicityError):
+            builder.build(root)
+
+    def test_issuance_cannot_dilute_approver_quorum(self):
+        root, worker = SigningKey.generate(), SigningKey.generate()
+        a, rogue = SigningKey.generate(), SigningKey.generate()
+        issuer = self._issuer(root, [a], 1)
+
+        builder = (
+            issuer.issue_execution()
+            .tool("transfer")
+            .required_approvers([a.public_key, rogue.public_key])
+            .min_approvals(1)
+            .holder(worker.public_key)
+            .ttl(60)
+        )
+
+        with pytest.raises(MonotonicityError):
+            builder.build(root)

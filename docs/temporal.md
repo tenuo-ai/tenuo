@@ -229,6 +229,8 @@ warrants as shown above.
 
 ## Capability constraints
 
+### Zero-trust closed-world rule
+
 Warrants use a **closed-world (zero-trust) model**: every argument the activity receives must be declared in the capability, even if unconstrained. Use `Wildcard()` for arguments that can take any value:
 
 ```python
@@ -253,6 +255,11 @@ warrant = (
 If an activity argument is not listed in the capability, the interceptor rejects the call with `TemporalConstraintViolation` — even if the value would otherwise be valid. This prevents accidental exposure of undeclared parameters.
 
 > **Common mistake:** listing only the constrained fields. If your activity has parameters `path` and `encoding`, the capability needs both — e.g. `.capability("read_file", path=Subpath("/data"), encoding=Wildcard())`.
+
+Prefer `Wildcard()` when the activity's argument names are known: it keeps the
+capability closed to unexpected fields. If a capability intentionally needs to
+accept every additional argument, set `_allow_unknown=True`; this is a broad
+opt-out from closed-world checking, so use it deliberately.
 
 See [Temporal Integration Reference — Constraint Types](./temporal-reference.md#constraint-types-for-ai-agent-workflows) for the full list of constraint types (`Subpath`, `UrlSafe`, `Exact`, `Pattern`, `Range`, `AnyOf`, etc.).
 

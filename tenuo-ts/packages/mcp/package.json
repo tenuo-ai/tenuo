@@ -50,7 +50,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-build-assets.mjs",
     "pack:smoke": "node scripts/pack-smoke.mjs",
-    "publish:npm": "npm publish --access public --provenance --tag beta"
+    "publish:npm": "node ../../scripts/npm-release-policy.mjs publish ."
   },
   "engines": {
     "node": ">=20"

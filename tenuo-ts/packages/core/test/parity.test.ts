@@ -153,6 +153,15 @@ describe("constraint set", () => {
     await c.denied({ amount: -1 });
   });
 
+  it.each(["all", "exists"])("cel %s rejects non-iterables without trapping", async (macro) => {
+    const tenuo = dev();
+    const c = probe(tenuo, "send", { recipients: cel(`value.${macro}(r, r == 'a')`) });
+    for (const recipients of ["sensitive-value", 5, true]) {
+      await expect(c.ok({ recipients })).rejects.toBeInstanceOf(AuthorizationDeniedError);
+    }
+    await expect(c.ok({ recipients: ["a"] })).resolves.toEqual({ recipients: ["a"] });
+  });
+
   it("under() takes case and equality options", async () => {
     const tenuo = dev();
     const strict = probe(tenuo, "read", { path: under("/data", { allowEqual: false }) });

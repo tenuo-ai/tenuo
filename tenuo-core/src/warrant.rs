@@ -38,7 +38,7 @@
 
 use crate::approval::{AuditEvent, AuditEventType};
 use crate::audit::log_event;
-use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
+use crate::constraints::{Constraint, ConstraintDiagnostics, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
@@ -764,10 +764,11 @@ impl Warrant {
         if let (Some(approvers), Some(min)) =
             (&self.payload.required_approvers, self.payload.min_approvals)
         {
-            let len = approvers.len() as u32;
+            // Distinct keys: a repeated approver cannot count twice toward the quorum.
+            let len = distinct_approver_count(approvers);
             if min > len {
                 return Err(Error::Validation(format!(
-                    "min_approvals ({}) exceeds number of required_approvers ({})",
+                    "min_approvals ({}) exceeds number of distinct required_approvers ({})",
                     min, len
                 )));
             }
@@ -867,10 +868,11 @@ impl Warrant {
         if let (Some(approvers), Some(min)) =
             (&self.payload.required_approvers, self.payload.min_approvals)
         {
-            let len = approvers.len() as u32;
+            // Distinct keys: a repeated approver cannot count twice toward the quorum.
+            let len = distinct_approver_count(approvers);
             if min > len {
                 return Err(Error::Validation(format!(
-                    "min_approvals ({}) exceeds number of required_approvers ({})",
+                    "min_approvals ({}) exceeds number of distinct required_approvers ({})",
                     min, len
                 )));
             }
@@ -963,15 +965,20 @@ impl Warrant {
 
     /// Get the effective approval threshold.
     pub fn approval_threshold(&self) -> u32 {
-        use std::convert::TryInto;
-        match (&self.payload.required_approvers, self.payload.min_approvals) {
-            (Some(approvers), Some(min)) => {
-                let len: u32 = approvers.len().try_into().unwrap_or(u32::MAX);
-                min.min(len)
-            }
-            (Some(approvers), None) => approvers.len().try_into().unwrap_or(u32::MAX),
-            (None, _) => 0,
-        }
+        approval_threshold(
+            self.payload.required_approvers.as_ref(),
+            self.payload.min_approvals,
+        )
+    }
+
+    /// Tools an approval gate is scoped against: the execution tools, or for an
+    /// issuer warrant, the tools it may issue.
+    pub(crate) fn approval_gate_scope(&self) -> BTreeMap<String, ConstraintSet> {
+        approval_gate_scope(
+            self.payload.warrant_type,
+            &self.payload.tools,
+            self.payload.issuable_tools.as_ref(),
+        )
     }
 
     /// Parse the signed `tenuo.approval_gates` extension.
@@ -1333,6 +1340,28 @@ impl Warrant {
         constraints.matches(args)
     }
 
+    /// Diagnose all capability-constraint failures without authorizing the call.
+    ///
+    /// This resolves exact and wildcard tool capabilities exactly as
+    /// [`Self::check_constraints`] does, but returns deterministic structured
+    /// diagnostics for adapters and developer tooling. It does not verify any
+    /// cryptographic or temporal security property.
+    pub fn diagnose_constraints(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<ConstraintDiagnostics> {
+        let constraints = if let Some(c) = self.payload.tools.get(tool) {
+            c
+        } else if let Some(c) = self.payload.tools.get("*") {
+            c
+        } else {
+            return Ok(ConstraintDiagnostics::tool_not_authorized(tool));
+        };
+
+        constraints.diagnose(args)
+    }
+
     /// Canonical PoP preimage: `POP_CONTEXT || CBOR((warrant_id_hex, tool, sorted_args, window_ts))`.
     ///
     /// `timestamp` is a unix-seconds instant, not a pre-windowed value. This
@@ -1547,6 +1576,143 @@ impl Warrant {
     }
 }
 
+/// Count distinct approvers in `approvers`.
+///
+/// Hash-set based: lists arrive from untrusted wire payloads before the
+/// issuer is checked, so the count must stay linear in the list length.
+fn distinct_approver_count(approvers: &[PublicKey]) -> u32 {
+    use std::convert::TryInto;
+    approvers
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        .try_into()
+        .unwrap_or(u32::MAX)
+}
+
+/// Count distinct approvers in `child` that are not present in `parent`.
+pub(crate) fn added_approver_count(parent: &[PublicKey], child: &[PublicKey]) -> u32 {
+    use std::collections::HashSet;
+    use std::convert::TryInto;
+    let parent: HashSet<_> = parent.iter().collect();
+    child
+        .iter()
+        .collect::<HashSet<_>>()
+        .difference(&parent)
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX)
+}
+
+/// Effective approval threshold: `min_approvals` capped at the distinct
+/// approver count, or every distinct approver when unset.
+fn approval_threshold(approvers: Option<&Vec<PublicKey>>, min: Option<u32>) -> u32 {
+    match (approvers, min) {
+        (Some(approvers), Some(min)) => min.min(distinct_approver_count(approvers)),
+        (Some(approvers), None) => distinct_approver_count(approvers),
+        (None, _) => 0,
+    }
+}
+
+/// A parent gate with no approvers can never be approved. A child that keeps
+/// such a gate must not name approvers: they apply warrant-wide, so the
+/// delegator could approve calls the parent could never make.
+pub(crate) fn check_approvers_under_unapprovable_gate(
+    parent: &Warrant,
+    child_scope: &BTreeMap<String, ConstraintSet>,
+    child_approvers: Option<&Vec<PublicKey>>,
+) -> Result<()> {
+    if parent
+        .payload
+        .required_approvers
+        .as_ref()
+        .is_some_and(|a| !a.is_empty())
+        || child_approvers.is_none_or(|a| a.is_empty())
+    {
+        return Ok(());
+    }
+    let parent_gates = crate::approval_gate::parse_approval_gate_map(
+        parent.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+    )?;
+    if parent_gates
+        .is_some_and(|g| crate::approval_gate::propagate_approval_gates(&g, child_scope).is_some())
+    {
+        return Err(Error::MonotonicityViolation(
+            "cannot add approvers under a parent approval gate that has none".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Approvers sorted and deduplicated, as the builders store them, so an
+/// inherited list compares equal to the parent's however the parent wrote it.
+fn canonical_approvers(approvers: Option<&Vec<PublicKey>>) -> Option<Vec<PublicKey>> {
+    approvers.map(|approvers| {
+        let mut approvers = approvers.clone();
+        approvers.sort_by_key(|a| a.to_bytes());
+        approvers.dedup();
+        approvers
+    })
+}
+
+/// Approvers in `child` that `parent` does not already list.
+fn delegated_added_approvers(parent: &Warrant, child: Option<&Vec<PublicKey>>) -> u32 {
+    match (parent.payload.required_approvers.as_deref(), child) {
+        (Some(p), Some(c)) => added_approver_count(p, c),
+        _ => 0,
+    }
+}
+
+/// A delegated child's minimum. Left at the parent's value, it rises by one per
+/// added approver, as issuance does, so adding a key never needs a separate
+/// `raise_min_approvals` call.
+fn delegated_min_approvals(
+    parent: &Warrant,
+    approvers: Option<&Vec<PublicKey>>,
+    min: Option<u32>,
+) -> Option<u32> {
+    let parent_min = parent.payload.min_approvals;
+    match (min.or(parent_min), parent_min) {
+        (Some(min), Some(parent_min)) if min == parent_min => {
+            Some(parent_min.saturating_add(delegated_added_approvers(parent, approvers)))
+        }
+        (min, _) => min,
+    }
+}
+
+/// Error text for a child threshold below `base` plus one per added approver.
+pub(crate) fn threshold_violation(base: u32, added: u32, threshold: u32) -> String {
+    if added == 0 {
+        format!(
+            "cannot lower approval threshold from {} to {}",
+            base, threshold
+        )
+    } else {
+        format!(
+            "adding {} approver(s) requires an approval threshold of at least {}, got {}",
+            added,
+            base.saturating_add(added),
+            threshold
+        )
+    }
+}
+
+/// See [`Warrant::approval_gate_scope`].
+fn approval_gate_scope(
+    warrant_type: WarrantType,
+    tools: &BTreeMap<String, ConstraintSet>,
+    issuable_tools: Option<&Vec<String>>,
+) -> BTreeMap<String, ConstraintSet> {
+    match warrant_type {
+        WarrantType::Execution => tools.clone(),
+        WarrantType::Issuer => issuable_tools
+            .into_iter()
+            .flatten()
+            .map(|name| (name.clone(), ConstraintSet::new()))
+            .collect(),
+    }
+}
+
 /// Builder for creating root warrants.
 #[derive(Debug, Clone)]
 pub struct WarrantBuilder {
@@ -1723,10 +1889,12 @@ impl WarrantBuilder {
         // Canonicalize lists for deterministic serialization
         if let Some(tools) = &mut self.issuable_tools {
             tools.sort();
+            tools.dedup();
         }
         if let Some(approvers) = &mut self.required_approvers {
             // PublicKey doesn't implement Ord, so sort by bytes
             approvers.sort_by_key(|a| a.to_bytes());
+            approvers.dedup();
         }
 
         let warrant_type = self
@@ -2123,6 +2291,18 @@ impl<'a> AttenuationBuilder<'a> {
         self.tool(tool, constraints)
     }
 
+    /// Set a single tool for issuable_tools (for issuer warrants).
+    pub fn issuable_tool(mut self, tool: impl Into<String>) -> Self {
+        self.issuable_tools = Some(vec![tool.into()]);
+        self
+    }
+
+    /// Set multiple tools for issuable_tools (for issuer warrants).
+    pub fn issuable_tools(mut self, tools: Vec<String>) -> Self {
+        self.issuable_tools = Some(tools);
+        self
+    }
+
     /// Set a shorter TTL.
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = Some(ttl);
@@ -2203,6 +2383,16 @@ impl<'a> AttenuationBuilder<'a> {
 
     /// Validate multi-sig monotonicity (cannot remove approvers or lower threshold).
     fn validate_multisig_monotonicity(&self) -> Result<()> {
+        check_approvers_under_unapprovable_gate(
+            self.parent,
+            &approval_gate_scope(
+                self.parent.payload.warrant_type,
+                &self.tools,
+                self.issuable_tools.as_ref(),
+            ),
+            self.required_approvers.as_ref(),
+        )?;
+
         if let Some(parent_approvers) = &self.parent.payload.required_approvers {
             if let Some(child_approvers) = &self.required_approvers {
                 for parent_key in parent_approvers {
@@ -2241,6 +2431,25 @@ impl<'a> AttenuationBuilder<'a> {
             }
         }
 
+        // An unset parent minimum still means every parent approver; each added
+        // approver must also raise the effective threshold so a new key cannot
+        // satisfy the quorum in place of a parent approver.
+        let added = delegated_added_approvers(self.parent, self.required_approvers.as_ref());
+        let base = self.parent.approval_threshold();
+        let threshold = approval_threshold(
+            self.required_approvers.as_ref(),
+            delegated_min_approvals(
+                self.parent,
+                self.required_approvers.as_ref(),
+                self.min_approvals,
+            ),
+        );
+        if threshold < base.saturating_add(added) {
+            return Err(Error::MonotonicityViolation(threshold_violation(
+                base, added, threshold,
+            )));
+        }
+
         Ok(())
     }
 
@@ -2271,6 +2480,15 @@ impl<'a> AttenuationBuilder<'a> {
 
     /// Freeze the child payload for an external or local parent signer.
     pub fn prepare(mut self) -> Result<PreparedDelegation> {
+        if let Some(tools) = &mut self.issuable_tools {
+            tools.sort();
+            tools.dedup();
+        }
+        if let Some(approvers) = &mut self.required_approvers {
+            approvers.sort_by_key(|a| a.to_bytes());
+            approvers.dedup();
+        }
+
         let new_depth = self.parent.depth() + 1;
         if new_depth > MAX_DELEGATION_DEPTH {
             return Err(Error::DepthExceeded(new_depth, MAX_DELEGATION_DEPTH));
@@ -2360,7 +2578,7 @@ impl<'a> AttenuationBuilder<'a> {
                 if let Some(parent_issuable) = &self.parent.payload.issuable_tools {
                     if let Some(ref child_issuable) = self.issuable_tools {
                         for tool in child_issuable {
-                            if !parent_issuable.contains(tool) {
+                            if !parent_issuable.iter().any(|t| t == tool || t == "*") {
                                 return Err(Error::MonotonicityViolation(format!(
                                     "issuable_tool '{}' not in parent's issuable_tools",
                                     tool
@@ -2375,8 +2593,6 @@ impl<'a> AttenuationBuilder<'a> {
             }
         }
 
-        self.validate_multisig_monotonicity()?;
-
         // Propagate approval gates: scope inherited gate map to the child's tool set.
         // Gates for tools the child doesn't have are dropped.
         if let Some(gate_bytes) = self
@@ -2386,7 +2602,14 @@ impl<'a> AttenuationBuilder<'a> {
         {
             let parent_gates = crate::approval_gate::parse_approval_gate_map(Some(&gate_bytes))?;
             if let Some(parent_gates) = parent_gates {
-                match crate::approval_gate::propagate_approval_gates(&parent_gates, &self.tools) {
+                match crate::approval_gate::propagate_approval_gates(
+                    &parent_gates,
+                    &approval_gate_scope(
+                        self.parent.payload.warrant_type,
+                        &self.tools,
+                        self.issuable_tools.as_ref(),
+                    ),
+                ) {
                     Some(scoped) => {
                         let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
                         self.extensions.insert(
@@ -2395,11 +2618,31 @@ impl<'a> AttenuationBuilder<'a> {
                         );
                     }
                     None => {
+                        // No gate survives: inherited approvers have nothing to
+                        // approve. Approvers set on this builder would be lost.
+                        if canonical_approvers(self.required_approvers.as_ref())
+                            != canonical_approvers(self.parent.payload.required_approvers.as_ref())
+                            || self.min_approvals != self.parent.payload.min_approvals
+                        {
+                            return Err(Error::Validation(
+                                "required_approvers requires an approval gate map".to_string(),
+                            ));
+                        }
                         self.extensions
                             .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
+                        self.required_approvers = None;
+                        self.min_approvals = None;
                     }
                 }
             }
+        }
+
+        if self
+            .extensions
+            .contains_key(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
+            || self.required_approvers.is_some()
+        {
+            self.validate_multisig_monotonicity()?;
         }
 
         // Validate extensions
@@ -2448,7 +2691,15 @@ impl<'a> AttenuationBuilder<'a> {
             self.parent.payload.expires_at
         };
 
-        let effective_min = self.min_approvals.or(self.parent.payload.min_approvals);
+        let effective_min = if self.required_approvers.is_some() {
+            delegated_min_approvals(
+                self.parent,
+                self.required_approvers.as_ref(),
+                self.min_approvals,
+            )
+        } else {
+            None
+        };
 
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -3129,6 +3380,16 @@ impl OwnedAttenuationBuilder {
 
     /// Validate multi-sig monotonicity.
     fn validate_multisig_monotonicity(&self) -> Result<()> {
+        check_approvers_under_unapprovable_gate(
+            &self.parent,
+            &approval_gate_scope(
+                self.parent.payload.warrant_type,
+                &self.tools,
+                self.issuable_tools.as_ref(),
+            ),
+            self.required_approvers.as_ref(),
+        )?;
+
         if let Some(parent_approvers) = &self.parent.payload.required_approvers {
             if let Some(child_approvers) = &self.required_approvers {
                 for parent_key in parent_approvers {
@@ -3167,6 +3428,25 @@ impl OwnedAttenuationBuilder {
             }
         }
 
+        // An unset parent minimum still means every parent approver; each added
+        // approver must also raise the effective threshold so a new key cannot
+        // satisfy the quorum in place of a parent approver.
+        let added = delegated_added_approvers(&self.parent, self.required_approvers.as_ref());
+        let base = self.parent.approval_threshold();
+        let threshold = approval_threshold(
+            self.required_approvers.as_ref(),
+            delegated_min_approvals(
+                &self.parent,
+                self.required_approvers.as_ref(),
+                self.min_approvals,
+            ),
+        );
+        if threshold < base.saturating_add(added) {
+            return Err(Error::MonotonicityViolation(threshold_violation(
+                base, added, threshold,
+            )));
+        }
+
         Ok(())
     }
 
@@ -3179,9 +3459,11 @@ impl OwnedAttenuationBuilder {
         // Canonicalize lists for deterministic serialization
         if let Some(tools) = &mut self.issuable_tools {
             tools.sort();
+            tools.dedup();
         }
         if let Some(approvers) = &mut self.required_approvers {
             approvers.sort_by_key(|a| a.to_bytes());
+            approvers.dedup();
         }
 
         // Delegation authority check: signer must be the parent's holder
@@ -3280,7 +3562,7 @@ impl OwnedAttenuationBuilder {
                 if let Some(parent_issuable) = &self.parent.payload.issuable_tools {
                     if let Some(ref child_issuable) = self.issuable_tools {
                         for tool in child_issuable {
-                            if !parent_issuable.contains(tool) {
+                            if !parent_issuable.iter().any(|t| t == tool || t == "*") {
                                 return Err(Error::MonotonicityViolation(format!(
                                     "issuable_tool '{}' not in parent's issuable_tools",
                                     tool
@@ -3295,8 +3577,6 @@ impl OwnedAttenuationBuilder {
             }
         }
 
-        self.validate_multisig_monotonicity()?;
-
         // Propagate approval gates: scope inherited gate map to the child's tool set.
         if let Some(gate_bytes) = self
             .extensions
@@ -3305,7 +3585,14 @@ impl OwnedAttenuationBuilder {
         {
             let parent_gates = crate::approval_gate::parse_approval_gate_map(Some(&gate_bytes))?;
             if let Some(parent_gates) = parent_gates {
-                match crate::approval_gate::propagate_approval_gates(&parent_gates, &self.tools) {
+                match crate::approval_gate::propagate_approval_gates(
+                    &parent_gates,
+                    &approval_gate_scope(
+                        self.parent.payload.warrant_type,
+                        &self.tools,
+                        self.issuable_tools.as_ref(),
+                    ),
+                ) {
                     Some(scoped) => {
                         let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
                         self.extensions.insert(
@@ -3314,11 +3601,31 @@ impl OwnedAttenuationBuilder {
                         );
                     }
                     None => {
+                        // No gate survives: inherited approvers have nothing to
+                        // approve. Approvers set on this builder would be lost.
+                        if canonical_approvers(self.required_approvers.as_ref())
+                            != canonical_approvers(self.parent.payload.required_approvers.as_ref())
+                            || self.min_approvals != self.parent.payload.min_approvals
+                        {
+                            return Err(Error::Validation(
+                                "required_approvers requires an approval gate map".to_string(),
+                            ));
+                        }
                         self.extensions
                             .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
+                        self.required_approvers = None;
+                        self.min_approvals = None;
                     }
                 }
             }
+        }
+
+        if self
+            .extensions
+            .contains_key(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
+            || self.required_approvers.is_some()
+        {
+            self.validate_multisig_monotonicity()?;
         }
 
         // Defense-in-depth: verify the final child gate map is monotonically
@@ -3337,7 +3644,11 @@ impl OwnedAttenuationBuilder {
             crate::approval_gate::verify_approval_gate_monotonicity(
                 parent_gates.as_ref(),
                 child_gates.as_ref(),
-                &self.tools,
+                &approval_gate_scope(
+                    self.parent.payload.warrant_type,
+                    &self.tools,
+                    self.issuable_tools.as_ref(),
+                ),
             )
             .map_err(|e| Error::Validation(format!("approval gate monotonicity violation: {e}")))?;
         }
@@ -3369,7 +3680,15 @@ impl OwnedAttenuationBuilder {
             self.parent.payload.expires_at
         };
 
-        let effective_min = self.min_approvals.or(self.parent.payload.min_approvals);
+        let effective_min = if self.required_approvers.is_some() {
+            delegated_min_approvals(
+                &self.parent,
+                self.required_approvers.as_ref(),
+                self.min_approvals,
+            )
+        } else {
+            None
+        };
 
         let payload = WarrantPayload {
             version: WARRANT_VERSION as u8,
@@ -3660,6 +3979,7 @@ impl<'a> IssuanceBuilder<'a> {
         // Note: IssuanceBuilder only creates execution warrants, so no issuable_tools
         if let Some(approvers) = &mut self.required_approvers {
             approvers.sort_by_key(|a| a.to_bytes());
+            approvers.dedup();
         }
 
         // Delegation authority check: signer must be the issuer warrant's holder
@@ -3694,7 +4014,7 @@ impl<'a> IssuanceBuilder<'a> {
         if let Some(issuable_tools) = &self.issuer.payload.issuable_tools {
             for (tool, constraints) in &self.tools {
                 // 1. Tool must be issuable
-                if !issuable_tools.contains(tool) {
+                if !issuable_tools.iter().any(|t| t == tool || t == "*") {
                     return Err(Error::Validation(format!(
                         "tool '{}' is not in issuer's issuable_tools",
                         tool
@@ -3738,7 +4058,7 @@ impl<'a> IssuanceBuilder<'a> {
         // Validate all tools are in issuable_tools
         if let Some(issuable_tools) = &self.issuer.payload.issuable_tools {
             for tool in self.tools.keys() {
-                if !issuable_tools.contains(tool) {
+                if !issuable_tools.iter().any(|t| t == tool || t == "*") {
                     return Err(Error::UnauthorizedToolIssuance {
                         tool: tool.clone(),
                         allowed: issuable_tools.clone(),
@@ -3814,17 +4134,6 @@ impl<'a> IssuanceBuilder<'a> {
             }
         }
 
-        // Validate min_approvals if set
-        if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {
-            if min as usize > approvers.len() {
-                return Err(Error::Validation(format!(
-                    "min_approvals ({}) cannot exceed required_approvers count ({})",
-                    min,
-                    approvers.len()
-                )));
-            }
-        }
-
         // Validate tool validation depth
         for constraints in self.tools.values() {
             constraints.validate_depth()?;
@@ -3851,6 +4160,78 @@ impl<'a> IssuanceBuilder<'a> {
                             .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
                     }
                 }
+            }
+        }
+
+        // The issuer's approvers and threshold are part of its approval template:
+        // wherever a gate survives scoping, the issued warrant keeps them. Issuance
+        // may add approvers or raise the threshold, never remove or lower them.
+        if self
+            .extensions
+            .contains_key(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
+        {
+            if let Some(issuer_approvers) = &self.issuer.payload.required_approvers {
+                match &self.required_approvers {
+                    None => self.required_approvers = Some(issuer_approvers.clone()),
+                    Some(approvers) => {
+                        for key in issuer_approvers {
+                            if !approvers.contains(key) {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "cannot remove issuer approver {}",
+                                    hex::encode(key.to_bytes())
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            let added = match (
+                self.issuer.payload.required_approvers.as_deref(),
+                self.required_approvers.as_deref(),
+            ) {
+                (Some(p), Some(c)) => added_approver_count(p, c),
+                _ => 0,
+            };
+            if let Some(issuer_min) = self.issuer.payload.min_approvals {
+                match self.min_approvals {
+                    None => self.min_approvals = Some(issuer_min.saturating_add(added)),
+                    Some(min) if min < issuer_min => {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "cannot lower min_approvals from {} to {}",
+                            issuer_min, min
+                        )));
+                    }
+                    Some(_) => {}
+                }
+            }
+            // An unset issuer minimum still means every issuer approver; each added
+            // approver must also raise the effective threshold so a new key cannot
+            // satisfy the quorum in place of an issuer approver.
+            let required_threshold = self.issuer.approval_threshold().saturating_add(added);
+            let threshold =
+                approval_threshold(self.required_approvers.as_ref(), self.min_approvals);
+            if threshold < required_threshold {
+                return Err(Error::MonotonicityViolation(threshold_violation(
+                    self.issuer.approval_threshold(),
+                    added,
+                    threshold,
+                )));
+            }
+        }
+        check_approvers_under_unapprovable_gate(
+            self.issuer,
+            &self.tools,
+            self.required_approvers.as_ref(),
+        )?;
+
+        // Validate min_approvals if set
+        if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {
+            if min as usize > approvers.len() {
+                return Err(Error::Validation(format!(
+                    "min_approvals ({}) cannot exceed required_approvers count ({})",
+                    min,
+                    approvers.len()
+                )));
             }
         }
 
