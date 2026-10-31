@@ -328,6 +328,7 @@ type Generated = {
   sdkInspectWarrant(wire: string): WasmInspect;
   sdkDiagnoseConstraints(wire: string, tool: string, args: unknown): WasmConstraintDiagnostics;
   sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
+  sdkCanonicalMetaSignature(signature: string): string;
   sdkProtocolLimits(): WasmProtocolLimits;
   sdkPublicKeyFromHolderKey(holderSecret: Uint8Array): string;
   sdkSignApproval(

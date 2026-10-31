@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-10-30
+
+### Security
+
+- **The filesystem jail requires the stored spelling of every path component.**
+  On a case-insensitive volume, a cold lookup could make the kernel report the
+  attacker's case-folded or 8.3 alias rather than the stored name. That let an
+  alias of a path denied by a case-sensitive constraint pass the post-open
+  identity check, including for `write_truncate`. The jail now lists every
+  component byte for byte and verifies that the opened descriptor is the
+  stored entry before returning or truncating it. The opt-in `filesystem`
+  feature in Rust `tenuo` 0.3.3 and 0.3.4 is affected.
+  ([GHSA-42gf-5647-7wg3](https://github.com/tenuo-ai/tenuo/security/advisories/GHSA-42gf-5647-7wg3))
+
+- **TypeScript replay protection keys on verified signature bytes.**
+  `nonceStore` previously received the proof-of-possession signature exactly
+  as spelled on the wire. Re-encoding an already accepted signature with
+  whitespace, different Base64 padding, or the URL-safe alphabet produced a
+  new store key while verifying as the same proof. `@tenuo/core` now gives
+  built-in and custom stores `tenuo-pop-v1:<lowercase signature hex>`, so every
+  equivalent encoding is one consumed token. Published `@tenuo/core` and
+  `@tenuo/mcp` versions through 0.3.4-beta.0 are affected.
+  ([GHSA-7qmv-9rg5-mvq2](https://github.com/tenuo-ai/tenuo/security/advisories/GHSA-7qmv-9rg5-mvq2))
+
+### Upgrade notes
+
+- Custom TypeScript `NonceStore` implementations now receive a namespaced,
+  canonical replay key instead of the raw Base64 PoP signature. Stores should
+  treat the key as opaque; implementations that parse the old value must be
+  updated.
+
 ## [0.3.4] - 2026-10-30
 
 ### Added

@@ -24,6 +24,19 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
+/// Decode an MCP proof-of-possession signature with the same parser used by
+/// authorization and return its canonical bytes as lowercase hex.
+///
+/// Replay stores must key on the verified signature bytes, not on the wire
+/// spelling: whitespace, padding, and the standard/URL-safe base64 alphabets
+/// can encode the same Ed25519 signature.
+#[wasm_bindgen(js_name = sdkCanonicalMetaSignature)]
+pub fn sdk_canonical_meta_signature(signature: &str) -> Result<String, JsError> {
+    tenuo::meta_envelope::decode_signature(signature)
+        .map(|decoded| hex::encode(decoded.to_bytes()))
+        .map_err(|_| JsError::new("invalid proof-of-possession signature"))
+}
+
 /// The core's Shlex decision for `command`.
 ///
 /// `allow` is a list of binary names or paths. The returned object has
