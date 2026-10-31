@@ -1275,6 +1275,82 @@ class MCPVerifier:
         latency_us = (time.perf_counter_ns() - start_ns) // 1000
         return _emit_and_return(result, chain_result=chain_result, latency_us=latency_us)
 
+    @property
+    def require_warrant(self) -> bool:
+        """Whether calls without a Tenuo envelope are denied."""
+        return self._require_warrant
+
+    def verify_task_request(
+        self,
+        method: str,
+        params: Any,
+        *,
+        bindings: Any,
+    ) -> Any:
+        """Authorize an MCP Tasks ``tasks/get``/``tasks/update``/``tasks/cancel``.
+
+        *params* is the raw request params mapping, ``_meta`` included.
+        *bindings* is the :class:`~tenuo.mcp.tasks.TaskBindingStore` the
+        creating ``tools/call`` was recorded in. The decision is audited and
+        receipted like a tool call, with the method as the tool name.
+
+        With ``require_warrant=False``, a request without an envelope for a
+        task that has no binding (created without a warrant) is allowed.
+        Bound tasks always need their warrant.
+
+        Never raises. Returns a :class:`~tenuo.mcp.tasks.TaskAccessResult`.
+        """
+        import time
+
+        from .tasks import TaskAccessResult, verify_task_request
+
+        start_ns = time.perf_counter_ns()
+        if not isinstance(params, Mapping):
+            params = {}
+        task_id = params.get("taskId")
+        meta = params.get("_meta")
+        envelope_absent = not (isinstance(meta, Mapping) and "tenuo" in meta)
+        if (
+            not self._require_warrant
+            and envelope_absent
+            and isinstance(task_id, str)
+            and bindings.get(task_id) is None
+        ):
+            logger.warning(
+                "Unauthenticated MCP %s allowed for unbound task (require_warrant=False).",
+                method,
+            )
+            result = TaskAccessResult(
+                allowed=True, tool=method, task_id=task_id, arguments={"taskId": task_id}
+            )
+        else:
+            result = verify_task_request(
+                method,
+                params,
+                store=bindings,
+                authorizer=self._authorizer,
+                nonce_store=self._nonce_store,
+            )
+
+        try:
+            setattr(result, "authorizer", self._authorizer)
+        except Exception:
+            pass
+        try:
+            from tenuo.receipts import collect_enforcement_receipt
+
+            collect_enforcement_receipt(result, None, runtime=self._runtime)
+        except Exception:
+            logger.warning("runtime receipt collection failed for '%s'", method, exc_info=True)
+        if self._control_plane:
+            try:
+                self._control_plane.emit_for_enforcement(
+                    result, latency_us=(time.perf_counter_ns() - start_ns) // 1000
+                )
+            except Exception:
+                logger.warning("Control plane emission failed for '%s'; audit event lost", method, exc_info=True)
+        return result
+
     def verify_or_raise(
         self,
         tool_name: str,

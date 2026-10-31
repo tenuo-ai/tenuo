@@ -409,6 +409,75 @@ Both first-call gate hits and partial multi-sig use `-32002` so clients can shar
 
 ---
 
+## Long-Running Tasks
+
+The [MCP Tasks extension](https://github.com/modelcontextprotocol/ext-tasks) (`io.modelcontextprotocol/tasks`, SEP-2663) lets a server answer `tools/call` with a task handle. The client then follows the work with `tasks/get`, answers input with `tasks/update` and stops it with `tasks/cancel`. The extension leaves authorization of those calls to each server. Without a check, the `taskId` works as a bearer token: anyone who holds it can read the result, inject input or cancel the task.
+
+Tenuo binds each task to the warrant that created it. A `tasks/*` request must present that warrant, held by the same key, with a fresh PoP over the method name and the request params.
+
+```
+Client                                    Server
+  │  tools/call + _meta.tenuo              │
+  │───────────────────────────────────────►│ verify warrant, start task
+  │  ◄── resultType: "task", taskId ──────│ bind taskId → warrant id + holder
+  │                                        │
+  │  tasks/get {taskId} + _meta.tenuo      │
+  │  (PoP over "tasks/get" + params)       │
+  │───────────────────────────────────────►│ same warrant? same holder? PoP?
+  │  ◄── status / result ─────────────────│
+```
+
+### Server-Side
+
+`TenuoMiddleware` does this on FastMCP 4 with `fastmcp-tasks` (`pip install "fastmcp[tasks]"`). No extra setup is needed:
+
+```python
+from fastmcp import FastMCP
+from fastmcp_tasks import TasksExtension
+from tenuo.mcp import MCPVerifier, TenuoMiddleware
+
+mcp = FastMCP("app", middleware=[TenuoMiddleware(verifier)])
+mcp.add_extension(TasksExtension())
+
+@mcp.tool(task=True)
+async def crunch(dataset: str) -> str:
+    ...
+```
+
+Bindings live in an in-memory store by default. When several processes serve the same tasks (FastMCP with a Redis backend, say), pass a shared `TaskBindingStore` with `TenuoMiddleware(verifier, task_bindings=store)`. `TaskBinding` has `task_id`, `warrant_id`, `holder` and `expires_at` for serializing.
+
+The decision is made in the core (`tenuo_core.verify_task_request`). Other servers can call `MCPVerifier.verify_task_request(method, params, bindings=store)`, which also audits the decision like a tool call, with the method as the tool name. `inputResponses` are left out of audit events.
+
+FastMCP 3 serves its older tasks protocol outside the middleware chain, so `TenuoMiddleware` cannot guard `tasks/*` there.
+
+### Client-Side
+
+Pass `tasks=True` (MCP SDK 2.x). The client then negotiates the 2026-07-28 protocol and advertises the extension. `call_tool` polls a tasked call to its result. `call_tool_task` returns a handle:
+
+```python
+async with SecureMCPClient(url=URL, transport="http", inject_warrant=True, tasks=True) as client:
+    async with mint(Capability("crunch")):
+        result = await client.call_tool("crunch", {"dataset": "q3"})   # polls to completion
+
+        task = await client.call_tool_task("crunch", {"dataset": "q4"})
+    status = await task.status()        # signed tasks/get
+    await task.cancel()                 # signed tasks/cancel
+```
+
+The handle keeps the warrant chain and key that created the task, so it keeps working after the `mint` scope closes. When a task pauses for input, `wait()` raises `TaskInputRequired`; answer with `task.update({...})`. Clients that do not sign `tasks/*` requests, including FastMCP's own `Client`, are denied once they start polling a bound task.
+
+### Rules
+
+- **Same warrant, same holder.** The presented chain must contain the creating warrant, and its leaf must be held by the same key. A new warrant for the same key does not reach an existing task.
+- **The warrant's TTL caps the task.** Once the creating warrant expires, the task cannot be reached. Issue it with a TTL that covers the task.
+- **Each request is signed for itself.** A PoP for `tasks/get` does not cancel, and changing `inputResponses` breaks the signature. Proofs have one-second resolution, so the client never signs two task requests in the same second.
+- **No task-id oracle.** An unknown task and someone else's task get the same `-32001` denial.
+- **Rollout.** With `require_warrant=False`, a task created without a warrant is reachable without one. A bound task always needs its warrant.
+
+Denials are JSON-RPC errors on the `tasks/*` request: `-32001` for access, `-32602` for malformed params or envelope, with `error.data.error_type` (`missing_signature`, `invalid_pop`, `invalid_warrant`, `task_not_accessible`, `replay`).
+
+---
+
 ## MCP Configuration
 
 Define how to extract constraints from MCP tool call arguments.

@@ -116,6 +116,7 @@ pub mod revocation_tracker;
 pub mod sdk;
 pub mod shell_words;
 pub mod strict_json;
+pub mod task_binding;
 pub mod verification;
 pub mod warrant;
 pub mod wire;
