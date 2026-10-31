@@ -2,7 +2,7 @@
 # End-to-end test: Envoy HTTP ext_authz -> Tenuo authorizer -> httpbin.
 #
 # Usage (from any directory):
-#   docs/quickstart/envoy/e2e-test.sh              # published image (tenuo/authorizer:0.3.3)
+#   docs/quickstart/envoy/e2e-test.sh              # published image (tenuo/authorizer:0.3.4)
 #   E2E_BUILD=1 docs/quickstart/envoy/e2e-test.sh  # build the authorizer from this checkout
 #   TENUO_AUTHORIZER_IMAGE=tenuo-authorizer:e2e docs/quickstart/envoy/e2e-test.sh
 #

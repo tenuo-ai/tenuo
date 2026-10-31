@@ -366,8 +366,8 @@ This runs the [orchestrator -> worker -> authorizer](https://tenuo.ai/demo.html)
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.3.3  # Sidecar for warrant verification
-docker pull tenuo/control:0.3.3     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.3.4  # Sidecar for warrant verification
+docker pull tenuo/control:0.3.4     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -404,7 +404,7 @@ The core crate is the protocol. The `sdk` feature is the enforcement surface: a 
 
 ```toml
 [dependencies]
-tenuo = { version = "0.3.3", features = ["sdk"] }
+tenuo = { version = "0.3.4", features = ["sdk"] }
 ```
 
 ```rust

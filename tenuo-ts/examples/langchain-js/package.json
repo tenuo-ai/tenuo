@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "@langchain/core": "1.2.17",
-    "@tenuo/core": "0.3.3-beta.0",
+    "@tenuo/core": "0.3.4-beta.0",
     "zod": "4.3.5"
   },
   "devDependencies": {
