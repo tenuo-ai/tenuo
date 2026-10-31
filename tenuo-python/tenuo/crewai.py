@@ -82,8 +82,12 @@ Usage (Tier 2 - Warrant with PoP):
 
 from __future__ import annotations
 
+import inspect
 import logging
-from dataclasses import dataclass, field
+import threading
+import time
+import warnings
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import (
     TYPE_CHECKING,
@@ -119,12 +123,13 @@ from tenuo import (
     Wildcard,
 )
 from ._builder import BaseGuardBuilder
-from .config import resolve_trusted_roots
+from .config import resolve_trusted_roots, should_block_violation
 
 # Import unified enforcement logic
 from tenuo._enforcement import (
     DenialResult,
     EnforcementResult,
+    _apply_observe_mode,
     enforce_tool_call,
     enforce_tool_call_async,
     handle_denial,
@@ -133,10 +138,11 @@ from tenuo._enforcement import (
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_crewai_compat  # noqa: E402
+from tenuo.approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 
 # Import Python-only security constraints
 from tenuo.constraints import Shlex, Subpath, UrlSafe
-from tenuo.exceptions import ConfigurationError
+from tenuo.exceptions import ApprovalExpired, ConfigurationError, InvalidApproval
 
 # Import shared constraint checking logic from framework-agnostic core
 from tenuo.core import check_constraint
@@ -203,6 +209,48 @@ Constraint = Union[
 
 # Denial modes
 DenialMode = Literal["raise", "skip", "log"]
+
+# Approval failures that enforce_tool_call raises instead of returning as a
+# denial. Mapped to the error codes recorded in the audit event.
+_APPROVAL_ERROR_CODES = (
+    (ApprovalDenied, "APPROVAL_DENIED"),
+    (ApprovalRequired, "APPROVAL_REQUIRED"),
+    (ApprovalVerificationError, "APPROVAL_VERIFICATION_FAILED"),
+    (InvalidApproval, "APPROVAL_VERIFICATION_FAILED"),
+    (ApprovalExpired, "APPROVAL_VERIFICATION_FAILED"),
+)
+# Keep this as a literal tuple: older mypy versions cannot prove that a tuple
+# produced by a comprehension contains only exception classes when it appears
+# in an ``except`` clause.
+_APPROVAL_ERRORS = (
+    ApprovalDenied,
+    ApprovalRequired,
+    ApprovalVerificationError,
+    InvalidApproval,
+    ApprovalExpired,
+)
+
+
+def _normalize_role(role: str) -> str:
+    """Canonical form of an agent role for namespace lookup.
+
+    CrewAI roles are free text ("Researcher", "Senior  Analyst"), while policy
+    keys are usually written in lower case. Matching ignores case and runs of
+    whitespace so a namespaced policy is never skipped over its spelling.
+    """
+    return " ".join(role.split()).casefold()
+
+
+def _hook_call_info(context: Any, agent_role: Optional[str]) -> "tuple[str, Any, Optional[str]]":
+    """Read ``(tool_name, args, role)`` from a CrewAI ToolCallHookContext."""
+    tool_name = getattr(context, "tool_name", None) or ""
+    args = getattr(context, "tool_input", None) or {}
+    effective_role = agent_role
+    if effective_role is None:
+        agent = getattr(context, "agent", None)
+        if agent is not None:
+            effective_role = getattr(agent, "role", None)
+    return tool_name, args, effective_role
 
 
 # =============================================================================
@@ -394,6 +442,27 @@ class InvalidPoP(TenuoCrewAIError):
         super().__init__(f"Invalid Proof-of-Possession: {reason}\n  Docs: https://tenuo.ai/docs/tier2#pop")
 
 
+class UntrustedWarrant(InvalidPoP):
+    """Raised when the warrant does not chain to a trusted root.
+
+    This indicates either:
+    - The root issuer is not in ``trusted_roots``
+    - A delegated warrant was presented without its parent chain
+
+    Subclasses ``InvalidPoP`` so existing ``except InvalidPoP`` handlers
+    keep catching it; the signature itself may be fine.
+    """
+
+    error_code = "UNTRUSTED_WARRANT"
+
+    def __init__(self, reason: str = "Warrant does not chain to a trusted root", error_type: Optional[str] = None):
+        self.reason = reason
+        self.error_type = error_type
+        TenuoCrewAIError.__init__(
+            self, f"Untrusted warrant: {reason}\n  Docs: https://tenuo.ai/docs/tier2#trusted-roots"
+        )
+
+
 class WarrantToolDenied(TenuoCrewAIError):
     """Raised when a warrant doesn't authorize a specific tool.
 
@@ -456,6 +525,10 @@ class AuditEvent:
         error_code: Machine-readable code if denied
         agent_role: CrewAI agent role (for namespaced tools)
         timestamp: ISO timestamp
+        observed: True for a DENY that observe mode let proceed
+        warrant_id: ID of the bound warrant, when one was bound (denials only)
+        constraint_violated: Field that failed, or "tool" when the tool
+            itself was not authorized (denials only)
     """
 
     tool: str
@@ -465,6 +538,9 @@ class AuditEvent:
     error_code: Optional[str] = None
     agent_role: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    observed: bool = False
+    warrant_id: Optional[str] = None
+    constraint_violated: Optional[str] = None
 
 
 AuditCallback = Callable[[AuditEvent], None]
@@ -680,9 +756,32 @@ class CrewAIGuard:
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._registered_hook: Optional[Callable] = None
+        self._namespaced = self._index_namespaced(allowed)
 
         from .control_plane import get_or_create
         self._control_plane = get_or_create()
+
+    @staticmethod
+    def _index_namespaced(allowed: Dict[str, Dict[str, Constraint]]) -> Dict[str, str]:
+        """Map ``normalized_role::tool`` to the policy key it came from.
+
+        Raises:
+            CrewAIConfigurationError: If two keys differ only in role case or
+                whitespace, since it would be ambiguous which one applies.
+        """
+        index: Dict[str, str] = {}
+        for key in allowed:
+            role, sep, tool = key.partition("::")
+            if not sep:
+                continue
+            normalized = f"{_normalize_role(role)}::{tool}"
+            if normalized in index and index[normalized] != key:
+                raise CrewAIConfigurationError(
+                    f"Policy keys {index[normalized]!r} and {key!r} name the same agent role; "
+                    "role matching ignores case and whitespace, so keep only one."
+                )
+            index[normalized] = key
+        return index
 
     def register(self, *, agent_role: Optional[str] = None) -> "CrewAIGuard":
         """Register this guard as a global before_tool_call hook.
@@ -771,7 +870,12 @@ class CrewAIGuard:
 
         The hook receives ToolCallHookContext and returns:
         - False to block/skip the tool call
-        - None (or True) to allow the call to proceed
+        - None to allow the call to proceed
+
+        CrewAI's hook dispatcher swallows any exception a hook raises and runs
+        the tool anyway, so the hook never lets one escape: every failure
+        (a denial raised under ``on_denial="raise"``, a refused or missing
+        approval, an unexpected error) becomes ``False``.
 
         Args:
             agent_role: Optional agent role for namespaced constraint lookup
@@ -783,20 +887,11 @@ class CrewAIGuard:
 
         def tenuo_authorize_hook(context: Any) -> Optional[bool]:
             """Tenuo authorization hook for CrewAI before_tool_call."""
-            tool_name = getattr(context, "tool_name", None) or ""
-            args = getattr(context, "tool_input", None) or {}
-
-            effective_role = agent_role
-            if effective_role is None:
-                agent = getattr(context, "agent", None)
-                if agent and hasattr(agent, "role"):
-                    effective_role = agent.role
-
+            tool_name, args, effective_role = _hook_call_info(context, agent_role)
             try:
                 result = guard._authorize(tool_name, args, agent_role=effective_role)
-            except TenuoCrewAIError as e:
-                logger.info(f"[TENUO] BLOCKED {tool_name}: {e}")
-                return False
+            except Exception as e:
+                return guard._block_on_exception(tool_name, args, effective_role, e)
 
             if result is not None:
                 logger.info(f"[TENUO] BLOCKED {tool_name}: {result.reason}")
@@ -805,6 +900,37 @@ class CrewAIGuard:
             return None
 
         return tenuo_authorize_hook
+
+    def _block_on_exception(
+        self,
+        tool_name: str,
+        args: Any,
+        agent_role: Optional[str],
+        error: BaseException,
+    ) -> bool:
+        """Turn an exception from ``_authorize`` into a hook block (``False``).
+
+        Denials and approval failures were already audited by ``_authorize``;
+        anything else is an unexpected failure and is audited here.
+        """
+        if isinstance(error, (TenuoCrewAIError,) + _APPROVAL_ERRORS):
+            logger.info(f"[TENUO] BLOCKED {tool_name}: {error}")
+        else:
+            logger.error(
+                "[TENUO] BLOCKED %s: authorization raised %s; failing closed",
+                tool_name,
+                type(error).__name__,
+                exc_info=True,
+            )
+            self._emit_audit(
+                tool_name,
+                args if isinstance(args, dict) else {},
+                "DENY",
+                f"Authorization error ({type(error).__name__}): {error}",
+                error_code="AUTHORIZATION_ERROR",
+                agent_role=agent_role,
+            )
+        return False
 
     def authorize_hook(self, context: Any, *, agent_role: Optional[str] = None) -> Optional[bool]:
         """Authorize a tool call from a CrewAI hook context.
@@ -819,7 +945,7 @@ class CrewAIGuard:
             agent_role: Optional agent role (overrides context-derived role)
 
         Returns:
-            None to allow the call, False to block it
+            None to allow the call, False to block it. Never raises.
 
         Example:
             @CrewBase
@@ -831,72 +957,53 @@ class CrewAIGuard:
         hook = self._create_hook(agent_role=agent_role)
         return hook(context)
 
-    def _create_async_hook(self, *, agent_role: Optional[str] = None) -> Callable[[Any], Any]:
-        """Create an async before_tool_call hook function.
+    def as_async_hook(self, *, agent_role: Optional[str] = None) -> Callable[[Any], Optional[bool]]:
+        """Deprecated: returns the same synchronous hook as :meth:`as_hook`.
 
-        Returns an async hook that uses ``_authorize_async`` for Tier 2
-        warrant enforcement, properly awaiting async approval handlers.
-
-        Args:
-            agent_role: Optional agent role for namespaced constraint lookup
-
-        Returns:
-            Async hook function compatible with CrewAI hooks API
-        """
-        guard = self
-
-        async def tenuo_authorize_hook_async(context: Any) -> Optional[bool]:
-            """Async Tenuo authorization hook for CrewAI before_tool_call."""
-            tool_name = getattr(context, "tool_name", None) or ""
-            args = getattr(context, "tool_input", None) or {}
-
-            effective_role = agent_role
-            if effective_role is None:
-                agent = getattr(context, "agent", None)
-                if agent and hasattr(agent, "role"):
-                    effective_role = agent.role
-
-            try:
-                result = await guard._authorize_async(tool_name, args, agent_role=effective_role)
-            except TenuoCrewAIError as e:
-                logger.info(f"[TENUO] BLOCKED {tool_name}: {e}")
-                return False
-
-            if result is not None:
-                logger.info(f"[TENUO] BLOCKED {tool_name}: {result.reason}")
-                return False
-
-            return None
-
-        return tenuo_authorize_hook_async
-
-    def as_async_hook(self, *, agent_role: Optional[str] = None) -> Callable[[Any], Any]:
-        """Get the async hook function for manual registration.
-
-        Use this when running async CrewAI execution paths
-        (e.g., ``crew.kickoff_async()``) and you need the hook to
-        properly ``await`` async approval handlers.
+        CrewAI calls ``before_tool_call`` hooks synchronously, including from
+        ``crew.kickoff_async()``. A coroutine handed to it is never awaited and
+        counts as "allow", so this method no longer returns one. The
+        synchronous hook already runs async approval handlers to completion.
 
         Args:
             agent_role: Optional agent role for namespaced constraint lookup
 
         Returns:
-            An async callable suitable for CrewAI hook registration.
+            The synchronous hook from :meth:`as_hook`.
         """
-        return self._create_async_hook(agent_role=agent_role)
+        warnings.warn(
+            "CrewAIGuard.as_async_hook() is deprecated and returns the synchronous hook: "
+            "CrewAI never awaits before_tool_call hooks. Use as_hook() or register().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._create_hook(agent_role=agent_role)
 
     async def authorize_hook_async(self, context: Any, *, agent_role: Optional[str] = None) -> Optional[bool]:
-        """Async variant of :meth:`authorize_hook`.
+        """Async variant of :meth:`authorize_hook`, for your own async code.
+
+        Do not register this, or a hook that returns its coroutine, with
+        CrewAI: CrewAI calls hooks synchronously, never awaits the coroutine,
+        and runs the tool. Use :meth:`as_hook` or :meth:`authorize_hook` there.
 
         Args:
             context: ToolCallHookContext from CrewAI
             agent_role: Optional agent role (overrides context-derived role)
 
         Returns:
-            None to allow the call, False to block it
+            None to allow the call, False to block it. Never raises.
         """
-        hook = self._create_async_hook(agent_role=agent_role)
-        return await hook(context)
+        tool_name, args, effective_role = _hook_call_info(context, agent_role)
+        try:
+            result = await self._authorize_async(tool_name, args, agent_role=effective_role)
+        except Exception as e:
+            return self._block_on_exception(tool_name, args, effective_role, e)
+
+        if result is not None:
+            logger.info(f"[TENUO] BLOCKED {tool_name}: {result.reason}")
+            return False
+
+        return None
 
     def authorize(
         self,
@@ -955,7 +1062,7 @@ class CrewAIGuard:
         """Resolve tool name with namespace fallback.
 
         Resolution order:
-        1. agent_role::tool_name (exact match)
+        1. agent_role::tool_name (role compared ignoring case and whitespace)
         2. tool_name (global default)
         3. None if neither exists
 
@@ -971,8 +1078,8 @@ class CrewAIGuard:
             if "::" in agent_role:
                 logger.warning(f"Rejecting agent_role with '::' injection attempt: {agent_role!r}")
                 return None
-            namespaced = f"{agent_role}::{tool_name}"
-            if namespaced in self._allowed:
+            namespaced = self._namespaced.get(f"{_normalize_role(agent_role)}::{tool_name}")
+            if namespaced is not None:
                 logger.debug(f"Resolved {tool_name} -> {namespaced}")
                 return namespaced
 
@@ -980,6 +1087,78 @@ class CrewAIGuard:
             return tool_name
 
         return None
+
+    def _tier1_error(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        agent_role: Optional[str],
+    ) -> Optional[TenuoCrewAIError]:
+        """Tier 1 policy check. Returns the denial error, or None if allowed.
+
+        Closed world: every argument needs a constraint, every constrained
+        argument must be present (CrewAI passes only the arguments the model
+        sent, so an omitted one would run with the tool's default unchecked),
+        and every value must satisfy its constraint.
+        """
+        resolved_name = self._resolve_tool_name(tool_name, agent_role)
+        if resolved_name is None:
+            return ToolDenied(
+                tool=tool_name,
+                reason=f"Tool '{tool_name}' not in allowed list",
+                allowed_tools=list(self._allowed.keys()),
+            )
+
+        constraints = self._allowed[resolved_name]
+
+        for arg_name in args:
+            if arg_name not in constraints:
+                return UnlistedArgument(
+                    tool=tool_name,
+                    argument=arg_name,
+                    allowed_args=list(constraints.keys()),
+                )
+
+        for arg_name, constraint in constraints.items():
+            if arg_name not in args:
+                return CrewAIConstraintViolation(
+                    tool=tool_name,
+                    argument=arg_name,
+                    value=None,
+                    constraint=constraint,
+                    reason="missing required argument (a constrained argument must be passed)",
+                )
+
+        for arg_name, arg_value in args.items():
+            constraint = constraints[arg_name]
+            if not check_constraint(constraint, arg_value):
+                return CrewAIConstraintViolation(
+                    tool=tool_name,
+                    argument=arg_name,
+                    value=arg_value,
+                    constraint=constraint,
+                )
+        return None
+
+    def _audit_approval_failure(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        agent_role: Optional[str],
+        error: BaseException,
+    ) -> None:
+        """Audit an approval failure raised by the shared enforcement path."""
+        error_code = next(code for cls, code in _APPROVAL_ERROR_CODES if isinstance(error, cls))
+        warrant_id = getattr(self._warrant, "id", None) if self._warrant is not None else None
+        self._emit_audit(
+            tool_name,
+            args,
+            "DENY",
+            str(error) or type(error).__name__,
+            error_code=error_code,
+            agent_role=agent_role,
+            warrant_id=warrant_id if isinstance(warrant_id, str) else None,
+        )
 
     def _authorize(
         self,
@@ -998,54 +1177,35 @@ class CrewAIGuard:
         """
         logger.debug(f"Authorizing {tool_name} with args {list(args.keys())}")
 
-        # Step 1: Resolve tool name with namespace fallback
-        resolved_name = self._resolve_tool_name(tool_name, agent_role)
-
-        if resolved_name is None:
-            error = ToolDenied(
-                tool=tool_name,
-                reason=f"Tool '{tool_name}' not in allowed list",
-                allowed_tools=list(self._allowed.keys()),
-            )
-            return self._handle_denial(error, tool_name, args, agent_role)
-
-        constraints = self._allowed[resolved_name]
-
-        # Step 2: Check all arguments have constraints (closed-world)
-        for arg_name in args:
-            if arg_name not in constraints:
-                error = UnlistedArgument(  # type: ignore[assignment]
-                    tool=tool_name,
-                    argument=arg_name,
-                    allowed_args=list(constraints.keys()),
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
-
-        # Step 3: Check each argument satisfies its constraint
-        for arg_name, arg_value in args.items():
-            constraint = constraints[arg_name]
-            if not check_constraint(constraint, arg_value):
-                error = CrewAIConstraintViolation(  # type: ignore[assignment]
-                    tool=tool_name,
-                    argument=arg_name,
-                    value=arg_value,
-                    constraint=constraint,
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
+        # Steps 1-3: Tier 1 policy (tool allowlist, closed-world arguments)
+        tier1_error = self._tier1_error(tool_name, args, agent_role)
+        if tier1_error is not None:
+            denial = self._handle_denial(tier1_error, tool_name, args, agent_role)
+            if should_block_violation():
+                return denial
+            # Observe mode: the DENY is audited; still run Tier 2 so its
+            # would-deny result and receipt are recorded too.
 
         # Step 4: Tier 2 - Warrant authorization with PoP (Unified Enforcement)
+        observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
 
-            enforcement: EnforcementResult = enforce_tool_call(
-                tool_name=tool_name,
-                tool_args=args,
-                bound_warrant=bound,
-                trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                approval_handler=self._approval_handler,
-                approvals=self._approvals,
-                warrant_chain=self._warrant_chain,
-            )
+            try:
+                enforcement: EnforcementResult = enforce_tool_call(
+                    tool_name=tool_name,
+                    tool_args=args,
+                    bound_warrant=bound,
+                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                    approval_handler=self._approval_handler,
+                    approvals=self._approvals,
+                    warrant_chain=self._warrant_chain,
+                )
+            except _APPROVAL_ERRORS as e:
+                # A refused, missing or unverifiable approval is raised, not
+                # returned as a denial. Record it, then let it propagate.
+                self._audit_approval_failure(tool_name, args, agent_role, e)
+                raise
 
             if self._control_plane is not None:
                 try:
@@ -1056,7 +1216,9 @@ class CrewAIGuard:
             if not enforcement.allowed:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
-                return self._handle_denial(error, tool_name, args, agent_role)
+                return self._handle_denial(error, tool_name, args, agent_role, result=enforcement)
+            if enforcement.observed:
+                observed_result = enforcement
 
         elif self._warrant is not None:
             raise CrewAIConfigurationError(
@@ -1066,8 +1228,21 @@ class CrewAIGuard:
                 f"or remove the warrant to use Tier 1 only."
             )
 
-        # Authorization granted
-        self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
+        # Authorization granted. Observe mode may have let a Tier 2 denial
+        # through; audit that as the observed DENY it was, not as an ALLOW.
+        if observed_result is not None:
+            self._emit_audit(
+                tool_name,
+                args,
+                "DENY",
+                observed_result.denial_reason or "Authorization denied",
+                agent_role=agent_role,
+                observed=True,
+                warrant_id=observed_result.warrant_id,
+                constraint_violated=observed_result.constraint_violated,
+            )
+        elif tier1_error is None:
+            self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized {tool_name}")
         return None
 
@@ -1092,52 +1267,35 @@ class CrewAIGuard:
         """
         logger.debug(f"Authorizing (async) {tool_name} with args {list(args.keys())}")
 
-        # Steps 1-3: Tier 1 checks are CPU-bound, delegate to sync path
-        resolved_name = self._resolve_tool_name(tool_name, agent_role)
-
-        if resolved_name is None:
-            error = ToolDenied(
-                tool=tool_name,
-                reason=f"Tool '{tool_name}' not in allowed list",
-                allowed_tools=list(self._allowed.keys()),
-            )
-            return self._handle_denial(error, tool_name, args, agent_role)
-
-        constraints = self._allowed[resolved_name]
-
-        for arg_name in args:
-            if arg_name not in constraints:
-                error = UnlistedArgument(  # type: ignore[assignment]
-                    tool=tool_name,
-                    argument=arg_name,
-                    allowed_args=list(constraints.keys()),
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
-
-        for arg_name, arg_value in args.items():
-            constraint = constraints[arg_name]
-            if not check_constraint(constraint, arg_value):
-                error = CrewAIConstraintViolation(  # type: ignore[assignment]
-                    tool=tool_name,
-                    argument=arg_name,
-                    value=arg_value,
-                    constraint=constraint,
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
+        # Steps 1-3: Tier 1 policy (tool allowlist, closed-world arguments)
+        tier1_error = self._tier1_error(tool_name, args, agent_role)
+        if tier1_error is not None:
+            denial = self._handle_denial(tier1_error, tool_name, args, agent_role)
+            if should_block_violation():
+                return denial
+            # Observe mode: the DENY is audited; still run Tier 2 so its
+            # would-deny result and receipt are recorded too.
 
         # Step 4: Tier 2 — async warrant authorization with PoP
+        observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
 
-            enforcement: EnforcementResult = await enforce_tool_call_async(
-                tool_name=tool_name,
-                tool_args=args,
-                bound_warrant=bound,
-                trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                approval_handler=self._approval_handler,
-                approvals=self._approvals,
-                warrant_chain=self._warrant_chain,
-            )
+            try:
+                enforcement: EnforcementResult = await enforce_tool_call_async(
+                    tool_name=tool_name,
+                    tool_args=args,
+                    bound_warrant=bound,
+                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                    approval_handler=self._approval_handler,
+                    approvals=self._approvals,
+                    warrant_chain=self._warrant_chain,
+                )
+            except _APPROVAL_ERRORS as e:
+                # A refused, missing or unverifiable approval is raised, not
+                # returned as a denial. Record it, then let it propagate.
+                self._audit_approval_failure(tool_name, args, agent_role, e)
+                raise
 
             if self._control_plane is not None:
                 try:
@@ -1148,7 +1306,9 @@ class CrewAIGuard:
             if not enforcement.allowed:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
-                return self._handle_denial(error, tool_name, args, agent_role)
+                return self._handle_denial(error, tool_name, args, agent_role, result=enforcement)
+            if enforcement.observed:
+                observed_result = enforcement
 
         elif self._warrant is not None:
             raise CrewAIConfigurationError(
@@ -1158,8 +1318,21 @@ class CrewAIGuard:
                 f"or remove the warrant to use Tier 1 only."
             )
 
-        # Authorization granted
-        self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
+        # Authorization granted. Observe mode may have let a Tier 2 denial
+        # through; audit that as the observed DENY it was, not as an ALLOW.
+        if observed_result is not None:
+            self._emit_audit(
+                tool_name,
+                args,
+                "DENY",
+                observed_result.denial_reason or "Authorization denied",
+                agent_role=agent_role,
+                observed=True,
+                warrant_id=observed_result.warrant_id,
+                constraint_violated=observed_result.constraint_violated,
+            )
+        elif tier1_error is None:
+            self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized (async) {tool_name}")
         return None
 
@@ -1177,13 +1350,12 @@ class CrewAIGuard:
             if enforcement.constraint_violated == "tool":
                 bound = self._warrant.bind(self._signing_key) if self._warrant and self._signing_key else None
                 return WarrantToolDenied(tool=tool_name, warrant_id=getattr(bound, "id", None))
-            from tenuo import Wildcard as _Wildcard
             violated_field = enforcement.constraint_violated or "unknown_field"
             return CrewAIConstraintViolation(
                 tool=tool_name,
                 argument=violated_field,
                 value=args.get(violated_field),
-                constraint=_Wildcard(),
+                constraint=self._warrant_constraint(tool_name, violated_field),
                 reason=reason,
             )
         elif enforcement.error_type == "tool_not_allowed":
@@ -1201,14 +1373,36 @@ class CrewAIGuard:
             )
         elif enforcement.error_type in ("invalid_pop", "signature_invalid", "missing_signature"):
             return InvalidPoP(reason=reason)
-        elif enforcement.error_type in ("authorization_failed", "configuration_error"):
-            return InvalidPoP(reason=reason)
-        else:
-            logger.debug(
-                "Unhandled enforcement error_type %r for tool %r, defaulting to InvalidPoP",
-                enforcement.error_type, tool_name,
+        elif enforcement.error_type in ("untrusted_issuer", "chain_missing"):
+            return UntrustedWarrant(
+                reason=f"{reason} (error_type={enforcement.error_type})", error_type=enforcement.error_type
             )
+        else:
+            # Configuration and internal failures have no dedicated CrewAI
+            # exception. InvalidPoP keeps the fail-closed type, but name the
+            # real cause so it isn't mistaken for a signature failure.
+            if enforcement.error_type not in ("authorization_failed", "configuration_error"):
+                logger.debug(
+                    "Unhandled enforcement error_type %r for tool %r, defaulting to InvalidPoP",
+                    enforcement.error_type, tool_name,
+                )
+            if enforcement.error_type:
+                reason = f"{reason} (error_type={enforcement.error_type})"
             return InvalidPoP(reason=reason)
+
+    def _warrant_constraint(self, tool_name: str, field_name: str) -> Any:
+        """The warrant's constraint on ``tool_name.field_name``, else ``Wildcard()``."""
+        try:
+            caps = self._warrant.capabilities if self._warrant is not None else None
+            tool_caps = caps.get(tool_name) if isinstance(caps, dict) else None
+            constraint = tool_caps.get(field_name) if isinstance(tool_caps, dict) else None
+        except Exception:
+            constraint = None
+        if constraint is None:
+            from tenuo import Wildcard as _Wildcard
+
+            return _Wildcard()
+        return constraint
 
     def _handle_denial(
         self,
@@ -1216,12 +1410,39 @@ class CrewAIGuard:
         tool_name: str,
         args: Dict[str, Any],
         agent_role: Optional[str],
+        *,
+        result: Optional[EnforcementResult] = None,
     ) -> Optional[DenialResult]:
         """Handle authorization denial based on mode.
 
         Always emits audit event, regardless of mode.
         Uses shared handle_denial() for consistent behavior across integrations.
+
+        In observe mode (``tenuo.configure(mode="observe")``) the denial is
+        audited and logged as ``OBSERVE: would deny ...``, then the call
+        proceeds. ``on_denial`` only governs enforced denials.
         """
+        observe = not should_block_violation()
+
+        if result is not None:
+            # Tier 2: keep the real enforcement fields (canonical error_type,
+            # warrant_id, constraint_violated); only the reason is the CrewAI
+            # exception message, as before. Copy so the caller's result is untouched.
+            denial_result = replace(result, denial_reason=str(error))
+        else:
+            # Tier 1: bridge CrewAI's exception-based flow to the shared handler.
+            warrant_id = getattr(self._warrant, "id", None) if self._warrant is not None else None
+            violated = "tool" if isinstance(error, ToolDenied) else getattr(error, "argument", None)
+            denial_result = EnforcementResult(
+                allowed=False,
+                tool=tool_name,
+                arguments=args,
+                denial_reason=str(error),
+                constraint_violated=violated,
+                error_type=error.error_code.lower() if error.error_code else None,
+                warrant_id=warrant_id if isinstance(warrant_id, str) else None,
+            )
+
         # Always audit denials (CrewAI-specific)
         self._emit_audit(
             tool_name,
@@ -1230,23 +1451,25 @@ class CrewAIGuard:
             str(error),
             error_code=error.error_code,
             agent_role=agent_role,
+            observed=observe,
+            warrant_id=denial_result.warrant_id,
+            constraint_violated=denial_result.constraint_violated,
         )
 
-        # Create an EnforcementResult-like object for the shared handler
-        # This bridges CrewAI's exception-based flow to the shared denial handler
-        pseudo_result = EnforcementResult(
-            allowed=False,
-            tool=tool_name,
-            arguments=args,
-            denial_reason=str(error),
-            error_type=error.error_code.lower() if error.error_code else None,
-        )
+        if observe:
+            _apply_observe_mode(denial_result)  # logs the shared OBSERVE warning
+            return None
 
-        return handle_denial(
-            pseudo_result,
+        denial = handle_denial(
+            denial_result,
             self._on_denial,
             exception_factory=lambda _: error,  # Re-raise the original CrewAI exception
         )
+        if denial is not None:
+            # Keep the CrewAI error code callers already match on
+            # (e.g. WARRANT_EXPIRED); error_type carries the canonical category.
+            denial.error_code = error.error_code
+        return denial
 
     def _emit_audit(
         self,
@@ -1257,6 +1480,9 @@ class CrewAIGuard:
         *,
         error_code: Optional[str] = None,
         agent_role: Optional[str] = None,
+        observed: bool = False,
+        warrant_id: Optional[str] = None,
+        constraint_violated: Optional[str] = None,
     ) -> None:
         """Emit audit event for authorization decision.
 
@@ -1274,6 +1500,9 @@ class CrewAIGuard:
                 reason=reason,
                 error_code=error_code,
                 agent_role=agent_role,
+                observed=observed,
+                warrant_id=warrant_id,
+                constraint_violated=constraint_violated,
             )
             try:
                 self._audit_callback(event)
@@ -1339,6 +1568,21 @@ class CrewAIGuard:
                         "allowed_args": list(constraints.keys()),
                     },
                     quick_fix=f".allow('{tool_name}', {arg_name}=Wildcard())",
+                )
+
+        # Constrained arguments are required
+        for arg_name, constraint in constraints.items():
+            if arg_name not in args:
+                return ExplanationResult(
+                    tool=tool_name,
+                    status="DENIED",
+                    reason=f"Missing required argument '{arg_name}'",
+                    details={
+                        "argument": arg_name,
+                        "constraint": str(constraint),
+                        "constraint_type": type(constraint).__name__,
+                    },
+                    quick_fix=None,
                 )
 
         # Step 3: Check each constraint
@@ -1697,6 +1941,19 @@ _strict_mode: contextvars.ContextVar[bool] = contextvars.ContextVar("tenuo_stric
 # Track unguarded calls in strict mode
 _unguarded_calls: contextvars.ContextVar[List[str]] = contextvars.ContextVar("tenuo_unguarded_calls", default=[])
 
+# CrewAI can execute tools in worker threads that do not inherit ContextVars.
+# Track live scoped guards so those workers fail closed instead of bypassing the
+# decorator.  A worker can safely use the policy only when exactly one scoped
+# guard is live; concurrent ambiguous scopes are denied.
+_scoped_guards_lock = threading.Lock()
+_scoped_guards: Dict[int, "CrewAIGuard"] = {}
+
+# Scoped guards entered in this context, outermost first.  Nested steps keep
+# every enclosing step's policy in force, as when each registered its own hook.
+_scoped_guard_stack: contextvars.ContextVar["tuple[CrewAIGuard, ...]"] = contextvars.ContextVar(
+    "tenuo_scoped_guard_stack", default=()
+)
+
 
 class UnguardedToolError(TenuoCrewAIError):
     """Raised when strict mode detects unguarded tool calls."""
@@ -1731,6 +1988,59 @@ def get_active_guard() -> Optional["CrewAIGuard"]:
     Returns None if not in a guarded zone.
     """
     return _guarded_context.get()
+
+
+@contextmanager
+def _scoped_guard_hook(guard: "CrewAIGuard"):
+    """Register a hook that enforces only in this context's guarded zone.
+
+    CrewAI's hook registry is process-global. Concurrent Flow steps therefore
+    see every registered hook; the ContextVar check prevents one step's guard
+    from applying another step's policy while leaving explicit global guards
+    registered through ``CrewAIGuard.register()`` unchanged.
+    """
+    if not HOOKS_AVAILABLE:
+        yield
+        return
+
+    authorize = guard._create_hook()
+
+    def dispatch(context: Any) -> Optional[bool]:
+        scopes = _scoped_guard_stack.get()
+        if scopes:
+            return authorize(context) if any(g is guard for g in scopes) else None
+        if get_active_guard() is not None:
+            return None
+
+        # Some CrewAI execution modes use plain worker threads, which do not
+        # inherit the guarded step's ContextVar.  Do not let that erase the
+        # authorization boundary.  With one live scope the association is
+        # unambiguous; with overlapping scopes, deny rather than apply another
+        # step's policy or allow the call unchecked.
+        with _scoped_guards_lock:
+            live_guards = tuple(_scoped_guards.values())
+        if len(live_guards) == 1 and live_guards[0] is guard:
+            return authorize(context)
+        if len(live_guards) > 1:
+            logger.error(
+                "Denied CrewAI tool call from a worker thread because multiple "
+                "@guarded_step policies are active and the originating scope is ambiguous."
+            )
+            return False
+        return None
+
+    guard_id = id(guard)
+    with _scoped_guards_lock:
+        _scoped_guards[guard_id] = guard
+    stack_token = _scoped_guard_stack.set(_scoped_guard_stack.get() + (guard,))
+    register_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
+    try:
+        yield
+    finally:
+        unregister_before_tool_call_hook(dispatch)
+        _scoped_guard_stack.reset(stack_token)
+        with _scoped_guards_lock:
+            _scoped_guards.pop(guard_id, None)
 
 
 def is_strict_mode() -> bool:
@@ -1816,60 +2126,86 @@ def guarded_step(
     elif warrant_chain is not None:
         raise ConfigurationError("guarded_step: warrant_chain was given without a warrant.")
 
+    def _build_guard() -> "CrewAIGuard":
+        builder = GuardBuilder()
+
+        if allow:
+            for tool_name, constraints in allow.items():
+                builder.allow(tool_name, **constraints)
+
+        if leaf is not None:
+            builder.with_warrant(leaf, signing_key, warrant_chain=parents)  # type: ignore[arg-type]
+
+        builder.on_denial(on_denial)
+
+        if audit:
+            builder.audit(audit)
+
+        return builder.build()
+
+    def _finish_step(step_name: str, step_start: float) -> None:
+        if strict:
+            unguarded = get_unguarded_calls()
+            if unguarded:
+                raise UnguardedToolError(unguarded, step_name)
+
+        if ttl:
+            ttl_seconds = _parse_ttl(ttl)
+            elapsed = time.time() - step_start
+            if ttl_seconds and elapsed > ttl_seconds:
+                logger.warning(
+                    f"Step '{step_name}' exceeded TTL of {ttl}: elapsed {elapsed:.1f}s. Warrant would be expired."
+                )
+
     def decorator(func: Callable) -> Callable:
         import functools
-        import time
+
+        step_name = func.__name__
+
+        # An async step must keep the guard registered until its coroutine
+        # finishes, not just until the coroutine object is created.
+        if inspect.iscoroutinefunction(func):
+
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                guard = _build_guard()
+                step_start = time.time()
+                with _guarded_zone(guard, strict=strict):
+                    try:
+                        with _scoped_guard_hook(guard):
+                            result = await func(*args, **kwargs)
+                    finally:
+                        _finish_step(step_name, step_start)
+                return result
+
+            return async_wrapper
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            builder = GuardBuilder()
-
-            if allow:
-                for tool_name, constraints in allow.items():
-                    builder.allow(tool_name, **constraints)
-
-            if leaf is not None:
-                builder.with_warrant(leaf, signing_key, warrant_chain=parents)
-
-            builder.on_denial(on_denial)
-
-            if audit:
-                builder.audit(audit)
-
-            guard = builder.build()
-
+            guard = _build_guard()
             step_start = time.time()
-            step_name = func.__name__
-
-            ttl_seconds = None
-            if ttl:
-                ttl_seconds = _parse_ttl(ttl)
-
             with _guarded_zone(guard, strict=strict):
-                # Register the guard as a CrewAI hook so tool calls during
-                # the step are actually intercepted and authorized.
-                if HOOKS_AVAILABLE:
-                    guard.register()
-
                 try:
-                    result = func(*args, **kwargs)
-                finally:
-                    if HOOKS_AVAILABLE:
-                        guard.unregister()
-
-                    if strict:
-                        unguarded = get_unguarded_calls()
-                        if unguarded:
-                            raise UnguardedToolError(unguarded, step_name)
-
-                    if ttl_seconds:
-                        elapsed = time.time() - step_start
-                        if elapsed > ttl_seconds:
-                            logger.warning(
-                                f"Step '{step_name}' exceeded TTL of {ttl}: "
-                                f"elapsed {elapsed:.1f}s. Warrant would be expired."
+                    with _scoped_guard_hook(guard):
+                        result = func(*args, **kwargs)
+                        if inspect.isawaitable(result):
+                            # A sync function that returns an awaitable would run
+                            # its tool calls after the guard is gone.  Stop Tasks
+                            # and Futures while the guard is still installed;
+                            # close bare coroutine objects before rejecting them.
+                            cancel = getattr(result, "cancel", None)
+                            if callable(cancel):
+                                cancel()
+                            close = getattr(result, "close", None)
+                            if callable(close):
+                                close()
+                            raise CrewAIConfigurationError(
+                                f"@guarded_step: '{step_name}' returned an awaitable from a "
+                                "non-async function, so it would run after the guard is removed. "
+                                "Declare the step with 'async def'."
                             )
-
+                finally:
+                    _finish_step(step_name, step_start)
             return result
 
         return wrapper
@@ -2152,7 +2488,8 @@ class _GuardedCrewImpl:
                 logger.warning(f"GuardedCrew hook: no guard for role '{role}', blocking")
                 return False
 
-            # Delegate to the agent's guard hook
+            # Delegate to the agent's guard hook (never raises; CrewAI would
+            # treat an escaped exception as "allow").
             return guard.authorize_hook(context, agent_role=role)
 
         return guarded_crew_hook
@@ -2272,6 +2609,7 @@ __all__ = [
     # Tier 2 exceptions (Phase 3)
     "WarrantExpired",
     "InvalidPoP",
+    "UntrustedWarrant",
     "WarrantToolDenied",
     # Result types
     "DenialResult",

@@ -752,54 +752,66 @@ class _SimpleProtectedAgent:
 def auto_protect(
     agent_or_tools: Any,
     *,
-    mode: str = "audit",  # "audit" (log only), "enforce" (block), "permissive" (warn)
+    mode: Optional[str] = None,  # "observe" (log only) or "enforce" (block)
     infer_schemas: bool = True,
 ) -> Any:
     """
     Zero-config protection with sensible defaults.
 
-    SECURITY: Defaults to AUDIT mode (log only, don't block).
-    This lets you deploy without breaking anything, then analyze logs
-    to understand what capabilities you need.
+    SECURITY: When Tenuo is not configured yet, defaults to observe mode
+    (log only, don't block). This lets you deploy without breaking anything,
+    then analyze logs to understand what capabilities you need. When Tenuo is
+    already configured, its mode is kept unless ``mode`` is passed.
+
+    The mode is process-wide: it applies to every Tenuo integration in the
+    process, not only to the tools passed here.
 
     Args:
         agent_or_tools: AgentExecutor, list of tools, or single tool
-        mode: "audit" (log only), "enforce" (block violations), "permissive" (warn only)
+        mode: "observe" (log only) or "enforce" (block violations).
+            "audit" and "permissive" are aliases of "observe".
         infer_schemas: If True, infer tool schemas from type hints
 
     Returns:
         Protected version of the input
 
+    Raises:
+        ConfigurationError: If ``mode`` is not a known enforcement mode.
+
     Example:
-        # Deploy in audit mode first
+        # Deploy in observe mode first
         executor = auto_protect(executor)  # Logs all tool calls
 
         # After analyzing logs, switch to enforce
         executor = auto_protect(executor, mode="enforce")
     """
     from .config import EnforcementMode, configure, get_config, is_configured
+    from .exceptions import ConfigurationError
 
-    # Map mode string to enum
-    mode_map = {
-        "audit": EnforcementMode.AUDIT,
-        "enforce": EnforcementMode.ENFORCE,
-        "permissive": EnforcementMode.PERMISSIVE,
-    }
-    enforcement_mode = mode_map.get(mode, EnforcementMode.AUDIT)
+    enforcement_mode: Optional[EnforcementMode] = None
+    if mode is not None:
+        try:
+            enforcement_mode = EnforcementMode(mode)
+        except ValueError:
+            raise ConfigurationError(f"Invalid mode {mode!r}: expected 'enforce' or 'observe'") from None
 
-    # Auto-configure if not already configured
-    if not is_configured():
+    # Auto-configure if not already configured. A verify-only setup
+    # (trusted roots, no issuer key) counts as configured: replacing it would
+    # drop its roots.
+    if not (is_configured() or get_config().trusted_roots):
         from tenuo_core import SigningKey
 
         configure(
             issuer_key=SigningKey.generate(),
-            mode=enforcement_mode.value,  # type: ignore[arg-type]
+            mode=(enforcement_mode or EnforcementMode.OBSERVE).value,  # type: ignore[arg-type]
             dev_mode=True,
             warn_on_missing_warrant=True,
         )
-    else:
-        # Update mode on existing config
+    elif enforcement_mode is not None:
+        # Only an explicit mode changes an existing configuration.
         config = get_config()
+        if config.mode != enforcement_mode:
+            logger.warning("auto_protect: switching Tenuo to %s mode for the whole process", enforcement_mode.value)
         config.mode = enforcement_mode
 
     # Detect type and protect

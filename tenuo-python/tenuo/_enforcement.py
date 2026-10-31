@@ -112,6 +112,9 @@ class EnforcementResult:
             Contains ``{"got": int, "need": int}`` so callers can tell "re-submit
             with more approvals" from a flat scope denial without parsing the
             human-readable ``denial_reason``.
+        observed: True when the decision was a denial that observe mode let
+            through. ``allowed`` is then True, the denial fields stay populated,
+            and receipts / control-plane events still record the denial.
     """
 
     allowed: bool
@@ -140,6 +143,7 @@ class EnforcementResult:
     # receipt fail a later check against the wire payload.
     pop_auth_args: Optional[Dict[str, Any]] = None
     approval_metadata: Optional[Dict[str, Any]] = None
+    observed: bool = False
 
     def raise_if_denied(self) -> None:
         """
@@ -669,6 +673,71 @@ def _denial_before_approval(
     return error_type, reason, argument
 
 
+def _observed_approval_gate(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    warrant_id: Optional[str],
+    threshold: int,
+    approvals: Optional[List[Any]],
+    presented_chain: List[Any],
+    pop_auth_args: Dict[str, Any],
+    constraint_auth_args: Dict[str, Any],
+    authorizer: Optional[Any],
+    *,
+    warrant: Any,
+    bound_warrant: Any,
+    verify_mode: str,
+    precomputed_signature: Optional[Any],
+) -> Optional[EnforcementResult]:
+    """In observe mode, record would-require-approval instead of prompting.
+
+    Mirrors Rust ``WouldRequireApproval``: no handler is called and nothing
+    blocks. Chain and PoP are still verified, so an integrity failure is
+    reported instead of the missing approval. Approvals already presented with
+    the call are verified normally, so ``None`` is returned for them and in
+    enforce mode.
+    """
+    from .config import should_block_violation
+
+    if approvals or should_block_violation():
+        return None
+    if verify_mode == "sign":
+        import time as _time
+
+        pop = bytes(warrant.sign(bound_warrant._key, tool_name, pop_auth_args, int(_time.time())))
+    else:
+        pop = bytes(precomputed_signature or b"")
+    integrity_error = _approval_gate_integrity_error(
+        authorizer, presented_chain, tool_name, pop_auth_args, constraint_auth_args, pop,
+    )
+    if integrity_error is not None:
+        return _enforcement_result_from_chain_error_with_logging(
+            integrity_error,
+            tool_name,
+            tool_args,
+            warrant_id,
+            constraint_auth_args=constraint_auth_args,
+            warrant=warrant,
+            presented_chain=presented_chain,
+            authorizer=authorizer,
+            pop_auth_args=pop_auth_args,
+            verified_pop=pop,
+        )
+    return EnforcementResult(
+        allowed=False,
+        tool=tool_name,
+        arguments=tool_args,
+        denial_reason=f"approval required for '{tool_name}' ({threshold} approval(s))",
+        error_type="approval_required",
+        warrant_id=warrant_id,
+        presented_chain=presented_chain,
+        pop_auth_args=pop_auth_args,
+        authorizer=authorizer,
+        approval_metadata={"min_approvals": threshold},
+        verified_pop=pop,
+    )
+
+
 def _sign_path_trusted_roots(trusted_roots: Optional[List[Any]], bound_warrant: Any) -> Optional[List[Any]]:
     """Trusted roots for the sign path: explicit, then bind-time, then configured, then the runtime's.
 
@@ -751,6 +820,45 @@ def _refusal_before_approval(
     if invalid is not None:
         return invalid
     return _denial_before_approval(warrant, tool_name, constraint_args)
+
+
+def _approval_gate_integrity_error(
+    authorizer: Any,
+    chain: List[Any],
+    tool_name: str,
+    pop_args: Dict[str, Any],
+    constraint_args: Dict[str, Any],
+    signature: bytes,
+) -> Optional[BaseException]:
+    """Verify chain and PoP before observing a missing approval.
+
+    Reaching an approval exception is the expected outcome: it proves the
+    integrity checks that precede the gate succeeded. Any other exception is
+    the real denial that observe mode should report.
+    """
+    try:
+        if pop_args != constraint_args and hasattr(authorizer, "check_chain_with_pop_args"):
+            authorizer.check_chain_with_pop_args(
+                chain,
+                tool_name,
+                pop_args,
+                constraint_args,
+                signature=signature,
+                approvals=[],
+            )
+        else:
+            authorizer.check_chain(
+                chain,
+                tool_name,
+                constraint_args,
+                signature=signature,
+                approvals=[],
+            )
+    except (ApprovalGateTriggered, ApprovalRequired, InsufficientApprovals):
+        return None
+    except Exception as exc:
+        return exc
+    return None
 
 def _collect_approvals_for_approval_gate(
     tool_name: str,
@@ -1148,6 +1256,7 @@ def _enforce_tool_call_impl(
     _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
+    _preflight_auth = None
     # Overwritten with the stripped PoP view once derived; the fallback keeps
     # except arms reached before that point from seeing an unbound local.
     _pop_auth_args = tool_args
@@ -1239,6 +1348,18 @@ def _enforce_tool_call_impl(
 
             # Collect and verify approvals — raises if missing or invalid.
             # Returns verified SignedApproval objects to pass to validate().
+            _would_require = _observed_approval_gate(
+                tool_name, tool_args, warrant_id, _gate_threshold, approvals,
+                _presented_chain, _pop_auth_args, _constraint_auth_args,
+                _preflight_auth,
+                warrant=_warrant_obj,
+                bound_warrant=bound_warrant,
+                verify_mode=verify_mode,
+                precomputed_signature=precomputed_signature,
+            )
+            if _would_require is not None:
+                return _would_require
+
             _gate_approvals = _collect_approvals_for_approval_gate(
                 tool_name, _pop_auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
@@ -1482,7 +1603,24 @@ def _enforce_tool_call_impl(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
+    except (InvalidApproval, ApprovalExpired) as e:
+        from .config import should_block_violation
+
+        if should_block_violation():
+            raise
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(e),
+            error_type="approval_verification_failed",
+            warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=_preflight_auth or authorizer or _auth,
+            verified_pop=_pop,
+        )
+    except ApprovalGateTriggered:
         raise
     except ApprovalRequired as e:
         if verify_mode == "sign":
@@ -1650,6 +1788,7 @@ async def _enforce_tool_call_async_impl(
     _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
+    _preflight_auth = None
     # Overwritten with the stripped PoP view once derived; the fallback keeps
     # except arms reached before that point from seeing an unbound local.
     _pop_auth_args = tool_args
@@ -1727,6 +1866,18 @@ async def _enforce_tool_call_async_impl(
                     pop_auth_args=_pop_auth_args,
                     authorizer=_preflight_auth,
                 )
+
+            _would_require = _observed_approval_gate(
+                tool_name, tool_args, warrant_id, _gate_threshold, approvals,
+                _presented_chain, _pop_auth_args, _constraint_auth_args,
+                _preflight_auth,
+                warrant=_warrant_obj,
+                bound_warrant=bound_warrant,
+                verify_mode=verify_mode,
+                precomputed_signature=precomputed_signature,
+            )
+            if _would_require is not None:
+                return _would_require
 
             _gate_approvals = await _collect_approvals_for_approval_gate_async(
                 tool_name, _pop_auth_args, bound_warrant,
@@ -1928,7 +2079,24 @@ async def _enforce_tool_call_async_impl(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
+    except (InvalidApproval, ApprovalExpired) as e:
+        from .config import should_block_violation
+
+        if should_block_violation():
+            raise
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(e),
+            error_type="approval_verification_failed",
+            warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=_preflight_auth or authorizer or _auth,
+            verified_pop=_pop,
+        )
+    except ApprovalGateTriggered:
         raise
     except ApprovalRequired as e:
         if verify_mode == "sign":
@@ -2062,17 +2230,52 @@ def _collect_runtime_receipt(result: EnforcementResult) -> EnforcementResult:
     return result
 
 
+def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
+    """Observe mode: log what would have been denied and let the call proceed.
+
+    The full decision has already run. Denial fields (including integrity
+    error types such as ``invalid_pop``) stay on the result and ``observed`` is
+    set, so receipts and control-plane events still record a denial. Argument
+    values are never logged, only keys and value type names.
+    """
+    from .config import should_block_violation
+
+    if result.allowed or should_block_violation():
+        return result
+    args = result.arguments or {}
+    reason_code = result.error_type or "authorization_denied"
+    logger.warning(
+        "OBSERVE: would deny %s (%s)",
+        result.tool,
+        reason_code,
+        extra={
+            "tool": result.tool,
+            "args_keys": list(args.keys()),
+            "arg_types": {k: type(v).__name__ for k, v in args.items()},
+            "error_type": result.error_type,
+            "constraint_violated": result.constraint_violated,
+            "warrant_id": result.warrant_id,
+            "observed": True,
+        },
+    )
+    result.observed = True
+    result.allowed = True
+    return result
+
+
 from functools import wraps as _wraps  # noqa: E402
 
 
 @_wraps(_enforce_tool_call_impl)
 def enforce_tool_call(*args, **kwargs):
-    return _collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs))
+    return _apply_observe_mode(_collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs)))
 
 
 @_wraps(_enforce_tool_call_async_impl)
 async def enforce_tool_call_async(*args, **kwargs):
-    return _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+    return _apply_observe_mode(
+        _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+    )
 
 
 def parents_from_presented_chain(
@@ -2251,7 +2454,7 @@ def verify_inbound_call(
     if not callable(bind):
         raise ConfigurationError("verify_inbound_call requires a Warrant with bind()")
     bound = bind(VerificationOnlyKey())
-    return _enforce_tool_call_impl(
+    result = _enforce_tool_call_impl(
         tool_name=tool_name,
         tool_args=tool_args,
         bound_warrant=bound,
@@ -2264,6 +2467,7 @@ def verify_inbound_call(
         constraint_args=constraint_args,
         approval_handler=approval_handler,
     )
+    return _apply_observe_mode(result)
 
 
 __all__ = [
