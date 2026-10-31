@@ -466,7 +466,7 @@ class ToolDenied(TenuoError):
             message += f"\n\nDid you mean: {similar}?"
         message += f"\n\nAllowed tools: {', '.join(sorted(allowed_tools))}"
         message += f"\n\nQuick fix: .allow('{tool_name}')"
-        message += f"\nDocs: https://tenuo.ai/docs/openai#allow-tools"
+        message += f"\nDocs: https://tenuo.ai/openai"
         
         super().__init__(message)
 ```

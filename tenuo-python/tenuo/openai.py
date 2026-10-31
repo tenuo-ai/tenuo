@@ -262,7 +262,7 @@ class ToolDenied(TenuoOpenAIError):
         elif param and "constraint" in reason.lower():
             msg += f"\n\n  Quick fix: Check the constraint for '{param}' parameter"
 
-        msg += "\n  Docs: https://tenuo.ai/docs/openai"
+        msg += "\n  Docs: https://tenuo.ai/openai"
 
         super().__init__(msg, code)
         self.tool_name = tool_name
@@ -302,7 +302,7 @@ class WarrantDenied(TenuoOpenAIError):
             msg += "\n\n  The warrant doesn't include this tool in its capabilities."
             msg += "\n  Request a new warrant with this tool included."
 
-        msg += "\n  Docs: https://tenuo.ai/docs/warrants"
+        msg += "\n  Docs: https://tenuo.ai/concepts#warrants"
 
         super().__init__(msg, code)
         self.tool_name = tool_name
@@ -3406,7 +3406,7 @@ def protect(
     Next Steps:
         - Add constraints: Use GuardBuilder().allow("tool", param=Constraint)
         - Add warrants: Use GuardBuilder().with_warrant(warrant, key)
-        - See docs: https://tenuo.ai/docs/openai
+        - See docs: https://tenuo.ai/openai
     """
     if tools is None:
         # No tools specified = deny all (fail closed)

@@ -243,7 +243,7 @@ class ToolDenied(TenuoCrewAIError):
 
         msg = f"Tool '{tool}' denied: {reason}"
         msg += f"\n\n  Quick fix: {self.quick_fix}"
-        msg += "\n  Docs: https://tenuo.ai/docs/crewai"
+        msg += "\n  Docs: https://tenuo.ai/crewai"
 
         super().__init__(msg)
 
@@ -282,7 +282,7 @@ class CrewAIConstraintViolation(TenuoCrewAIError):
         msg += f"\n  Constraint: {constraint}"
         if quick_fix:
             msg += f"\n\n  Quick fix: {quick_fix}"
-        msg += "\n  Docs: https://tenuo.ai/docs/constraints"
+        msg += "\n  Docs: https://tenuo.ai/constraints"
 
         super().__init__(msg)
 
@@ -312,7 +312,7 @@ class UnlistedArgument(TenuoCrewAIError):
         if allowed_args:
             msg += f"\n  Allowed arguments: {', '.join(allowed_args)}"
         msg += f"\n\n  Quick fix: {self.quick_fix}"
-        msg += "\n  Docs: https://tenuo.ai/docs/constraints"
+        msg += "\n  Docs: https://tenuo.ai/constraints"
 
         super().__init__(msg)
 
@@ -329,7 +329,7 @@ class MissingSigningKey(TenuoCrewAIError):
         super().__init__(
             "Warrant provided without signing_key. "
             "Tier 2 requires a signing key for Proof-of-Possession. "
-            "See: https://tenuo.ai/docs/tier2"
+            "See: https://tenuo.ai/crewai#tier-2-warrants"
         )
 
 
@@ -373,7 +373,7 @@ class WarrantExpired(TenuoCrewAIError):
             if expired_at:
                 msg += f" (expired at {expired_at})"
         msg += "\n\n  Action: Request a new warrant from the issuer."
-        msg += "\n  Docs: https://tenuo.ai/docs/tier2#expiry"
+        msg += "\n  Docs: https://tenuo.ai/crewai#expiry-handling"
 
         super().__init__(msg)
 
@@ -391,7 +391,7 @@ class InvalidPoP(TenuoCrewAIError):
 
     def __init__(self, reason: str = "Signature verification failed"):
         self.reason = reason
-        super().__init__(f"Invalid Proof-of-Possession: {reason}\n  Docs: https://tenuo.ai/docs/tier2#pop")
+        super().__init__(f"Invalid Proof-of-Possession: {reason}\n  Docs: https://tenuo.ai/concepts#proof-of-possession-pop")
 
 
 class WarrantToolDenied(TenuoCrewAIError):

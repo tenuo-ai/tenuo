@@ -613,7 +613,7 @@ def protect_agent(
     Next Steps:
         - Add constraints: GuardBuilder().allow("tool", param=Constraint)
         - Add warrants: GuardBuilder().with_warrant(warrant, key)
-        - See docs: https://tenuo.ai/docs/google-adk
+        - See docs: https://tenuo.ai/google-adk
     """
     from .guard import GuardBuilder
 
