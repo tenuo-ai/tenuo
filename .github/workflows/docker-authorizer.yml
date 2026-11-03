@@ -112,10 +112,12 @@ jobs:
     name: Create Multi-Arch Manifest
     runs-on: ubuntu-latest
     needs: build
-    # One publish per image at a time, across both workflows, so two runs
-    # can't both pass the tag check and then overwrite each other.
+    # Manual runs write a version tag, so they share release.yml's queue:
+    # one publish at a time, and no two runs both pass the tag check. Main
+    # pushes write only main and sha- tags; they get their own group so a
+    # burst of pushes can't displace a release waiting in the shared queue.
     concurrency:
-      group: docker-publish-tenuo-authorizer
+      group: ${{ github.event_name == 'workflow_dispatch' && 'docker-publish-tenuo-authorizer' || format('docker-authorizer-main-{0}', github.run_id) }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
