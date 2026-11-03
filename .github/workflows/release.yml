@@ -579,6 +579,19 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
+      # The full version tag is immutable once published. X.Y and "latest"
+      # move on purpose.
+      - name: Refuse to overwrite the version tag
+        run: |
+          ref="tenuo/authorizer:${{ steps.meta.outputs.version }}"
+          if out=$(docker buildx imagetools inspect "$ref" 2>&1); then
+            echo "::error::$ref already exists; release a new version instead"
+            exit 1
+          elif ! grep -qi "not found" <<< "$out"; then
+            echo "::error::could not check $ref: $out"
+            exit 1
+          fi
+
       - name: Create manifest list and push
         working-directory: /tmp/digests
         env:
@@ -679,6 +692,19 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
+
+      # The full version tag is immutable once published. X.Y and "latest"
+      # move on purpose.
+      - name: Refuse to overwrite the version tag
+        run: |
+          ref="tenuo/control:${{ steps.meta.outputs.version }}"
+          if out=$(docker buildx imagetools inspect "$ref" 2>&1); then
+            echo "::error::$ref already exists; release a new version instead"
+            exit 1
+          elif ! grep -qi "not found" <<< "$out"; then
+            echo "::error::could not check $ref: $out"
+            exit 1
+          fi
 
       - name: Create manifest list and push
         working-directory: /tmp/digests

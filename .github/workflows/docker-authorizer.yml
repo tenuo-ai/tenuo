@@ -156,15 +156,25 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            # Order matters for the Docker Hub version badge (sort=date):
-            # it shows the newest tag, unless that tag is "latest", in which
-            # case it shows the same-digest tag with the most dots (oldest
-            # wins a tie). Crate version first, "latest" last. Never a bare
-            # numeric SHA: that is what made the badge read 0777990.
-            type=raw,value=${{ steps.version.outputs.crate_version }}
-            type=raw,value=${{ steps.version.outputs.version }}
+            # Version tags belong to deliberate builds and are never rewritten.
+            # A push to main gets only tags that are meant to move ("main") or
+            # are unique to the commit. Plain crate versions and "latest" are
+            # written by release.yml alone.
             type=sha,prefix=sha-
-            type=raw,value=latest
+            type=raw,value=main,enable=${{ github.event_name == 'push' }}
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Refuse to overwrite a version tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          ref="${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+          if out=$(docker buildx imagetools inspect "$ref" 2>&1); then
+            echo "::error::$ref already exists; bump AUTHORIZER_BUILD or pass a new version_tag"
+            exit 1
+          elif ! grep -qi "not found" <<< "$out"; then
+            echo "::error::could not check $ref: $out"
+            exit 1
+          fi
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
@@ -174,14 +184,13 @@ jobs:
             $(printf '${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect image
-        run: docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+        run: docker buildx imagetools inspect ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
 
       - name: Summary
         run: |
           echo "## Authorizer Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+                    echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
@@ -190,5 +199,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Pull command:**" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull tenuo/authorizer:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ fromJSON(steps.meta.outputs.json).tags[0] }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
