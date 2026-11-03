@@ -221,12 +221,13 @@ jobs:
         run: |
           tags=$(jq -c --argjson drop "$DROP_MAIN" '.tags | map(select(($drop | not) or (endswith(":main") | not)))' <<< "$DOCKER_METADATA_OUTPUT_JSON")
           echo "tags=$(jq -r 'join(" ")' <<< "$tags")" >> "$GITHUB_OUTPUT"
+          echo "primary=$(jq -r '.[0]' <<< "$tags")" >> "$GITHUB_OUTPUT"
           docker buildx imagetools create \
             $(jq -r 'map("-t " + .) | join(" ")' <<< "$tags") \
             $(printf '${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect image
-        run: docker buildx imagetools inspect ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+        run: docker buildx imagetools inspect ${{ steps.push.outputs.primary }}
 
       - name: Summary
         run: |
@@ -241,5 +242,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Pull command:**" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ fromJSON(steps.meta.outputs.json).tags[0] }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ steps.push.outputs.primary }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
