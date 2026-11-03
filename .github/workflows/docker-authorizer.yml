@@ -201,8 +201,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          later=$(gh api "repos/${{ github.repository }}/actions/workflows/docker-authorizer.yml/runs?branch=${{ github.ref_name }}&event=push&per_page=50" \
-            --jq '[.workflow_runs[] | select(.run_number > ${{ github.run_number }} and (.conclusion == null or .conclusion == "success"))] | map(.run_number) | min // empty')
+          later=$(gh api --paginate "repos/${{ github.repository }}/actions/workflows/docker-authorizer.yml/runs?branch=${{ github.ref_name }}&event=push&per_page=100" \
+            --jq '.workflow_runs[] | select(.run_number > ${{ github.run_number }} and (.conclusion == null or .conclusion == "success")) | .run_number' \
+            | sort -n | head -n 1)
           if [[ -n "$later" ]]; then
             echo "move_main=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Run #$later is newer and will move main; publishing sha- only"
