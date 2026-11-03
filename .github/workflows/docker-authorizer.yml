@@ -112,6 +112,11 @@ jobs:
     name: Create Multi-Arch Manifest
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: read
+      packages: write
+      # The freshness check lists this workflow's later runs.
+      actions: read
     # Manual runs write a version tag, so they share release.yml's queue:
     # one publish at a time, and no two runs both pass the tag check. Main
     # pushes write only main and sha- tags; they get their own FIFO queue so
@@ -122,9 +127,6 @@ jobs:
       queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The freshness check walks the commits after this one.
-          fetch-depth: 0
 
       - name: Extract version from authorizer.rs
         id: version
@@ -189,29 +191,21 @@ jobs:
 
       # The FIFO queue orders merge jobs by when their builds finish, not by
       # push order, so an older run can still reach this point last. Move
-      # "main" only if no later commit on the branch touches the paths that
-      # trigger this workflow (each such commit has its own run that will
-      # move it). Commits are checked one by one, so a later revert still
-      # counts. A README-only push doesn't. The sha- tag is always published.
+      # "main" only if no later push run of this workflow exists that is still
+      # going or succeeded: that run will move it. Asking Actions which runs
+      # were actually scheduled matches the path filter exactly (it sees each
+      # push's net diff). The sha- tag is always published.
       - name: Check main publication is current
         id: freshness
         if: github.event_name == 'push'
         env:
-          # Keep in sync with on.push.paths.
-          WATCHED: >-
-            tenuo-core/src/bin/authorizer.rs
-            tenuo-core/src/approval_gate.rs
-            tenuo-core/src/planes.rs
-            tenuo-core/src/warrant.rs
-            tenuo-core/src/heartbeat.rs
-            tenuo-core/deploy/docker/Dockerfile.authorizer
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git fetch --quiet origin "${{ github.ref }}"
-          # shellcheck disable=SC2086 # WATCHED is a space-separated path list
-          newer=$(git rev-list --full-history -1 "${{ github.sha }}..FETCH_HEAD" -- $WATCHED)
-          if [[ -n "$newer" ]]; then
+          later=$(gh api "repos/${{ github.repository }}/actions/workflows/docker-authorizer.yml/runs?branch=${{ github.ref_name }}&event=push&per_page=50" \
+            --jq '[.workflow_runs[] | select(.run_number > ${{ github.run_number }} and (.conclusion == null or .conclusion == "success"))] | map(.run_number) | min // empty')
+          if [[ -n "$later" ]]; then
             echo "move_main=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::$newer also changes the authorizer; publishing sha- only"
+            echo "::notice::Run #$later is newer and will move main; publishing sha- only"
           else
             echo "move_main=true" >> "$GITHUB_OUTPUT"
           fi
