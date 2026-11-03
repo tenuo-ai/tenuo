@@ -114,11 +114,12 @@ jobs:
     needs: build
     # Manual runs write a version tag, so they share release.yml's queue:
     # one publish at a time, and no two runs both pass the tag check. Main
-    # pushes write only main and sha- tags; they get their own group so a
-    # burst of pushes can't displace a release waiting in the shared queue.
+    # pushes write only main and sha- tags; they get their own FIFO queue so
+    # an older run can never finish after a newer one and move main backwards.
     concurrency:
-      group: ${{ github.event_name == 'workflow_dispatch' && 'docker-publish-tenuo-authorizer' || format('docker-authorizer-main-{0}', github.run_id) }}
+      group: ${{ github.event_name == 'workflow_dispatch' && 'docker-publish-tenuo-authorizer' || 'docker-authorizer-main' }}
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -183,7 +184,20 @@ jobs:
             exit 1
           fi
 
+      - name: Check main publication is current
+        id: freshness
+        if: github.event_name == 'push'
+        run: |
+          remote_sha=$(git ls-remote --exit-code origin "refs/heads/${{ github.ref_name }}" | awk '{print $1}')
+          if [[ "$remote_sha" == "${{ github.sha }}" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping stale main publication for ${{ github.sha }}; branch head is $remote_sha"
+          fi
+
       - name: Create manifest list and push
+        if: github.event_name != 'push' || steps.freshness.outputs.publish == 'true'
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
@@ -191,13 +205,15 @@ jobs:
             $(printf '${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect image
+        if: github.event_name != 'push' || steps.freshness.outputs.publish == 'true'
         run: docker buildx imagetools inspect ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
 
       - name: Summary
+        if: github.event_name != 'push' || steps.freshness.outputs.publish == 'true'
         run: |
           echo "## Authorizer Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-                    echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
