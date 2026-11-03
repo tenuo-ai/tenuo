@@ -122,6 +122,9 @@ jobs:
       queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The freshness check walks the commits after this one.
+          fetch-depth: 0
 
       - name: Extract version from authorizer.rs
         id: version
@@ -186,17 +189,16 @@ jobs:
 
       # The FIFO queue orders merge jobs by when their builds finish, not by
       # push order, so an older run can still reach this point last. Move
-      # "main" only if no newer commit on the branch touches the paths that
-      # trigger this workflow (such a commit has its own run that will move
-      # it). A README-only push after this commit doesn't count. The sha- tag
-      # is always published.
+      # "main" only if no later commit on the branch touches the paths that
+      # trigger this workflow (each such commit has its own run that will
+      # move it). Commits are checked one by one, so a later revert still
+      # counts. A README-only push doesn't. The sha- tag is always published.
       - name: Check main publication is current
         id: freshness
         if: github.event_name == 'push'
         env:
-          GH_TOKEN: ${{ github.token }}
           # Keep in sync with on.push.paths.
-          WATCHED: |
+          WATCHED: >-
             tenuo-core/src/bin/authorizer.rs
             tenuo-core/src/approval_gate.rs
             tenuo-core/src/planes.rs
@@ -204,11 +206,12 @@ jobs:
             tenuo-core/src/heartbeat.rs
             tenuo-core/deploy/docker/Dockerfile.authorizer
         run: |
-          changed=$(gh api "repos/${{ github.repository }}/compare/${{ github.sha }}...${{ github.ref_name }}" \
-            --jq '.files[]?.filename')
-          if grep -qxFf <(grep -v '^$' <<< "$WATCHED") <<< "$changed"; then
+          git fetch --quiet origin "${{ github.ref }}"
+          # shellcheck disable=SC2086 # WATCHED is a space-separated path list
+          newer=$(git rev-list --full-history -1 "${{ github.sha }}..FETCH_HEAD" -- $WATCHED)
+          if [[ -n "$newer" ]]; then
             echo "move_main=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::A newer authorizer change is on ${{ github.ref_name }}; publishing sha- only"
+            echo "::notice::$newer also changes the authorizer; publishing sha- only"
           else
             echo "move_main=true" >> "$GITHUB_OUTPUT"
           fi
@@ -221,13 +224,14 @@ jobs:
         run: |
           tags=$(jq -c --argjson drop "$DROP_MAIN" '.tags | map(select(($drop | not) or (endswith(":main") | not)))' <<< "$DOCKER_METADATA_OUTPUT_JSON")
           echo "tags=$(jq -r 'join(" ")' <<< "$tags")" >> "$GITHUB_OUTPUT"
-          echo "primary=$(jq -r '.[0]' <<< "$tags")" >> "$GITHUB_OUTPUT"
+          # A tag this run just wrote: the version tag if there is one, else sha-.
+          echo "ref=$(jq -r '(map(select((contains(":sha-") or endswith(":main")) | not)) + map(select(contains(":sha-"))))[0]' <<< "$tags")" >> "$GITHUB_OUTPUT"
           docker buildx imagetools create \
             $(jq -r 'map("-t " + .) | join(" ")' <<< "$tags") \
             $(printf '${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect image
-        run: docker buildx imagetools inspect ${{ steps.push.outputs.primary }}
+        run: docker buildx imagetools inspect ${{ steps.push.outputs.ref }}
 
       - name: Summary
         run: |
@@ -242,5 +246,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Pull command:**" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ steps.push.outputs.primary }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ steps.push.outputs.ref }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
