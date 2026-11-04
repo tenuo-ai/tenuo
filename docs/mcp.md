@@ -840,6 +840,31 @@ authorizer.authorize_one(warrant, "read_file", dict(result.constraints), signatu
 - MCP Transport: Tenuo relies on standard transports (stdio, SSE, StreamableHTTP).
 - Prompt Injection Detection: Tenuo assumes injection will happen. Instead of detecting it, Tenuo fails closed on unauthorized actions — a successful injection can still influence agent reasoning, but cannot invoke tools outside the warrant's scope.
 
+### Server identity and destination binding
+
+The current warrant format authorizes a tool name and its arguments. It does
+not bind that authority to a particular MCP server, transport URL, or other
+destination. If an agent can reach two servers that expose the same tool name,
+a warrant for that name is valid at either server when both trust the same
+issuer and accept the same argument constraints.
+
+Until the protocol defines destination binding, deployments must enforce that
+boundary out of band. Use one or more of these controls:
+
+- Give tools server-qualified capability names.
+- Use distinct trusted issuer sets for servers with different authority.
+- Route calls through a proxy or gateway that maps each destination to its
+  permitted tool names.
+- Prevent an agent from selecting an untrusted server for an otherwise valid
+  capability.
+
+Do not assume that the MCP transport destination is covered by the warrant or
+the proof-of-possession signature. Adding an audience or destination claim
+would change the protocol and its attenuation rules. That design is tracked in
+[issue #754](https://github.com/tenuo-ai/tenuo/issues/754) and should be
+considered through the relevant IETF Agent Authorization Token discussion so
+the broader community can evaluate interoperability and security tradeoffs.
+
 ---
 
 ## Reference: Common Tool Configurations
