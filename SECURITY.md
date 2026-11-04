@@ -80,8 +80,8 @@ These cover:
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | ✅ Security updates |
-| < 0.1   | ❌ No support |
+| 0.3.x   | ✅ Security updates |
+| < 0.3   | ❌ No support |
 
 ## Security Advisories
 
