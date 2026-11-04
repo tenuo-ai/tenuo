@@ -38,7 +38,10 @@ result = enforce_tool_call(
     trusted_roots=[control_key.public_key],
     approval_handler=cli_prompt(approver_key=approver_key),
 )
+result.raise_if_denied()  # a denial is returned, not raised; this turns it into an exception
 ```
+
+`enforce_tool_call` returns an `EnforcementResult`. A gate that fires without an approval raises `ApprovalRequired`, but most other denials (a constraint that is not satisfied, a tool that is not granted, an untrusted root) do **not** raise: they come back as `result.allowed == False`. Call `result.raise_if_denied()` before you run the tool.
 
 **Three things to configure on the warrant:**
 
@@ -194,6 +197,23 @@ warrant = (Warrant.mint_builder()
     .mint(control_key)
 )
 ```
+
+---
+
+## Delegation
+
+A delegated (child) warrant can narrow authority but never remove an approval requirement. In Python, a child adds gates with `with_approval_gates(...)` on the builder returned by `warrant.attenuate_builder()`. These are the ways a child's gates combine with its parent's:
+
+| The child | Result |
+|-----------|--------|
+| Adds a gate for another tool | Allowed. The inherited gates stay. |
+| Passes an empty gate map, or tries to drop an inherited gate | The inherited gate stays. |
+| Gates a whole tool that the parent gated per argument | Every call to that tool needs approval. |
+| Adds an exemption for a tool the parent gates as a whole | Ignored. Every call still needs approval. |
+| Gates the same argument as the parent with a different exemption, broader or narrower | The parent's gate wins. A child cannot loosen it, and a narrower exemption is ignored. |
+| Replaces the gate's display `message` | Allowed. The message is display text only; see [Approval Gates](#approval-gates). |
+
+Execution warrants issued from an issuer warrant inherit its approval gates, `required_approvers` and `min_approvals`. Issuance can add approvers or raise the threshold, but removing an approver or lowering the threshold fails with a `MonotonicityError`.
 
 ---
 
