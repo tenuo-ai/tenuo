@@ -19,7 +19,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "postcss": "8.5.28",
+    "postcss": "8.5.32",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
