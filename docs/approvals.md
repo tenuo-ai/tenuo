@@ -207,13 +207,18 @@ A delegated (child) warrant can narrow authority but never remove an approval re
 | The child | Result |
 |-----------|--------|
 | Adds a gate for another tool | Allowed. The inherited gates stay. |
+| Gates another argument of a tool the parent already gates | Both gates apply. A call needs approval if either one fires. |
 | Passes an empty gate map, or tries to drop an inherited gate | The inherited gate stays. |
 | Gates a whole tool that the parent gated per argument | Every call to that tool needs approval. |
 | Adds an exemption for a tool the parent gates as a whole | Ignored. Every call still needs approval. |
 | Gates the same argument as the parent with a different exemption, broader or narrower | The parent's gate wins. A child cannot loosen it, and a narrower exemption is ignored. |
 | Replaces the gate's display `message` | Allowed. The message is display text only; see [Approval Gates](#approval-gates). |
 
-Execution warrants issued from an issuer warrant inherit its approval gates, `required_approvers` and `min_approvals`. Issuance can add approvers or raise the threshold, but removing an approver or lowering the threshold fails with a `MonotonicityError`.
+For the tools an issuer warrant gates, the execution warrants it issues keep its approval gates, `required_approvers` and `min_approvals`. A tool the issuer does not gate gets none of them.
+
+Issuance can add approvers or raise the threshold. Removing an approver, or lowering `min_approvals`, fails with a `MonotonicityError`.
+
+Each approver you add also raises the minimum threshold. The threshold must be at least the issuer's threshold plus the number of new approvers, where the issuer's threshold is its `min_approvals`, or all of its approvers if it set none. If you leave `min_approvals` unset you get exactly that minimum: a 1-of-1 issuer plus one approver gives 2-of-2, and a 1-of-2 issuer plus one approver gives 2-of-3. Passing a lower value fails with a `MonotonicityError`. `min_approvals` can't exceed the number of distinct approvers (a `ValidationError`), and repeating an existing approver does not count as adding one.
 
 ---
 
