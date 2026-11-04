@@ -14,7 +14,7 @@
     "bullmq": "6.3.4"
   },
   "devDependencies": {
-    "@types/node": "22.20.1",
+    "@types/node": "26.6.6",
     "tsx": "4.23.15",
     "typescript": "5.8.3",
     "vitest": "4.1.12"
