@@ -70,7 +70,7 @@ The Agents SDK routes from `triage` to `refund_specialist` with its native
 `handoff()` API. Tenuo does not authorize the routing decision: `guard_agent()`
 checks each specialist tool call against a child warrant at execution time.
 The parent can also delete orders, while the child can only look up an order
-and issue a refund of at most 100 cents. The offline test uses a scripted model
+and issue a refund of 1 to 100 cents. The offline test uses a scripted model
 and proves that a denied deletion never reaches its tool body.
 
 ## Security Constraints

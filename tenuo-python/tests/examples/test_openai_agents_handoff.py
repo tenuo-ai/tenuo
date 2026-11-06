@@ -36,6 +36,12 @@ async def test_handoff_runs_allowed_tools_and_blocks_ungranted_tool():
     assert "delete_all_orders" not in child.tools
     preview = await guardrail(None, None, [{"function": {"name": "delete_all_orders", "arguments": "{}"}}])
     assert preview.tripwire_triggered
+    over_limit = await guardrail(
+        None,
+        None,
+        [{"function": {"name": "issue_refund", "arguments": '{"amount": 101}'}}],
+    )
+    assert over_limit.tripwire_triggered
 
     result = await Runner.run(triage, "Check the order and refund 50 cents")
 

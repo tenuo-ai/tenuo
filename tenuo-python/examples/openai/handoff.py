@@ -66,7 +66,7 @@ def build_agents(model, executed):
     child = (
         parent.grant_builder()
         .capability("lookup_order")
-        .capability("issue_refund", amount=Range(max=100))
+        .capability("issue_refund", amount=Range(min=1, max=100))
         .holder(specialist_key.public_key)
         .ttl(120)
         .grant(triage_key)
