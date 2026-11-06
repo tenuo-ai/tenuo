@@ -992,3 +992,48 @@ class TestGrantChainPropagation:
                 )
                 assert result.allowed, result.denial_reason
             assert chain_scope() is None
+
+    def test_nested_async_mint_resets_and_restores_outer_chain(self, root_only_trust, worker_key):
+        from tenuo_core import Pattern
+
+        from tenuo import Capability, chain_scope
+
+        @guard(tool="read_file")
+        async def read_file(path: str) -> str:
+            return f"content of {path}"
+
+        async def _test():
+            async with mint(Capability("read_file", path=Pattern("/outer/*")), holder_key=worker_key) as outer:
+                async with grant(Capability("read_file", path=Pattern("/outer/reports/*"))):
+                    assert [w.id for w in chain_scope()] == [outer.id]
+
+                    async with mint(Capability("read_file", path=Pattern("/fresh/*"))) as fresh:
+                        assert chain_scope() is None
+                        assert await read_file(path="/fresh/report.txt") == "content of /fresh/report.txt"
+
+                        async with grant(Capability("read_file", path=Pattern("/fresh/reports/*"))):
+                            assert [w.id for w in chain_scope()] == [fresh.id]
+                            assert await read_file(path="/fresh/reports/q1.txt") == "content of /fresh/reports/q1.txt"
+
+                    assert [w.id for w in chain_scope()] == [outer.id]
+                assert chain_scope() is None
+
+        asyncio.run(_test())
+
+    def test_nested_sync_mint_resets_and_restores_outer_chain(self, root_only_trust, worker_key):
+        from tenuo_core import Pattern
+
+        from tenuo import Capability, chain_scope
+        from tenuo.scoped import mint_sync
+
+        with mint_sync(Capability("read_file", path=Pattern("/outer/*")), holder_key=worker_key) as outer:
+            with grant(Capability("read_file", path=Pattern("/outer/reports/*"))):
+                assert [w.id for w in chain_scope()] == [outer.id]
+
+                with mint_sync(Capability("read_file", path=Pattern("/fresh/*"))) as fresh:
+                    assert chain_scope() is None
+                    with grant(Capability("read_file", path=Pattern("/fresh/reports/*"))):
+                        assert [w.id for w in chain_scope()] == [fresh.id]
+
+                assert [w.id for w in chain_scope()] == [outer.id]
+            assert chain_scope() is None

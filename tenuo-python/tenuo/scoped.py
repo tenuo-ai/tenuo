@@ -745,13 +745,16 @@ async def mint(
         holder=holder.public_key if holder != issuer else None,
     )
 
-    # Set in context
+    # A minted warrant is a fresh root, so it must not inherit an outer
+    # delegated warrant's parent chain. Restore the outer chain on exit.
+    chain_token = _chain_context.set(None)
     warrant_token = _warrant_context.set(warrant)
     keypair_token = _keypair_context.set(holder)
 
     try:
         yield warrant
     finally:
+        _chain_context.reset(chain_token)
         _warrant_context.reset(warrant_token)
         _keypair_context.reset(keypair_token)
 
@@ -800,12 +803,16 @@ def mint_sync(
         holder=holder.public_key if holder != issuer else None,
     )
 
+    # A minted warrant is a fresh root, so it must not inherit an outer
+    # delegated warrant's parent chain. Restore the outer chain on exit.
+    chain_token = _chain_context.set(None)
     warrant_token = _warrant_context.set(warrant)
     keypair_token = _keypair_context.set(holder)
 
     try:
         yield warrant
     finally:
+        _chain_context.reset(chain_token)
         _warrant_context.reset(warrant_token)
         _keypair_context.reset(keypair_token)
 
