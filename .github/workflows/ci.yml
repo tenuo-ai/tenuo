@@ -270,7 +270,7 @@ jobs:
           # OpenAI + Agents SDK (Python 3.10+). Installed before crewai so the
           # matrix exercises openai>=2; crewai may pin openai<3 afterwards.
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
-            && uv pip install --system openai openai-agents \
+            && uv pip install --system '.[openai]' \
             || echo "Skipping openai / openai-agents (requires Python 3.10+)"
           # AutoGen AgentChat (Python 3.10+)
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \

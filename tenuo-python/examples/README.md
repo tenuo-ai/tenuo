@@ -138,6 +138,7 @@ This demo shows Tenuo's key capabilities:
   - **[warrant.py](openai/warrant.py)**: Tier 2 cryptographic authorization with PoP
   - **[async_patterns.py](openai/async_patterns.py)**: Async/streaming patterns with TOCTOU protection
   - **[agents_sdk.py](openai/agents_sdk.py)**: OpenAI Agents SDK integration
+- **[handoff.py](openai/handoff.py)**: Native Agents SDK handoff to a refund specialist with a narrower warrant (offline test)
 
 ### CrewAI Integration
 - **[crewai/](crewai/)**: Complete CrewAI integration examples
