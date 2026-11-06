@@ -17,6 +17,7 @@ python guardrails.py    # Tier 1: Runtime guardrails
 python warrant.py       # Tier 2: Cryptographic authorization
 python async_patterns.py  # Async/streaming patterns
 python agents_sdk.py    # Agents SDK integration
+python handoff.py       # Offline handoff check, no API key needed
 ```
 
 ## Examples
@@ -62,6 +63,15 @@ Using Tenuo with OpenAI's Agents SDK. Shows:
 - Multi-turn conversations with protection
 
 **Use when**: Using the OpenAI Agents SDK.
+
+### [handoff.py](handoff.py) - Scoped Specialist Handoff
+
+The Agents SDK routes from `triage` to `refund_specialist` with its native
+`handoff()` API. Tenuo does not authorize the routing decision: `guard_agent()`
+checks each specialist tool call against a child warrant at execution time.
+The parent can also delete orders, while the child can only look up an order
+and issue a refund of 1 to 100 cents. The offline test uses a scripted model
+and proves that a denied deletion never reaches its tool body.
 
 ## Security Constraints
 
