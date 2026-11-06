@@ -52,6 +52,7 @@ try:
     from mcp.types import Tool as MCPTool  # type: ignore[import-not-found]
 
     from ._compat import (
+        MCP_V2,
         call_tool_with_meta,
         tool_input_schema,
         call_tool_result_is_error,
@@ -188,6 +189,9 @@ class SecureMCPClient:
                 result = await client.tools["read_file"](path="/data/file.txt")
     """
 
+    tasks: bool = False
+    task_timeout: Optional[float] = 3600.0
+
     def __init__(
         self,
         command: Optional[str] = None,
@@ -203,6 +207,8 @@ class SecureMCPClient:
         sse_read_timeout: float = 300.0,
         auth: Optional[Any] = None,
         approval_handler: Optional[ApprovalHandler] = None,
+        tasks: bool = False,
+        task_timeout: Optional[float] = 3600.0,
     ):
         """
         Initialize MCP client.
@@ -234,9 +240,22 @@ class SecureMCPClient:
                 Receives an ``ApprovalRequest`` and returns ``SignedApproval``
                 (or raises ``ApprovalDenied``). Used during local enforcement
                 (``warrant_context=True``).
+            tasks: Advertise the MCP Tasks extension (SEP-2663, MCP SDK 2.x).
+                A server may then run a call as a task; ``call_tool`` polls it
+                to the final result, and ``call_tool_task`` returns a
+                :class:`~tenuo.mcp.TenuoTask` handle. Every ``tasks/*``
+                request is signed with the warrant that created the task.
+                Default ``False``.
+            task_timeout: Longest ``call_tool`` waits for a task to finish, in
+                seconds (default 3600; ``None`` waits until the task ends).
         """
         if not MCP_AVAILABLE:
             raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
+        if tasks and not MCP_V2:
+            raise ConfigurationError(
+                "tasks=True needs the MCP SDK 2.x (2026-07-28 protocol); "
+                "the installed SDK has no tasks extension support."
+            )
 
         from tenuo._extension import require_extension
         require_extension("SecureMCPClient")
@@ -266,6 +285,8 @@ class SecureMCPClient:
         self.sse_read_timeout = sse_read_timeout
         self.auth = auth
         self._approval_handler = approval_handler
+        self.tasks = tasks
+        self.task_timeout = task_timeout
 
         from ..control_plane import get_or_create
         self._control_plane = get_or_create()
@@ -396,12 +417,30 @@ class SecureMCPClient:
             )
 
         # Create session
+        session_options: Dict[str, Any] = {}
+        if self.tasks:
+            from ._tasks_client import task_session_options
+
+            session_options = task_session_options()
         self.session = await self.exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
+            ClientSession(read_stream, write_stream, **session_options)
         )
 
-        # Initialize protocol
-        await asyncio.wait_for(self.session.initialize(), timeout=self.timeout)
+        # Initialize protocol. Tasks exist only on the 2026-07-28 era, which
+        # is negotiated by server/discover; the legacy handshake strips them.
+        negotiated = False
+        if self.tasks:
+            try:
+                await asyncio.wait_for(self.session.discover(), timeout=self.timeout)
+                negotiated = True
+            except Exception as exc:
+                logger.warning(
+                    "MCP server/discover failed (%s); falling back to initialize, "
+                    "where the server cannot run calls as tasks.",
+                    type(exc).__name__,
+                )
+        if not negotiated:
+            await asyncio.wait_for(self.session.initialize(), timeout=self.timeout)
 
         # Discover tools
         response = await asyncio.wait_for(self.session.list_tools(), timeout=self.timeout)
@@ -651,9 +690,15 @@ class SecureMCPClient:
         approvals: Optional[List] = None,
         timeout: float = 30.0,
         raise_on_tool_error: bool = True,
+        *,
+        _as_task: bool = False,
     ) -> Any:
         """
         Call an MCP tool with Tenuo authorization.
+
+        With ``tasks=True`` on the client, a call the server runs as a task
+        is polled to its final result (up to ``task_timeout``), each poll
+        signed with the warrant that created it.
 
         MCP Warrant Transport:
             With ``inject_warrant=True``, the current warrant and PoP signature
@@ -719,6 +764,9 @@ class SecureMCPClient:
         async def _perform_call(args: Dict[str, Any]) -> Any:
             call_args = args.copy()
             meta_payload: Optional[Dict[str, Any]] = None
+            # The authority a task created by this call is signed with.
+            task_chain: Optional[List[Any]] = None
+            task_key: Any = None
 
             if injection_mode != "none":
                 warrant = warrant_scope()
@@ -744,20 +792,57 @@ class SecureMCPClient:
                         call_args["_tenuo"] = tenuo_meta
                     else:
                         meta_payload = {"tenuo": tenuo_meta}
+                    task_chain, task_key = chain, keypair
 
             if self.session is None:
                 raise RuntimeError("Not connected to MCP server. Call connect() first.")
 
+            task_created = False
+            response: Any
             for attempt in range(2):
                 try:
-                    response = await asyncio.wait_for(
-                        # The compatibility helper uses the public call on
-                        # modern SDKs and a wire request on the 1.9.4 floor.
-                        call_tool_with_meta(
-                            self.session, tool_name, call_args, meta_payload
-                        ),
-                        timeout=timeout,
-                    )
+                    if self.tasks:
+                        response = await asyncio.wait_for(
+                            # MCP SDK 2.x only (tasks=True requires it).
+                            self.session.call_tool(  # type: ignore[call-arg, unused-ignore]
+                                tool_name,
+                                call_args,
+                                meta=meta_payload,  # type: ignore[arg-type, unused-ignore]
+                                allow_claimed=True,
+                            ),
+                            timeout=timeout,
+                        )
+                    else:
+                        response = await asyncio.wait_for(
+                            # The compatibility helper uses the public call on
+                            # modern SDKs and a wire request on the 1.9.4 floor.
+                            call_tool_with_meta(
+                                self.session, tool_name, call_args, meta_payload
+                            ),
+                            timeout=timeout,
+                        )
+                    if self.tasks:
+                        from ._tasks_client import CreateTaskResult, TenuoTask
+
+                        if isinstance(response, CreateTaskResult):
+                            task_created = True
+                            task = TenuoTask(
+                                self.session,
+                                tool_name,
+                                response,
+                                chain=task_chain,
+                                key=task_key,
+                                timeout=timeout,
+                            )
+                            if _as_task:
+                                return task
+                            response = await task.result(self.task_timeout)
+                        elif _as_task:
+                            raise MCPToolCallError(
+                                f"Tool '{tool_name}' did not run as a task; the server "
+                                "returned its result directly.",
+                                tool_name=tool_name,
+                            )
                     if call_tool_result_is_error(response):
                         raw_content = getattr(response, "content", None)
                         structured = call_tool_result_structured_content(response)
@@ -789,7 +874,8 @@ class SecureMCPClient:
                 except asyncio.TimeoutError:
                     raise
                 except Exception as exc:
-                    if attempt == 0 and self._is_connection_error(exc):
+                    # Never re-send a call that already started a task.
+                    if attempt == 0 and not task_created and self._is_connection_error(exc):
                         logger.warning(
                             "MCP connection lost during call to '%s'; reconnecting...",
                             tool_name,
@@ -854,6 +940,36 @@ class SecureMCPClient:
         else:
             # Call without local authorization (but still with optional injection)
             return await _perform_call(arguments)
+
+    async def call_tool_task(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        warrant_context: bool = True,
+        inject_warrant: Optional[WarrantInjection] = None,
+        approvals: Optional[List] = None,
+        timeout: float = 30.0,
+    ) -> Any:
+        """Call a tool as an MCP task and return a :class:`~tenuo.mcp.TenuoTask`.
+
+        Requires ``tasks=True`` on the client. Authorization is the same as
+        :meth:`call_tool`. The handle's ``status``/``update``/``cancel``/
+        ``wait``/``result`` sign each ``tasks/*`` request with the warrant
+        chain and key active for this call. Raises
+        :class:`~tenuo.exceptions.MCPToolCallError` if the server runs the
+        call directly instead.
+        """
+        if not self.tasks:
+            raise ConfigurationError("call_tool_task requires SecureMCPClient(tasks=True)")
+        return await self.call_tool(
+            tool_name,
+            arguments,
+            warrant_context=warrant_context,
+            inject_warrant=inject_warrant,
+            approvals=approvals,
+            timeout=timeout,
+            _as_task=True,
+        )
 
     def create_protected_tool(self, mcp_tool: MCPTool) -> Callable:
         """
