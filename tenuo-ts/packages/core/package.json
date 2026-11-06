@@ -63,7 +63,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
-    "@types/node": "^22.13.10",
+    "@types/node": "^26.6.6",
     "fast-check": "4.9.0",
     "typescript": "~5.8.2",
     "vitest": "^4.1.12",
