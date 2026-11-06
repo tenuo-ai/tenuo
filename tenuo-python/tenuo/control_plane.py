@@ -98,6 +98,7 @@ _DECISION_CODE_BY_ERROR_TYPE = {
     "insufficient_approvals": "insufficient-approvals",
     "approval_gate_misconfigured": "approval-invalid",
     "untrusted_issuer": "untrusted-root",
+    "chain_missing": "untrusted-root",
     # Python-side categories with no Rust counterpart; not in Error::name()'s
     # vocabulary, and kept kebab-case so they cannot be mistaken for it.
     "authorization_failed": "authorization-failed",
