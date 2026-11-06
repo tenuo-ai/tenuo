@@ -42,6 +42,10 @@ cargo add tenuo --features sdk
 
 See [`tenuo-ts/README.md`](tenuo-ts/README.md) for TypeScript. Rust is [below](#rust).
 
+For local controller files without an account, use `tenuo-cli init --dev` from
+the Python package. See the [local CLI guide](docs/local-cli.md) for identities,
+trust, signed revocation lists and development isolation limits.
+
 ### AI coding agents
 
 Install Tenuo's implementation skill so a supported coding agent can place
