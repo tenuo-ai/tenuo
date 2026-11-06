@@ -258,7 +258,7 @@ def _uses_tenuo_core_import(tree: ast.Module) -> List[Tuple[str, int]]:
 # Names that are only available from tenuo_core (not re-exported by tenuo)
 TENUO_CORE_ONLY: Set[str] = {
     "Subpath", "UrlSafe", "Shlex", "CompiledMcpConfig", "McpConfig",
-    "Clearance", "ChainVerificationResult",
+    "Clearance", "ChainVerificationResult", "sign_meta",
 }
 
 

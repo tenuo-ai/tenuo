@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -48,6 +49,11 @@ TEXT_SUFFIXES = {
 }
 
 PATTERNS = {
+    "framework": re.compile(
+        r"\b(?:from|import)\s+(?:agents|openai|langchain\w*|langgraph\w*|crewai|temporalio|"
+        r"tenuo\.(?:openai|langchain|langgraph|crewai|autogen|google_adk|temporal|fastapi|a2a)|mcp|fastmcp)\b|"
+        r"from\s+[\"'](?:@langchain/|@openai/agents|@modelcontextprotocol/)"
+    ),
     "mcp_server": re.compile(
         r"\bFastMCP\s*\(|\bServer\s*\(|@\w*\.tool\s*\(|"
         r"\bMcpServer\s*\(|\.registerTool\s*\(|\bserver\.tool\s*\(|\bguardTools\s*\(|"
@@ -70,11 +76,11 @@ PATTERNS = {
     ),
     "propagation": re.compile(
         r"inject_warrant\s*=|_meta[\"']?\s*[:.]\s*[\"']?tenuo|"
-        r"[\"']_tenuo[\"']|\bchain_scope\s*\(|"
+        r"[\"']_tenuo[\"']|\bwarrant_chain\b|\bencode_warrant_stack\b|\bchain_scope\s*\(|"
         r"\btenuo\.mcp\.attach\s*\(|\btenuo\.present\s*\(|\bmcp_meta\b|\bpresent\s*\("
     ),
     "verifier": re.compile(
-        r"\bMCPVerifier\s*\(|\bTenuoMiddleware\s*\(|"
+        r"\bMCPVerifier\s*\(|\bTenuoServerMiddleware\s*\(|\bTenuoMiddleware\s*\(|"
         r"\btenuo\.mcp\.(?:verify|handler)\s*\(|\btenuo\.verify\s*\(|\bguardTools\s*\(|"
         r"\bAuthorizer::(?:new|builder)\s*\(|\bGuard::\w+\s*\(|\bcheck_chain\w*\s*\("
     ),
@@ -91,7 +97,7 @@ PATTERNS = {
         r"os\.(?:remove|unlink|rename|replace)|"
         r"requests\.(?:post|put|patch|delete)|httpx\.(?:post|put|patch|delete)|"
         r"\w+\.(?:write|delete|remove|unlink|insert|update|commit|publish|send|deploy)\s*\(|"
-        r"(?:delete|remove|deploy|send|publish|create|update|write)_\w+\s*\(|"
+        r"(?:delete|remove|deploy|send|publish|create|update|write|refund|charge|pay|transfer)_\w+\s*\(|"
         r"\bfs\.(?:writeFile|writeFileSync|rm|rmSync|unlink|rename)\w*\s*\(|"
         r"\baxios\.(?:post|put|patch|delete)\s*\(|"
         r"method\s*:\s*[\"'](?:POST|PUT|PATCH|DELETE)[\"']|"
@@ -116,12 +122,27 @@ class Finding:
 
 
 def iter_files(root: Path) -> Iterable[Path]:
-    for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
-            continue
-        if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):
-            continue
-        yield path
+    # Prune before descent: filtering rglob results still traverses dependency
+    # trees. A copied skill and an alternatively named virtualenv are not target
+    # application evidence. Keep other agent configuration directories visible.
+    installed_skill = Path(__file__).resolve().parents[1]
+    for directory, directories, files in os.walk(root, followlinks=False):
+        parent = Path(directory)
+        directories[:] = [
+            name for name in directories
+            if name not in IGNORED_DIRS
+            and not (parent / name).is_symlink()
+            and (parent / name).resolve() != installed_skill
+            and not (parent / name / "pyvenv.cfg").is_file()
+        ]
+        for name in files:
+            path = parent / name
+            if (
+                path.suffix.lower() in TEXT_SUFFIXES
+                and path.is_file()
+                and path.resolve().is_relative_to(root.resolve())
+            ):
+                yield path
 
 
 def inspect(root: Path) -> list[Finding]:
@@ -140,9 +161,7 @@ def inspect(root: Path) -> list[Finding]:
                 continue
             for kind, pattern in PATTERNS.items():
                 if pattern.search(line):
-                    findings.append(
-                        Finding(kind=kind, path=relative, line=number, excerpt=stripped[:180])
-                    )
+                    findings.append(Finding(kind=kind, path=relative, line=number, excerpt=stripped[:180]))
     return findings
 
 
@@ -183,18 +202,50 @@ def summarize(findings: list[Finding], max_per_kind: int) -> dict[str, object]:
             "no wrapper, observe-only mode, or fallback route makes authorization optional."
         )
 
+    # Nested evidence shares each kind's --max-per-kind budget, so "truncated" covers it too.
+    shown = {id(item) for items in by_kind.values() for item in items[:max_per_kind]}
+    candidates = []
+    for path in sorted({item.path for item in findings}):
+        items = [item for item in findings if item.path == path]
+        evidence_text = "\n".join(item.excerpt for item in items)
+        frameworks = [
+            label
+            for label, pattern in {
+                "OpenAI Agents": r"agents|function_tool|tool_input_guardrails|tenuo\.openai",
+                "LangChain/LangGraph": r"langchain|langgraph|TenuoToolNode|TenuoMiddleware|tenuo_node|guard_node",
+                "Temporal": r"temporal|TenuoTemporalPlugin|TenuoWorkerInterceptor",
+                "CrewAI": r"crewai|GuardedCrew|guarded_step|before_tool_call",
+                "Google ADK": r"google_adk|TenuoPlugin|before_tool_callback",
+                "FastAPI": r"fastapi|SecureAPIRouter",
+                "MCP": r"MCP|McpServer|call_tool|callTool",
+            }.items()
+            if re.search(pattern, evidence_text, re.I)
+        ]
+        candidates.append(
+            {
+                "path": path,
+                "framework_candidates": frameworks,
+                "tool_types": sorted(
+                    {
+                        item.kind
+                        for item in items
+                        if item.kind in {"native_tool", "builtin_execution", "handoff", "mcp_server", "mcp_client"}
+                    }
+                ),
+                "effects": [asdict(item) for item in items if item.kind == "effect" and id(item) in shown],
+                "existing_interception": [
+                    asdict(item) for item in items if item.kind in {"interceptor", "verifier"} and id(item) in shown
+                ],
+                "possible_bypass": "Unverified: trace original handlers, alternate dispatch and direct effect clients in source.",
+            }
+        )
+
     return {
+        "certified": False,
+        "candidate_boundaries": candidates,
         "counts": {kind: len(items) for kind, items in by_kind.items()},
-        "evidence": {
-            kind: [asdict(item) for item in items[:max_per_kind]]
-            for kind, items in by_kind.items()
-            if items
-        },
-        "truncated": {
-            kind: len(items) - max_per_kind
-            for kind, items in by_kind.items()
-            if len(items) > max_per_kind
-        },
+        "evidence": {kind: [asdict(item) for item in items[:max_per_kind]] for kind, items in by_kind.items() if items},
+        "truncated": {kind: len(items) - max_per_kind for kind, items in by_kind.items() if len(items) > max_per_kind},
         "gaps": gaps,
         "warnings": warnings,
         "note": "Heuristic inventory only; confirm trust ownership and denial-before-effect behavior manually.",
@@ -222,7 +273,7 @@ def print_human(summary: dict[str, object]) -> None:
             print(f"  - ... {omitted} more")
     print()
     gaps = summary["gaps"]
-    print("Gaps: " + (", ".join(gaps) if gaps else "none detected"))
+    print("Gaps: " + (", ".join(gaps) if gaps else "no missing symbols; coverage still unverified"))
     for warning in summary["warnings"]:
         print(f"Warning: {warning}")
     print(f"Note: {summary['note']}")
