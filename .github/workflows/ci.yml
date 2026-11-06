@@ -274,7 +274,7 @@ jobs:
             || echo "Skipping openai / openai-agents (requires Python 3.10+)"
           # AutoGen AgentChat (Python 3.10+)
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
-            && uv pip install --system "autogen-agentchat>=0.7.0" "autogen-ext[openai]>=0.7.0" \
+            && uv pip install --system '.[autogen]' \
             || echo "Skipping autogen (requires Python 3.10+)"
           # Google ADK
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
