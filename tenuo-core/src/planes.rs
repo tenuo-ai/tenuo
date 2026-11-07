@@ -151,6 +151,7 @@ fn verify_approvals_with_tolerance(
             approved_at: payload.approved_at,
             expires_at: payload.expires_at,
             request_hash: payload.request_hash,
+            nonce: payload.nonce,
             signed_approval_cbor_b64: Some(approval.to_cbor_b64()?),
         });
         valid_count = valid_count.saturating_add(1);
@@ -259,6 +260,11 @@ pub struct VerifiedApproval {
     pub expires_at: u64,
     /// Hash binding the approval to (warrant_id, tool, args, holder).
     pub request_hash: [u8; 32],
+    /// The approval's 128-bit nonce. Identifies this approval, as opposed to
+    /// the request it covers, for at-most-once use at the enforcement point.
+    /// All zero when deserializing older payloads.
+    #[serde(default)]
+    pub nonce: [u8; 16],
     /// Standard base64-encoded CBOR [`crate::approval::SignedApproval`] envelope.
     ///
     /// Present for approvals produced by `verify_approvals_with_tolerance`.
@@ -329,6 +335,37 @@ fn encode_warrant_stack_b64(chain: &[Warrant]) -> Option<String> {
 }
 
 impl ChainVerificationResult {
+    /// A stable key for this authorization, for downstream deduplication.
+    ///
+    /// `SHA-256("tenuo-idempotency-v1" || request_hash || (approver_key ||
+    /// nonce)*)`, with approvals sorted so their presentation order does not
+    /// matter. The same approvals for the same request give the same key on
+    /// every retry, a restored checkpoint or another replica; a fresh approval
+    /// gives a new one. Carry it to the system that performs the action so the
+    /// action itself happens at most once.
+    ///
+    /// `None` when no approvals were verified: without one there is no
+    /// single-use authorization to name.
+    pub fn idempotency_key(&self) -> Option<[u8; 32]> {
+        use sha2::{Digest, Sha256};
+
+        let first = self.verified_approvals.first()?;
+        let mut parts: Vec<([u8; 32], [u8; 16])> = self
+            .verified_approvals
+            .iter()
+            .map(|a| (a.approver_key, a.nonce))
+            .collect();
+        parts.sort();
+        let mut h = Sha256::new();
+        h.update(crate::domain::IDEMPOTENCY_CONTEXT);
+        h.update(first.request_hash);
+        for (key, nonce) in parts {
+            h.update(key);
+            h.update(nonce);
+        }
+        Some(h.finalize().into())
+    }
+
     /// Build the signed content of a receipt from this verification.
     ///
     /// Every trust-critical field comes from the verification that produced
@@ -3213,6 +3250,103 @@ mod receipt_plumbing_tests {
             .expect("chain verifies");
 
         assert_ne!(first.request_hash, second.request_hash);
+    }
+
+    fn verified_with(approvals: &[([u8; 32], [u8; 16])]) -> ChainVerificationResult {
+        ChainVerificationResult {
+            root_issuer: None,
+            chain_length: 1,
+            leaf_depth: 0,
+            verified_steps: Vec::new(),
+            warrant_stack_b64: None,
+            verified_approvals: approvals
+                .iter()
+                .map(|(key, nonce)| VerifiedApproval {
+                    approver_key: *key,
+                    external_id: String::new(),
+                    approved_at: 0,
+                    expires_at: 1,
+                    request_hash: [9u8; 32],
+                    nonce: *nonce,
+                    signed_approval_cbor_b64: None,
+                })
+                .collect(),
+            pop_signature: None,
+            request_hash: Some([9u8; 32]),
+            tool: None,
+        }
+    }
+
+    /// Retries of one authorization must agree on the key, whatever order the
+    /// approvals arrive in; a fresh approval is a new authorization.
+    #[test]
+    fn idempotency_key_names_the_approvals_not_their_order() {
+        let a = ([1u8; 32], [1u8; 16]);
+        let b = ([2u8; 32], [2u8; 16]);
+        assert_eq!(verified_with(&[]).idempotency_key(), None);
+
+        let ab = verified_with(&[a, b]).idempotency_key().unwrap();
+        assert_eq!(verified_with(&[b, a]).idempotency_key(), Some(ab));
+
+        let fresh = ([1u8; 32], [3u8; 16]);
+        assert_ne!(verified_with(&[fresh, b]).idempotency_key(), Some(ab));
+        assert_ne!(verified_with(&[a]).idempotency_key(), Some(ab));
+        assert_ne!(verified_with(&[a]).idempotency_key(), Some([9u8; 32]));
+    }
+
+    /// The nonce has to come out of verification, or the enforcement point has
+    /// nothing to consume.
+    #[test]
+    fn carries_the_approval_nonce_out_of_verification() {
+        use crate::approval::{ApprovalPayload, SignedApproval};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+        use crate::constraints::ConstraintSet;
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let approver = SigningKey::generate();
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("transfer".into(), ToolApprovalGate::whole_tool());
+        let warrant = Warrant::builder()
+            .capability("transfer", ConstraintSet::new())
+            .holder(holder.public_key())
+            .required_approvers(vec![approver.public_key()])
+            .min_approvals(1)
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .ttl(Duration::from_secs(600))
+            .build(&issuer)
+            .unwrap();
+        let args = HashMap::new();
+        let request_hash = crate::approval::compute_request_hash(
+            &warrant.id().to_string(),
+            "transfer",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let nonce = [7u8; 16];
+        let approval = SignedApproval::create(
+            ApprovalPayload::new(
+                request_hash,
+                nonce,
+                "approver".into(),
+                now,
+                now + chrono::Duration::seconds(300),
+            ),
+            &approver,
+        );
+        let pop = warrant.sign(&holder, "transfer", &args).unwrap();
+        let result = Authorizer::new()
+            .with_trusted_root(issuer.public_key())
+            .check_chain(&[warrant], "transfer", &args, Some(&pop), &[approval])
+            .expect("approved call verifies");
+
+        assert_eq!(result.verified_approvals.len(), 1);
+        assert_eq!(result.verified_approvals[0].nonce, nonce);
+        assert!(result.idempotency_key().is_some());
     }
 
     /// The whole point of building from a verification result: a caller cannot

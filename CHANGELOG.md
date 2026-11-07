@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Single-use approvals (opt-in).** `tenuo.enable_approval_consumption()` or
+  `enforce_tool_call(consumption_store=...)` lets each approval authorize one
+  call, with reserve / commit / release and a pluggable backend. Approved calls
+  expose a stable `idempotency_key` (`tenuo.current_idempotency_key()` in the
+  tool) for downstream deduplication. Core: `VerifiedApproval.nonce` and
+  `ChainVerificationResult.idempotency_key()`.
+
 ## [0.3.5] - 2026-10-30
 
 ### Security

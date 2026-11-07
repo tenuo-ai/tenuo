@@ -385,6 +385,33 @@ from tenuo.exceptions import InsufficientApprovals, ApprovalGateTriggered
 
 ---
 
+## Single-Use Approvals
+
+Approval verification keeps no state, so an approval authorizes its request every time it is presented until it expires. That includes the honest holder being rewound: a run resumed from a checkpoint taken before the approved call, a fork of that checkpoint, or a worker retried after a crash. Each re-signs a fresh PoP, so the PoP `NonceStore` does not see a repeat.
+
+Enable the consumption store to allow each approval once:
+
+```python
+import tenuo
+
+tenuo.enable_approval_consumption()   # process-wide; every adapter uses it
+
+# or per call
+from tenuo import ApprovalConsumptionStore
+store = ApprovalConsumptionStore()
+result = enforce_tool_call(..., consumption_store=store)
+```
+
+A second use is denied with `error_type="approval_consumed"` (receipt decision code `approval-consumed`, `raise_if_denied()` raises `InvalidApproval`). `approval_metadata["state"]` is `"in_flight"` or `"consumed"`. A fresh approval for the same call is allowed.
+
+**Reserve / commit.** An allowed call reserves its approvals. Call `result.approval_reservation.commit()` once the action has run, or `.release()` only when it certainly did not. A crash in between leaves the reservation in flight, so a retry is refused rather than treated as unused. Entries are kept until the approval expires.
+
+**Idempotency key.** The store stops a second *authorization*; only the downstream system can stop a second *effect*. Every approved call carries `result.idempotency_key`, also available inside the tool as `tenuo.current_idempotency_key()`. It is derived in the core from the `request_hash` receipts already carry plus the approvals' nonces, so it is the same on every retry and replica and new for a fresh approval. Pass it to the payment API, queue or database as its idempotency key.
+
+The in-memory backend is per process. With several replicas, implement `ConsumptionBackend` (`reserve` / `commit` / `release`) on a shared store, with `reserve` as an atomic insert-if-absent (for example Redis `SET NX EX`).
+
+---
+
 ## Cryptographic Model
 
 Every approval binds to `(warrant_id, tool, args, holder)` via SHA-256 (`compute_request_hash`). `SignedApproval` = Ed25519 over `ApprovalPayload`. Rust verifies signature, hash, strict expiry, future-timestamp clock tolerance, approver trust, deduplication, and threshold.
