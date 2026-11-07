@@ -816,6 +816,9 @@ def auto_protect(
     Returns:
         Protected version of the input
 
+    Raises:
+        ConfigurationError: If ``mode`` is not a known enforcement mode.
+
     Example:
         # Deploy in observe mode first
         executor = auto_protect(executor)  # Logs would-be denials
@@ -846,8 +849,11 @@ def auto_protect(
             warn_on_missing_warrant=True,
         )
     elif enforcement_mode is not None:
-        # Explicit mode only: never silently downgrade a configured enforce mode
-        get_config().mode = enforcement_mode
+        # Only an explicit mode changes an existing configuration.
+        config = get_config()
+        if config.mode != enforcement_mode:
+            logger.warning("auto_protect: switching Tenuo to %s mode for the whole process", enforcement_mode.value)
+        config.mode = enforcement_mode
 
     if get_config().mode == EnforcementMode.OBSERVE:
         logger.warning("auto_protect: observe mode is active process-wide; tool calls are logged, not blocked")
