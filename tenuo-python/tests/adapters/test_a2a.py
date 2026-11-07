@@ -2024,6 +2024,59 @@ class TestServerConstraintsWithPoP:
         assert outcomes() == ["deny", "allow"]
 
     @pytest.mark.asyncio
+    async def test_observed_denial_keeps_denial_audit_and_control_plane_context(self):
+        core = pytest.importorskip("tenuo_core")
+        from tenuo.config import configure, reset_config
+
+        root = core.SigningKey.generate()
+        holder = core.SigningKey.generate()
+        warrant = core.Warrant.mint(
+            keypair=root,
+            holder=holder.public_key,
+            capabilities={"read_file": {"path": core.Subpath("/data")}},
+            ttl_seconds=300,
+        )
+        emitted = []
+
+        class Recorder:
+            def emit_for_enforcement(self, result, **kwargs):
+                emitted.append((result, kwargs))
+
+        server = A2AServer(
+            name="Observed Agent",
+            url="https://observe.example.com",
+            public_key=holder.public_key.to_bytes().hex(),
+            trusted_issuers=[root.public_key.to_bytes().hex()],
+            require_audience=False,
+            check_replay=False,
+            audit_log=None,
+            control_plane=Recorder(),
+        )
+        audit_events = []
+
+        async def capture_audit(event):
+            audit_events.append(event)
+
+        server._audit = capture_audit
+        configure(trusted_roots=[root.public_key], mode="observe")
+        try:
+            result = await self._call(
+                server, warrant, holder, {"path": "/etc/passwd"}
+            )
+        finally:
+            reset_config()
+
+        assert result is not None
+        enforcement, kwargs = emitted[-1]
+        assert enforcement.allowed and enforcement.observed
+        assert enforcement.error_type == "constraint_violation"
+        assert enforcement.denial_reason
+        assert kwargs["chain_result"] is None
+        assert audit_events[-1].event.value == "warrant_rejected"
+        assert audit_events[-1].outcome == "denied"
+        assert audit_events[-1].reason == enforcement.denial_reason
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("constraint", "allowed", "denied"),
         [

@@ -120,7 +120,7 @@ class RecordingControlPlane:
             "request_id": request_id,
             "warrant_stack_override": warrant_stack_override,
         }
-        if result.allowed:
+        if result.allowed and not getattr(result, "observed", False):
             self.allow_events.append(event)
         else:
             self.deny_events.append(event)
@@ -369,6 +369,60 @@ def test_verify_nexus_operation_emits_control_plane_allow(
         "order_id": "ord_123",
         "amount_cents": 2500,
     }
+
+
+def test_verify_nexus_operation_preserves_observed_denial_context(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    from tenuo.config import configure, reset_config
+
+    root_key, agent_key = nexus_keys
+    denied_input = RefundInput("ord_999", 2500)
+    control_plane = RecordingControlPlane()
+    audit_events = []
+    ctx = SimpleNamespace(
+        request_id="req-observed-denial",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=denied_input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=control_plane,
+        audit_callback=audit_events.append,
+    )
+
+    configure(trusted_roots=[root_key.public_key], mode="observe")
+    try:
+        verified = verify_nexus_operation(
+            ctx, denied_input, config, endpoint="billing-prod"
+        )
+    finally:
+        reset_config()
+
+    assert verified.to_bytes() == nexus_warrant.to_bytes()
+    assert control_plane.allow_events == []
+    [entry] = control_plane.deny_events
+    assert entry["chain_result"] is None
+    assert entry["result"].allowed and entry["result"].observed
+    assert entry["result"].error_type == "constraint_violation"
+    assert entry["result"].denial_reason
+    assert entry["result"].arguments == {
+        "order_id": "[REDACTED]",
+        "amount_cents": "[REDACTED]",
+    }
+    assert audit_events[-1].decision == "DENY"
+    assert audit_events[-1].denial_reason == entry["result"].denial_reason
 
 
 def test_verify_nexus_operation_control_plane_failure_does_not_deny_allow(

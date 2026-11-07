@@ -115,6 +115,7 @@ _POP_ESTABLISHED_ERROR_TYPES = frozenset(
         "constraint_violation",
         "policy_violation",
         "insufficient_approvals",
+        "approval_required",
         "approval_gate_misconfigured",
     }
 )
@@ -291,7 +292,8 @@ class ControlPlaneClient:
             _receipts.collect_enforcement_receipt(result, chain_result)
         except Exception:  # noqa: BLE001 - collection must not fail the caller
             logger.warning("runtime receipt collection failed", exc_info=True)
-        allowed = getattr(result, "allowed", False)
+        # An observed denial was let through, but the decision was still a deny.
+        allowed = getattr(result, "allowed", False) and not getattr(result, "observed", False)
         tool = getattr(result, "tool", "") or ""
 
         # Resolve arguments — EnforcementResult uses .arguments,

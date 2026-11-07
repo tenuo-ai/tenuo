@@ -1053,15 +1053,25 @@ def guard(
                     result, warrant_to_use, tool_name, auth_args, callsite, func_name,
                 )
 
+            observed = bool(getattr(result, "observed", False))
             audit_logger.log(
                 AuditEvent(
-                    event_type=AuditEventType.AUTHORIZATION_SUCCESS,
+                    event_type=(
+                        AuditEventType.AUTHORIZATION_FAILURE
+                        if observed
+                        else AuditEventType.AUTHORIZATION_SUCCESS
+                    ),
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else None,
                     tool=tool_name,
-                    action="authorized",
+                    action="denied" if observed else "authorized",
                     constraints=auth_args,
                     trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, "session_id") else None,
-                    details=f"Authorization successful for {tool_name}",
+                    error_code="authorization_failed" if observed else None,
+                    details=(
+                        f"Authorization denied: {result.denial_reason}"
+                        if observed
+                        else f"Authorization successful for {tool_name}"
+                    ),
                     metadata={
                         "callsite": callsite,
                         "function": func_name,

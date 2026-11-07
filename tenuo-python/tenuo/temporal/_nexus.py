@@ -1351,6 +1351,7 @@ def _verify_nexus_operation(
             chain_result=chain_result,
             authorizer=authorizer,
             verified_pop=pop_bytes,
+            enforcement=enforcement,
         )
     except _nexus_auth_error_types() as exc:
         _emit_nexus_control_plane_event(
@@ -1403,12 +1404,15 @@ def _emit_nexus_control_plane_event(
     exc: Optional[BaseException] = None,
     authorizer: Optional[Any] = None,
     verified_pop: Optional[bytes] = None,
+    enforcement: Optional[Any] = None,
 ) -> None:
     latency_s = (time.perf_counter_ns() - start_ns) / 1e9
     redacted_args = _redact_nexus_args(config, args)
     request_id = getattr(ctx, "request_id", None)
-    _record_nexus_metrics(config, tool_name, latency_s, exc)
-    _emit_nexus_audit_event(config, ctx, warrant, tool_name, redacted_args, exc)
+    _record_nexus_metrics(config, tool_name, latency_s, exc, enforcement)
+    _emit_nexus_audit_event(
+        config, ctx, warrant, tool_name, redacted_args, exc, enforcement
+    )
 
     control_plane = getattr(config, "control_plane", None)
     try:
@@ -1418,24 +1422,58 @@ def _emit_nexus_control_plane_event(
         latency_us = int(latency_s * 1e6)
         presented_chain = _presented_nexus_chain(warrant, chain)
         if exc is None:
-            result = EnforcementResult(
-                allowed=True,
-                tool=tool_name,
-                arguments=redacted_args,
-                warrant_id=getattr(warrant, "id", None),
-                chain_result=chain_result,
-                authorizer=authorizer,
-                presented_chain=presented_chain,
-                verified_pop=verified_pop,
-                pop_auth_args=args,
+            result = (
+                _dataclasses.replace(
+                    enforcement,
+                    arguments=redacted_args,
+                    chain_result=(
+                        enforcement.chain_result
+                        if enforcement.chain_result is not None
+                        else chain_result
+                    ),
+                    authorizer=(
+                        enforcement.authorizer
+                        if enforcement.authorizer is not None
+                        else authorizer
+                    ),
+                    presented_chain=(
+                        enforcement.presented_chain
+                        if enforcement.presented_chain is not None
+                        else presented_chain
+                    ),
+                    verified_pop=(
+                        enforcement.verified_pop
+                        if enforcement.verified_pop is not None
+                        else verified_pop
+                    ),
+                    pop_auth_args=(
+                        enforcement.pop_auth_args
+                        if enforcement.pop_auth_args is not None
+                        else args
+                    ),
+                )
+                if enforcement is not None
+                else EnforcementResult(
+                    allowed=True,
+                    tool=tool_name,
+                    arguments=redacted_args,
+                    warrant_id=getattr(warrant, "id", None),
+                    chain_result=chain_result,
+                    authorizer=authorizer,
+                    presented_chain=presented_chain,
+                    verified_pop=verified_pop,
+                    pop_auth_args=args,
+                )
             )
             collect_enforcement_receipt(
-                result, chain_result, runtime=getattr(config, "runtime", None)
+                result,
+                result.chain_result,
+                runtime=getattr(config, "runtime", None),
             )
             if control_plane:
                 control_plane.emit_for_enforcement(
                     result,
-                    chain_result=chain_result,
+                    chain_result=result.chain_result,
                     latency_us=latency_us,
                     request_id=str(request_id) if request_id else None,
                 )
@@ -1478,12 +1516,19 @@ def _record_nexus_metrics(
     tool_name: str,
     latency_s: float,
     exc: Optional[BaseException],
+    enforcement: Optional[Any] = None,
 ) -> None:
     metrics = getattr(config, "metrics", None)
     if metrics is None:
         return
     try:
-        if exc is None:
+        observed_enforcement = (
+            enforcement
+            if enforcement is not None and enforcement.observed
+            else None
+        )
+        observed = observed_enforcement is not None
+        if exc is None and not observed:
             metrics.record_authorized(
                 tool=tool_name,
                 workflow_type="nexus",
@@ -1492,7 +1537,11 @@ def _record_nexus_metrics(
         else:
             metrics.record_denied(
                 tool=tool_name,
-                reason=str(exc),
+                reason=(
+                    observed_enforcement.denial_reason
+                    if observed_enforcement is not None
+                    else str(exc)
+                ),
                 workflow_type="nexus",
                 latency_seconds=latency_s,
             )
@@ -1511,11 +1560,18 @@ def _emit_nexus_audit_event(
     tool_name: str,
     redacted_args: Dict[str, Any],
     exc: Optional[BaseException],
+    enforcement: Optional[Any] = None,
 ) -> None:
     callback = getattr(config, "audit_callback", None)
     if not callback:
         return
-    allowed = exc is None
+    observed_enforcement = (
+        enforcement
+        if enforcement is not None and enforcement.observed
+        else None
+    )
+    observed = observed_enforcement is not None
+    allowed = exc is None and not observed
     if allowed and not getattr(config, "audit_allow", True):
         return
     if not allowed and not getattr(config, "audit_deny", True):
@@ -1561,9 +1617,19 @@ def _emit_nexus_audit_event(
         warrant_id=getattr(warrant, "id", None) or "none",
         warrant_expires_at=expires_at,
         warrant_capabilities=capabilities,
-        denial_reason=None if allowed else str(exc),
+        denial_reason=(
+            None
+            if allowed
+            else observed_enforcement.denial_reason
+            if observed_enforcement is not None
+            else str(exc)
+        ),
         constraint_violated=(
-            getattr(exc, "constraint", None) if exc is not None else None
+            observed_enforcement.constraint_violated
+            if observed_enforcement is not None
+            else getattr(exc, "constraint", None)
+            if exc is not None
+            else None
         ),
         tenuo_version=tenuo_version,
     )
