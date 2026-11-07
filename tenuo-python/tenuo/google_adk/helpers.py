@@ -436,7 +436,7 @@ def scoped_warrant(
     state: Dict[str, Any],
     warrant: "Warrant",
     *,
-    key: str = "tenuo_warrant",
+    key: str = "__tenuo_warrant__",
     agent_name: Optional[str] = None,
 ):
     """
@@ -451,21 +451,29 @@ def scoped_warrant(
         # Warrant automatically removed from state
 
     Args:
-        state: The state dict to inject warrant into
-        warrant: The warrant to inject
-        key: State key to use (default: "tenuo_warrant")
+        state: The state dict (or ADK ``State``) to inject the warrant into
+        warrant: The warrant to inject. A ``Warrant`` object is stored as its
+            base64 encoding, since ADK copies and persists session state and
+            ``Warrant`` objects cannot be copied.
+        key: State key to use (default: ``"__tenuo_warrant__"``, the key
+            ``TenuoGuard`` and ``TenuoPlugin`` read)
         agent_name: If provided, wraps in ScopedWarrant for multi-agent safety
     """
-    from .plugin import ScopedWarrant
+    from .plugin import ScopedWarrant, _portable_warrant
 
     try:
         if agent_name:
-            state[key] = ScopedWarrant(warrant, agent_name)
+            state[key] = ScopedWarrant(_portable_warrant(warrant), agent_name)
         else:
-            state[key] = warrant
+            state[key] = _portable_warrant(warrant)
         yield
     finally:
-        state.pop(key, None)
+        # ADK's State has no pop(); assigning None also records the removal
+        # in its delta.
+        if hasattr(state, "pop"):
+            state.pop(key, None)
+        else:
+            state[key] = None
 
 
 # =============================================================================
