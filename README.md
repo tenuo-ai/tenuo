@@ -10,7 +10,7 @@
   <a href="https://github.com/tenuo-ai/tenuo/actions/workflows/ci.yml"><img src="https://github.com/tenuo-ai/tenuo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://crates.io/crates/tenuo"><img src="https://img.shields.io/crates/v/tenuo.svg" alt="Crates.io"></a>
   <a href="https://pypi.org/project/tenuo/"><img src="https://img.shields.io/pypi/v/tenuo.svg" alt="PyPI"></a>
-  <a href="https://hub.docker.com/r/tenuo/authorizer"><img src="https://img.shields.io/docker/v/tenuo/authorizer?label=docker" alt="Docker"></a>
+  <a href="https://hub.docker.com/r/tenuo/authorizer"><img src="https://img.shields.io/docker/v/tenuo/authorizer?label=docker&sort=semver" alt="Docker"></a>
   <a href="https://tenuo.ai"><img src="https://img.shields.io/badge/docs-tenuo.ai-blue" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
   <a href="https://deepwiki.com/tenuo-ai/tenuo"><img src="https://img.shields.io/badge/Ask-DeepWiki-blue.svg" alt="Ask DeepWiki"></a>
@@ -366,8 +366,8 @@ This runs the [orchestrator -> worker -> authorizer](https://tenuo.ai/demo.html)
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.3.3  # Sidecar for warrant verification
-docker pull tenuo/control:0.3.3     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.3.4  # Sidecar for warrant verification
+docker pull tenuo/control:0.3.4     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -404,7 +404,7 @@ The core crate is the protocol. The `sdk` feature is the enforcement surface: a 
 
 ```toml
 [dependencies]
-tenuo = { version = "0.3.3", features = ["sdk"] }
+tenuo = { version = "0.3.4", features = ["sdk"] }
 ```
 
 ```rust

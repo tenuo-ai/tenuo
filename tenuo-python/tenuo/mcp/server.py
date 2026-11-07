@@ -560,7 +560,7 @@ def _mcp_result_from_enforcement(
             constraints=constraints,
             warrant_id=warrant_id,
             denial_reason=reason,
-            jsonrpc_error_code=-32002,
+            jsonrpc_error_code=None if allowed else -32002,
             request_hash=meta.get("request_hash") or getattr(enforcement, "request_hash", None),
             approval_metadata=meta or None,
             error_type=error_type or None,

@@ -346,6 +346,48 @@ def test_verify_path_integrity_failure_observed_with_error_type():
     assert result.error_type == "invalid_pop"
 
 
+def test_verify_path_missing_signature_is_observed_with_context():
+    from tenuo_core import Authorizer
+
+    _observe()
+    authorizer = Authorizer(trusted_roots=ROOTS)
+    result = verify_inbound_call(
+        tool_name="issue_payout",
+        tool_args=BAD_ARGS,
+        warrant=WARRANT,
+        pop_signature=None,
+        authorizer=authorizer,
+    )
+    assert result.allowed and result.observed
+    assert result.error_type == "invalid_pop"
+    assert result.authorizer is authorizer
+    assert result.presented_chain == [WARRANT]
+    assert result.verified_pop is None
+    assert result.pop_auth_args == BAD_ARGS
+
+
+def test_guard_audits_observed_denial_as_failure(monkeypatch):
+    from tenuo import guard
+    from tenuo.audit import AuditEventType, audit_logger
+
+    events = []
+    monkeypatch.setattr(audit_logger, "log", events.append)
+
+    @guard(
+        WARRANT,
+        tool="issue_payout",
+        keypair=AGENT,
+        trusted_roots=ROOTS,
+    )
+    def issue_payout(payee: str, amount: int) -> str:
+        return payee
+
+    _observe()
+    assert issue_payout(**BAD_ARGS) == BAD_ARGS["payee"]
+    assert events[-1].event_type == AuditEventType.AUTHORIZATION_FAILURE
+    assert events[-1].action == "denied"
+
+
 # -- approval gates -----------------------------------------------------------
 
 

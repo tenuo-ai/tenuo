@@ -21,6 +21,7 @@ from tenuo.mcp.server import (
     MCPVerificationResult,
     MCPVerifier,
     verify_mcp_call,
+    _mcp_result_from_enforcement,
 )
 
 
@@ -603,6 +604,27 @@ class TestDenialScenarios:
 
 
 class TestApprovalGateTriggered:
+    def test_observed_approval_is_not_an_actionable_jsonrpc_error(self):
+        from types import SimpleNamespace
+
+        result = _mcp_result_from_enforcement(
+            SimpleNamespace(
+                allowed=True,
+                observed=True,
+                error_type="approval_required",
+                denial_reason="approval required",
+                approval_metadata={},
+            ),
+            tool_name="transfer",
+            clean_arguments={"amount": 100},
+            constraints={},
+            warrant_id="w-1",
+        )
+
+        assert result.allowed and result.observed
+        assert result.jsonrpc_error_code is None
+        assert not result.is_approval_required
+
     def test_gate_fires_returns_minus_32002(
         self,
         issuer_key: SigningKey,

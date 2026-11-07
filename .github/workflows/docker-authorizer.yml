@@ -112,6 +112,19 @@ jobs:
     name: Create Multi-Arch Manifest
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: read
+      packages: write
+      # The freshness check lists this workflow's later runs.
+      actions: read
+    # Manual runs write a version tag, so they share release.yml's queue:
+    # one publish at a time, and no two runs both pass the tag check. Main
+    # pushes write only main and sha- tags; they get their own FIFO queue so
+    # an older run can never finish after a newer one and move main backwards.
+    concurrency:
+      group: ${{ github.event_name == 'workflow_dispatch' && 'docker-publish-tenuo-authorizer' || 'docker-authorizer-main' }}
+      cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -156,39 +169,77 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            # Order matters for the Docker Hub version badge (sort=date):
-            # it shows the newest tag, unless that tag is "latest", in which
-            # case it shows the same-digest tag with the most dots (oldest
-            # wins a tie). Crate version first, "latest" last. Never a bare
-            # numeric SHA: that is what made the badge read 0777990.
-            type=raw,value=${{ steps.version.outputs.crate_version }}
-            type=raw,value=${{ steps.version.outputs.version }}
+            # Version tags belong to deliberate builds and are never rewritten.
+            # A push to main gets only tags that are meant to move ("main") or
+            # are unique to the commit. Plain crate versions and "latest" are
+            # written by release.yml alone.
             type=sha,prefix=sha-
-            type=raw,value=latest
+            type=raw,value=main,enable=${{ github.event_name == 'push' }}
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Refuse to overwrite a version tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          ref="${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+          if out=$(docker buildx imagetools inspect "$ref" 2>&1); then
+            echo "::error::$ref already exists; bump AUTHORIZER_BUILD or pass a new version_tag"
+            exit 1
+          elif ! grep -qi "not found" <<< "$out"; then
+            echo "::error::could not check $ref: $out"
+            exit 1
+          fi
+
+      # The FIFO queue orders merge jobs by when their builds finish, not by
+      # push order, so an older run can still reach this point last. Move
+      # "main" only if no later push run of this workflow exists that is still
+      # going or succeeded: that run will move it. Asking Actions which runs
+      # were actually scheduled matches the path filter exactly (it sees each
+      # push's net diff). The sha- tag is always published.
+      - name: Check main publication is current
+        id: freshness
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          later=$(gh api --paginate "repos/${{ github.repository }}/actions/workflows/docker-authorizer.yml/runs?branch=${{ github.ref_name }}&event=push&per_page=100" \
+            --jq '.workflow_runs[] | select(.run_number > ${{ github.run_number }} and (.conclusion == null or .conclusion == "success")) | .run_number' \
+            | sort -n | head -n 1)
+          if [[ -n "$later" ]]; then
+            echo "move_main=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Run #$later is newer and will move main; publishing sha- only"
+          else
+            echo "move_main=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create manifest list and push
+        id: push
         working-directory: /tmp/digests
+        env:
+          DROP_MAIN: ${{ steps.freshness.outputs.move_main == 'false' }}
         run: |
+          tags=$(jq -c --argjson drop "$DROP_MAIN" '.tags | map(select(($drop | not) or (endswith(":main") | not)))' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          echo "tags=$(jq -r 'join(" ")' <<< "$tags")" >> "$GITHUB_OUTPUT"
+          # A tag this run just wrote: the version tag if there is one, else sha-.
+          echo "ref=$(jq -r '(map(select((contains(":sha-") or endswith(":main")) | not)) + map(select(contains(":sha-"))))[0]' <<< "$tags")" >> "$GITHUB_OUTPUT"
           docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(jq -r 'map("-t " + .) | join(" ")' <<< "$tags") \
             $(printf '${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect image
-        run: docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+        run: docker buildx imagetools inspect ${{ steps.push.outputs.ref }}
 
       - name: Summary
         run: |
           echo "## Authorizer Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.push.outputs.tags }}" | tr ' ' '\n' >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Pull command:**" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull tenuo/authorizer:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ steps.push.outputs.ref }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

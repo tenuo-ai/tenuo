@@ -551,6 +551,8 @@ def generate_hints(
             granted.extend(caps.keys())
         tools_attr = getattr(warrant, "tools", [])
         granted.extend(tools_attr)
+        # capabilities and tools name the same skills; list each once
+        granted = list(dict.fromkeys(granted))
 
         if granted and tool_name not in granted:
             hints.append(f"Warrant has skills: {granted[:5]}")
@@ -621,7 +623,7 @@ def protect_agent(
     Next Steps:
         - Add constraints: GuardBuilder().allow("tool", param=Constraint)
         - Add warrants: GuardBuilder().with_warrant(warrant, key)
-        - See docs: https://tenuo.ai/docs/google-adk
+        - See docs: https://tenuo.ai/google-adk
     """
     from .guard import GuardBuilder
 
