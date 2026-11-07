@@ -97,3 +97,15 @@ try:
     __all__.extend(["MCPToolAdapter", "mcp_tool_to_langchain"])
 except ImportError:
     pass
+
+# MCP Tasks (SEP-2663): binding store on the server, task handle on the client.
+from .tasks import InMemoryTaskBindingStore, TaskBinding, TaskBindingStore  # noqa: E402, F401
+
+__all__.extend(["InMemoryTaskBindingStore", "TaskBinding", "TaskBindingStore"])
+
+try:
+    from ._tasks_client import TaskInputRequired, TenuoTask  # noqa: F401
+
+    __all__.extend(["TaskInputRequired", "TenuoTask"])
+except ImportError:
+    pass
