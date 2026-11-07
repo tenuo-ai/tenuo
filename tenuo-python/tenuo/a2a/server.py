@@ -1411,7 +1411,11 @@ class A2AServer:
                 warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
                 outcome="denied" if observed else "allowed",
                 latency_ms=latency_ms,
-                reason=enforcement.denial_reason if observed else None,
+                reason=(
+                    enforcement.denial_reason
+                    if observed and enforcement is not None
+                    else None
+                ),
             )
         )
 

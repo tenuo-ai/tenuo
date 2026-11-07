@@ -1522,7 +1522,12 @@ def _record_nexus_metrics(
     if metrics is None:
         return
     try:
-        observed = bool(enforcement is not None and enforcement.observed)
+        observed_enforcement = (
+            enforcement
+            if enforcement is not None and enforcement.observed
+            else None
+        )
+        observed = observed_enforcement is not None
         if exc is None and not observed:
             metrics.record_authorized(
                 tool=tool_name,
@@ -1533,8 +1538,8 @@ def _record_nexus_metrics(
             metrics.record_denied(
                 tool=tool_name,
                 reason=(
-                    enforcement.denial_reason
-                    if observed
+                    observed_enforcement.denial_reason
+                    if observed_enforcement is not None
                     else str(exc)
                 ),
                 workflow_type="nexus",
@@ -1560,7 +1565,12 @@ def _emit_nexus_audit_event(
     callback = getattr(config, "audit_callback", None)
     if not callback:
         return
-    observed = bool(enforcement is not None and enforcement.observed)
+    observed_enforcement = (
+        enforcement
+        if enforcement is not None and enforcement.observed
+        else None
+    )
+    observed = observed_enforcement is not None
     allowed = exc is None and not observed
     if allowed and not getattr(config, "audit_allow", True):
         return
@@ -1610,13 +1620,13 @@ def _emit_nexus_audit_event(
         denial_reason=(
             None
             if allowed
-            else enforcement.denial_reason
-            if observed
+            else observed_enforcement.denial_reason
+            if observed_enforcement is not None
             else str(exc)
         ),
         constraint_violated=(
-            enforcement.constraint_violated
-            if observed
+            observed_enforcement.constraint_violated
+            if observed_enforcement is not None
             else getattr(exc, "constraint", None)
             if exc is not None
             else None
