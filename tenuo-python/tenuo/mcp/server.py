@@ -1105,7 +1105,7 @@ class MCPVerifier:
                     pop_args=pop_args,
                     constraint_args=constraints,
                 )
-            if not enforcement.allowed or enforcement.observed:
+            if not enforcement.allowed:
                 result = _mcp_result_from_enforcement(
                     enforcement,
                     tool_name=tool_name,

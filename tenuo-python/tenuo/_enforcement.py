@@ -856,7 +856,7 @@ def _approval_gate_integrity_error(
             )
     except (ApprovalGateTriggered, ApprovalRequired, InsufficientApprovals):
         return None
-    except BaseException as exc:
+    except Exception as exc:
         return exc
     return None
 
