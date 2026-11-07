@@ -1395,29 +1395,41 @@ class A2AServer:
 
         # Log audit event
         latency_ms = int((time.time() - start_time) * 1000)
+        observed = bool(enforcement is not None and enforcement.observed)
         await self._audit(
             AuditEvent(
                 timestamp=datetime.now(timezone.utc),
-                event=AuditEventType.WARRANT_VALIDATED,
+                event=(
+                    AuditEventType.WARRANT_REJECTED
+                    if observed
+                    else AuditEventType.WARRANT_VALIDATED
+                ),
                 task_id="",
                 skill=skill_id,
                 warrant_jti=jti or "",
                 warrant_iss=issuer_normalized or "",
                 warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
-                outcome="allowed",
+                outcome="denied" if observed else "allowed",
                 latency_ms=latency_ms,
+                reason=(
+                    enforcement.denial_reason
+                    if observed and enforcement is not None
+                    else None
+                ),
             )
         )
 
         if self._control_plane is not None:
             try:
                 from tenuo._enforcement import EnforcementResult
-                _res = EnforcementResult(
+                _res = enforcement or EnforcementResult(
                     allowed=True, tool=skill_id, arguments=arguments,
                     warrant_id=jti or "",
                 )
                 self._control_plane.emit_for_enforcement(
-                    _res, latency_us=latency_ms * 1000,
+                    _res,
+                    chain_result=getattr(_res, "chain_result", None),
+                    latency_us=latency_ms * 1000,
                 )
             except Exception:
                 logger.warning("Control plane emission failed for '%s'; audit event lost", skill_id, exc_info=True)

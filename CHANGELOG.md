@@ -76,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
-Two checks are stricter, and some calls that used to pass now fail:
+Check these before upgrading:
 
 - **A delegated warrant that asks to outlive its parent is rejected.**
   Requesting a TTL longer than the parent's remaining lifetime used to be
@@ -89,9 +89,33 @@ Two checks are stricter, and some calls that used to pass now fail:
   their approver said, as warrants already do at authorization. The tolerance
   still covers an approval dated slightly in the future. The `clock_tolerance_secs`
   argument of `verify_approvals` now applies to `approved_at` only.
+- **`mode="audit"` and `mode="permissive"` now stop blocking.** The shared
+  enforcement path ignored them, so calls were still enforced. Both are now
+  aliases of `mode="observe"`, which runs the full check, logs each call it
+  would deny, and lets it run, in every integration. If you set either,
+  including through `TENUO_MODE`, set `enforce` to keep blocking.
+  `auto_protect()` changes the mode of an existing configuration only when
+  `mode` is passed.
 
 ### Fixed
 
+- **CrewAI hooks block every call they cannot authorize.** CrewAI runs the
+  tool when a `before_tool_call` hook raises, so a refused approval, a missing
+  `on_approval` handler, an approval that failed to verify, or an unexpected
+  error let the call through. The hook now returns `False` for all of them,
+  and approval failures are audited as `DENY` with `APPROVAL_DENIED`,
+  `APPROVAL_REQUIRED` or `APPROVAL_VERIFICATION_FAILED`.
+  `CrewAIGuard.as_async_hook()` returned a coroutine function that CrewAI
+  never awaits, which counted as allow; it now returns the synchronous hook
+  and is deprecated. `@guarded_step` on an `async def` Flow step removed the
+  guard before the step ran; it now stays registered until the step finishes.
+- **CrewAI Tier 1 requires constrained arguments and matches roles
+  case-insensitively.** A call that left out a constrained argument ran with
+  the tool's default value unchecked; it is now denied, matching the core.
+  `role::tool` policy keys match the agent role ignoring case and whitespace,
+  so `researcher::search` applies to role `Researcher` instead of falling back
+  to the global `search` policy. Two keys for the same role that differ only
+  in case raise `CrewAIConfigurationError`.
 - **CEL object constraints can test optional fields.** Object-valued arguments
   are now available through the opt-in `tenuo_object()` function, so policies
   can use expressions such as `!has(tenuo_object().approve) ||
@@ -339,6 +363,32 @@ are now denied. Check these before upgrading:
   stay raw strings. Custom `extract_args` is unchanged.
 
 ### Fixed
+
+- **`guard_agent()` and `auto_protect()` route LangChain 1.x executors
+  through the guarded tools.** `AgentExecutor` moved to `langchain_classic`
+  in LangChain 1.x, so the wrapper fell back to one that reported
+  `TenuoTool`s while the executor kept running the original tools. Both
+  locations are now supported, and an agent that cannot be rebuilt around
+  the guarded tools, including a `create_agent()` graph, raises
+  `ConfigurationError` pointing to `TenuoMiddleware`. `SecureAgentExecutor`
+  also works with `langchain_classic`.
+- **LangGraph `guard_node()` verifies the warrant before the node runs.**
+  It previously only bound the warrant, so an untrusted, expired or
+  wrong-holder warrant let the node run. The warrant must now chain to a
+  trusted root, be unexpired and be held by the bound key. `required_tools`
+  checks that the warrant grants each tool instead of authorizing a call
+  with empty arguments, which denied tools with constrained arguments.
+- **Observe mode lets LangChain and LangGraph calls without a warrant run.**
+  `TenuoTool` and the `TenuoToolNode` / `TenuoMiddleware` tool-call check denied a call
+  with no usable warrant even in observe mode; they now log it as an
+  `OBSERVE: would deny` and run it. Enforce mode is unchanged.
+- **`TenuoToolNode` sends authorization events to the control plane.** The
+  enforcement hooks captured the control plane before it was resolved, so
+  no events were sent unless one was passed explicitly.
+- **The `langgraph` extra installs a `TenuoToolNode`-capable LangGraph.** On
+  Python 3.10+ it now requires `langgraph>=1.0` and
+  `langgraph-prebuilt>=1.0.2`, the first release with the tool-call hooks
+  `TenuoToolNode` needs.
 
 - **OpenAI `guard()` checks async clients.** On `AsyncOpenAI`,
   `chat.completions.create()` returned the raw coroutine, and the awaited
@@ -608,6 +658,28 @@ are now denied. Check these before upgrading:
   extension does not export, so every signed request failed before it was
   sent. Arguments are now passed to `Warrant.sign`, which already
   canonicalizes plain values.
+- **Google ADK Tier 1 checks follow the core's closed-world rules.** A
+  `Wildcard()` on one argument admitted every unlisted argument, a call that
+  left out a constrained argument ran with the tool's default unchecked, and
+  arguments whose names start with `_` skipped their constraints. `Wildcard()`
+  now covers only its own argument, every constrained argument is required,
+  and `_`-prefixed arguments are checked; `_allow_unknown=True` remains the
+  opt-out for unlisted arguments. This applies to `GuardBuilder.allow()`,
+  `GuardBuilder.from_tools()` and `TenuoGuard(require_pop=False)`.
+- **Google ADK enforces `ScopedWarrant` in the guard and keeps session state
+  copyable.** A `TenuoGuard` used as an agent's `before_tool_callback` ran on a
+  `ScopedWarrant` scoped to another agent; only `TenuoPlugin` checked the
+  scope. The guard now denies it. A `ScopedWarrant` around a `Warrant` made
+  `InMemoryRunner` fail with `TypeError: cannot pickle`; it now copies and
+  pickles as the warrant's base64 form. `scoped_warrant()` uses the
+  `__tenuo_warrant__` key the guard and plugin read (it used
+  `tenuo_warrant`), stores `Warrant` objects encoded, and clears an ADK
+  `State`, which has no `pop()`.
+- **Google ADK denies approval failures instead of ending the run.** A
+  refused approval, a missing approval handler, or an approval that failed
+  verification raised out of `before_tool_callback` and stopped the Runner.
+  The call is now denied with an `authorization_denied` result. `TenuoPlugin`
+  accepts `approval_handler=` and `approvals=`.
 
 ### Security
 

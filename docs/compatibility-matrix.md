@@ -17,7 +17,7 @@ These four packages share the same protocol line. TypeScript stays on the
 | TypeScript | `@tenuo/core` | 0.3.4-beta.0 |
 
 `make version-check` (and the CI job of the same name) fails if the Rust,
-Python, and WASM crate versions diverge, or if `@tenuo/core` does not start
+Python, and WASM crate versions or `tenuo.__version__` diverge, or if `@tenuo/core` does not start
 with the same `MAJOR.MINOR.PATCH`.
 
 ## Supported Versions

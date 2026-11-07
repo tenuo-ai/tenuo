@@ -32,6 +32,7 @@ unrelated crash can never satisfy a negative case.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 from dataclasses import dataclass
@@ -716,6 +717,26 @@ class TestGoogleAdkSessionState:
 
         guard = self._guard(chain)
         ctx = self._ctx(ScopedWarrant(chain["stack"], "researcher"))
+        ctx.agent_name = "researcher"
+        assert guard.before_tool(SimpleNamespace(name="search"), {"query": IN_SCOPE}, ctx) is None
+
+        # The guard enforces the scope itself, not only TenuoPlugin
+        ctx.agent_name = "writer"
+        self._assert_denied(
+            guard.before_tool(SimpleNamespace(name="search"), {"query": IN_SCOPE}, ctx),
+            message_prefix="Authorization denied: Invalid warrant:",
+        )
+
+    @pytest.mark.parametrize("bound_leaf", [False, True])
+    def test_scoped_warrant_copy_normalizes_mixed_chain(self, chain, bound_leaf):
+        from tenuo.google_adk import ScopedWarrant
+
+        leaf = chain["leaf"].bind(chain["leaf_key"]) if bound_leaf else chain["leaf"]
+        scoped = ScopedWarrant([chain["root"].to_base64(), chain["mid"], leaf], "researcher")
+        copied = copy.deepcopy(scoped)
+        guard = self._guard(chain)
+        ctx = self._ctx(copied)
+        ctx.agent_name = "researcher"
         assert guard.before_tool(SimpleNamespace(name="search"), {"query": IN_SCOPE}, ctx) is None
 
     def test_malformed_state_token_denied(self, chain):

@@ -144,6 +144,8 @@ guard = (GuardBuilder()
 guard.register()
 ```
 
+If the approver refuses, no handler is configured, or the approval does not verify, the hook blocks the call and the audit callback records a `DENY` with `APPROVAL_DENIED`, `APPROVAL_REQUIRED` or `APPROVAL_VERIFICATION_FAILED`. CrewAI calls hooks synchronously, also under `kickoff_async()`, so register `guard.register()` or `guard.as_hook()`; the synchronous hook runs async approval handlers to completion. `as_async_hook()` is deprecated and returns the same synchronous hook.
+
 ---
 
 ## Warrant Lifecycle
@@ -209,7 +211,7 @@ guard.register()
 ```
 
 **Resolution order:**
-1. `agent_role::tool_name` (exact match)
+1. `agent_role::tool_name` (the role matches ignoring case and extra whitespace, so `researcher::` applies to an agent with role `Researcher`)
 2. `tool_name` (global fallback)
 3. Reject if neither exists
 
@@ -254,6 +256,8 @@ guard = GuardBuilder().allow("api_call", url=UrlSafe()).build()
 # Explicitly allow unknown args
 guard = GuardBuilder().allow("api_call", url=UrlSafe(), timeout=Wildcard()).build()
 ```
+
+Every listed argument is also required. CrewAI passes only the arguments the model sent, so a call that leaves out `path` from `.allow("read_file", path=Subpath("/data"))` is denied instead of running with the tool's default value.
 
 ---
 
@@ -378,6 +382,8 @@ class ResearchFlow(Flow):
     def notify_step(self, state):
         return self.email_agent.execute(state)
 ```
+
+`@guarded_step` also works on `async def` steps; the guard stays registered until the step's coroutine finishes.
 
 ### Decorator Parameters
 
@@ -773,10 +779,10 @@ crew = Crew(
 
 Moving from unprotected CrewAI to Tenuo GuardedCrew:
 
-1. **Audit Phase**: Add `.audit(callback)` and keep `.on_denial("raise")`. A CrewAI hook blocks denied calls in every denial mode. Use `guard.explain(tool, args)` to check one call without running the crew.
+1. **Audit Phase**: Run with `tenuo.configure(mode="observe")` and add `.audit(callback)`. Calls the policy would deny still run; each one is logged as `OBSERVE: would deny <tool>: <reason>` and audited as a `DENY` with `observed=True`. `.on_denial("log")` is not an audit mode: in enforce mode a CrewAI hook blocks denied calls whatever `on_denial` is set to. Use `guard.explain(tool, args)` to check one call without running the crew.
 2. **Policy Generation**: Map the audit logs to agent roles. Identify which tools are actually used by each agent.
 3. **Constraint Hardening**: Replace `Wildcard()` with `Pattern` or `Subpath` based on observed data (e.g., if agent only reads `/tmp`, restrict to `/tmp`).
-4. **Enforcement**: Switch to `.on_denial("raise")` and enable `.strict()` to prevent future drift.
+4. **Enforcement**: Remove `mode="observe"` (enforce is the default), keep `.on_denial("raise")`, and enable `.strict()` to prevent future drift.
 
 ## Performance Considerations
 

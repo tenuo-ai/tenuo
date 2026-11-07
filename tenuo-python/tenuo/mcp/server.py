@@ -392,6 +392,18 @@ class MCPVerificationResult:
     error_type: Optional[str] = field(default=None)
     """PEP ``error_type`` (``invalid_pop``, ``constraint_violation``, …)."""
 
+    observed: bool = field(default=False)
+    """Whether observe mode allowed this otherwise denied call to continue."""
+
+    constraint_violated: Optional[str] = field(default=None)
+    """Constraint field reported by the shared enforcement result."""
+
+    verified_pop: Optional[bytes] = field(default=None, repr=False)
+    """Verified proof bytes retained for receipt emission."""
+
+    pop_auth_args: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    """Canonical arguments covered by the proof, retained for receipts."""
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -526,6 +538,8 @@ def _mcp_result_from_enforcement(
     error_type = getattr(enforcement, "error_type", None) or ""
     meta = getattr(enforcement, "approval_metadata", None) or {}
     reason = getattr(enforcement, "denial_reason", None) or "Authorization denied"
+    observed = bool(getattr(enforcement, "observed", False))
+    allowed = bool(getattr(enforcement, "allowed", False))
     if error_type == "invalid_pop":
         reason = (
             f"Access denied: {reason} PoP covers the core's reading of the "
@@ -540,26 +554,36 @@ def _mcp_result_from_enforcement(
         )
     if error_type in ("insufficient_approvals", "approval_required", "approval_gate_misconfigured"):
         return MCPVerificationResult(
-            allowed=False,
+            allowed=allowed,
             tool=tool_name,
             clean_arguments=clean_arguments,
             constraints=constraints,
             warrant_id=warrant_id,
             denial_reason=reason,
-            jsonrpc_error_code=-32002,
+            # An observed call proceeds, so it carries no JSON-RPC error code:
+            # callers branch on is_approval_required before checking allowed.
+            jsonrpc_error_code=None if allowed else -32002,
             request_hash=meta.get("request_hash") or getattr(enforcement, "request_hash", None),
             approval_metadata=meta or None,
             error_type=error_type or None,
+            observed=observed,
+            constraint_violated=getattr(enforcement, "constraint_violated", None),
+            verified_pop=getattr(enforcement, "verified_pop", None),
+            pop_auth_args=getattr(enforcement, "pop_auth_args", None),
         )
     return MCPVerificationResult(
-        allowed=False,
+        allowed=allowed,
         tool=tool_name,
         clean_arguments=clean_arguments,
         constraints=constraints,
         warrant_id=warrant_id,
         denial_reason=reason,
-        jsonrpc_error_code=-32001,
+        jsonrpc_error_code=None if allowed else -32001,
         error_type=error_type or None,
+        observed=observed,
+        constraint_violated=getattr(enforcement, "constraint_violated", None),
+        verified_pop=getattr(enforcement, "verified_pop", None),
+        pop_auth_args=getattr(enforcement, "pop_auth_args", None),
     )
 
 
@@ -1103,7 +1127,24 @@ class MCPVerifier:
             if _ns is None:
                 from ..nonce import get_default_nonce_store as _get_ns
                 _ns = _get_ns()
-            if _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig):
+            replayed = _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig)
+
+            if enforcement.observed:
+                # Observe mode lets the call through; still report a replay
+                # alongside the denial it would have added.
+                if replayed:
+                    logger.warning("OBSERVE: would deny %s (pop_replay)", tool_name)
+                result = _mcp_result_from_enforcement(
+                    enforcement,
+                    tool_name=tool_name,
+                    clean_arguments=clean_arguments,
+                    constraints=constraints,
+                    warrant_id=warrant_id,
+                )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                return _emit_and_return(result, chain_result=chain_result, latency_us=latency_us)
+
+            if replayed:
                 logger.warning(
                     "PoP replay rejected for '%s' (warrant=%s)",
                     tool_name,

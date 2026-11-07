@@ -133,13 +133,12 @@ class TestStrictModeSemantic:
             return
 
         with _guarded_zone(guard, strict=True):
-            async_hook = guard._create_async_hook()
             ctx = MagicMock()
             ctx.tool_name = tool
             ctx.tool_input = {}
             ctx.agent = None
 
-            result = asyncio.run(async_hook(ctx))
+            result = asyncio.run(guard.authorize_hook_async(ctx))
             assert result is False
 
             unguarded = get_unguarded_calls()
