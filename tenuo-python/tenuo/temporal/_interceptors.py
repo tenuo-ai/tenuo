@@ -1508,7 +1508,10 @@ class TenuoActivityInboundInterceptor:
             # -- 12. Multi-Sig Approval Resolution --
             # Only a cryptographically authenticated caller can reach an
             # approval handler or cause supplied approvals to be parsed.
-            if approval_needed:
+            supplied_approvals = bool(headers.get(TENUO_APPROVALS_HEADER))
+            if approval_needed and (
+                not getattr(preflight, "observed", False) or supplied_approvals
+            ):
                 gate_approvals = await self._resolve_approval_gate_approvals(
                     warrant, tool_name, args, headers,
                 )

@@ -4186,6 +4186,38 @@ class TestApprovalGates:
         assert "approval" in msg.lower() or "gate" in msg.lower() or \
             isinstance(exc_info.value, ApprovalGateTriggered)
 
+    def test_observe_mode_skips_approval_handler_without_supplied_approvals(self):
+        import time as _time
+
+        from tenuo import SigningKey
+        from tenuo.config import configure, reset_config
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+        warrant = self._mint_gated_warrant(
+            control_key, agent_key, approver_key=approver_key,
+        )
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            raise AssertionError("observe mode must not prompt for approval")
+
+        configure(trusted_roots=[control_key.public_key], mode="observe")
+        try:
+            plugin = TenuoWorkerInterceptor(TenuoPluginConfig(
+                key_resolver=EnvKeyResolver(),
+                trusted_roots=[control_key.public_key],
+                approval_handler=handler,
+            ))
+            info, inp = self._build_activity_inputs(warrant, pop)
+            assert self._run(plugin, info, inp) == "ok"
+        finally:
+            reset_config()
+        assert calls == []
+
     @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
     @pytest.mark.parametrize("outcome", ["allowed", "revoked", "expired"])
     def test_approval_retry_lifecycle(self, async_handler, outcome):

@@ -2480,9 +2480,24 @@ def verify_inbound_call(
     if authorizer is None:
         raise ConfigurationError("verify_inbound_call requires an Authorizer")
     if pop_signature is None:
-        raise MissingSignature(
+        missing = MissingSignature(
             "precomputed_signature is required when verify_mode='verify'"
         )
+        result = _enforcement_result_from_chain_error_with_logging(
+            missing,
+            tool_name,
+            tool_args,
+            getattr(warrant, "id", None),
+            constraint_auth_args=constraint_args or tool_args,
+            warrant=warrant,
+            presented_chain=[*(warrant_chain or []), warrant],
+            authorizer=authorizer,
+            pop_auth_args=pop_args or tool_args,
+        )
+        observed = _apply_observe_mode(result)
+        if observed.observed:
+            return observed
+        raise missing
     bind = getattr(warrant, "bind", None)
     if not callable(bind):
         raise ConfigurationError("verify_inbound_call requires a Warrant with bind()")
