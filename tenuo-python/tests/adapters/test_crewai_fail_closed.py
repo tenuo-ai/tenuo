@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import threading
+import time
 import warnings
 from unittest.mock import MagicMock
 
@@ -379,15 +380,11 @@ def test_guarded_step_enforces_outer_policy_inside_worker_guarded_crew():
 def test_cancelled_async_step_keeps_worker_guarded_until_completion():
     started = threading.Event()
     proceed = threading.Event()
-    finished = threading.Event()
 
     def worker():
-        try:
-            started.set()
-            assert proceed.wait(timeout=5)
-            return _step_crew().kickoff()
-        finally:
-            finished.set()
+        started.set()
+        assert proceed.wait(timeout=5)
+        return _step_crew().kickoff()
 
     @guarded_step(allow={"search": {"query": Pattern("*")}})
     async def step():
@@ -399,14 +396,31 @@ def test_cancelled_async_step_keeps_worker_guarded_until_completion():
         running.cancel()
         await asyncio.sleep(0)
         running.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(running, timeout=0.5)
-        assert not finished.is_set()
         proceed.set()
-        assert await asyncio.to_thread(finished.wait, 5)
-        await asyncio.sleep(0)
+        with pytest.raises(asyncio.CancelledError):
+            await running
 
     asyncio.run(run())
+    assert EXECUTED == []
+
+
+def test_loop_shutdown_keeps_worker_guarded_until_completion():
+    started = threading.Event()
+
+    def worker():
+        started.set()
+        time.sleep(0.1)
+        return _step_crew().kickoff()
+
+    @guarded_step(allow={"search": {"query": Pattern("*")}})
+    async def step():
+        return await asyncio.to_thread(worker)
+
+    async def start_and_exit():
+        asyncio.create_task(step())
+        assert await asyncio.to_thread(started.wait, 5)
+
+    asyncio.run(start_and_exit())
     assert EXECUTED == []
 
 

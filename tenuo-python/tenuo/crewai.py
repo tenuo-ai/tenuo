@@ -157,6 +157,7 @@ check_crewai_compat()
 try:
     from crewai.hooks import (  # type: ignore[import-not-found,import-untyped]
         ToolCallHookContext,
+        get_before_tool_call_hooks,
         register_before_tool_call_hook,
         unregister_before_tool_call_hook,
     )
@@ -1956,6 +1957,25 @@ _scoped_guard_stack: contextvars.ContextVar["tuple[CrewAIGuard, ...]"] = context
 )
 
 
+def _orphan_scoped_guard_hook(context: Any) -> Optional[bool]:
+    """Enforce scoped policies copied into a worker after its wrapper exits."""
+    scopes = _scoped_guard_stack.get()
+    if not scopes:
+        return None
+    with _scoped_guards_lock:
+        active_ids = set(_scoped_guards)
+    for guard in scopes:
+        if id(guard) not in active_ids and guard.authorize_hook(context) is False:
+            return False
+    return None
+
+
+def _ensure_orphan_scoped_guard_hook() -> None:
+    """Install the stateless fallback hook if CrewAI's registry lacks it."""
+    if HOOKS_AVAILABLE and _orphan_scoped_guard_hook not in get_before_tool_call_hooks():
+        register_before_tool_call_hook(_orphan_scoped_guard_hook)
+
+
 class UnguardedToolError(TenuoCrewAIError):
     """Raised when strict mode detects unguarded tool calls."""
 
@@ -2029,35 +2049,17 @@ def _scoped_guard_hook(guard: "CrewAIGuard"):
         return None
 
     guard_id = id(guard)
-    deferred_task: Optional[asyncio.Task[Any]] = None
-
-    def defer_cleanup(task: asyncio.Task[Any]) -> None:
-        """Keep the global hook live after its calling task is cancelled."""
-        nonlocal deferred_task
-        deferred_task = task
-
-    def cleanup(task: Optional[asyncio.Task[Any]] = None) -> None:
-        if task is not None and not task.cancelled():
-            try:
-                task.exception()
-            except BaseException:
-                pass
-        unregister_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
-        with _scoped_guards_lock:
-            _scoped_guards.pop(guard_id, None)
-
     with _scoped_guards_lock:
         _scoped_guards[guard_id] = guard
     stack_token = _scoped_guard_stack.set(_scoped_guard_stack.get() + (guard,))
     register_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
     try:
-        yield defer_cleanup
+        yield
     finally:
+        unregister_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
         _scoped_guard_stack.reset(stack_token)
-        if deferred_task is not None and not deferred_task.done():
-            deferred_task.add_done_callback(cleanup)
-        else:
-            cleanup(deferred_task)
+        with _scoped_guards_lock:
+            _scoped_guards.pop(guard_id, None)
 
 
 def is_strict_mode() -> bool:
@@ -2190,16 +2192,17 @@ def guarded_step(
                 step_start = time.time()
                 with _guarded_zone(guard, strict=strict):
                     try:
-                        with _scoped_guard_hook(guard) as defer_cleanup:
+                        with _scoped_guard_hook(guard):
                             task = asyncio.create_task(func(*args, **kwargs))
                             try:
                                 result = await asyncio.shield(task)
                             except asyncio.CancelledError:
                                 # asyncio.to_thread() cannot stop its worker.
-                                # Propagate cancellation now, but transfer hook
-                                # cleanup to the still-running task so its later
-                                # tool calls remain guarded.
-                                defer_cleanup(task)
+                                # The worker retains its copied ContextVars even
+                                # if loop shutdown cancels this Task. A single
+                                # stateless fallback hook enforces those orphaned
+                                # scopes without retaining tasks or policies.
+                                _ensure_orphan_scoped_guard_hook()
                                 raise
                     finally:
                         _finish_step(step_name, step_start)
