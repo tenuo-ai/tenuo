@@ -424,6 +424,38 @@ def test_loop_shutdown_keeps_worker_guarded_until_completion():
     assert EXECUTED == []
 
 
+def test_plain_executor_worker_stays_guarded_after_cancellation():
+    started = threading.Event()
+    proceed = threading.Event()
+    finished = threading.Event()
+
+    def worker():
+        try:
+            started.set()
+            assert proceed.wait(timeout=5)
+            return _step_crew().kickoff()
+        finally:
+            finished.set()
+
+    @guarded_step(allow={"search": {"query": Pattern("*")}})
+    async def step():
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, worker)
+
+    async def run():
+        running = asyncio.create_task(step())
+        assert await asyncio.to_thread(started.wait, 5)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(running, timeout=0.5)
+        proceed.set()
+        assert await asyncio.to_thread(finished.wait, 5)
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert EXECUTED == []
+
+
 def test_guarded_step_rejects_invalid_ttl_before_user_code_runs():
     executed = []
 

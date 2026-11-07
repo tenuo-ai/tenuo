@@ -1949,6 +1949,7 @@ _unguarded_calls: contextvars.ContextVar[List[str]] = contextvars.ContextVar("te
 # guard is live; concurrent ambiguous scopes are denied.
 _scoped_guards_lock = threading.Lock()
 _scoped_guards: Dict[int, "CrewAIGuard"] = {}
+_deferred_guard_tasks: set[asyncio.Task[Any]] = set()
 
 # Scoped guards entered in this context, outermost first.  Nested steps keep
 # every enclosing step's policy in force, as when each registered its own hook.
@@ -2049,17 +2050,37 @@ def _scoped_guard_hook(guard: "CrewAIGuard"):
         return None
 
     guard_id = id(guard)
+    deferred_task: Optional[asyncio.Task[Any]] = None
+
+    def defer_cleanup(task: asyncio.Task[Any]) -> None:
+        nonlocal deferred_task
+        deferred_task = task
+        _deferred_guard_tasks.add(task)
+
+    def cleanup(task: Optional[asyncio.Task[Any]] = None) -> None:
+        if task is not None:
+            _deferred_guard_tasks.discard(task)
+            if not task.cancelled():
+                try:
+                    task.exception()
+                except BaseException:
+                    pass
+        unregister_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
+        with _scoped_guards_lock:
+            _scoped_guards.pop(guard_id, None)
+
     with _scoped_guards_lock:
         _scoped_guards[guard_id] = guard
     stack_token = _scoped_guard_stack.set(_scoped_guard_stack.get() + (guard,))
     register_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
     try:
-        yield
+        yield defer_cleanup
     finally:
-        unregister_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
         _scoped_guard_stack.reset(stack_token)
-        with _scoped_guards_lock:
-            _scoped_guards.pop(guard_id, None)
+        if deferred_task is not None and not deferred_task.done():
+            deferred_task.add_done_callback(cleanup)
+        else:
+            cleanup(deferred_task)
 
 
 def is_strict_mode() -> bool:
@@ -2192,7 +2213,7 @@ def guarded_step(
                 step_start = time.time()
                 with _guarded_zone(guard, strict=strict):
                     try:
-                        with _scoped_guard_hook(guard):
+                        with _scoped_guard_hook(guard) as defer_cleanup:
                             task = asyncio.create_task(func(*args, **kwargs))
                             try:
                                 result = await asyncio.shield(task)
@@ -2203,6 +2224,7 @@ def guarded_step(
                                 # stateless fallback hook enforces those orphaned
                                 # scopes without retaining tasks or policies.
                                 _ensure_orphan_scoped_guard_hook()
+                                defer_cleanup(task)
                                 raise
                     finally:
                         _finish_step(step_name, step_start)
