@@ -379,11 +379,15 @@ def test_guarded_step_enforces_outer_policy_inside_worker_guarded_crew():
 def test_cancelled_async_step_keeps_worker_guarded_until_completion():
     started = threading.Event()
     proceed = threading.Event()
+    finished = threading.Event()
 
     def worker():
-        started.set()
-        assert proceed.wait(timeout=5)
-        return _step_crew().kickoff()
+        try:
+            started.set()
+            assert proceed.wait(timeout=5)
+            return _step_crew().kickoff()
+        finally:
+            finished.set()
 
     @guarded_step(allow={"search": {"query": Pattern("*")}})
     async def step():
@@ -395,9 +399,12 @@ def test_cancelled_async_step_keeps_worker_guarded_until_completion():
         running.cancel()
         await asyncio.sleep(0)
         running.cancel()
-        proceed.set()
         with pytest.raises(asyncio.CancelledError):
-            await running
+            await asyncio.wait_for(running, timeout=0.5)
+        assert not finished.is_set()
+        proceed.set()
+        assert await asyncio.to_thread(finished.wait, 5)
+        await asyncio.sleep(0)
 
     asyncio.run(run())
     assert EXECUTED == []

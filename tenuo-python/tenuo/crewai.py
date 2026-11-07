@@ -2001,7 +2001,7 @@ def _scoped_guard_hook(guard: "CrewAIGuard"):
     registered through ``CrewAIGuard.register()`` unchanged.
     """
     if not HOOKS_AVAILABLE:
-        yield
+        yield lambda task: None
         return
 
     authorize = guard._create_hook()
@@ -2029,17 +2029,35 @@ def _scoped_guard_hook(guard: "CrewAIGuard"):
         return None
 
     guard_id = id(guard)
+    deferred_task: Optional[asyncio.Task[Any]] = None
+
+    def defer_cleanup(task: asyncio.Task[Any]) -> None:
+        """Keep the global hook live after its calling task is cancelled."""
+        nonlocal deferred_task
+        deferred_task = task
+
+    def cleanup(task: Optional[asyncio.Task[Any]] = None) -> None:
+        if task is not None and not task.cancelled():
+            try:
+                task.exception()
+            except BaseException:
+                pass
+        unregister_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
+        with _scoped_guards_lock:
+            _scoped_guards.pop(guard_id, None)
+
     with _scoped_guards_lock:
         _scoped_guards[guard_id] = guard
     stack_token = _scoped_guard_stack.set(_scoped_guard_stack.get() + (guard,))
     register_before_tool_call_hook(dispatch)  # type: ignore[arg-type]
     try:
-        yield
+        yield defer_cleanup
     finally:
-        unregister_before_tool_call_hook(dispatch)
         _scoped_guard_stack.reset(stack_token)
-        with _scoped_guards_lock:
-            _scoped_guards.pop(guard_id, None)
+        if deferred_task is not None and not deferred_task.done():
+            deferred_task.add_done_callback(cleanup)
+        else:
+            cleanup(deferred_task)
 
 
 def is_strict_mode() -> bool:
@@ -2172,26 +2190,17 @@ def guarded_step(
                 step_start = time.time()
                 with _guarded_zone(guard, strict=strict):
                     try:
-                        with _scoped_guard_hook(guard):
+                        with _scoped_guard_hook(guard) as defer_cleanup:
                             task = asyncio.create_task(func(*args, **kwargs))
                             try:
                                 result = await asyncio.shield(task)
-                            except asyncio.CancelledError as cancellation:
+                            except asyncio.CancelledError:
                                 # asyncio.to_thread() cannot stop its worker.
-                                # Keep the process-global hook registered until
-                                # the step really finishes, then propagate the
-                                # caller's cancellation. Repeated cancellation
-                                # must not tear down enforcement early either.
-                                while not task.done():
-                                    try:
-                                        await asyncio.shield(task)
-                                    except asyncio.CancelledError:
-                                        continue
-                                    except BaseException:
-                                        break
-                                if task.done() and not task.cancelled():
-                                    task.exception()
-                                raise cancellation
+                                # Propagate cancellation now, but transfer hook
+                                # cleanup to the still-running task so its later
+                                # tool calls remain guarded.
+                                defer_cleanup(task)
+                                raise
                     finally:
                         _finish_step(step_name, step_start)
                 return result
