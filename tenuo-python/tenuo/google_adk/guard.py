@@ -452,10 +452,12 @@ class TenuoGuard:
                     # returning a denial. Deny the call the same way as any
                     # other, instead of letting the exception end the run.
                     reason = _approval_denial_reason(e)
-                    self._collect_approval_denial_receipt(
-                        e, reason, skill_name, validation_args, bound_warrant, warrant_chain
+                    cp_emitted = self._collect_approval_denial_receipt(
+                        e, reason, skill_name, validation_args, bound_warrant, warrant_chain, start_ns
                     )
-                    return self._deny(reason, tool.name, args, start_ns=start_ns)
+                    return self._deny(
+                        reason, tool.name, args, start_ns=start_ns, _cp_already_emitted=cp_emitted
+                    )
 
                 if self._control_plane is not None:
                     latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -684,10 +686,12 @@ class TenuoGuard:
                     # returning a denial. Deny the call the same way as any
                     # other, instead of letting the exception end the run.
                     reason = _approval_denial_reason(e)
-                    self._collect_approval_denial_receipt(
-                        e, reason, skill_name, validation_args, bound_warrant, warrant_chain
+                    cp_emitted = self._collect_approval_denial_receipt(
+                        e, reason, skill_name, validation_args, bound_warrant, warrant_chain, start_ns
                     )
-                    return self._deny(reason, tool.name, args, start_ns=start_ns)
+                    return self._deny(
+                        reason, tool.name, args, start_ns=start_ns, _cp_already_emitted=cp_emitted
+                    )
 
                 if self._control_plane is not None:
                     latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -972,7 +976,8 @@ class TenuoGuard:
         args: Dict[str, Any],
         bound_warrant: Any,
         warrant_chain: Optional[List[Any]],
-    ) -> None:
+        start_ns: Optional[int],
+    ) -> bool:
         """Collect evidence when ADK turns approval flow control into a denial."""
         if isinstance(error, ApprovalDenied):
             error_type = "approval_denied"
@@ -981,6 +986,7 @@ class TenuoGuard:
         else:
             error_type = "approval_verification_failed"
 
+        result = None
         try:
             authorizer = None
             roots = resolve_trusted_roots(self._trusted_roots)
@@ -1007,6 +1013,23 @@ class TenuoGuard:
             collect_enforcement_receipt(result)
         except Exception:
             logger.warning("Approval denial receipt collection failed for '%s'", tool_name, exc_info=True)
+        if self._control_plane is None or result is None:
+            return False
+        try:
+            import time
+            from tenuo_core import encode_warrant_stack
+
+            latency_us = ((time.perf_counter_ns() - start_ns) // 1000) if start_ns is not None else 0
+            stack = encode_warrant_stack(result.presented_chain)
+            self._control_plane.emit_for_enforcement(
+                result,
+                latency_us=latency_us,
+                warrant_stack_override=stack,
+            )
+            return True
+        except Exception:
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+            return False
 
     def _deny(
         self,

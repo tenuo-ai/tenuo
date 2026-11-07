@@ -293,7 +293,13 @@ class TestTier2Authorization:
             .ttl(3600)
             .mint(keys)
         )
-        guard = TenuoGuard(warrant=warrant, signing_key=keys, trusted_roots=[keys.public_key])
+        control_plane = MagicMock()
+        guard = TenuoGuard(
+            warrant=warrant,
+            signing_key=keys,
+            trusted_roots=[keys.public_key],
+            control_plane=control_plane,
+        )
         collected = []
         monkeypatch.setattr(
             "tenuo.receipts.collect_enforcement_receipt",
@@ -308,9 +314,12 @@ class TestTier2Authorization:
                 {"path": "/tmp/private.txt"},
                 warrant.bind(keys),
                 None,
+                None,
             )
 
         assert collected[0].presented_chain == [parent, warrant]
+        emitted = control_plane.emit_for_enforcement.call_args.args[0]
+        assert emitted.presented_chain == [parent, warrant]
 
 
 class TestTier1Authorization:
