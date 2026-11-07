@@ -82,6 +82,7 @@ Usage (Tier 2 - Warrant with PoP):
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import threading
@@ -2009,8 +2010,6 @@ def _scoped_guard_hook(guard: "CrewAIGuard"):
         scopes = _scoped_guard_stack.get()
         if scopes:
             return authorize(context) if any(g is guard for g in scopes) else None
-        if get_active_guard() is not None:
-            return None
 
         # Some CrewAI execution modes use plain worker threads, which do not
         # inherit the guarded step's ContextVar.  Do not let that erase the
@@ -2126,6 +2125,8 @@ def guarded_step(
     elif warrant_chain is not None:
         raise ConfigurationError("guarded_step: warrant_chain was given without a warrant.")
 
+    ttl_seconds = _parse_ttl(ttl) if ttl is not None else None
+
     def _build_guard() -> "CrewAIGuard":
         builder = GuardBuilder()
 
@@ -2149,8 +2150,7 @@ def guarded_step(
             if unguarded:
                 raise UnguardedToolError(unguarded, step_name)
 
-        if ttl:
-            ttl_seconds = _parse_ttl(ttl)
+        if ttl_seconds is not None:
             elapsed = time.time() - step_start
             if ttl_seconds and elapsed > ttl_seconds:
                 logger.warning(
@@ -2173,7 +2173,19 @@ def guarded_step(
                 with _guarded_zone(guard, strict=strict):
                     try:
                         with _scoped_guard_hook(guard):
-                            result = await func(*args, **kwargs)
+                            task = asyncio.create_task(func(*args, **kwargs))
+                            try:
+                                result = await asyncio.shield(task)
+                            except asyncio.CancelledError:
+                                # asyncio.to_thread() cannot stop its worker.
+                                # Keep the process-global hook registered until
+                                # the step really finishes, then propagate the
+                                # caller's cancellation.
+                                try:
+                                    await task
+                                except BaseException:
+                                    pass
+                                raise
                     finally:
                         _finish_step(step_name, step_start)
                 return result

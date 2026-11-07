@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import warnings
 from unittest.mock import MagicMock
 
@@ -34,6 +35,7 @@ from tenuo.approval import cli_prompt  # noqa: E402
 from tenuo.config import reset_config  # noqa: E402
 from tenuo.crewai import (  # noqa: E402
     CrewAIConfigurationError,
+    GuardedCrew,
     GuardBuilder,
     Pattern,
     Subpath,
@@ -347,6 +349,68 @@ def test_guarded_step_enforces_policy_in_worker_thread():
 
     step()
     assert EXECUTED == []
+
+
+def test_guarded_step_enforces_outer_policy_inside_worker_guarded_crew():
+    from concurrent.futures import ThreadPoolExecutor
+
+    agent = Agent(
+        role="r",
+        goal="g",
+        backstory="b",
+        tools=[delete_file],
+        llm=ScriptedLLM([("delete_file", {"path": "/x"})]),
+        max_iter=3,
+        verbose=False,
+        allow_delegation=False,
+    )
+    task = Task(description="do it", expected_output="x", agent=agent)
+    crew = GuardedCrew([agent], [task]).policy({"r": ["delete_file"]}).strict().build()
+
+    @guarded_step(allow={"search": {"query": Pattern("*")}})
+    def step():
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(crew.kickoff).result()
+
+    step()
+    assert EXECUTED == []
+
+
+def test_cancelled_async_step_keeps_worker_guarded_until_completion():
+    started = threading.Event()
+    proceed = threading.Event()
+
+    def worker():
+        started.set()
+        assert proceed.wait(timeout=5)
+        return _step_crew().kickoff()
+
+    @guarded_step(allow={"search": {"query": Pattern("*")}})
+    async def step():
+        return await asyncio.to_thread(worker)
+
+    async def run():
+        running = asyncio.create_task(step())
+        await asyncio.to_thread(started.wait, 5)
+        running.cancel()
+        proceed.set()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+
+    asyncio.run(run())
+    assert EXECUTED == []
+
+
+def test_guarded_step_rejects_invalid_ttl_before_user_code_runs():
+    executed = []
+
+    with pytest.raises(ValueError):
+
+        @guarded_step(allow={"search": {"query": Pattern("*")}}, ttl="5min")
+        def step():
+            executed.append(True)
+
+    assert executed == []
 
 
 # -- Tier 1 closed world -----------------------------------------------------
