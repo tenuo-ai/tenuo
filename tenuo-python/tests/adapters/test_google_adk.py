@@ -283,6 +283,35 @@ class TestTier2Authorization:
 
         assert len(runtime.peek_receipts()) == 2
 
+    def test_approval_denial_receipt_includes_ambient_parents(self, keys, warrant, monkeypatch):
+        from tenuo import chain_scope
+
+        parent = (
+            Warrant.mint_builder()
+            .capability("parent")
+            .holder(keys.public_key)
+            .ttl(3600)
+            .mint(keys)
+        )
+        guard = TenuoGuard(warrant=warrant, signing_key=keys, trusted_roots=[keys.public_key])
+        collected = []
+        monkeypatch.setattr(
+            "tenuo.receipts.collect_enforcement_receipt",
+            lambda result, chain_result=None, runtime=None: collected.append(result),
+        )
+
+        with chain_scope([parent]):
+            guard._collect_approval_denial_receipt(
+                RuntimeError("refused"),
+                "Approval failed verification",
+                "read_file",
+                {"path": "/tmp/private.txt"},
+                warrant.bind(keys),
+                None,
+            )
+
+        assert collected[0].presented_chain == [parent, warrant]
+
 
 class TestTier1Authorization:
     """Test Tier 1 (guardrails-only) authorization."""

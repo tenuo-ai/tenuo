@@ -69,6 +69,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from tenuo._enforcement import (
     EnforcementResult,
     _log_observed_denial,
+    _resolve_presented_parents,
     enforce_tool_call,
     enforce_tool_call_async,
     split_presented_warrant,
@@ -997,7 +998,7 @@ class TenuoGuard:
                 arguments=args,
                 denial_reason=reason,
                 error_type=error_type,
-                presented_chain=[*(warrant_chain or []), bound_warrant.warrant],
+                presented_chain=[*_resolve_presented_parents(warrant_chain), bound_warrant.warrant],
                 pop_auth_args=args,
                 authorizer=authorizer,
             )
