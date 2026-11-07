@@ -415,7 +415,7 @@ __all__ = [
     "get_default_nonce_store",
 ]
 
-__version__ = "0.3.3"
+__version__ = "0.3.5"
 
 
 def __getattr__(name: str):

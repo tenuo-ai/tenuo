@@ -117,6 +117,56 @@ updates:
       - "dependencies"
       - "frontend"
 
+  # TypeScript SDK workspace
+  - package-ecosystem: "npm"
+    directory: "/tenuo-ts"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      mcp:
+        patterns:
+          - "@modelcontextprotocol/*"
+      testing:
+        patterns:
+          - "vitest*"
+          - "@stryker-mutator/*"
+          - "fast-check"
+    commit-message:
+      prefix: "deps(ts)"
+    assignees:
+      - "aimable100"
+    reviewers:
+      - "aimable100"
+    labels:
+      - "dependencies"
+      - "typescript"
+
+  # Standalone TypeScript projects are outside the pnpm workspace.
+  - package-ecosystem: "npm"
+    directories:
+      - "/labs/agent-delegation"
+      - "/tenuo-ts/examples/bullmq"
+      - "/tenuo-ts/examples/langchain-js"
+      - "/tenuo-ts/examples/nextjs-node"
+      - "/tenuo-ts/examples/vercel-ai-sdk"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(examples)"
+    assignees:
+      - "aimable100"
+    reviewers:
+      - "aimable100"
+    labels:
+      - "dependencies"
+      - "typescript"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

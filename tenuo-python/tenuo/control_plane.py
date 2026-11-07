@@ -115,6 +115,7 @@ _POP_ESTABLISHED_ERROR_TYPES = frozenset(
         "constraint_violation",
         "policy_violation",
         "insufficient_approvals",
+        "approval_required",
         "approval_gate_misconfigured",
     }
 )

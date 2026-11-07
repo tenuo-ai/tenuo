@@ -856,7 +856,7 @@ def _approval_gate_integrity_error(
             )
     except (ApprovalGateTriggered, ApprovalRequired, InsufficientApprovals):
         return None
-    except Exception as exc:
+    except BaseException as exc:
         return exc
     return None
 
@@ -1397,9 +1397,10 @@ def _enforce_tool_call_impl(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                _pop = bytes(
-                    _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
-                )
+                if _pop is None:
+                    _pop = bytes(
+                        _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
+                    )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
                 from .runtime import apply_runtime_revocation
                 apply_runtime_revocation(_auth)
@@ -1906,9 +1907,10 @@ async def _enforce_tool_call_async_impl(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                _pop = bytes(
-                    _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
-                )
+                if _pop is None:
+                    _pop = bytes(
+                        _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
+                    )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
                 from .runtime import apply_runtime_revocation
                 apply_runtime_revocation(_auth)
@@ -2242,6 +2244,19 @@ def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
 
     if result.allowed or should_block_violation():
         return result
+    _log_observed_denial(result)
+    result.observed = True
+    result.allowed = True
+    return result
+
+
+def _log_observed_denial(result: EnforcementResult) -> None:
+    """Log one ``OBSERVE: would deny ...`` warning for a denial that proceeds.
+
+    Shared by observe mode and adapter-level equivalents (e.g. a guard's
+    ``dry_run``) so every integration reports would-deny decisions the same
+    way. Argument values are never logged, only keys and value type names.
+    """
     args = result.arguments or {}
     reason_code = result.error_type or "authorization_denied"
     logger.warning(
@@ -2258,9 +2273,6 @@ def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
             "observed": True,
         },
     )
-    result.observed = True
-    result.allowed = True
-    return result
 
 
 from functools import wraps as _wraps  # noqa: E402
@@ -2442,14 +2454,30 @@ def verify_inbound_call(
     pop_args: Optional[Dict[str, Any]] = None,
     constraint_args: Optional[Dict[str, Any]] = None,
     approval_handler: Optional[Any] = None,
+    apply_observe: bool = True,
 ) -> EnforcementResult:
     """Shared inbound PEP. Adapters must not call Authorizer directly."""
     if authorizer is None:
         raise ConfigurationError("verify_inbound_call requires an Authorizer")
     if pop_signature is None:
-        raise MissingSignature(
+        missing = MissingSignature(
             "precomputed_signature is required when verify_mode='verify'"
         )
+        result = _enforcement_result_from_chain_error_with_logging(
+            missing,
+            tool_name,
+            tool_args,
+            getattr(warrant, "id", None),
+            constraint_auth_args=constraint_args or tool_args,
+            warrant=warrant,
+            presented_chain=[*(warrant_chain or []), warrant],
+            authorizer=authorizer,
+            pop_auth_args=pop_args or tool_args,
+        )
+        observed = _apply_observe_mode(result) if apply_observe else result
+        if observed.observed:
+            return observed
+        raise missing
     bind = getattr(warrant, "bind", None)
     if not callable(bind):
         raise ConfigurationError("verify_inbound_call requires a Warrant with bind()")
@@ -2467,7 +2495,7 @@ def verify_inbound_call(
         constraint_args=constraint_args,
         approval_handler=approval_handler,
     )
-    return _apply_observe_mode(result)
+    return _apply_observe_mode(result) if apply_observe else result
 
 
 __all__ = [

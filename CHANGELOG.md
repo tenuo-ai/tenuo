@@ -5,7 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.5] - 2026-10-30
+
+### Security
+
+- **The filesystem jail requires the stored spelling of every path component.**
+  On a case-insensitive volume, a cold lookup could make the kernel report the
+  attacker's case-folded or 8.3 alias rather than the stored name. That let an
+  alias of a path denied by a case-sensitive constraint pass the post-open
+  identity check, including for `write_truncate`. The jail now lists every
+  component byte for byte and verifies that the opened descriptor is the
+  stored entry before returning or truncating it. The opt-in `filesystem`
+  feature in Rust `tenuo` 0.3.3 and 0.3.4 is affected.
+  ([GHSA-42gf-5647-7wg3](https://github.com/tenuo-ai/tenuo/security/advisories/GHSA-42gf-5647-7wg3))
+
+- **TypeScript replay protection keys on verified signature bytes.**
+  `nonceStore` previously received the proof-of-possession signature exactly
+  as spelled on the wire. Re-encoding an already accepted signature with
+  whitespace, different Base64 padding, or the URL-safe alphabet produced a
+  new store key while verifying as the same proof. `@tenuo/core` now gives
+  built-in and custom stores `tenuo-pop-v1:<lowercase signature hex>`, so every
+  equivalent encoding is one consumed token. Published `@tenuo/core` and
+  `@tenuo/mcp` versions through 0.3.4-beta.0 are affected.
+  ([GHSA-7qmv-9rg5-mvq2](https://github.com/tenuo-ai/tenuo/security/advisories/GHSA-7qmv-9rg5-mvq2))
+
+### Upgrade notes
+
+- Custom TypeScript `NonceStore` implementations now receive a namespaced,
+  canonical replay key instead of the raw Base64 PoP signature. Stores should
+  treat the key as opaque; implementations that parse the old value must be
+  updated.
+
+## [0.3.4] - 2026-10-30
 
 ### Added
 
@@ -128,6 +159,16 @@ Check these before upgrading:
   it cannot apply rather than silently ignoring them.
 
 ### Security
+
+- **`UrlSafe` judges an address by where it points, not how it is spelled.**
+  IP literals are classified against the IANA special-purpose registries:
+  `::` is blocked like `0.0.0.0`, 6to4, NAT64 and Teredo addresses are judged
+  by the IPv4 address they carry, and `block_private` / `block_reserved` now
+  cover RFC 6598 shared space, benchmarking, IPv6 site-local, IPv6 multicast,
+  documentation ranges and class E. A fully-qualified host (`localhost.`) is
+  the same name as `localhost` for every host policy, including allow and deny
+  lists; a host ending in more than one dot is rejected.
+  ([GHSA-mxh3-hvjr-h242](https://github.com/tenuo-ai/tenuo/security/advisories/GHSA-mxh3-hvjr-h242))
 
 - **Shlex (type 128) uses one POSIX-quoting tokenizer across every SDK.**
   Quoted and escaped operator characters are literal arguments
@@ -322,6 +363,32 @@ are now denied. Check these before upgrading:
   stay raw strings. Custom `extract_args` is unchanged.
 
 ### Fixed
+
+- **`guard_agent()` and `auto_protect()` route LangChain 1.x executors
+  through the guarded tools.** `AgentExecutor` moved to `langchain_classic`
+  in LangChain 1.x, so the wrapper fell back to one that reported
+  `TenuoTool`s while the executor kept running the original tools. Both
+  locations are now supported, and an agent that cannot be rebuilt around
+  the guarded tools, including a `create_agent()` graph, raises
+  `ConfigurationError` pointing to `TenuoMiddleware`. `SecureAgentExecutor`
+  also works with `langchain_classic`.
+- **LangGraph `guard_node()` verifies the warrant before the node runs.**
+  It previously only bound the warrant, so an untrusted, expired or
+  wrong-holder warrant let the node run. The warrant must now chain to a
+  trusted root, be unexpired and be held by the bound key. `required_tools`
+  checks that the warrant grants each tool instead of authorizing a call
+  with empty arguments, which denied tools with constrained arguments.
+- **Observe mode lets LangChain and LangGraph calls without a warrant run.**
+  `TenuoTool` and the `TenuoToolNode` / `TenuoMiddleware` tool-call check denied a call
+  with no usable warrant even in observe mode; they now log it as an
+  `OBSERVE: would deny` and run it. Enforce mode is unchanged.
+- **`TenuoToolNode` sends authorization events to the control plane.** The
+  enforcement hooks captured the control plane before it was resolved, so
+  no events were sent unless one was passed explicitly.
+- **The `langgraph` extra installs a `TenuoToolNode`-capable LangGraph.** On
+  Python 3.10+ it now requires `langgraph>=1.0` and
+  `langgraph-prebuilt>=1.0.2`, the first release with the tool-call hooks
+  `TenuoToolNode` needs.
 
 - **OpenAI `guard()` checks async clients.** On `AsyncOpenAI`,
   `chat.completions.create()` returned the raw coroutine, and the awaited
@@ -591,6 +658,28 @@ are now denied. Check these before upgrading:
   extension does not export, so every signed request failed before it was
   sent. Arguments are now passed to `Warrant.sign`, which already
   canonicalizes plain values.
+- **Google ADK Tier 1 checks follow the core's closed-world rules.** A
+  `Wildcard()` on one argument admitted every unlisted argument, a call that
+  left out a constrained argument ran with the tool's default unchecked, and
+  arguments whose names start with `_` skipped their constraints. `Wildcard()`
+  now covers only its own argument, every constrained argument is required,
+  and `_`-prefixed arguments are checked; `_allow_unknown=True` remains the
+  opt-out for unlisted arguments. This applies to `GuardBuilder.allow()`,
+  `GuardBuilder.from_tools()` and `TenuoGuard(require_pop=False)`.
+- **Google ADK enforces `ScopedWarrant` in the guard and keeps session state
+  copyable.** A `TenuoGuard` used as an agent's `before_tool_callback` ran on a
+  `ScopedWarrant` scoped to another agent; only `TenuoPlugin` checked the
+  scope. The guard now denies it. A `ScopedWarrant` around a `Warrant` made
+  `InMemoryRunner` fail with `TypeError: cannot pickle`; it now copies and
+  pickles as the warrant's base64 form. `scoped_warrant()` uses the
+  `__tenuo_warrant__` key the guard and plugin read (it used
+  `tenuo_warrant`), stores `Warrant` objects encoded, and clears an ADK
+  `State`, which has no `pop()`.
+- **Google ADK denies approval failures instead of ending the run.** A
+  refused approval, a missing approval handler, or an approval that failed
+  verification raised out of `before_tool_callback` and stopped the Runner.
+  The call is now denied with an `authorization_denied` result. `TenuoPlugin`
+  accepts `approval_handler=` and `approvals=`.
 
 ### Security
 

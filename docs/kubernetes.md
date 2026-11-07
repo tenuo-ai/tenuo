@@ -183,7 +183,7 @@ env:
 ```yaml
 containers:
 - name: tenuo-authorizer
-  image: tenuo/authorizer:0.3.3
+  image: tenuo/authorizer:0.3.4
   args: ["serve", "--config", "/etc/tenuo/gateway.yaml"]
   ports:
   - name: http
@@ -459,7 +459,7 @@ curl -s localhost:9091/status | jq
 
 ```json
 {
-  "version": "0.3.3",
+  "version": "0.3.4",
   "uptime_secs": 42,
   "cp": {
     "enabled": true,

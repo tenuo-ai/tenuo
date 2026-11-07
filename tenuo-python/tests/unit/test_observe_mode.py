@@ -147,6 +147,156 @@ def test_observe_does_not_touch_real_allows():
     assert result.error_type is None
 
 
+def test_guard_decorator_observes_missing_warrant(caplog):
+    from tenuo.decorators import guard
+
+    _observe()
+
+    @guard(tool="unscoped_tool")
+    def unscoped_tool():
+        return "executed"
+
+    with caplog.at_level(logging.WARNING, logger="tenuo"):
+        assert unscoped_tool() == "executed"
+    [record] = _observe_records(caplog)
+    assert record.tool == "unscoped_tool"
+    assert record.error_type == "missing_warrant"
+
+
+def test_guard_decorator_observes_expired_warrant(caplog):
+    from tenuo.decorators import guard
+
+    expired = (
+        Warrant.mint_builder()
+        .capability("expired_tool", value=Exact("ok"))
+        .holder(AGENT.public_key)
+        .ttl(0)
+        .mint(ISSUER)
+    )
+    _observe()
+
+    @guard(expired, tool="expired_tool", keypair=AGENT, trusted_roots=ROOTS)
+    def expired_tool(value):
+        return value
+
+    with caplog.at_level(logging.WARNING, logger="tenuo"):
+        assert expired_tool("ok") == "ok"
+    [record] = _observe_records(caplog)
+    assert record.tool == "expired_tool"
+    assert record.error_type == "expired"
+
+
+def test_guard_decorator_collects_expired_warrant_denial_receipt(monkeypatch):
+    from tenuo import HolderIdentity, Runtime
+    from tenuo.decorators import guard
+
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    expired = (
+        Warrant.mint_builder()
+        .capability("expired_tool", value=Exact("ok"))
+        .holder(holder.public_key)
+        .ttl(0)
+        .mint(root)
+    )
+    runtime = Runtime(
+        identity=holder,
+        trusted_roots=[root.public_key],
+        receipts="collect",
+    )
+    configure(trusted_roots=[root.public_key], mode="observe")
+    collected = []
+    from tenuo.receipts import collect_enforcement_receipt as real_collect
+
+    def capture(result, chain_result=None, runtime=None):
+        collected.append(result)
+        return real_collect(result, chain_result, runtime)
+
+    monkeypatch.setattr("tenuo.receipts.collect_enforcement_receipt", capture)
+
+    @guard(
+        expired,
+        tool="expired_tool",
+        keypair=holder.signing_key,
+        mapping={"file_path": "value"},
+        trusted_roots=[root.public_key],
+    )
+    def expired_tool(file_path="ok"):
+        return file_path
+
+    with runtime.bind():
+        assert expired_tool() == "ok"
+
+    assert len(runtime.peek_receipts()) == 1
+    assert collected[0].arguments == {"value": "ok"}
+
+
+def test_guard_decorator_observe_calls_custom_extractor_once():
+    from tenuo.decorators import guard
+
+    expired = (
+        Warrant.mint_builder()
+        .capability("expired_tool", value=Exact("ok"))
+        .holder(AGENT.public_key)
+        .ttl(0)
+        .mint(ISSUER)
+    )
+    calls = 0
+
+    def extract(value):
+        nonlocal calls
+        calls += 1
+        return {"value": value}
+
+    _observe()
+
+    @guard(
+        expired,
+        tool="expired_tool",
+        keypair=AGENT,
+        extract_args=extract,
+        trusted_roots=ROOTS,
+    )
+    def expired_tool(value):
+        return value
+
+    assert expired_tool("ok") == "ok"
+    assert calls == 1
+
+
+def test_guard_verify_early_denial_uses_request_chain_and_authorizer(monkeypatch):
+    from tenuo import chain_scope, guard
+    from tenuo_core import Authorizer
+
+    request_parent = Warrant.mint_builder().capability("request_parent").holder(AGENT.public_key).ttl(3600).mint(ISSUER)
+    ambient_parent = Warrant.mint_builder().capability("ambient_parent").holder(AGENT.public_key).ttl(3600).mint(ISSUER)
+    explicit_authorizer = Authorizer(trusted_roots=ROOTS)
+    collected = []
+    monkeypatch.setattr(
+        "tenuo.receipts.collect_enforcement_receipt",
+        lambda result, chain_result=None, runtime=None: collected.append(result),
+    )
+    _observe()
+
+    @guard(
+        WARRANT,
+        tool="issue_payout",
+        verify_mode="verify",
+        extract_signature=lambda **kwargs: None,
+        extract_chain=lambda **kwargs: [request_parent],
+        authorizer=explicit_authorizer,
+    )
+    def issue_payout(**kwargs):
+        return "executed"
+
+    with chain_scope([ambient_parent]):
+        assert issue_payout(**BAD_ARGS) == "executed"
+
+    assert len(collected) == 1
+    assert collected[0].presented_chain == [request_parent, WARRANT]
+    assert collected[0].authorizer is explicit_authorizer
+
+
 def test_receipt_collected_as_denial(monkeypatch):
     """The runtime receipt sees the denial, not the observe-mode allow."""
     import tenuo.receipts as receipts
@@ -227,6 +377,48 @@ def test_verify_path_integrity_failure_observed_with_error_type():
     result = _inbound(BAD_ARGS, forged)
     assert result.allowed and result.observed
     assert result.error_type == "invalid_pop"
+
+
+def test_verify_path_missing_signature_is_observed_with_context():
+    from tenuo_core import Authorizer
+
+    _observe()
+    authorizer = Authorizer(trusted_roots=ROOTS)
+    result = verify_inbound_call(
+        tool_name="issue_payout",
+        tool_args=BAD_ARGS,
+        warrant=WARRANT,
+        pop_signature=None,
+        authorizer=authorizer,
+    )
+    assert result.allowed and result.observed
+    assert result.error_type == "invalid_pop"
+    assert result.authorizer is authorizer
+    assert result.presented_chain == [WARRANT]
+    assert result.verified_pop is None
+    assert result.pop_auth_args == BAD_ARGS
+
+
+def test_guard_audits_observed_denial_as_failure(monkeypatch):
+    from tenuo import guard
+    from tenuo.audit import AuditEventType, audit_logger
+
+    events = []
+    monkeypatch.setattr(audit_logger, "log", events.append)
+
+    @guard(
+        WARRANT,
+        tool="issue_payout",
+        keypair=AGENT,
+        trusted_roots=ROOTS,
+    )
+    def issue_payout(payee: str, amount: int) -> str:
+        return payee
+
+    _observe()
+    assert issue_payout(**BAD_ARGS) == BAD_ARGS["payee"]
+    assert events[-1].event_type == AuditEventType.AUTHORIZATION_FAILURE
+    assert events[-1].action == "denied"
 
 
 # -- approval gates -----------------------------------------------------------

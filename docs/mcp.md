@@ -840,6 +840,38 @@ authorizer.authorize_one(warrant, "read_file", dict(result.constraints), signatu
 - MCP Transport: Tenuo relies on standard transports (stdio, SSE, StreamableHTTP).
 - Prompt Injection Detection: Tenuo assumes injection will happen. Instead of detecting it, Tenuo fails closed on unauthorized actions — a successful injection can still influence agent reasoning, but cannot invoke tools outside the warrant's scope.
 
+### Server identity and destination binding
+
+The current warrant format authorizes a tool name and its arguments. It does
+not bind that authority to a particular MCP server, transport URL, or other
+destination. If an agent can reach two servers that expose the same tool name,
+a warrant for that name is valid at either server when both trust the same
+issuer and accept the same argument constraints.
+
+Until the protocol defines destination binding, deployments must enforce that
+boundary out of band. Use one or more of these controls:
+
+- Give tools server-qualified capability names.
+- Use distinct trusted issuer sets for servers with different authority.
+- Route calls through a proxy or gateway that maps each destination to its
+  permitted tool names.
+- Prevent an agent from selecting any destination outside the operator-approved
+  routing policy, including a different trusted server.
+
+Do not assume that the MCP transport destination is covered by Tenuo's current
+warrant or proof-of-possession signature. The Agent Authorization Token draft
+already defines two relevant mechanisms: the token chain's `aud` claim and the
+PoP JWT's optional `aat_aud` presentation audience. Tenuo's MCP integration does
+not currently populate or verify either mechanism as a destination-binding
+profile.
+
+[Issue #754](https://github.com/tenuo-ai/tenuo/issues/754) tracks the remaining
+profile and implementation decisions, including destination identifier
+canonicalization, which audience claim deployments require, proxy and alias
+handling, compatibility, and test vectors. Changes to the AAT claim semantics
+should be considered through the relevant IETF discussion so the broader
+community can evaluate interoperability and security tradeoffs.
+
 ---
 
 ## Reference: Common Tool Configurations

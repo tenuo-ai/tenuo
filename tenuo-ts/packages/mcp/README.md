@@ -47,7 +47,8 @@ await client.callTool({ name: call.name, arguments: call.arguments, _meta: call.
 Zod (or any host schema) is **valid**. `allow` is **allowed**, AND'd with the
 warrant in Rust, and zero-trust: every argument must be named. `allow` is
 stripped before `registerTool` so it is not advertised. Pass `nonceStore:
-memoryNonceStore()` to reject an exact replayed PoP (opt-in, in-process only).
+memoryNonceStore()` to reject a replayed PoP regardless of equivalent Base64
+spelling (opt-in, in-process only).
 PoP v1 is replayable in-window, including approval-gated calls. With
 `nonceStore`, an allowed call also consumes the approvals it carried, so a
 fresh PoP cannot reuse them; pass it on a gated tool if approvals must be
