@@ -5,9 +5,9 @@
 
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
-use der::asn1::{AnyRef, BitStringRef};
+use der::asn1::{AnyRef, BitStringRef, OctetStringRef};
 use der::{Decode, Encode, EncodePem};
-use pkcs8::{LineEnding, PrivateKeyInfo};
+use pkcs8::{LineEnding, PrivateKeyInfoRef};
 use spki::{AlgorithmIdentifier, SubjectPublicKeyInfo};
 use std::collections::HashMap;
 use std::fs;
@@ -469,20 +469,20 @@ fn load_private_key(path: &PathBuf) -> Result<SigningKey, Box<dyn std::error::Er
     if let Ok(pem) = pem::parse(content) {
         if pem.tag() == "PRIVATE KEY" {
             // Decode PrivateKeyInfo from DER
-            if let Ok(info) = PrivateKeyInfo::from_der(pem.contents()) {
+            if let Ok(info) = PrivateKeyInfoRef::from_der(pem.contents()) {
                 if info.algorithm.oid.to_string() == "1.3.101.112" {
                     use der::Decode;
-                    if let Ok(octet_string) =
-                        <der::asn1::OctetString as Decode>::from_der(info.private_key)
-                    {
+                    if let Ok(octet_string) = <&der::asn1::OctetStringRef as Decode>::from_der(
+                        info.private_key.as_bytes(),
+                    ) {
                         let bytes = octet_string.as_bytes();
                         if bytes.len() == 32 {
                             let arr: [u8; 32] = bytes.try_into()?;
                             return Ok(SigningKey::from_bytes(&arr));
                         }
                     }
-                    if info.private_key.len() == 32 {
-                        let arr: [u8; 32] = info.private_key.try_into()?;
+                    if info.private_key.as_bytes().len() == 32 {
+                        let arr: [u8; 32] = info.private_key.as_bytes().try_into()?;
                         return Ok(SigningKey::from_bytes(&arr));
                     }
                 }
@@ -656,11 +656,9 @@ fn encode_private_key_pem(keypair: &SigningKey) -> Result<String, Box<dyn std::e
         parameters: None,
     };
 
-    let info = PrivateKeyInfo {
-        algorithm: alg,
-        private_key: &octet_string_bytes,
-        public_key: None,
-    };
+    let private_key = OctetStringRef::new(&octet_string_bytes)
+        .map_err(|e| format!("Failed to create private key: {:?}", e))?;
+    let info = PrivateKeyInfoRef::new(alg, private_key);
 
     info.to_pem(LineEnding::LF)
         .map_err(|e| format!("Failed to encode PEM: {:?}", e).into())
