@@ -450,7 +450,11 @@ class TenuoGuard:
                     # The shared path raises approval failures instead of
                     # returning a denial. Deny the call the same way as any
                     # other, instead of letting the exception end the run.
-                    return self._deny(_approval_denial_reason(e), tool.name, args, start_ns=start_ns)
+                    reason = _approval_denial_reason(e)
+                    self._collect_approval_denial_receipt(
+                        e, reason, skill_name, validation_args, bound_warrant, warrant_chain
+                    )
+                    return self._deny(reason, tool.name, args, start_ns=start_ns)
 
                 if self._control_plane is not None:
                     latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -678,7 +682,11 @@ class TenuoGuard:
                     # The shared path raises approval failures instead of
                     # returning a denial. Deny the call the same way as any
                     # other, instead of letting the exception end the run.
-                    return self._deny(_approval_denial_reason(e), tool.name, args, start_ns=start_ns)
+                    reason = _approval_denial_reason(e)
+                    self._collect_approval_denial_receipt(
+                        e, reason, skill_name, validation_args, bound_warrant, warrant_chain
+                    )
+                    return self._deny(reason, tool.name, args, start_ns=start_ns)
 
                 if self._control_plane is not None:
                     latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -954,6 +962,50 @@ class TenuoGuard:
             "need": need,
             "details": reason if self._denial_detail == "full" else None,
         }
+
+    def _collect_approval_denial_receipt(
+        self,
+        error: BaseException,
+        reason: str,
+        tool_name: str,
+        args: Dict[str, Any],
+        bound_warrant: Any,
+        warrant_chain: Optional[List[Any]],
+    ) -> None:
+        """Collect evidence when ADK turns approval flow control into a denial."""
+        if isinstance(error, ApprovalDenied):
+            error_type = "approval_denied"
+        elif isinstance(error, ApprovalRequired):
+            error_type = "approval_required"
+        else:
+            error_type = "approval_verification_failed"
+
+        try:
+            authorizer = None
+            roots = resolve_trusted_roots(self._trusted_roots)
+            if roots:
+                from tenuo_core import Authorizer
+
+                authorizer = Authorizer(trusted_roots=roots)
+                from tenuo.runtime import apply_runtime_revocation
+
+                apply_runtime_revocation(authorizer)
+            result = EnforcementResult(
+                allowed=False,
+                warrant_id=str(getattr(bound_warrant, "id", "")),
+                tool=tool_name,
+                arguments=args,
+                denial_reason=reason,
+                error_type=error_type,
+                presented_chain=[*(warrant_chain or []), bound_warrant.warrant],
+                pop_auth_args=args,
+                authorizer=authorizer,
+            )
+            from tenuo.receipts import collect_enforcement_receipt
+
+            collect_enforcement_receipt(result)
+        except Exception:
+            logger.warning("Approval denial receipt collection failed for '%s'", tool_name, exc_info=True)
 
     def _deny(
         self,

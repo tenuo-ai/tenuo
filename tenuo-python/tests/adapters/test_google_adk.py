@@ -240,6 +240,49 @@ class TestTier2Authorization:
         assert result["error"] == "authorization_denied"
         assert "Approval required" in result["message"]
 
+    def test_approval_denials_collect_receipts_sync_and_async(self, keys):
+        from tenuo import HolderIdentity, Runtime
+        from tenuo.approval import auto_deny
+        from tenuo_core import Exact
+
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file")
+            .approval_gates({"read_file": {"path": {"exempt": Exact("/tmp/public.txt")}}})
+            .required_approvers([SigningKey.generate().public_key])
+            .holder(keys.public_key)
+            .ttl(3600)
+            .mint(keys)
+        )
+        guard = TenuoGuard(
+            warrant=warrant,
+            signing_key=keys,
+            trusted_roots=[keys.public_key],
+            skill_map={"read_file_tool": "read_file"},
+            arg_map={"read_file": {"file_path": "path"}},
+        )
+        denied_guard = TenuoGuard(
+            warrant=warrant,
+            signing_key=keys,
+            trusted_roots=[keys.public_key],
+            skill_map={"read_file_tool": "read_file"},
+            arg_map={"read_file": {"file_path": "path"}},
+            approval_handler=auto_deny(),
+        )
+        runtime = Runtime(
+            identity=HolderIdentity.generate(),
+            trusted_roots=[keys.public_key],
+            receipts="collect",
+        )
+        tool = MockBaseTool("read_file_tool")
+        args = {"file_path": "/tmp/private.txt"}
+
+        with runtime.bind():
+            assert guard.before_tool(tool, args, MockToolContext()) is not None
+            assert asyncio.run(denied_guard.async_before_tool(tool, args, MockToolContext())) is not None
+
+        assert len(runtime.peek_receipts()) == 2
+
 
 class TestTier1Authorization:
     """Test Tier 1 (guardrails-only) authorization."""
