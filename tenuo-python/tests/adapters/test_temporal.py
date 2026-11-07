@@ -4226,6 +4226,45 @@ class TestApprovalGates:
         assert len(observed) == 1
         assert observed[0].error_type == "approval_required"
 
+    def test_observe_mode_applies_to_non_approval_preflight_denial(self, caplog):
+        import time as _time
+
+        from tenuo import SigningKey, Warrant
+        from tenuo.config import configure, reset_config
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("delete_file")
+            .ttl(3600)
+            .mint(control_key)
+        )
+        args = {"path": "/tmp/stale.txt"}
+        pop = warrant.sign(agent_key, "delete_file", args, int(_time.time()))
+        plugin = TenuoWorkerInterceptor(TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+        ))
+        info, inp = self._build_activity_inputs(warrant, pop, args=args)
+        info.activity_type = "delete_file"
+
+        configure(trusted_roots=[control_key.public_key], mode="observe")
+        try:
+            with caplog.at_level("WARNING"):
+                assert self._run(plugin, info, inp) == "ok"
+        finally:
+            reset_config()
+
+        observed = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("OBSERVE: would deny")
+        ]
+        assert len(observed) == 1
+        assert observed[0].error_type == "policy_violation"
+
     @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
     @pytest.mark.parametrize("outcome", ["allowed", "revoked", "expired"])
     def test_approval_retry_lifecycle(self, async_handler, outcome):

@@ -1498,6 +1498,23 @@ class TenuoActivityInboundInterceptor:
                 )
 
             approval_needed = preflight.error_type in ("approval_required", "insufficient_approvals")
+            from tenuo.config import should_block_violation
+
+            if (
+                not preflight.allowed
+                and not approval_needed
+                and not should_block_violation()
+            ):
+                with bind_runtime(runtime):
+                    preflight = verify_inbound_call(
+                        tool_name=tool_name,
+                        tool_args=args,
+                        warrant=warrant,
+                        pop_signature=pop_bytes,
+                        authorizer=authorizer,
+                        warrant_chain=presented_parents,
+                        approvals=[],
+                    )
             if not preflight.allowed and not approval_needed:
                 if preflight.error_type == "invalid_pop":
                     raise PopVerificationError(
@@ -1509,8 +1526,6 @@ class TenuoActivityInboundInterceptor:
             # -- 12. Multi-Sig Approval Resolution --
             # Only a cryptographically authenticated caller can reach an
             # approval handler or cause supplied approvals to be parsed.
-            from tenuo.config import should_block_violation
-
             supplied_approvals = bool(headers.get(TENUO_APPROVALS_HEADER))
             if approval_needed and (supplied_approvals or should_block_violation()):
                 gate_approvals = await self._resolve_approval_gate_approvals(
