@@ -71,7 +71,7 @@ managed control plane is about running that authority system consistently at
 enterprise scale.
 
 If you are evaluating this model for multiple teams or business units,
-[schedule a demo / request access](https://tenuo.ai/early-access.html) and we
+[schedule a demo / request access](https://tenuo.ai/#talk) and we
 can walk through your Temporal topology.
 
 ## Example 1: AI agent requests a payment refund
@@ -309,7 +309,7 @@ warrant?" to "can the enterprise operate warrant authority safely across all
 the teams using Nexus?"
 
 For that enterprise-scale operating model,
-[schedule a demo / request access](https://tenuo.ai/early-access.html).
+[schedule a demo / request access](https://tenuo.ai/#talk).
 
 ## When this is the right fit
 
