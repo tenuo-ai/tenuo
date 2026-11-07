@@ -51,6 +51,8 @@ from .guard import TenuoGuard  # noqa: E402
 
 def _portable_warrant(warrant: Any) -> Any:
     """A copyable, picklable form of a warrant or root-first warrant list."""
+    if isinstance(warrant, ScopedWarrant):
+        return warrant
     if isinstance(warrant, (list, tuple)):
         from tenuo._enforcement import split_presented_warrant
         from tenuo_core import encode_warrant_stack

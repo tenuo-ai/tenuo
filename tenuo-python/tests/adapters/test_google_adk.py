@@ -949,6 +949,17 @@ class TestScopedWarrantContext:
 
         assert "test" not in state
 
+    def test_existing_scoped_warrant_keeps_agent_binding(self, warrant):
+        from tenuo.google_adk import ScopedWarrant
+
+        state = {}
+        scoped = ScopedWarrant(warrant, "researcher")
+
+        with scoped_warrant(state, scoped, key="test"):
+            assert state["test"] is scoped
+            assert state["test"].valid_for_agent("researcher")
+            assert not state["test"].valid_for_agent("writer")
+
 
 class TestGenerateHints:
     """Test hint generation."""
