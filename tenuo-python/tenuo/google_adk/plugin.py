@@ -52,11 +52,12 @@ from .guard import TenuoGuard  # noqa: E402
 def _portable_warrant(warrant: Any) -> Any:
     """A copyable, picklable form of a warrant or root-first warrant list."""
     if isinstance(warrant, (list, tuple)):
-        if all(isinstance(w, str) for w in warrant):
-            return list(warrant)
+        from tenuo._enforcement import split_presented_warrant
         from tenuo_core import encode_warrant_stack
 
-        return encode_warrant_stack(list(warrant))
+        leaf, parents = split_presented_warrant(warrant)
+        leaf = getattr(leaf, "warrant", leaf)
+        return encode_warrant_stack([*(parents or []), leaf])
     to_base64 = getattr(warrant, "to_base64", None)
     if callable(to_base64):
         return to_base64()

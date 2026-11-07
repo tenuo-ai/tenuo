@@ -783,6 +783,9 @@ def guard(
             warrant_to_use = active_warrant or get_warrant_context()
             args_not_extracted = object()
             auth_args_cache: Any = args_not_extracted
+            context_not_resolved = object()
+            presented_parents_cache: Any = context_not_resolved
+            receipt_authorizer_cache: Any = context_not_resolved
 
             def authorization_args() -> Dict[str, Any]:
                 """Extract once so enforcement and early-denial receipts agree."""
@@ -819,6 +822,41 @@ def guard(
                 auth_args_cache = extracted
                 return auth_args_cache
 
+            def presented_parents() -> Optional[List[Any]]:
+                """Resolve the request's parents once for enforcement and receipts."""
+                nonlocal presented_parents_cache
+                if presented_parents_cache is not context_not_resolved:
+                    return presented_parents_cache
+                if verify_mode == "verify":
+                    raw_chain = extract_chain(*args, **kwargs) if callable(extract_chain) else None
+                else:
+                    raw_chain = chain_scope()
+                presented_parents_cache = list(raw_chain) if raw_chain else None
+                return presented_parents_cache
+
+            def receipt_authorizer() -> Any:
+                """Use the same trust context as normal verification for receipts."""
+                nonlocal receipt_authorizer_cache
+                if receipt_authorizer_cache is not context_not_resolved:
+                    return receipt_authorizer_cache
+                if verify_mode == "verify" and authorizer is not None:
+                    receipt_authorizer_cache = authorizer
+                    return receipt_authorizer_cache
+
+                from .config import resolve_trusted_roots
+
+                roots = resolve_trusted_roots(trusted_roots)
+                if not roots:
+                    receipt_authorizer_cache = None
+                    return None
+                from tenuo_core import Authorizer
+
+                receipt_authorizer_cache = Authorizer(trusted_roots=roots)
+                from .runtime import apply_runtime_revocation
+
+                apply_runtime_revocation(receipt_authorizer_cache)
+                return receipt_authorizer_cache
+
             def observe_early_denial(
                 reason: str,
                 error_type: str,
@@ -843,17 +881,8 @@ def guard(
                     pop_auth_args=observed_args,
                 )
                 if warrant_to_use is not None:
-                    observed_result.presented_chain = [*(chain_scope() or []), warrant_to_use]
-                    from .config import resolve_trusted_roots
-
-                    roots = list(trusted_roots) if trusted_roots else resolve_trusted_roots(None)
-                    if roots:
-                        from tenuo_core import Authorizer
-
-                        observed_result.authorizer = Authorizer(trusted_roots=roots)
-                        from .runtime import apply_runtime_revocation
-
-                        apply_runtime_revocation(observed_result.authorizer)
+                    observed_result.presented_chain = [*(presented_parents() or []), warrant_to_use]
+                    observed_result.authorizer = receipt_authorizer()
                 from .receipts import collect_enforcement_receipt
 
                 collect_enforcement_receipt(observed_result)
@@ -1089,9 +1118,7 @@ def guard(
                         )
                     raise MissingSignature("@guard(verify_mode='verify') requires extract_signature to return bytes")
                 _precomputed_sig = bytes(_precomputed_sig)
-                _raw_chain = extract_chain(*args, **kwargs) if callable(extract_chain) else None
-                if _raw_chain:
-                    _warrant_chain = list(_raw_chain)
+                _warrant_chain = presented_parents()
                 # Build authorizer from trusted_roots if not explicitly provided
                 if _verify_authorizer is None:
                     from .config import resolve_trusted_roots as _rtr
@@ -1105,9 +1132,7 @@ def guard(
                             "or trusted_roots configured via configure() at startup."
                         )
             else:
-                _parents = chain_scope()
-                if _parents:
-                    _warrant_chain = list(_parents)
+                _warrant_chain = presented_parents()
 
             result = enforce_tool_call(
                 tool_name=tool_name,

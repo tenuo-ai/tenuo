@@ -264,6 +264,39 @@ def test_guard_decorator_observe_calls_custom_extractor_once():
     assert calls == 1
 
 
+def test_guard_verify_early_denial_uses_request_chain_and_authorizer(monkeypatch):
+    from tenuo import chain_scope, guard
+    from tenuo_core import Authorizer
+
+    request_parent = Warrant.mint_builder().capability("request_parent").holder(AGENT.public_key).ttl(3600).mint(ISSUER)
+    ambient_parent = Warrant.mint_builder().capability("ambient_parent").holder(AGENT.public_key).ttl(3600).mint(ISSUER)
+    explicit_authorizer = Authorizer(trusted_roots=ROOTS)
+    collected = []
+    monkeypatch.setattr(
+        "tenuo.receipts.collect_enforcement_receipt",
+        lambda result, chain_result=None, runtime=None: collected.append(result),
+    )
+    _observe()
+
+    @guard(
+        WARRANT,
+        tool="issue_payout",
+        verify_mode="verify",
+        extract_signature=lambda **kwargs: None,
+        extract_chain=lambda **kwargs: [request_parent],
+        authorizer=explicit_authorizer,
+    )
+    def issue_payout(**kwargs):
+        return "executed"
+
+    with chain_scope([ambient_parent]):
+        assert issue_payout(**BAD_ARGS) == "executed"
+
+    assert len(collected) == 1
+    assert collected[0].presented_chain == [request_parent, WARRANT]
+    assert collected[0].authorizer is explicit_authorizer
+
+
 def test_receipt_collected_as_denial(monkeypatch):
     """The runtime receipt sees the denial, not the observe-mode allow."""
     import tenuo.receipts as receipts
