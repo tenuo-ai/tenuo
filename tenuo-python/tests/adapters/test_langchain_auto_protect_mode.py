@@ -10,6 +10,7 @@ from tenuo_core import SigningKey  # noqa: E402
 from tenuo.config import EnforcementMode, configure, get_config, reset_config  # noqa: E402
 from tenuo.exceptions import ConfigurationError  # noqa: E402
 from tenuo.langchain import auto_protect  # noqa: E402
+from tenuo import HolderIdentity, Runtime  # noqa: E402
 
 
 @tool
@@ -20,8 +21,10 @@ def search(query: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _reset():
+    Runtime.uninstall()
     reset_config()
     yield
+    Runtime.uninstall()
     reset_config()
 
 
@@ -67,3 +70,14 @@ def test_keeps_verifier_only_trusted_roots():
     config = get_config()
     assert not config.dev_mode
     assert [k.to_bytes() for k in config.trusted_roots] == [root.public_key.to_bytes()]
+
+
+def test_installed_runtime_prevents_dev_observe_fallback():
+    root = SigningKey.generate()
+    runtime = Runtime(HolderIdentity.generate(), trusted_roots=[root.public_key]).install()
+
+    auto_protect([search])
+
+    assert get_config().mode == EnforcementMode.ENFORCE
+    assert not get_config().dev_mode
+    assert runtime.trusted_roots == [root.public_key]

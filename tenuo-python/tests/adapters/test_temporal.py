@@ -4186,7 +4186,7 @@ class TestApprovalGates:
         assert "approval" in msg.lower() or "gate" in msg.lower() or \
             isinstance(exc_info.value, ApprovalGateTriggered)
 
-    def test_observe_mode_skips_approval_handler_without_supplied_approvals(self):
+    def test_observe_mode_skips_approval_handler_without_supplied_approvals(self, caplog):
         import time as _time
 
         from tenuo import SigningKey
@@ -4213,10 +4213,18 @@ class TestApprovalGates:
                 approval_handler=handler,
             ))
             info, inp = self._build_activity_inputs(warrant, pop)
-            assert self._run(plugin, info, inp) == "ok"
+            with caplog.at_level("WARNING"):
+                assert self._run(plugin, info, inp) == "ok"
         finally:
             reset_config()
         assert calls == []
+        observed = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("OBSERVE: would deny")
+        ]
+        assert len(observed) == 1
+        assert observed[0].error_type == "approval_required"
 
     @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
     @pytest.mark.parametrize("outcome", ["allowed", "revoked", "expired"])

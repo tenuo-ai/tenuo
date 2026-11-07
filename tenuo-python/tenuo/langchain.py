@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 from tenuo._version_compat import check_langchain_compat  # noqa: E402
 
 from ._enforcement import enforce_tool_call, enforce_tool_call_async, split_presented_warrant
-from .audit import log_authorization_success
+from .audit import audit_logger, log_authorization_success
 from .config import allow_passthrough, resolve_trusted_roots
 from .decorators import chain_scope, get_allowed_tools_context, key_scope, warrant_scope
 from .exceptions import (
@@ -331,7 +331,15 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         if not result.allowed:
             result.raise_if_denied()
 
-        log_authorization_success(bound_warrant, self.name, tool_input)
+        if getattr(result, "observed", False):
+            audit_logger.authorization_failure(
+                getattr(bound_warrant, "id", None),
+                self.name,
+                tool_input,
+                result.denial_reason or "authorization denied",
+            )
+        else:
+            log_authorization_success(bound_warrant, self.name, tool_input)
 
     def _check_authorization(self, tool_input: Dict[str, Any]) -> None:
         """Synchronous authorization check before tool execution."""
@@ -817,6 +825,7 @@ def auto_protect(
     """
     from .config import EnforcementMode, configure, get_config, is_configured
     from .exceptions import ConfigurationError
+    from .runtime import get_runtime
 
     enforcement_mode: Optional[EnforcementMode] = None
     if mode is not None:
@@ -827,7 +836,7 @@ def auto_protect(
 
     # A verifier-only setup (trusted_roots, no issuer key) is configured too;
     # never replace its roots with a generated dev key.
-    if not (is_configured() or get_config().trusted_roots):
+    if not (is_configured() or get_config().trusted_roots or get_runtime() is not None):
         from tenuo_core import SigningKey
 
         configure(

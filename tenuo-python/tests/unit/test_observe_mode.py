@@ -249,6 +249,28 @@ def test_verify_path_missing_signature_is_observed_with_context():
     assert result.pop_auth_args == BAD_ARGS
 
 
+def test_guard_audits_observed_denial_as_failure(monkeypatch):
+    from tenuo import guard
+    from tenuo.audit import AuditEventType, audit_logger
+
+    events = []
+    monkeypatch.setattr(audit_logger, "log", events.append)
+
+    @guard(
+        WARRANT,
+        tool="issue_payout",
+        keypair=AGENT,
+        trusted_roots=ROOTS,
+    )
+    def issue_payout(payee: str, amount: int) -> str:
+        return payee
+
+    _observe()
+    assert issue_payout(**BAD_ARGS) == BAD_ARGS["payee"]
+    assert events[-1].event_type == AuditEventType.AUTHORIZATION_FAILURE
+    assert events[-1].action == "denied"
+
+
 # -- approval gates -----------------------------------------------------------
 
 

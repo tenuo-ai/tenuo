@@ -2475,6 +2475,7 @@ def verify_inbound_call(
     pop_args: Optional[Dict[str, Any]] = None,
     constraint_args: Optional[Dict[str, Any]] = None,
     approval_handler: Optional[Any] = None,
+    apply_observe: bool = True,
 ) -> EnforcementResult:
     """Shared inbound PEP. Adapters must not call Authorizer directly."""
     if authorizer is None:
@@ -2494,7 +2495,7 @@ def verify_inbound_call(
             authorizer=authorizer,
             pop_auth_args=pop_args or tool_args,
         )
-        observed = _apply_observe_mode(result)
+        observed = _apply_observe_mode(result) if apply_observe else result
         if observed.observed:
             return observed
         raise missing
@@ -2515,7 +2516,7 @@ def verify_inbound_call(
         constraint_args=constraint_args,
         approval_handler=approval_handler,
     )
-    return _apply_observe_mode(result)
+    return _apply_observe_mode(result) if apply_observe else result
 
 
 __all__ = [
