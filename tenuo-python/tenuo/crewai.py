@@ -2176,16 +2176,22 @@ def guarded_step(
                             task = asyncio.create_task(func(*args, **kwargs))
                             try:
                                 result = await asyncio.shield(task)
-                            except asyncio.CancelledError:
+                            except asyncio.CancelledError as cancellation:
                                 # asyncio.to_thread() cannot stop its worker.
                                 # Keep the process-global hook registered until
                                 # the step really finishes, then propagate the
-                                # caller's cancellation.
-                                try:
-                                    await task
-                                except BaseException:
-                                    pass
-                                raise
+                                # caller's cancellation. Repeated cancellation
+                                # must not tear down enforcement early either.
+                                while not task.done():
+                                    try:
+                                        await asyncio.shield(task)
+                                    except asyncio.CancelledError:
+                                        continue
+                                    except BaseException:
+                                        break
+                                if task.done() and not task.cancelled():
+                                    task.exception()
+                                raise cancellation
                     finally:
                         _finish_step(step_name, step_start)
                 return result

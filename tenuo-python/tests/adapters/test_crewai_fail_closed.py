@@ -393,6 +393,8 @@ def test_cancelled_async_step_keeps_worker_guarded_until_completion():
         running = asyncio.create_task(step())
         await asyncio.to_thread(started.wait, 5)
         running.cancel()
+        await asyncio.sleep(0)
+        running.cancel()
         proceed.set()
         with pytest.raises(asyncio.CancelledError):
             await running
