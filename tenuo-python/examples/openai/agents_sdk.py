@@ -342,7 +342,7 @@ Protect an agent's tool calls with guard_agent():
     agent = guard_agent(Agent(name="MyAgent", tools=[...]), constraints={...})
 
 For more information:
-  - Documentation: https://tenuo.ai/docs
+  - Documentation: https://tenuo.ai/quickstart
   - Explorer: https://tenuo.ai/explorer
 """)
 
