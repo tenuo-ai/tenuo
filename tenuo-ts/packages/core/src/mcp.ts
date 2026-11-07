@@ -266,10 +266,23 @@ function admitPop(
   signature: string,
   onNonceStoreError?: (error: unknown) => void | Promise<void>,
 ): Promise<void> {
-  return admitNonce(store, signature, onNonceStoreError, () =>
+  if (store === undefined) {
+    return Promise.resolve();
+  }
+  let canonical: string;
+  try {
+    canonical = `tenuo-pop-v1:${loadWasm().sdkCanonicalMetaSignature(signature)}`;
+  } catch (cause) {
+    const error = new TenuoConfigurationError(
+      "could not canonicalize an authorized proof for replay protection",
+    );
+    error.cause = cause;
+    return Promise.reject(error);
+  }
+  return admitNonce(store, canonical, onNonceStoreError, () =>
     new AuthorizationDeniedError(
       "TENUO_INVALID_POP",
-      "PoP replay detected — this exact authorization token was already consumed.",
+      "PoP replay detected — this authorization token was already consumed.",
     ),
   );
 }
