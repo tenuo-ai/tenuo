@@ -31,11 +31,14 @@
 //! open blocking, so a FIFO can hang the handler. Symlinks are always rejected.
 //! Every opened handle is checked against the named directory entry, including
 //! after an `openat2` open. This prevents a case-insensitive directory (ext4
-//! casefold, vfat, SMB) from opening `/workspace/secret` for an authorized
-//! spelling such as `/workspace/SECRET`. The check compares path strings,
-//! including the jail root's path, not the root inode. If the platform cannot
-//! resolve the descriptor's path, the open fails closed. Truncate runs only
-//! after that check.
+//! casefold, vfat, exFAT, SMB) from opening `/workspace/secret` for an
+//! authorized spelling such as `/workspace/SECRET`. Two checks run. The
+//! descriptor's path must equal the jail root's path plus the argument. That
+//! path can echo the spelling of the lookup that first cached the entry, so
+//! each component must also be listed byte for byte in its parent directory,
+//! and the handle must be the inode at that entry. Directories under the jail
+//! must therefore be readable. If either check cannot run, the open fails
+//! closed. Truncate runs only after both checks.
 //!
 //! Linux resolves the descriptor through `/proc/self/fd`. A Linux deployment
 //! must mount and permit reads from that interface; otherwise
@@ -416,11 +419,13 @@ impl Workspace {
             // keeps resolution beneath the jail, but a case-folding filesystem
             // can still resolve different bytes to the same entry. Verify the
             // descriptor's resolved spelling before returning or truncating it.
-            match named_entry(self.jail.root(), &relative, &opened) {
-                NamedEntry::Match => {}
-                NamedEntry::Mismatch => return Err(FilesystemError::NotTheNamedFile),
-                NamedEntry::Unavailable => {
-                    return Err(FilesystemError::EntryCheckUnavailable);
+            for check in [named_entry, stored_entry] {
+                match check(self.jail.root(), &relative, &opened) {
+                    NamedEntry::Match => {}
+                    NamedEntry::Mismatch => return Err(FilesystemError::NotTheNamedFile),
+                    NamedEntry::Unavailable => {
+                        return Err(FilesystemError::EntryCheckUnavailable);
+                    }
                 }
             }
             if options.truncate {
@@ -638,7 +643,7 @@ enum NamedEntry {
 
 /// The opened handle's path is `root/relative`, byte for byte.
 ///
-/// Used on the fallback, where the kernel did not enforce the open. A missing
+/// Runs after every open, together with [`stored_entry`]. A missing
 /// path lookup is [`NamedEntry::Unavailable`], not a claim that the file is
 /// the wrong entry. The host path is not returned.
 ///
@@ -655,6 +660,51 @@ fn named_entry(root: &Path, relative: &str, opened: &GuardedFile) -> NamedEntry 
     } else {
         NamedEntry::Mismatch
     }
+}
+
+/// Every component of `relative` is stored with exactly these bytes, and the
+/// handle is the inode at that entry.
+///
+/// The descriptor path alone is not enough. Linux builds it from the dentry
+/// name, and macOS FAT and exFAT from the name cache. On a case-insensitive
+/// directory both can hold the spelling of whichever lookup came first, so a
+/// cold `SECRET/KEY` lookup reports `SECRET/KEY` for the file stored as
+/// `secret/key`. A directory listing returns the stored name.
+#[cfg(unix)]
+fn stored_entry(root: &Path, relative: &str, opened: &GuardedFile) -> NamedEntry {
+    use std::os::unix::fs::MetadataExt;
+    let mut current = root.to_path_buf();
+    for component in relative.split('/') {
+        match directory_lists(&current, component) {
+            Ok(true) => {}
+            Ok(false) => return NamedEntry::Mismatch,
+            Err(_) => return NamedEntry::Unavailable,
+        }
+        current.push(component);
+    }
+    let (Ok(named), Ok(handle)) = (
+        std::fs::symlink_metadata(&current),
+        opened.file().metadata(),
+    ) else {
+        return NamedEntry::Unavailable;
+    };
+    if named.dev() == handle.dev() && named.ino() == handle.ino() {
+        NamedEntry::Match
+    } else {
+        NamedEntry::Mismatch
+    }
+}
+
+/// `dir` has an entry whose stored name is exactly `name`.
+#[cfg(unix)]
+fn directory_lists(dir: &Path, name: &str) -> std::io::Result<bool> {
+    use std::os::unix::ffi::OsStrExt;
+    for entry in std::fs::read_dir(dir)? {
+        if entry?.file_name().as_bytes() == name.as_bytes() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(unix)]
@@ -1339,6 +1389,18 @@ mod tests {
                 .as_deref(),
             None
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_listing_requires_the_stored_spelling() {
+        let dir = tempfile::tempdir().expect("dir");
+        std::fs::create_dir(dir.path().join("secret")).expect("secret");
+        assert!(directory_lists(dir.path(), "secret").expect("list"));
+        // Absent on a case-sensitive directory; an alias on a folding one.
+        // Either way the stored name is not these bytes.
+        assert!(!directory_lists(dir.path(), "SECRET").expect("list"));
+        assert!(!directory_lists(dir.path(), "secre").expect("list"));
     }
 
     #[cfg(unix)]

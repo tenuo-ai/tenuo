@@ -138,6 +138,7 @@ This demo shows Tenuo's key capabilities:
   - **[warrant.py](openai/warrant.py)**: Tier 2 cryptographic authorization with PoP
   - **[async_patterns.py](openai/async_patterns.py)**: Async/streaming patterns with TOCTOU protection
   - **[agents_sdk.py](openai/agents_sdk.py)**: OpenAI Agents SDK integration
+- **[handoff.py](openai/handoff.py)**: Native Agents SDK handoff to a refund specialist with a narrower warrant (offline test)
 
 ### CrewAI Integration
 - **[crewai/](crewai/)**: Complete CrewAI integration examples
@@ -156,6 +157,7 @@ This demo shows Tenuo's key capabilities:
 - **[autogen_demo_protected_attenuation.py](autogen_demo_protected_attenuation.py)**: Per-agent attenuation + escalation blocking.
 - **[autogen_demo_guardbuilder_tier1.py](autogen_demo_guardbuilder_tier1.py)**: GuardBuilder (constraints-only) with on_denial raise/log/skip.
 - **[autogen_demo_guardbuilder_tier2.py](autogen_demo_guardbuilder_tier2.py)**: GuardBuilder with warrant + PoP (Tier 2).
+- **[autogen_round_robin_group_chat.py](autogen_round_robin_group_chat.py)**: Offline `RoundRobinGroupChat` with researcher and reviewer warrants; cross-role calls are denied.
 
 ### Google ADK Integration
 - **[google_adk_incident_response/](google_adk_incident_response/)**: **Multi-Agent Security Demo** - Detector, Analyst, and Responder agents with warrant-based authorization. Shows Tier 2 protection with monotonic attenuation.
