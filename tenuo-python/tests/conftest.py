@@ -38,6 +38,12 @@ if sys.version_info >= (3, 14):
         ]
     )
 
+# The local CLI workspace relies on POSIX file locking and key-file modes, and
+# refuses to update a workspace elsewhere. Skip its tests on Windows.
+collect_ignore_glob: list[str] = []
+if sys.platform == "win32":
+    collect_ignore_glob.extend(["test_local_cli_*.py", "e2e/test_local_cli_*.py"])
+
 
 def pytest_collection_modifyitems(config, items):
     pass
