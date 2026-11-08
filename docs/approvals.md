@@ -404,7 +404,7 @@ result = enforce_tool_call(..., consumption_store=store)
 
 A second use is denied with `error_type="approval_consumed"` (receipt decision code `approval-consumed`, `raise_if_denied()` raises `InvalidApproval`). `approval_metadata["state"]` is `"in_flight"` or `"consumed"`. A fresh approval for the same call is allowed.
 
-Every valid approval presented with a call is consumed, including any beyond the threshold, so presenting the same approvals in a different order does not authorize the call again. Client-side preflight checks that are not the final enforcement point (`SecureMCPClient` does this) pass `consumption_store=False`, so only the server consumes.
+Every valid approval presented with a call is consumed, including any beyond the threshold, so presenting the same approvals in a different order does not authorize the call again. Client-side checks that are not the final enforcement point pass `consumption_store=False`, so only the server consumes. `SecureMCPClient` does this only when it sends the warrant (`inject_warrant`); otherwise its own check is the enforcement point and consumes. The guarded OpenAI client verifies a response without running its tools, so it releases the approvals of any call or response it rejects.
 
 **Reserve / commit.** An allowed call reserves its approvals. Call `result.approval_reservation.commit()` once the action has run, or `.release()` only when it certainly did not. A crash in between leaves the reservation in flight, so a retry is refused rather than treated as unused. Entries are kept until the approval expires.
 

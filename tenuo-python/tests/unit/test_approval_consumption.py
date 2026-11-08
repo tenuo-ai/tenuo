@@ -459,3 +459,92 @@ async def test_mcp_client_and_server_sharing_one_store(setup, monkeypatch):
     with warrant_scope(setup["warrant"]), key_scope(setup["holder"]):
         await client.call_tool("transfer", dict(setup["args"]), approvals=[setup["approval"]])
     assert outcomes == [True]
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_without_injection_is_the_enforcement_point(setup, monkeypatch):
+    """Without the warrant sent, the server may not run Tenuo at all, so the
+    client's own check consumes: a second call on the same approval is denied."""
+    pytest.importorskip("mcp")
+    from types import SimpleNamespace
+
+    from tenuo.decorators import key_scope, warrant_scope
+    from tenuo.mcp.client import SecureMCPClient
+
+    enable_default_consumption_store()
+    monkeypatch.setattr("tenuo.config.resolve_trusted_roots", lambda explicit=None: [setup["issuer"].public_key])
+    monkeypatch.setattr("tenuo.mcp.client.is_configured", lambda: True)
+    executed = []
+
+    class PlainSession:
+        async def call_tool(self, name, arguments, meta=None):
+            executed.append(name)
+            return SimpleNamespace(content=[], isError=False, structuredContent=None)
+
+    client = SecureMCPClient("python", [], inject_warrant=False)
+    client.session = PlainSession()
+    with warrant_scope(setup["warrant"]), key_scope(setup["holder"]):
+        await client.call_tool("transfer", dict(setup["args"]), approvals=[setup["approval"]])
+        with pytest.raises(Exception):
+            await client.call_tool("transfer", dict(setup["args"]), approvals=[setup["approval"]])
+    assert executed == ["transfer"]
+
+
+class TestOpenAIReleasesUnusedReservations:
+    """The guarded OpenAI client verifies a response; it does not run tools.
+    A response or call it rejects must leave its approvals usable."""
+
+    @staticmethod
+    def _response(calls):
+        from types import SimpleNamespace as NS
+
+        tool_calls = [
+            NS(id=f"call_{i}", type="function", function=NS(name=name, arguments=raw))
+            for i, (name, raw) in enumerate(calls)
+        ]
+        message = NS(role="assistant", content=None, tool_calls=tool_calls, function_call=None)
+        return NS(id="resp", model="m", choices=[NS(index=0, message=message, finish_reason="tool_calls")])
+
+    def _guarded(self, setup, monkeypatch, response, **kw):
+        pytest.importorskip("openai")
+        from unittest.mock import Mock
+
+        from tenuo.openai import GuardBuilder
+
+        monkeypatch.setattr("tenuo.openai.resolve_trusted_roots", lambda explicit=None: [setup["issuer"].public_key])
+        client = Mock()
+        client.chat.completions.create.return_value = response
+        builder = GuardBuilder(client).with_warrant(setup["warrant"], setup["holder"]).with_approvals([setup["approval"]])
+        for name in kw.get("deny", []):
+            builder = builder.deny(name)
+        return builder.on_denial("raise").build()
+
+    def test_rejected_response_releases_earlier_calls(self, setup, monkeypatch):
+        import json
+
+        store = enable_default_consumption_store()
+        bad = self._response([("transfer", json.dumps(setup["args"])), ("transfer", "{not json")])
+        with pytest.raises(Exception):
+            self._guarded(setup, monkeypatch, bad).chat.completions.create(model="m", messages=[])
+        assert len(store) == 0
+
+        good = self._response([("transfer", json.dumps(setup["args"]))])
+        self._guarded(setup, monkeypatch, good).chat.completions.create(model="m", messages=[])
+        assert len(store) == 1
+
+    def test_tier1_denial_after_tier2_releases(self, setup, monkeypatch):
+        from tenuo.openai import ToolDenied, verify_tool_call
+
+        pytest.importorskip("openai")
+        store = enable_default_consumption_store()
+        roots = [setup["issuer"].public_key]
+        with pytest.raises(ToolDenied):
+            verify_tool_call(
+                "transfer", setup["args"], None, ["transfer"], None,
+                setup["warrant"], setup["holder"], roots, None, [setup["approval"]],
+            )
+        assert len(store) == 0
+        assert verify_tool_call(
+            "transfer", setup["args"], None, None, None,
+            setup["warrant"], setup["holder"], roots, None, [setup["approval"]],
+        )

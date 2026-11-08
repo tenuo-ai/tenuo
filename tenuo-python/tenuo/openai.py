@@ -522,6 +522,7 @@ def verify_tool_call(
     approvals: Optional[list] = None,
     *,
     warrant_chain: Optional[List[Warrant]] = None,
+    _reservations: Optional[List[Any]] = None,
 ) -> Optional[str]:
     """Verify a tool call against guardrails and/or warrant.
 
@@ -599,6 +600,7 @@ def verify_tool_call(
         else:
             logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
             idempotency_key = result.idempotency_key
+            _hold_reservation(result, tool_name, allow_tools, deny_tools, _reservations)
 
     # ==========================================================================
     # Tier 1: Guardrail-based authorization (runtime checks)
@@ -684,6 +686,7 @@ async def verify_tool_call_async(
     approvals: Optional[list] = None,
     *,
     warrant_chain: Optional[List[Warrant]] = None,
+    _reservations: Optional[List[Any]] = None,
 ) -> Optional[str]:
     """Async variant of verify_tool_call — uses enforce_tool_call_async for Tier 2.
 
@@ -711,6 +714,7 @@ async def verify_tool_call_async(
         if not result.allowed:
             _raise_for_enforcement_denial(tool_name, result)
         idempotency_key = result.idempotency_key
+        _hold_reservation(result, tool_name, allow_tools, deny_tools, _reservations)
 
     if deny_tools and tool_name in deny_tools:
         raise ToolDenied(tool_name, "Tool is in denylist")
@@ -752,6 +756,41 @@ async def verify_tool_call_async(
                     reason=f"internal validation error ({type(e).__name__})",
                 )
     return idempotency_key
+
+
+def _hold_reservation(
+    result: Any,
+    tool_name: str,
+    allow_tools: Optional[List[str]],
+    deny_tools: Optional[List[str]],
+    reservations: Optional[List[Any]],
+) -> None:
+    """Keep or drop the approvals Tier 2 just reserved for this call.
+
+    This adapter only verifies; the host runs the tool later. If the Tier 1
+    lists below deny the call, nothing will run, so the reservation is
+    released. Otherwise the caller may collect it to release if the response
+    as a whole is rejected.
+    """
+    reservation = getattr(result, "approval_reservation", None)
+    if reservation is None:
+        return
+    if (deny_tools and tool_name in deny_tools) or (
+        allow_tools is not None and tool_name not in allow_tools
+    ):
+        reservation.release()
+    elif reservations is not None:
+        reservations.append(reservation)
+
+
+def _release_all(reservations: List[Any]) -> None:
+    """Release reservations of calls in a response that will not be returned."""
+    for reservation in reservations:
+        try:
+            reservation.release()
+        except Exception:
+            logger.warning("Approval reservation release failed", exc_info=True)
+    reservations.clear()
 
 
 _IDEMPOTENCY_KEYS_MAX = 4096
@@ -1081,6 +1120,16 @@ class GuardedCompletions:
         if not hasattr(response, "choices") or not response.choices:
             return response
 
+        # Approvals reserved by calls in this response; released if the
+        # response is rejected, since no tool has run.
+        reservations: List[Any] = []
+        try:
+            return self._guard_choices(response, reservations)
+        except BaseException:
+            _release_all(reservations)
+            raise
+
+    def _guard_choices(self, response: Any, reservations: List[Any]) -> Any:
         for choice in response.choices:
             if not hasattr(choice, "message") or not choice.message:
                 continue
@@ -1094,6 +1143,7 @@ class GuardedCompletions:
                         getattr(function_call, "name", None) or "",
                         "function",
                         getattr(function_call, "arguments", None),
+                        reservations=reservations,
                     )
                 except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                     self._handle_denial(e)
@@ -1108,7 +1158,7 @@ class GuardedCompletions:
             verified_calls = []
             for tool_call in message.tool_calls:
                 try:
-                    self._verify_single_tool_call(tool_call)
+                    self._verify_single_tool_call(tool_call, reservations)
                     verified_calls.append(tool_call)
                 except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                     self._handle_denial(e)
@@ -1122,10 +1172,10 @@ class GuardedCompletions:
 
         return response
 
-    def _verify_single_tool_call(self, tool_call: Any) -> None:
+    def _verify_single_tool_call(self, tool_call: Any, reservations: Optional[List[Any]] = None) -> None:
         """Verify a single tool call (function, custom, or any other type)."""
         tool_name, kind, raw = _chat_tool_call_parts(tool_call)
-        self._verify_call(tool_name, kind, raw, getattr(tool_call, "id", None))
+        self._verify_call(tool_name, kind, raw, getattr(tool_call, "id", None), reservations)
 
     @staticmethod
     def _call_arguments(tool_name: str, kind: str, raw: Optional[str]) -> Dict[str, Any]:
@@ -1142,7 +1192,12 @@ class GuardedCompletions:
             raise MalformedToolCall(tool_name, str(e))
 
     def _verify_call(
-        self, tool_name: str, kind: str, raw: Optional[str], call_id: Optional[str] = None
+        self,
+        tool_name: str,
+        kind: str,
+        raw: Optional[str],
+        call_id: Optional[str] = None,
+        reservations: Optional[List[Any]] = None,
     ) -> None:
         """Authorize one chat tool call and audit the decision (allow or deny)."""
         arguments: Dict[str, Any] = {}
@@ -1161,6 +1216,7 @@ class GuardedCompletions:
                 self._approval_handler,
                 self._approvals,
                 warrant_chain=self._warrant_chain,
+                _reservations=reservations,
             )
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
             self._record_decision(tool_name, arguments, e)
@@ -1169,7 +1225,12 @@ class GuardedCompletions:
         self._record_decision(tool_name, arguments)
 
     async def _verify_call_async(
-        self, tool_name: str, kind: str, raw: Optional[str], call_id: Optional[str] = None
+        self,
+        tool_name: str,
+        kind: str,
+        raw: Optional[str],
+        call_id: Optional[str] = None,
+        reservations: Optional[List[Any]] = None,
     ) -> None:
         """Async variant of _verify_call (awaits approval handlers)."""
         arguments: Dict[str, Any] = {}
@@ -1188,6 +1249,7 @@ class GuardedCompletions:
                 self._approval_handler,
                 self._approvals,
                 warrant_chain=self._warrant_chain,
+                _reservations=reservations,
             )
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
             self._record_decision(tool_name, arguments, e)
@@ -1306,15 +1368,23 @@ class GuardedCompletions:
 
         # Stream complete — now verify ALL buffered tool calls
         denied_indices: set = set()
+        reservations: List[Any] = []
 
-        for index, buffer in buffers.items():
-            try:
-                self._verify_call(buffer.name, buffer.kind, buffer.arguments_buffer, buffer.id)
-            except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
-                self._handle_denial(e)
-                if self._on_denial == "raise":
-                    raise
-                denied_indices.add(index)
+        try:
+            for index, buffer in buffers.items():
+                try:
+                    self._verify_call(
+                        buffer.name, buffer.kind, buffer.arguments_buffer, buffer.id, reservations
+                    )
+                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
+                    self._handle_denial(e)
+                    if self._on_denial == "raise":
+                        raise
+                    denied_indices.add(index)
+        except BaseException:
+            # The stream is rejected before any chunk is released: no tool ran.
+            _release_all(reservations)
+            raise
 
         # EMIT: Only yield chunks for verified tool calls
         if self._on_denial == "raise" or not denied_indices:
@@ -1508,15 +1578,23 @@ class GuardedCompletions:
 
         # Verify all buffered tool calls
         denied_indices: set = set()
+        reservations: List[Any] = []
 
-        for index, buffer in buffers.items():
-            try:
-                await self._verify_call_async(buffer.name, buffer.kind, buffer.arguments_buffer, buffer.id)
-            except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
-                self._handle_denial(e)
-                if self._on_denial == "raise":
-                    raise
-                denied_indices.add(index)
+        try:
+            for index, buffer in buffers.items():
+                try:
+                    await self._verify_call_async(
+                        buffer.name, buffer.kind, buffer.arguments_buffer, buffer.id, reservations
+                    )
+                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
+                    self._handle_denial(e)
+                    if self._on_denial == "raise":
+                        raise
+                    denied_indices.add(index)
+        except BaseException:
+            # The stream is rejected before any chunk is released: no tool ran.
+            _release_all(reservations)
+            raise
 
         # Emit verified chunks
         if self._on_denial == "raise" or not denied_indices:
@@ -1622,19 +1700,26 @@ class GuardedResponses:
 
         # Build list of verified items, filtering denied ones in skip/log mode
         verified_items = []
-        for item in output:
-            if _is_app_executed_item(item):
-                try:
-                    self._verify_function_call(item)
+        # Approvals reserved by items in this response; released if the
+        # response is rejected, since no tool has run.
+        reservations: List[Any] = []
+        try:
+            for item in output:
+                if _is_app_executed_item(item):
+                    try:
+                        self._verify_function_call(item, reservations)
+                        verified_items.append(item)
+                    except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
+                        self._handle_denial(e)
+                        if self._on_denial == "raise":
+                            raise
+                        # skip or log: exclude from results (don't append)
+                else:
+                    # Messages, reasoning and hosted-tool items pass through unchanged
                     verified_items.append(item)
-                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
-                    self._handle_denial(e)
-                    if self._on_denial == "raise":
-                        raise
-                    # skip or log: exclude from results (don't append)
-            else:
-                # Messages, reasoning and hosted-tool items pass through unchanged
-                verified_items.append(item)
+        except BaseException:
+            _release_all(reservations)
+            raise
 
         # Update output with verified items only (mirrors chat.completions behavior)
         if self._on_denial != "raise":
@@ -1642,7 +1727,7 @@ class GuardedResponses:
 
         return response
 
-    def _verify_function_call(self, item: Any) -> None:
+    def _verify_function_call(self, item: Any, reservations: Optional[List[Any]] = None) -> None:
         """Verify an app-executed Responses item (function, custom, shell, patch, computer...)."""
         tool_name = getattr(item, "name", "") or getattr(item, "type", "") or ""
         arguments: Dict[str, Any] = {}
@@ -1663,8 +1748,9 @@ class GuardedResponses:
                 self._approval_handler,
                 self._approvals,
                 warrant_chain=self._warrant_chain,
+                _reservations=reservations,
             )
-            _record_idempotency_key(getattr(item, "call_id", None), key)
+            _record_idempotency_key(getattr(item, "call_id", None) or getattr(item, "id", None), key)
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
             self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
