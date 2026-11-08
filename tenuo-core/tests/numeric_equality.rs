@@ -145,3 +145,173 @@ fn cel_decides_the_same_for_either_spelling() {
     assert!(!eval(Float(1000.0), "amount != 1000"));
     assert!(eval(Float(0.5), "amount == 0.5"));
 }
+
+// ---------------------------------------------------------------------------
+// Property: rewriting an argument's integers as floats, or its integral
+// floats as integers, never changes a decision. The rule side is respelled
+// too, so both directions are covered.
+// ---------------------------------------------------------------------------
+
+mod respelling {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Integers, integral floats, fractional floats and a few strings, drawn
+    /// from a small range so rules and arguments often hold the same number.
+    fn scalar() -> impl Strategy<Value = ConstraintValue> {
+        prop_oneof![
+            (-20i64..20).prop_map(Integer),
+            (-20i64..20).prop_map(|i| Float(i as f64)),
+            (-40i64..40).prop_map(|i| Float(i as f64 / 2.0)),
+            prop::sample::select(&["a", "b", "1"][..])
+                .prop_map(|s| ConstraintValue::String(s.into())),
+        ]
+    }
+
+    fn value() -> impl Strategy<Value = ConstraintValue> {
+        prop_oneof![
+            3 => scalar(),
+            1 => prop::collection::vec(scalar(), 0..4).prop_map(ConstraintValue::List),
+        ]
+    }
+
+    /// The same value with every integer written as a float and every
+    /// integral float written as an integer.
+    fn respell(v: &ConstraintValue) -> ConstraintValue {
+        match v {
+            Integer(i) => Float(*i as f64),
+            Float(f) if f.fract() == 0.0 && f.abs() < 1e15 => Integer(*f as i64),
+            ConstraintValue::List(l) => ConstraintValue::List(l.iter().map(respell).collect()),
+            ConstraintValue::Object(m) => {
+                ConstraintValue::Object(m.iter().map(|(k, v)| (k.clone(), respell(v))).collect())
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// Every value-equality rule built from `v` and `others`.
+    fn rules(v: &ConstraintValue, others: &[ConstraintValue]) -> Vec<Constraint> {
+        let mut set = vec![v.clone()];
+        set.extend(others.iter().cloned());
+        vec![
+            Constraint::Exact(Exact::new(v.clone())),
+            Constraint::OneOf(OneOf::from_values(set.clone())),
+            Constraint::NotOneOf(NotOneOf::from_values(set.clone())),
+            Constraint::Not(Not::new(Constraint::Exact(Exact::new(v.clone())))),
+            Constraint::Contains(Contains::new(set.clone())),
+            Constraint::Subset(Subset::new(set)),
+        ]
+    }
+
+    fn decide(rule: &Constraint, arg: &ConstraintValue) -> Option<bool> {
+        rule.matches(arg).ok()
+    }
+
+    fn gate_decision(rule: &Constraint, arg: &ConstraintValue) -> String {
+        let gates = gate_on_amount(ArgApprovalGate::Constraint(rule.clone()));
+        let args: HashMap<String, ConstraintValue> = [("amount".to_string(), arg.clone())].into();
+        format!(
+            "{:?}",
+            approval_requirement(Some(&gates), "pay", &args).ok()
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn decisions_ignore_number_spelling(
+            rule_value in value(),
+            others in prop::collection::vec(scalar(), 0..3),
+            arg in value(),
+        ) {
+            let respelled_arg = respell(&arg);
+            for rule in rules(&rule_value, &others)
+                .into_iter()
+                .chain(rules(&respell(&rule_value), &others))
+            {
+                prop_assert_eq!(
+                    decide(&rule, &arg),
+                    decide(&rule, &respelled_arg),
+                    "{:?} decided {:?} and {:?} differently", rule, arg, respelled_arg
+                );
+                prop_assert_eq!(
+                    gate_decision(&rule, &arg),
+                    gate_decision(&rule, &respelled_arg),
+                    "gate {:?} decided {:?} and {:?} differently", rule, arg, respelled_arg
+                );
+            }
+        }
+
+        #[cfg(feature = "cel")]
+        #[test]
+        fn cel_ignores_number_spelling(n in -20i64..20, lit in -20i64..20) {
+            use tenuo::cel::evaluate_with_value_context;
+            for expr in [
+                format!("value == {lit}"),
+                format!("value != {lit}"),
+                format!("value in [{lit}, 3]"),
+                format!("value >= {lit}"),
+            ] {
+                prop_assert_eq!(
+                    evaluate_with_value_context(&expr, &Integer(n)).ok(),
+                    evaluate_with_value_context(&expr, &Float(n as f64)).ok(),
+                    "`{}` with {}", expr, n
+                );
+            }
+        }
+    }
+}
+
+/// The shared `_meta.tenuo` vectors list argument JSON that must sign alike
+/// (`{"n":1}` and `{"n":1.0}`). They must also authorize alike, whether a
+/// rule sees the signed map or the extracted one.
+#[test]
+fn shared_equivalent_vectors_authorize_alike() {
+    use tenuo::meta_envelope::args_from_json;
+    let suite: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/vectors/tenuo-meta-conformance.json"
+    ))
+    .unwrap();
+    let extracted = |text: &str| -> HashMap<String, ConstraintValue> {
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        json.as_object()
+            .unwrap()
+            .keys()
+            .filter_map(|k| extract_json_path(&json, k).map(|v| (k.clone(), v)))
+            .collect()
+    };
+    let mut checked = 0;
+    for case in suite["valid"].as_array().unwrap() {
+        let (args, equivalent) = (
+            case["args"].as_str().unwrap(),
+            case["equivalent"].as_str().unwrap(),
+        );
+        let views = [
+            ("signed args", args_from_json(args).unwrap()),
+            ("signed equivalent", args_from_json(equivalent).unwrap()),
+            ("extracted args", extracted(args)),
+            ("extracted equivalent", extracted(equivalent)),
+        ];
+        let reference = &views[0].1;
+        for (key, value) in reference {
+            let rules = [
+                Constraint::Exact(Exact::new(value.clone())),
+                Constraint::NotOneOf(NotOneOf::from_values(vec![value.clone()])),
+            ];
+            for rule in &rules {
+                let expected = rule.matches(value).unwrap();
+                for (name, view) in &views {
+                    let got = view.get(key).map(|v| rule.matches(v).unwrap());
+                    assert_eq!(
+                        got,
+                        Some(expected),
+                        "{name} of {args} / {equivalent}: {rule:?} on `{key}`"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 0, "no vector arguments were checked");
+}
