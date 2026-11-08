@@ -2081,16 +2081,17 @@ fn authorize_spelling(
 }
 
 fn gated_pay_warrant(root: &SigningKey, gate_value: ConstraintValue) -> Warrant {
+    gated_pay_constraint_warrant(root, Constraint::Exact(Exact::new(gate_value)))
+}
+
+fn gated_pay_constraint_warrant(root: &SigningKey, gate: Constraint) -> Warrant {
     use tenuo::approval_gate::{
         encode_approval_gate_map, ApprovalGateMap, ArgApprovalGate, ToolApprovalGate,
     };
     let mut caps = ConstraintSet::new();
     caps.insert("amount", Range::new(Some(0.0), Some(1_000_000.0)).unwrap());
     let mut arg_gates = BTreeMap::new();
-    arg_gates.insert(
-        "amount".to_string(),
-        ArgApprovalGate::Constraint(Constraint::Exact(Exact::new(gate_value))),
-    );
+    arg_gates.insert("amount".to_string(), ArgApprovalGate::Constraint(gate));
     let mut gates = ApprovalGateMap::new();
     gates.insert("pay".to_string(), ToolApprovalGate::with_args(arg_gates));
     Warrant::builder()
@@ -2178,7 +2179,13 @@ fn test_attack_numeric_spelling_skips_denylist() {
 fn test_attack_numeric_spelling_skips_cel_exclusion() {
     println!("\n--- Attack: Numeric Spelling (CEL) ---");
     let root = SigningKey::generate();
-    for expr in ["value != 1000", "!(value in [1000, 2000])"] {
+    for expr in [
+        "value != 1000",
+        "!(value in [1000, 2000])",
+        "value != 1000.0",
+        "!(value in [1000.0, 2000.0])",
+        "value != double(1000)",
+    ] {
         let mut caps = ConstraintSet::new();
         caps.insert(
             "amount",
@@ -2200,6 +2207,24 @@ fn test_attack_numeric_spelling_skips_cel_exclusion() {
         authorize_spelling(&warrant, &root, &root, r#"{"amount": 7.0}"#)
             .unwrap_or_else(|e| panic!("CEL `{expr}` must allow 7.0: {e}"));
     }
+}
+
+#[cfg(feature = "cel")]
+#[test]
+fn test_attack_numeric_spelling_skips_decimal_cel_gate() {
+    let root = SigningKey::generate();
+    let warrant = gated_pay_constraint_warrant(
+        &root,
+        Constraint::Cel(tenuo::constraints::CelConstraint::new("value == 1000.0")),
+    );
+    for body in [
+        r#"{"amount":1000}"#,
+        r#"{"amount":1000.0}"#,
+        r#"{"amount":1e3}"#,
+    ] {
+        assert!(authorize_spelling(&warrant, &root, &root, body).is_err());
+    }
+    authorize_spelling(&warrant, &root, &root, r#"{"amount":999.0}"#).unwrap();
 }
 
 // ============================================================================

@@ -146,6 +146,74 @@ fn cel_decides_the_same_for_either_spelling() {
     assert!(eval(Float(0.5), "amount == 0.5"));
 }
 
+#[cfg(feature = "cel")]
+#[test]
+fn cel_decimal_policies_enforce_numeric_equality() {
+    use tenuo::cel::evaluate_with_value_context as eval;
+    for arg in [Integer(1000), Float(1000.0)] {
+        for expr in [
+            "value == 1000.0",
+            "1000.0 == value",
+            "value == 1e3",
+            "value == double(1000)",
+            "value == (2000.0 / 2.0)",
+            "value in [1000.0, 2000.0]",
+            "[1000.0].contains(value)",
+            "[value] == [1000.0]",
+            "{'n': value} == {'n': 1000.0}",
+            "[1000.0].exists(n, value == n)",
+            "[1000.0].all(n, value == n)",
+            "[1000.0].map(n, n == value) == [true]",
+            "{'ok': value == 1000.0}.ok",
+            "(value == 1000.0 ? [true] : [false])[0]",
+        ] {
+            assert!(eval(expr, &arg).unwrap(), "{expr} with {arg:?}");
+        }
+        for expr in [
+            "value != 1000.0",
+            "!(value in [1000.0, 2000.0])",
+            "value == 1000.5",
+            "value == '1000.0'",
+        ] {
+            assert!(!eval(expr, &arg).unwrap(), "{expr} with {arg:?}");
+        }
+        let gates = gate_on_amount(ArgApprovalGate::Constraint(Constraint::Cel(
+            tenuo::constraints::CelConstraint::new("value == 1000.0"),
+        )));
+        let args = [("amount".to_string(), arg)].into();
+        assert!(matches!(
+            approval_requirement(Some(&gates), "pay", &args).unwrap(),
+            ApprovalRequirement::Required { .. }
+        ));
+    }
+    // Normalizing policy literals globally would silently turn this into
+    // integer division. Comparisons must leave arithmetic and strings intact.
+    assert!(eval("1.0 / 2.0 == 0.5 && '1000.0' == '1000.0'", &Integer(0)).unwrap());
+    assert!(eval("value == -0.0", &Integer(0)).unwrap());
+    assert!(eval("value == -1000.0", &Integer(-1000)).unwrap());
+    assert!(eval("value != 9007199254740992.0", &Integer(9007199254740993)).unwrap());
+    assert!(eval(
+        "!(value in [9007199254740992.0])",
+        &Integer(9007199254740993)
+    )
+    .unwrap());
+    assert!(eval(
+        "![9007199254740992.0].contains(value)",
+        &Integer(9007199254740993)
+    )
+    .unwrap());
+    assert!(eval("value != 9223372036854775808.0", &Integer(i64::MAX)).unwrap());
+    assert!(eval("value == -9223372036854775808.0", &Integer(i64::MIN)).unwrap());
+    assert!(eval(
+        "18446744073709551615u != 18446744073709551616.0",
+        &Integer(0)
+    )
+    .unwrap());
+    assert!(eval("1000u == 1000.0", &Integer(0)).unwrap());
+    assert!(eval("'key' in {'key': 1} && 'abc'.contains('b')", &Integer(0)).unwrap());
+    assert!(eval("value in 1000", &Integer(1000)).is_err());
+}
+
 // ---------------------------------------------------------------------------
 // Property: rewriting an argument's integers as floats, or its integral
 // floats as integers, never changes a decision. The rule side is respelled

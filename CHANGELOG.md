@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or send `1000` past one written against `1000.0`. Value equality is now
   numeric across `Integer` and `Float`; extraction and CEL fold an integral
   float to an integer, the rule the signed argument map already uses.
+  CEL equality and list membership compare numeric values exactly, including
+  decimal literals and computed doubles, without rounding large integers or
+  changing literal arithmetic.
   Published Rust and Python `tenuo` versions through 0.3.5 are affected.
   ([GHSA-7rpx-gxpc-f3m5](https://github.com/tenuo-ai/tenuo/security/advisories/GHSA-7rpx-gxpc-f3m5))
 
