@@ -25,10 +25,13 @@ denies like a consumed one.
 
 Idempotency key
 ---------------
-:attr:`EnforcementResult.idempotency_key` (also :func:`current_idempotency_key`
-inside the tool handler) is a stable hex key derived by the core from the
-request hash and the approvals that authorized it. Pass it to the system that
-performs the action so the action itself happens at most once.
+:attr:`EnforcementResult.idempotency_key` is a stable hex key derived by the
+core from the request hash and the approvals that authorized it. Pass it to the
+system that performs the action so the action itself happens at most once. It
+is also kept on ``approval_consumed`` denials, for reconciling after a crash.
+:func:`current_idempotency_key` is a convenience for paths that enforce one call
+and then run it; when several calls are authorized before any runs (a batch),
+use the key on each call's result.
 
 Scope: the in-memory backend is per process. Replicas need a shared backend
 (Redis ``SET NX``, a database row with a unique key) implementing
@@ -179,8 +182,8 @@ class ApprovalConsumptionStore:
 
     @staticmethod
     def key_for(verified_approval: Any) -> str:
-        """Storage key for one verified approval: approver key and nonce, hex."""
-        return f"{bytes(verified_approval.approver_key).hex()}:{bytes(verified_approval.nonce).hex()}"
+        """Storage key for one verified approval, as defined by the core."""
+        return str(verified_approval.consumption_key)
 
     def reserve(self, chain_result: Any) -> Tuple[Optional[ApprovalReservation], Optional[ConsumptionState]]:
         """Reserve every approval ``chain_result`` verified.
@@ -194,17 +197,29 @@ class ApprovalConsumptionStore:
             return None, None
         now = int(time.time())
         reserved: List[str] = []
-        for va in verified:
-            key = self.key_for(va)
-            ttl = max(1, int(va.expires_at) - now + self._margin)
-            state = self._backend.reserve(key, ttl)
-            if state is not None:
-                for k in reserved:
-                    self._backend.release(k)
-                logger.warning("Approval reuse denied (%s): %s…", state, key[-8:])
-                return None, state
-            reserved.append(key)
+        try:
+            for va in verified:
+                key = self.key_for(va)
+                ttl = max(1, int(va.expires_at) - now + self._margin)
+                state = self._backend.reserve(key, ttl)
+                if state is not None:
+                    self._rollback(reserved)
+                    logger.warning("Approval reuse denied (%s): %s…", state, key[-8:])
+                    return None, state
+                reserved.append(key)
+        except BaseException:
+            # A backend failure part-way must not leave earlier approvals
+            # reserved for an action that never ran.
+            self._rollback(reserved)
+            raise
         return ApprovalReservation(self._backend, reserved), None
+
+    def _rollback(self, keys: List[str]) -> None:
+        for k in keys:
+            try:
+                self._backend.release(k)
+            except Exception:
+                logger.warning("Approval reservation rollback failed: %s…", k[-8:], exc_info=True)
 
     def __len__(self) -> int:
         return len(self._backend)  # type: ignore[arg-type]

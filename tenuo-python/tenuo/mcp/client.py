@@ -618,6 +618,8 @@ class SecureMCPClient:
             pop_args=pop_args,
             constraint_args=constraint_args,
             bound_warrant=bound_warrant,
+            # Client-side check; the server is the enforcement point that consumes.
+            consumption_store=False,
         )
 
         if self._control_plane is not None:
@@ -837,6 +839,8 @@ class SecureMCPClient:
                 trusted_roots=resolve_trusted_roots(),
                 approval_handler=self._approval_handler,
                 approvals=approvals,
+                # Client-side check; the server is the enforcement point that consumes.
+                consumption_store=False,
             )
             if self._control_plane is not None:
                 try:
@@ -914,6 +918,8 @@ class SecureMCPClient:
                     trusted_roots=resolve_trusted_roots(),
                     approval_handler=self._approval_handler,
                     approvals=_approvals,
+                    # Client-side check; the server is the enforcement point that consumes.
+                    consumption_store=False,
                 )
                 if self._control_plane is not None:
                     try:

@@ -210,7 +210,8 @@ class TestReserveCommit:
         store = ApprovalConsumptionStore(margin_seconds=0)
         _call(setup, [setup["approval"]], consumption_store=store)
         ttl = store._backend.ttl_remaining(next(iter(store._backend._store)))
-        assert 290 <= ttl <= 300
+        # Small tolerance: monotonic clock arithmetic is not exact on every platform.
+        assert 290 <= ttl <= 300 + 1e-3
 
     def test_backend_protocol(self):
         from tenuo.consumption import ConsumptionBackend, InMemoryConsumptionBackend
@@ -289,3 +290,172 @@ class TestThroughAnAdapter:
         rerun = run_node()
         assert rerun != "done"
         assert len(seen) == 1 and seen[0] is not None
+
+
+class TestReviewFollowUps:
+    def test_reordered_surplus_approvals_are_one_authorization(self, monkeypatch):
+        issuer, holder = SigningKey.generate(), SigningKey.generate()
+        a, b = SigningKey.generate(), SigningKey.generate()
+        warrant = _gated_warrant(issuer, holder, [a, b], min_approvals=1)
+        bound, args = warrant.bind(holder), {"amount": 7}
+        pa = _approval(warrant, "transfer", args, holder, a)
+        pb = _approval(warrant, "transfer", args, holder, b)
+        store = ApprovalConsumptionStore()
+        kw = dict(trusted_roots=[issuer.public_key], consumption_store=store)
+
+        first = enforce_tool_call("transfer", args, bound, approvals=[pa, pb], **kw)
+        assert first.allowed
+        assert len(first.approval_reservation.keys) == 2
+        _next_pop_window(monkeypatch)
+        retry = enforce_tool_call("transfer", args, bound, approvals=[pb, pa], **kw)
+        assert retry.error_type == "approval_consumed"
+        assert retry.idempotency_key == first.idempotency_key
+        # Either approval alone is spent too.
+        assert enforce_tool_call("transfer", args, bound, approvals=[pb], **kw).error_type == "approval_consumed"
+
+    def test_store_uses_the_core_consumption_key(self, setup):
+        r = _call(setup, [setup["approval"]], consumption_store=ApprovalConsumptionStore())
+        va = r.chain_result.verified_approvals[0]
+        assert r.approval_reservation.keys == [va.consumption_key]
+        assert va.consumption_key == f"{bytes(va.approver_key).hex()}:{bytes(va.nonce).hex()}"
+
+    def test_denial_keeps_the_idempotency_key(self, setup):
+        store = ApprovalConsumptionStore()
+        first = _call(setup, [setup["approval"]], consumption_store=store)
+        retry = _call(setup, [setup["approval"]], consumption_store=store)
+        assert retry.error_type == "approval_consumed"
+        assert retry.idempotency_key == first.idempotency_key
+        assert current_idempotency_key() is None
+
+    def test_preflight_does_not_consume(self, setup):
+        enable_default_consumption_store()
+        assert _call(setup, [setup["approval"]], consumption_store=False).allowed
+        final = _call(setup, [setup["approval"]])
+        assert final.allowed and final.approval_reservation is not None
+
+    def test_backend_failure_rolls_back_earlier_reservations(self):
+        from types import SimpleNamespace
+
+        from tenuo.consumption import InMemoryConsumptionBackend
+
+        class Flaky(InMemoryConsumptionBackend):
+            fail = True
+
+            def reserve(self, key, ttl_seconds):
+                if key.startswith("bb") and self.fail:
+                    raise ConnectionError("backend down")
+                return super().reserve(key, ttl_seconds)
+
+        backend = Flaky()
+        store = ApprovalConsumptionStore(backend=backend)
+        far = int(time.time()) + 300
+        result = SimpleNamespace(verified_approvals=[
+            SimpleNamespace(consumption_key="aa:01", expires_at=far),
+            SimpleNamespace(consumption_key="bb:02", expires_at=far),
+        ])
+        with pytest.raises(ConnectionError):
+            store.reserve(result)
+        assert len(backend) == 0
+        backend.fail = False
+        reservation, state = store.reserve(result)
+        assert state is None and reservation.keys == ["aa:01", "bb:02"]
+
+    def test_verify_inbound_call_publishes_the_key(self, setup):
+        from tenuo import Authorizer
+        from tenuo._enforcement import verify_inbound_call
+
+        auth = Authorizer(trusted_roots=[setup["issuer"].public_key])
+        pop = bytes(setup["warrant"].sign(setup["holder"], "transfer", setup["args"], int(time.time())))
+        r = verify_inbound_call(
+            tool_name="transfer", tool_args=setup["args"], warrant=setup["warrant"],
+            pop_signature=pop, authorizer=auth, approvals=[setup["approval"]],
+            apply_observe=False,
+        )
+        assert r.allowed and r.idempotency_key
+        assert current_idempotency_key() == r.idempotency_key
+        with pytest.raises(Exception):
+            verify_inbound_call(
+                tool_name="transfer", tool_args=setup["args"], warrant=setup["warrant"],
+                pop_signature=None, authorizer=auth, approvals=[setup["approval"]],
+            )
+        assert current_idempotency_key() is None
+
+    @pytest.mark.asyncio
+    async def test_langchain_threaded_tool_sees_the_key(self, setup):
+        pytest.importorskip("langchain_core")
+        from tenuo.langchain import TenuoTool
+
+        seen = []
+
+        class SyncOnly:
+            name = "transfer"
+            description = "transfer"
+            args_schema = None
+
+            def _run(self, *args, **kwargs):
+                seen.append(current_idempotency_key())
+                return "done"
+
+        tool = TenuoTool.__new__(TenuoTool)
+        object.__setattr__(tool, "wrapped", SyncOnly())
+
+        async def _authorize(_tool_input):
+            r = await enforce_tool_call_async(
+                "transfer", setup["args"], setup["bound"],
+                trusted_roots=[setup["issuer"].public_key], approvals=[setup["approval"]],
+            )
+            assert r.allowed
+
+        object.__setattr__(tool, "_acheck_authorization", _authorize)
+        object.__setattr__(tool, "_build_tool_input", lambda a, k: dict(k))
+        assert await TenuoTool._arun(tool, **setup["args"]) == "done"
+        assert seen and seen[0] is not None
+
+    def test_openai_records_a_key_per_tool_call(self, setup):
+        pytest.importorskip("openai")
+        from tenuo.openai import _record_idempotency_key, idempotency_key_for, verify_tool_call
+
+        key = verify_tool_call(
+            "transfer", setup["args"], None, None, None,
+            setup["warrant"], setup["holder"], [setup["issuer"].public_key],
+            None, [setup["approval"]],
+        )
+        assert key and len(key) == 64
+        _record_idempotency_key("call_1", key)
+        _record_idempotency_key("call_2", "other")
+        from types import SimpleNamespace
+
+        assert idempotency_key_for(SimpleNamespace(id="call_1")) == key
+        assert idempotency_key_for("call_2") == "other"
+        assert idempotency_key_for("call_3") is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_and_server_sharing_one_store(setup, monkeypatch):
+    """The client authorizes before sending and the server enforces; with one
+    store between them, only the server consumes, so the first call runs."""
+    pytest.importorskip("mcp")
+    from types import SimpleNamespace
+
+    from tenuo import Authorizer
+    from tenuo.decorators import key_scope, warrant_scope
+    from tenuo.mcp.client import SecureMCPClient
+    from tenuo.mcp.server import MCPVerifier
+
+    enable_default_consumption_store()
+    monkeypatch.setattr("tenuo.config.resolve_trusted_roots", lambda explicit=None: [setup["issuer"].public_key])
+    monkeypatch.setattr("tenuo.mcp.client.is_configured", lambda: True)
+    verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[setup["issuer"].public_key]))
+    outcomes = []
+
+    class InProcessSession:
+        async def call_tool(self, name, arguments, meta=None):
+            result = verifier.verify(name, arguments, meta=meta)
+            outcomes.append(result.allowed)
+            return SimpleNamespace(content=[], isError=not result.allowed, structuredContent=None)
+
+    client = SecureMCPClient("python", [], inject_warrant=True)
+    client.session = InProcessSession()
+    with warrant_scope(setup["warrant"]), key_scope(setup["holder"]):
+        await client.call_tool("transfer", dict(setup["args"]), approvals=[setup["approval"]])
+    assert outcomes == [True]

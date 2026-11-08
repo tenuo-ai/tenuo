@@ -90,6 +90,7 @@ import time
 import weakref
 import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -521,7 +522,7 @@ def verify_tool_call(
     approvals: Optional[list] = None,
     *,
     warrant_chain: Optional[List[Warrant]] = None,
-) -> None:
+) -> Optional[str]:
     """Verify a tool call against guardrails and/or warrant.
 
     Tier 1 (guardrails): Uses allow_tools, deny_tools, constraints
@@ -554,6 +555,12 @@ def verify_tool_call(
             root-first and excluding the leaf, so the chain verifies back to a
             trusted root without ``chain_scope``.
 
+    Returns:
+        The call's idempotency key when it was authorized with approvals, else
+        ``None``. Pass it downstream with this call; when several calls are
+        verified before any runs, ``tenuo.current_idempotency_key()`` only holds
+        the last one.
+
     Raises:
         ToolDenied: If tool is not allowed (Tier 1 allow/deny lists)
         WarrantDenied: If warrant doesn't authorize the call (Tier 2)
@@ -563,6 +570,7 @@ def verify_tool_call(
     # ==========================================================================
     # Tier 2: Warrant-based authorization (cryptographic)
     # ==========================================================================
+    idempotency_key: Optional[str] = None
     warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
     if warrant is not None:
         logger.debug(f"Tier 2: Verifying tool '{tool_name}' with warrant")
@@ -590,6 +598,7 @@ def verify_tool_call(
             _raise_for_enforcement_denial(tool_name, result)
         else:
             logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
+            idempotency_key = result.idempotency_key
 
     # ==========================================================================
     # Tier 1: Guardrail-based authorization (runtime checks)
@@ -659,6 +668,7 @@ def verify_tool_call(
                     constraint=Wildcard(),
                     reason=f"internal validation error ({type(e).__name__})",
                 )
+    return idempotency_key
 
 
 async def verify_tool_call_async(
@@ -674,12 +684,13 @@ async def verify_tool_call_async(
     approvals: Optional[list] = None,
     *,
     warrant_chain: Optional[List[Warrant]] = None,
-) -> None:
+) -> Optional[str]:
     """Async variant of verify_tool_call — uses enforce_tool_call_async for Tier 2.
 
     Required for async streaming paths so approval handlers can be awaited.
     See verify_tool_call for full documentation.
     """
+    idempotency_key: Optional[str] = None
     warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
     if warrant is not None:
         if signing_key is None:
@@ -699,6 +710,7 @@ async def verify_tool_call_async(
 
         if not result.allowed:
             _raise_for_enforcement_denial(tool_name, result)
+        idempotency_key = result.idempotency_key
 
     if deny_tools and tool_name in deny_tools:
         raise ToolDenied(tool_name, "Tool is in denylist")
@@ -739,6 +751,39 @@ async def verify_tool_call_async(
                     constraint=Wildcard(),
                     reason=f"internal validation error ({type(e).__name__})",
                 )
+    return idempotency_key
+
+
+_IDEMPOTENCY_KEYS_MAX = 4096
+_idempotency_keys: "OrderedDict[str, str]" = OrderedDict()
+_idempotency_keys_lock = threading.Lock()
+
+
+def _record_idempotency_key(call_id: Optional[str], key: Optional[str]) -> None:
+    if not call_id or key is None:
+        return
+    with _idempotency_keys_lock:
+        _idempotency_keys[call_id] = key
+        _idempotency_keys.move_to_end(call_id)
+        while len(_idempotency_keys) > _IDEMPOTENCY_KEYS_MAX:
+            _idempotency_keys.popitem(last=False)
+
+
+def idempotency_key_for(tool_call: Any) -> Optional[str]:
+    """Idempotency key of a tool call a guarded client authorized with approvals.
+
+    Accepts the tool call (chat ``tool_call``, Responses item) or its id /
+    ``call_id``. Guarded clients verify every call in a response before any
+    handler runs, so use this, not ``tenuo.current_idempotency_key()``, to get
+    the key for the call you are about to execute.
+    """
+    call_id = tool_call if isinstance(tool_call, str) else (
+        getattr(tool_call, "call_id", None) or getattr(tool_call, "id", None)
+    )
+    if not call_id:
+        return None
+    with _idempotency_keys_lock:
+        return _idempotency_keys.get(call_id)
 
 
 def _check_type_compatibility(constraint: Constraint, value: Any) -> tuple:
@@ -1080,7 +1125,7 @@ class GuardedCompletions:
     def _verify_single_tool_call(self, tool_call: Any) -> None:
         """Verify a single tool call (function, custom, or any other type)."""
         tool_name, kind, raw = _chat_tool_call_parts(tool_call)
-        self._verify_call(tool_name, kind, raw)
+        self._verify_call(tool_name, kind, raw, getattr(tool_call, "id", None))
 
     @staticmethod
     def _call_arguments(tool_name: str, kind: str, raw: Optional[str]) -> Dict[str, Any]:
@@ -1096,13 +1141,15 @@ class GuardedCompletions:
         except ValueError as e:
             raise MalformedToolCall(tool_name, str(e))
 
-    def _verify_call(self, tool_name: str, kind: str, raw: Optional[str]) -> None:
+    def _verify_call(
+        self, tool_name: str, kind: str, raw: Optional[str], call_id: Optional[str] = None
+    ) -> None:
         """Authorize one chat tool call and audit the decision (allow or deny)."""
         arguments: Dict[str, Any] = {}
         try:
             arguments = self._call_arguments(tool_name, kind, raw)
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
-            verify_tool_call(
+            key = verify_tool_call(
                 tool_name,
                 arguments,
                 self._allow_tools,
@@ -1118,15 +1165,18 @@ class GuardedCompletions:
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
             self._record_decision(tool_name, arguments, e)
             raise
+        _record_idempotency_key(call_id, key)
         self._record_decision(tool_name, arguments)
 
-    async def _verify_call_async(self, tool_name: str, kind: str, raw: Optional[str]) -> None:
+    async def _verify_call_async(
+        self, tool_name: str, kind: str, raw: Optional[str], call_id: Optional[str] = None
+    ) -> None:
         """Async variant of _verify_call (awaits approval handlers)."""
         arguments: Dict[str, Any] = {}
         try:
             arguments = self._call_arguments(tool_name, kind, raw)
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
-            await verify_tool_call_async(
+            key = await verify_tool_call_async(
                 tool_name,
                 arguments,
                 self._allow_tools,
@@ -1142,6 +1192,7 @@ class GuardedCompletions:
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
             self._record_decision(tool_name, arguments, e)
             raise
+        _record_idempotency_key(call_id, key)
         self._record_decision(tool_name, arguments)
 
     def _record_decision(self, tool_name: str, arguments: Dict[str, Any], error: Optional[Exception] = None) -> None:
@@ -1258,7 +1309,7 @@ class GuardedCompletions:
 
         for index, buffer in buffers.items():
             try:
-                self._verify_call(buffer.name, buffer.kind, buffer.arguments_buffer)
+                self._verify_call(buffer.name, buffer.kind, buffer.arguments_buffer, buffer.id)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
@@ -1460,7 +1511,7 @@ class GuardedCompletions:
 
         for index, buffer in buffers.items():
             try:
-                await self._verify_call_async(buffer.name, buffer.kind, buffer.arguments_buffer)
+                await self._verify_call_async(buffer.name, buffer.kind, buffer.arguments_buffer, buffer.id)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
@@ -1600,7 +1651,7 @@ class GuardedResponses:
             if not tool_name:
                 raise MalformedToolCall(tool_name, "tool call has no name")
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
-            verify_tool_call(
+            key = verify_tool_call(
                 tool_name,
                 arguments,
                 self._allow_tools,
@@ -1613,6 +1664,7 @@ class GuardedResponses:
                 self._approvals,
                 warrant_chain=self._warrant_chain,
             )
+            _record_idempotency_key(getattr(item, "call_id", None), key)
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
             self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
@@ -3305,6 +3357,7 @@ def guard_agent(
 __all__ = [
     # Main API
     "guard",
+    "idempotency_key_for",
     "GuardBuilder",
     "GuardedClient",
     "GuardedResponses",

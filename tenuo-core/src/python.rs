@@ -4982,6 +4982,12 @@ impl PyVerifiedApproval {
         self.inner.nonce
     }
 
+    /// Key a consumption store records this approval under (`approver_hex:nonce_hex`).
+    #[getter]
+    fn consumption_key(&self) -> String {
+        self.inner.consumption_key()
+    }
+
     /// Standard base64-encoded CBOR SignedApproval envelope for independent verification.
     #[getter]
     fn signed_approval_cbor_b64(&self) -> Option<String> {
