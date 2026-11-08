@@ -118,7 +118,7 @@ from tenuo import SigningKey, configure, mint, Capability, Subpath
 from tenuo.mcp import SecureMCPClient
 
 key = SigningKey.generate()
-configure(issuer_key=key)
+configure(issuer_key=key, trusted_roots=[key.public_key])
 
 # Print the public key for the server
 print("TENUO_ISSUER_PUB=" + bytes(key.public_key_bytes()).hex())
@@ -211,6 +211,8 @@ The middleware:
 
 Install the `tenuo[fastmcp]` extra, which pins FastMCP ≥3.2.1 (includes [hardened client parsing](https://github.com/PrefectHQ/fastmcp/pull/3778) of tool error results).
 
+Running a FastMCP server you didn't write, such as mcp-atlassian or Workspace MCP? You can add the same middleware from a small launcher without forking it: see [Existing FastMCP servers](./fastmcp-servers).
+
 ### Pattern 2: SecureMCPClient (Recommended for Clients)
 
 Tenuo's own MCP client wraps the MCP SDK with automatic warrant injection, PoP signing, and tool discovery.
@@ -220,7 +222,7 @@ from tenuo.mcp import SecureMCPClient
 from tenuo import configure, mint, Capability, Subpath, SigningKey
 
 key = SigningKey.generate()
-configure(issuer_key=key)
+configure(issuer_key=key, trusted_roots=[key.public_key])
 
 # Stdio (local subprocess)
 async with SecureMCPClient("python", ["server.py"], inject_warrant=True) as client:
