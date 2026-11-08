@@ -322,7 +322,12 @@ fn constraint_value_to_cel(cv: &ConstraintValue) -> Result<Value> {
     match cv {
         ConstraintValue::String(s) => Ok(Value::String(s.clone().into())),
         ConstraintValue::Integer(i) => Ok(Value::Int(*i)),
-        ConstraintValue::Float(f) => Ok(Value::Float(*f)),
+        // CEL's `==` and `in` do not equate int and double. Give an integral
+        // number one CEL type, the one the signed argument map uses, so the
+        // caller's spelling (`1000` or `1000.0`) cannot change the result.
+        ConstraintValue::Float(f) => {
+            Ok(crate::meta_envelope::integral_i64(*f).map_or(Value::Float(*f), Value::Int))
+        }
         ConstraintValue::Boolean(b) => Ok(Value::Bool(*b)),
         ConstraintValue::Null => Ok(Value::Null),
         ConstraintValue::List(list) => {

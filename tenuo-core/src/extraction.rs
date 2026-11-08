@@ -545,7 +545,12 @@ fn json_to_constraint_value(value: &Value) -> Option<ConstraintValue> {
                         .or_else(|| Some(ConstraintValue::String(u.to_string())))
                 }
             } else {
-                n.as_f64().map(ConstraintValue::Float)
+                // Same number rule as the signed argument map: `1.0` is `1`.
+                n.as_f64().map(|f| {
+                    crate::meta_envelope::integral_i64(f)
+                        .map(ConstraintValue::Integer)
+                        .unwrap_or(ConstraintValue::Float(f))
+                })
             }
         }
         Value::Array(arr) => {
