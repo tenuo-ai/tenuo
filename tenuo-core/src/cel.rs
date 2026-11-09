@@ -198,6 +198,95 @@ pub fn compile(_expression: &str) -> Result<()> {
     Err(Error::FeatureNotEnabled { feature: "cel" })
 }
 
+/// Whether `child` accepts no value that `parent` rejects, by syntax.
+///
+/// True when the parsed `child` equals the parsed `parent`, or is a logical
+/// AND whose left operand equals the parsed `parent`. Expressions are
+/// compared as syntax trees, so formatting and redundant parentheses do not
+/// matter, while string literals, operator precedence and every other part
+/// of the expression do.
+#[cfg(feature = "cel")]
+pub fn is_conjunctive_attenuation(parent: &str, child: &str) -> Result<bool> {
+    use cel_interpreter::common::ast::{operators, Expr};
+
+    let parent = parse_without_ids(parent)?;
+    let child = parse_without_ids(child)?;
+    if child == parent {
+        return Ok(true);
+    }
+    Ok(match &child.expr {
+        Expr::Call(call) => {
+            call.func_name == operators::LOGICAL_AND
+                && call.target.is_none()
+                && call.args.len() == 2
+                && call.args[0] == parent
+        }
+        _ => false,
+    })
+}
+
+/// Syntactic CEL attenuation needs the parser (stub when `cel` is disabled).
+#[cfg(not(feature = "cel"))]
+pub fn is_conjunctive_attenuation(_parent: &str, _child: &str) -> Result<bool> {
+    Err(Error::FeatureNotEnabled { feature: "cel" })
+}
+
+/// Parse an expression and clear node ids, which depend on source position.
+#[cfg(feature = "cel")]
+fn parse_without_ids(expression: &str) -> Result<cel_interpreter::IdedExpr> {
+    let mut expr = cel_interpreter::parser::Parser::default()
+        .parse(expression)
+        .map_err(|e| Error::CelError(format!("compilation failed: {}", e)))?;
+    clear_ids(&mut expr);
+    Ok(expr)
+}
+
+#[cfg(feature = "cel")]
+fn clear_ids(node: &mut cel_interpreter::IdedExpr) {
+    use cel_interpreter::common::ast::{EntryExpr, Expr};
+
+    node.id = 0;
+    match &mut node.expr {
+        Expr::Unspecified | Expr::Ident(_) | Expr::Literal(_) => {}
+        Expr::Call(call) => {
+            if let Some(target) = call.target.as_deref_mut() {
+                clear_ids(target);
+            }
+            call.args.iter_mut().for_each(clear_ids);
+        }
+        Expr::Comprehension(c) => {
+            for e in [
+                &mut c.iter_range,
+                &mut c.accu_init,
+                &mut c.loop_cond,
+                &mut c.loop_step,
+                &mut c.result,
+            ] {
+                clear_ids(e);
+            }
+        }
+        Expr::List(list) => list.elements.iter_mut().for_each(clear_ids),
+        Expr::Select(select) => clear_ids(&mut select.operand),
+        Expr::Map(map) => map.entries.iter_mut().for_each(|entry| {
+            entry.id = 0;
+            if let EntryExpr::MapEntry(e) = &mut entry.expr {
+                clear_ids(&mut e.key);
+                clear_ids(&mut e.value);
+            }
+        }),
+        Expr::Struct(s) => s.entries.iter_mut().for_each(|entry| {
+            entry.id = 0;
+            match &mut entry.expr {
+                EntryExpr::StructField(f) => clear_ids(&mut f.value),
+                EntryExpr::MapEntry(e) => {
+                    clear_ids(&mut e.key);
+                    clear_ids(&mut e.value);
+                }
+            }
+        }),
+    }
+}
+
 /// Evaluate a CEL expression against a context built from constraint values.
 ///
 /// The context contains:

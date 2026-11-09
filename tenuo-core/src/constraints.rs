@@ -2060,6 +2060,10 @@ impl UrlPattern {
 
     /// Check if a URL string matches this pattern.
     pub fn matches_url(&self, url_str: &str) -> Result<bool> {
+        // The host checked here must be the host any client would fetch.
+        if has_ambiguous_url_syntax(url_str) {
+            return Ok(false);
+        }
         let parsed = url::Url::parse(url_str).map_err(|e| Error::InvalidUrl {
             url: url_str.to_string(),
             reason: e.to_string(),
@@ -2958,6 +2962,12 @@ impl UrlSafe {
             return Ok(Some(UrlSafeRejection::NullByte));
         }
 
+        // Text that HTTP clients may resolve to a different host than the
+        // one checked below (backslashes, repeated `@`, stripped characters).
+        if has_ambiguous_url_syntax(url) {
+            return Ok(Some(UrlSafeRejection::Malformed));
+        }
+
         // Parse URL
         let parsed = match Url::parse(url) {
             Ok(u) => u,
@@ -3643,6 +3653,35 @@ impl From<Shlex> for Constraint {
     }
 }
 
+/// Whether URL text may be read with a different host by other URL parsers.
+///
+/// Constraints check the host the WHATWG parser (`url` crate) sees, while
+/// the tool fetches with whatever client it uses. Those disagree on
+/// backslashes (WHATWG treats `\` as `/` in special URLs; RFC 3986 clients
+/// keep it in the authority), on characters WHATWG silently strips (tab,
+/// CR, LF, leading and trailing C0 and space), on slash counts after the
+/// scheme, and on which of several `@` ends the userinfo. Text with any of
+/// these is refused rather than guessed at. A single `@` is unambiguous.
+fn has_ambiguous_url_syntax(raw: &str) -> bool {
+    if raw
+        .chars()
+        .any(|c| c == '\\' || c == ' ' || c.is_ascii_control())
+    {
+        return true;
+    }
+    let Some(scheme_end) = raw.find(':') else {
+        return true;
+    };
+    let Some(rest) = raw[scheme_end + 1..].strip_prefix("//") else {
+        return true;
+    };
+    if rest.starts_with('/') {
+        return true;
+    }
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    rest[..authority_end].matches('@').count() > 1
+}
+
 /// Simple URL decoding (handles percent-encoded characters).
 fn urlencoding_decode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -4081,11 +4120,30 @@ impl CelConstraint {
     /// - Child: `net.in_cidr(ip, '10.1.0.0/16')` -> **REJECTED** (cannot prove subset)
     /// - Child: `(net.in_cidr(ip, '10.0.0.0/8')) && (net.in_cidr(ip, '10.1.0.0/16'))` -> **ALLOWED**
     /// - Child: `(net.in_cidr(ip, '10.0.0.0/8')) && true || false` -> **REJECTED** (no parens)
+    ///
+    /// The textual shape check below ignores whitespace everywhere, including
+    /// inside string literals, so on its own it would accept a child whose
+    /// parent clause has different literals. The parsed-expression check is
+    /// what proves the child's left operand is the parent expression.
     pub fn validate_attenuation(&self, child: &CelConstraint) -> Result<()> {
-        // Same expression is always valid (after normalizing whitespace)
+        if child.expression == self.expression {
+            return Ok(());
+        }
+        let shape_error = || {
+            Error::MonotonicityViolation(format!(
+                "child CEL must be '({}) && (<predicate>)', got '{}'",
+                self.expression, child.expression
+            ))
+        };
+
+        // Same expression up to formatting is valid.
         if normalize_cel_whitespace(&child.expression) == normalize_cel_whitespace(&self.expression)
         {
-            return Ok(());
+            return if crate::cel::is_conjunctive_attenuation(&self.expression, &child.expression)? {
+                Ok(())
+            } else {
+                Err(shape_error())
+            };
         }
 
         // Child must be a conjunction with parent: (parent) && (extra)
@@ -4094,10 +4152,7 @@ impl CelConstraint {
         let expected_prefix = format!("({})&&", parent_normalized);
 
         if !child_normalized.starts_with(&expected_prefix) {
-            return Err(Error::MonotonicityViolation(format!(
-                "child CEL must be '({}) && (<predicate>)', got '{}'",
-                self.expression, child.expression
-            )));
+            return Err(shape_error());
         }
 
         // Extract the remainder after "(parent)&&"
@@ -4115,6 +4170,12 @@ impl CelConstraint {
 
         // Validate the child expression compiles
         child.validate()?;
+
+        // The left operand must be the parent expression itself, compared as
+        // parsed CEL rather than as whitespace-stripped text.
+        if !crate::cel::is_conjunctive_attenuation(&self.expression, &child.expression)? {
+            return Err(shape_error());
+        }
 
         Ok(())
     }
@@ -6461,12 +6522,9 @@ mod tests {
     fn test_url_safe_empty_host() {
         let us = UrlSafe::new();
 
-        // Note: The Rust `url` crate (WHATWG spec) parses "https:///path" as "https://path/"
-        // where "path" becomes the hostname. This is technically correct per spec.
-        // So "https:///path" is valid (host = "path"), but "http://" is invalid (no host).
-
-        // This is actually valid - parsed as https://path/
-        assert!(us.is_safe("https:///path").unwrap());
+        // WHATWG reads "https:///path" as host "path"; RFC 3986 clients read
+        // an empty host. The checked host would not be the fetched one.
+        assert!(!us.is_safe("https:///path").unwrap());
 
         // But "http://" with no path truly has no host
         assert!(!us.is_safe("http://").unwrap());
@@ -6479,6 +6537,51 @@ mod tests {
     fn test_url_safe_null_bytes() {
         let us = UrlSafe::new();
         assert!(!us.is_safe("https://evil.com\x00.trusted.com/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_rejects_parser_differential_syntax() {
+        // Each of these reads as an allowed host to the WHATWG parser and as
+        // a different host to at least one common HTTP client.
+        let us = UrlSafe::with_domains(vec!["allowed.com"]);
+        for url in [
+            "http://allowed.com\\@169.254.169.254/latest/meta-data/",
+            "http://allowed.com\\@10.0.0.1/",
+            "http://a@allowed.com@169.254.169.254/",
+            "http://allowed.com@a@169.254.169.254/",
+            "http://allowed.com\t/",
+            "http://allowed.com\n/",
+            " http://allowed.com/",
+            "http://allowed.com/ ",
+            "http:/allowed.com/",
+            "http:allowed.com/",
+            "http:///allowed.com/",
+        ] {
+            assert!(!us.is_safe(url).unwrap(), "{url:?} must be rejected");
+        }
+        // Plain URLs, single userinfo and `@` outside the authority still pass.
+        for url in [
+            "http://allowed.com/latest",
+            "https://user:pass@allowed.com/",
+            "https://evil.com@allowed.com/",
+            "https://allowed.com:443/a/b?q=1#frag",
+            "https://allowed.com/users/@me",
+            "https://allowed.com/?mention=@me",
+        ] {
+            assert!(us.is_safe(url).unwrap(), "{url:?} should pass");
+        }
+    }
+
+    #[test]
+    fn test_url_pattern_rejects_parser_differential_syntax() {
+        let p = UrlPattern::new("https://*.allowed.com/*").unwrap();
+        assert!(p.matches_url("https://api.allowed.com/x").unwrap());
+        assert!(!p
+            .matches_url("https://api.allowed.com\\@169.254.169.254/x")
+            .unwrap());
+        assert!(!p
+            .matches_url("https://u@api.allowed.com@10.0.0.1/x")
+            .unwrap());
     }
 
     #[test]
@@ -7140,6 +7243,37 @@ mod tests {
         let child =
             CelConstraint::new("(amount < 10000) && (currency == 'USD' || currency == 'EUR')");
         assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_string_literal_whitespace_preserved() {
+        // Whitespace inside a string literal is part of the value, so these
+        // children do not contain the parent clause.
+        let cases = [
+            (
+                "!value.contains('rm -rf')",
+                "(!value.contains('rm-rf')) && (true)",
+            ),
+            ("value == 'read only'", "(value == 'readonly') && (true)"),
+            ("value == 'read only'", "value == 'readonly'"),
+            ("value == \"a b\"", "(value == \"a\tb\") && (true)"),
+        ];
+        for (parent, child) in cases {
+            assert!(
+                CelConstraint::new(parent)
+                    .validate_attenuation(&CelConstraint::new(child))
+                    .is_err(),
+                "{child} must not attenuate {parent}"
+            );
+        }
+
+        // Formatting outside literals is still free.
+        let parent = CelConstraint::new("value == 'read only'");
+        let child = CelConstraint::new("( value=='read only' )  &&  ( size(value) > 0 )");
+        assert!(parent.validate_attenuation(&child).is_ok());
+        let same = CelConstraint::new("value  ==  'read only'");
+        assert!(parent.validate_attenuation(&same).is_ok());
     }
 
     #[cfg(feature = "cel")]
