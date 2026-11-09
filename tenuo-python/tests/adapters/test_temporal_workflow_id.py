@@ -389,3 +389,13 @@ def test_arg_keys_header_cannot_rename_arguments_of_another_function():
 
     with pytest.raises(ApplicationError, match="x-tenuo-arg-keys"):
         s.execute(headers, "wf", fn=copy_file, args=("/tmp/b", "/data/a"))
+
+
+def test_worker_rejects_a_positional_name_collision_before_dispatch():
+    def activity(arg1, *rest):
+        return arg1
+
+    s = Setup()
+    headers = _with_arg_keys(s.schedule("wf"), b"arg1")
+    with pytest.raises(ApplicationError, match="argument name"):
+        s.execute(headers, "wf", fn=activity, args=("secret", "public"))

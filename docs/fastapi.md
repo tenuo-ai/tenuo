@@ -400,7 +400,7 @@ class TransferRequest(BaseModel):
 async def extract_transfer_args(request: Request) -> dict:
     body = await request.json()
     # Path params last: the handler receives the path value, so it must win.
-    return {**body, **dict(request.query_params), **request.path_params}
+    return {**dict(request.query_params), **body, **request.path_params}
 
 @app.post("/transfer")
 async def transfer(

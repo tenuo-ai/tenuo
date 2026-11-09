@@ -160,22 +160,23 @@ def _args_to_dict_by_fn(
         try:
             sig = inspect.signature(activity_fn)
             for pname, p in sig.parameters.items():
-                if p.kind in (
-                    inspect.Parameter.VAR_POSITIONAL,
-                    inspect.Parameter.VAR_KEYWORD,
+                if p.kind not in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 ):
-                    continue
-                if pname == "self":
                     continue
                 params.append(pname)
         except (ValueError, TypeError):
             pass
 
     for i, arg in enumerate(raw_args):
-        if i < len(params):
-            result[params[i]] = arg
-        else:
-            result[f"arg{i}"] = arg
+        name = params[i] if i < len(params) else f"arg{i}"
+        if name in result:
+            raise TenuoContextError(
+                f"Ambiguous activity argument name {name!r}: a positional fallback "
+                "would overwrite another argument. Rename the activity parameter."
+            )
+        result[name] = arg
 
     return result
 

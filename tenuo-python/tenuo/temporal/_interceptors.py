@@ -1859,16 +1859,17 @@ class TenuoActivityInboundInterceptor:
                 ) from exc
             keys = [] if decoded == "" else decoded.split(",")
             positional = [f"arg{i}" for i in range(len(args))]
+            if len(keys) != len(args) or len(set(keys)) != len(keys) or not all(keys):
+                raise TenuoContextError(
+                    "Malformed x-tenuo-arg-keys header; expected one unique, "
+                    "non-empty name per argument."
+                )
             if derived is not None:
                 if keys == list(derived.keys()):
                     return derived
                 if keys == positional:
                     return dict(zip(positional, args))
-            elif (
-                len(keys) == len(args)
-                and len(set(keys)) == len(keys)
-                and all(keys)
-            ):
+            else:
                 return dict(zip(keys, args))
             raise TenuoContextError(
                 "Activity argument binding mismatch: x-tenuo-arg-keys does not "

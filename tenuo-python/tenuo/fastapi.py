@@ -890,8 +890,16 @@ def _declared_params(dependant: Any, kind: str) -> List[Any]:
     return found
 
 
+def _same_argument_view(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_same_argument_view(a, b) for a, b in zip(left, right))
+    return left == right
+
+
 def _default_extract_args(request: Request) -> Dict[str, Any]:
-    """Path + query params, typed from the matched endpoint's own signature.
+    """Path + query params, typed from the endpoint and its dependencies.
 
     The guard should authorize exactly what the handler receives, and PoP
     signs typed values, so ``?limit=5`` for ``limit: int`` is checked as
@@ -906,20 +914,34 @@ def _default_extract_args(request: Request) -> Dict[str, Any]:
     if dependant is None:
         return args
 
+    declared: Dict[str, Any] = {}
+
+    def record(key: str, value: Any) -> None:
+        if key in declared and not _same_argument_view(declared[key], value):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Ambiguous argument {key!r} has different handler/dependency values; "
+                "configure a custom args_extractor that names each value explicitly.",
+            )
+        declared[key] = value
+        args[key] = value
+
     for field in _declared_params(dependant, "path_params"):
         key = field.alias
         if key in request.path_params:
-            args[key] = _coerce(field, request.path_params[key])
+            record(key, _coerce(field, request.path_params[key]))
 
     for field in _declared_params(dependant, "query_params"):
         key = field.alias
-        if key not in request.query_params or key in request.path_params:
+        if key not in request.query_params:
             continue
+        if key in request.path_params and key not in declared:
+            record(key, request.path_params[key])
         annotation = getattr(field.field_info, "annotation", None) or getattr(field, "outer_type_", None)
         if _is_list_annotation(annotation):
-            args[key] = _coerce(field, request.query_params.getlist(key))
+            record(key, _coerce(field, request.query_params.getlist(key)))
         else:
-            args[key] = _coerce(field, request.query_params[key])
+            record(key, _coerce(field, request.query_params[key]))
     return args
 
 

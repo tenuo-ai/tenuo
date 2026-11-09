@@ -36,6 +36,49 @@ def search(request: Request, tags: List[str] = Depends(tag_filter)):
 client = TestClient(app)
 
 
+def scalar_tag(tags: str = Query()):
+    return tags
+
+
+@app.get("/ambiguous-query")
+def ambiguous_query(request: Request, scalar=Depends(scalar_tag), tags=Depends(tag_filter)):
+    return _default_extract_args(request)
+
+
+def query_name(value: str = Query(alias="name")):
+    return value
+
+
+@app.get("/ambiguous-path/{name}")
+def ambiguous_path(name: str, request: Request, query=Depends(query_name)):
+    return _default_extract_args(request)
+
+
+def shared_limit(limit: int = 10):
+    return limit
+
+
+@app.get("/shared-query")
+def shared_query(request: Request, limit: int = 10, same=Depends(shared_limit)):
+    return _default_extract_args(request)
+
+
+@pytest.mark.parametrize("path,params", [
+    ("/ambiguous-query", [("tags", "secret"), ("tags", "public")]),
+    ("/ambiguous-path/public", {"name": "secret"}),
+])
+def test_conflicting_argument_views_require_an_explicit_extractor(path, params):
+    response = client.get(path, params=params)
+    assert response.status_code == 400
+    assert "Ambiguous argument" in response.json()["detail"]
+
+
+def test_identical_dependency_argument_views_remain_supported():
+    response = client.get("/shared-query", params={"limit": "5"})
+    assert response.status_code == 200
+    assert response.json() == {"limit": 5}
+
+
 def test_query_param_cannot_shadow_a_path_param():
     body = client.get("/files/secret-keys", params={"name": "public-x"}).json()
     assert body["handler"] == "secret-keys"
