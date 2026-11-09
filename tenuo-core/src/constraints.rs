@@ -6586,14 +6586,16 @@ mod tests {
 
     #[test]
     fn test_url_safe_rejects_parser_differential_syntax() {
-        // Each of these reads as an allowed host to the WHATWG parser and as
-        // a different host to at least one common HTTP client.
+        // Reject ambiguous URL forms, including those that the WHATWG parser
+        // resolves to an allowed host but another client may read differently.
         let us = UrlSafe::with_domains(vec!["allowed.com"]);
         for url in [
             "http://allowed.com\\@169.254.169.254/latest/meta-data/",
             "http://allowed.com\\@10.0.0.1/",
             "http://a@allowed.com@169.254.169.254/",
             "http://allowed.com@a@169.254.169.254/",
+            // The final host is allowed, so only the repeated-`@` guard denies it.
+            "http://a@169.254.169.254@allowed.com/",
             "http://allowed.com\t/",
             "http://allowed.com\n/",
             " http://allowed.com/",
@@ -6626,6 +6628,10 @@ mod tests {
             .unwrap());
         assert!(!p
             .matches_url("https://u@api.allowed.com@10.0.0.1/x")
+            .unwrap());
+        // An allowed final host must not hide ambiguous repeated userinfo.
+        assert!(!p
+            .matches_url("https://u@10.0.0.1@api.allowed.com/x")
             .unwrap());
     }
 
