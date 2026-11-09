@@ -1111,7 +1111,7 @@ class A2AServer:
             arguments: Skill arguments to check against constraints
             warrant_chain: Optional semicolon-separated parent warrants (legacy)
             _preloaded_parents: Already-decoded parent warrants from a WarrantStack
-                (takes precedence over ``warrant_chain`` when provided)
+                (nonempty parents take precedence over ``warrant_chain``)
             pop_signature: Optional Proof-of-Possession signature bytes
             approvals: Optional list of decoded SignedApproval objects for multi-sig
 
@@ -1193,17 +1193,16 @@ class A2AServer:
 
         # A supplied chain is part of the presented authority even when the
         # leaf issuer is independently trusted. Never silently discard it.
-        if _preloaded_parents is not None:
-            if _preloaded_parents:
-                if not self.trust_delegated:
-                    raise UntrustedIssuerError(issuer_normalized or "", reason="Delegated chains are disabled")
-                if len(_preloaded_parents) > self.max_chain_depth:
-                    raise ChainValidationError(
-                        f"Chain depth {len(_preloaded_parents)} exceeds maximum {self.max_chain_depth}"
-                    )
-                if not self.require_pop:
-                    await self._validate_chain_warrants(warrant, _preloaded_parents)
-                _resolved_chain_parents = _preloaded_parents
+        if _preloaded_parents:
+            if not self.trust_delegated:
+                raise UntrustedIssuerError(issuer_normalized or "", reason="Delegated chains are disabled")
+            if len(_preloaded_parents) > self.max_chain_depth:
+                raise ChainValidationError(
+                    f"Chain depth {len(_preloaded_parents)} exceeds maximum {self.max_chain_depth}"
+                )
+            if not self.require_pop:
+                await self._validate_chain_warrants(warrant, _preloaded_parents)
+            _resolved_chain_parents = _preloaded_parents
         elif warrant_chain:
             if not self.trust_delegated:
                 raise UntrustedIssuerError(issuer_normalized or "", reason="Delegated chains are disabled")

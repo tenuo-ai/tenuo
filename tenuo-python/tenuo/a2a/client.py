@@ -436,8 +436,11 @@ class A2AClient:
 
         # Validate pinned key if provided. A card without a key cannot
         # satisfy a pin.
-        if self.pin_key and card.public_key != self.pin_key:
-            raise KeyMismatchError(self.pin_key, card.public_key or "")
+        if self.pin_key:
+            from .server import A2AServer
+
+            if not card.public_key or A2AServer._normalize_key(card.public_key) != A2AServer._normalize_key(self.pin_key):
+                raise KeyMismatchError(self.pin_key, card.public_key or "")
 
         self._agent_card = card
         return card

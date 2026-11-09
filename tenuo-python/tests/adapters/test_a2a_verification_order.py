@@ -207,7 +207,7 @@ async def test_presented_chain_policies_apply_even_with_a_directly_trusted_leaf_
 
 
 async def test_signature_is_verified_when_pop_is_disabled():
-    from tenuo.a2a.errors import A2AError
+    from tenuo.a2a.errors import InvalidSignatureError
 
     issuer, holder = SigningKey.generate(), SigningKey.generate()
     warrant = Warrant.mint_builder().capability("ping").holder(holder.public_key).ttl(600).mint(issuer)
@@ -215,9 +215,41 @@ async def test_signature_is_verified_when_pop_is_disabled():
     assert await server.validate_warrant(warrant.to_base64(), "ping", {})
     forged = bytearray(warrant.to_bytes())
     forged[-1] ^= 1
-    token = base64.urlsafe_b64encode(forged).decode()
-    with pytest.raises(A2AError):
+    token = base64.urlsafe_b64encode(forged).decode().rstrip("=")
+    with pytest.raises(Exception, match="invalid warrant signature"):
+        Warrant.from_base64(token)
+    with pytest.raises(InvalidSignatureError, match="invalid warrant signature"):
         await server.validate_warrant(token, "ping", {})
+
+
+@pytest.mark.parametrize("method", ["task/send", "task/sendSubscribe"])
+async def test_legacy_chain_header_is_enforced_through_both_http_endpoints(method):
+    from tenuo.a2a.server import WARRANT_CHAIN_HEADER
+
+    issuer, mid, holder = (SigningKey.generate() for _ in range(3))
+    root = Warrant.mint_builder().capability("ping").holder(mid.public_key).ttl(600).mint(issuer)
+    child = delegate(root, mid, holder)
+    headers = {
+        "X-Tenuo-Warrant": child.to_base64(),
+        WARRANT_CHAIN_HEADER: root.to_base64(),
+        "X-Tenuo-PoP": pop(child, holder, "ping", {}),
+    }
+
+    async def request(server):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://t") as client:
+            return await client.post("/a2a", json={"jsonrpc": "2.0", "method": method, "params": PING, "id": 1}, headers=headers)
+
+    allowed = await request(make_server(issuer, check_replay=False))
+    if method == "task/send":
+        assert allowed.json()["result"]["output"] == "pong"
+    else:
+        assert "text/event-stream" in allowed.headers["content-type"]
+        assert "pong" in allowed.text
+    trusted = [issuer.public_key, mid.public_key]
+    revoked = await request(make_server(issuer, trusted_issuers=trusted, revoked_issuers=[issuer.public_key], check_replay=False))
+    assert revoked.json()["error"]["code"] == -32009
+    shallow = await request(make_server(issuer, trusted_issuers=trusted, max_chain_depth=0, check_replay=False))
+    assert shallow.json()["error"]["code"] == -32010
 
 
 def multibase_key(key):
@@ -243,6 +275,25 @@ def test_multibase_roots_work_without_an_optional_decoder(monkeypatch, did):
     assert client.validate_chain([warrant.to_base64()], trusted_roots=[key])
     server = make_server(issuer, trusted_issuers=[key])
     assert bytes(issuer.public_key.to_bytes()).hex() in server.trusted_issuers
+
+
+@pytest.mark.parametrize("did", [False, True])
+async def test_pinned_key_compares_decoded_key_identity(monkeypatch, did):
+    from unittest.mock import AsyncMock
+
+    key = SigningKey.generate().public_key
+    pin = multibase_key(key)
+    if did:
+        pin = "did:key:" + pin
+    key_hex = bytes(key.to_bytes()).hex()
+    client = A2AClient("https://agent.example.com", pin_key=pin)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={
+        "name": "agent", "url": "https://agent.example.com", "skills": [], "x-tenuo": {"public_key": key_hex},
+    }))
+    async with httpx.AsyncClient(transport=transport) as http:
+        monkeypatch.setattr(client, "_get_client", AsyncMock(return_value=http))
+        card = await client.discover()
+    assert card.public_key == key_hex
 
 
 @pytest.mark.parametrize("denial", ["replay", "server_constraint", "backend_failure", "cancelled_audit", "revoked_before_pep"])
