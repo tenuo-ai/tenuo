@@ -193,12 +193,15 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
       - Range.contains()       -> Rust core
       - Exact.matches()        -> Rust core
       - OneOf.contains()       -> Rust core
-      - NotOneOf.allows()      -> Rust core
+      - Not/NotOneOf.satisfies() -> Rust core, preserving value kinds
       - Wildcard.matches()     -> Rust core
     """
     constraint_type = type(constraint).__name__
 
     try:
+        if constraint_type in {"Not", "NotOneOf"} and hasattr(constraint, "satisfies"):
+            return constraint.satisfies(value)
+
         # Subpath - filesystem path containment (Rust core)
         if hasattr(constraint, "contains") and constraint_type == "Subpath":
             return constraint.contains(str(value))
@@ -237,10 +240,6 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
         # OneOf - set membership (Rust core)
         if hasattr(constraint, "contains") and constraint_type == "OneOf":
             return constraint.contains(str(value))
-
-        # NotOneOf - exclusion list (Rust core)
-        if hasattr(constraint, "allows") and constraint_type == "NotOneOf":
-            return constraint.allows(str(value))
 
         # Wildcard - matches anything (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Wildcard":

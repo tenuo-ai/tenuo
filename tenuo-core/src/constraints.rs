@@ -970,7 +970,8 @@ pub enum ConstraintValue {
     Null,
 }
 
-/// A set of [`ConstraintValue`] kinds. Integers and floats are one kind.
+/// A set of [`ConstraintValue`] kinds. Integers and finite floats are one kind;
+/// non-finite floats have no admissible kind for negation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ValueKinds(u8);
 
@@ -987,7 +988,9 @@ impl ValueKinds {
     pub(crate) fn of(value: &ConstraintValue) -> Self {
         match value {
             ConstraintValue::String(_) => Self::STRING,
-            ConstraintValue::Integer(_) | ConstraintValue::Float(_) => Self::NUMBER,
+            ConstraintValue::Integer(_) => Self::NUMBER,
+            ConstraintValue::Float(number) if number.is_finite() => Self::NUMBER,
+            ConstraintValue::Float(_) => Self::NONE,
             ConstraintValue::Boolean(_) => Self::BOOLEAN,
             ConstraintValue::List(_) => Self::LIST,
             ConstraintValue::Object(_) => Self::OBJECT,
@@ -1011,6 +1014,13 @@ impl ValueKinds {
 
     pub(crate) fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+
+    /// Whether a value has a supported kind in this domain. NONE is a valid
+    /// empty set in subset comparisons, but must never admit an invalid value.
+    pub(crate) fn accepts(self, value: &ConstraintValue) -> bool {
+        let kind = Self::of(value);
+        kind != Self::NONE && self.contains(kind)
     }
 }
 
@@ -1618,7 +1628,7 @@ impl NotOneOf {
     /// A value whose kind differs from every excluded entry does not pass:
     /// `NotOneOf(["prod"])` rejects `["prod"]` and `5` as well as `"prod"`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        Ok(self.value_kinds().contains(ValueKinds::of(value)) && !self.is_excluded(value))
+        Ok(self.value_kinds().accepts(value) && !self.is_excluded(value))
     }
 
     /// Validate attenuation: child can exclude MORE values.
@@ -4100,11 +4110,7 @@ impl Not {
     /// A value of a kind the inner constraint cannot judge does not pass:
     /// `Not(Regex("rm"))` rejects a list or a number as well as `"rm -rf"`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        if !self
-            .constraint
-            .value_kinds()
-            .contains(ValueKinds::of(value))
-        {
+        if !self.constraint.value_kinds().accepts(value) {
             return Ok(false);
         }
         Ok(!self.constraint.matches(value)?)
@@ -4115,18 +4121,16 @@ impl Not {
     /// `Not(child_inner)` is a valid attenuation of `Not(parent_inner)` when the
     /// child's accepted set is a subset of the parent's:
     ///
-    ///   accepted(Not(X)) = universe \ accepted(X)
+    ///   accepted(Not(X)) = kinds(X) \ accepted(X)
     ///
-    /// So child ⊆ parent iff:
+    /// A sufficient condition for child ⊆ parent is:
     ///
-    ///   (U \ accepted(child_inner)) ⊆ (U \ accepted(parent_inner))
-    ///   ⟺ accepted(parent_inner) ⊆ accepted(child_inner)
-    ///   ⟺ child_inner is a valid attenuation of parent_inner… reversed:
-    ///       parent_inner.validate_attenuation(child_inner) would check parent ⊆ child
-    ///       but we need parent ⊆ child, so we call child_inner.validate_attenuation(&parent_inner).
+    ///   kinds(child_inner) ⊆ kinds(parent_inner), and
+    ///   accepted(parent_inner) ⊆ accepted(child_inner).
     ///
-    /// In plain terms: the child inner constraint must be *looser* (accept more values)
-    /// than the parent inner, because the `Not` flips the direction.
+    /// The child inner constraint must be at least as permissive within the
+    /// parent's kinds, without adding a new kind under negation. The positive
+    /// attenuation check therefore runs in the reverse direction.
     ///
     /// Examples:
     ///   Not(Exact("admin")) → Not(Exact("admin"))           — identity, valid
@@ -7628,6 +7632,56 @@ mod tests {
         // Not(Wildcard) admits nothing, so it narrows any negation.
         let nothing = Constraint::Not(Not::new(Constraint::Wildcard(Wildcard::new())));
         assert!(parent.validate_attenuation(&nothing).is_ok());
+
+        // Subpath can positively narrow to these list constraints, but
+        // reversing that relation under Not would add string authority.
+        let subpath = Constraint::Subpath(Subpath::new("/etc").unwrap());
+        let list = vec![ConstraintValue::String("/etc/passwd".to_string())];
+        for list_rule in [
+            Constraint::Subset(Subset::new(list.clone())),
+            Constraint::Exact(Exact::new(ConstraintValue::List(list))),
+        ] {
+            assert!(subpath.validate_attenuation(&list_rule).is_ok());
+            let parent = Constraint::Not(Not::new(list_rule));
+            let child = Constraint::Not(Not::new(subpath.clone()));
+            let witness = ConstraintValue::String("/tmp/allowed".to_string());
+            assert!(!parent.matches(&witness).unwrap());
+            assert!(child.matches(&witness).unwrap());
+            assert!(parent.validate_attenuation(&child).is_err());
+        }
+    }
+
+    #[test]
+    fn test_negation_rejects_non_finite_numbers() {
+        let rules = [
+            Constraint::Not(Not::new(Constraint::Range(Range::min(1000.0).unwrap()))),
+            Constraint::Not(Not::new(Constraint::Range(Range::max(1000.0).unwrap()))),
+            Constraint::Not(Not::new(Constraint::Exact(Exact::new(1000)))),
+            Constraint::NotOneOf(NotOneOf::from_values(vec![ConstraintValue::Integer(1000)])),
+            Constraint::NotOneOf(NotOneOf::new(Vec::<String>::new())),
+            Constraint::NotOneOf(NotOneOf::from_values(vec![ConstraintValue::Float(
+                f64::NAN,
+            )])),
+            Constraint::Not(Not::new(Constraint::Regex(
+                RegexConstraint::new("rm").unwrap(),
+            ))),
+            Constraint::NotOneOf(NotOneOf::new(vec!["prod"])),
+        ];
+        for rule in &rules {
+            for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let value = ConstraintValue::Float(number);
+                assert!(
+                    !rule.matches(&value).unwrap(),
+                    "{rule:?} must reject {value:?}"
+                );
+            }
+        }
+        // Finite values still use the ordinary numeric rule.
+        for rule in &rules[..4] {
+            assert!(!rule.matches(&ConstraintValue::Float(1000.0)).unwrap());
+        }
+        assert!(rules[0].matches(&ConstraintValue::Float(999.5)).unwrap());
+        assert!(rules[1].matches(&ConstraintValue::Float(1000.5)).unwrap());
     }
 
     #[test]
