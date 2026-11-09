@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-09
+
 ### Added
 
 - **Single-use approvals (opt-in).** `tenuo.enable_approval_consumption()` or
@@ -33,6 +35,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changing literal arithmetic.
   Published Rust and Python `tenuo` versions through 0.3.5 are affected.
   ([GHSA-7rpx-gxpc-f3m5](https://github.com/tenuo-ai/tenuo/security/advisories/GHSA-7rpx-gxpc-f3m5))
+
+- **URL constraints reject text that different clients can interpret differently.**
+  `UrlSafe` and `UrlPattern` reject backslashes, whitespace and ASCII controls,
+  missing or extra authority slashes, and repeated `@` characters in the
+  authority. A permitted final hostname can no longer hide ambiguous userinfo.
+  Ordinary URLs, a single userinfo separator, and `@` in a path or query remain
+  supported. These checks apply in every SDK using the Rust core.
+- **TypeScript dependencies include the advisory remediations merged since
+  0.3.5.** Updated transitive HTTP, URL, glob, and build-tool dependencies are
+  pinned in the workspace lockfile.
+
+### Fixed
+
+- **CEL attenuation compares parsed expressions.** Whitespace differences in
+  equivalent policies no longer prevent attenuation; different expressions
+  remain subject to the existing conservative attenuation rules.
+- **Delegated Python warrants retain their chain.** `grant()` installs the
+  parent chain in its scope, and outbound authorization headers carry the
+  parents needed by a verifier that trusts only the root issuer.
+- **LangChain and LangGraph fail closed at execution boundaries.** Classic
+  agent helpers use `langchain_classic.AgentExecutor` on LangChain 1.x and
+  refuse agents they cannot rebuild around guarded tools. `create_agent`
+  users should use `TenuoMiddleware`. `guard_node` verifies trusted roots,
+  revocation, expiry, holder, and delegation before running the node.
+  `required_tools` checks capabilities without inventing empty call arguments,
+  and `TenuoToolNode` resolves the default control plane before creating hooks.
+- **CrewAI guards survive asynchronous execution and cancellation.** Tool
+  hook failures deny execution, async Flow guards stay installed until their
+  workers finish, and concurrent or orphaned worker contexts retain their
+  own policy. Direct authorization preserves typed denials and receipts.
+- **Google ADK enforces constrained arguments and agent scope.** Tier 1 checks
+  require constrained arguments, validate underscore-prefixed inputs, and
+  apply wildcard constraints only to their own argument. `TenuoGuard` checks
+  `ScopedWarrant` scope even without the plugin; scoped warrants can be copied
+  through session state. Approval denials return structured authorization
+  errors with signed denial receipts. Audit timestamps and skill hints are
+  corrected.
+- **Observe mode preserves denial evidence.** Calls that observe mode permits
+  retain the decision, arguments, and approval metadata from the underlying
+  verification, including replay and cancellation paths.
+- **Python reports the package version in `tenuo.__version__`.** The release
+  version check now validates it against both Rust and Python manifests.
+- **Versioned Docker tags stay immutable.** Main builds publish rolling and
+  commit tags without replacing released images. The crates.io release job
+  uses the locked dependency graph and the larger test stack required by
+  optimized wire-format tests.
+
+### Documentation
+
+- Added scoped OpenAI specialist handoffs and a protected AutoGen
+  `RoundRobinGroupChat` example.
+- Approval examples check enforcement results and explain delegation.
+  MCP guidance explains that a warrant does not bind a destination server
+  unless the application explicitly constrains that destination.
+- Updated live error-message links and coordinated deployment examples.
+
+### Upgrade notes
+
+- Upgrade numeric-policy enforcement points together. Integral numeric values
+  now compare by value across integer and floating-point spellings, including
+  deny rules, approval gates, and CEL equality and membership.
+- The `langgraph` extra requires `langgraph>=1.0` and
+  `langgraph-prebuilt>=1.0.2` on Python 3.10+. Classic agent helpers cannot
+  protect `create_agent` graphs; use `TenuoMiddleware` for those graphs.
+- Single-use approvals remain opt-in. The default store is per process;
+  replicas need a shared backend with atomic reservation and owner checks.
+  Hosts should pass the idempotency key to the effect-performing system and
+  reconcile uncertain outcomes before releasing a reservation. Verification
+  in Rust remains stateless, and warrant and approval wire formats are unchanged.
+- TypeScript packages remain on the npm `beta` channel at `0.3.6-beta.0`.
+  `@tenuo/mcp` requires `@tenuo/core >=0.3.6-beta.0 <0.3.7`.
 
 ## [0.3.5] - 2026-10-30
 

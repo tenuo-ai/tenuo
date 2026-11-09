@@ -1,24 +1,26 @@
 # Integration Compatibility Matrix
 
-**Last Updated**: 2026-10-21
+**Artifact versions updated**: 2026-11-09
 
 Tracks compatibility between Tenuo artifacts and upstream integration libraries.
 
-## Tenuo artifacts (0.3.4)
+## Tenuo artifacts (0.3.6)
 
-These four packages share the same protocol line. TypeScript stays on the
-`beta` npm dist-tag (`0.3.4-beta.0`).
+These artifacts share the same protocol line. TypeScript stays on the
+`beta` npm dist-tag (`0.3.6-beta.0`).
 
 | Artifact | Package | Version |
 |----------|---------|---------|
-| Rust core | `tenuo` | 0.3.4 |
-| WASM | `tenuo-wasm` | 0.3.4 |
-| Python | `tenuo` / `tenuo_core` | 0.3.4 |
-| TypeScript | `@tenuo/core` | 0.3.4-beta.0 |
+| Rust core | `tenuo` | 0.3.6 |
+| WASM | `tenuo-wasm` | 0.3.6 |
+| Python | `tenuo` / `tenuo_core` | 0.3.6 |
+| TypeScript | `@tenuo/core` | 0.3.6-beta.0 |
+| TypeScript MCP | `@tenuo/mcp` | 0.3.6-beta.0 |
 
 `make version-check` (and the CI job of the same name) fails if the Rust,
-Python, and WASM crate versions or `tenuo.__version__` diverge, or if `@tenuo/core` does not start
-with the same `MAJOR.MINOR.PATCH`.
+Python, and WASM crate versions or `tenuo.__version__` diverge, or if either
+TypeScript package does not start with the same `MAJOR.MINOR.PATCH`. Runnable
+TypeScript examples must pin that package version as well.
 
 ## Supported Versions
 
