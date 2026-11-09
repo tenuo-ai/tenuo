@@ -62,6 +62,15 @@ the generated document repeats the list. Steps 4e, 4f and 5 are among them.
 `--fault-chains` prints, for every DENY vector, each check that fails once the
 earlier ones are disabled.
 
+Step 3c checks two things, and only one of them overlaps another step. Its
+check that the root's `del_depth` is 0 and step 5 each imply the other once 4d
+holds, so dropping one of them, but not both, changes no verdict. Its integer
+check is still needed. In J.21.9 the root's `del_depth` is `false`, which
+passes step 5 wherever `false + 1` evaluates to 1, as in JavaScript and
+Python. Thanks to Yerassyl Mussa
+([aat-lean](https://github.com/emeraldblast/aat-lean)) and Azat Davliatshin
+([aat](https://github.com/azatdavliatshin/aat)) for pointing this out.
+
 The suite covers happy-path chains (single token, three levels, prefix
 presentation, a chain at MAX_DELEGATION_DEPTH), each attenuation invariant I1
 through I6, explicit typing and the other header rules on root, derived and PoP
