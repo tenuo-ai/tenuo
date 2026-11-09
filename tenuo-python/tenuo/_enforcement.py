@@ -1096,8 +1096,9 @@ def _allowed_result(
         store = get_default_consumption_store()
     reservation = None
     if store is not None and store is not False:
-        reservation, state = store.reserve(chain_result)
-        if state is not None:
+        reservation, denial = store.reserve(chain_result, idempotency_key)
+        if denial is not None:
+            state = denial.state
             return EnforcementResult(
                 allowed=False,
                 tool=tool_name,
@@ -1114,8 +1115,10 @@ def _allowed_result(
                 authorizer=authorizer,
                 verified_pop=verified_pop,
                 approval_metadata={"state": state},
-                # Kept so a retry after a crash can look the action up downstream.
-                idempotency_key=idempotency_key,
+                # The key the first use stored, so a retry after a crash can
+                # look the action up downstream even if fewer approvals
+                # verified this time.
+                idempotency_key=denial.idempotency_key,
             )
 
     return EnforcementResult(

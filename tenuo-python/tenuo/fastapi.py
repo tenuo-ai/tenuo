@@ -335,11 +335,16 @@ class SecurityContext:
         warrant: The verified Warrant object
         args: Dictionary of extracted arguments (path + query params)
         tool: The tool name this context was verified for
+        idempotency_key: Key naming this approved authorization, or ``None``
+            when the call carried no approvals. Read it here rather than from
+            ``current_idempotency_key()``: FastAPI runs this guard in a
+            threadpool, so its context does not reach an async endpoint.
     """
 
     warrant: Warrant
     args: Dict[str, Any]
     tool: str
+    idempotency_key: Optional[str] = None
 
     @property
     def holder(self) -> str:
@@ -828,6 +833,7 @@ class TenuoGuard:
             warrant=warrant,
             args=auth_args,
             tool=self.tool,
+            idempotency_key=enforcement.idempotency_key,
         )
 
 

@@ -54,7 +54,7 @@ import contextvars
 import logging
 import threading
 import time
-from typing import Any, List, Literal, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, List, Literal, NamedTuple, Optional, Protocol, Tuple, runtime_checkable
 
 logger = logging.getLogger("tenuo.consumption")
 
@@ -62,6 +62,26 @@ ConsumptionState = Literal["in_flight", "consumed"]
 
 IN_FLIGHT: ConsumptionState = "in_flight"
 CONSUMED: ConsumptionState = "consumed"
+
+
+class ConsumptionEntry(NamedTuple):
+    """What a backend holds for one approval: its state and the idempotency
+    key of the authorization that reserved it."""
+
+    state: ConsumptionState
+    idempotency_key: Optional[str]
+
+
+class ConsumptionDenial(NamedTuple):
+    """Why :meth:`ApprovalConsumptionStore.reserve` refused a call.
+
+    ``idempotency_key`` is the key of the authorization that first used the
+    approval, which may differ from the current call's key when fewer
+    approvals verify on a retry (for example a surplus approval expired).
+    """
+
+    state: ConsumptionState
+    idempotency_key: Optional[str]
 
 
 @runtime_checkable
@@ -72,15 +92,17 @@ class ConsumptionBackend(Protocol):
     atomic (insert-if-absent), or two concurrent uses can both succeed.
     """
 
-    def reserve(self, key: str, ttl_seconds: int) -> Optional[ConsumptionState]:
-        """Record ``key`` as in flight if absent.
+    def reserve(
+        self, key: str, ttl_seconds: int, idempotency_key: Optional[str] = None
+    ) -> Optional[ConsumptionEntry]:
+        """Record ``key`` as in flight, with ``idempotency_key``, if absent.
 
-        Returns ``None`` when this call reserved it, or the existing state.
+        Returns ``None`` when this call reserved it, or the existing entry.
         """
         ...
 
     def commit(self, key: str) -> None:
-        """Mark a reserved ``key`` consumed, keeping its expiry."""
+        """Mark a reserved ``key`` consumed, keeping its expiry and stored key."""
         ...
 
     def release(self, key: str) -> None:
@@ -93,29 +115,31 @@ class InMemoryConsumptionBackend:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # key -> (state, expiry on the monotonic clock)
-        self._store: dict[str, Tuple[ConsumptionState, float]] = {}
+        # key -> (entry, expiry on the monotonic clock)
+        self._store: dict[str, Tuple[ConsumptionEntry, float]] = {}
 
-    def reserve(self, key: str, ttl_seconds: int) -> Optional[ConsumptionState]:
+    def reserve(
+        self, key: str, ttl_seconds: int, idempotency_key: Optional[str] = None
+    ) -> Optional[ConsumptionEntry]:
         now = time.monotonic()
         with self._lock:
             self._evict(now)
             existing = self._store.get(key)
             if existing is not None:
                 return existing[0]
-            self._store[key] = (IN_FLIGHT, now + ttl_seconds)
+            self._store[key] = (ConsumptionEntry(IN_FLIGHT, idempotency_key), now + ttl_seconds)
             return None
 
     def commit(self, key: str) -> None:
         with self._lock:
             existing = self._store.get(key)
             if existing is not None:
-                self._store[key] = (CONSUMED, existing[1])
+                self._store[key] = (existing[0]._replace(state=CONSUMED), existing[1])
 
     def release(self, key: str) -> None:
         with self._lock:
             existing = self._store.get(key)
-            if existing is not None and existing[0] == IN_FLIGHT:
+            if existing is not None and existing[0].state == IN_FLIGHT:
                 del self._store[key]
 
     def ttl_remaining(self, key: str) -> Optional[float]:
@@ -134,20 +158,28 @@ class InMemoryConsumptionBackend:
 
 
 class ApprovalReservation:
-    """The approvals one authorization reserved. Commit or release once."""
+    """The approvals one authorization reserved. Commit or release once.
+
+    The first of :meth:`commit` / :meth:`release` decides the outcome. If the
+    backend fails for some keys, those stay pending and the error propagates;
+    calling the same method again finishes them. The other method is then
+    ignored.
+    """
 
     def __init__(self, backend: ConsumptionBackend, keys: List[str]) -> None:
         self._backend = backend
         self.keys = list(keys)
-        self._done = False
+        self._pending = list(keys)
+        self._outcome: Optional[str] = None
+
+    @property
+    def done(self) -> bool:
+        """True once every key has been committed or released."""
+        return self._outcome is not None and not self._pending
 
     def commit(self) -> None:
         """The action ran: record its approvals as consumed."""
-        if self._done:
-            return
-        self._done = True
-        for key in self.keys:
-            self._backend.commit(key)
+        self._finish("commit", self._backend.commit)
 
     def release(self) -> None:
         """The action did not run: make the approvals usable again.
@@ -155,11 +187,25 @@ class ApprovalReservation:
         Only call this when the action certainly had no effect. When in doubt,
         leave the reservation in flight.
         """
-        if self._done:
+        self._finish("release", self._backend.release)
+
+    def _finish(self, outcome: str, apply: Any) -> None:
+        if self._outcome is None:
+            self._outcome = outcome
+        elif self._outcome != outcome:
             return
-        self._done = True
-        for key in self.keys:
-            self._backend.release(key)
+        failed: List[str] = []
+        first_error: Optional[BaseException] = None
+        for key in self._pending:
+            try:
+                apply(key)
+            except Exception as e:
+                failed.append(key)
+                if first_error is None:
+                    first_error = e
+        self._pending = failed
+        if first_error is not None:
+            raise first_error
 
 
 class ApprovalConsumptionStore:
@@ -185,12 +231,17 @@ class ApprovalConsumptionStore:
         """Storage key for one verified approval, as defined by the core."""
         return str(verified_approval.consumption_key)
 
-    def reserve(self, chain_result: Any) -> Tuple[Optional[ApprovalReservation], Optional[ConsumptionState]]:
-        """Reserve every approval ``chain_result`` verified.
+    def reserve(
+        self, chain_result: Any, idempotency_key: Optional[str] = None
+    ) -> Tuple[Optional[ApprovalReservation], Optional[ConsumptionDenial]]:
+        """Reserve every approval ``chain_result`` verified, recording
+        ``idempotency_key`` with each.
 
         Returns ``(reservation, None)`` on success, ``(None, None)`` when the
-        call carried no approvals, or ``(None, state)`` when one was already in
-        flight or consumed. A partial reservation is rolled back.
+        call carried no approvals, or ``(None, denial)`` when one was already
+        in flight or consumed; ``denial.idempotency_key`` is the key stored by
+        the authorization that used it first. A partial reservation is rolled
+        back.
         """
         verified = list(getattr(chain_result, "verified_approvals", None) or [])
         if not verified:
@@ -201,11 +252,11 @@ class ApprovalConsumptionStore:
             for va in verified:
                 key = self.key_for(va)
                 ttl = max(1, int(va.expires_at) - now + self._margin)
-                state = self._backend.reserve(key, ttl)
-                if state is not None:
+                existing = self._backend.reserve(key, ttl, idempotency_key)
+                if existing is not None:
                     self._rollback(reserved)
-                    logger.warning("Approval reuse denied (%s): %s…", state, key[-8:])
-                    return None, state
+                    logger.warning("Approval reuse denied (%s): %s…", existing.state, key[-8:])
+                    return None, ConsumptionDenial(existing.state, existing.idempotency_key or idempotency_key)
                 reserved.append(key)
         except BaseException:
             # A backend failure part-way must not leave earlier approvals

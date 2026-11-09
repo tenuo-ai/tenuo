@@ -218,12 +218,12 @@ class TestReserveCommit:
 
         b = InMemoryConsumptionBackend()
         assert isinstance(b, ConsumptionBackend)
-        assert b.reserve("k", 60) is None
-        assert b.reserve("k", 60) == "in_flight"
+        assert b.reserve("k", 60, "ik") is None
+        assert b.reserve("k", 60, "other") == ("in_flight", "ik")
         b.commit("k")
-        assert b.reserve("k", 60) == "consumed"
+        assert b.reserve("k", 60) == ("consumed", "ik")
         b.release("k")
-        assert b.reserve("k", 60) == "consumed"
+        assert b.reserve("k", 60).state == "consumed"
 
 
 class TestIdempotencyKey:
@@ -341,10 +341,10 @@ class TestReviewFollowUps:
         class Flaky(InMemoryConsumptionBackend):
             fail = True
 
-            def reserve(self, key, ttl_seconds):
+            def reserve(self, key, ttl_seconds, idempotency_key=None):
                 if key.startswith("bb") and self.fail:
                     raise ConnectionError("backend down")
-                return super().reserve(key, ttl_seconds)
+                return super().reserve(key, ttl_seconds, idempotency_key)
 
         backend = Flaky()
         store = ApprovalConsumptionStore(backend=backend)
@@ -357,8 +357,8 @@ class TestReviewFollowUps:
             store.reserve(result)
         assert len(backend) == 0
         backend.fail = False
-        reservation, state = store.reserve(result)
-        assert state is None and reservation.keys == ["aa:01", "bb:02"]
+        reservation, denial = store.reserve(result)
+        assert denial is None and reservation.keys == ["aa:01", "bb:02"]
 
     def test_verify_inbound_call_publishes_the_key(self, setup):
         from tenuo import Authorizer
@@ -411,9 +411,11 @@ class TestReviewFollowUps:
         assert await TenuoTool._arun(tool, **setup["args"]) == "done"
         assert seen and seen[0] is not None
 
-    def test_openai_records_a_key_per_tool_call(self, setup):
+    def test_openai_key_travels_with_the_tool_call(self, setup):
         pytest.importorskip("openai")
-        from tenuo.openai import _record_idempotency_key, idempotency_key_for, verify_tool_call
+        from types import SimpleNamespace
+
+        from tenuo.openai import _attach_idempotency_key, idempotency_key_for, verify_tool_call
 
         key = verify_tool_call(
             "transfer", setup["args"], None, None, None,
@@ -421,13 +423,10 @@ class TestReviewFollowUps:
             None, [setup["approval"]],
         )
         assert key and len(key) == 64
-        _record_idempotency_key("call_1", key)
-        _record_idempotency_key("call_2", "other")
-        from types import SimpleNamespace
-
-        assert idempotency_key_for(SimpleNamespace(id="call_1")) == key
-        assert idempotency_key_for("call_2") == "other"
-        assert idempotency_key_for("call_3") is None
+        call = SimpleNamespace(id="call_1")
+        _attach_idempotency_key(call, key)
+        assert idempotency_key_for(call) == key
+        assert idempotency_key_for(SimpleNamespace(id="call_2")) is None
 
 
 @pytest.mark.asyncio
@@ -548,3 +547,163 @@ class TestOpenAIReleasesUnusedReservations:
             "transfer", setup["args"], None, None, None,
             setup["warrant"], setup["holder"], roots, None, [setup["approval"]],
         )
+
+
+class TestSecondReviewFollowUps:
+    def test_reuse_denial_returns_the_original_key_after_a_surplus_expires(self, monkeypatch):
+        issuer, holder = SigningKey.generate(), SigningKey.generate()
+        a, b = SigningKey.generate(), SigningKey.generate()
+        warrant = _gated_warrant(issuer, holder, [a, b], min_approvals=1)
+        bound, args = warrant.bind(holder), {"amount": 9}
+        t0 = int(time.time())
+        short = _approval(warrant, "transfer", args, holder, a, ttl=2)
+        long = _approval(warrant, "transfer", args, holder, b, ttl=300)
+        store = ApprovalConsumptionStore()
+        kw = dict(trusted_roots=[issuer.public_key], consumption_store=store)
+
+        first = enforce_tool_call("transfer", args, bound, approvals=[short, long], **kw)
+        assert first.allowed and len(first.approval_reservation.keys) == 2
+
+        # Wait for the short approval to expire (the core checks real time).
+        time.sleep(max(0.0, t0 + 2.05 - time.time()))
+        _next_pop_window(monkeypatch)
+        retry = enforce_tool_call("transfer", args, bound, approvals=[short, long], **kw)
+        assert retry.error_type == "approval_consumed"
+        # Only the long-lived approval verifies now, so the key for this
+        # attempt alone would differ; the denial names the first use instead.
+        alone = enforce_tool_call(
+            "transfer", args, bound, approvals=[long], trusted_roots=[issuer.public_key], consumption_store=False
+        )
+        assert alone.allowed and alone.idempotency_key != first.idempotency_key
+        # ...but the denial names the authorization that used it.
+        assert retry.idempotency_key == first.idempotency_key
+
+    def test_failed_release_can_be_retried(self):
+        from tenuo.consumption import ApprovalReservation, InMemoryConsumptionBackend
+
+        class FlakyRelease(InMemoryConsumptionBackend):
+            failures = 1
+
+            def release(self, key):
+                if key == "bb:02" and self.failures:
+                    self.failures -= 1
+                    raise ConnectionError("backend down")
+                super().release(key)
+
+        backend = FlakyRelease()
+        for k in ("aa:01", "bb:02", "cc:03"):
+            backend.reserve(k, 60)
+        reservation = ApprovalReservation(backend, ["aa:01", "bb:02", "cc:03"])
+        with pytest.raises(ConnectionError):
+            reservation.release()
+        # Keys that succeeded are released; the failed one is still pending.
+        assert not reservation.done and len(backend) == 1
+        reservation.commit()  # the outcome is already release; ignored
+        assert len(backend) == 1
+        reservation.release()
+        assert reservation.done and len(backend) == 0
+
+    def test_failed_commit_can_be_retried(self):
+        from tenuo.consumption import ApprovalReservation, InMemoryConsumptionBackend
+
+        class FlakyCommit(InMemoryConsumptionBackend):
+            failures = 1
+
+            def commit(self, key):
+                if self.failures:
+                    self.failures -= 1
+                    raise ConnectionError("backend down")
+                super().commit(key)
+
+        backend = FlakyCommit()
+        backend.reserve("aa:01", 60)
+        reservation = ApprovalReservation(backend, ["aa:01"])
+        with pytest.raises(ConnectionError):
+            reservation.commit()
+        assert backend.reserve("aa:01", 60).state == "in_flight"
+        reservation.commit()
+        assert reservation.done and backend.reserve("aa:01", 60).state == "consumed"
+
+    @staticmethod
+    def _fastapi_headers(setup, tool, args):
+        import base64
+        import json
+
+        from tenuo.fastapi import X_TENUO_APPROVALS, X_TENUO_POP, X_TENUO_WARRANT
+
+        pop = setup["warrant"].sign(setup["holder"], tool, args, int(time.time()))
+        approvals = [base64.b64encode(setup["approval"].to_bytes()).decode()]
+        return {
+            X_TENUO_WARRANT: setup["warrant"].to_base64(),
+            X_TENUO_POP: base64.b64encode(pop).decode(),
+            X_TENUO_APPROVALS: base64.b64encode(json.dumps(approvals).encode()).decode(),
+        }
+
+    def test_fastapi_async_endpoint_gets_the_key_from_the_context(self, setup, monkeypatch):
+        pytest.importorskip("fastapi")
+        from fastapi import Depends, FastAPI
+        from fastapi.testclient import TestClient
+
+        from tenuo.fastapi import SecurityContext, TenuoGuard, configure_tenuo
+
+        app = FastAPI()
+        configure_tenuo(app, trusted_issuers=[setup["issuer"].public_key])
+        seen = {}
+
+        @app.post("/transfer")
+        async def transfer(amount: int, ctx: SecurityContext = Depends(TenuoGuard("transfer"))):
+            seen["ctx"] = ctx.idempotency_key
+            seen["var"] = current_idempotency_key()
+            return {"ok": True}
+
+        store = enable_default_consumption_store()
+        headers = self._fastapi_headers(setup, "transfer", setup["args"])
+        r = TestClient(app).post("/transfer?amount=100", headers=headers)
+        assert r.status_code == 200, r.text
+        assert seen["ctx"] and len(seen["ctx"]) == 64
+        assert len(store) == 1
+
+    def test_openai_stream_deltas_carry_the_key(self, setup, monkeypatch):
+        pytest.importorskip("openai")
+        import json
+        from types import SimpleNamespace as NS
+        from unittest.mock import Mock
+
+        from tenuo.openai import GuardBuilder, idempotency_key_for
+
+        monkeypatch.setattr("tenuo.openai.resolve_trusted_roots", lambda explicit=None: [setup["issuer"].public_key])
+        raw = json.dumps(setup["args"])
+
+        def chunk(tc=None, finish=None):
+            delta = NS(content=None, tool_calls=[tc] if tc else None, function_call=None, role="assistant")
+            return NS(choices=[NS(index=0, delta=delta, finish_reason=finish)])
+
+        chunks = [
+            chunk(NS(index=0, id="call_0", type="function", function=NS(name="transfer", arguments=raw[:5]))),
+            chunk(NS(index=0, id=None, type=None, function=NS(name=None, arguments=raw[5:]))),
+            chunk(finish="tool_calls"),
+        ]
+        client = Mock()
+        client.chat.completions.create.return_value = iter(chunks)
+        guarded = (
+            GuardBuilder(client).with_warrant(setup["warrant"], setup["holder"])
+            .with_approvals([setup["approval"]]).on_denial("raise").build()
+        )
+        out = list(guarded.chat.completions.create(model="m", messages=[], stream=True))
+        first_tc = out[0].choices[0].delta.tool_calls[0]
+        key = idempotency_key_for(first_tc)
+        assert key and len(key) == 64
+        assert idempotency_key_for(out[1].choices[0].delta.tool_calls[0]) == key
+
+    def test_openai_response_tool_calls_carry_their_keys(self, setup, monkeypatch):
+        import json
+
+        from tenuo.openai import idempotency_key_for
+
+        enable_default_consumption_store()
+        resp = TestOpenAIReleasesUnusedReservations._response([("transfer", json.dumps(setup["args"]))])
+        out = TestOpenAIReleasesUnusedReservations()._guarded(setup, monkeypatch, resp).chat.completions.create(
+            model="m", messages=[]
+        )
+        key = idempotency_key_for(out.choices[0].message.tool_calls[0])
+        assert key and len(key) == 64

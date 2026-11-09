@@ -90,7 +90,6 @@ import time
 import weakref
 import threading
 import uuid
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -793,36 +792,51 @@ def _release_all(reservations: List[Any]) -> None:
     reservations.clear()
 
 
-_IDEMPOTENCY_KEYS_MAX = 4096
-_idempotency_keys: "OrderedDict[str, str]" = OrderedDict()
-_idempotency_keys_lock = threading.Lock()
+# Attribute the guarded clients set on each tool call they authorized with
+# approvals. The key travels with the object the caller holds, so it lives as
+# long as that call does.
+_IDEMPOTENCY_ATTR = "_tenuo_idempotency_key"
 
 
-def _record_idempotency_key(call_id: Optional[str], key: Optional[str]) -> None:
-    if not call_id or key is None:
+def _attach_idempotency_key(obj: Any, key: Optional[str]) -> None:
+    if obj is None or key is None:
         return
-    with _idempotency_keys_lock:
-        _idempotency_keys[call_id] = key
-        _idempotency_keys.move_to_end(call_id)
-        while len(_idempotency_keys) > _IDEMPOTENCY_KEYS_MAX:
-            _idempotency_keys.popitem(last=False)
+    try:
+        setattr(obj, _IDEMPOTENCY_ATTR, key)
+    except Exception:
+        try:
+            object.__setattr__(obj, _IDEMPOTENCY_ATTR, key)
+        except Exception:
+            logger.debug("Cannot attach idempotency key to %s", type(obj).__name__)
+
+
+def _annotate_stream_chunk(chunk: Any, keys: Dict[Tuple[int, int], str]) -> None:
+    """Attach each verified call's key to its deltas in a buffered chunk."""
+    if not keys:
+        return
+    for choice in getattr(chunk, "choices", None) or []:
+        delta = getattr(choice, "delta", None)
+        if not delta:
+            continue
+        choice_index = _stream_index(choice)
+        function_call = getattr(delta, "function_call", None)
+        if function_call:
+            _attach_idempotency_key(function_call, keys.get((choice_index, _LEGACY_FUNCTION_CALL)))
+        for tc_delta in getattr(delta, "tool_calls", None) or []:
+            _attach_idempotency_key(tc_delta, keys.get((choice_index, _stream_index(tc_delta))))
 
 
 def idempotency_key_for(tool_call: Any) -> Optional[str]:
     """Idempotency key of a tool call a guarded client authorized with approvals.
 
-    Accepts the tool call (chat ``tool_call``, Responses item) or its id /
-    ``call_id``. Guarded clients verify every call in a response before any
+    Pass the tool call object from the guarded response: a chat ``tool_call``
+    (or legacy ``function_call``), a Responses item, or any streamed delta of
+    the call. Guarded clients verify every call in a response before any
     handler runs, so use this, not ``tenuo.current_idempotency_key()``, to get
-    the key for the call you are about to execute.
+    the key for the call you are about to execute. Returns ``None`` when the
+    call carried no approvals.
     """
-    call_id = tool_call if isinstance(tool_call, str) else (
-        getattr(tool_call, "call_id", None) or getattr(tool_call, "id", None)
-    )
-    if not call_id:
-        return None
-    with _idempotency_keys_lock:
-        return _idempotency_keys.get(call_id)
+    return getattr(tool_call, _IDEMPOTENCY_ATTR, None)
 
 
 def _check_type_compatibility(constraint: Constraint, value: Any) -> tuple:
@@ -1139,12 +1153,13 @@ class GuardedCompletions:
             function_call = getattr(message, "function_call", None)
             if function_call:
                 try:
-                    self._verify_call(
+                    key = self._verify_call(
                         getattr(function_call, "name", None) or "",
                         "function",
                         getattr(function_call, "arguments", None),
                         reservations=reservations,
                     )
+                    _attach_idempotency_key(function_call, key)
                 except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
@@ -1175,7 +1190,8 @@ class GuardedCompletions:
     def _verify_single_tool_call(self, tool_call: Any, reservations: Optional[List[Any]] = None) -> None:
         """Verify a single tool call (function, custom, or any other type)."""
         tool_name, kind, raw = _chat_tool_call_parts(tool_call)
-        self._verify_call(tool_name, kind, raw, getattr(tool_call, "id", None), reservations)
+        key = self._verify_call(tool_name, kind, raw, getattr(tool_call, "id", None), reservations)
+        _attach_idempotency_key(tool_call, key)
 
     @staticmethod
     def _call_arguments(tool_name: str, kind: str, raw: Optional[str]) -> Dict[str, Any]:
@@ -1198,8 +1214,11 @@ class GuardedCompletions:
         raw: Optional[str],
         call_id: Optional[str] = None,
         reservations: Optional[List[Any]] = None,
-    ) -> None:
-        """Authorize one chat tool call and audit the decision (allow or deny)."""
+    ) -> Optional[str]:
+        """Authorize one chat tool call and audit the decision (allow or deny).
+
+        Returns the call's idempotency key, or ``None`` without approvals.
+        """
         arguments: Dict[str, Any] = {}
         try:
             arguments = self._call_arguments(tool_name, kind, raw)
@@ -1221,8 +1240,8 @@ class GuardedCompletions:
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
             self._record_decision(tool_name, arguments, e)
             raise
-        _record_idempotency_key(call_id, key)
         self._record_decision(tool_name, arguments)
+        return key
 
     async def _verify_call_async(
         self,
@@ -1231,7 +1250,7 @@ class GuardedCompletions:
         raw: Optional[str],
         call_id: Optional[str] = None,
         reservations: Optional[List[Any]] = None,
-    ) -> None:
+    ) -> Optional[str]:
         """Async variant of _verify_call (awaits approval handlers)."""
         arguments: Dict[str, Any] = {}
         try:
@@ -1254,8 +1273,8 @@ class GuardedCompletions:
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
             self._record_decision(tool_name, arguments, e)
             raise
-        _record_idempotency_key(call_id, key)
         self._record_decision(tool_name, arguments)
+        return key
 
     def _record_decision(self, tool_name: str, arguments: Dict[str, Any], error: Optional[Exception] = None) -> None:
         """Emit the audit event and control-plane record for one decision."""
@@ -1369,13 +1388,16 @@ class GuardedCompletions:
         # Stream complete — now verify ALL buffered tool calls
         denied_indices: set = set()
         reservations: List[Any] = []
+        keys: Dict[Tuple[int, int], str] = {}
 
         try:
             for index, buffer in buffers.items():
                 try:
-                    self._verify_call(
+                    key = self._verify_call(
                         buffer.name, buffer.kind, buffer.arguments_buffer, buffer.id, reservations
                     )
+                    if key is not None:
+                        keys[index] = key
                 except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
@@ -1385,6 +1407,9 @@ class GuardedCompletions:
             # The stream is rejected before any chunk is released: no tool ran.
             _release_all(reservations)
             raise
+
+        for chunk in pending_chunks:
+            _annotate_stream_chunk(chunk, keys)
 
         # EMIT: Only yield chunks for verified tool calls
         if self._on_denial == "raise" or not denied_indices:
@@ -1579,13 +1604,16 @@ class GuardedCompletions:
         # Verify all buffered tool calls
         denied_indices: set = set()
         reservations: List[Any] = []
+        keys: Dict[Tuple[int, int], str] = {}
 
         try:
             for index, buffer in buffers.items():
                 try:
-                    await self._verify_call_async(
+                    key = await self._verify_call_async(
                         buffer.name, buffer.kind, buffer.arguments_buffer, buffer.id, reservations
                     )
+                    if key is not None:
+                        keys[index] = key
                 except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
@@ -1595,6 +1623,9 @@ class GuardedCompletions:
             # The stream is rejected before any chunk is released: no tool ran.
             _release_all(reservations)
             raise
+
+        for chunk in pending_chunks:
+            _annotate_stream_chunk(chunk, keys)
 
         # Emit verified chunks
         if self._on_denial == "raise" or not denied_indices:
@@ -1750,7 +1781,7 @@ class GuardedResponses:
                 warrant_chain=self._warrant_chain,
                 _reservations=reservations,
             )
-            _record_idempotency_key(getattr(item, "call_id", None) or getattr(item, "id", None), key)
+            _attach_idempotency_key(item, key)
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
             self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
