@@ -979,19 +979,21 @@ class A2AServer:
             # Handle multibase (z = base58btc for Ed25519)
             if key.startswith("z"):
                 try:
-                    import base58  # type: ignore[import-not-found]
-
-                    # Strip multibase prefix and decode
-                    decoded = base58.b58decode(key[1:])
-                    # Ed25519 multicodec prefix is 0xed01 (2 bytes)
-                    if len(decoded) > 2 and decoded[:2] == b"\xed\x01":
-                        return decoded[2:].hex()
-                    return decoded.hex()
-                except ImportError:
-                    # base58 not installed - return as-is
-                    logger.debug("base58 not installed, cannot normalize multibase key")
-                    return key
-                except Exception:
+                    encoded = key[1:]
+                    if not encoded or len(encoded) > 64:
+                        raise ValueError("Invalid Ed25519 multibase key length")
+                    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+                    number = 0
+                    for character in encoded:
+                        number = number * 58 + alphabet.index(character)
+                    decoded = (
+                        b"\x00" * (len(encoded) - len(encoded.lstrip("1")))
+                        + number.to_bytes((number.bit_length() + 7) // 8, "big")
+                    )
+                    if len(decoded) != 34 or decoded[:2] != b"\xed\x01":
+                        raise ValueError("Expected an Ed25519 multicodec public key")
+                    return decoded[2:].hex()
+                except ValueError:
                     # Decoding failed - return as-is
                     return key
 
@@ -1186,12 +1188,12 @@ class A2AServer:
         # when the leaf's issuer is a delegated agent (not a direct trusted root).
         _resolved_chain_parents: Optional[List[Any]] = None
 
-        if issuer_normalized and issuer_normalized not in self.trusted_issuers:
-            if self.trust_delegated and _preloaded_parents is not None and len(_preloaded_parents) > 0:
-                # WarrantStack path: parents already decoded by the HTTP handler.
-                # Gated on trust_delegated exactly like the legacy path below.
-                # Verify chain structure now; PoP (if required) is done below
-                # via check_chain so the full chain is validated atomically.
+        # A supplied chain is part of the presented authority even when the
+        # leaf issuer is independently trusted. Never silently discard it.
+        if _preloaded_parents is not None:
+            if _preloaded_parents:
+                if not self.trust_delegated:
+                    raise UntrustedIssuerError(issuer_normalized or "", reason="Delegated chains are disabled")
                 if len(_preloaded_parents) > self.max_chain_depth:
                     raise ChainValidationError(
                         f"Chain depth {len(_preloaded_parents)} exceeds maximum {self.max_chain_depth}"
@@ -1199,11 +1201,13 @@ class A2AServer:
                 if not self.require_pop:
                     await self._validate_chain_warrants(warrant, _preloaded_parents)
                 _resolved_chain_parents = _preloaded_parents
-            elif self.trust_delegated and warrant_chain:
-                # Legacy path: semicolon-separated header.
-                _resolved_chain_parents = await self._validate_chain(warrant, warrant_chain)
-            else:
-                raise UntrustedIssuerError(issuer_normalized)
+        elif warrant_chain:
+            if not self.trust_delegated:
+                raise UntrustedIssuerError(issuer_normalized or "", reason="Delegated chains are disabled")
+            _resolved_chain_parents = await self._validate_chain(warrant, warrant_chain)
+
+        if issuer_normalized not in self.trusted_issuers and not _resolved_chain_parents:
+            raise UntrustedIssuerError(issuer_normalized or "")
 
         # A revoked key anywhere in the chain revokes everything issued under it.
         for parent in _resolved_chain_parents or []:
@@ -1343,66 +1347,78 @@ class A2AServer:
                 if skill_id not in granted_skills:
                     raise SkillNotGrantedError(skill_id, granted_skills)
 
-        # Always check server-level constraints (declared on SkillDefinition),
-        # regardless of require_pop. These represent the skill's own input
-        # requirements and are NOT encoded in the warrant, so neither
-        # why_denied() nor the Authorizer above can see them.
-        skill_def = self._skills.get(skill_id)
-        if skill_def:
-            for param, server_constraint in skill_def.constraints.items():
-                if param in arguments:
-                    value = arguments[param]
-                    try:
-                        constraint_satisfied = self._check_constraint(server_constraint, value, param)
-                    except Exception as exc:
-                        # Core constraints use ValidationError for malformed input
-                        # (for example, a non-IP value passed to Cidr). That is an
-                        # authorization denial, not an adapter failure. Keep
-                        # configuration/programming errors such as
-                        # UnknownConstraintError distinct and fail closed.
-                        from tenuo.exceptions import ValidationError as _ValidationError
+        try:
+            # Always check server-level constraints (declared on SkillDefinition),
+            # regardless of require_pop. These represent the skill's own input
+            # requirements and are NOT encoded in the warrant, so neither
+            # why_denied() nor the Authorizer above can see them.
+            skill_def = self._skills.get(skill_id)
+            if skill_def:
+                for param, server_constraint in skill_def.constraints.items():
+                    if param in arguments:
+                        value = arguments[param]
+                        try:
+                            constraint_satisfied = self._check_constraint(server_constraint, value, param)
+                        except Exception as exc:
+                            # Core constraints use ValidationError for malformed input
+                            # (for example, a non-IP value passed to Cidr). That is an
+                            # authorization denial, not an adapter failure. Keep
+                            # configuration/programming errors such as
+                            # UnknownConstraintError distinct and fail closed.
+                            from tenuo.exceptions import ValidationError as _ValidationError
 
-                        if not isinstance(exc, _ValidationError):
-                            raise
-                        constraint_satisfied = False
-                    if not constraint_satisfied:
-                        if enforcement is not None:
-                            # The Authorizer allowed the call, so its receipt was
-                            # held back; record this refusal instead.
-                            collect_enforcement_receipt(
-                                EnforcementResult(
-                                    allowed=False,
-                                    tool=skill_id,
-                                    arguments=arguments,
-                                    denial_reason="Value does not satisfy server constraint",
-                                    constraint_violated=param,
-                                    error_type="constraint_violation",
-                                    warrant_id=enforcement.warrant_id,
-                                    authorizer=enforcement.authorizer,
-                                    presented_chain=[*(_resolved_chain_parents or []), warrant],
-                                    verified_pop=pop_signature,
-                                    pop_auth_args=arguments,
-                                ),
-                                None,
-                                runtime=runtime,
+                            if not isinstance(exc, _ValidationError):
+                                raise
+                            constraint_satisfied = False
+                        if not constraint_satisfied:
+                            if enforcement is not None:
+                                # The Authorizer allowed the call, so its receipt was
+                                # held back; record this refusal instead.
+                                collect_enforcement_receipt(
+                                    EnforcementResult(
+                                        allowed=False,
+                                        tool=skill_id,
+                                        arguments=arguments,
+                                        denial_reason="Value does not satisfy server constraint",
+                                        constraint_violated=param,
+                                        error_type="constraint_violation",
+                                        warrant_id=enforcement.warrant_id,
+                                        authorizer=enforcement.authorizer,
+                                        presented_chain=[*(_resolved_chain_parents or []), warrant],
+                                        verified_pop=pop_signature,
+                                        pop_auth_args=arguments,
+                                    ),
+                                    None,
+                                    runtime=runtime,
+                                )
+                            raise ConstraintViolationError(
+                                param=param,
+                                constraint_type=type(server_constraint).__name__,
+                                value=value,
+                                reason="Value does not satisfy server constraint",
                             )
-                        raise ConstraintViolationError(
-                            param=param,
-                            constraint_type=type(server_constraint).__name__,
-                            value=value,
-                            reason="Value does not satisfy server constraint",
-                        )
 
-        # Check replay last, so only a request that passed every other gate
-        # (proof-of-possession included) can mark the warrant as used.
-        if self.check_replay and jti:
-            is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
-            if not is_new:
-                raise ReplayDetectedError(jti)
+            # Check replay last, so only a request that passed every other gate
+            # (proof-of-possession included) can mark the warrant as used.
+            if self.check_replay and jti:
+                is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
+                if not is_new:
+                    raise ReplayDetectedError(jti)
 
-        # Every A2A gate has passed: only now record the Authorizer's allow.
-        if enforcement is not None:
-            collect_enforcement_receipt(enforcement, enforcement.chain_result, runtime=runtime)
+            # Every A2A gate has passed: only now record the Authorizer's allow.
+            if enforcement is not None:
+                collect_enforcement_receipt(enforcement, enforcement.chain_result, runtime=runtime)
+        except BaseException:
+            from tenuo.consumption import _set_current_idempotency_key
+
+            _set_current_idempotency_key(None)
+            reservation = getattr(enforcement, "approval_reservation", None)
+            if reservation is not None:
+                try:
+                    reservation.release()
+                except Exception:
+                    logger.exception("Failed to release approvals after A2A denial")
+            raise
 
         # Log audit event
         latency_ms = int((time.time() - start_time) * 1000)
