@@ -1153,6 +1153,7 @@ def _enforce_tool_call_impl(
     nonce_store: Optional[Any] = None,
     consumption_store: Optional[Any] = None,
     verify_replay: bool = False,
+    replay_admissions: Optional[Any] = None,
 ) -> EnforcementResult:
     """
     Core enforcement logic for tool authorization.
@@ -1549,7 +1550,8 @@ def _enforce_tool_call_impl(
                 if _ns is None:
                     from .nonce import get_default_nonce_store as _get_ns
                     _ns = _get_ns()
-                if _ns is not None and not _ns.check_and_record(_pop):
+                from .nonce import _admit_verified_pop
+                if _ns is not None and not _admit_verified_pop(_ns, _pop, _auth):
                     return EnforcementResult(
                         allowed=False,
                         tool=tool_name,
@@ -1667,7 +1669,15 @@ def _enforce_tool_call_impl(
             if _ns is None:
                 from .nonce import get_default_nonce_store as _get_ns
                 _ns = _get_ns()
-            if _ns is not None and not _ns.check_and_record(precomputed_signature):
+            from .nonce import _admit_verified_pop
+            admitted = True
+            if _ns is not None:
+                admitted = (
+                    replay_admissions.admit(_ns, precomputed_signature, authorizer)
+                    if replay_admissions is not None
+                    else _admit_verified_pop(_ns, precomputed_signature, authorizer)
+                )
+            if not admitted:
                 return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
@@ -2080,7 +2090,8 @@ async def _enforce_tool_call_async_impl(
                 if _ns is None:
                     from .nonce import get_default_nonce_store as _get_ns
                     _ns = _get_ns()
-                if _ns is not None and not _ns.check_and_record(_pop):
+                from .nonce import _admit_verified_pop
+                if _ns is not None and not _admit_verified_pop(_ns, _pop, _auth):
                     return EnforcementResult(
                         allowed=False, tool=tool_name, arguments=tool_args,
                         denial_reason="PoP replay detected — this exact authorization token was already consumed.",
@@ -2606,13 +2617,16 @@ def verify_inbound_call(
     consumption_store: Optional[Any] = None,
     check_replay: bool = False,
     nonce_store: Optional[Any] = None,
+    replay_admissions: Optional[Any] = None,
 ) -> EnforcementResult:
     """Shared inbound PEP. Adapters must not call Authorizer directly.
 
     ``check_replay`` rejects a PoP signature the nonce store has already
     admitted (``nonce_store``, else the process-wide store when enabled).
     Set it once per request: callers that verify the same request more than
-    once, or keep their own replay record, leave it off.
+    once can share a request-scoped ``replay_admissions`` object. Every call
+    still performs full authorization. Adapters with later local gates must
+    defer nonce admission until those gates succeed.
     """
     _clear_idempotency_key()
     if authorizer is None:
@@ -2655,6 +2669,7 @@ def verify_inbound_call(
         consumption_store=consumption_store,
         nonce_store=nonce_store,
         verify_replay=check_replay,
+        replay_admissions=replay_admissions,
     )
     return _publish_idempotency_key(_apply_observe_mode(result) if apply_observe else result)
 

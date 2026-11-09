@@ -523,6 +523,7 @@ class TenuoGuard:
         pop_signature: bytes,
         parents: Optional[List] = None,
         approvals: Optional[List] = None,
+        replay_admissions: Optional[Any] = None,
     ) -> EnforcementResult:
         """
         Adapter for FastAPI's client-side PoP pattern.
@@ -578,6 +579,7 @@ class TenuoGuard:
                 approval_handler=self._approval_handler,
                 approvals=approvals,
                 check_replay=True,
+                replay_admissions=replay_admissions,
             )
             from tenuo.receipts import collect_enforcement_receipt
             collect_enforcement_receipt(
@@ -695,6 +697,9 @@ class TenuoGuard:
 
         # 5. Authorize using Adapter (include delegation chain parents if present)
         parents = getattr(request.state, "tenuo_parents", [])
+        from tenuo.nonce import _RequestNonceAdmissions
+
+        replay_admissions = request.scope.setdefault("tenuo.nonce_admissions", _RequestNonceAdmissions())
         try:
             enforcement = self._enforce_with_pop_signature(
                 warrant=warrant,
@@ -703,6 +708,7 @@ class TenuoGuard:
                 pop_signature=pop_sig_bytes,
                 parents=parents,
                 approvals=decoded_approvals,
+                replay_admissions=replay_admissions,
             )
         except ApprovalRequired as approval_required:
             req = approval_required.request

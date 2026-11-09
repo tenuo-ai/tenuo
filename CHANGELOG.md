@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Inbound PoP replay protection uses atomic nonce admission.** FastAPI and
+  A2A honor the configured process nonce store after verification. Retention
+  covers the Authorizer's complete PoP validity interval, including custom
+  windows. Multiple FastAPI guards share admission only within one request;
+  A2A local denials do not consume the nonce. Python nonce backends must now
+  implement atomic `check_and_record(nonce_hex, ttl_seconds)`, for example
+  Redis `SET ... NX EX`. Separate `seen()` and `record()` operations are no
+  longer sufficient. Custom stores must accept `min_ttl_seconds` and retain
+  signatures for at least that long.
+
 - **An integral number matches the same way however it is spelled.**
   `ConstraintValue` compared `Integer(1000)` and `Float(1000.0)` as different
   values, and argument extraction and the Python binding yield `Float` for

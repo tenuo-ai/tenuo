@@ -13,14 +13,14 @@ as replays until the TTL expires.
 
 **Scope**: this is an *in-process* defence.  For multi-process or distributed
 deployments (multiple worker replicas) the store must be backed by a shared
-cache (Redis, Memcached, …).  The :class:`RedisNonceBackend` interface below
+cache (Redis, Memcached, …).  The :class:`NonceBackend` interface below
 provides the extension point.
 
 Usage::
 
     from tenuo.nonce import NonceStore
 
-    store = NonceStore(ttl_seconds=60)
+    store = NonceStore(ttl_seconds=150)
 
     result = enforce_tool_call(
         tool_name, args, bound_warrant,
@@ -52,6 +52,14 @@ class NonceBackend(Protocol):
     Implementations must be thread-safe.
     """
 
+    def check_and_record(self, nonce_hex: str, ttl_seconds: int) -> bool:
+        """Atomically admit and insert an unseen nonce with the given TTL.
+
+        Shared backends must use a single atomic operation, such as Redis
+        SET with NX and EX. A separate exists/set pair is not sufficient.
+        """
+        ...
+
     def seen(self, nonce_hex: str) -> bool:
         """Return ``True`` if ``nonce_hex`` has been recorded (replay)."""
         ...
@@ -73,6 +81,15 @@ class _InMemoryBackend:
         self._lock = threading.Lock()
         # nonce_hex → expiry timestamp (float)
         self._store: dict[str, float] = {}
+
+    def check_and_record(self, nonce_hex: str, ttl_seconds: int) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            self._evict(now)
+            if nonce_hex in self._store:
+                return False
+            self._store[nonce_hex] = now + ttl_seconds
+            return True
 
     def seen(self, nonce_hex: str) -> bool:
         now = time.monotonic()
@@ -108,8 +125,9 @@ class NonceStore:
     ----------
     ttl_seconds:
         How long to remember a PoP signature.  Should be at least as long as
-        the Authorizer's ``pop_window_secs * pop_max_windows`` (default: 120 s)
-        so every PoP that could be accepted is tracked.
+        the Authorizer's ``pop_window_secs * pop_max_windows`` (default: 150 s).
+        Enforcement raises retention to the verifier's full validity
+        interval when a shorter TTL was configured.
     backend:
         Optional custom :class:`NonceBackend`.  Defaults to an in-process
         ``threading.Lock``-guarded dict.  For multi-process deployments pass a
@@ -118,10 +136,12 @@ class NonceStore:
     Example::
 
         # Single-process worker
-        store = NonceStore(ttl_seconds=120)
+        store = NonceStore(ttl_seconds=150)
 
         # Multi-process — plug in Redis
         class RedisBackend:
+            def check_and_record(self, h, ttl):
+                return bool(redis.set(h, "1", nx=True, ex=ttl))
             def seen(self, h): return redis.exists(h)
             def record(self, h, ttl): redis.setex(h, ttl, "1")
 
@@ -130,18 +150,22 @@ class NonceStore:
 
     def __init__(
         self,
-        ttl_seconds: int = 120,
+        ttl_seconds: int = 150,
         backend: Optional[Any] = None,
     ) -> None:
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
+            raise ValueError("nonce TTL must be a positive integer")
         self._ttl = ttl_seconds
         self._backend: NonceBackend = backend if backend is not None else _InMemoryBackend()
+        if not callable(getattr(self._backend, "check_and_record", None)):
+            raise TypeError("NonceBackend must implement atomic check_and_record(nonce_hex, ttl_seconds)")
 
     # ------------------------------------------------------------------
     # Core operations
     # ------------------------------------------------------------------
 
-    def check_and_record(self, pop_bytes: bytes) -> bool:
-        """Admit a PoP if it has not been seen before; record it for TTL.
+    def check_and_record(self, pop_bytes: bytes, *, min_ttl_seconds: int = 0) -> bool:
+        """Atomically admit an unseen PoP for at least ``min_ttl_seconds``.
 
         Returns
         -------
@@ -150,13 +174,12 @@ class NonceStore:
             ``False`` if it is a replay (reject the call).
         """
         nonce_hex = hashlib.sha256(pop_bytes).hexdigest()
-        if self._backend.seen(nonce_hex):
+        if not self._backend.check_and_record(nonce_hex, max(self._ttl, min_ttl_seconds)):
             logger.warning(
                 "PoP replay detected — nonce %s…%s was already consumed.",
                 nonce_hex[:8], nonce_hex[-4:],
             )
             return False
-        self._backend.record(nonce_hex, self._ttl)
         return True
 
     def is_replay(self, pop_bytes: bytes) -> bool:
@@ -173,6 +196,33 @@ class NonceStore:
 # Module-level shared instance (opt-in singleton)
 # ---------------------------------------------------------------------------
 
+
+class _RequestNonceAdmissions:
+    """Reuse nonce admission inside one HTTP request, after each guard verifies."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._admitted: set[tuple[int, bytes]] = set()
+
+    def admit(self, store: Any, signature: bytes, authorizer: Any) -> bool:
+        with self._lock:
+            key = (id(store), signature)
+            if key in self._admitted:
+                return True
+            if not _admit_verified_pop(store, signature, authorizer):
+                return False
+            self._admitted.add(key)
+            return True
+
+
+def _admit_verified_pop(store: Any, signature: bytes, authorizer: Any) -> bool:
+    """Retain the signature for every time window the verifier can accept."""
+    validity = authorizer.pop_validity_secs()
+    if not isinstance(validity, int) or isinstance(validity, bool) or validity <= 0:
+        raise ValueError("Cannot determine the verifier's PoP validity interval")
+    return bool(store.check_and_record(signature, min_ttl_seconds=validity))
+
+
 _default_store: Optional[NonceStore] = None
 
 
@@ -181,7 +231,7 @@ def get_default_nonce_store() -> Optional[NonceStore]:
     return _default_store
 
 
-def enable_default_nonce_store(ttl_seconds: int = 120, backend: Optional[Any] = None) -> NonceStore:
+def enable_default_nonce_store(ttl_seconds: int = 150, backend: Optional[Any] = None) -> NonceStore:
     """Enable the process-wide nonce store and return it.
 
     Call this once at application startup alongside ``tenuo.configure()``:

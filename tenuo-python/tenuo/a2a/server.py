@@ -1257,7 +1257,6 @@ class A2AServer:
                         authorizer=self._authorizer,
                         warrant_chain=_resolved_chain_parents or [],
                         approvals=approvals,
-                        check_replay=True,
                     )
                 if enforcement.allowed:
                     logger.debug(f"PoP verified for skill '{skill_id}'")
@@ -1403,6 +1402,12 @@ class A2AServer:
 
             # Check replay last, so only a request that passed every other gate
             # (proof-of-possession included) can mark the warrant as used.
+            if self.require_pop and pop_signature is not None and enforcement is not None and not enforcement.observed:
+                from tenuo.nonce import _admit_verified_pop, get_default_nonce_store
+
+                nonce_store = get_default_nonce_store()
+                if nonce_store is not None and not _admit_verified_pop(nonce_store, pop_signature, self._authorizer):
+                    raise PopVerificationError("PoP replay detected")
             if self.check_replay and jti:
                 is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
                 if not is_new:
