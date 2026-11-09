@@ -508,6 +508,16 @@ class BufferOverflow(TenuoOpenAIError):
 from tenuo.core import check_constraint  # noqa: E402
 
 
+def _require_constrained_arguments(tool_name: str, arguments: Dict[str, Any], constraints: Dict[str, Any]) -> None:
+    """Require explicit values instead of authorizing unseen tool defaults."""
+    for name, constraint in constraints.items():
+        if not name.startswith("_") and name not in arguments and not isinstance(constraint, Wildcard):
+            raise OpenAIConstraintViolation(
+                tool_name, name, None, constraint,
+                reason=f"Missing argument '{name}' - a constrained argument must be passed",
+            )
+
+
 def _check_local_tool_name(
     tool_name: str, allow_tools: Optional[List[str]], deny_tools: Optional[List[str]],
 ) -> None:
@@ -631,19 +641,7 @@ def verify_tool_call(
         # A constrained argument must be passed: an omitted one would run with
         # the tool's own default, which no constraint has seen. Wildcard
         # accepts any value, the default included.
-        for required_name, required_constraint in tool_constraints.items():
-            if (
-                not required_name.startswith("_")
-                and required_name not in arguments
-                and not isinstance(required_constraint, Wildcard)
-            ):
-                raise OpenAIConstraintViolation(
-                    tool_name,
-                    required_name,
-                    None,
-                    required_constraint,
-                    reason=f"Missing argument '{required_name}' - a constrained argument must be passed",
-                )
+        _require_constrained_arguments(tool_name, arguments, tool_constraints)
 
         # Iterate over arguments to ensure we catch UNKNOWN arguments (Zero Trust)
         for arg_name, value in arguments.items():
@@ -742,6 +740,7 @@ async def verify_tool_call_async(
     if warrant is None and constraints and tool_name in constraints:
         tool_constraints = constraints[tool_name]
         allow_unknown = tool_constraints.get("_allow_unknown", False)
+        _require_constrained_arguments(tool_name, arguments, tool_constraints)
 
         for arg_name, value in arguments.items():
             try:

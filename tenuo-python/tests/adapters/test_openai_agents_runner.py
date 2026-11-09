@@ -23,7 +23,7 @@ from openai.types.responses import (  # noqa: E402
     ResponseOutputText,
 )
 
-from tenuo import Range, SigningKey, Warrant  # noqa: E402
+from tenuo import Range, SigningKey, Subpath, Warrant  # noqa: E402
 from tenuo.openai import OpenAIConfigurationError, TenuoToolGuardrail, guard_agent  # noqa: E402
 
 
@@ -286,3 +286,21 @@ async def test_guarding_a_parent_keeps_the_policy_of_a_handoff_target(tools, ran
     refunds.model = ScriptedModel([[_call("refund", {"amount": 5}, "c2")]])
     await Runner.run(refunds, "refund")
     assert ran == [("refund", 5)]
+
+
+@pytest.mark.asyncio
+async def test_omitted_constrained_argument_never_runs_with_the_tool_default(ran):
+    @function_tool
+    def read_file(path: str = "/etc/shadow") -> str:
+        """Read a file."""
+        ran.append(path)
+        return "ok"
+
+    model = ScriptedModel([[_call("read_file", {}, "c1")], [_call("read_file", {"path": "/data/x"}, "c2")]])
+    agent = guard_agent(
+        Agent(name="reader", model=model, tools=[read_file]),
+        allow_tools=["read_file"], constraints={"read_file": {"path": Subpath("/data")}},
+    )
+    await Runner.run(agent, "read")
+    assert ran == ["/data/x"]
+    assert any("blocked by Tenuo" in output for output in _tool_outputs(model))
