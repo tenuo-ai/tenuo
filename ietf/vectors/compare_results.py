@@ -16,8 +16,9 @@ implementation does not support as "SKIP", optionally with a "reason"; skipped
 vectors are listed separately and are not disagreements.
 
 Only verdicts are compared. Section 8 permits some reordering, so a different
-failing step is not a disagreement; --steps lists those differences for
-information.
+failing step is not a disagreement. The summary still counts the agreed
+denials that stopped at the suite's expected step, and --steps lists those
+that stopped at another one.
 
 The suite's SHA-256 is printed so that a report names the exact bytes it was
 run against. Exit status: 0 if every reported verdict matches, 1 if any
@@ -101,11 +102,17 @@ def main() -> None:
             if exp["verdict"] == "DENY" and got["step"] and got["step"] != exp["step"]:
                 step_diff.append((vid, exp["step"], got["step"], v["title"]))
     missing = [vid for vid in vectors if vid not in results]
+    deny_agreed = [vid for vid in agree if vectors[vid]["expected"]["verdict"] == "DENY"]
+    no_step = [vid for vid in deny_agreed if not results[vid]["step"]]
+    same_step = len(deny_agreed) - len(no_step) - len(step_diff)
 
     summary = {
         "suite": args.suite.name, "suite_sha256": hashlib.sha256(suite_bytes).hexdigest(),
         "spec": suite.get("spec"), "vectors": len(vectors), "reported": len(results),
         "agree": len(agree), "differ": len(differ), "skipped": len(skipped), "missing": len(missing),
+        "deny_agreed": len(deny_agreed), "same_step": same_step, "no_step": len(no_step),
+        "step_differences": [{"id": vid, "expected_step": exp_step, "got_step": got_step, "title": title}
+                             for vid, exp_step, got_step, title in step_diff],
         "disagreements": [{"id": vid, "expected": exp["verdict"], "expected_step": exp["step"],
                            "got": got["verdict"], "got_step": got["step"], "title": title}
                           for vid, exp, got, title in differ],
@@ -118,6 +125,8 @@ def main() -> None:
         print(f"suite:  {args.suite.name}")
         print(f"sha256: {summary['suite_sha256']}  ({summary['spec']}, {len(vectors)} vectors)")
         print(f"agree {len(agree)}, differ {len(differ)}, skipped {len(skipped)}, missing {len(missing)}")
+        print(f"steps: {same_step} of {len(deny_agreed)} agreed denials at the expected step"
+              + (f", {len(no_step)} without a step" if no_step else ""))
         for vid, exp, got, title in differ:
             exp_s = exp["verdict"] + (f" at {exp['step']}" if exp["step"] else "")
             got_s = got["verdict"] + (f" at {got['step']}" if got["step"] else "")
