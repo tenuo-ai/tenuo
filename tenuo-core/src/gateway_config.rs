@@ -818,10 +818,10 @@ routes:
             result.constraints.get("replicas"),
             Some(&ConstraintValue::Integer(5))
         );
-        assert_eq!(
+        assert!(matches!(
             result.constraints.get("cost"),
-            Some(&ConstraintValue::Float(150.0))
-        );
+            Some(&ConstraintValue::Integer(150))
+        ));
     }
 
     #[test]
@@ -956,10 +956,10 @@ routes:
             result.constraints.get("replicas"),
             Some(&ConstraintValue::Integer(5))
         );
-        assert_eq!(
+        assert!(matches!(
             result.constraints.get("cost"),
-            Some(&ConstraintValue::Float(150.0))
-        );
+            Some(&ConstraintValue::Integer(150))
+        ));
     }
 
     #[test]

@@ -2038,6 +2038,196 @@ fn test_attack_type_confusion_nan() {
 }
 
 // ============================================================================
+// Numeric Spelling Attacks
+// ============================================================================
+//
+// `1000` and `1000.0` are one JSON number. The caller picks the spelling, so
+// a deny-direction rule (approval gate, NotOneOf, Not, CEL `!=`) must decide
+// the same for both. These run the MCP split view end to end: the PoP covers
+// the signed argument map, rules see the extracted one.
+
+const SPELLING_MCP: &str = r#"
+version: "1"
+settings:
+  trusted_issuers: []
+tools:
+  pay:
+    description: "Pay"
+    constraints:
+      amount:
+        from: body
+        path: "amount"
+        required: true
+"#;
+
+/// Authorize `body` the way the MCP server does: sign the canonical wire
+/// args, match rules against the config-extracted view.
+fn authorize_spelling(
+    warrant: &Warrant,
+    holder: &SigningKey,
+    root: &SigningKey,
+    body: &str,
+) -> tenuo::Result<()> {
+    let config: tenuo::McpConfig = serde_yaml::from_str(SPELLING_MCP).unwrap();
+    let mcp = tenuo::CompiledMcpConfig::compile(config).unwrap();
+    let pop_args = tenuo::meta_envelope::args_from_json(body).unwrap();
+    let json: serde_json::Value = serde_json::from_str(body).unwrap();
+    let constraint_args = mcp.extract_constraints("pay", &json).unwrap().constraints;
+    let sig = warrant.sign(holder, "pay", &pop_args).unwrap();
+    Authorizer::new()
+        .with_trusted_root(root.public_key())
+        .authorize_one_with_pop_args(warrant, "pay", &pop_args, &constraint_args, Some(&sig), &[])
+        .map(|_| ())
+}
+
+fn gated_pay_warrant(root: &SigningKey, gate_value: ConstraintValue) -> Warrant {
+    gated_pay_constraint_warrant(root, Constraint::Exact(Exact::new(gate_value)))
+}
+
+fn gated_pay_constraint_warrant(root: &SigningKey, gate: Constraint) -> Warrant {
+    use tenuo::approval_gate::{
+        encode_approval_gate_map, ApprovalGateMap, ArgApprovalGate, ToolApprovalGate,
+    };
+    let mut caps = ConstraintSet::new();
+    caps.insert("amount", Range::new(Some(0.0), Some(1_000_000.0)).unwrap());
+    let mut arg_gates = BTreeMap::new();
+    arg_gates.insert("amount".to_string(), ArgApprovalGate::Constraint(gate));
+    let mut gates = ApprovalGateMap::new();
+    gates.insert("pay".to_string(), ToolApprovalGate::with_args(arg_gates));
+    Warrant::builder()
+        .capability("pay", caps)
+        .ttl(Duration::from_secs(300))
+        .required_approvers(vec![SigningKey::generate().public_key()])
+        .min_approvals(1)
+        .holder(root.public_key())
+        .extension(
+            "tenuo.approval_gates",
+            encode_approval_gate_map(&gates).unwrap(),
+        )
+        .build(root)
+        .unwrap()
+}
+
+/// Attack: respell a gated amount so the approval gate does not fire.
+#[test]
+fn test_attack_numeric_spelling_skips_approval_gate() {
+    println!("\n--- Attack: Numeric Spelling (approval gate) ---");
+    let root = SigningKey::generate();
+    for (gate, body) in [
+        (ConstraintValue::Integer(1000), r#"{"amount": 1000.0}"#),
+        (ConstraintValue::Integer(1000), r#"{"amount": 1000}"#),
+        (ConstraintValue::Float(1000.0), r#"{"amount": 1000}"#),
+        (ConstraintValue::Float(1000.0), r#"{"amount": 1e3}"#),
+    ] {
+        let warrant = gated_pay_warrant(&root, gate.clone());
+        let result = authorize_spelling(&warrant, &root, &root, body);
+        assert!(
+            result.is_err(),
+            "gate Exact({gate:?}) must require approval for {body}"
+        );
+        println!("  [PASS] gate {gate:?} fires for {body}");
+    }
+    // Control: a different amount is not gated.
+    let warrant = gated_pay_warrant(&root, ConstraintValue::Integer(1000));
+    authorize_spelling(&warrant, &root, &root, r#"{"amount": 999.0}"#)
+        .expect("an ungated amount runs without approval");
+}
+
+/// Attack: respell an excluded value so a NotOneOf or Not denylist misses it.
+#[test]
+fn test_attack_numeric_spelling_skips_denylist() {
+    println!("\n--- Attack: Numeric Spelling (NotOneOf / Not) ---");
+    let root = SigningKey::generate();
+    let denylists: Vec<(&str, Constraint)> = vec![
+        (
+            "NotOneOf([1000])",
+            Constraint::NotOneOf(tenuo::constraints::NotOneOf::from_values(vec![
+                ConstraintValue::Integer(1000),
+            ])),
+        ),
+        (
+            "Not(Exact(1000.0))",
+            Constraint::Not(tenuo::constraints::Not::new(Constraint::Exact(Exact::new(
+                ConstraintValue::Float(1000.0),
+            )))),
+        ),
+    ];
+    for (name, deny) in denylists {
+        let mut caps = ConstraintSet::new();
+        caps.insert("amount", deny);
+        let warrant = Warrant::builder()
+            .capability("pay", caps)
+            .ttl(Duration::from_secs(300))
+            .holder(root.public_key())
+            .build(&root)
+            .unwrap();
+        for body in [r#"{"amount": 1000}"#, r#"{"amount": 1000.0}"#] {
+            assert!(
+                authorize_spelling(&warrant, &root, &root, body).is_err(),
+                "{name} must refuse {body}"
+            );
+            println!("  [PASS] {name} refuses {body}");
+        }
+        authorize_spelling(&warrant, &root, &root, r#"{"amount": 7.0}"#)
+            .unwrap_or_else(|e| panic!("{name} must allow 7.0: {e}"));
+    }
+}
+
+/// Attack: respell an excluded value so a CEL `!=` or `in` check misses it.
+#[cfg(feature = "cel")]
+#[test]
+fn test_attack_numeric_spelling_skips_cel_exclusion() {
+    println!("\n--- Attack: Numeric Spelling (CEL) ---");
+    let root = SigningKey::generate();
+    for expr in [
+        "value != 1000",
+        "!(value in [1000, 2000])",
+        "value != 1000.0",
+        "!(value in [1000.0, 2000.0])",
+        "value != double(1000)",
+    ] {
+        let mut caps = ConstraintSet::new();
+        caps.insert(
+            "amount",
+            Constraint::Cel(tenuo::constraints::CelConstraint::new(expr)),
+        );
+        let warrant = Warrant::builder()
+            .capability("pay", caps)
+            .ttl(Duration::from_secs(300))
+            .holder(root.public_key())
+            .build(&root)
+            .unwrap();
+        for body in [r#"{"amount": 1000}"#, r#"{"amount": 1000.0}"#] {
+            assert!(
+                authorize_spelling(&warrant, &root, &root, body).is_err(),
+                "CEL `{expr}` must refuse {body}"
+            );
+            println!("  [PASS] CEL `{expr}` refuses {body}");
+        }
+        authorize_spelling(&warrant, &root, &root, r#"{"amount": 7.0}"#)
+            .unwrap_or_else(|e| panic!("CEL `{expr}` must allow 7.0: {e}"));
+    }
+}
+
+#[cfg(feature = "cel")]
+#[test]
+fn test_attack_numeric_spelling_skips_decimal_cel_gate() {
+    let root = SigningKey::generate();
+    let warrant = gated_pay_constraint_warrant(
+        &root,
+        Constraint::Cel(tenuo::constraints::CelConstraint::new("value == 1000.0")),
+    );
+    for body in [
+        r#"{"amount":1000}"#,
+        r#"{"amount":1000.0}"#,
+        r#"{"amount":1e3}"#,
+    ] {
+        assert!(authorize_spelling(&warrant, &root, &root, body).is_err());
+    }
+    authorize_spelling(&warrant, &root, &root, r#"{"amount":999.0}"#).unwrap();
+}
+
+// ============================================================================
 // Chain Transport Attacks
 // ============================================================================
 
