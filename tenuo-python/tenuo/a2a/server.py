@@ -1121,6 +1121,9 @@ class A2AServer:
         Raises:
             Various A2AErrors for validation failures
         """
+        from tenuo.consumption import _set_current_idempotency_key
+
+        _set_current_idempotency_key(None)
         start_time = time.time()
 
         # Size guard — reject oversized tokens before any parsing cost
@@ -1408,9 +1411,50 @@ class A2AServer:
             # Every A2A gate has passed: only now record the Authorizer's allow.
             if enforcement is not None:
                 collect_enforcement_receipt(enforcement, enforcement.chain_result, runtime=runtime)
-        except BaseException:
-            from tenuo.consumption import _set_current_idempotency_key
 
+            # Log audit event
+            latency_ms = int((time.time() - start_time) * 1000)
+            observed = bool(enforcement is not None and enforcement.observed)
+            await self._audit(
+                AuditEvent(
+                    timestamp=datetime.now(timezone.utc),
+                    event=(
+                        AuditEventType.WARRANT_REJECTED
+                        if observed
+                        else AuditEventType.WARRANT_VALIDATED
+                    ),
+                    task_id="",
+                    skill=skill_id,
+                    warrant_jti=jti or "",
+                    warrant_iss=issuer_normalized or "",
+                    warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
+                    outcome="denied" if observed else "allowed",
+                    latency_ms=latency_ms,
+                    reason=(
+                        enforcement.denial_reason
+                        if observed and enforcement is not None
+                        else None
+                    ),
+                )
+            )
+
+            if self._control_plane is not None:
+                try:
+                    from tenuo._enforcement import EnforcementResult
+                    _res = enforcement or EnforcementResult(
+                        allowed=True, tool=skill_id, arguments=arguments,
+                        warrant_id=jti or "",
+                    )
+                    self._control_plane.emit_for_enforcement(
+                        _res,
+                        chain_result=getattr(_res, "chain_result", None),
+                        latency_us=latency_ms * 1000,
+                    )
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", skill_id, exc_info=True)
+
+            return warrant
+        except BaseException:
             _set_current_idempotency_key(None)
             reservation = getattr(enforcement, "approval_reservation", None)
             if reservation is not None:
@@ -1419,49 +1463,6 @@ class A2AServer:
                 except Exception:
                     logger.exception("Failed to release approvals after A2A denial")
             raise
-
-        # Log audit event
-        latency_ms = int((time.time() - start_time) * 1000)
-        observed = bool(enforcement is not None and enforcement.observed)
-        await self._audit(
-            AuditEvent(
-                timestamp=datetime.now(timezone.utc),
-                event=(
-                    AuditEventType.WARRANT_REJECTED
-                    if observed
-                    else AuditEventType.WARRANT_VALIDATED
-                ),
-                task_id="",
-                skill=skill_id,
-                warrant_jti=jti or "",
-                warrant_iss=issuer_normalized or "",
-                warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
-                outcome="denied" if observed else "allowed",
-                latency_ms=latency_ms,
-                reason=(
-                    enforcement.denial_reason
-                    if observed and enforcement is not None
-                    else None
-                ),
-            )
-        )
-
-        if self._control_plane is not None:
-            try:
-                from tenuo._enforcement import EnforcementResult
-                _res = enforcement or EnforcementResult(
-                    allowed=True, tool=skill_id, arguments=arguments,
-                    warrant_id=jti or "",
-                )
-                self._control_plane.emit_for_enforcement(
-                    _res,
-                    chain_result=getattr(_res, "chain_result", None),
-                    latency_us=latency_ms * 1000,
-                )
-            except Exception:
-                logger.warning("Control plane emission failed for '%s'; audit event lost", skill_id, exc_info=True)
-
-        return warrant
 
     async def _validate_chain_warrants(
         self,

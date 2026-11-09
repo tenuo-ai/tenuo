@@ -1,6 +1,7 @@
 """A2A server and client checks run with default settings and real warrants."""
 
 import base64
+import asyncio
 import io
 import os
 import sys
@@ -244,7 +245,7 @@ def test_multibase_roots_work_without_an_optional_decoder(monkeypatch, did):
     assert bytes(issuer.public_key.to_bytes()).hex() in server.trusted_issuers
 
 
-@pytest.mark.parametrize("denial", ["replay", "server_constraint", "backend_failure"])
+@pytest.mark.parametrize("denial", ["replay", "server_constraint", "backend_failure", "cancelled_audit", "revoked_before_pep"])
 async def test_local_denial_releases_only_its_approval_reservation(monkeypatch, denial):
     from unittest.mock import AsyncMock
 
@@ -270,20 +271,26 @@ async def test_local_denial_releases_only_its_approval_reservation(monkeypatch, 
         ), approver)
 
     retained = 0
-    if denial == "replay":
+    if denial in {"replay", "revoked_before_pep"}:
         await server.validate_warrant(warrant.to_base64(), "read_file", args, pop_signature=signature, approvals=[approval()])
         retained = 1
+        if denial == "revoked_before_pep":
+            server._revoked_issuers = frozenset({bytes(issuer.public_key.to_bytes()).hex()})
     elif denial == "server_constraint":
         server._skills["read_file"].constraints["path"] = Subpath("/data")
-    else:
+    elif denial == "backend_failure":
         server._replay_cache.check_and_add = AsyncMock(side_effect=ConnectionError("replay backend unavailable"))
+    else:
+        server._audit = AsyncMock(side_effect=asyncio.CancelledError())
 
     retry_approval = approval()
-    with pytest.raises(Exception):
+    with pytest.raises(asyncio.CancelledError if denial == "cancelled_audit" else Exception):
         await server.validate_warrant(warrant.to_base64(), "read_file", args, pop_signature=signature, approvals=[retry_approval])
     assert len(store) == retained
     assert current_idempotency_key() is None
     server.check_replay = False
+    server._revoked_issuers = frozenset()
+    server._audit = AsyncMock(return_value=None)
     server._skills["read_file"].constraints.clear()
     await server.validate_warrant(warrant.to_base64(), "read_file", args, pop_signature=signature, approvals=[retry_approval])
     assert len(store) == retained + 1
