@@ -254,3 +254,35 @@ async def test_clone_of_a_guarded_agent_needs_its_own_policy(tools, ran):
     model.turns = [[_call("search", {"query": "y"}, "c2")]]
     await Runner.run(guard_agent(clone, allow_tools=["search"]), "search")
     assert ran == [("search", "y")]
+
+
+@pytest.mark.asyncio
+async def test_guarding_a_parent_keeps_the_policy_of_a_handoff_target(tools, ran):
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = (
+        Warrant.mint_builder()
+        .holder(holder.public_key)
+        .capability("refund", amount=Range(max=100))
+        .ttl(300)
+        .mint(issuer)
+    )
+    refunds = guard_agent(
+        Agent(name="refunds", model=ScriptedModel([]), tools=[tools["refund"]]),
+        warrant=warrant,
+        signing_key=holder,
+        trusted_roots=[issuer.public_key],
+    )
+    # The parent's looser policy must not replace the refunds agent's warrant.
+    guard_agent(
+        Agent(name="triage", model=ScriptedModel([]), tools=[tools["search"]], handoffs=[refunds]),
+        allow_tools=["search", "refund"],
+    )
+    refunds.model = ScriptedModel([[_call("refund", {"amount": 99999}, "c1")]])
+    await Runner.run(refunds, "refund")
+    assert ran == []
+
+    # Calling guard_agent on the agent itself still replaces its policy.
+    guard_agent(refunds, allow_tools=["refund"])
+    refunds.model = ScriptedModel([[_call("refund", {"amount": 5}, "c2")]])
+    await Runner.run(refunds, "refund")
+    assert ran == [("refund", 5)]

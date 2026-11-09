@@ -628,6 +628,23 @@ def verify_tool_call(
         # Check for _allow_unknown opt-out (default: Zero Trust = reject unknown)
         allow_unknown = tool_constraints.get("_allow_unknown", False)
 
+        # A constrained argument must be passed: an omitted one would run with
+        # the tool's own default, which no constraint has seen. Wildcard
+        # accepts any value, the default included.
+        for required_name, required_constraint in tool_constraints.items():
+            if (
+                not required_name.startswith("_")
+                and required_name not in arguments
+                and not isinstance(required_constraint, Wildcard)
+            ):
+                raise OpenAIConstraintViolation(
+                    tool_name,
+                    required_name,
+                    None,
+                    required_constraint,
+                    reason=f"Missing argument '{required_name}' - a constrained argument must be passed",
+                )
+
         # Iterate over arguments to ensure we catch UNKNOWN arguments (Zero Trust)
         for arg_name, value in arguments.items():
             try:
@@ -3363,7 +3380,9 @@ def guard_agent(
 
     The policy belongs to the agent, not to its tools: agents that share
     tool objects or MCP servers each keep their own policy, and calling
-    guard_agent() again on an agent replaces its policy. A tool that has been
+    guard_agent() again on an agent replaces its policy. An agent reached
+    through a handoff that already has a policy keeps it; to change it, call
+    guard_agent() on that agent. A tool that has been
     guarded denies calls from any agent without a policy, including copies
     made with ``agent.clone()``; guard those too.
 
@@ -3427,7 +3446,10 @@ def guard_agent(
         if id(current) in seen:
             continue
         seen.add(id(current))
-        _register_agent_policy(current, guard, on_denial)
+        # An agent reached through a handoff keeps a policy it was already
+        # given; only the agent named in this call has its policy replaced.
+        if current is agent or _agent_policy(current) is None:
+            _register_agent_policy(current, guard, on_denial)
         for tool in getattr(current, "tools", None) or []:
             if not hasattr(tool, "tool_input_guardrails"):
                 raise OpenAIConfigurationError(
