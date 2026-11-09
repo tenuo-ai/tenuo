@@ -44,6 +44,33 @@ def test_mcp_verifier_denies_arguments_the_schema_would_convert():
     assert verifier.verify("deploy", {"dry_run": "off"}).allowed
 
 
+@pytest.mark.asyncio
+async def test_fastmcp_middleware_reads_the_registered_schema_before_execution():
+    fastmcp = pytest.importorskip("fastmcp")
+    from fastmcp.exceptions import ToolError
+    from tenuo_core import Authorizer
+
+    from tenuo.mcp import MCPVerifier, TenuoMiddleware
+
+    issuer = SigningKey.generate()
+    server = fastmcp.FastMCP("typed", middleware=[TenuoMiddleware(MCPVerifier(
+        authorizer=Authorizer(trusted_roots=[issuer.public_key]), require_warrant=False, control_plane=False,
+    ))])
+    ran = []
+
+    @server.tool()
+    def deploy(dry_run: bool) -> str:
+        ran.append(dry_run)
+        return "ok"
+
+    async with fastmcp.Client(server) as client:
+        with pytest.raises(ToolError, match="type does not match"):
+            await client.call_tool("deploy", {"dry_run": "off"})
+        assert ran == []
+        await client.call_tool("deploy", {"dry_run": False})
+    assert ran == [False]
+
+
 def test_langgraph_denies_before_the_tool_validates():
     pytest.importorskip("langgraph")
     tools = pytest.importorskip("langchain_core.tools")

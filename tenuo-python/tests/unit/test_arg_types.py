@@ -81,9 +81,120 @@ def test_missing_or_unreadable_schema_reports_nothing(schema):
     assert argument_type_mismatches(schema, {"replicas": "22"}) == []
 
 
-def test_unresolvable_reference_accepts_the_value():
+def test_unresolvable_reference_denies_the_value():
     schema = {"properties": {"x": {"$ref": "#/$defs/Missing"}, "y": {"$ref": "http://example.com/s"}}}
-    assert argument_type_mismatches(schema, {"x": "1", "y": 2}) == []
+    assert argument_type_mismatches(schema, {"x": "1", "y": 2}) == ["x", "y"]
+
+
+def test_composite_object_schemas_and_sibling_rules_are_all_checked():
+    schema = {"allOf": [{"properties": {"flag": {"type": "boolean"}}}]}
+    assert argument_type_mismatches(schema, {"flag": "off"}) == ["flag"]
+    assert argument_type_mismatches(schema, {"flag": False}) == []
+    schema = {"properties": {"flag": {"anyOf": [{}], "type": "boolean"}}}
+    assert argument_type_mismatches(schema, {"flag": "off"}) == ["flag"]
+    schema = {"$defs": {"Any": {}}, "properties": {"flag": {"$ref": "#/$defs/Any", "type": "boolean"}}}
+    assert argument_type_mismatches(schema, {"flag": "off"}) == ["flag"]
+
+
+def test_union_must_match_the_whole_argument_object():
+    schema = {"anyOf": [
+        {"properties": {"x": {"type": "boolean"}, "y": {"type": "integer"}}},
+        {"properties": {"x": {"type": "integer"}, "y": {"type": "boolean"}}},
+    ]}
+    assert argument_type_mismatches(schema, {"x": True, "y": 1}) == []
+    assert argument_type_mismatches(schema, {"x": True, "y": True}) == ["x", "y"]
+
+
+def test_pydantic_mapping_and_tuple_elements_are_checked():
+    from typing import Dict, Tuple
+
+    from pydantic import BaseModel
+
+    class Args(BaseModel):
+        flags: Dict[str, bool]
+        pair: Tuple[bool, int]
+
+    schema = Args.model_json_schema()
+    converted = {"flags": {"enabled": "off"}, "pair": ["yes", "22"]}
+    parsed = Args.model_validate(converted)
+    assert parsed.flags == {"enabled": False}
+    assert parsed.pair == (True, 22)
+    assert argument_type_mismatches(schema, converted) == ["flags", "pair"]
+    assert argument_type_mismatches(schema, {"flags": {"enabled": False}, "pair": [True, 22]}) == []
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_numbers_are_not_json_numbers(value):
+    assert argument_type_mismatches(SCHEMA, {"budget": value}) == ["budget"]
+
+
+def test_recursive_and_deep_schema_rules_fail_closed():
+    schema = {"$defs": {"Loop": {"$ref": "#/$defs/Loop"}}, "properties": {"x": {"$ref": "#/$defs/Loop"}}}
+    assert argument_type_mismatches(schema, {"x": "off"}) == ["x"]
+    rule = {"type": "boolean"}
+    for _ in range(20):
+        rule = {"allOf": [rule]}
+    assert argument_type_mismatches({"properties": {"x": rule}}, {"x": "off"}) == ["x"]
+
+
+def test_literal_union_branch_cannot_hide_numeric_conversion():
+    from typing import Literal, Union
+
+    from pydantic import BaseModel
+
+    class Args(BaseModel):
+        limit: Union[Literal["auto"], int]
+
+    schema = Args.model_json_schema()
+    assert Args.model_validate({"limit": "22"}).limit == 22
+    assert argument_type_mismatches(schema, {"limit": "22"}) == ["limit"]
+    assert argument_type_mismatches(schema, {"limit": "auto"}) == []
+    assert argument_type_mismatches(schema, {"limit": 22}) == []
+
+
+def test_constrained_string_union_cannot_hide_numeric_conversion():
+    from typing import Annotated, Union
+
+    from pydantic import BaseModel, StringConstraints
+
+    class Args(BaseModel):
+        limit: Union[Annotated[str, StringConstraints(pattern="^auto$", min_length=4)], int]
+
+    assert Args.model_validate({"limit": "22"}).limit == 22
+    assert argument_type_mismatches(Args.model_json_schema(), {"limit": "22"}) == ["limit"]
+    assert argument_type_mismatches(Args.model_json_schema(), {"limit": "auto"}) == []
+
+
+def test_discriminated_union_checks_only_eligible_branches():
+    from typing import Annotated, Literal, Union
+
+    from pydantic import BaseModel, Field
+
+    class Text(BaseModel):
+        kind: Literal["text"]
+        value: str
+
+    class Number(BaseModel):
+        kind: Literal["number"]
+        value: int
+
+    class Args(BaseModel):
+        item: Annotated[Union[Text, Number], Field(discriminator="kind")]
+
+    args = {"item": {"kind": "number", "value": "22"}}
+    assert Args.model_validate(args).item.value == 22
+    assert argument_type_mismatches(Args.model_json_schema(), args) == ["item"]
+    assert argument_type_mismatches(Args.model_json_schema(), {"item": {"kind": "text", "value": "22"}}) == []
+
+
+def test_old_tuple_and_pattern_property_schemas():
+    schema = {"properties": {
+        "pair": {"type": "array", "items": [{"type": "integer"}, {"type": "boolean"}]},
+        "flags": {"type": "object", "patternProperties": {"^flag": {"type": "boolean"}}, "additionalProperties": {"type": "integer"}},
+    }}
+    assert argument_type_mismatches(schema, {"pair": ["22", "off"]}) == ["pair"]
+    assert argument_type_mismatches(schema, {"flags": {"flag1": "off"}}) == ["flags"]
+    assert argument_type_mismatches(schema, {"pair": [22, False], "flags": {"flag1": False, "other": 22}}) == []
 
 
 def test_tool_input_schema_reads_common_tool_shapes():
