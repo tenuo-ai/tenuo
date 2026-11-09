@@ -549,10 +549,20 @@ impl Constraint {
     /// that negating a rule never admits values the rule could not judge.
     pub(crate) fn value_kinds(&self) -> Result<ValueKinds> {
         Ok(match self {
-            Constraint::Wildcard(_) | Constraint::Cel(_) => ValueKinds::ALL,
-            Constraint::Pattern(_)
-            | Constraint::Regex(_)
-            | Constraint::Cidr(_)
+            Constraint::Wildcard(_) => ValueKinds::ALL,
+            Constraint::Cel(c) => {
+                c.validate()?;
+                ValueKinds::ALL
+            }
+            Constraint::Pattern(p) => {
+                p.get_compiled()?;
+                ValueKinds::STRING
+            }
+            Constraint::Regex(r) => {
+                r.get_compiled()?;
+                ValueKinds::STRING
+            }
+            Constraint::Cidr(_)
             | Constraint::UrlPattern(_)
             | Constraint::UrlSafe(_)
             | Constraint::Shlex(_)
@@ -564,9 +574,16 @@ impl Constraint {
             Constraint::Exact(e) => ValueKinds::of(&e.value),
             Constraint::OneOf(o) => ValueKinds::of_all(&o.values),
             Constraint::NotOneOf(n) => n.value_kinds(),
-            Constraint::All(a) => a.constraints.iter().try_fold(ValueKinds::ALL, |acc, c| {
-                Ok::<_, Error>(acc.intersection(c.value_kinds()?))
-            })?,
+            Constraint::All(a) => {
+                if a.constraints.is_empty() {
+                    return Err(Error::Validation(
+                        "All constraint with an empty constraints array is invalid".to_string(),
+                    ));
+                }
+                a.constraints.iter().try_fold(ValueKinds::ALL, |acc, c| {
+                    Ok::<_, Error>(acc.intersection(c.value_kinds()?))
+                })?
+            }
             Constraint::Any(a) => a.constraints.iter().try_fold(ValueKinds::NONE, |acc, c| {
                 Ok::<_, Error>(acc.union(c.value_kinds()?))
             })?,
@@ -4113,10 +4130,11 @@ impl Not {
     /// A value of a kind the inner constraint cannot judge does not pass:
     /// `Not(Regex("rm"))` rejects a list or a number as well as `"rm -rf"`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        if !self.constraint.value_kinds()?.accepts(value) {
-            return Ok(false);
-        }
-        Ok(!self.constraint.matches(value)?)
+        let kinds = self.constraint.value_kinds()?;
+        // Even off-kind values must not hide an evaluation error that an
+        // enclosing negation could otherwise turn into an allow.
+        let matched = self.constraint.matches(value)?;
+        Ok(kinds.accepts(value) && !matched)
     }
 
     /// Validate attenuation for `Not` constraints.
@@ -7714,6 +7732,57 @@ mod tests {
                 assert!(error.to_string().contains("unknown constraint type ID 200"));
             }
         }
+    }
+
+    fn nested_negation_with(inner: Constraint) -> Constraint {
+        Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+            Constraint::Not(Not::new(Constraint::All(All::new(vec![
+                inner,
+                Constraint::Exact(Exact::new("blocked")),
+            ])))),
+            Constraint::Exact(Exact::new(1000)),
+        ]))))
+    }
+
+    #[test]
+    fn test_negation_preserves_invalid_constraint_errors() {
+        let invalid = [
+            Constraint::All(All::new(Vec::<Constraint>::new())),
+            Constraint::Regex(RegexConstraint {
+                pattern: "[".to_string(),
+                compiled: None,
+            }),
+            Constraint::Pattern(Pattern {
+                pattern: "[".to_string(),
+                compiled: None,
+            }),
+            Constraint::Cel(CelConstraint::new("(")),
+        ];
+        for inner in invalid {
+            let value = ConstraintValue::Integer(5);
+            let error = inner.matches(&value).unwrap_err();
+            let nested = nested_negation_with(inner).matches(&value).unwrap_err();
+            assert_eq!(nested.to_string(), error.to_string());
+        }
+    }
+
+    #[cfg(not(feature = "cel"))]
+    #[test]
+    fn test_negation_preserves_disabled_cel_error() {
+        let rule = nested_negation_with(Constraint::Cel(CelConstraint::new("false")));
+        assert!(matches!(
+            rule.matches(&ConstraintValue::Integer(5)),
+            Err(Error::FeatureNotEnabled { feature: "cel" })
+        ));
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_negation_preserves_cel_evaluation_errors_for_off_kind_values() {
+        let inner = Constraint::Cel(CelConstraint::new("value / 0 == 0"));
+        let value = ConstraintValue::Integer(5);
+        assert!(inner.matches(&value).is_err());
+        assert!(nested_negation_with(inner).matches(&value).is_err());
     }
 
     #[test]
