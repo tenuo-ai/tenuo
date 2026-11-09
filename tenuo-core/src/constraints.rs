@@ -917,7 +917,13 @@ impl Constraint {
 ///
 /// Note: Object uses BTreeMap for deterministic serialization order.
 /// This ensures canonical CBOR encoding for consistent warrant IDs.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// Equality is numeric across `Integer` and `Float`: `Integer(1)` equals
+/// `Float(1.0)`, the same number rule the signed argument map uses. Every
+/// value-equality constraint (`Exact`, `OneOf`, `NotOneOf`, `Contains`,
+/// `Subset`) and every approval gate compares through this, so the spelling
+/// of an integral number cannot change a decision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ConstraintValue {
     String(String),
@@ -927,6 +933,25 @@ pub enum ConstraintValue {
     List(Vec<ConstraintValue>),
     Object(BTreeMap<String, ConstraintValue>),
     Null,
+}
+
+impl PartialEq for ConstraintValue {
+    fn eq(&self, other: &Self) -> bool {
+        use ConstraintValue::*;
+        match (self, other) {
+            (String(a), String(b)) => a == b,
+            (Integer(a), Integer(b)) => a == b,
+            (Float(a), Float(b)) => a == b,
+            (Integer(i), Float(f)) | (Float(f), Integer(i)) => {
+                crate::meta_envelope::integral_i64(*f) == Some(*i)
+            }
+            (Boolean(a), Boolean(b)) => a == b,
+            (List(a), List(b)) => a == b,
+            (Object(a), Object(b)) => a == b,
+            (Null, Null) => true,
+            _ => false,
+        }
+    }
 }
 
 impl ConstraintValue {
@@ -950,6 +975,26 @@ impl ConstraintValue {
             ConstraintValue::Integer(i) => Some(*i as f64),
             ConstraintValue::Float(f) => Some(*f),
             _ => None,
+        }
+    }
+
+    /// This value with every integral `Float` written as `Integer`, recursively.
+    ///
+    /// Equal values (under the numeric `PartialEq`) map to one representation,
+    /// for code that orders or hashes values rather than comparing them.
+    pub(crate) fn with_integral_floats_folded(&self) -> ConstraintValue {
+        match self {
+            ConstraintValue::Float(f) => crate::meta_envelope::integral_i64(*f)
+                .map_or(ConstraintValue::Float(*f), ConstraintValue::Integer),
+            ConstraintValue::List(l) => {
+                ConstraintValue::List(l.iter().map(Self::with_integral_floats_folded).collect())
+            }
+            ConstraintValue::Object(m) => ConstraintValue::Object(
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.with_integral_floats_folded()))
+                    .collect(),
+            ),
+            other => other.clone(),
         }
     }
 

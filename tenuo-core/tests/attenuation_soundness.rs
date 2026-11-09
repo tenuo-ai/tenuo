@@ -45,6 +45,9 @@ fn numeric_value_strategy() -> impl Strategy<Value = ConstraintValue> {
     prop_oneof![
         (-1000i64..1000).prop_map(ConstraintValue::Integer),
         (-1000.0f64..1000.0).prop_map(ConstraintValue::Float),
+        // Integral floats: the same numbers as above, spelled `n.0`. A uniform
+        // float draw almost never lands on one.
+        (-1000i64..1000).prop_map(|i| ConstraintValue::Float(i as f64)),
     ]
 }
 

@@ -545,7 +545,12 @@ fn json_to_constraint_value(value: &Value) -> Option<ConstraintValue> {
                         .or_else(|| Some(ConstraintValue::String(u.to_string())))
                 }
             } else {
-                n.as_f64().map(ConstraintValue::Float)
+                // Same number rule as the signed argument map: `1.0` is `1`.
+                n.as_f64().map(|f| {
+                    crate::meta_envelope::integral_i64(f)
+                        .map(ConstraintValue::Integer)
+                        .unwrap_or(ConstraintValue::Float(f))
+                })
             }
         }
         Value::Array(arr) => {
@@ -984,7 +989,11 @@ mod tests {
         assert!(compiled.compiled_path.is_some());
 
         let ctx = RequestContext::with_body(json!({ "metadata": { "cost": 150.0 } }));
-        assert_eq!(compiled.extract(&ctx), Some(ConstraintValue::Float(150.0)));
+        // Integral floats extract as integers, the signed-map number rule.
+        assert!(matches!(
+            compiled.extract(&ctx),
+            Some(ConstraintValue::Integer(150))
+        ));
     }
 
     #[test]
@@ -1026,10 +1035,10 @@ mod tests {
             constraints.get("cluster"),
             Some(&ConstraintValue::String("prod".into()))
         );
-        assert_eq!(
+        assert!(matches!(
             constraints.get("cost"),
-            Some(&ConstraintValue::Float(100.0))
-        );
+            Some(&ConstraintValue::Integer(100))
+        ));
     }
 
     #[test]
