@@ -628,6 +628,29 @@ impl Constraint {
         }
     }
 
+    /// Evaluate composites under negation without hiding errors behind a
+    /// branch whose result changed due to kind-scoped negation. The caller
+    /// first validates availability and structure with `value_kinds()`.
+    fn matches_for_negation(&self, value: &ConstraintValue) -> Result<bool> {
+        match self {
+            Constraint::All(all) => {
+                let mut matched = true;
+                for clause in &all.constraints {
+                    matched &= clause.matches_for_negation(value)?;
+                }
+                Ok(matched)
+            }
+            Constraint::Any(any) => {
+                let mut matched = false;
+                for clause in &any.constraints {
+                    matched |= clause.matches_for_negation(value)?;
+                }
+                Ok(matched)
+            }
+            _ => self.matches(value),
+        }
+    }
+
     /// Check if `child` is a valid attenuation of `self` (parent).
     ///
     /// Returns `Ok(())` if the child is strictly narrower or equal.
@@ -4133,7 +4156,7 @@ impl Not {
         let kinds = self.constraint.value_kinds()?;
         // Even off-kind values must not hide an evaluation error that an
         // enclosing negation could otherwise turn into an allow.
-        let matched = self.constraint.matches(value)?;
+        let matched = self.constraint.matches_for_negation(value)?;
         Ok(kinds.accepts(value) && !matched)
     }
 
@@ -7783,6 +7806,31 @@ mod tests {
         let value = ConstraintValue::Integer(5);
         assert!(inner.matches(&value).is_err());
         assert!(nested_negation_with(inner).matches(&value).is_err());
+
+        let rule = Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+            Constraint::All(All::new(vec![
+                Constraint::Not(Not::new(Constraint::Exact(Exact::new("prod")))),
+                Constraint::Cel(CelConstraint::new("value / 0 == 0")),
+            ])),
+            Constraint::Exact(Exact::new(1000)),
+        ]))));
+        assert!(rule.matches(&value).is_err());
+    }
+
+    #[test]
+    fn test_negation_keeps_valid_mixed_kind_exclusions() {
+        let rule = Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+            Constraint::Exact(Exact::new("prod")),
+            Constraint::Exact(Exact::new(1000)),
+        ]))));
+        assert!(rule.matches(&ConstraintValue::Integer(5)).unwrap());
+        assert!(rule
+            .matches(&ConstraintValue::String("staging".to_string()))
+            .unwrap());
+        assert!(!rule.matches(&ConstraintValue::Integer(1000)).unwrap());
+        assert!(!rule
+            .matches(&ConstraintValue::String("prod".to_string()))
+            .unwrap());
     }
 
     #[test]

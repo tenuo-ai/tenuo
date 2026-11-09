@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   annotation and A2A checks preserve the argument's original type, and the
   same core checks are included in the TypeScript WASM build. Upgrade
   enforcement points together before relying on these negation semantics.
+  Composite branches inside `Not` must all evaluate successfully: unsupported
+  features, malformed rules, and evaluation errors are never hidden by
+  short-circuiting. Put error-guarding CEL conditions in the CEL expression
+  itself when conditional evaluation is required.
 
 - **An integral number matches the same way however it is spelled.**
   `ConstraintValue` compared `Integer(1000)` and `Float(1000.0)` as different
