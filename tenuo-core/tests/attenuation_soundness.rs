@@ -33,6 +33,55 @@ fn atom_strategy() -> impl Strategy<Value = String> {
     prop::sample::select(ATOMS).prop_map(|s| s.to_string())
 }
 
+#[test]
+fn regression_negation_cannot_remove_error_based_rejection() {
+    let exact = Constraint::Exact(Exact::new("10.0.0.1"));
+    let cidr = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
+    let parent = Constraint::Not(Not::new(Constraint::All(All::new(vec![
+        exact.clone(),
+        cidr.clone(),
+    ]))));
+    let child = Constraint::Not(Not::new(Constraint::All(All::new(vec![exact.clone()]))));
+    let malformed = ConstraintValue::String("not-an-ip".into());
+    assert!(parent.matches(&malformed).is_err());
+    assert!(child.matches(&malformed).unwrap());
+    assert!(parent.validate_attenuation(&child).is_err());
+
+    let inner = vec![
+        exact.clone(),
+        cidr.clone(),
+        Constraint::All(All::new(vec![exact.clone(), cidr.clone()])),
+        Constraint::Any(Any::new(vec![exact.clone(), cidr.clone()])),
+        Constraint::All(All::new(vec![cidr.clone()])),
+        Constraint::Any(Any::new(vec![cidr])),
+        Constraint::Not(Not::new(exact)),
+        Constraint::Wildcard(Wildcard),
+    ];
+    let values = [
+        malformed,
+        ConstraintValue::String("10.0.0.1".into()),
+        ConstraintValue::String("10.0.0.2".into()),
+        ConstraintValue::String("192.168.1.1".into()),
+        ConstraintValue::Integer(5),
+        ConstraintValue::List(vec![]),
+    ];
+    for parent_inner in &inner {
+        for child_inner in &inner {
+            let parent = Constraint::Not(Not::new(parent_inner.clone()));
+            let child = Constraint::Not(Not::new(child_inner.clone()));
+            if parent.validate_attenuation(&child).is_ok() {
+                for value in &values {
+                    assert!(
+                        !child.matches(value).unwrap_or(false)
+                            || parent.matches(value).unwrap_or(false),
+                        "negated delegation widened rejection: {parent:?} -> {child:?}, {value:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn string_value_strategy() -> impl Strategy<Value = ConstraintValue> {
     prop_oneof![
         atom_strategy().prop_map(ConstraintValue::String),
