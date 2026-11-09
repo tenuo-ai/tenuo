@@ -18,6 +18,9 @@ import math
 import re
 from typing import Any, Dict, List, Mapping, Optional
 
+from jsonschema import Draft202012Validator, FormatChecker, validators
+from referencing import Registry
+
 _MAX_DEPTH = 16
 
 
@@ -80,6 +83,32 @@ def _resolve(schema: Any, root: Mapping[str, Any]) -> Optional[Mapping[str, Any]
     return None
 
 
+def _no_remote_schema(uri: str) -> Any:
+    raise ValueError("Remote schema retrieval is disabled")
+
+
+_BranchValidator = validators.extend(
+    Draft202012Validator,
+    type_checker=Draft202012Validator.TYPE_CHECKER.redefine_many({
+        name: (lambda checker, value, expected=name: _json_type_ok(expected, value))
+        for name in ("boolean", "integer", "number", "string", "array", "object", "null")
+    }),
+)
+
+
+def _eligible_branch(schema: Any, value: Any, root: Mapping[str, Any]) -> bool:
+    # Type checks alone cannot choose a union branch: a failing minimum,
+    # required field, format, or collection bound can make the framework use
+    # another branch that converts a value. Use the complete schema rules.
+    # References remain local; validation must never retrieve remote schemas.
+    try:
+        registry = Registry(retrieve=_no_remote_schema)  # type: ignore[call-arg]  # attrs-generated constructor
+        validator = _BranchValidator(root, registry=registry, format_checker=FormatChecker())
+        return validator.evolve(schema=schema).is_valid(value)
+    except Exception:
+        return False
+
+
 def _matches(schema: Any, value: Any, root: Mapping[str, Any], depth: int) -> bool:
     if isinstance(schema, bool):
         return schema
@@ -112,7 +141,10 @@ def _matches(schema: Any, value: Any, root: Mapping[str, Any], depth: int) -> bo
     for key in ("anyOf", "oneOf"):
         options = resolved.get(key)
         if isinstance(options, list) and options:
-            if not any(_matches(option, value, root, depth + 1) for option in options):
+            if not any(
+                _eligible_branch(option, value, root) and _matches(option, value, root, depth + 1)
+                for option in options
+            ):
                 return False
     parts = resolved.get("allOf")
     if isinstance(parts, list) and not all(_matches(part, value, root, depth + 1) for part in parts):

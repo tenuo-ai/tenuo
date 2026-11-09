@@ -197,6 +197,50 @@ def test_old_tuple_and_pattern_property_schemas():
     assert argument_type_mismatches(schema, {"pair": [22, False], "flags": {"flag1": False, "other": 22}}) == []
 
 
+def test_union_branch_value_requirements_cannot_mask_conversion():
+    from typing import Annotated, List, Union
+
+    from pydantic import BaseModel, Field, PositiveInt
+
+    class Numeric(BaseModel):
+        item: Union[PositiveInt, bool]
+
+    assert Numeric.model_validate({"item": 0}).item is False
+    assert argument_type_mismatches(Numeric.model_json_schema(), {"item": 0}) == ["item"]
+
+    class Arrays(BaseModel):
+        item: Union[Annotated[List[str], Field(min_length=2)], List[int]]
+
+    assert Arrays.model_validate({"item": ["22"]}).item == [22]
+    assert argument_type_mismatches(Arrays.model_json_schema(), {"item": ["22"]}) == ["item"]
+
+    class Text(BaseModel):
+        value: str
+        required: str
+
+    class Number(BaseModel):
+        value: int
+
+    class Objects(BaseModel):
+        item: Union[Text, Number]
+
+    assert Objects.model_validate({"item": {"value": "22"}}).item.value == 22
+    assert argument_type_mismatches(Objects.model_json_schema(), {"item": {"value": "22"}}) == ["item"]
+
+
+def test_union_validation_never_fetches_remote_references(monkeypatch):
+    import urllib.request
+
+    requests = []
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: requests.append(args))
+    schema = {"properties": {"item": {"anyOf": [
+        {"$ref": "https://example.test/schema"}, {"type": "integer"},
+    ]}}}
+    assert argument_type_mismatches(schema, {"item": "22"}) == ["item"]
+    assert argument_type_mismatches(schema, {"item": 22}) == []
+    assert requests == []
+
+
 def test_tool_input_schema_reads_common_tool_shapes():
     class JsonSchemaTool:
         params_json_schema = SCHEMA
