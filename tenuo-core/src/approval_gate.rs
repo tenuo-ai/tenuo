@@ -942,7 +942,11 @@ fn normalize_for_gate_comparison(c: &Constraint) -> Constraint {
     fn sorted(
         vals: &[crate::constraints::ConstraintValue],
     ) -> Vec<crate::constraints::ConstraintValue> {
-        let mut v = vals.to_vec();
+        // Fold first so `1` and `1.0`, which compare equal, sort together.
+        let mut v: Vec<_> = vals
+            .iter()
+            .map(crate::constraints::ConstraintValue::with_integral_floats_folded)
+            .collect();
         v.sort_unstable_by(cmp_cv);
         v
     }
