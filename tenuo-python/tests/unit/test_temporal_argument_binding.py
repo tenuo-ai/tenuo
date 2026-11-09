@@ -48,26 +48,45 @@ def test_plain_self_parameter_is_preserved_when_signing():
     assert _args_to_dict_by_fn(("first", "second"), plain, for_signing=True) == {"self": "first", "destination": "second"}
 
 
+from temporalio import activity  # noqa: E402
+
+
+class Activities:
+    @activity.defn
+    def method(self, destination: str):
+        return destination
+
+    @activity.defn
+    def varargs(self, *values):
+        return values
+
+    @staticmethod
+    @activity.defn
+    def static(self: str, destination: str):
+        return self, destination
+
+
 def test_unbound_activity_method_matches_the_worker_bound_method():
-    from temporalio import activity
-
-    class Activities:
-        @activity.defn
-        def method(self, destination: str):
-            return destination
-
     caller = _args_to_dict_by_fn(("public",), Activities.method, for_signing=True)
     worker = _args_to_dict_by_fn(("public",), Activities().method)
     assert caller == worker == {"destination": "public"}
 
 
 def test_unbound_vararg_activity_keeps_every_argument():
-    from temporalio import activity
-
-    class Activities:
-        @activity.defn
-        def method(self, *values):
-            return values
-
     args = ("first", "second", "third")
-    assert _args_to_dict_by_fn(args, Activities.method, for_signing=True) == _args_to_dict_by_fn(args, Activities().method)
+    assert _args_to_dict_by_fn(args, Activities.varargs, for_signing=True) == _args_to_dict_by_fn(args, Activities().varargs)
+
+
+def test_static_activity_preserves_its_explicit_self_parameter():
+    args = ("first", "second")
+    assert _args_to_dict_by_fn(args, Activities.static, for_signing=True) == {"self": "first", "destination": "second"}
+
+
+def test_unresolvable_local_method_requires_a_worker_callable():
+    class Local:
+        @activity.defn
+        def method(self, destination: str):
+            return destination
+
+    with pytest.raises(TenuoContextError, match="bound callable"):
+        _args_to_dict_by_fn(("public",), Local.method, for_signing=True)

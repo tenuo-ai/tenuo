@@ -264,7 +264,15 @@ class _TenuoWorkflowOutboundInterceptor:
 
                     raw_args = getattr(input, "args", ()) or ()
                     _validate_no_reserved_workflow_parameters(activity_fn)
-                    args_dict = _args_to_dict_by_fn(raw_args, activity_fn, for_signing=True)
+                    registered = self._config._activity_registry.get(activity_type) if self._config else None
+                    use_registered_signature = registered is not None and (
+                        registered is activity_fn or getattr(registered, "__func__", None) is activity_fn
+                    )
+                    args_dict = _args_to_dict_by_fn(
+                        raw_args,
+                        registered if use_registered_signature else activity_fn,
+                        for_signing=not use_registered_signature,
+                    )
 
                     pop_tool_name = _warrant_tool_name_for_activity_type(
                         self._config, activity_type, activity_fn

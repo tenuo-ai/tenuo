@@ -175,7 +175,19 @@ def _args_to_dict_by_fn(
                 and len(activity_fn.__qualname__.split(".")) > 1
                 and activity_fn.__qualname__.split(".")[-2] != "<locals>"
             ):
-                parameters = parameters[1:]
+                owner = inspect.getmodule(activity_fn)
+                for part in activity_fn.__qualname__.split(".")[:-1]:
+                    owner = getattr(owner, part, None) if part != "<locals>" else None
+                if not inspect.isclass(owner):
+                    raise TenuoContextError(
+                        "Cannot distinguish an unbound local activity method from a static method. "
+                        "Pass a bound callable or register the worker callable in activity_fns."
+                    )
+                descriptor = inspect.getattr_static(owner, activity_fn.__name__, None)
+                if descriptor is activity_fn:
+                    parameters = parameters[1:]
+                elif not isinstance(descriptor, staticmethod):
+                    raise TenuoContextError("Cannot resolve the activity's receiver; pass a bound callable")
             for pname, p in parameters:
                 if p.kind not in (
                     inspect.Parameter.POSITIONAL_ONLY,

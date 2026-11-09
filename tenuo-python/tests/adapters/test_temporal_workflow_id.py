@@ -449,6 +449,8 @@ def test_unbound_caller_and_bound_worker_round_trip():
     s.warrant = Warrant.mint_builder().holder(s.holder.public_key).capability(
         "issue_refund", destination=Pattern("/data/*"),
     ).ttl(600).mint(s.issuer)
+    worker_fn = Activities().refund
+    s.config._activity_registry["issue_refund"] = worker_fn
     token = _activity_fn_override.set(Activities.refund)
     try:
         headers = s.schedule("wf", fn=None, args=("/data/a",))
@@ -458,3 +460,25 @@ def test_unbound_caller_and_bound_worker_round_trip():
     body = s.execute(headers, "wf", fn=Activities().refund, args=("/data/a",))
     body.execute_activity.assert_awaited_once()
     assert body.execute_activity.call_args.args[0].args == ("/data/a",)
+
+
+def test_static_activity_self_parameter_signing_and_worker_round_trip():
+    from temporalio import activity
+
+    class StaticActivities:
+        @staticmethod
+        @activity.defn
+        def issue_refund(self: str, destination: str):
+            return self, destination
+
+    s = Setup()
+    s.warrant = Warrant.mint_builder().holder(s.holder.public_key).capability(
+        "issue_refund", {"self": Exact("sender"), "destination": Pattern("/data/*")},
+    ).ttl(600).mint(s.issuer)
+    s.config._activity_registry["issue_refund"] = StaticActivities.issue_refund
+    args = ("sender", "/data/a")
+    headers = s.schedule("wf", fn=StaticActivities.issue_refund, args=args)
+    assert headers[TENUO_ARG_KEYS_HEADER].data == b"self,destination"
+    body = s.execute(headers, "wf", fn=StaticActivities.issue_refund, args=args)
+    body.execute_activity.assert_awaited_once()
+    assert body.execute_activity.call_args.args[0].args == args
