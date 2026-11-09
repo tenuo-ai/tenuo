@@ -651,6 +651,47 @@ impl Constraint {
         }
     }
 
+    /// Every potentially failing leaf in the parent must still run under
+    /// negation. Reversed positive attenuation only compares boolean match
+    /// sets, so it cannot prove that removing a parser preserves denials.
+    fn preserves_negation_errors_of(&self, parent: &Constraint) -> bool {
+        match parent {
+            Constraint::All(all) => all
+                .constraints
+                .iter()
+                .all(|c| self.preserves_negation_errors_of(c)),
+            Constraint::Any(any) => any
+                .constraints
+                .iter()
+                .all(|c| self.preserves_negation_errors_of(c)),
+            Constraint::Not(not) => self.preserves_negation_errors_of(&not.constraint),
+            Constraint::Wildcard(_)
+            | Constraint::Exact(_)
+            | Constraint::OneOf(_)
+            | Constraint::NotOneOf(_)
+            | Constraint::Range(_)
+            | Constraint::Contains(_)
+            | Constraint::Subset(_)
+            | Constraint::Shlex(_) => true,
+            _ => self.contains_negation_leaf(parent),
+        }
+    }
+
+    fn contains_negation_leaf(&self, leaf: &Constraint) -> bool {
+        match self {
+            Constraint::All(all) => all
+                .constraints
+                .iter()
+                .any(|c| c.contains_negation_leaf(leaf)),
+            Constraint::Any(any) => any
+                .constraints
+                .iter()
+                .any(|c| c.contains_negation_leaf(leaf)),
+            Constraint::Not(not) => not.constraint.contains_negation_leaf(leaf),
+            _ => self == leaf,
+        }
+    }
+
     /// Check if `child` is a valid attenuation of `self` (parent).
     ///
     /// Returns `Ok(())` if the child is strictly narrower or equal.
@@ -4194,6 +4235,15 @@ impl Not {
                 "Not attenuation requires the child inner constraint to judge only kinds of \
                  value the parent inner constraint judges"
                     .to_string(),
+            ));
+        }
+        if !matches!(*child.constraint, Constraint::Wildcard(_))
+            && !child
+                .constraint
+                .preserves_negation_errors_of(&self.constraint)
+        {
+            return Err(Error::MonotonicityViolation(
+                "Not attenuation must preserve potentially failing inner rules".to_string(),
             ));
         }
         // Direction is inverted: child_inner must be at least as permissive as parent_inner.

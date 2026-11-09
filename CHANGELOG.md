@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   features, malformed rules, and evaluation errors are never hidden by
   short-circuiting. Put error-guarding CEL conditions in the CEL expression
   itself when conditional evaluation is required.
+  Negated delegation must retain potentially failing inner rules unchanged;
+  removing a parsing or evaluation rule cannot discard an error-based denial.
 
 - **An integral number matches the same way however it is spelled.**
   `ConstraintValue` compared `Integer(1000)` and `Float(1000.0)` as different
