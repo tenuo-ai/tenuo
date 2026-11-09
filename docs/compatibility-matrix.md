@@ -32,7 +32,7 @@ TypeScript examples must pin that package version as well.
 | **Hermes Agent** | 0.20 (plugin floor) | latest | upstream `main` (nightly) | Supported | Official plugin package, `hermes-tenuo` 0.1.3. Requires `tenuo>=0.3.2`. |
 | **AutoGen** | 0.7.0 | 0.7+ latest | 0.7.5 | Stable | Use `autogen-agentchat` / `autogen-ext` (not stale `0.0.x` squat packages). |
 | **LangChain** | 0.2.0 | 1.x latest | 1.4.7 / core 1.6.13 | Stable | |
-| **LangGraph** | 0.2.0 | 1.x latest | 1.2.16 | Stable | Requires `langchain-core>=0.2.27`. `TenuoToolNode` needs `langgraph-prebuilt>=1.0.2` (LangGraph 1.x), the first release with the `ToolNode(wrap_tool_call=)` hook; on older lines it raises `RuntimeError` at construction. |
+| **LangGraph** | 1.0 on Python 3.10+; 0.2.0 on Python 3.9 | 1.x latest | 1.2.16 | Stable | Requires `langchain-core>=0.2.27`. On Python 3.10+, the extra also installs `langgraph-prebuilt>=1.0.2`, the first release with the `ToolNode(wrap_tool_call=)` hook that `TenuoToolNode` needs; on older lines it raises `RuntimeError` at construction. |
 | **MCP** | 1.9.4 | 1.x or 2.x | 1.30.0 and 2.3.0 | Stable | Python `tenuo.mcp` supports MCP SDK 1.9.4+ and 2.x (streamable-HTTP transport shape settled in 1.9.4). |
 | **FastMCP** | 3.2.1 | 3.x or 4.x | 3.4.11 and 4.1.3 | Stable | FastMCP 4 requires MCP SDK 2.x. Denials are a real `ToolResult` subclass (`isError=True` on the wire) on every line. |
 | **Google ADK** | 0.1.0 | latest | 2.12.0 | Stable | GuardBuilder / before_tool covered in CI. |
@@ -87,6 +87,9 @@ TypeScript examples must pin that package version as well.
 
 **Version Notes**:
 - **langchain-core 0.2.0-0.2.26**: Incompatible with `langgraph>=0.2` (runtime warning).
+- The `langgraph` extra installs LangGraph 1.0+ and `langgraph-prebuilt>=1.0.2`
+  on Python 3.10+. Python 3.9 retains the older dependency floor and supports
+  the basic node/decorator paths, rather than `TenuoToolNode`.
 - **`TenuoToolNode`**: needs `langgraph-prebuilt>=1.0.2`. Earlier prebuilt releases (including every LangGraph 0.x line) have no `ToolNode(wrap_tool_call=)` hook, so `TenuoToolNode` raises `RuntimeError` and its tests skip on the 0.2.0 floor. `guard_node`, `tenuo_node` and the `@guard` path work from 0.2.0. Check `tenuo.langgraph.WRAP_TOOL_CALL_SUPPORTED` at runtime.
 - LangChain / LangGraph 1.x validated in the hosted compatibility matrix on 2026-10-21.
 
