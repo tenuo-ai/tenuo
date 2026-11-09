@@ -2631,6 +2631,19 @@ class _GuardedCrewImpl:
             guard = self._build_agent_guard(agent)
             self._guards[role] = guard
 
+        for task in self._tasks:
+            assigned = getattr(task, "agent", None)
+            if _is_agent_adapter(assigned):
+                raise CrewAIConfigurationError(
+                    "A task uses an agent adapter, whose tools bypass before_tool_call hooks. "
+                    "Use a native crewai.Agent covered by this crew's policy."
+                )
+            if assigned is not None and not any(assigned is agent for agent in self._agents):
+                raise CrewAIConfigurationError(
+                    "A task's agent is absent from the guarded agents list. "
+                    "Add that agent to agents and policy before running the crew."
+                )
+
         # Return agents unmodified - hooks will intercept tool calls
         return list(self._agents)
 

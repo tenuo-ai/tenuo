@@ -1,6 +1,7 @@
 """CrewAI agent adapters bypass tool hooks, so the guard refuses to cover them."""
 
 import warnings
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -36,13 +37,36 @@ def test_adapter_agents_are_recognised():
 
 def test_guarded_crew_refuses_an_adapter_agent():
     crew = (
-        GuardedCrew(agents=[_adapter_agent("researcher")], tasks=[MagicMock()])
+        GuardedCrew(agents=[_adapter_agent("researcher")], tasks=[SimpleNamespace(agent=None)])
         .policy({"researcher": ["search"]})
         .constraints({"researcher": {"search": {"query": Wildcard()}}})
         .build()
     )
     with pytest.raises(CrewAIConfigurationError, match="agent adapter"):
         crew.kickoff()
+
+
+def test_task_assigned_adapter_cannot_bypass_the_guarded_agent_list():
+    from crewai import Agent, Task
+
+    native = Agent.model_construct(role="researcher", goal="g", backstory="b")
+    task = Task.model_construct(description="work", expected_output="result", agent=_adapter_agent("researcher"))
+    crew = GuardedCrew(agents=[native], tasks=[task]).policy({"researcher": ["search"]}).build()
+    with pytest.raises(CrewAIConfigurationError, match="agent adapter"):
+        crew.kickoff()
+
+
+def test_task_agent_must_be_one_of_the_vetted_instances():
+    from crewai import Agent, Task
+
+    native = Agent.model_construct(role="researcher", goal="g", backstory="b")
+    unvetted = Agent.model_construct(role="researcher", goal="g", backstory="b")
+    task = Task.model_construct(description="work", expected_output="result", agent=unvetted)
+    crew = GuardedCrew(agents=[native], tasks=[task]).policy({"researcher": ["search"]}).build()
+    with pytest.raises(CrewAIConfigurationError, match="absent from the guarded agents"):
+        crew.kickoff()
+    task.agent = native
+    assert crew._protect_agents() == [native]
 
 
 def test_strict_mode_says_what_it_does_not_detect():

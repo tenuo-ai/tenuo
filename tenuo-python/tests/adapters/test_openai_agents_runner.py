@@ -314,3 +314,37 @@ async def test_argument_the_sdk_would_convert_never_runs(tools, ran):
     await Runner.run(agent, "refund")
     assert ran == [("refund", 50)]
     assert any("blocked by Tenuo" in o for o in _tool_outputs(model))
+
+
+@pytest.mark.asyncio
+async def test_concurrent_parent_registration_cannot_replace_a_target_policy(tools, ran, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    import tenuo.openai as adapter
+
+    target = Agent(name="refunds", model=ScriptedModel([]), tools=[tools["refund"]])
+    parent = Agent(name="triage", model=ScriptedModel([]), tools=[tools["search"]], handoffs=[target])
+    reached, proceed = threading.Event(), threading.Event()
+    main_thread = threading.current_thread()
+    register = adapter._register_agent_policy
+
+    def pause_parent(agent, *args, **kwargs):
+        if agent is target and threading.current_thread() is not main_thread:
+            reached.set()
+            assert proceed.wait(timeout=5)
+        return register(agent, *args, **kwargs)
+
+    monkeypatch.setattr(adapter, "_register_agent_policy", pause_parent)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(guard_agent, parent, allow_tools=["search", "refund"])
+        try:
+            assert reached.wait(timeout=5)
+            guard_agent(target, allow_tools=["search"])
+        finally:
+            proceed.set()
+        pending.result(timeout=5)
+    target.model = ScriptedModel([[_call("refund", {"amount": 50}, "c1")]])
+    await Runner.run(target, "refund")
+    assert ran == []
+    assert any("blocked by Tenuo" in output for output in _tool_outputs(target.model))

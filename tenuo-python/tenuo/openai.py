@@ -3274,7 +3274,9 @@ _AGENT_POLICIES_LOCK = threading.Lock()
 _TOOL_GUARDRAIL: Any = None
 
 
-def _register_agent_policy(agent: Any, guard: TenuoToolGuardrail, on_denial: str) -> None:
+def _register_agent_policy(
+    agent: Any, guard: TenuoToolGuardrail, on_denial: str, *, replace: bool = True,
+) -> None:
     key = id(agent)
 
     def _forget(_ref: Any, key: int = key) -> None:
@@ -3284,6 +3286,9 @@ def _register_agent_policy(agent: Any, guard: TenuoToolGuardrail, on_denial: str
                 del _AGENT_POLICIES[key]
 
     with _AGENT_POLICIES_LOCK:
+        entry = _AGENT_POLICIES.get(key)
+        if not replace and entry is not None and entry[0]() is agent:
+            return
         _AGENT_POLICIES[key] = (weakref.ref(agent, _forget), guard, on_denial)
 
 
@@ -3508,8 +3513,7 @@ def guard_agent(
         seen.add(id(current))
         # An agent reached through a handoff keeps a policy it was already
         # given; only the agent named in this call has its policy replaced.
-        if current is agent or _agent_policy(current) is None:
-            _register_agent_policy(current, guard, on_denial)
+        _register_agent_policy(current, guard, on_denial, replace=current is agent)
         for tool in getattr(current, "tools", None) or []:
             if not hasattr(tool, "tool_input_guardrails"):
                 raise OpenAIConfigurationError(
