@@ -304,3 +304,13 @@ async def test_omitted_constrained_argument_never_runs_with_the_tool_default(ran
     await Runner.run(agent, "read")
     assert ran == ["/data/x"]
     assert any("blocked by Tenuo" in output for output in _tool_outputs(model))
+
+
+@pytest.mark.asyncio
+async def test_argument_the_sdk_would_convert_never_runs(tools, ran):
+    # refund(amount: int): the SDK would turn "50" into 50 after the guardrail.
+    model = ScriptedModel([[_call("refund", {"amount": "50"}, "c1")], [_call("refund", {"amount": 50}, "c2")]])
+    agent = guard_agent(Agent(name="a", model=model, tools=[tools["refund"]]), allow_tools=["refund"])
+    await Runner.run(agent, "refund")
+    assert ran == [("refund", 50)]
+    assert any("blocked by Tenuo" in o for o in _tool_outputs(model))

@@ -266,9 +266,24 @@ def _is_agent_adapter(agent: Any) -> bool:
     return isinstance(agent, BaseAgentAdapter)
 
 
-# =============================================================================
+def _hook_argument_type_mismatches(context: Any, args: Any) -> List[str]:
+    """Arguments the tool's schema would convert before the tool runs.
+
+    The hook authorizes ``context.tool_input`` as the model sent it; CrewAI
+    then validates it against the tool's ``args_schema``, which converts
+    ``"5000"`` to ``5000.0`` and ``"off"`` to ``False``. Naming those
+    arguments lets the hook refuse the call instead.
+    """
+    from ._arg_types import argument_type_mismatches, tool_input_schema
+
+    return argument_type_mismatches(tool_input_schema(getattr(context, "tool", None)), args)
+
+
+# ======================================================================
+
 # Exceptions
-# =============================================================================
+# ======================================================================
+
 
 
 class TenuoCrewAIError(Exception):
@@ -521,9 +536,11 @@ class InsufficientApprovalsDenied(TenuoCrewAIError):
         )
 
 
-# =============================================================================
+# ======================================================================
+
 # Audit Support
-# =============================================================================
+# ======================================================================
+
 
 
 @dataclass
@@ -559,9 +576,11 @@ class AuditEvent:
 AuditCallback = Callable[[AuditEvent], None]
 
 
-# =============================================================================
+# ======================================================================
+
 # Explanation API (Phase 2)
-# =============================================================================
+# ======================================================================
+
 
 
 @dataclass
@@ -595,9 +614,11 @@ class ExplanationResult:
         return f"ExplanationResult(tool={self.tool!r}, status='DENIED', reason={self.reason!r})"
 
 
-# =============================================================================
+# ======================================================================
+
 # GuardBuilder
-# =============================================================================
+# ======================================================================
+
 
 
 class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
@@ -728,9 +749,11 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
         )
 
 
-# =============================================================================
+# ======================================================================
+
 # CrewAIGuard
-# =============================================================================
+# ======================================================================
+
 
 
 class CrewAIGuard:
@@ -907,6 +930,8 @@ class CrewAIGuard:
             """Tenuo authorization hook for CrewAI before_tool_call."""
             tool_name, args, effective_role = _hook_call_info(context, agent_role)
             try:
+                if guard._blocks_converted_arguments(context, tool_name, args, effective_role):
+                    return False
                 result = guard._authorize(tool_name, args, agent_role=effective_role)
             except Exception as e:
                 return guard._block_on_exception(tool_name, args, effective_role, e)
@@ -918,6 +943,39 @@ class CrewAIGuard:
             return None
 
         return tenuo_authorize_hook
+
+    def _blocks_converted_arguments(
+        self,
+        context: Any,
+        tool_name: str,
+        args: Any,
+        agent_role: Optional[str],
+    ) -> bool:
+        """Deny a hook call whose arguments the tool's schema would convert.
+
+        Returns True when the call must be blocked. In observe mode the
+        denial is audited and the call continues to the normal checks.
+        """
+        mismatched = _hook_argument_type_mismatches(context, args)
+        if not mismatched:
+            return False
+        argument = mismatched[0]
+        self._handle_denial(
+            CrewAIConstraintViolation(
+                tool=tool_name,
+                argument=argument,
+                value=args.get(argument) if isinstance(args, dict) else None,
+                constraint="the tool's argument schema",  # type: ignore[arg-type]
+                reason="argument type does not match the tool schema",
+            ),
+            tool_name,
+            args,
+            agent_role,
+        )
+        if not should_block_violation():
+            return False
+        logger.info(f"[TENUO] BLOCKED {tool_name}: argument type does not match the tool schema")
+        return True
 
     def _block_on_exception(
         self,
@@ -1013,6 +1071,8 @@ class CrewAIGuard:
         """
         tool_name, args, effective_role = _hook_call_info(context, agent_role)
         try:
+            if self._blocks_converted_arguments(context, tool_name, args, effective_role):
+                return False
             result = await self._authorize_async(tool_name, args, agent_role=effective_role)
         except Exception as e:
             return self._block_on_exception(tool_name, args, effective_role, e)
@@ -1530,9 +1590,11 @@ class CrewAIGuard:
                 # operators for diagnosis.
                 logger.error("Audit callback failed: %s", e, exc_info=True)
 
-    # =========================================================================
+    # ==================================================================
+
     # Explain API (Phase 2)
-    # =========================================================================
+    # ==================================================================
+
 
     def explain(
         self,
@@ -1794,9 +1856,11 @@ class CrewAIGuard:
         return info
 
 
-# =============================================================================
+# ======================================================================
+
 # Warrant Delegation (Phase 4: Hierarchical Crews)
-# =============================================================================
+# ======================================================================
+
 
 
 class WarrantDelegator:
@@ -1941,9 +2005,11 @@ class WarrantDelegator:
             )
 
 
-# =============================================================================
+# ======================================================================
+
 # Phase 5: Strict Mode Context
-# =============================================================================
+# ======================================================================
+
 
 import contextvars  # noqa: E402 - intentionally grouped in Phase 5 section
 from contextlib import contextmanager  # noqa: E402
@@ -2132,9 +2198,11 @@ def get_unguarded_calls() -> List[str]:
     return _unguarded_calls.get()
 
 
-# =============================================================================
+# ======================================================================
+
 # Phase 5: @guarded_step Decorator
-# =============================================================================
+# ======================================================================
+
 
 
 def guarded_step(
@@ -2318,9 +2386,11 @@ def _parse_ttl(ttl: str) -> int:
         return int(float(ttl))
 
 
-# =============================================================================
+# ======================================================================
+
 # Phase 5: GuardedCrew Wrapper
-# =============================================================================
+# ======================================================================
+
 
 
 class GuardedCrewBuilder:
@@ -2681,9 +2751,11 @@ def GuardedCrew(
     return GuardedCrewBuilder(agents, tasks, process)
 
 
-# =============================================================================
+# ======================================================================
+
 # Re-exports for convenience
-# =============================================================================
+# ======================================================================
+
 
 __all__ = [
     # Builder

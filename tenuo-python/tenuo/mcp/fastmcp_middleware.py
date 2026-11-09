@@ -131,6 +131,27 @@ def _strip_tenuo_meta(
     )
 
 
+async def _tool_input_schema(fastmcp_context: Any, name: str) -> Optional[dict[str, Any]]:
+    """The registered tool's input JSON Schema, or ``None`` when unavailable.
+
+    FastMCP validates arguments against this schema after the middleware
+    chain, converting values of other JSON types. The verifier uses it to
+    refuse such values instead of authorizing one value and running another.
+    """
+    server = getattr(fastmcp_context, "fastmcp", None)
+    get_tool = getattr(server, "get_tool", None)
+    if not callable(get_tool):
+        return None
+    try:
+        tool = get_tool(name)
+        if hasattr(tool, "__await__"):
+            tool = await tool
+    except Exception:
+        return None
+    schema = getattr(tool, "parameters", None)
+    return dict(schema) if isinstance(schema, dict) else None
+
+
 class _DenialToolResult(ToolResult):
     """A real ``ToolResult`` that always serializes as an error ``CallToolResult``.
 
@@ -219,7 +240,8 @@ class TenuoMiddleware(Middleware):
         meta = resolve_tool_call_meta_for_verify(
             params, context.fastmcp_context
         )
-        result = self._verifier.verify(name, arguments, meta=meta)
+        input_schema = await _tool_input_schema(context.fastmcp_context, name)
+        result = self._verifier.verify(name, arguments, meta=meta, input_schema=input_schema)
         if not result.allowed:
             return _denial_tool_return(result)
         new_message = _strip_tenuo_meta(params, result.clean_arguments, resolved_meta=meta)
