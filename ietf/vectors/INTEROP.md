@@ -21,6 +21,9 @@ Record each verdict by vector id, as a JSON object:
 {"J.1": "PERMIT", "J.2": {"verdict": "DENY", "step": "2c"}}
 ```
 
+Give the `step` for each DENY, as in the example, so the comparison can count
+the denials that stop at the suite's expected step.
+
 A vector your implementation does not support can be `"SKIP"`, with an
 optional `"reason"`. An implementation with a different token format can
 run the suite at the property level: express each scenario it can in its
@@ -33,7 +36,11 @@ python3 ietf/vectors/compare_results.py results.json
 It prints the suite's SHA-256, so a report names the exact bytes it ran
 against, then the count of agreements and every disagreement. Only verdicts
 are compared: Section 8 permits some reordering, so a different failing step
-is not a disagreement (`--steps` lists them).
+is not a disagreement. The output also counts the agreed denials that stopped
+at the suite's expected step, and `--steps` lists those that stopped at
+another one. That count matters: an implementation that denies every vector at
+an early step agrees with every DENY verdict without checking the fault a
+vector was written for.
 
 ## Reporting
 
@@ -48,10 +55,14 @@ Please report both; ambiguities are fixed in the draft.
 
 ## Results
 
-| Implementation | Language | Version | Suite SHA-256 | Agree | Skipped | Notes |
-|---|---|---|---|---|---|---|
-| `gen_vectors.py` self-check | Python | this repository | `b7a42e9dfdce7fbc…` | 229 / 229 | 0 | Generates the suite; its Section 8 verifier shares no code with Tenuo. |
-| [VAID](https://github.com/solara-associates/vaid) (`vaid-mint`) | Rust | 0.11.0, Apache-2.0 | `b7a42e9dfdce7fbc…` | 22 / 229 | 207 | Property-level run in a different token format: VAID has no per-hop holder-key signing, JOSE headers, or constraint-predicate algebra, so most vectors testing those are `SKIP`, each with a per-scenario reason. 0 disagreements, 0 missing. [Harness](https://github.com/solara-associates/vaid/blob/254d7441e53df2d025311da73e81420c35b76959/crates/vaid-mint/examples/aat_interop_harness.rs), [results](https://github.com/solara-associates/vaid/blob/254d7441e53df2d025311da73e81420c35b76959/docs/aat-interop/s485-results.md). |
-| [Mission-Bound Authorization reference architecture](https://github.com/mcguinness/mission-bound-authorization) (`mission-core`) | TypeScript | commit `020e7885`, BSD-2-Clause | `b7a42e9dfdce7fbc…` | 229 / 229 | 0 | Full run in the suite's token format: each vector's `presentation` goes through its Section 8 verifier, with no exclusions, in the project's CI. [Test](https://github.com/mcguinness/mission-bound-authorization/blob/020e78858199403903d5a873c7644523b965826a/src/packages/mission-core/test/aat-vectors.test.ts), [suite pin](https://github.com/mcguinness/mission-bound-authorization/blob/020e78858199403903d5a873c7644523b965826a/src/packages/mission-core/test/vectors/aat/README.md). |
-| [aat](https://github.com/azatdavliatshin/aat) (`verifier`) | TypeScript | commit `d8131142`, Apache-2.0 | `b7a42e9dfdce7fbc…` | 229 / 229 | 0 | Full run in the suite's token format: the `aat-02` profile, written from the -02 text, follows Section 8 step by step with no exclusions, and every denial fails at the suite's expected step. Described in [draft-davliatshin-oauth-attenuation-chains-report](https://datatracker.ietf.org/doc/draft-davliatshin-oauth-attenuation-chains-report/). [Test](https://github.com/azatdavliatshin/aat/blob/d8131142742409889a8ec01fed3bf3de47aeafe0/verifier/test/aat02.suite.test.ts), [results](https://github.com/azatdavliatshin/aat/blob/d8131142742409889a8ec01fed3bf3de47aeafe0/verifier/results/aat02-results.json). |
-| [Agent Passport System](https://github.com/agent-passport-system/agent-passport-system) (`agent-passport-system`) | TypeScript | 8.0.1, Apache-2.0 | `b7a42e9dfdce7fbc…` | 24 / 229 | 205 | Property-level run in a different format: APS does not implement AAT. Each scenario APS can express becomes an APS delegation record, checked with `verifyAuthorityDelegationChain`; the rest are `SKIP`, each with a reason. In five of the 24 (J.10.c, J.12, J.14, J.21.1, J.23.4) the harness caught the fault while translating, so those five do not show APS detecting it. 0 disagreements, 0 missing. [Report](https://github.com/tenuo-ai/tenuo/issues/1084), [harness and results](https://gist.github.com/aeoess/0595689da9721a3b78de2cc010382e36/8814dc6217dba87c90f9c530e56a916bc9fc2e01). |
+The Same step column counts the agreed denials that failed at the suite's
+expected step. It is n/a for a property-level run in another format, which
+has no Section 8 step to report.
+
+| Implementation | Language | Version | Suite SHA-256 | Agree | Same step | Skipped | Notes |
+|---|---|---|---|---|---|---|---|
+| `gen_vectors.py` self-check | Python | this repository | `b7a42e9dfdce7fbc…` | 229 / 229 | 175 / 175 | 0 | Generates the suite; its Section 8 verifier shares no code with Tenuo. |
+| [VAID](https://github.com/solara-associates/vaid) (`vaid-mint`) | Rust | 0.11.0, Apache-2.0 | `b7a42e9dfdce7fbc…` | 22 / 229 | n/a | 207 | Property-level run in a different token format: VAID has no per-hop holder-key signing, JOSE headers, or constraint-predicate algebra, so most vectors testing those are `SKIP`, each with a per-scenario reason. 0 disagreements, 0 missing. [Harness](https://github.com/solara-associates/vaid/blob/254d7441e53df2d025311da73e81420c35b76959/crates/vaid-mint/examples/aat_interop_harness.rs), [results](https://github.com/solara-associates/vaid/blob/254d7441e53df2d025311da73e81420c35b76959/docs/aat-interop/s485-results.md). |
+| [Mission-Bound Authorization reference architecture](https://github.com/mcguinness/mission-bound-authorization) (`mission-core`) | TypeScript | commit `020e7885`, BSD-2-Clause | `b7a42e9dfdce7fbc…` | 229 / 229 | not reported | 0 | Full run in the suite's token format: each vector's `presentation` goes through its Section 8 verifier, with no exclusions, in the project's CI. [Test](https://github.com/mcguinness/mission-bound-authorization/blob/020e78858199403903d5a873c7644523b965826a/src/packages/mission-core/test/aat-vectors.test.ts), [suite pin](https://github.com/mcguinness/mission-bound-authorization/blob/020e78858199403903d5a873c7644523b965826a/src/packages/mission-core/test/vectors/aat/README.md). |
+| [aat](https://github.com/azatdavliatshin/aat) (`verifier`) | TypeScript | commit `d8131142`, Apache-2.0 | `b7a42e9dfdce7fbc…` | 229 / 229 | 175 / 175 | 0 | Full run in the suite's token format: the `aat-02` profile, written from the -02 text, follows Section 8 step by step with no exclusions, and every denial fails at the suite's expected step. Described in [draft-davliatshin-oauth-attenuation-chains-report](https://datatracker.ietf.org/doc/draft-davliatshin-oauth-attenuation-chains-report/). [Test](https://github.com/azatdavliatshin/aat/blob/d8131142742409889a8ec01fed3bf3de47aeafe0/verifier/test/aat02.suite.test.ts), [results](https://github.com/azatdavliatshin/aat/blob/d8131142742409889a8ec01fed3bf3de47aeafe0/verifier/results/aat02-results.json). |
+| [Agent Passport System](https://github.com/agent-passport-system/agent-passport-system) (`agent-passport-system`) | TypeScript | 8.0.1, Apache-2.0 | `b7a42e9dfdce7fbc…` | 24 / 229 | n/a | 205 | Property-level run in a different format: APS does not implement AAT. Each scenario APS can express becomes an APS delegation record, checked with `verifyAuthorityDelegationChain`; the rest are `SKIP`, each with a reason. In five of the 24 (J.10.c, J.12, J.14, J.21.1, J.23.4) the harness caught the fault while translating, so those five do not show APS detecting it. 0 disagreements, 0 missing. [Report](https://github.com/tenuo-ai/tenuo/issues/1084), [harness and results](https://gist.github.com/aeoess/0595689da9721a3b78de2cc010382e36/8814dc6217dba87c90f9c530e56a916bc9fc2e01). |
