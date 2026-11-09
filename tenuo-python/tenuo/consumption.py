@@ -157,6 +157,7 @@ class InMemoryConsumptionBackend:
             existing = self._store.get(key)
             if existing is not None and existing[2] == owner_token and existing[0].state == IN_FLIGHT:
                 del self._store[key]
+                self._compact_expiries()
 
     def ttl_remaining(self, key: str) -> Optional[float]:
         with self._lock:
@@ -169,6 +170,18 @@ class InMemoryConsumptionBackend:
             existing = self._store.get(key)
             if existing is not None and existing[1:] == (expiry, owner_token):
                 del self._store[key]
+        self._compact_expiries()
+
+    def _compact_expiries(self) -> None:
+        # Released acquisitions leave tombstones. Rebuild only after they
+        # outnumber live entries (with a small floor), keeping memory bounded
+        # and the rebuild cost amortized across releases and expirations.
+        if len(self._expiries) > max(64, 2 * len(self._store)):
+            self._expiries = [
+                (expiry, key, owner_token)
+                for key, (_, expiry, owner_token) in self._store.items()
+            ]
+            heapq.heapify(self._expiries)
 
     def __len__(self) -> int:
         with self._lock:

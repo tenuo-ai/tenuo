@@ -738,6 +738,32 @@ class TestSecondReviewFollowUps:
         assert sum(reservation is not None for reservation, _ in results) == 1
         assert sum(denial is not None for _, denial in results) == 7
 
+    @pytest.mark.parametrize("retained", [1, 100])
+    def test_denied_retries_keep_expiry_storage_bounded(self, monkeypatch, retained):
+        from tenuo.consumption import InMemoryConsumptionBackend
+
+        now = [100.0]
+        monkeypatch.setattr("tenuo.consumption.time.monotonic", lambda: now[0])
+        backend = InMemoryConsumptionBackend()
+        store = ApprovalConsumptionStore(backend=backend)
+        consumed = self._chain(*(f"zz:{i}" for i in range(retained)))
+        reservation, _ = store.reserve(consumed, "original")
+        reservation.commit()
+        partial = self._chain("aa:unused", "zz:0")
+        for _ in range(2000):
+            reservation, denial = store.reserve(partial, "retry")
+            assert reservation is None and denial.state == "consumed"
+            assert len(backend._expiries) <= max(64, 2 * retained)
+        assert len(store) == retained
+        assert all(entry[0].idempotency_key == "original" for entry in backend._store.values())
+
+        # Compaction must retain every live entry's actual expiry.
+        now[0] += 361
+        assert len(store) == 0
+        assert not backend._expiries
+        reservation, denial = store.reserve(consumed)
+        assert reservation is not None and denial is None
+
     @pytest.mark.parametrize("margin", [-1, 0.5, float("nan")])
     def test_expiry_margin_cannot_shorten_approval_retention(self, margin):
         with pytest.raises(ValueError, match="non-negative integer"):
