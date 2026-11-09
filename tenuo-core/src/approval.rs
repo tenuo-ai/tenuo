@@ -128,19 +128,33 @@
 //!
 //! **Why no server-side nonce tracking?**
 //!
-//! For replay to succeed, an attacker needs BOTH:
+//! Against a third party, for replay to succeed an attacker needs BOTH:
 //! - The intercepted approval
 //! - The holder's private key (to sign the Proof-of-Possession)
 //!
-//! If they have the holder's key, they don't need the approval at all.
-//! The attack window is extremely narrow (requires tricking the legitimate
-//! holder into signing a PoP for a replayed approval within TTL).
+//! The holder's key alone cannot satisfy an approval gate: a valid approval
+//! for the exact request is still required. Neither signature records whether
+//! that approval has already been used.
 //!
-//! **Application-layer opt-in:**
+//! That argument does not cover the holder itself being rewound. A run
+//! restored or forked from a checkpoint taken before an approved call, or a
+//! worker retried after a crash, is the legitimate holder re-running the same
+//! call: it signs a fresh PoP, the request hash matches, and an approval still
+//! within its TTL verifies again. Verification cannot tell this from the first
+//! use, and state that would tell them apart cannot live with the holder,
+//! because rewinding the holder rewinds that state too.
 //!
-//! Applications requiring stricter guarantees can implement nonce tracking
-//! at their layer. The nonce field enables this without forcing statefulness
-//! on all deployments.
+//! **Enforcement-point opt-in:**
+//!
+//! At-most-once use therefore lives at the enforcement point, keyed on each
+//! approval's nonce, which [`crate::planes::VerifiedApproval`] carries out of
+//! verification. The Python SDK's approval consumption store reserves the
+//! approvals of an allowed call, denies a second use, and keeps a reservation
+//! "in flight" across a crash so a retry is not taken for a first use. Only
+//! the system performing the action can make the action itself happen once;
+//! [`crate::planes::ChainVerificationResult::idempotency_key`] gives it a
+//! stable key to deduplicate on. Verification itself stays stateless, so
+//! deployments that do not need this pay nothing for it.
 //!
 //! ## Implementation Status
 //!

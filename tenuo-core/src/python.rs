@@ -4976,6 +4976,18 @@ impl PyVerifiedApproval {
         self.inner.request_hash
     }
 
+    /// The approval's nonce (16 bytes); identifies this approval for at-most-once use.
+    #[getter]
+    fn nonce(&self) -> [u8; 16] {
+        self.inner.nonce
+    }
+
+    /// Key a consumption store records this approval under (`approver_hex:nonce_hex`).
+    #[getter]
+    fn consumption_key(&self) -> String {
+        self.inner.consumption_key()
+    }
+
     /// Standard base64-encoded CBOR SignedApproval envelope for independent verification.
     #[getter]
     fn signed_approval_cbor_b64(&self) -> Option<String> {
@@ -5049,6 +5061,20 @@ impl PyChainVerificationResult {
             .cloned()
             .map(|inner| PyVerifiedApproval { inner })
             .collect()
+    }
+
+    /// Commitment to the authorized invocation (32 bytes), the same value a
+    /// receipt carries as its request hash. None when no invocation was checked.
+    #[getter]
+    fn request_hash(&self) -> Option<[u8; 32]> {
+        self.inner.request_hash
+    }
+
+    /// Stable key for this authorization (32 bytes), for downstream
+    /// deduplication. None unless approvals were verified.
+    #[getter]
+    fn idempotency_key(&self) -> Option<[u8; 32]> {
+        self.inner.idempotency_key()
     }
 
     fn __repr__(&self) -> String {

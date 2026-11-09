@@ -112,6 +112,14 @@ class EnforcementResult:
             Contains ``{"got": int, "need": int}`` so callers can tell "re-submit
             with more approvals" from a flat scope denial without parsing the
             human-readable ``denial_reason``.
+        idempotency_key: Hex key naming this approved authorization (request
+            hash plus approvals), for downstream deduplication. ``None`` unless
+            approvals were verified. Also kept on ``approval_consumed`` denials
+            so a retry can look the action up downstream. This is the reliable
+            source; ``current_idempotency_key()`` is a convenience for paths
+            that enforce one call and then run it.
+        approval_reservation: :class:`~tenuo.consumption.ApprovalReservation`
+            when a consumption store reserved this call's approvals.
         observed: True when the decision was a denial that observe mode let
             through. ``allowed`` is then True, the denial fields stay populated,
             and receipts / control-plane events still record the denial.
@@ -144,6 +152,13 @@ class EnforcementResult:
     pop_auth_args: Optional[Dict[str, Any]] = None
     approval_metadata: Optional[Dict[str, Any]] = None
     observed: bool = False
+    # Stable hex key for an approved call, derived by the core from the request
+    # hash and the approvals that authorized it. Same on every retry of the
+    # same authorization; pass it downstream to deduplicate the action.
+    idempotency_key: Optional[str] = None
+    # Set when a consumption store reserved this call's approvals. Commit once
+    # the action ran, or release when it certainly did not.
+    approval_reservation: Optional[Any] = None
 
     def raise_if_denied(self) -> None:
         """
@@ -171,7 +186,7 @@ class EnforcementResult:
                 detail=self.denial_reason or "",
             )
 
-        if error_type == "invalid_approval":
+        if error_type in ("invalid_approval", "approval_consumed"):
             raise InvalidApproval(self.denial_reason or "Invalid approval")
 
         if error_type == "approval_required":
@@ -1051,6 +1066,73 @@ def _resolve_presented_parents(
     return list(parents) if parents else []
 
 
+def _allowed_result(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    warrant_id: Optional[str],
+    chain_result: Any,
+    authorizer: Any,
+    *,
+    consumption_store: Optional[Any],
+    presented_chain: List[Any],
+    pop_auth_args: Dict[str, Any],
+    verified_pop: Any,
+) -> EnforcementResult:
+    """Result for a call the core authorized, after at-most-once approval use.
+
+    Verification is stateless, so a holder rewound to before an approved call
+    (restored checkpoint, fork, retried worker) passes again under a fresh PoP.
+    The consumption store, when enabled, is what refuses the second use.
+    """
+    raw_key = getattr(chain_result, "idempotency_key", None)
+    idempotency_key = bytes(raw_key).hex() if raw_key is not None else None
+
+    # False: a preflight check (e.g. an MCP client before sending) that must
+    # not consume; the final enforcement point does.
+    store = consumption_store
+    if store is None:
+        from .consumption import get_default_consumption_store
+
+        store = get_default_consumption_store()
+    reservation = None
+    if store is not None and store is not False:
+        reservation, denial = store.reserve(chain_result, idempotency_key)
+        if denial is not None:
+            state = denial.state
+            return EnforcementResult(
+                allowed=False,
+                tool=tool_name,
+                arguments=tool_args,
+                denial_reason=(
+                    "approval already used"
+                    if state == "consumed"
+                    else "approval already in use (in flight)"
+                ),
+                error_type="approval_consumed",
+                warrant_id=warrant_id,
+                presented_chain=presented_chain,
+                pop_auth_args=pop_auth_args,
+                authorizer=authorizer,
+                verified_pop=verified_pop,
+                approval_metadata={"state": state},
+                # The key the first use stored, so a retry after a crash can
+                # look the action up downstream even if fewer approvals
+                # verified this time.
+                idempotency_key=denial.idempotency_key,
+            )
+
+    return EnforcementResult(
+        allowed=True,
+        tool=tool_name,
+        arguments=tool_args,
+        warrant_id=warrant_id,
+        chain_result=chain_result,
+        authorizer=authorizer,
+        idempotency_key=idempotency_key,
+        approval_reservation=reservation,
+    )
+
+
 def _enforce_tool_call_impl(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -1069,6 +1151,7 @@ def _enforce_tool_call_impl(
     approval_handler: Optional[ApprovalHandler] = None,
     approvals: Optional[List[Any]] = None,
     nonce_store: Optional[Any] = None,
+    consumption_store: Optional[Any] = None,
 ) -> EnforcementResult:
     """
     Core enforcement logic for tool authorization.
@@ -1121,6 +1204,15 @@ def _enforce_tool_call_impl(
             ``approvals`` are provided.
         approvals: Pre-obtained ``SignedApproval`` objects for gate-satisfied calls
             (out-of-band / control plane). Checked before ``approval_handler``.
+        nonce_store: Optional :class:`~tenuo.nonce.NonceStore` rejecting exact
+            PoP replays (sign path). Defaults to the process-wide store, if enabled.
+        consumption_store: Optional
+            :class:`~tenuo.consumption.ApprovalConsumptionStore`. An approval
+            it has seen is denied with ``error_type="approval_consumed"``, even
+            under a fresh PoP. Defaults to the process-wide store, if enabled.
+            Pass ``False`` for a preflight check that is not the final
+            enforcement point (e.g. a client before sending to a server that
+            enforces), so the approval is not consumed twice.
 
     Returns:
         EnforcementResult with allowed status and denial details.
@@ -1575,13 +1667,16 @@ def _enforce_tool_call_impl(
             }
         )
 
-        return EnforcementResult(
-            allowed=True,
-            tool=tool_name,
-            arguments=tool_args,
-            warrant_id=warrant_id,
-            chain_result=_chain_result,
-            authorizer=_auth if verify_mode == "sign" else authorizer,
+        return _allowed_result(
+            tool_name,
+            tool_args,
+            warrant_id,
+            _chain_result,
+            _auth if verify_mode == "sign" else authorizer,
+            consumption_store=consumption_store,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            verified_pop=_pop if verify_mode == "sign" else precomputed_signature,
         )
 
     except InsufficientApprovals as e:
@@ -1713,6 +1808,7 @@ async def _enforce_tool_call_async_impl(
     approval_handler: "Optional[ApprovalHandler]" = None,
     approvals: Optional[List[Any]] = None,
     nonce_store: Optional[Any] = None,
+    consumption_store: Optional[Any] = None,
 ) -> EnforcementResult:
     """Async variant of :func:`enforce_tool_call`.
 
@@ -2059,10 +2155,16 @@ async def _enforce_tool_call_async_impl(
             f"Tool authorized: {tool_name}",
             extra={"tool": tool_name, "warrant_id": bound_warrant.id, "args_keys": list(tool_args.keys())}
         )
-        return EnforcementResult(
-            allowed=True, tool=tool_name, arguments=tool_args,
-            warrant_id=warrant_id, chain_result=_chain_result,
-            authorizer=_auth if verify_mode == "sign" else authorizer,
+        return _allowed_result(
+            tool_name,
+            tool_args,
+            warrant_id,
+            _chain_result,
+            _auth if verify_mode == "sign" else authorizer,
+            consumption_store=consumption_store,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            verified_pop=_pop if verify_mode == "sign" else precomputed_signature,
         )
 
     except InsufficientApprovals as e:
@@ -2278,15 +2380,37 @@ def _log_observed_denial(result: EnforcementResult) -> None:
 from functools import wraps as _wraps  # noqa: E402
 
 
+def _clear_idempotency_key() -> None:
+    # Cleared first so a call that raises (e.g. ApprovalRequired) cannot leave
+    # an earlier call's key in place for the handler.
+    from .consumption import _set_current_idempotency_key
+
+    _set_current_idempotency_key(None)
+
+
+def _publish_idempotency_key(result: EnforcementResult) -> EnforcementResult:
+    """Expose the key to the tool handler that runs next in this context."""
+    from .consumption import _set_current_idempotency_key
+
+    _set_current_idempotency_key(result.idempotency_key if result.allowed else None)
+    return result
+
+
 @_wraps(_enforce_tool_call_impl)
 def enforce_tool_call(*args, **kwargs):
-    return _apply_observe_mode(_collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs)))
+    _clear_idempotency_key()
+    return _publish_idempotency_key(
+        _apply_observe_mode(_collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs)))
+    )
 
 
 @_wraps(_enforce_tool_call_async_impl)
 async def enforce_tool_call_async(*args, **kwargs):
-    return _apply_observe_mode(
-        _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+    _clear_idempotency_key()
+    return _publish_idempotency_key(
+        _apply_observe_mode(
+            _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+        )
     )
 
 
@@ -2455,8 +2579,10 @@ def verify_inbound_call(
     constraint_args: Optional[Dict[str, Any]] = None,
     approval_handler: Optional[Any] = None,
     apply_observe: bool = True,
+    consumption_store: Optional[Any] = None,
 ) -> EnforcementResult:
     """Shared inbound PEP. Adapters must not call Authorizer directly."""
+    _clear_idempotency_key()
     if authorizer is None:
         raise ConfigurationError("verify_inbound_call requires an Authorizer")
     if pop_signature is None:
@@ -2476,7 +2602,7 @@ def verify_inbound_call(
         )
         observed = _apply_observe_mode(result) if apply_observe else result
         if observed.observed:
-            return observed
+            return _publish_idempotency_key(observed)
         raise missing
     bind = getattr(warrant, "bind", None)
     if not callable(bind):
@@ -2494,8 +2620,9 @@ def verify_inbound_call(
         pop_args=pop_args,
         constraint_args=constraint_args,
         approval_handler=approval_handler,
+        consumption_store=consumption_store,
     )
-    return _apply_observe_mode(result) if apply_observe else result
+    return _publish_idempotency_key(_apply_observe_mode(result) if apply_observe else result)
 
 
 __all__ = [

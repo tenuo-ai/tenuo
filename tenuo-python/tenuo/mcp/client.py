@@ -618,6 +618,8 @@ class SecureMCPClient:
             pop_args=pop_args,
             constraint_args=constraint_args,
             bound_warrant=bound_warrant,
+            # Dry run: nothing executes, so nothing is consumed.
+            consumption_store=False,
         )
 
         if self._control_plane is not None:
@@ -837,6 +839,9 @@ class SecureMCPClient:
                 trusted_roots=resolve_trusted_roots(),
                 approval_handler=self._approval_handler,
                 approvals=approvals,
+                # With the warrant sent, the server is the enforcement point
+                # that consumes. Without it, this check is the only one.
+                consumption_store=False if injection_mode != "none" else None,
             )
             if self._control_plane is not None:
                 try:
@@ -914,6 +919,11 @@ class SecureMCPClient:
                     trusted_roots=resolve_trusted_roots(),
                     approval_handler=self._approval_handler,
                     approvals=_approvals,
+                    # The call below skips local checks, so this is the local
+                    # enforcement point unless the warrant goes to the server.
+                    consumption_store=(
+                        False if _warrant_injection_mode(self.inject_warrant) != "none" else None
+                    ),
                 )
                 if self._control_plane is not None:
                     try:

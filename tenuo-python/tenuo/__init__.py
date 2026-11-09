@@ -151,6 +151,15 @@ from .nonce import (
     get_default_nonce_store,
 )
 
+# At-most-once use of approvals
+from .consumption import (
+    ApprovalConsumptionStore,
+    current_idempotency_key,
+    disable_default_consumption_store,
+    enable_default_consumption_store as enable_approval_consumption,
+    get_default_consumption_store,
+)
+
 # Constraints
 from .constraints import Capability, Shlex, Subpath, UrlSafe, path_glob
 
@@ -413,6 +422,12 @@ __all__ = [
     "enable_nonce_store",
     "disable_default_nonce_store",
     "get_default_nonce_store",
+    # At-most-once approvals
+    "ApprovalConsumptionStore",
+    "enable_approval_consumption",
+    "disable_default_consumption_store",
+    "get_default_consumption_store",
+    "current_idempotency_key",
 ]
 
 __version__ = "0.3.5"

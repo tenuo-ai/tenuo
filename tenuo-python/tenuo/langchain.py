@@ -32,6 +32,7 @@ For multi-agent graphs with automatic delegation, see tenuo.langgraph.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -423,8 +424,11 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             return await self.wrapped._arun(*args, **kwargs)
         elif hasattr(self.wrapped, "_run"):
             loop = asyncio.get_running_loop()
+            # Run in a copy of this context so the tool sees what enforcement
+            # set here (e.g. tenuo.current_idempotency_key()).
+            ctx = contextvars.copy_context()
             return await loop.run_in_executor(
-                None, lambda: self.wrapped._run(*args, **kwargs)
+                None, lambda: ctx.run(self.wrapped._run, *args, **kwargs)
             )
         else:
             result = self.wrapped(*args, **kwargs)

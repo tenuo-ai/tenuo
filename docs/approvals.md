@@ -385,6 +385,35 @@ from tenuo.exceptions import InsufficientApprovals, ApprovalGateTriggered
 
 ---
 
+## Single-Use Approvals
+
+Approval verification keeps no state, so an approval authorizes its request every time it is presented until it expires. That includes the honest holder being rewound: a run resumed from a checkpoint taken before the approved call, a fork of that checkpoint, or a worker retried after a crash. Each re-signs a fresh PoP, so the PoP `NonceStore` does not see a repeat.
+
+Enable the consumption store to allow each approval once:
+
+```python
+import tenuo
+
+tenuo.enable_approval_consumption()   # process-wide; every adapter uses it
+
+# or per call
+from tenuo import ApprovalConsumptionStore
+store = ApprovalConsumptionStore()
+result = enforce_tool_call(..., consumption_store=store)
+```
+
+A second use is denied with `error_type="approval_consumed"` (receipt decision code `approval-consumed`, `raise_if_denied()` raises `InvalidApproval`). `approval_metadata["state"]` is `"in_flight"` or `"consumed"`. A fresh approval for the same call is allowed.
+
+One valid approval per approver is consumed, including approvers beyond the threshold, so presenting the same approvals in a different order does not authorize the call again. If several valid approvals come from the same approver, the one with the lowest nonce is selected independently of presentation order. Client-side checks that are not the final enforcement point pass `consumption_store=False`, so only the server consumes. `SecureMCPClient` does this only when it sends the warrant (`inject_warrant`); otherwise its own check is the enforcement point and consumes. The guarded OpenAI client verifies a response without running its tools, so it releases the approvals of any call or response it rejects.
+
+**Reserve / commit.** An allowed call reserves its approvals. Call `result.approval_reservation.commit()` once the action has run, or `.release()` only when it certainly did not. A crash in between leaves the reservation in flight, so a retry is refused rather than treated as unused. Entries are kept until the approval expires.
+
+**Idempotency key.** The store stops a second *authorization*; only the downstream system can stop a second *effect*. Every approved call carries `result.idempotency_key`. An `approval_consumed` denial carries the key the first use stored, so a retry can look the action up even when fewer approvals verify the second time. `tenuo.current_idempotency_key()` returns it inside the tool for paths that enforce one call and then run it. With FastAPI, read `ctx.idempotency_key` from the `SecurityContext` instead: the guard runs in a threadpool, so its context does not reach an async endpoint. When several calls are authorized before any runs (an OpenAI response with several tool calls), use the key for each call instead: `verify_tool_call()` returns it, and `tenuo.openai.idempotency_key_for(tool_call)` reads it from a tool call (or streamed delta) a guarded client verified. It is derived in the core from the `request_hash` receipts already carry plus the approvals' nonces, so it is the same on every retry and replica and new for a fresh approval. Pass it to the payment API, queue or database as its idempotency key.
+
+The in-memory backend is per process. With several replicas, implement `ConsumptionBackend` (`reserve` / `commit` / `release`) on a shared store. `reserve` must atomically insert-if-absent (for example Redis `SET NX EX`), storing the supplied `owner_token` alongside the idempotency key and state. `commit` and `release` must atomically compare `owner_token` before changing or deleting an entry; a missing entry or different owner is a no-op. A Redis implementation needs a Lua script or equivalent transaction for that comparison. The store generates a fresh owner token for each acquisition, even when the idempotency key is unchanged. This prevents a retried release after a lost backend reply from deleting another worker's reservation. If `commit()` or `release()` raises, the keys that failed stay pending; call the same method again to finish them. `margin_seconds` must be a non-negative integer so entries cannot expire before their approvals.
+
+---
+
 ## Cryptographic Model
 
 Every approval binds to `(warrant_id, tool, args, holder)` via SHA-256 (`compute_request_hash`). `SignedApproval` = Ed25519 over `ApprovalPayload`. Rust verifies signature, hash, strict expiry, future-timestamp clock tolerance, approver trust, deduplication, and threshold.
