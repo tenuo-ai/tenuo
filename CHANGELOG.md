@@ -30,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer sufficient. Custom stores must accept `min_ttl_seconds` and retain
   signatures for at least that long.
 
+- **Negated constraints reject values of unrelated kinds.** `Not` and
+  `NotOneOf` now judge only the kinds their inner rule or exclusion entries
+  cover: for example, negating a string rule cannot admit a list, and negating
+  a numeric rule cannot admit a numeric string. NaN and infinities are rejected
+  by negated constraints. `Not(Subpath(...))` accepts only string arguments;
+  it does not turn a partially matching path list into an allowed call.
+  Delegation cannot add accepted value kinds through negation. Python's
+  annotation and A2A checks preserve the argument's original type, and the
+  same core checks are included in the TypeScript WASM build. Upgrade
+  enforcement points together before relying on these negation semantics.
+  Composite branches inside `Not` must all evaluate successfully: unsupported
+  features, malformed rules, and evaluation errors are never hidden by
+  short-circuiting. Put error-guarding CEL conditions in the CEL expression
+  itself when conditional evaluation is required.
+
 - **An integral number matches the same way however it is spelled.**
   `ConstraintValue` compared `Integer(1000)` and `Float(1000.0)` as different
   values, and argument extraction and the Python binding yield `Float` for

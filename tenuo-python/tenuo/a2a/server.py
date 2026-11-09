@@ -1781,7 +1781,7 @@ class A2AServer:
           - Range.contains()       -> Rust core
           - Exact.matches()        -> Rust core
           - OneOf.contains()       -> Rust core
-          - NotOneOf.allows()      -> Rust core
+          - Not/NotOneOf.satisfies() -> Rust core, preserving value kinds
           - Wildcard.matches()     -> Rust core
 
         If tenuo_core changes these method names, tests in test_a2a.py will fail.
@@ -1799,6 +1799,9 @@ class A2AServer:
             UnknownConstraintError: If constraint type is not recognized
         """
         constraint_type = type(constraint).__name__
+
+        if constraint_type in {"Not", "NotOneOf"} and hasattr(constraint, "satisfies"):
+            return constraint.satisfies(value)
 
         # =================================================================
         # RUST CORE METHODS - Type-aware dispatch
@@ -1844,10 +1847,6 @@ class A2AServer:
         # OneOf - set membership (Rust core)
         if hasattr(constraint, "contains") and constraint_type == "OneOf":
             return constraint.contains(str(value))
-
-        # NotOneOf - exclusion list (Rust core)
-        if hasattr(constraint, "allows") and constraint_type == "NotOneOf":
-            return constraint.allows(str(value))
 
         # Wildcard - matches anything (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Wildcard":
