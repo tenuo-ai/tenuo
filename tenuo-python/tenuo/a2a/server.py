@@ -1247,6 +1247,7 @@ class A2AServer:
                         authorizer=self._authorizer,
                         warrant_chain=_resolved_chain_parents or [],
                         approvals=approvals,
+                        check_replay=True,
                     )
                 if enforcement.allowed:
                     logger.debug(f"PoP verified for skill '{skill_id}'")

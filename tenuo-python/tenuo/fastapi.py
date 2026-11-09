@@ -577,6 +577,7 @@ class TenuoGuard:
                 warrant_chain=parents or [],
                 approval_handler=self._approval_handler,
                 approvals=approvals,
+                check_replay=True,
             )
             from tenuo.receipts import collect_enforcement_receipt
             collect_enforcement_receipt(

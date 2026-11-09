@@ -1152,6 +1152,7 @@ def _enforce_tool_call_impl(
     approvals: Optional[List[Any]] = None,
     nonce_store: Optional[Any] = None,
     consumption_store: Optional[Any] = None,
+    verify_replay: bool = False,
 ) -> EnforcementResult:
     """
     Core enforcement logic for tool authorization.
@@ -1205,7 +1206,8 @@ def _enforce_tool_call_impl(
         approvals: Pre-obtained ``SignedApproval`` objects for gate-satisfied calls
             (out-of-band / control plane). Checked before ``approval_handler``.
         nonce_store: Optional :class:`~tenuo.nonce.NonceStore` rejecting exact
-            PoP replays (sign path). Defaults to the process-wide store, if enabled.
+            PoP replays. Defaults to the process-wide store, if enabled. On
+            the verify path it is consulted only when ``verify_replay`` is set.
         consumption_store: Optional
             :class:`~tenuo.consumption.ApprovalConsumptionStore`. An approval
             it has seen is denied with ``error_type="approval_consumed"``, even
@@ -1651,6 +1653,28 @@ def _enforce_tool_call_impl(
                     warrant_id,
                     constraint_auth_args=_constraint_auth_args,
                     warrant=bound_warrant.warrant,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=authorizer,
+                    verified_pop=precomputed_signature,
+                )
+
+        # ── Replay prevention for a presented PoP ───────────────────────
+        # Checked after the chain and PoP verify, so only a valid request can
+        # use up its signature, and before approvals are consumed.
+        if verify_mode == "verify" and verify_replay and precomputed_signature is not None:
+            _ns = nonce_store
+            if _ns is None:
+                from .nonce import get_default_nonce_store as _get_ns
+                _ns = _get_ns()
+            if _ns is not None and not _ns.check_and_record(precomputed_signature):
+                return EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason="PoP replay detected — this exact authorization token was already consumed.",
+                    error_type="invalid_pop",
+                    warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
                     authorizer=authorizer,
@@ -2580,8 +2604,16 @@ def verify_inbound_call(
     approval_handler: Optional[Any] = None,
     apply_observe: bool = True,
     consumption_store: Optional[Any] = None,
+    check_replay: bool = False,
+    nonce_store: Optional[Any] = None,
 ) -> EnforcementResult:
-    """Shared inbound PEP. Adapters must not call Authorizer directly."""
+    """Shared inbound PEP. Adapters must not call Authorizer directly.
+
+    ``check_replay`` rejects a PoP signature the nonce store has already
+    admitted (``nonce_store``, else the process-wide store when enabled).
+    Set it once per request: callers that verify the same request more than
+    once, or keep their own replay record, leave it off.
+    """
     _clear_idempotency_key()
     if authorizer is None:
         raise ConfigurationError("verify_inbound_call requires an Authorizer")
@@ -2621,6 +2653,8 @@ def verify_inbound_call(
         constraint_args=constraint_args,
         approval_handler=approval_handler,
         consumption_store=consumption_store,
+        nonce_store=nonce_store,
+        verify_replay=check_replay,
     )
     return _publish_idempotency_key(_apply_observe_mode(result) if apply_observe else result)
 
