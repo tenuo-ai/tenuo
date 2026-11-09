@@ -1243,9 +1243,10 @@ class TenuoActivityInboundInterceptor:
             self._config, info.activity_type, activity_fn
         )
 
-        args = self._extract_arguments(input, headers)
+        args: Dict[str, Any] = {}
         try:
             _validate_no_reserved_workflow_parameters(activity_fn)
+            args = self._extract_arguments(input, headers)
             args = _add_workflow_scope(
                 warrant,
                 tool_name,
@@ -1837,19 +1838,45 @@ class TenuoActivityInboundInterceptor:
     def _extract_arguments(
         self, input: Any, headers: Optional[Dict[str, bytes]] = None,
     ) -> Dict[str, Any]:
-        """Extract arguments from activity input with proper signature mapping."""
+        """Name the activity's positional arguments for authorization.
+
+        Names come from the function this worker dispatches. The caller's
+        ``x-tenuo-arg-keys`` header states the names it signed; it must agree
+        with the worker's own names, or be the positional ``arg0, arg1, ...``
+        form a caller uses when it cannot see the function. Any other header
+        raises :class:`TenuoContextError`.
+        """
         args = getattr(input, "args", ()) or ()
+        activity_fn = getattr(input, "fn", None)
+        derived = _args_to_dict_by_fn(args, activity_fn) if activity_fn and args else None
 
         if headers and TENUO_ARG_KEYS_HEADER in headers:
-            keys = headers[TENUO_ARG_KEYS_HEADER].decode("utf-8").split(",")
-            result: Dict[str, Any] = {}
-            for i, arg in enumerate(args):
-                result[keys[i] if i < len(keys) else f"arg{i}"] = arg
-            return result
+            try:
+                decoded = headers[TENUO_ARG_KEYS_HEADER].decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise TenuoContextError(
+                    "Malformed x-tenuo-arg-keys header; expected UTF-8."
+                ) from exc
+            keys = [] if decoded == "" else decoded.split(",")
+            positional = [f"arg{i}" for i in range(len(args))]
+            if derived is not None:
+                if keys == list(derived.keys()):
+                    return derived
+                if keys == positional:
+                    return dict(zip(positional, args))
+            elif (
+                len(keys) == len(args)
+                and len(set(keys)) == len(keys)
+                and all(keys)
+            ):
+                return dict(zip(keys, args))
+            raise TenuoContextError(
+                "Activity argument binding mismatch: x-tenuo-arg-keys does not "
+                "name the arguments this worker dispatches."
+            )
 
-        activity_fn = getattr(input, "fn", None)
-        if activity_fn and args:
-            return _args_to_dict_by_fn(args, activity_fn)
+        if derived is not None:
+            return derived
 
         if args and isinstance(args[0], dict):
             return args[0]

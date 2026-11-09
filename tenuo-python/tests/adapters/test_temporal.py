@@ -4063,7 +4063,9 @@ class TestApprovalGates:
         info.is_local = False
 
         inp = MagicMock()
-        inp.fn = lambda: None
+        # The worker names arguments from the function it dispatches, so the
+        # stand-in activity declares the same parameters the caller signed.
+        inp.fn = eval(f"lambda {', '.join(args)}: None")
         inp.args = tuple(args.values())
         inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
         return info, inp

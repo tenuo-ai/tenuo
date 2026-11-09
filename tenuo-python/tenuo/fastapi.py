@@ -875,32 +875,51 @@ def _coerce(field: Any, raw: Any) -> Any:
     return raw
 
 
+def _declared_params(dependant: Any, kind: str) -> List[Any]:
+    """Params of ``kind`` declared by the endpoint or any of its dependencies."""
+    found: List[Any] = []
+    seen: set = set()
+    stack = [dependant]
+    while stack:
+        node = stack.pop()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        found.extend(getattr(node, kind, None) or [])
+        stack.extend(getattr(node, "dependencies", None) or [])
+    return found
+
+
 def _default_extract_args(request: Request) -> Dict[str, Any]:
     """Path + query params, typed from the matched endpoint's own signature.
 
     The guard should authorize exactly what the handler receives, and PoP
     signs typed values, so ``?limit=5`` for ``limit: int`` is checked as
     ``5``, not ``"5"``. Params the endpoint does not declare stay strings.
+
+    A path param keeps its value when the query string repeats its name,
+    since the handler receives the path value. A list-typed query param is
+    checked with every value, wherever in the dependency tree it is declared.
     """
-    args: Dict[str, Any] = {**request.path_params, **dict(request.query_params)}
+    args: Dict[str, Any] = {**dict(request.query_params), **request.path_params}
     dependant = getattr(request.scope.get("route"), "dependant", None)
     if dependant is None:
         return args
 
-    for field in getattr(dependant, "path_params", []):
+    for field in _declared_params(dependant, "path_params"):
         key = field.alias
-        if key in args:
-            args[key] = _coerce(field, args[key])
+        if key in request.path_params:
+            args[key] = _coerce(field, request.path_params[key])
 
-    for field in getattr(dependant, "query_params", []):
+    for field in _declared_params(dependant, "query_params"):
         key = field.alias
-        if key not in request.query_params:
+        if key not in request.query_params or key in request.path_params:
             continue
         annotation = getattr(field.field_info, "annotation", None) or getattr(field, "outer_type_", None)
         if _is_list_annotation(annotation):
             args[key] = _coerce(field, request.query_params.getlist(key))
         else:
-            args[key] = _coerce(field, args[key])
+            args[key] = _coerce(field, request.query_params[key])
     return args
 
 

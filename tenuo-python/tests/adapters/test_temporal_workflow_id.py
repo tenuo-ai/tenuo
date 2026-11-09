@@ -341,3 +341,51 @@ def test_missing_temporal_workflow_identity_fails_closed():
     headers = s.schedule("refund-order-123")
     with pytest.raises(ApplicationError, match="complete workflow identity"):
         s.execute(headers, "refund-order-123", namespace=None)
+
+
+def copy_file(src: str, dst: str) -> str:
+    return f"copied {src} to {dst}"
+
+
+def _with_arg_keys(headers, keys: bytes):
+    tampered = dict(headers)
+    tampered[TENUO_ARG_KEYS_HEADER] = type(headers[TENUO_ARG_KEYS_HEADER])(data=keys)
+    return tampered
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        b"amount,order_id",  # swapped
+        b"order_id,order_id",  # duplicate
+        b"order_id",  # too few
+        b"order_id,amount,extra",  # too many
+        b"order_id,total",  # renamed
+        b"",  # empty
+        b"\xff\xfe",  # not UTF-8
+    ],
+)
+def test_arg_keys_header_must_name_the_dispatched_parameters(keys):
+    s = Setup()
+    headers = _with_arg_keys(s.schedule("refund-order-123"), keys)
+
+    with pytest.raises(ApplicationError, match="x-tenuo-arg-keys"):
+        s.execute(headers, "refund-order-123")
+
+
+def test_arg_keys_header_cannot_rename_arguments_of_another_function():
+    s = Setup()
+    s.warrant = (
+        Warrant.mint_builder()
+        .holder(s.holder.public_key)
+        .capability("copy_file", src=Pattern("/data/*"), dst=Pattern("/tmp/*"))
+        .ttl(600)
+        .mint(s.issuer)
+    )
+    # Signed as src=/data/a, dst=/tmp/b, then presented with the names swapped
+    # so the worker would run copy_file(src="/tmp/b", dst="/data/a").
+    headers = s.schedule("wf", fn=copy_file, args=("/data/a", "/tmp/b"))
+    headers = _with_arg_keys(headers, b"dst,src")
+
+    with pytest.raises(ApplicationError, match="x-tenuo-arg-keys"):
+        s.execute(headers, "wf", fn=copy_file, args=("/tmp/b", "/data/a"))
