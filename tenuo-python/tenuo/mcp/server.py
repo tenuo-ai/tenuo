@@ -1127,7 +1127,19 @@ class MCPVerifier:
             if _ns is None:
                 from ..nonce import get_default_nonce_store as _get_ns
                 _ns = _get_ns()
-            replayed = _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig)
+            replayed = True
+            try:
+                replayed = _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig)
+            finally:
+                # No action runs on replay denial or a nonce backend failure.
+                # Release only this attempt's reservation so a fresh PoP can
+                # retry the approval, and do not publish an abandoned key.
+                if replayed and not enforcement.observed:
+                    from ..consumption import _set_current_idempotency_key
+
+                    _set_current_idempotency_key(None)
+                    if enforcement.approval_reservation is not None:
+                        enforcement.approval_reservation.release()
 
             if enforcement.observed:
                 # Observe mode lets the call through; still report a replay

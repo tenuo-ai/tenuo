@@ -776,6 +776,9 @@ def _hold_reservation(
 
 def _release_all(reservations: List[Any]) -> None:
     """Release reservations of calls in a response that will not be returned."""
+    from .consumption import _set_current_idempotency_key
+
+    _set_current_idempotency_key(None)
     for reservation in reservations:
         try:
             reservation.release()

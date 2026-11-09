@@ -492,6 +492,52 @@ async def test_mcp_client_without_injection_is_the_enforcement_point(setup, monk
     assert executed == ["transfer"]
 
 
+@pytest.mark.parametrize("nonce_failure", [False, True], ids=["replay", "backend_failure"])
+def test_mcp_nonce_denial_releases_fresh_approval(setup, nonce_failure):
+    """A rejected PoP must not strand the approval supplied with it."""
+    pytest.importorskip("mcp")
+    import base64
+
+    from tenuo import Authorizer
+    from tenuo.mcp.server import MCPVerifier
+
+    class FailingNonceStore:
+        def check_and_record(self, signature):
+            raise ConnectionError("nonce backend unavailable")
+
+    store = enable_default_consumption_store()
+    nonces = NonceStore()
+    verifier = MCPVerifier(
+        authorizer=Authorizer(trusted_roots=[setup["issuer"].public_key]),
+        nonce_store=nonces,
+    )
+    now = int(time.time())
+
+    def metadata(approval, timestamp):
+        signature = setup["warrant"].sign(setup["holder"], "transfer", setup["args"], timestamp)
+        return {"tenuo": {
+            "warrant": setup["warrant"].to_base64(),
+            "signature": base64.b64encode(bytes(signature)).decode(),
+            "approvals": [base64.b64encode(approval.to_bytes()).decode()],
+        }}
+
+    assert verifier.verify("transfer", setup["args"], meta=metadata(setup["approval"], now)).allowed
+    assert len(store) == 1
+    fresh = _approval(setup["warrant"], "transfer", setup["args"], setup["holder"], setup["approver"])
+    if nonce_failure:
+        verifier._nonce_store = FailingNonceStore()
+    denied = verifier.verify("transfer", setup["args"], meta=metadata(fresh, now))
+    assert not denied.allowed
+    assert ("unavailable" if nonce_failure else "replay") in denied.denial_reason.lower()
+    assert len(store) == 1  # only the original action retains a reservation
+    assert current_idempotency_key() is None
+
+    verifier._nonce_store = nonces
+    assert verifier.verify("transfer", setup["args"], meta=metadata(fresh, now + 31)).allowed
+    assert len(store) == 2
+    assert current_idempotency_key() is not None
+
+
 class TestOpenAIReleasesUnusedReservations:
     """The guarded OpenAI client verifies a response; it does not run tools.
     A response or call it rejects must leave its approvals usable."""
@@ -529,6 +575,7 @@ class TestOpenAIReleasesUnusedReservations:
         with pytest.raises(Exception):
             self._guarded(setup, monkeypatch, bad).chat.completions.create(model="m", messages=[])
         assert len(store) == 0
+        assert current_idempotency_key() is None
 
         good = self._response([("transfer", json.dumps(setup["args"]))])
         self._guarded(setup, monkeypatch, good).chat.completions.create(model="m", messages=[])
