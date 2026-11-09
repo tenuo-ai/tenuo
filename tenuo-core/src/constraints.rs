@@ -542,6 +542,41 @@ impl Constraint {
         }
     }
 
+    /// The kinds of value this constraint can judge.
+    ///
+    /// A value of any other kind is rejected by the constraint for being the
+    /// wrong kind, not for failing the rule. `Not` and `NotOneOf` use this so
+    /// that negating a rule never admits values the rule could not judge.
+    pub(crate) fn value_kinds(&self) -> ValueKinds {
+        match self {
+            Constraint::Wildcard(_) | Constraint::Cel(_) => ValueKinds::ALL,
+            Constraint::Pattern(_)
+            | Constraint::Regex(_)
+            | Constraint::Cidr(_)
+            | Constraint::UrlPattern(_)
+            | Constraint::UrlSafe(_)
+            | Constraint::Shlex(_)
+            // A list satisfies Subpath only when every item does, so the
+            // negation of a list match is not "no item is under the root".
+            | Constraint::Subpath(_) => ValueKinds::STRING,
+            Constraint::Range(_) => ValueKinds::NUMBER,
+            Constraint::Contains(_) | Constraint::Subset(_) => ValueKinds::LIST,
+            Constraint::Exact(e) => ValueKinds::of(&e.value),
+            Constraint::OneOf(o) => ValueKinds::of_all(&o.values),
+            Constraint::NotOneOf(n) => n.value_kinds(),
+            Constraint::All(a) => a
+                .constraints
+                .iter()
+                .fold(ValueKinds::ALL, |acc, c| acc.intersection(c.value_kinds())),
+            Constraint::Any(a) => a
+                .constraints
+                .iter()
+                .fold(ValueKinds::NONE, |acc, c| acc.union(c.value_kinds())),
+            Constraint::Not(n) => n.constraint.value_kinds(),
+            Constraint::Unknown { .. } => ValueKinds::NONE,
+        }
+    }
+
     /// Check if this constraint is satisfied by the given value.
     ///
     /// **Note**: This method does not check depth limits. Call `validate_depth()`
@@ -933,6 +968,50 @@ pub enum ConstraintValue {
     List(Vec<ConstraintValue>),
     Object(BTreeMap<String, ConstraintValue>),
     Null,
+}
+
+/// A set of [`ConstraintValue`] kinds. Integers and floats are one kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ValueKinds(u8);
+
+impl ValueKinds {
+    pub(crate) const NONE: Self = Self(0);
+    pub(crate) const STRING: Self = Self(1);
+    pub(crate) const NUMBER: Self = Self(1 << 1);
+    pub(crate) const BOOLEAN: Self = Self(1 << 2);
+    pub(crate) const LIST: Self = Self(1 << 3);
+    pub(crate) const OBJECT: Self = Self(1 << 4);
+    pub(crate) const NULL: Self = Self(1 << 5);
+    pub(crate) const ALL: Self = Self(0b11_1111);
+
+    pub(crate) fn of(value: &ConstraintValue) -> Self {
+        match value {
+            ConstraintValue::String(_) => Self::STRING,
+            ConstraintValue::Integer(_) | ConstraintValue::Float(_) => Self::NUMBER,
+            ConstraintValue::Boolean(_) => Self::BOOLEAN,
+            ConstraintValue::List(_) => Self::LIST,
+            ConstraintValue::Object(_) => Self::OBJECT,
+            ConstraintValue::Null => Self::NULL,
+        }
+    }
+
+    pub(crate) fn of_all(values: &[ConstraintValue]) -> Self {
+        values
+            .iter()
+            .fold(Self::NONE, |acc, v| acc.union(Self::of(v)))
+    }
+
+    pub(crate) fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub(crate) fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    pub(crate) fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
 }
 
 impl PartialEq for ConstraintValue {
@@ -1524,15 +1603,35 @@ impl NotOneOf {
         self.excluded.contains(value)
     }
 
+    /// The kinds of value this exclusion list can judge: the kinds of its
+    /// entries, or every kind when the list is empty.
+    pub(crate) fn value_kinds(&self) -> ValueKinds {
+        if self.excluded.is_empty() {
+            ValueKinds::ALL
+        } else {
+            ValueKinds::of_all(&self.excluded)
+        }
+    }
+
     /// Check if a value passes (is NOT excluded).
+    ///
+    /// A value whose kind differs from every excluded entry does not pass:
+    /// `NotOneOf(["prod"])` rejects `["prod"]` and `5` as well as `"prod"`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        Ok(!self.is_excluded(value))
+        Ok(self.value_kinds().contains(ValueKinds::of(value)) && !self.is_excluded(value))
     }
 
     /// Validate attenuation: child can exclude MORE values.
     ///
-    /// More exclusions = smaller allowed set = valid attenuation.
+    /// More exclusions = smaller allowed set = valid attenuation. The added
+    /// values must be of kinds the parent already judges, since a new kind
+    /// would admit values of that kind the parent rejects.
     pub fn validate_attenuation(&self, child: &NotOneOf) -> Result<()> {
+        if !self.value_kinds().contains(child.value_kinds()) {
+            return Err(Error::MonotonicityViolation(
+                "child NotOneOf excludes a kind of value the parent does not accept".to_string(),
+            ));
+        }
         // Child must exclude everything parent excludes (can add more)
         for v in &self.excluded {
             if !child.excluded.contains(v) {
@@ -3997,7 +4096,17 @@ impl Not {
     }
 
     /// Check if the inner constraint does NOT match.
+    ///
+    /// A value of a kind the inner constraint cannot judge does not pass:
+    /// `Not(Regex("rm"))` rejects a list or a number as well as `"rm -rf"`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        if !self
+            .constraint
+            .value_kinds()
+            .contains(ValueKinds::of(value))
+        {
+            return Ok(false);
+        }
         Ok(!self.constraint.matches(value)?)
     }
 
@@ -4024,6 +4133,21 @@ impl Not {
     ///   Not(Exact("admin")) → Not(OneOf(["admin","root"]))  — child inner is wider → valid
     ///   Not(OneOf(["admin","root"])) → Not(Exact("admin"))  — child inner is narrower → invalid
     pub fn validate_attenuation(&self, child: &Not) -> Result<()> {
+        // A negation only admits values of kinds its inner constraint can
+        // judge, so a child whose inner constraint judges more kinds would
+        // admit values the parent rejects. `Not(Wildcard)` admits nothing.
+        if !matches!(*child.constraint, Constraint::Wildcard(_))
+            && !self
+                .constraint
+                .value_kinds()
+                .contains(child.constraint.value_kinds())
+        {
+            return Err(Error::MonotonicityViolation(
+                "Not attenuation requires the child inner constraint to judge only kinds of \
+                 value the parent inner constraint judges"
+                    .to_string(),
+            ));
+        }
         // Direction is inverted: child_inner must be at least as permissive as parent_inner.
         child
             .constraint
@@ -7405,6 +7529,105 @@ mod tests {
             parent.validate_attenuation(&child).is_err(),
             "Not(OneOf[wider]) -> Not(Exact) must be rejected (child accepts more values)"
         );
+    }
+
+    #[test]
+    fn test_negation_rejects_values_of_other_kinds() {
+        let list = |items: &[&str]| {
+            ConstraintValue::List(
+                items
+                    .iter()
+                    .map(|s| ConstraintValue::String(s.to_string()))
+                    .collect(),
+            )
+        };
+        let object = ConstraintValue::Object(BTreeMap::from([(
+            "v".to_string(),
+            ConstraintValue::String("x".to_string()),
+        )]));
+        let off_kind = [
+            list(&["rm -rf /"]),
+            list(&["prod"]),
+            list(&[]),
+            object,
+            ConstraintValue::Integer(5),
+            ConstraintValue::Float(5.5),
+            ConstraintValue::Boolean(false),
+            ConstraintValue::Null,
+        ];
+        let string_rules = [
+            Constraint::Not(Not::new(Constraint::Regex(
+                RegexConstraint::new("rm").unwrap(),
+            ))),
+            Constraint::Not(Not::new(Constraint::Pattern(
+                Pattern::new("*.exe").unwrap(),
+            ))),
+            Constraint::Not(Not::new(Constraint::Exact(Exact::new("prod")))),
+            Constraint::Not(Not::new(Constraint::Subpath(Subpath::new("/etc").unwrap()))),
+            Constraint::Not(Not::new(Constraint::OneOf(OneOf::new(vec!["prod"])))),
+            Constraint::NotOneOf(NotOneOf::new(vec!["prod"])),
+        ];
+        for rule in &string_rules {
+            for value in &off_kind {
+                assert!(
+                    !rule.matches(value).unwrap(),
+                    "{rule:?} must reject {value:?}"
+                );
+            }
+            // Strings are still judged by the rule itself.
+            assert!(rule.matches(&"staging".into()).unwrap(), "{rule:?}");
+        }
+
+        // A numeric rule rejects numeric strings and booleans when negated.
+        let not_high = Constraint::Not(Not::new(Constraint::Range(Range::min(1000.0).unwrap())));
+        assert!(not_high.matches(&ConstraintValue::Integer(5)).unwrap());
+        assert!(!not_high.matches(&ConstraintValue::Integer(5000)).unwrap());
+        assert!(!not_high.matches(&"5000".into()).unwrap());
+        assert!(!not_high.matches(&ConstraintValue::Boolean(true)).unwrap());
+
+        // Entries of several kinds judge each of those kinds.
+        let mixed = NotOneOf::from_values(vec![
+            ConstraintValue::String("50".to_string()),
+            ConstraintValue::Integer(50),
+        ]);
+        assert!(!mixed.matches(&ConstraintValue::Integer(50)).unwrap());
+        assert!(!mixed.matches(&"50".into()).unwrap());
+        assert!(mixed.matches(&ConstraintValue::Integer(49)).unwrap());
+        assert!(!mixed.matches(&ConstraintValue::Boolean(true)).unwrap());
+
+        // List rules keep their list semantics under negation.
+        let no_admin =
+            Constraint::Not(Not::new(Constraint::Contains(Contains::new(vec!["admin"]))));
+        assert!(no_admin.matches(&list(&["user"])).unwrap());
+        assert!(!no_admin.matches(&list(&["admin"])).unwrap());
+        assert!(!no_admin.matches(&"admin".into()).unwrap());
+    }
+
+    #[test]
+    fn test_negation_attenuation_cannot_add_kinds() {
+        // Parent judges strings only, so it rejects every number. A child
+        // that also excluded a number would admit the other numbers.
+        let parent = NotOneOf::new(vec!["prod"]);
+        let widened = NotOneOf::from_values(vec![
+            ConstraintValue::String("prod".to_string()),
+            ConstraintValue::Integer(5),
+        ]);
+        assert!(parent.validate_attenuation(&widened).is_err());
+        assert!(parent
+            .validate_attenuation(&NotOneOf::new(vec!["prod", "staging"]))
+            .is_ok());
+
+        let parent = Constraint::Not(Not::new(Constraint::Exact(Exact::new("prod"))));
+        let widened = Constraint::Not(Not::new(Constraint::OneOf(OneOf {
+            values: vec![
+                ConstraintValue::String("prod".to_string()),
+                ConstraintValue::Integer(5),
+            ],
+        })));
+        assert!(parent.validate_attenuation(&widened).is_err());
+        // Not(Wildcard) admits nothing, so it narrows any negation.
+        let nothing = Constraint::Not(Not::new(Constraint::Wildcard(Wildcard::new())));
+        assert!(parent.validate_attenuation(&nothing).is_ok());
     }
 
     #[test]
