@@ -51,7 +51,9 @@ Usage::
 from __future__ import annotations
 
 import contextvars
+import heapq
 import logging
+import secrets
 import threading
 import time
 from typing import Any, List, Literal, NamedTuple, Optional, Protocol, Tuple, runtime_checkable
@@ -88,12 +90,16 @@ class ConsumptionDenial(NamedTuple):
 class ConsumptionBackend(Protocol):
     """Pluggable storage for approval consumption.
 
-    Implementations must be safe for concurrent use, and :meth:`reserve` must be
-    atomic (insert-if-absent), or two concurrent uses can both succeed.
+    Implementations must be safe for concurrent use. ``reserve`` must atomically
+    insert-if-absent, storing ``owner_token`` with the entry. ``commit`` and
+    ``release`` must atomically compare that token before changing an entry.
+    An idempotency key names the authorization; the owner token identifies one
+    acquisition and must not be reused after a release or expiry.
     """
 
     def reserve(
-        self, key: str, ttl_seconds: int, idempotency_key: Optional[str] = None
+        self, key: str, ttl_seconds: int, idempotency_key: Optional[str] = None,
+        *, owner_token: str,
     ) -> Optional[ConsumptionEntry]:
         """Record ``key`` as in flight, with ``idempotency_key``, if absent.
 
@@ -101,12 +107,18 @@ class ConsumptionBackend(Protocol):
         """
         ...
 
-    def commit(self, key: str) -> None:
-        """Mark a reserved ``key`` consumed, keeping its expiry and stored key."""
+    def commit(self, key: str, *, owner_token: str) -> None:
+        """Mark ``key`` consumed only if its owner matches; preserve expiry.
+
+        Missing entries and entries owned by another acquisition are no-ops.
+        """
         ...
 
-    def release(self, key: str) -> None:
-        """Drop ``key`` if it is still in flight. A consumed key stays."""
+    def release(self, key: str, *, owner_token: str) -> None:
+        """Drop ``key`` only if still in flight and its owner matches.
+
+        Missing entries, consumed entries and other owners are no-ops.
+        """
         ...
 
 
@@ -115,31 +127,35 @@ class InMemoryConsumptionBackend:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # key -> (entry, expiry on the monotonic clock)
-        self._store: dict[str, Tuple[ConsumptionEntry, float]] = {}
+        # key -> (entry, expiry on the monotonic clock, acquisition owner)
+        self._store: dict[str, Tuple[ConsumptionEntry, float, str]] = {}
+        self._expiries: List[Tuple[float, str, str]] = []
 
     def reserve(
-        self, key: str, ttl_seconds: int, idempotency_key: Optional[str] = None
+        self, key: str, ttl_seconds: int, idempotency_key: Optional[str] = None,
+        *, owner_token: str,
     ) -> Optional[ConsumptionEntry]:
-        now = time.monotonic()
         with self._lock:
+            now = time.monotonic()
             self._evict(now)
             existing = self._store.get(key)
             if existing is not None:
                 return existing[0]
-            self._store[key] = (ConsumptionEntry(IN_FLIGHT, idempotency_key), now + ttl_seconds)
+            expiry = now + ttl_seconds
+            self._store[key] = (ConsumptionEntry(IN_FLIGHT, idempotency_key), expiry, owner_token)
+            heapq.heappush(self._expiries, (expiry, key, owner_token))
             return None
 
-    def commit(self, key: str) -> None:
+    def commit(self, key: str, *, owner_token: str) -> None:
         with self._lock:
             existing = self._store.get(key)
-            if existing is not None:
-                self._store[key] = (existing[0]._replace(state=CONSUMED), existing[1])
+            if existing is not None and existing[2] == owner_token:
+                self._store[key] = (existing[0]._replace(state=CONSUMED), existing[1], owner_token)
 
-    def release(self, key: str) -> None:
+    def release(self, key: str, *, owner_token: str) -> None:
         with self._lock:
             existing = self._store.get(key)
-            if existing is not None and existing[0].state == IN_FLIGHT:
+            if existing is not None and existing[2] == owner_token and existing[0].state == IN_FLIGHT:
                 del self._store[key]
 
     def ttl_remaining(self, key: str) -> Optional[float]:
@@ -148,8 +164,11 @@ class InMemoryConsumptionBackend:
             return None if existing is None else existing[1] - time.monotonic()
 
     def _evict(self, now: float) -> None:
-        for k in [k for k, (_, exp) in self._store.items() if exp < now]:
-            del self._store[k]
+        while self._expiries and self._expiries[0][0] <= now:
+            expiry, key, owner_token = heapq.heappop(self._expiries)
+            existing = self._store.get(key)
+            if existing is not None and existing[1:] == (expiry, owner_token):
+                del self._store[key]
 
     def __len__(self) -> int:
         with self._lock:
@@ -166,8 +185,9 @@ class ApprovalReservation:
     ignored.
     """
 
-    def __init__(self, backend: ConsumptionBackend, keys: List[str]) -> None:
+    def __init__(self, backend: ConsumptionBackend, keys: List[str], *, owner_token: str) -> None:
         self._backend = backend
+        self._owner_token = owner_token
         self.keys = list(keys)
         self._pending = list(keys)
         self._outcome: Optional[str] = None
@@ -198,7 +218,7 @@ class ApprovalReservation:
         first_error: Optional[BaseException] = None
         for key in self._pending:
             try:
-                apply(key)
+                apply(key, owner_token=self._owner_token)
             except Exception as e:
                 failed.append(key)
                 if first_error is None:
@@ -223,6 +243,8 @@ class ApprovalConsumptionStore:
     """
 
     def __init__(self, backend: Optional[ConsumptionBackend] = None, margin_seconds: int = 60) -> None:
+        if not isinstance(margin_seconds, int) or margin_seconds < 0:
+            raise ValueError("margin_seconds must be a non-negative integer")
         self._backend: ConsumptionBackend = backend if backend is not None else InMemoryConsumptionBackend()
         self._margin = margin_seconds
 
@@ -247,28 +269,31 @@ class ApprovalConsumptionStore:
         if not verified:
             return None, None
         now = int(time.time())
+        owner_token = secrets.token_hex(16)
         reserved: List[str] = []
         try:
             for va in verified:
                 key = self.key_for(va)
                 ttl = max(1, int(va.expires_at) - now + self._margin)
-                existing = self._backend.reserve(key, ttl, idempotency_key)
+                # Include this attempt before the backend call: it may insert
+                # successfully and then raise after losing its response.
+                reserved.append(key)
+                existing = self._backend.reserve(key, ttl, idempotency_key, owner_token=owner_token)
                 if existing is not None:
-                    self._rollback(reserved)
+                    self._rollback(reserved, owner_token)
                     logger.warning("Approval reuse denied (%s): %s…", existing.state, key[-8:])
                     return None, ConsumptionDenial(existing.state, existing.idempotency_key or idempotency_key)
-                reserved.append(key)
         except BaseException:
             # A backend failure part-way must not leave earlier approvals
             # reserved for an action that never ran.
-            self._rollback(reserved)
+            self._rollback(reserved, owner_token)
             raise
-        return ApprovalReservation(self._backend, reserved), None
+        return ApprovalReservation(self._backend, reserved, owner_token=owner_token), None
 
-    def _rollback(self, keys: List[str]) -> None:
+    def _rollback(self, keys: List[str], owner_token: str) -> None:
         for k in keys:
             try:
-                self._backend.release(k)
+                self._backend.release(k, owner_token=owner_token)
             except Exception:
                 logger.warning("Approval reservation rollback failed: %s…", k[-8:], exc_info=True)
 

@@ -508,6 +508,19 @@ class BufferOverflow(TenuoOpenAIError):
 from tenuo.core import check_constraint  # noqa: E402
 
 
+def _check_local_tool_name(
+    tool_name: str, allow_tools: Optional[List[str]], deny_tools: Optional[List[str]],
+) -> None:
+    """Clear the prior call's key and reject local policy before reserving approvals."""
+    from .consumption import _set_current_idempotency_key
+
+    _set_current_idempotency_key(None)
+    if deny_tools and tool_name in deny_tools:
+        raise ToolDenied(tool_name, "Tool is in denylist")
+    if allow_tools is not None and tool_name not in allow_tools:
+        raise ToolDenied(tool_name, "Tool not in allowlist")
+
+
 def verify_tool_call(
     tool_name: str,
     arguments: Dict[str, Any],
@@ -570,6 +583,7 @@ def verify_tool_call(
     # ==========================================================================
     # Tier 2: Warrant-based authorization (cryptographic)
     # ==========================================================================
+    _check_local_tool_name(tool_name, allow_tools, deny_tools)
     idempotency_key: Optional[str] = None
     warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
     if warrant is not None:
@@ -599,20 +613,12 @@ def verify_tool_call(
         else:
             logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
             idempotency_key = result.idempotency_key
-            _hold_reservation(result, tool_name, allow_tools, deny_tools, _reservations)
+            _hold_reservation(result, _reservations)
 
     # ==========================================================================
     # Tier 1: Guardrail-based authorization (runtime checks)
     # ==========================================================================
     logger.debug(f"Tier 1: Checking guardrails for '{tool_name}'")
-
-    # Check denylist first
-    if deny_tools and tool_name in deny_tools:
-        raise ToolDenied(tool_name, "Tool is in denylist")
-
-    # Check allowlist
-    if allow_tools is not None and tool_name not in allow_tools:
-        raise ToolDenied(tool_name, "Tool not in allowlist")
 
     # Check Tier 1 constraints only if no warrant present.
     # When warrant exists, its constraints are authoritative (cryptographically signed).
@@ -692,6 +698,7 @@ async def verify_tool_call_async(
     Required for async streaming paths so approval handlers can be awaited.
     See verify_tool_call for full documentation.
     """
+    _check_local_tool_name(tool_name, allow_tools, deny_tools)
     idempotency_key: Optional[str] = None
     warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
     if warrant is not None:
@@ -713,13 +720,7 @@ async def verify_tool_call_async(
         if not result.allowed:
             _raise_for_enforcement_denial(tool_name, result)
         idempotency_key = result.idempotency_key
-        _hold_reservation(result, tool_name, allow_tools, deny_tools, _reservations)
-
-    if deny_tools and tool_name in deny_tools:
-        raise ToolDenied(tool_name, "Tool is in denylist")
-
-    if allow_tools is not None and tool_name not in allow_tools:
-        raise ToolDenied(tool_name, "Tool not in allowlist")
+        _hold_reservation(result, _reservations)
 
     if warrant is None and constraints and tool_name in constraints:
         tool_constraints = constraints[tool_name]
@@ -759,26 +760,17 @@ async def verify_tool_call_async(
 
 def _hold_reservation(
     result: Any,
-    tool_name: str,
-    allow_tools: Optional[List[str]],
-    deny_tools: Optional[List[str]],
     reservations: Optional[List[Any]],
 ) -> None:
-    """Keep or drop the approvals Tier 2 just reserved for this call.
+    """Keep the approvals Tier 2 just reserved for this call.
 
-    This adapter only verifies; the host runs the tool later. If the Tier 1
-    lists below deny the call, nothing will run, so the reservation is
-    released. Otherwise the caller may collect it to release if the response
-    as a whole is rejected.
+    This adapter only verifies; the host runs the tool later. The caller may
+    collect the reservation to release if the response as a whole is rejected.
     """
     reservation = getattr(result, "approval_reservation", None)
     if reservation is None:
         return
-    if (deny_tools and tool_name in deny_tools) or (
-        allow_tools is not None and tool_name not in allow_tools
-    ):
-        reservation.release()
-    elif reservations is not None:
+    if reservations is not None:
         reservations.append(reservation)
 
 

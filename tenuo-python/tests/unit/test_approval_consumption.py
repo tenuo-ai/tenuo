@@ -218,12 +218,15 @@ class TestReserveCommit:
 
         b = InMemoryConsumptionBackend()
         assert isinstance(b, ConsumptionBackend)
-        assert b.reserve("k", 60, "ik") is None
-        assert b.reserve("k", 60, "other") == ("in_flight", "ik")
-        b.commit("k")
-        assert b.reserve("k", 60) == ("consumed", "ik")
-        b.release("k")
-        assert b.reserve("k", 60).state == "consumed"
+        assert b.reserve("k", 60, "ik", owner_token="first") is None
+        assert b.reserve("k", 60, "other", owner_token="second") == ("in_flight", "ik")
+        b.commit("k", owner_token="second")
+        b.release("k", owner_token="second")
+        assert b.reserve("k", 60, owner_token="second").state == "in_flight"
+        b.commit("k", owner_token="first")
+        assert b.reserve("k", 60, owner_token="second") == ("consumed", "ik")
+        b.release("k", owner_token="first")
+        assert b.reserve("k", 60, owner_token="second").state == "consumed"
 
 
 class TestIdempotencyKey:
@@ -341,10 +344,10 @@ class TestReviewFollowUps:
         class Flaky(InMemoryConsumptionBackend):
             fail = True
 
-            def reserve(self, key, ttl_seconds, idempotency_key=None):
+            def reserve(self, key, ttl_seconds, idempotency_key=None, *, owner_token):
                 if key.startswith("bb") and self.fail:
                     raise ConnectionError("backend down")
-                return super().reserve(key, ttl_seconds, idempotency_key)
+                return super().reserve(key, ttl_seconds, idempotency_key, owner_token=owner_token)
 
         backend = Flaky()
         store = ApprovalConsumptionStore(backend=backend)
@@ -531,7 +534,7 @@ class TestOpenAIReleasesUnusedReservations:
         self._guarded(setup, monkeypatch, good).chat.completions.create(model="m", messages=[])
         assert len(store) == 1
 
-    def test_tier1_denial_after_tier2_releases(self, setup, monkeypatch):
+    def test_tier1_denial_does_not_reserve_or_publish_a_key(self, setup, monkeypatch):
         from tenuo.openai import ToolDenied, verify_tool_call
 
         pytest.importorskip("openai")
@@ -543,13 +546,156 @@ class TestOpenAIReleasesUnusedReservations:
                 setup["warrant"], setup["holder"], roots, None, [setup["approval"]],
             )
         assert len(store) == 0
+        assert current_idempotency_key() is None
         assert verify_tool_call(
             "transfer", setup["args"], None, None, None,
             setup["warrant"], setup["holder"], roots, None, [setup["approval"]],
         )
 
+    @pytest.mark.asyncio
+    async def test_async_tier1_denial_clears_the_prior_key(self, setup):
+        pytest.importorskip("openai")
+        from tenuo.openai import ToolDenied, verify_tool_call_async
+
+        store = enable_default_consumption_store()
+        first = await enforce_tool_call_async(
+            "transfer", setup["args"], setup["bound"],
+            trusted_roots=[setup["issuer"].public_key], approvals=[setup["approval"]],
+        )
+        assert current_idempotency_key() is not None
+        first.approval_reservation.release()
+        with pytest.raises(ToolDenied):
+            await verify_tool_call_async(
+                "transfer", setup["args"], None, ["transfer"], None,
+                setup["warrant"], setup["holder"], [setup["issuer"].public_key],
+                None, [setup["approval"]],
+            )
+        assert len(store) == 0
+        assert current_idempotency_key() is None
+
 
 class TestSecondReviewFollowUps:
+    def test_duplicate_approver_selection_is_independent_of_order(self, setup):
+        first = setup["approval"]
+        second = _approval(setup["warrant"], "transfer", setup["args"], setup["holder"], setup["approver"])
+        a = _call(setup, [first], consumption_store=False)
+        b = _call(setup, [second], consumption_store=False)
+        ab = _call(setup, [first, second], consumption_store=False)
+        ba = _call(setup, [second, first], consumption_store=False)
+        assert ab.allowed and ba.allowed
+        assert len(ab.chain_result.verified_approvals) == 1
+        assert ab.idempotency_key == ba.idempotency_key
+        assert bytes(ab.chain_result.verified_approvals[0].nonce) == min(
+            bytes(a.chain_result.verified_approvals[0].nonce),
+            bytes(b.chain_result.verified_approvals[0].nonce),
+        )
+
+    @staticmethod
+    def _chain(*keys):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(verified_approvals=[
+            SimpleNamespace(consumption_key=key, expires_at=int(time.time()) + 300)
+            for key in keys
+        ])
+
+    def test_lost_release_response_cannot_release_a_new_owner(self):
+        from tenuo.consumption import InMemoryConsumptionBackend
+
+        class LostReply(InMemoryConsumptionBackend):
+            lose_reply = True
+
+            def release(self, key, *, owner_token):
+                super().release(key, owner_token=owner_token)
+                if self.lose_reply:
+                    self.lose_reply = False
+                    raise ConnectionError("release succeeded but response was lost")
+
+        store = ApprovalConsumptionStore(backend=LostReply())
+        chain = self._chain("aa:01")
+        first, _ = store.reserve(chain, "same-authorization")
+        with pytest.raises(ConnectionError):
+            first.release()
+        second, denial = store.reserve(chain, "same-authorization")
+        assert second is not None and denial is None
+        first.release()
+        assert first.done
+        third, denial = store.reserve(chain, "same-authorization")
+        assert third is None and denial.state == "in_flight"
+        second.commit()
+        assert store.reserve(chain)[1].state == "consumed"
+
+    def test_lost_reserve_response_rolls_back_that_acquisition(self):
+        from tenuo.consumption import InMemoryConsumptionBackend
+
+        class LostReply(InMemoryConsumptionBackend):
+            lose_reply = True
+
+            def reserve(self, key, ttl_seconds, idempotency_key=None, *, owner_token):
+                result = super().reserve(key, ttl_seconds, idempotency_key, owner_token=owner_token)
+                if key == "bb:02" and self.lose_reply:
+                    self.lose_reply = False
+                    raise ConnectionError("reserve succeeded but response was lost")
+                return result
+
+        store = ApprovalConsumptionStore(backend=LostReply())
+        chain = self._chain("aa:01", "bb:02")
+        with pytest.raises(ConnectionError):
+            store.reserve(chain)
+        assert len(store) == 0
+        reservation, denial = store.reserve(chain)
+        assert reservation is not None and denial is None
+
+    def test_old_commit_cannot_commit_a_new_acquisition(self, monkeypatch):
+        from tenuo.consumption import ApprovalReservation, InMemoryConsumptionBackend
+
+        now = [100.0]
+        monkeypatch.setattr("tenuo.consumption.time.monotonic", lambda: now[0])
+        backend = InMemoryConsumptionBackend()
+        backend.reserve("aa:01", 1, owner_token="first")
+        old = ApprovalReservation(backend, ["aa:01"], owner_token="first")
+        now[0] += 2
+        assert backend.reserve("aa:01", 60, owner_token="second") is None
+        old.commit()
+        assert backend.reserve("aa:01", 60, owner_token="third").state == "in_flight"
+
+    def test_old_expiry_does_not_evict_a_reacquired_approval(self, monkeypatch):
+        from tenuo.consumption import InMemoryConsumptionBackend
+
+        now = [100.0]
+        monkeypatch.setattr("tenuo.consumption.time.monotonic", lambda: now[0])
+        backend = InMemoryConsumptionBackend()
+        backend.reserve("aa:01", 1, owner_token="first")
+        backend.release("aa:01", owner_token="first")
+        assert backend.reserve("aa:01", 60, owner_token="second") is None
+        now[0] += 2
+        assert len(backend) == 1
+        assert backend.reserve("aa:01", 60, owner_token="third").state == "in_flight"
+        now[0] += 60
+        assert len(backend) == 0
+
+    def test_only_one_concurrent_reservation_succeeds(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        store = ApprovalConsumptionStore()
+        chain = self._chain("aa:01")
+        ready = Barrier(8)
+
+        def reserve(_):
+            ready.wait()
+            return store.reserve(chain)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(reserve, range(8)))
+        assert sum(reservation is not None for reservation, _ in results) == 1
+        assert sum(denial is not None for _, denial in results) == 7
+
+    @pytest.mark.parametrize("margin", [-1, 0.5, float("nan")])
+    def test_expiry_margin_cannot_shorten_approval_retention(self, margin):
+        with pytest.raises(ValueError, match="non-negative integer"):
+            ApprovalConsumptionStore(margin_seconds=margin)
+
     def test_reuse_denial_returns_the_original_key_after_a_surplus_expires(self, monkeypatch):
         issuer, holder = SigningKey.generate(), SigningKey.generate()
         a, b = SigningKey.generate(), SigningKey.generate()
@@ -584,16 +730,16 @@ class TestSecondReviewFollowUps:
         class FlakyRelease(InMemoryConsumptionBackend):
             failures = 1
 
-            def release(self, key):
+            def release(self, key, *, owner_token):
                 if key == "bb:02" and self.failures:
                     self.failures -= 1
                     raise ConnectionError("backend down")
-                super().release(key)
+                super().release(key, owner_token=owner_token)
 
         backend = FlakyRelease()
         for k in ("aa:01", "bb:02", "cc:03"):
-            backend.reserve(k, 60)
-        reservation = ApprovalReservation(backend, ["aa:01", "bb:02", "cc:03"])
+            backend.reserve(k, 60, owner_token="first")
+        reservation = ApprovalReservation(backend, ["aa:01", "bb:02", "cc:03"], owner_token="first")
         with pytest.raises(ConnectionError):
             reservation.release()
         # Keys that succeeded are released; the failed one is still pending.
@@ -609,20 +755,20 @@ class TestSecondReviewFollowUps:
         class FlakyCommit(InMemoryConsumptionBackend):
             failures = 1
 
-            def commit(self, key):
+            def commit(self, key, *, owner_token):
                 if self.failures:
                     self.failures -= 1
                     raise ConnectionError("backend down")
-                super().commit(key)
+                super().commit(key, owner_token=owner_token)
 
         backend = FlakyCommit()
-        backend.reserve("aa:01", 60)
-        reservation = ApprovalReservation(backend, ["aa:01"])
+        backend.reserve("aa:01", 60, owner_token="first")
+        reservation = ApprovalReservation(backend, ["aa:01"], owner_token="first")
         with pytest.raises(ConnectionError):
             reservation.commit()
-        assert backend.reserve("aa:01", 60).state == "in_flight"
+        assert backend.reserve("aa:01", 60, owner_token="second").state == "in_flight"
         reservation.commit()
-        assert reservation.done and backend.reserve("aa:01", 60).state == "consumed"
+        assert reservation.done and backend.reserve("aa:01", 60, owner_token="second").state == "consumed"
 
     @staticmethod
     def _fastapi_headers(setup, tool, args):

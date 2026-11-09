@@ -132,7 +132,9 @@
 //! - The intercepted approval
 //! - The holder's private key (to sign the Proof-of-Possession)
 //!
-//! If they have the holder's key, they don't need the approval at all.
+//! The holder's key alone cannot satisfy an approval gate: a valid approval
+//! for the exact request is still required. Neither signature records whether
+//! that approval has already been used.
 //!
 //! That argument does not cover the holder itself being rewound. A run
 //! restored or forked from a checkpoint taken before an approved call, or a
