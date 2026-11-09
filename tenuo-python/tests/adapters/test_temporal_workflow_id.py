@@ -399,3 +399,62 @@ def test_worker_rejects_a_positional_name_collision_before_dispatch():
     headers = _with_arg_keys(s.schedule("wf"), b"arg1")
     with pytest.raises(ApplicationError, match="argument name"):
         s.execute(headers, "wf", fn=activity, args=("secret", "public"))
+
+
+def test_positional_header_cannot_permute_worker_parameter_names():
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    def activity(arg1, arg0):
+        return arg1, arg0
+
+    inbound = TenuoWorkerInterceptor(Setup().config).intercept_activity(MagicMock())
+    with pytest.raises(TenuoContextError, match="reassign"):
+        inbound._extract_arguments(
+            ExecuteActivity(activity, ("/data/a", "/tmp/b"), {}),
+            {TENUO_ARG_KEYS_HEADER: b"arg0,arg1"},
+        )
+
+
+def test_worker_without_a_function_reference_does_not_trust_caller_aliases():
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    inbound = TenuoWorkerInterceptor(Setup().config).intercept_activity(MagicMock())
+    inp = ExecuteActivity(None, ("/private", "/public"), {})
+    with pytest.raises(TenuoContextError, match="without the dispatched"):
+        inbound._extract_arguments(inp, {TENUO_ARG_KEYS_HEADER: b"destination,source"})
+    assert inbound._extract_arguments(inp, {TENUO_ARG_KEYS_HEADER: b"arg0,arg1"}) == {
+        "arg0": "/private", "arg1": "/public",
+    }
+
+
+def test_legacy_dict_view_does_not_discard_additional_arguments():
+    inbound = TenuoWorkerInterceptor(Setup().config).intercept_activity(MagicMock())
+    inp = ExecuteActivity(None, ({"path": "/public"}, "/private"), {})
+    assert inbound._extract_arguments(inp) == {"arg0": {"path": "/public"}, "arg1": "/private"}
+
+
+def test_unbound_caller_and_bound_worker_round_trip():
+    from temporalio import activity
+
+    from tenuo.temporal._decorators import tool
+    from tenuo.temporal._state import _activity_fn_override
+
+    class Activities:
+        @activity.defn
+        @tool("issue_refund")
+        def refund(self, destination: str):
+            return destination
+
+    s = Setup()
+    s.warrant = Warrant.mint_builder().holder(s.holder.public_key).capability(
+        "issue_refund", destination=Pattern("/data/*"),
+    ).ttl(600).mint(s.issuer)
+    token = _activity_fn_override.set(Activities.refund)
+    try:
+        headers = s.schedule("wf", fn=None, args=("/data/a",))
+    finally:
+        _activity_fn_override.reset(token)
+    assert headers[TENUO_ARG_KEYS_HEADER].data == b"destination"
+    body = s.execute(headers, "wf", fn=Activities().refund, args=("/data/a",))
+    body.execute_activity.assert_awaited_once()
+    assert body.execute_activity.call_args.args[0].args == ("/data/a",)

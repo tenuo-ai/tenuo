@@ -144,6 +144,8 @@ def _warrant_tool_has_non_empty_field_constraints(warrant: Any, tool_name: str) 
 def _args_to_dict_by_fn(
     raw_args: Sequence[Any],
     activity_fn: Optional[Any],
+    *,
+    for_signing: bool = False,
 ) -> Dict[str, Any]:
     """Map positional activity args to their parameter names.
 
@@ -159,7 +161,22 @@ def _args_to_dict_by_fn(
     if activity_fn is not None:
         try:
             sig = inspect.signature(activity_fn)
-            for pname, p in sig.parameters.items():
+            parameters = list(sig.parameters.items())
+            # Workflow callers may pass an unbound @activity.defn method;
+            # Temporal binds its instance on the worker. Only the caller view
+            # may omit that implicit self. Worker names always use the callable
+            # actually dispatched, and must still agree with the signed header.
+            if (
+                for_signing
+                and inspect.isfunction(activity_fn)
+                and getattr(activity_fn, "__temporal_activity_definition", None) is not None
+                and parameters
+                and parameters[0][0] == "self"
+                and len(activity_fn.__qualname__.split(".")) > 1
+                and activity_fn.__qualname__.split(".")[-2] != "<locals>"
+            ):
+                parameters = parameters[1:]
+            for pname, p in parameters:
                 if p.kind not in (
                     inspect.Parameter.POSITIONAL_ONLY,
                     inspect.Parameter.POSITIONAL_OR_KEYWORD,

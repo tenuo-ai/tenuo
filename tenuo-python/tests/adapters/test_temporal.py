@@ -3692,7 +3692,7 @@ class TestConstraintTypesThroughInterceptor:
         info.is_local = False
 
         inp = MagicMock()
-        inp.fn = None
+        inp.fn = eval(f"lambda {', '.join(activity_args)}: None")
         inp.args = tuple(activity_args.values())
         inp.headers = payload_headers
 
@@ -4718,7 +4718,7 @@ class TestMetricsWiring:
         info.is_local = False
 
         inp = MagicMock()
-        inp.fn = None
+        inp.fn = lambda msg: None
         inp.args = ("hello",)
         inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
 
@@ -4795,7 +4795,7 @@ class TestMetricsWiring:
         info.is_local = False
 
         inp = MagicMock()
-        inp.fn = None
+        inp.fn = lambda path: None
         inp.args = ("/etc/passwd",)
         inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
 
@@ -5333,7 +5333,7 @@ class TestAuditCallbackFailureSwallowed:
         info.is_local = False
 
         inp = MagicMock()
-        inp.fn = None
+        inp.fn = lambda path: None
         inp.args = ("/etc/passwd",)
         inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
 

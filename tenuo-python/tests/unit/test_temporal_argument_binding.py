@@ -36,3 +36,38 @@ def test_bound_method_uses_its_visible_signature():
             return destination
 
     assert _args_to_dict_by_fn(("public",), Activities().activity) == {"destination": "public"}
+
+
+def test_plain_self_parameter_is_preserved_when_signing():
+    from temporalio import activity
+
+    @activity.defn
+    def plain(self: str, destination: str):
+        return self, destination
+
+    assert _args_to_dict_by_fn(("first", "second"), plain, for_signing=True) == {"self": "first", "destination": "second"}
+
+
+def test_unbound_activity_method_matches_the_worker_bound_method():
+    from temporalio import activity
+
+    class Activities:
+        @activity.defn
+        def method(self, destination: str):
+            return destination
+
+    caller = _args_to_dict_by_fn(("public",), Activities.method, for_signing=True)
+    worker = _args_to_dict_by_fn(("public",), Activities().method)
+    assert caller == worker == {"destination": "public"}
+
+
+def test_unbound_vararg_activity_keeps_every_argument():
+    from temporalio import activity
+
+    class Activities:
+        @activity.defn
+        def method(self, *values):
+            return values
+
+    args = ("first", "second", "third")
+    assert _args_to_dict_by_fn(args, Activities.method, for_signing=True) == _args_to_dict_by_fn(args, Activities().method)
