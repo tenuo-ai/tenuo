@@ -547,8 +547,8 @@ impl Constraint {
     /// A value of any other kind is rejected by the constraint for being the
     /// wrong kind, not for failing the rule. `Not` and `NotOneOf` use this so
     /// that negating a rule never admits values the rule could not judge.
-    pub(crate) fn value_kinds(&self) -> ValueKinds {
-        match self {
+    pub(crate) fn value_kinds(&self) -> Result<ValueKinds> {
+        Ok(match self {
             Constraint::Wildcard(_) | Constraint::Cel(_) => ValueKinds::ALL,
             Constraint::Pattern(_)
             | Constraint::Regex(_)
@@ -564,17 +564,20 @@ impl Constraint {
             Constraint::Exact(e) => ValueKinds::of(&e.value),
             Constraint::OneOf(o) => ValueKinds::of_all(&o.values),
             Constraint::NotOneOf(n) => n.value_kinds(),
-            Constraint::All(a) => a
-                .constraints
-                .iter()
-                .fold(ValueKinds::ALL, |acc, c| acc.intersection(c.value_kinds())),
-            Constraint::Any(a) => a
-                .constraints
-                .iter()
-                .fold(ValueKinds::NONE, |acc, c| acc.union(c.value_kinds())),
-            Constraint::Not(n) => n.constraint.value_kinds(),
-            Constraint::Unknown { .. } => ValueKinds::NONE,
-        }
+            Constraint::All(a) => a.constraints.iter().try_fold(ValueKinds::ALL, |acc, c| {
+                Ok::<_, Error>(acc.intersection(c.value_kinds()?))
+            })?,
+            Constraint::Any(a) => a.constraints.iter().try_fold(ValueKinds::NONE, |acc, c| {
+                Ok::<_, Error>(acc.union(c.value_kinds()?))
+            })?,
+            Constraint::Not(n) => n.constraint.value_kinds()?,
+            Constraint::Unknown { type_id, .. } => {
+                return Err(Error::ConstraintNotSatisfied {
+                    field: "constraint".to_string(),
+                    reason: format!("unknown constraint type ID {}", type_id),
+                });
+            }
+        })
     }
 
     /// Check if this constraint is satisfied by the given value.
@@ -4110,7 +4113,7 @@ impl Not {
     /// A value of a kind the inner constraint cannot judge does not pass:
     /// `Not(Regex("rm"))` rejects a list or a number as well as `"rm -rf"`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        if !self.constraint.value_kinds().accepts(value) {
+        if !self.constraint.value_kinds()?.accepts(value) {
             return Ok(false);
         }
         Ok(!self.constraint.matches(value)?)
@@ -4143,8 +4146,8 @@ impl Not {
         if !matches!(*child.constraint, Constraint::Wildcard(_))
             && !self
                 .constraint
-                .value_kinds()
-                .contains(child.constraint.value_kinds())
+                .value_kinds()?
+                .contains(child.constraint.value_kinds()?)
         {
             return Err(Error::MonotonicityViolation(
                 "Not attenuation requires the child inner constraint to judge only kinds of \
@@ -7682,6 +7685,35 @@ mod tests {
         }
         assert!(rules[0].matches(&ConstraintValue::Float(999.5)).unwrap());
         assert!(rules[1].matches(&ConstraintValue::Float(1000.5)).unwrap());
+    }
+
+    #[test]
+    fn test_negation_preserves_unknown_constraint_errors() {
+        let unknown = Constraint::Unknown {
+            type_id: 200,
+            payload: vec![0xf6],
+        };
+        let negated_unknown = Constraint::Not(Not::new(unknown.clone()));
+        for rule in [
+            negated_unknown.clone(),
+            Constraint::Not(Not::new(negated_unknown.clone())),
+            Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+                negated_unknown.clone(),
+                Constraint::Exact(Exact::new("blocked")),
+            ])))),
+            Constraint::Not(Not::new(Constraint::All(All::new(vec![
+                negated_unknown,
+                Constraint::Exact(Exact::new("blocked")),
+            ])))),
+        ] {
+            for value in [
+                ConstraintValue::String("allowed".to_string()),
+                ConstraintValue::Integer(5),
+            ] {
+                let error = rule.matches(&value).unwrap_err();
+                assert!(error.to_string().contains("unknown constraint type ID 200"));
+            }
+        }
     }
 
     #[test]
