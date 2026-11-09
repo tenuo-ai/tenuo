@@ -22,13 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Inbound PoP replay protection uses atomic nonce admission.** FastAPI and
   A2A honor the configured process nonce store after verification. Retention
-  covers the Authorizer's complete PoP validity interval, including custom
-  windows. Multiple FastAPI guards share admission only within one request;
+  uses an immutable backend floor covering every shared Authorizer's complete
+  PoP validity interval; incompatible verifier windows are rejected. Configure
+  the floor before serving. Multiple FastAPI guards share admission only within one request;
   A2A local denials do not consume the nonce. Python nonce backends must now
   implement atomic `check_and_record(nonce_hex, ttl_seconds)`, for example
   Redis `SET ... NX EX`. Separate `seen()` and `record()` operations are no
-  longer sufficient. Custom stores must accept `min_ttl_seconds` and retain
-  signatures for at least that long.
+  longer sufficient. Backends must declare and enforce namespace-wide
+  `retention_seconds`; custom stores must expose that floor and accept
+  `min_ttl_seconds`. A2A nonce denials honor observe mode and retain denial
+  metadata for auditing.
 
 - **Negated constraints reject values of unrelated kinds.** `Not` and
   `NotOneOf` now judge only the kinds their inner rule or exclusion entries

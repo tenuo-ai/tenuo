@@ -50,7 +50,7 @@ def call():
 
 
 def test_replayed_pop_is_denied_with_an_explicit_store(call):
-    store = NonceStore(ttl_seconds=120)
+    store = NonceStore(ttl_seconds=150)
     first, signature = call(check_replay=True, nonce_store=store)
     assert first.allowed
     replay, _ = call(signature=signature, check_replay=True, nonce_store=store)
@@ -68,7 +68,7 @@ def test_replayed_pop_is_denied_with_the_process_wide_store(call):
 
 
 def test_a_denied_request_does_not_use_up_its_signature(call):
-    store = NonceStore(ttl_seconds=120)
+    store = NonceStore(ttl_seconds=150)
     denied, signature = call(path="/etc/x", check_replay=True, nonce_store=store)
     assert not denied.allowed
     assert not store.is_replay(signature)
@@ -97,7 +97,7 @@ def test_retention_covers_the_verifiers_full_acceptance_interval(monkeypatch, wi
     now = [1000.0]
     monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
     authorizer = Authorizer(pop_window_secs=window, pop_max_windows=count)
-    store = NonceStore(ttl_seconds=1)
+    store = NonceStore(ttl_seconds=window * count)
     assert _admit_verified_pop(store, b"signature", authorizer)
     now[0] += window * count - 0.001
     assert not _admit_verified_pop(store, b"signature", authorizer)
@@ -106,7 +106,7 @@ def test_retention_covers_the_verifiers_full_acceptance_interval(monkeypatch, wi
 def test_future_window_pop_remains_recorded_past_120_seconds(call, monkeypatch):
     now = [1000.0]
     monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
-    store = NonceStore(ttl_seconds=120)
+    store = NonceStore(ttl_seconds=150)
     first, signature = call(timestamp=int(time.time()) + 60, check_replay=True, nonce_store=store)
     assert first.allowed
     now[0] += 121
@@ -199,3 +199,70 @@ async def test_a2a_local_denial_does_not_consume_the_process_nonce_store():
     assert await server.validate_warrant(warrant.to_base64(), "read_file", args, pop_signature=signature)
     with pytest.raises(PopVerificationError):
         await server.validate_warrant(warrant.to_base64(), "read_file", args, pop_signature=signature)
+
+
+def test_shared_backend_rejects_wider_verifiers_until_the_floor_is_configured(monkeypatch):
+    from tenuo.exceptions import ConfigurationError
+    from tenuo.nonce import _InMemoryBackend, _admit_verified_pop
+
+    now = [1000.0]
+    monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
+    narrow, wide = Authorizer(pop_max_windows=5), Authorizer(pop_max_windows=9)
+    backend = _InMemoryBackend(retention_seconds=150)
+    first, second = NonceStore(backend=backend), NonceStore(backend=backend)
+    assert _admit_verified_pop(first, b"same-pop", narrow)
+    now[0] += 151
+    with pytest.raises(ConfigurationError, match="every shared verifier"):
+        _admit_verified_pop(second, b"same-pop", wide)
+    with pytest.raises(ValueError, match="shared backend retention floor"):
+        NonceStore(ttl_seconds=270, backend=backend)
+
+    # Every admission uses the namespace floor, including the narrow verifier.
+    backend = _InMemoryBackend(retention_seconds=270)
+    first, second = NonceStore(backend=backend), NonceStore(ttl_seconds=270, backend=backend)
+    assert _admit_verified_pop(first, b"same-pop", narrow)
+    now[0] += 151
+    assert not _admit_verified_pop(second, b"same-pop", wide)
+
+
+def test_short_retention_is_denied_without_recording_a_signature(call):
+    store = NonceStore(ttl_seconds=120)
+    denied, signature = call(check_replay=True, nonce_store=store)
+    assert not denied.allowed
+    assert "retention floor" in denied.denial_reason
+    assert not store.is_replay(signature)
+
+
+@pytest.mark.asyncio
+async def test_a2a_nonce_replay_observes_the_configured_mode(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tenuo.a2a.errors import PopVerificationError
+    from tenuo.a2a.server import A2AServer
+    from tenuo.config import configure, reset_config
+
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("ping").holder(holder.public_key).ttl(300).mint(issuer)
+    signature = bytes(warrant.sign(holder, "ping", {}, int(time.time())))
+    server = A2AServer(name="agent", url="https://agent.test", public_key=issuer.public_key,
+                       trusted_issuers=[issuer.public_key], check_replay=False)
+    audit = AsyncMock()
+    monkeypatch.setattr(server, "_audit", audit)
+    cp = MagicMock()
+    monkeypatch.setattr(server, "_control_plane", cp)
+    enable_default_nonce_store()
+    try:
+        configure(mode="observe", trusted_roots=[issuer.public_key])
+        assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+        assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+        result = cp.emit_for_enforcement.call_args.args[0]
+        assert result.allowed and result.observed
+        assert result.error_type == "invalid_pop"
+        assert result.chain_result is None
+        assert "replay" in result.denial_reason.lower()
+        assert audit.call_args.args[0].outcome == "denied"
+        configure(mode="enforce", trusted_roots=[issuer.public_key])
+        with pytest.raises(PopVerificationError):
+            await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+    finally:
+        reset_config()

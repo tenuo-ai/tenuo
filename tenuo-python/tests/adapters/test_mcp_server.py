@@ -1014,7 +1014,7 @@ class TestNonceReplayPrevention:
         """Second call with the exact same PoP bytes is rejected."""
         from tenuo.nonce import NonceStore
 
-        ns = NonceStore(ttl_seconds=120)
+        ns = NonceStore(ttl_seconds=150)
         verifier = MCPVerifier(authorizer=authorizer, nonce_store=ns)
 
         tool_args = {"path": "/data/f.txt"}
@@ -1059,7 +1059,7 @@ class TestNonceReplayPrevention:
         """Two calls with different args produce distinct PoPs — both pass."""
         from tenuo.nonce import NonceStore
 
-        ns = NonceStore(ttl_seconds=120)
+        ns = NonceStore(ttl_seconds=150)
         verifier = MCPVerifier(authorizer=authorizer, nonce_store=ns)
 
         args1 = {"path": "/data/a.txt"}
@@ -1085,7 +1085,7 @@ class TestNonceReplayPrevention:
         from tenuo.nonce import NonceStore
         from tenuo import nonce as nonce_mod
 
-        default_ns = NonceStore(ttl_seconds=120)
+        default_ns = NonceStore(ttl_seconds=150)
         monkeypatch.setattr(nonce_mod, "_default_store", default_ns)
 
         verifier = MCPVerifier(authorizer=authorizer)

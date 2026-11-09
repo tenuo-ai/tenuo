@@ -501,7 +501,7 @@ def test_mcp_nonce_denial_releases_fresh_approval(setup, nonce_failure):
     from tenuo import Authorizer
     from tenuo.mcp.server import MCPVerifier
 
-    class FailingNonceStore:
+    class FailingNonceStore(NonceStore):
         def check_and_record(self, signature, *, min_ttl_seconds=0):
             raise ConnectionError("nonce backend unavailable")
 

@@ -49,8 +49,15 @@ logger = logging.getLogger("tenuo.nonce")
 class NonceBackend(Protocol):
     """Pluggable storage backend for the nonce store.
 
-    Implementations must be thread-safe.
+    Implementations must be thread-safe. ``retention_seconds`` is an
+    immutable floor shared by every client of the backend's nonce namespace.
+    Shared backends must reject inconsistent namespace configurations.
     """
+
+    @property
+    def retention_seconds(self) -> int:
+        """Minimum lifetime of every admitted nonce, fixed before serving."""
+        ...
 
     def check_and_record(self, nonce_hex: str, ttl_seconds: int) -> bool:
         """Atomically admit and insert an unseen nonce with the given TTL.
@@ -77,10 +84,15 @@ class NonceBackend(Protocol):
 class _InMemoryBackend:
     """Thread-safe in-process nonce store with TTL eviction."""
 
-    def __init__(self) -> None:
+    def __init__(self, retention_seconds: int = 150) -> None:
+        self._retention_seconds = retention_seconds
         self._lock = threading.Lock()
         # nonce_hex → expiry timestamp (float)
         self._store: dict[str, float] = {}
+
+    @property
+    def retention_seconds(self) -> int:
+        return self._retention_seconds
 
     def check_and_record(self, nonce_hex: str, ttl_seconds: int) -> bool:
         with self._lock:
@@ -88,7 +100,7 @@ class _InMemoryBackend:
             self._evict(now)
             if nonce_hex in self._store:
                 return False
-            self._store[nonce_hex] = now + ttl_seconds
+            self._store[nonce_hex] = now + max(ttl_seconds, self.retention_seconds)
             return True
 
     def seen(self, nonce_hex: str) -> bool:
@@ -126,8 +138,8 @@ class NonceStore:
     ttl_seconds:
         How long to remember a PoP signature.  Should be at least as long as
         the Authorizer's ``pop_window_secs * pop_max_windows`` (default: 150 s).
-        Enforcement raises retention to the verifier's full validity
-        interval when a shorter TTL was configured.
+        Configure this before serving to cover the longest validity interval
+        of every verifier sharing the backend. Wider verifiers are rejected.
     backend:
         Optional custom :class:`NonceBackend`.  Defaults to an in-process
         ``threading.Lock``-guarded dict.  For multi-process deployments pass a
@@ -140,10 +152,17 @@ class NonceStore:
 
         # Multi-process — plug in Redis
         class RedisBackend:
+            retention_seconds = 300  # fixed for every client of this namespace
+            def __init__(self):
+                # Persistent metadata prevents clients from choosing different
+                # floors for signatures stored in the same namespace.
+                redis.set("tenuo:nonce-retention", self.retention_seconds, nx=True)
+                if int(redis.get("tenuo:nonce-retention")) != self.retention_seconds:
+                    raise ValueError("inconsistent nonce namespace retention")
             def check_and_record(self, h, ttl):
-                return bool(redis.set(h, "1", nx=True, ex=ttl))
-            def seen(self, h): return redis.exists(h)
-            def record(self, h, ttl): redis.setex(h, ttl, "1")
+                return bool(redis.set("tenuo:nonce:" + h, "1", nx=True, ex=ttl))
+            def seen(self, h): return redis.exists("tenuo:nonce:" + h)
+            def record(self, h, ttl): redis.setex("tenuo:nonce:" + h, ttl, "1")
 
         store = NonceStore(backend=RedisBackend())
     """
@@ -155,10 +174,19 @@ class NonceStore:
     ) -> None:
         if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
             raise ValueError("nonce TTL must be a positive integer")
-        self._ttl = ttl_seconds
-        self._backend: NonceBackend = backend if backend is not None else _InMemoryBackend()
+        self._backend: NonceBackend = backend if backend is not None else _InMemoryBackend(ttl_seconds)
         if not callable(getattr(self._backend, "check_and_record", None)):
             raise TypeError("NonceBackend must implement atomic check_and_record(nonce_hex, ttl_seconds)")
+        floor = getattr(self._backend, "retention_seconds", None)
+        if isinstance(floor, bool) or not isinstance(floor, int) or floor <= 0:
+            raise TypeError("NonceBackend must declare an immutable positive retention_seconds floor")
+        if ttl_seconds > floor:
+            raise ValueError("Configure the shared backend retention floor before creating a wider nonce store")
+        self._ttl = floor
+
+    @property
+    def retention_seconds(self) -> int:
+        return self._ttl
 
     # ------------------------------------------------------------------
     # Core operations
@@ -173,8 +201,15 @@ class NonceStore:
             ``True`` if the PoP is fresh (admitted).
             ``False`` if it is a replay (reject the call).
         """
+        if min_ttl_seconds > self.retention_seconds:
+            from .exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                f"Nonce retention floor {self.retention_seconds}s cannot cover a {min_ttl_seconds}s PoP interval; "
+                "configure every client of the shared backend for the longest verifier interval before serving"
+            )
         nonce_hex = hashlib.sha256(pop_bytes).hexdigest()
-        if not self._backend.check_and_record(nonce_hex, max(self._ttl, min_ttl_seconds)):
+        if not self._backend.check_and_record(nonce_hex, self.retention_seconds):
             logger.warning(
                 "PoP replay detected — nonce %s…%s was already consumed.",
                 nonce_hex[:8], nonce_hex[-4:],
@@ -206,6 +241,7 @@ class _RequestNonceAdmissions:
 
     def admit(self, store: Any, signature: bytes, authorizer: Any) -> bool:
         with self._lock:
+            _validate_retention(store, authorizer)
             key = (id(store), signature)
             if key in self._admitted:
                 return True
@@ -217,10 +253,23 @@ class _RequestNonceAdmissions:
 
 def _admit_verified_pop(store: Any, signature: bytes, authorizer: Any) -> bool:
     """Retain the signature for every time window the verifier can accept."""
+    validity = _validate_retention(store, authorizer)
+    return bool(store.check_and_record(signature, min_ttl_seconds=validity))
+
+
+def _validate_retention(store: Any, authorizer: Any) -> int:
     validity = authorizer.pop_validity_secs()
     if not isinstance(validity, int) or isinstance(validity, bool) or validity <= 0:
         raise ValueError("Cannot determine the verifier's PoP validity interval")
-    return bool(store.check_and_record(signature, min_ttl_seconds=validity))
+    floor = getattr(store, "retention_seconds", None)
+    if not isinstance(floor, int) or isinstance(floor, bool) or floor < validity:
+        from .exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            f"Nonce retention floor must cover every shared verifier ({validity}s required); "
+            "configure the shared backend before serving"
+        )
+    return validity
 
 
 _default_store: Optional[NonceStore] = None

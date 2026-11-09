@@ -1407,7 +1407,20 @@ class A2AServer:
 
                 nonce_store = get_default_nonce_store()
                 if nonce_store is not None and not _admit_verified_pop(nonce_store, pop_signature, self._authorizer):
-                    raise PopVerificationError("PoP replay detected")
+                    from dataclasses import replace
+                    from tenuo._enforcement import _apply_observe_mode
+
+                    if enforcement.approval_reservation is not None:
+                        enforcement.approval_reservation.release()
+                    _set_current_idempotency_key(None)
+                    enforcement = _apply_observe_mode(replace(
+                        enforcement, allowed=False, denial_reason="PoP replay detected",
+                        error_type="invalid_pop", chain_result=None,
+                        approval_reservation=None, idempotency_key=None,
+                    ))
+                    if not enforcement.allowed:
+                        collect_enforcement_receipt(enforcement, None, runtime=runtime)
+                        _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
             if self.check_replay and jti:
                 is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
                 if not is_new:
