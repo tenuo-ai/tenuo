@@ -1192,6 +1192,10 @@ class A2AServer:
                 # Gated on trust_delegated exactly like the legacy path below.
                 # Verify chain structure now; PoP (if required) is done below
                 # via check_chain so the full chain is validated atomically.
+                if len(_preloaded_parents) > self.max_chain_depth:
+                    raise ChainValidationError(
+                        f"Chain depth {len(_preloaded_parents)} exceeds maximum {self.max_chain_depth}"
+                    )
                 if not self.require_pop:
                     await self._validate_chain_warrants(warrant, _preloaded_parents)
                 _resolved_chain_parents = _preloaded_parents
@@ -1200,6 +1204,13 @@ class A2AServer:
                 _resolved_chain_parents = await self._validate_chain(warrant, warrant_chain)
             else:
                 raise UntrustedIssuerError(issuer_normalized)
+
+        # A revoked key anywhere in the chain revokes everything issued under it.
+        for parent in _resolved_chain_parents or []:
+            parent_issuer = self._get_warrant_prop(parent, "iss", "issuer")
+            parent_issuer_normalized = self._normalize_key(parent_issuer) if parent_issuer else None
+            if parent_issuer_normalized and parent_issuer_normalized in self._revoked_issuers:
+                raise RevokedError(f"Issuer key '{parent_issuer_normalized}' is revoked")
 
         # Check audience (SECURITY: must be present AND match when required)
         if self.require_audience:
@@ -1212,13 +1223,6 @@ class A2AServer:
 
         # Extract JTI once — reused for replay check and audit event
         jti = self._get_warrant_prop(warrant, "jti", "id")
-
-        # Check replay
-        if self.check_replay:
-            if jti:
-                is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
-                if not is_new:
-                    raise ReplayDetectedError(jti)
 
         # Set when the shared PEP allowed the call. Its receipt is collected only
         # after the A2A-local gates below pass, so a later local denial never
@@ -1388,6 +1392,13 @@ class A2AServer:
                             value=value,
                             reason="Value does not satisfy server constraint",
                         )
+
+        # Check replay last, so only a request that passed every other gate
+        # (proof-of-possession included) can mark the warrant as used.
+        if self.check_replay and jti:
+            is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
+            if not is_new:
+                raise ReplayDetectedError(jti)
 
         # Every A2A gate has passed: only now record the Authorizer's allow.
         if enforcement is not None:
@@ -2482,8 +2493,17 @@ class A2AServer:
                 approvals=decoded_approvals,
             )
 
-        # Get warrant expiry for mid-stream checks
-        warrant_exp = getattr(warrant, "exp", None) if warrant else None
+        def warrant_expired() -> bool:
+            """Mid-stream expiry, with the same clock tolerance as admission."""
+            if warrant is None:
+                return False
+            is_expired = getattr(warrant, "is_expired", None)
+            if callable(is_expired):
+                result = is_expired()
+                if isinstance(result, bool):
+                    return result
+            exp = getattr(warrant, "exp", None)
+            return isinstance(exp, (int, float)) and time.time() > exp + 30
 
         async def event_generator():
             """Generate SSE events."""
@@ -2519,9 +2539,7 @@ class A2AServer:
                 # Check if result is async generator (streaming skill)
                 if hasattr(result, "__anext__"):
                     async for chunk in result:
-                        # Mid-stream expiry check — mirror Rust's 30 s clock skew tolerance
-                        _CLOCK_SKEW = 30
-                        if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
+                        if warrant_expired():
                             error_event = {
                                 "type": "error",
                                 "task_id": task_id,
@@ -2546,9 +2564,7 @@ class A2AServer:
 
                 # Final expiry check before completion
                 # (catches expiry during long-running non-streaming skills)
-                # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s)
-                _CLOCK_SKEW = 30
-                if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
+                if warrant_expired():
                     error_event = {
                         "type": "error",
                         "task_id": task_id,

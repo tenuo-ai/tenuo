@@ -259,8 +259,8 @@ class A2AClient:
           1. Parses all warrants from base64.
           2. Checks every warrant for expiry via Rust ``is_expired()``.
           3. Verifies delegation linkage (each child's issuer == parent's holder).
-          4. Checks that the root warrant's issuer is in ``trusted_roots``,
-             closing the self-signed trust gap on the client side.
+          4. Verifies the whole chain with the core verifier: signatures,
+             links, narrowing, and a root issued by one of ``trusted_roots``.
 
         Note: This does **not** perform Proof-of-Possession verification — PoP
         is a runtime check done at the server when the chain is presented with
@@ -348,25 +348,27 @@ class A2AClient:
                         f"parent holder does not match child issuer"
                     )
 
-        # Verify the root warrant's issuer is in the trusted set.
-        # This is the cryptographic trust anchor check — without it, an attacker
-        # could present a structurally-valid chain signed by a key they control.
-        root = chain_warrants[0]
-        root_issuer = getattr(root, "issuer", None)
-        if root_issuer is not None:
-            root_issuer_bytes = bytes(root_issuer.to_bytes()) if hasattr(root_issuer, "to_bytes") else None
-            trusted_bytes = []
-            for r in roots:
+        # Verify the whole chain with the core verifier: every signature, each
+        # link, monotonic narrowing, and a root issued by one of ``roots``.
+        from tenuo_core import Authorizer, PublicKey
+
+        from .server import A2AServer
+
+        root_keys = []
+        for r in roots:
+            if isinstance(r, str):
                 try:
-                    trusted_bytes.append(bytes(r.to_bytes()) if hasattr(r, "to_bytes") else None)
-                except Exception:
-                    pass
-            trusted_bytes = [b for b in trusted_bytes if b is not None]
-            if trusted_bytes and root_issuer_bytes not in trusted_bytes:
-                raise ChainValidationError(
-                    "Root warrant issuer is not in trusted_roots — chain rejected. "
-                    "Ensure trusted_roots contains the public key of the warrant authority."
-                )
+                    r = PublicKey.from_bytes(bytes.fromhex(A2AServer._normalize_key(r)))
+                except Exception as e:
+                    raise ChainValidationError(
+                        "A trusted root is not a usable public key; pass PublicKey "
+                        "objects, hex, or multibase/did:key strings."
+                    ) from e
+            root_keys.append(r)
+        try:
+            Authorizer(trusted_roots=root_keys).verify_chain(chain_warrants)
+        except Exception as e:
+            raise ChainValidationError(f"Chain verification failed: {e}") from e
 
         return True
 
@@ -432,10 +434,10 @@ class A2AClient:
 
         card = AgentCard.from_dict(card_data)
 
-        # Validate pinned key if provided
-        if self.pin_key and card.public_key:
-            if card.public_key != self.pin_key:
-                raise KeyMismatchError(self.pin_key, card.public_key)
+        # Validate pinned key if provided. A card without a key cannot
+        # satisfy a pin.
+        if self.pin_key and card.public_key != self.pin_key:
+            raise KeyMismatchError(self.pin_key, card.public_key or "")
 
         self._agent_card = card
         return card
