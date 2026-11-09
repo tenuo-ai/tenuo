@@ -157,6 +157,7 @@ class TenuoGuard:
         control_plane: Optional[Any] = None,
         *,
         warrant_chain: Optional[List["Warrant"]] = None,
+        warrant_resolver: Optional[Callable[[Any], Any]] = None,
     ) -> None:
         """
         Initialize TenuoGuard.
@@ -172,7 +173,14 @@ class TenuoGuard:
                 Always supply in production. Emits SecurityWarning when omitted.
             warrant_key: Key to look up warrant in ToolContext.state (for dynamic warrants).
                 The state value may be a Warrant, a base64 warrant or WarrantStack
-                string, or a root-first list of warrants.
+                string, or a root-first list of warrants. Session state can be
+                written by tools and by whoever starts the run, so any of them
+                can replace the warrant; prefer ``warrant_resolver``.
+            warrant_resolver: Callable ``(tool_context) -> warrant`` returning the
+                warrant for this call from a source the model cannot write,
+                for example a server-side store keyed by ``tool_context.user_id``.
+                Accepts the same forms as ``warrant_key`` values, or ``None``
+                for no warrant. When set, session state is not consulted.
             skill_map: Map ADK tool names to warrant skill names
             arg_map: Map tool argument names to constraint parameter names
             constraints: Direct constraints for Tier 1 mode (no warrant)
@@ -216,6 +224,8 @@ class TenuoGuard:
         self._signing_key = signing_key
         self._trusted_roots = trusted_roots
         self._warrant_key = warrant_key
+        self._warrant_resolver = warrant_resolver
+        self._warned_state_warrant = False
         self._skill_map = skill_map or {}
         self._arg_map = arg_map or {}
         self._constraints = constraints or {}  # Direct constraints for Tier 1
@@ -801,12 +811,26 @@ class TenuoGuard:
         if self._warrant is not None:
             return self._warrant, self._warrant_chain
         value = None
-        if self._warrant_key and tool_context:
+        if self._warrant_resolver is not None:
+            # The resolver is the only source: session state is not consulted.
+            try:
+                value = self._warrant_resolver(tool_context)
+            except Exception as e:
+                raise ConfigurationError(f"warrant_resolver failed: {e}") from e
+        elif self._warrant_key and tool_context:
             # Check session_state (standard) then state (fallback)
             if hasattr(tool_context, "session_state"):
                 value = tool_context.session_state.get(self._warrant_key)
             elif hasattr(tool_context, "state"):
                 value = tool_context.state.get(self._warrant_key)
+            if value is not None and not self._warned_state_warrant:
+                self._warned_state_warrant = True
+                logger.warning(
+                    "Tenuo is reading the warrant from session state key %r. Tools and "
+                    "whoever starts the run can write session state and so replace the "
+                    "warrant; pass warrant_resolver= to read it from a trusted source.",
+                    self._warrant_key,
+                )
         if value is None:
             return None, None
         if hasattr(value, "valid_for_agent"):
@@ -1311,6 +1335,7 @@ class GuardBuilder:
         self._warrant_chain: Optional[List["Warrant"]] = None
         self._signing_key: Optional["SigningKey"] = None
         self._warrant_key: Optional[str] = None
+        self._warrant_resolver: Optional[Callable[[Any], Any]] = None
         self._skill_map: Dict[str, str] = {}
         self._arg_map: Dict[str, Dict[str, str]] = {}
         self._constraints: Dict[str, Dict[str, Any]] = {}  # Direct constraints
@@ -1431,6 +1456,21 @@ class GuardBuilder:
             self for chaining
         """
         self._warrant_key = key
+        return self
+
+    def warrant_resolver(self, resolver: Callable[[Any], Any]) -> "GuardBuilder":
+        """
+        Set a callable that returns the warrant for each tool call.
+
+        The resolver receives the ADK ``ToolContext`` and returns the warrant
+        from a source the model cannot write (for example a server-side store
+        keyed by ``tool_context.user_id``), or ``None`` for no warrant. When
+        set, session state is not consulted.
+
+        Returns:
+            self for chaining
+        """
+        self._warrant_resolver = resolver
         return self
 
     def allow(self, tool_name: str, **constraints: Any) -> "GuardBuilder":
@@ -1666,4 +1706,5 @@ class GuardBuilder:
             control_plane=self._control_plane,
             trusted_roots=self._trusted_roots,
             warrant_chain=self._warrant_chain,
+            warrant_resolver=self._warrant_resolver,
         )
