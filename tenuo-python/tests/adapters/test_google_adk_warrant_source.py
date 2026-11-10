@@ -153,6 +153,60 @@ def test_resolver_miss_in_builder_does_not_use_an_allow_rule(setup):
     assert read(guard, context("alice", {}), setup.tool, "/data/alice/notes") is not None
 
 
+@pytest.mark.parametrize("hook", ["sync", "async", "plugin"])
+def test_resolver_exception_details_are_not_returned_to_the_model(setup, hook):
+    secret = "https://user:secret-token@store.test/?credential=private"
+    failure = RuntimeError(secret)
+
+    def resolver(_):
+        raise failure
+
+    plugin = TenuoPlugin(warrant_resolver=resolver)
+    guard, ctx, args = plugin._guard, context("alice", {}), {"path": "/data/alice/notes"}
+    with pytest.raises(ConfigurationError) as error:
+        guard._get_warrant_and_chain(ctx)
+    assert error.value.__cause__ is failure
+    assert secret not in str(error.value)
+    if hook == "sync":
+        denied = guard.before_tool(setup.tool, args, ctx)
+    elif hook == "async":
+        denied = asyncio.run(guard.async_before_tool(setup.tool, args, ctx))
+    else:
+        denied = asyncio.run(plugin.before_tool_callback(tool=setup.tool, tool_args=args, tool_context=ctx))
+    assert denied["error"] == "authorization_denied"
+    assert secret not in str(denied)
+    assert "secret-token" not in str(denied)
+    assert "credential" not in str(denied)
+
+
+@pytest.mark.parametrize("hook", ["sync", "async", "plugin"])
+@pytest.mark.parametrize("require_pop", [False, True])
+def test_one_lookup_per_authorization_and_no_completion_lookup_without_audit(setup, hook, require_pop):
+    resolver = MagicMock(return_value=setup.alice)
+    plugin = TenuoPlugin(warrant_resolver=resolver, signing_key=setup.agent,
+                         trusted_roots=[setup.issuer.public_key], require_pop=require_pop)
+    guard, ctx, args = plugin._guard, context("alice", {}), {"path": "/data/alice/notes"}
+
+    def before():
+        if hook == "sync":
+            return guard.before_tool(setup.tool, args, ctx)
+        if hook == "async":
+            return asyncio.run(guard.async_before_tool(setup.tool, args, ctx))
+        return asyncio.run(plugin.before_tool_callback(tool=setup.tool, tool_args=args, tool_context=ctx))
+
+    assert before() is None
+    resolver.assert_called_once_with(ctx)
+    if hook == "plugin":
+        asyncio.run(plugin.after_tool_callback(tool=setup.tool, tool_args=args, tool_context=ctx, result="ok"))
+    else:
+        guard.after_tool(setup.tool, args, ctx, "ok")
+    resolver.assert_called_once_with(ctx)
+    # No authorization cache: revocation is seen on the next invocation.
+    resolver.return_value = None
+    assert before() is not None
+    assert resolver.call_count == 2
+
+
 def test_reading_a_warrant_from_session_state_warns_once(setup, caplog):
     guard = TenuoGuard(
         signing_key=setup.agent,

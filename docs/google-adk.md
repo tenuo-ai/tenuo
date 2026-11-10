@@ -603,6 +603,8 @@ def handle_request(user_id):
 
 `TenuoPlugin` and `GuardBuilder` accept the same resolver (`warrant_resolver=` / `.warrant_resolver(fn)`). When a resolver is set, session state is not consulted. Combining a static warrant with a resolver is rejected at construction. A resolver that raises or returns `None` denies the call, including when local constraints or allow rules are configured.
 
+Resolver failures produce generic tool denials without backend exception details. Authorization resolves once per call, including the asynchronous local-policy path. Completion callbacks skip resolution when audit logging is disabled; each new authorization still resolves afresh.
+
 ### Session-state warrants
 
 `warrant_key="user_warrant"` reads the warrant from session state instead. Session state can be written by any tool (`tool_context.state[...] = ...`) and by whoever starts the run (`state_delta`), and the guard signs proof-of-possession with its own key for whichever valid warrant it finds there. Anything that can write the key can therefore replace the warrant with another one issued to the same agent key. Use it only when nothing untrusted can write session state; the guard logs a warning the first time it reads a warrant from state.

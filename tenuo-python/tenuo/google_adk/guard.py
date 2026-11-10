@@ -539,6 +539,22 @@ class TenuoGuard:
                     args,
                 )
 
+        return self._before_tool_tier1(tool, args, warrant, skill_name, validation_args, start_ns=start_ns)
+
+    def _before_tool_tier1(
+        self,
+        tool: "BaseTool",
+        args: Dict[str, Any],
+        warrant: Optional["Warrant"],
+        skill_name: str,
+        validation_args: Dict[str, Any],
+        *,
+        start_ns: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply local policy to the warrant already resolved for this call."""
+        import time
+
+        use_direct_constraints = warrant is None and (self._constraints or self._allow_tools)
         # =======================================================================
         # Tier 1: Guardrails-Only Authorization (Logic Checks)
         # =======================================================================
@@ -768,8 +784,8 @@ class TenuoGuard:
                     args,
                 )
 
-        # Tier 1 path is CPU-only, safe to delegate to sync
-        return self.before_tool(tool, args, tool_context)
+        # Reuse this hook's resolved warrant; never query the resolver twice.
+        return self._before_tool_tier1(tool, args, warrant, skill_name, validation_args, start_ns=start_ns)
 
     def after_tool(
         self,
@@ -785,6 +801,8 @@ class TenuoGuard:
             None: Use original result
             Any: Replace result (not used here)
         """
+        if self._audit_log is None:
+            return None
         try:
             warrant = self._get_warrant(tool_context)
         except ConfigurationError:
@@ -824,7 +842,9 @@ class TenuoGuard:
             try:
                 value = self._warrant_resolver(tool_context)
             except Exception as e:
-                raise ConfigurationError(f"warrant_resolver failed: {e}") from e
+                # Tool denials are returned to the model. Keep backend details
+                # only in the exception cause available to the host.
+                raise ConfigurationError("warrant_resolver failed") from e
             if value is None:
                 raise ConfigurationError("warrant_resolver returned no warrant")
         elif self._warrant_key and tool_context:
