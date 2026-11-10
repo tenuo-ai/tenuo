@@ -38,7 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operations so failed admission, including a lost insertion reply, can release
   only its own nonce reservation. A failed rollback remains fail-closed until expiry.
   A2A nonce denials honor observe mode and retain denial metadata for receipts,
-  audit logs, and control-plane events in both enforcement modes. FastAPI
+  audit logs, and control-plane events in both enforcement modes. HTTP error
+  handling avoids duplicate control-plane denials and preserves verification
+  context when retrying a failed emission. FastAPI
   reserves approvals before nonce admission, so an approval-backend failure
   does not consume the presented PoP; nonce refusals release the current approval reservation.
 

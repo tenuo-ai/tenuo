@@ -354,6 +354,59 @@ async def test_a2a_nonce_replay_observes_the_configured_mode(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["task/send", "task/sendSubscribe"])
+@pytest.mark.parametrize("emit_failure", [False, True])
+async def test_a2a_http_nonce_denial_emits_once_with_verified_context(method, emit_failure):
+    import base64
+    from unittest.mock import MagicMock
+
+    import httpx
+
+    from tenuo.a2a.server import A2AServer
+
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("ping").holder(holder.public_key).ttl(300).mint(issuer)
+    signature = bytes(warrant.sign(holder, "ping", {}, int(time.time())))
+    store = enable_default_nonce_store()
+    assert store.check_and_record(signature)
+    cp = MagicMock()
+    if emit_failure:
+        cp.emit_for_enforcement.side_effect = [ConnectionError("first emission unavailable"), None]
+    server = A2AServer(name="agent", url="https://agent.test", public_key=issuer.public_key,
+                       trusted_issuers=[issuer.public_key], check_replay=False, control_plane=cp)
+    calls = []
+
+    @server.skill("ping")
+    async def ping():
+        calls.append(True)
+        return "pong"
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://t") as client:
+        response = await client.post("/a2a", json={
+            "jsonrpc": "2.0", "method": method, "params": {"task": {"skill": "ping", "arguments": {}}}, "id": 1,
+        }, headers={"X-Tenuo-Warrant": warrant.to_base64(), "X-Tenuo-PoP": base64.urlsafe_b64encode(signature).decode()})
+        assert "error" in response.json()
+        assert not calls
+        assert cp.emit_for_enforcement.call_count == (2 if emit_failure else 1)
+        result = cp.emit_for_enforcement.call_args.args[0]
+        assert not result.allowed
+        assert result.error_type == "invalid_pop"
+        assert result.verified_pop == signature
+        assert [item.id for item in result.presented_chain] == [warrant.id]
+        assert result.pop_auth_args == {}
+        if emit_failure:
+            assert cp.emit_for_enforcement.call_args_list[0].args[0] is result
+        cp.reset_mock(side_effect=True)
+        # Errors raised before verification still receive the HTTP fallback event.
+        response = await client.post("/a2a", json={
+            "jsonrpc": "2.0", "method": method, "params": {"task": {"skill": "ping", "arguments": {}}}, "id": 2,
+        })
+        assert "error" in response.json()
+        cp.emit_for_enforcement.assert_called_once()
+        assert not cp.emit_for_enforcement.call_args.args[0].allowed
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("observe", [False, True])
 async def test_a2a_nonce_denial_produces_a_signed_runtime_receipt(observe):
     import io

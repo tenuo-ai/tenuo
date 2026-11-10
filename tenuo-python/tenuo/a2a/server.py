@@ -1459,6 +1459,7 @@ class A2AServer:
                 )
             )
 
+            control_plane_emitted = False
             if self._control_plane is not None:
                 try:
                     from tenuo._enforcement import EnforcementResult
@@ -1471,11 +1472,17 @@ class A2AServer:
                         chain_result=getattr(_res, "chain_result", None),
                         latency_us=latency_ms * 1000,
                     )
+                    control_plane_emitted = True
                 except Exception:
                     logger.warning("Control plane emission failed for '%s'; audit event lost", skill_id, exc_info=True)
 
             if enforcement is not None and not enforcement.allowed:
-                _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
+                try:
+                    _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
+                except A2AError as error:
+                    error._control_plane_emitted = control_plane_emitted
+                    error._enforcement_result = enforcement
+                    raise
             if nonce_reservation is not None:
                 nonce_reservation.commit()
             return warrant
@@ -2194,16 +2201,16 @@ class A2AServer:
                 )
 
             except A2AError as e:
-                if self._control_plane is not None and method in ("task/send", "task/sendSubscribe"):
+                if self._control_plane is not None and method in ("task/send", "task/sendSubscribe") and not e._control_plane_emitted:
                     try:
                         from tenuo._enforcement import EnforcementResult
                         _skill = params.get("task", {}).get("skill", "")
                         _args = params.get("task", {}).get("arguments", {})
-                        _res = EnforcementResult(
+                        _res = e._enforcement_result or EnforcementResult(
                             allowed=False, tool=_skill, arguments=_args,
                             denial_reason=str(e),
                         )
-                        self._control_plane.emit_for_enforcement(_res)
+                        self._control_plane.emit_for_enforcement(_res, chain_result=_res.chain_result)
                     except Exception:
                         logger.warning("Control plane emission failed for '%s'; audit event lost", _skill, exc_info=True)
                 return JSONResponse(
