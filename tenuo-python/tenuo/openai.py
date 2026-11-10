@@ -508,6 +508,16 @@ class BufferOverflow(TenuoOpenAIError):
 from tenuo.core import check_constraint  # noqa: E402
 
 
+def _require_constrained_arguments(tool_name: str, arguments: Dict[str, Any], constraints: Dict[str, Any]) -> None:
+    """Require explicit values instead of authorizing unseen tool defaults."""
+    for name, constraint in constraints.items():
+        if not name.startswith("_") and name not in arguments and not isinstance(constraint, Wildcard):
+            raise OpenAIConstraintViolation(
+                tool_name, name, None, constraint,
+                reason=f"Missing argument '{name}' - a constrained argument must be passed",
+            )
+
+
 def _check_local_tool_name(
     tool_name: str, allow_tools: Optional[List[str]], deny_tools: Optional[List[str]],
 ) -> None:
@@ -628,6 +638,11 @@ def verify_tool_call(
         # Check for _allow_unknown opt-out (default: Zero Trust = reject unknown)
         allow_unknown = tool_constraints.get("_allow_unknown", False)
 
+        # A constrained argument must be passed: an omitted one would run with
+        # the tool's own default, which no constraint has seen. Wildcard
+        # accepts any value, the default included.
+        _require_constrained_arguments(tool_name, arguments, tool_constraints)
+
         # Iterate over arguments to ensure we catch UNKNOWN arguments (Zero Trust)
         for arg_name, value in arguments.items():
             try:
@@ -725,6 +740,7 @@ async def verify_tool_call_async(
     if warrant is None and constraints and tool_name in constraints:
         tool_constraints = constraints[tool_name]
         allow_unknown = tool_constraints.get("_allow_unknown", False)
+        _require_constrained_arguments(tool_name, arguments, tool_constraints)
 
         for arg_name, value in arguments.items():
             try:
@@ -3258,7 +3274,9 @@ _AGENT_POLICIES_LOCK = threading.Lock()
 _TOOL_GUARDRAIL: Any = None
 
 
-def _register_agent_policy(agent: Any, guard: TenuoToolGuardrail, on_denial: str) -> None:
+def _register_agent_policy(
+    agent: Any, guard: TenuoToolGuardrail, on_denial: str, *, replace: bool = True,
+) -> None:
     key = id(agent)
 
     def _forget(_ref: Any, key: int = key) -> None:
@@ -3268,6 +3286,9 @@ def _register_agent_policy(agent: Any, guard: TenuoToolGuardrail, on_denial: str
                 del _AGENT_POLICIES[key]
 
     with _AGENT_POLICIES_LOCK:
+        entry = _AGENT_POLICIES.get(key)
+        if not replace and entry is not None and entry[0]() is agent:
+            return
         _AGENT_POLICIES[key] = (weakref.ref(agent, _forget), guard, on_denial)
 
 
@@ -3434,7 +3455,9 @@ def guard_agent(
 
     The policy belongs to the agent, not to its tools: agents that share
     tool objects or MCP servers each keep their own policy, and calling
-    guard_agent() again on an agent replaces its policy. A tool that has been
+    guard_agent() again on an agent replaces its policy. An agent reached
+    through a handoff that already has a policy keeps it; to change it, call
+    guard_agent() on that agent. A tool that has been
     guarded denies calls from any agent without a policy, including copies
     made with ``agent.clone()``; guard those too.
 
@@ -3498,7 +3521,9 @@ def guard_agent(
         if id(current) in seen:
             continue
         seen.add(id(current))
-        _register_agent_policy(current, guard, on_denial)
+        # An agent reached through a handoff keeps a policy it was already
+        # given; only the agent named in this call has its policy replaced.
+        _register_agent_policy(current, guard, on_denial, replace=current is agent)
         for tool in getattr(current, "tools", None) or []:
             if not hasattr(tool, "tool_input_guardrails"):
                 raise OpenAIConfigurationError(

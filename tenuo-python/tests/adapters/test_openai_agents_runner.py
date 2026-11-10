@@ -23,7 +23,7 @@ from openai.types.responses import (  # noqa: E402
     ResponseOutputText,
 )
 
-from tenuo import Range, SigningKey, Warrant  # noqa: E402
+from tenuo import Range, SigningKey, Subpath, Warrant  # noqa: E402
 from tenuo.openai import OpenAIConfigurationError, TenuoToolGuardrail, guard_agent  # noqa: E402
 
 
@@ -257,6 +257,56 @@ async def test_clone_of_a_guarded_agent_needs_its_own_policy(tools, ran):
 
 
 @pytest.mark.asyncio
+async def test_guarding_a_parent_keeps_the_policy_of_a_handoff_target(tools, ran):
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = (
+        Warrant.mint_builder()
+        .holder(holder.public_key)
+        .capability("refund", amount=Range(max=100))
+        .ttl(300)
+        .mint(issuer)
+    )
+    refunds = guard_agent(
+        Agent(name="refunds", model=ScriptedModel([]), tools=[tools["refund"]]),
+        warrant=warrant,
+        signing_key=holder,
+        trusted_roots=[issuer.public_key],
+    )
+    # The parent's looser policy must not replace the refunds agent's warrant.
+    guard_agent(
+        Agent(name="triage", model=ScriptedModel([]), tools=[tools["search"]], handoffs=[refunds]),
+        allow_tools=["search", "refund"],
+    )
+    refunds.model = ScriptedModel([[_call("refund", {"amount": 99999}, "c1")]])
+    await Runner.run(refunds, "refund")
+    assert ran == []
+
+    # Calling guard_agent on the agent itself still replaces its policy.
+    guard_agent(refunds, allow_tools=["refund"])
+    refunds.model = ScriptedModel([[_call("refund", {"amount": 5}, "c2")]])
+    await Runner.run(refunds, "refund")
+    assert ran == [("refund", 5)]
+
+
+@pytest.mark.asyncio
+async def test_omitted_constrained_argument_never_runs_with_the_tool_default(ran):
+    @function_tool
+    def read_file(path: str = "/etc/shadow") -> str:
+        """Read a file."""
+        ran.append(path)
+        return "ok"
+
+    model = ScriptedModel([[_call("read_file", {}, "c1")], [_call("read_file", {"path": "/data/x"}, "c2")]])
+    agent = guard_agent(
+        Agent(name="reader", model=model, tools=[read_file]),
+        allow_tools=["read_file"], constraints={"read_file": {"path": Subpath("/data")}},
+    )
+    await Runner.run(agent, "read")
+    assert ran == ["/data/x"]
+    assert any("blocked by Tenuo" in output for output in _tool_outputs(model))
+
+
+@pytest.mark.asyncio
 async def test_argument_the_sdk_would_convert_never_runs(tools, ran):
     # refund(amount: int): the SDK would turn "50" into 50 after the guardrail.
     model = ScriptedModel([[_call("refund", {"amount": "50"}, "c1")], [_call("refund", {"amount": 50}, "c2")]])
@@ -264,6 +314,40 @@ async def test_argument_the_sdk_would_convert_never_runs(tools, ran):
     await Runner.run(agent, "refund")
     assert ran == [("refund", 50)]
     assert any("blocked by Tenuo" in o for o in _tool_outputs(model))
+
+
+@pytest.mark.asyncio
+async def test_concurrent_parent_registration_cannot_replace_a_target_policy(tools, ran, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    import tenuo.openai as adapter
+
+    target = Agent(name="refunds", model=ScriptedModel([]), tools=[tools["refund"]])
+    parent = Agent(name="triage", model=ScriptedModel([]), tools=[tools["search"]], handoffs=[target])
+    reached, proceed = threading.Event(), threading.Event()
+    main_thread = threading.current_thread()
+    register = adapter._register_agent_policy
+
+    def pause_parent(agent, *args, **kwargs):
+        if agent is target and threading.current_thread() is not main_thread:
+            reached.set()
+            assert proceed.wait(timeout=5)
+        return register(agent, *args, **kwargs)
+
+    monkeypatch.setattr(adapter, "_register_agent_policy", pause_parent)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(guard_agent, parent, allow_tools=["search", "refund"])
+        try:
+            assert reached.wait(timeout=5)
+            guard_agent(target, allow_tools=["search"])
+        finally:
+            proceed.set()
+        pending.result(timeout=5)
+    target.model = ScriptedModel([[_call("refund", {"amount": 50}, "c1")]])
+    await Runner.run(target, "refund")
+    assert ran == []
+    assert any("blocked by Tenuo" in output for output in _tool_outputs(target.model))
 
 
 @pytest.mark.asyncio

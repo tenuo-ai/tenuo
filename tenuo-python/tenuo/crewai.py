@@ -255,6 +255,17 @@ def _hook_call_info(context: Any, agent_role: Optional[str]) -> "tuple[str, Any,
     return tool_name, args, effective_role
 
 
+def _is_agent_adapter(agent: Any) -> bool:
+    """Whether ``agent`` is a CrewAI agent adapter, which bypasses tool hooks."""
+    try:
+        from crewai.agents.agent_adapters.base_agent_adapter import (  # type: ignore[import-not-found]
+            BaseAgentAdapter,
+        )
+    except Exception:
+        return False
+    return isinstance(agent, BaseAgentAdapter)
+
+
 def _hook_argument_type_mismatches(context: Any, args: Any) -> List[str]:
     """Arguments the tool's schema would convert before the tool runs.
 
@@ -268,9 +279,11 @@ def _hook_argument_type_mismatches(context: Any, args: Any) -> List[str]:
     return argument_type_mismatches(tool_input_schema(getattr(context, "tool", None)), args)
 
 
-# =============================================================================
+# ======================================================================
+
 # Exceptions
-# =============================================================================
+# ======================================================================
+
 
 
 class TenuoCrewAIError(Exception):
@@ -523,9 +536,11 @@ class InsufficientApprovalsDenied(TenuoCrewAIError):
         )
 
 
-# =============================================================================
+# ======================================================================
+
 # Audit Support
-# =============================================================================
+# ======================================================================
+
 
 
 @dataclass
@@ -561,9 +576,11 @@ class AuditEvent:
 AuditCallback = Callable[[AuditEvent], None]
 
 
-# =============================================================================
+# ======================================================================
+
 # Explanation API (Phase 2)
-# =============================================================================
+# ======================================================================
+
 
 
 @dataclass
@@ -597,9 +614,11 @@ class ExplanationResult:
         return f"ExplanationResult(tool={self.tool!r}, status='DENIED', reason={self.reason!r})"
 
 
-# =============================================================================
+# ======================================================================
+
 # GuardBuilder
-# =============================================================================
+# ======================================================================
+
 
 
 class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
@@ -730,9 +749,11 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
         )
 
 
-# =============================================================================
+# ======================================================================
+
 # CrewAIGuard
-# =============================================================================
+# ======================================================================
+
 
 
 class CrewAIGuard:
@@ -801,8 +822,13 @@ class CrewAIGuard:
     def register(self, *, agent_role: Optional[str] = None) -> "CrewAIGuard":
         """Register this guard as a global before_tool_call hook.
 
-        Once registered, ALL tool calls in ANY crew will be authorized
-        through this guard. Use unregister() to remove.
+        Once registered, every tool call CrewAI dispatches through its
+        ``before_tool_call`` hooks, in any crew, is authorized through this
+        guard. Use unregister() to remove.
+
+        Agent adapters (``OpenAIAgentAdapter``, ``LangGraphAgentAdapter``) run
+        tools through another framework and do not call these hooks; guard
+        those tools with that framework's Tenuo integration.
 
         Args:
             agent_role: Optional agent role for namespaced constraint lookup
@@ -1564,9 +1590,11 @@ class CrewAIGuard:
                 # operators for diagnosis.
                 logger.error("Audit callback failed: %s", e, exc_info=True)
 
-    # =========================================================================
+    # ==================================================================
+
     # Explain API (Phase 2)
-    # =========================================================================
+    # ==================================================================
+
 
     def explain(
         self,
@@ -1828,9 +1856,11 @@ class CrewAIGuard:
         return info
 
 
-# =============================================================================
+# ======================================================================
+
 # Warrant Delegation (Phase 4: Hierarchical Crews)
-# =============================================================================
+# ======================================================================
+
 
 
 class WarrantDelegator:
@@ -1975,9 +2005,11 @@ class WarrantDelegator:
             )
 
 
-# =============================================================================
+# ======================================================================
+
 # Phase 5: Strict Mode Context
-# =============================================================================
+# ======================================================================
+
 
 import contextvars  # noqa: E402 - intentionally grouped in Phase 5 section
 from contextlib import contextmanager  # noqa: E402
@@ -2150,14 +2182,27 @@ def report_unguarded_call(tool_name: str) -> None:
         _unguarded_calls.set(calls)
 
 
+def _warn_strict_mode_detects_nothing() -> None:
+    warnings.warn(
+        "Tenuo strict mode does not detect unguarded CrewAI tool calls on its own: "
+        "CrewAI reports nothing for calls that bypass before_tool_call hooks "
+        "(for example tools run by agent adapters). It only raises for calls "
+        "reported with tenuo.crewai.report_unguarded_call().",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
 def get_unguarded_calls() -> List[str]:
     """Get list of unguarded calls in current context."""
     return _unguarded_calls.get()
 
 
-# =============================================================================
+# ======================================================================
+
 # Phase 5: @guarded_step Decorator
-# =============================================================================
+# ======================================================================
+
 
 
 def guarded_step(
@@ -2183,7 +2228,10 @@ def guarded_step(
         signing_key: Key for PoP signature (required with warrant)
         ttl: TTL string like "10m" or "1h" (parsed for warrant)
         on_denial: How to handle denials ("raise", "log", "skip")
-        strict: If True, fail if any unguarded tool calls detected
+        strict: If True, raise ``UnguardedToolError`` for tool calls reported
+            with ``report_unguarded_call``. CrewAI does not report calls that
+            bypass its hooks, so nothing is detected automatically; a warning
+            says so.
         audit: Optional audit callback
         warrant_chain: Parent warrants of a delegated ``warrant``,
             root-first and excluding the leaf
@@ -2206,6 +2254,9 @@ def guarded_step(
         def research_step(self, state):
             return self.research_crew.kickoff(state)
     """
+
+    if strict:
+        _warn_strict_mode_detects_nothing()
 
     leaf: Optional[Warrant] = None
     parents: Optional[List[Warrant]] = None
@@ -2335,9 +2386,11 @@ def _parse_ttl(ttl: str) -> int:
         return int(float(ttl))
 
 
-# =============================================================================
+# ======================================================================
+
 # Phase 5: GuardedCrew Wrapper
-# =============================================================================
+# ======================================================================
+
 
 
 class GuardedCrewBuilder:
@@ -2419,7 +2472,15 @@ class GuardedCrewBuilder:
         return self
 
     def strict(self, enabled: bool = True) -> "GuardedCrewBuilder":
-        """Enable strict mode - fail if unguarded tools detected."""
+        """Enable strict mode.
+
+        Strict mode raises :class:`UnguardedToolError` for tool calls reported
+        with :func:`report_unguarded_call`. CrewAI does not report tool calls
+        that bypass its hooks, so nothing is detected automatically; a
+        warning says so when strict mode is enabled.
+        """
+        if enabled:
+            _warn_strict_mode_detects_nothing()
         self._strict = enabled
         return self
 
@@ -2550,6 +2611,15 @@ class _GuardedCrewImpl:
         for agent in self._agents:
             role = self._get_agent_role(agent)
 
+            if _is_agent_adapter(agent):
+                raise CrewAIConfigurationError(
+                    f"Agent '{role}' is a CrewAI agent adapter ({type(agent).__name__}). "
+                    "Adapter agents run tools through another framework and do not "
+                    "call before_tool_call hooks, so this guard cannot check them. "
+                    "Use a native crewai.Agent, or guard the tools with that "
+                    "framework's Tenuo integration."
+                )
+
             if role not in self._policy:
                 # SECURITY: Fail-closed - agents not in policy cannot execute
                 raise CrewAIConfigurationError(
@@ -2560,6 +2630,19 @@ class _GuardedCrewImpl:
 
             guard = self._build_agent_guard(agent)
             self._guards[role] = guard
+
+        for task in self._tasks:
+            assigned = getattr(task, "agent", None)
+            if _is_agent_adapter(assigned):
+                raise CrewAIConfigurationError(
+                    "A task uses an agent adapter, whose tools bypass before_tool_call hooks. "
+                    "Use a native crewai.Agent covered by this crew's policy."
+                )
+            if assigned is not None and not any(assigned is agent for agent in self._agents):
+                raise CrewAIConfigurationError(
+                    "A task's agent is absent from the guarded agents list. "
+                    "Add that agent to agents and policy before running the crew."
+                )
 
         # Return agents unmodified - hooks will intercept tool calls
         return list(self._agents)
@@ -2681,9 +2764,11 @@ def GuardedCrew(
     return GuardedCrewBuilder(agents, tasks, process)
 
 
-# =============================================================================
+# ======================================================================
+
 # Re-exports for convenience
-# =============================================================================
+# ======================================================================
+
 
 __all__ = [
     # Builder
