@@ -60,7 +60,11 @@ class NonceBackend(Protocol):
 
     @property
     def retention_seconds(self) -> int:
-        """Minimum lifetime of every admitted nonce, fixed before serving."""
+        """Minimum elapsed-time lifetime of every nonce, fixed before serving.
+
+        Wall-clock expiry backends must pad their TTL for clock advances so
+        the elapsed-time floor remains true within the declared clock bound.
+        """
         ...
 
     @property
@@ -70,7 +74,7 @@ class NonceBackend(Protocol):
 
     @property
     def max_clock_skew_seconds(self) -> int:
-        """Immutable bound on verifier clock disagreement/backward adjustment."""
+        """Immutable clock-error bound for verifiers and expiry backends."""
         ...
 
     def reserve(self, nonce_hex: str, ttl_seconds: int, owner: str) -> bool:
@@ -192,12 +196,14 @@ class NonceStore:
         Immutable PoP bucket size, default 30 seconds for a new backend.
         When sharing a backend, defaults to its declared bucket size.
     max_clock_skew_seconds:
-        Maximum clock disagreement across verifiers, including backward clock
-        adjustment during an entry's lifetime. Defaults to 60 seconds for a new
+        Maximum clock-error range across verifiers and expiry backends,
+        including clock adjustments during an entry's lifetime. Defaults to 60 seconds for a new
         backend, or the supplied backend's immutable setting. If each clock is
         within S seconds of UTC, allow at least 2*S seconds of disagreement.
-        Operators must keep actual clocks within this declared bound. Zero
-        explicitly assumes no disagreement or backward adjustment.
+        Operators must keep actual clocks within this declared bound. A backend
+        using wall-clock expiry must additionally pad its TTL by its possible
+        forward clock adjustment to guarantee the elapsed-time retention floor.
+        Zero explicitly assumes no disagreement or clock adjustment.
     backend:
         Optional custom :class:`NonceBackend`.  Defaults to an in-process
         ``threading.Lock``-guarded dict.  For multi-process deployments pass a
@@ -220,7 +226,10 @@ class NonceStore:
                 if redis.get("tenuo:nonce-config").decode() != config:
                     raise ValueError("inconsistent nonce namespace configuration")
             def reserve(self, h, ttl, owner):
-                return bool(redis.set("tenuo:nonce:" + h, owner, nx=True, ex=max(ttl, self.retention_seconds)))
+                # Redis expiry uses wall time. Pad for a bounded cache-clock
+                # advance so retention_seconds remains an elapsed-time floor.
+                expiry = max(ttl, self.retention_seconds) + self.max_clock_skew_seconds
+                return bool(redis.set("tenuo:nonce:" + h, owner, nx=True, ex=expiry))
             def release(self, h, owner):
                 # Compare and delete in one Redis operation, never DEL blindly.
                 redis.eval("if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0",
@@ -229,7 +238,8 @@ class NonceStore:
                 return self.reserve(h, ttl, secrets.token_hex(16))
             def seen(self, h): return bool(redis.exists("tenuo:nonce:" + h))
             def record(self, h, ttl):
-                redis.setex("tenuo:nonce:" + h, max(ttl, self.retention_seconds), secrets.token_hex(16))
+                expiry = max(ttl, self.retention_seconds) + self.max_clock_skew_seconds
+                redis.setex("tenuo:nonce:" + h, expiry, secrets.token_hex(16))
 
         store = NonceStore(backend=RedisBackend())
     """
