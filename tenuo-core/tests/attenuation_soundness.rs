@@ -1595,3 +1595,18 @@ fn total_urlsafe_policies_allow_any_narrowing() {
         .matches(&"https://other.example.com/report".into())
         .unwrap());
 }
+
+#[test]
+fn invalid_empty_all_cannot_grant_an_exact_child() {
+    let empty = Constraint::All(All::new([]));
+    for child in [
+        Exact::new("safe").into(),
+        Exact::new(5).into(),
+        Constraint::All(All::new([])),
+    ] {
+        assert!(empty.validate_attenuation(&child).is_err());
+    }
+    let parent = Constraint::All(All::new([Wildcard.into(), empty]));
+    let child = Constraint::All(All::new([Exact::new("safe").into()]));
+    assert!(parent.validate_attenuation(&child).is_err());
+}

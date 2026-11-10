@@ -1893,6 +1893,53 @@ mod tests {
     }
 
     #[test]
+    fn empty_conjunction_errors_cannot_disappear_from_approval_gates() {
+        use crate::constraints::{All, Exact, Not};
+        let empty = Constraint::All(All::new([]));
+        let safe: Constraint = Exact::new("safe").into();
+        assert!(empty.preserves_gate_errors_of(&empty));
+        assert!(!safe.preserves_gate_errors_of(&empty));
+        let negated = Constraint::Not(Not {
+            constraint: Box::new(safe.clone()),
+        });
+        let parent = Constraint::All(All::new([negated.clone(), empty.clone()]));
+        let child = Constraint::All(All::new([negated.clone(), safe.clone()]));
+        assert!(!child.preserves_gate_negations_of(&parent));
+        for exempt in [false, true] {
+            let gate = |rule: Constraint| {
+                if exempt {
+                    ArgApprovalGate::exempt(rule).unwrap()
+                } else {
+                    ArgApprovalGate::Constraint(rule)
+                }
+            };
+            assert!(verify_arg_gates(gate(child.clone()), gate(parent.clone())).is_err());
+            let parent_args = BTreeMap::from([
+                ("a".into(), ArgApprovalGate::Constraint(negated.clone())),
+                ("z".into(), gate(empty.clone())),
+            ]);
+            let mut child_args = parent_args.clone();
+            child_args.insert("z".into(), gate(safe.clone()));
+            let parents = ApprovalGateMap(BTreeMap::from([(
+                "action".into(),
+                ToolApprovalGate::with_args(parent_args),
+            )]));
+            let children = ApprovalGateMap(BTreeMap::from([(
+                "action".into(),
+                ToolApprovalGate::with_args(child_args),
+            )]));
+            let tools =
+                BTreeMap::from([("action".into(), crate::constraints::ConstraintSet::new())]);
+            assert!(
+                verify_approval_gate_monotonicity(Some(&parents), Some(&children), &tools).is_err()
+            );
+            assert!(
+                verify_approval_gate_monotonicity(Some(&parents), Some(&parents), &tools).is_ok()
+            );
+        }
+    }
+
+    #[test]
     fn positive_only_gate_maps_preserve_short_circuiting() {
         use crate::constraints::{All, Any, Exact};
         let mut unavailable = vec![Constraint::Unknown {

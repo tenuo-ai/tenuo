@@ -746,6 +746,9 @@ impl Constraint {
             return true;
         }
         match parent {
+            Constraint::All(all) if all.constraints.is_empty() => {
+                self.contains_negation_leaf(parent)
+            }
             Constraint::All(all) => all
                 .constraints
                 .iter()
@@ -768,6 +771,9 @@ impl Constraint {
     }
 
     fn contains_negation_leaf(&self, leaf: &Constraint) -> bool {
+        if self == leaf {
+            return true;
+        }
         match self {
             Constraint::All(all) => all
                 .constraints
@@ -810,6 +816,13 @@ impl Constraint {
     /// Returns `Ok(())` if the child is strictly narrower or equal.
     /// Returns `Err` if the child would expand capabilities.
     pub fn validate_attenuation(&self, child: &Constraint) -> Result<()> {
+        // An invalid conjunction grants no authority. The cross-type
+        // All-to-Exact proof must not succeed by iterating zero clauses.
+        if matches!(self, Constraint::All(all) if all.constraints.is_empty()) {
+            return Err(Error::MonotonicityViolation(
+                "cannot attenuate an invalid empty All constraint".to_string(),
+            ));
+        }
         // Positive Any short-circuits. Removing or reordering a potentially
         // failing alternative can expose a later allow that the parent never
         // reaches, even when boolean match sets appear to narrow.

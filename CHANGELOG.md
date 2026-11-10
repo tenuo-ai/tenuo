@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branches before returning, retaining the first approval reason. Positive-only
   gate maps keep their existing ordered evaluation. Delegation preserves this
   error-checking behavior even when negation and parsers occur in different arguments.
+  Empty conjunctions cannot delegate to exact values or be removed from
+  error-preserving gate policies.
   Delegation cannot add accepted value kinds through negation. Python's
   annotation and A2A checks preserve the argument's original type, and the
   same core checks are included in the TypeScript WASM build. Upgrade
