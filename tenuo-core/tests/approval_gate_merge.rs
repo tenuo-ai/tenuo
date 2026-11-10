@@ -998,3 +998,105 @@ fn off_kind_negation_cannot_bypass_authorizer_approval_gate() {
             .unwrap();
     }
 }
+
+#[test]
+fn composite_off_kind_approval_gate_preserves_parser_errors() {
+    use tenuo::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+    use tenuo::constraints::{All, Any, Cidr, Not, Range, Wildcard};
+    use tenuo::planes::Authorizer;
+    let issuer = SigningKey::generate();
+    let approver = SigningKey::generate();
+    let negated = Constraint::Not(Not {
+        constraint: Box::new(Range::min(1000.0).unwrap().into()),
+    });
+    let cidr: Constraint = Cidr::new("10.0.0.0/8").unwrap().into();
+    let conjunction = Constraint::All(All {
+        constraints: vec![negated.clone(), cidr.clone()],
+    });
+    let disjunction = Constraint::Any(Any {
+        constraints: vec![cidr.clone(), negated],
+    });
+    let mut cases = vec![];
+    for gate in [
+        ArgApprovalGate::Constraint(disjunction),
+        ArgApprovalGate::Constraint(conjunction.clone()),
+        ArgApprovalGate::exempt(conjunction).unwrap(),
+    ] {
+        cases.push((
+            BTreeMap::from([("value".into(), gate)]),
+            HashMap::<String, ConstraintValue>::from([("value".into(), "not-an-ip".into())]),
+        ));
+    }
+    let single_negation = Constraint::Not(Not {
+        constraint: Box::new(tenuo::constraints::Exact::new("safe").into()),
+    });
+    for gate in [
+        ArgApprovalGate::Constraint(Constraint::Not(Not {
+            constraint: Box::new(single_negation.clone()),
+        })),
+        ArgApprovalGate::exempt(Constraint::All(All::new([single_negation]))).unwrap(),
+    ] {
+        cases.push((
+            BTreeMap::from([
+                ("a".into(), gate),
+                ("z".into(), ArgApprovalGate::Constraint(cidr.clone())),
+            ]),
+            HashMap::from([
+                ("a".into(), ConstraintValue::Integer(5)),
+                ("z".into(), "not-an-ip".into()),
+            ]),
+        ));
+    }
+    // A newly added earlier all-values gate must not hide a later error.
+    let (mut prefix_gates, prefix_args) = cases.last().unwrap().clone();
+    prefix_gates.insert("0".into(), ArgApprovalGate::All);
+    let mut prefix_args = prefix_args;
+    prefix_args.insert("0".into(), true.into());
+    cases.push((prefix_gates, prefix_args));
+    for (arg_gates, args) in cases {
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("action".into(), ToolApprovalGate::with_args(arg_gates));
+        let mut constraints = ConstraintSet::new();
+        for name in args.keys() {
+            constraints.insert(name.clone(), Wildcard);
+        }
+        let warrant = Warrant::builder()
+            .capability("action", constraints)
+            .holder(issuer.public_key())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver.public_key()])
+            .min_approvals(1)
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        let approval = SignedApproval::create(
+            ApprovalPayload {
+                version: 1,
+                request_hash: compute_request_hash(
+                    &warrant.id().to_string(),
+                    "action",
+                    &args,
+                    Some(&issuer.public_key()),
+                ),
+                nonce: rand::random(),
+                external_id: "review-test".into(),
+                approved_at: now,
+                expires_at: now + 300,
+                extensions: None,
+            },
+            &approver,
+        );
+        let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+        for approvals in [vec![], vec![approval]] {
+            assert!(matches!(
+                authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &approvals),
+                Err(tenuo::Error::InvalidIpAddress { .. })
+            ));
+        }
+    }
+}

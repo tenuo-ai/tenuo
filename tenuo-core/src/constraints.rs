@@ -649,6 +649,72 @@ impl Constraint {
         })
     }
 
+    /// Do not let typed negation suppress a parser error in an approval gate.
+    pub(crate) fn approval_gate_matches(
+        &self,
+        value: &ConstraintValue,
+        eager: bool,
+    ) -> Result<(bool, bool)> {
+        if !eager {
+            // The caller uses ordered evaluation for positive-only gate maps.
+            // Do not inspect a branch that the matcher intentionally skips.
+            return Ok((self.matches(value)?, false));
+        }
+        self.value_kinds()?;
+        let off_kind = self.has_off_kind_negation(value)?;
+        Ok((self.matches_for_negation(value)?, off_kind))
+    }
+
+    /// Preserve every source of off-kind approval requirements across delegation.
+    pub(crate) fn preserves_gate_negations_of(&self, parent: &Constraint) -> bool {
+        self.preserves_gate_negation_nodes(parent)
+            && (!parent.has_negation() || self.preserves_negation_errors_of(parent))
+    }
+
+    pub(crate) fn preserves_gate_errors_of(&self, parent: &Constraint) -> bool {
+        self.preserves_negation_errors_of(parent)
+    }
+
+    pub(crate) fn has_fallible_gate_negation(&self) -> bool {
+        self.has_negation() && self.can_fail()
+    }
+
+    pub(crate) fn has_negation(&self) -> bool {
+        match self {
+            Self::Not(_) | Self::NotOneOf(_) => true,
+            Self::All(a) => a.constraints.iter().any(Self::has_negation),
+            Self::Any(a) => a.constraints.iter().any(Self::has_negation),
+            _ => false,
+        }
+    }
+
+    fn preserves_gate_negation_nodes(&self, parent: &Constraint) -> bool {
+        match parent {
+            Self::Not(_) | Self::NotOneOf(_) => self.contains_gate_negation(parent),
+            Self::All(a) => a
+                .constraints
+                .iter()
+                .all(|c| self.preserves_gate_negation_nodes(c)),
+            Self::Any(a) => a
+                .constraints
+                .iter()
+                .all(|c| self.preserves_gate_negation_nodes(c)),
+            _ => true,
+        }
+    }
+
+    fn contains_gate_negation(&self, rule: &Constraint) -> bool {
+        if self == rule {
+            return true;
+        }
+        match self {
+            Self::Not(n) => n.constraint.contains_gate_negation(rule),
+            Self::All(a) => a.constraints.iter().any(|c| c.contains_gate_negation(rule)),
+            Self::Any(a) => a.constraints.iter().any(|c| c.contains_gate_negation(rule)),
+            _ => false,
+        }
+    }
+
     /// Evaluate composites under negation without hiding errors behind a
     /// branch whose result changed due to kind-scoped negation. The caller
     /// first validates availability and structure with `value_kinds()`.
@@ -680,6 +746,9 @@ impl Constraint {
             return true;
         }
         match parent {
+            Constraint::All(all) if all.constraints.is_empty() => {
+                self.contains_negation_leaf(parent)
+            }
             Constraint::All(all) => all
                 .constraints
                 .iter()
@@ -702,6 +771,9 @@ impl Constraint {
     }
 
     fn contains_negation_leaf(&self, leaf: &Constraint) -> bool {
+        if self == leaf {
+            return true;
+        }
         match self {
             Constraint::All(all) => all
                 .constraints
@@ -716,7 +788,7 @@ impl Constraint {
         }
     }
 
-    fn can_fail(&self) -> bool {
+    pub(crate) fn can_fail(&self) -> bool {
         match self {
             Constraint::Wildcard(_)
             | Constraint::Exact(_)
@@ -729,6 +801,7 @@ impl Constraint {
             | Constraint::Subpath(_) => false,
             Constraint::Pattern(p) => p.get_compiled().is_err(),
             Constraint::Regex(r) => r.get_compiled().is_err(),
+            Constraint::UrlSafe(u) => u.validate().is_err(),
             Constraint::All(a) => {
                 a.constraints.is_empty() || a.constraints.iter().any(Self::can_fail)
             }
@@ -743,6 +816,13 @@ impl Constraint {
     /// Returns `Ok(())` if the child is strictly narrower or equal.
     /// Returns `Err` if the child would expand capabilities.
     pub fn validate_attenuation(&self, child: &Constraint) -> Result<()> {
+        // An invalid conjunction grants no authority. The cross-type
+        // All-to-Exact proof must not succeed by iterating zero clauses.
+        if matches!(self, Constraint::All(all) if all.constraints.is_empty()) {
+            return Err(Error::MonotonicityViolation(
+                "cannot attenuate an invalid empty All constraint".to_string(),
+            ));
+        }
         // Positive Any short-circuits. Removing or reordering a potentially
         // failing alternative can expose a later allow that the parent never
         // reaches, even when boolean match sets appear to narrow.

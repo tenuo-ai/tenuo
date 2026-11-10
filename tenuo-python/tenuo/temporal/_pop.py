@@ -144,6 +144,8 @@ def _warrant_tool_has_non_empty_field_constraints(warrant: Any, tool_name: str) 
 def _args_to_dict_by_fn(
     raw_args: Sequence[Any],
     activity_fn: Optional[Any],
+    *,
+    for_signing: bool = False,
 ) -> Dict[str, Any]:
     """Map positional activity args to their parameter names.
 
@@ -159,23 +161,51 @@ def _args_to_dict_by_fn(
     if activity_fn is not None:
         try:
             sig = inspect.signature(activity_fn)
-            for pname, p in sig.parameters.items():
-                if p.kind in (
-                    inspect.Parameter.VAR_POSITIONAL,
-                    inspect.Parameter.VAR_KEYWORD,
+            parameters = list(sig.parameters.items())
+            # Workflow callers may pass an unbound @activity.defn method;
+            # Temporal binds its instance on the worker. Only the caller view
+            # may omit that implicit self. Worker names always use the callable
+            # actually dispatched, and must still agree with the signed header.
+            if (
+                for_signing
+                and inspect.isfunction(activity_fn)
+                and getattr(activity_fn, "__temporal_activity_definition", None) is not None
+                and parameters
+                and parameters[0][0] == "self"
+                and len(activity_fn.__qualname__.split(".")) > 1
+                and activity_fn.__qualname__.split(".")[-2] != "<locals>"
+            ):
+                owner = inspect.getmodule(activity_fn)
+                for part in activity_fn.__qualname__.split(".")[:-1]:
+                    owner = getattr(owner, part, None) if part != "<locals>" else None
+                if not inspect.isclass(owner):
+                    raise TenuoContextError(
+                        "Cannot distinguish an unbound local activity method from a static method. "
+                        "Pass a bound callable or register the worker callable in activity_fns."
+                    )
+                descriptor = inspect.getattr_static(owner, activity_fn.__name__, None)
+                if descriptor is activity_fn:
+                    parameters = parameters[1:]
+                elif not isinstance(descriptor, staticmethod):
+                    raise TenuoContextError("Cannot resolve the activity's receiver; pass a bound callable")
+            for pname, p in parameters:
+                if p.kind not in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 ):
-                    continue
-                if pname == "self":
                     continue
                 params.append(pname)
         except (ValueError, TypeError):
             pass
 
     for i, arg in enumerate(raw_args):
-        if i < len(params):
-            result[params[i]] = arg
-        else:
-            result[f"arg{i}"] = arg
+        name = params[i] if i < len(params) else f"arg{i}"
+        if name in result:
+            raise TenuoContextError(
+                f"Ambiguous activity argument name {name!r}: a positional fallback "
+                "would overwrite another argument. Rename the activity parameter."
+            )
+        result[name] = arg
 
     return result
 

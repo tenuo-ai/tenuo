@@ -266,7 +266,7 @@ jobs:
           uv pip install --system pytest pytest-asyncio hypothesis ruff mypy
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
-          uv pip install --system types-PyYAML types-requests
+          uv pip install --system types-PyYAML types-requests types-jsonschema
           # OpenAI + Agents SDK (Python 3.10+). Installed before crewai so the
           # matrix exercises openai>=2; crewai may pin openai<3 afterwards.
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \

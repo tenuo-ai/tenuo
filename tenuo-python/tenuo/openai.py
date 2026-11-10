@@ -508,6 +508,16 @@ class BufferOverflow(TenuoOpenAIError):
 from tenuo.core import check_constraint  # noqa: E402
 
 
+def _require_constrained_arguments(tool_name: str, arguments: Dict[str, Any], constraints: Dict[str, Any]) -> None:
+    """Require explicit values instead of authorizing unseen tool defaults."""
+    for name, constraint in constraints.items():
+        if not name.startswith("_") and name not in arguments and not isinstance(constraint, Wildcard):
+            raise OpenAIConstraintViolation(
+                tool_name, name, None, constraint,
+                reason=f"Missing argument '{name}' - a constrained argument must be passed",
+            )
+
+
 def _check_local_tool_name(
     tool_name: str, allow_tools: Optional[List[str]], deny_tools: Optional[List[str]],
 ) -> None:
@@ -628,6 +638,11 @@ def verify_tool_call(
         # Check for _allow_unknown opt-out (default: Zero Trust = reject unknown)
         allow_unknown = tool_constraints.get("_allow_unknown", False)
 
+        # A constrained argument must be passed: an omitted one would run with
+        # the tool's own default, which no constraint has seen. Wildcard
+        # accepts any value, the default included.
+        _require_constrained_arguments(tool_name, arguments, tool_constraints)
+
         # Iterate over arguments to ensure we catch UNKNOWN arguments (Zero Trust)
         for arg_name, value in arguments.items():
             try:
@@ -725,6 +740,7 @@ async def verify_tool_call_async(
     if warrant is None and constraints and tool_name in constraints:
         tool_constraints = constraints[tool_name]
         allow_unknown = tool_constraints.get("_allow_unknown", False)
+        _require_constrained_arguments(tool_name, arguments, tool_constraints)
 
         for arg_name, value in arguments.items():
             try:
@@ -975,6 +991,37 @@ def _require_explicit_allow(
         )
 
 
+def _parsed_arguments_schema(call: Any) -> Optional[Dict[str, Any]]:
+    """JSON Schema of the model a ``parse()`` call validated the arguments into.
+
+    ``parse()`` hands the application ``parsed_arguments``, built by lenient
+    validation of the raw argument JSON that Tenuo authorizes. Returns
+    ``None`` for calls that carry no parsed model.
+    """
+    holder = getattr(call, "function", None) or call
+    parsed = getattr(holder, "parsed_arguments", None)
+    to_schema = getattr(type(parsed), "model_json_schema", None)
+    if parsed is None or not callable(to_schema):
+        return None
+    try:
+        schema = to_schema()
+    except Exception:
+        return None
+    return dict(schema) if isinstance(schema, dict) else None
+
+
+def _require_declared_argument_types(tool_name: str, schema: Any, arguments: Any) -> None:
+    """Deny arguments whose JSON type the tool's schema would convert."""
+    from ._arg_types import argument_type_mismatches
+
+    mismatched = argument_type_mismatches(schema, arguments)
+    if mismatched:
+        raise ToolDenied(
+            tool_name,
+            "argument type does not match the tool schema: " + ", ".join(mismatched),
+        )
+
+
 def _chat_tool_call_parts(tool_call: Any) -> Tuple[str, str, Optional[str]]:
     """Return (name, kind, raw_input) for a chat completion tool call."""
     call_type = getattr(tool_call, "type", None)
@@ -1185,7 +1232,14 @@ class GuardedCompletions:
     def _verify_single_tool_call(self, tool_call: Any, reservations: Optional[List[Any]] = None) -> None:
         """Verify a single tool call (function, custom, or any other type)."""
         tool_name, kind, raw = _chat_tool_call_parts(tool_call)
-        key = self._verify_call(tool_name, kind, raw, getattr(tool_call, "id", None), reservations)
+        key = self._verify_call(
+            tool_name,
+            kind,
+            raw,
+            getattr(tool_call, "id", None),
+            reservations,
+            schema=_parsed_arguments_schema(tool_call),
+        )
         _attach_idempotency_key(tool_call, key)
 
     @staticmethod
@@ -1209,6 +1263,7 @@ class GuardedCompletions:
         raw: Optional[str],
         call_id: Optional[str] = None,
         reservations: Optional[List[Any]] = None,
+        schema: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Authorize one chat tool call and audit the decision (allow or deny).
 
@@ -1217,6 +1272,7 @@ class GuardedCompletions:
         arguments: Dict[str, Any] = {}
         try:
             arguments = self._call_arguments(tool_name, kind, raw)
+            _require_declared_argument_types(tool_name, schema, arguments)
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
             key = verify_tool_call(
                 tool_name,
@@ -1245,11 +1301,13 @@ class GuardedCompletions:
         raw: Optional[str],
         call_id: Optional[str] = None,
         reservations: Optional[List[Any]] = None,
+        schema: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Async variant of _verify_call (awaits approval handlers)."""
         arguments: Dict[str, Any] = {}
         try:
             arguments = self._call_arguments(tool_name, kind, raw)
+            _require_declared_argument_types(tool_name, schema, arguments)
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
             key = await verify_tool_call_async(
                 tool_name,
@@ -1761,6 +1819,7 @@ class GuardedResponses:
             tool_name, kind, arguments = _responses_item_parts(item)
             if not tool_name:
                 raise MalformedToolCall(tool_name, "tool call has no name")
+            _require_declared_argument_types(tool_name, _parsed_arguments_schema(item), arguments)
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
             key = verify_tool_call(
                 tool_name,
@@ -3215,7 +3274,9 @@ _AGENT_POLICIES_LOCK = threading.Lock()
 _TOOL_GUARDRAIL: Any = None
 
 
-def _register_agent_policy(agent: Any, guard: TenuoToolGuardrail, on_denial: str) -> None:
+def _register_agent_policy(
+    agent: Any, guard: TenuoToolGuardrail, on_denial: str, *, replace: bool = True,
+) -> None:
     key = id(agent)
 
     def _forget(_ref: Any, key: int = key) -> None:
@@ -3225,6 +3286,9 @@ def _register_agent_policy(agent: Any, guard: TenuoToolGuardrail, on_denial: str
                 del _AGENT_POLICIES[key]
 
     with _AGENT_POLICIES_LOCK:
+        entry = _AGENT_POLICIES.get(key)
+        if not replace and entry is not None and entry[0]() is agent:
+            return
         _AGENT_POLICIES[key] = (weakref.ref(agent, _forget), guard, on_denial)
 
 
@@ -3291,6 +3355,34 @@ def _tenuo_tool_input_guardrail() -> Any:
             return _deny(guard, on_denial, tool_name, {}, str(MalformedToolCall(tool_name, str(e))), "tier1")
         if not isinstance(arguments, dict):
             return _deny(guard, on_denial, tool_name, {}, "tool arguments are not a JSON object", "tier1")
+        # The SDK validates these arguments into the tool's parameters after
+        # this guardrail, converting "5000" to 5000.0 or "off" to False.
+        from ._arg_types import argument_type_mismatches, tool_input_schema
+
+        mismatched: List[str] = []
+        try:
+            agent = getattr(data, "agent", None)
+            if agent is None:
+                raise OpenAIConfigurationError("Cannot resolve the invoking agent", "CFG_006")
+            candidates = list(getattr(agent, "tools", None) or [])
+            if not any(getattr(candidate, "name", None) == tool_name for candidate in candidates):
+                if getattr(agent, "mcp_servers", None):
+                    candidates.extend(await agent.get_mcp_tools(data.context))
+            candidate = next((tool for tool in candidates if getattr(tool, "name", None) == tool_name), None)
+            if candidate is None:
+                raise OpenAIConfigurationError("Cannot resolve the invoked tool's input schema", "CFG_006")
+            mismatched = argument_type_mismatches(tool_input_schema(candidate), arguments)
+        except Exception:
+            return _deny(guard, on_denial, tool_name, arguments, "cannot resolve or check the tool input schema", "tier1")
+        if mismatched:
+            return _deny(
+                guard,
+                on_denial,
+                tool_name,
+                arguments,
+                "argument type does not match the tool schema: " + ", ".join(mismatched),
+                "tier1",
+            )
         try:
             await verify_tool_call_async(
                 tool_name,
@@ -3363,7 +3455,9 @@ def guard_agent(
 
     The policy belongs to the agent, not to its tools: agents that share
     tool objects or MCP servers each keep their own policy, and calling
-    guard_agent() again on an agent replaces its policy. A tool that has been
+    guard_agent() again on an agent replaces its policy. An agent reached
+    through a handoff that already has a policy keeps it; to change it, call
+    guard_agent() on that agent. A tool that has been
     guarded denies calls from any agent without a policy, including copies
     made with ``agent.clone()``; guard those too.
 
@@ -3427,7 +3521,9 @@ def guard_agent(
         if id(current) in seen:
             continue
         seen.add(id(current))
-        _register_agent_policy(current, guard, on_denial)
+        # An agent reached through a handoff keeps a policy it was already
+        # given; only the agent named in this call has its policy replaced.
+        _register_agent_policy(current, guard, on_denial, replace=current is agent)
         for tool in getattr(current, "tools", None) or []:
             if not hasattr(tool, "tool_input_guardrails"):
                 raise OpenAIConfigurationError(
