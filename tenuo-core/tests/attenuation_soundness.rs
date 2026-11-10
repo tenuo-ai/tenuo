@@ -33,6 +33,103 @@ fn atom_strategy() -> impl Strategy<Value = String> {
     prop::sample::select(ATOMS).prop_map(|s| s.to_string())
 }
 
+#[test]
+fn regression_negation_cannot_remove_error_based_rejection() {
+    let exact = Constraint::Exact(Exact::new("10.0.0.1"));
+    let cidr = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
+    let parent = Constraint::Not(Not::new(Constraint::All(All::new(vec![
+        exact.clone(),
+        cidr.clone(),
+    ]))));
+    let child = Constraint::Not(Not::new(Constraint::All(All::new(vec![exact.clone()]))));
+    let malformed = ConstraintValue::String("not-an-ip".into());
+    assert!(parent.matches(&malformed).is_err());
+    assert!(child.matches(&malformed).unwrap());
+    assert!(parent.validate_attenuation(&child).is_err());
+
+    let inner = vec![
+        exact.clone(),
+        cidr.clone(),
+        Constraint::All(All::new(vec![exact.clone(), cidr.clone()])),
+        Constraint::Any(Any::new(vec![exact.clone(), cidr.clone()])),
+        Constraint::All(All::new(vec![cidr.clone()])),
+        Constraint::Any(Any::new(vec![cidr])),
+        Constraint::Not(Not::new(exact)),
+        Constraint::Wildcard(Wildcard),
+    ];
+    let values = [
+        malformed,
+        ConstraintValue::String("10.0.0.1".into()),
+        ConstraintValue::String("10.0.0.2".into()),
+        ConstraintValue::String("192.168.1.1".into()),
+        ConstraintValue::Integer(5),
+        ConstraintValue::List(vec![]),
+    ];
+    for parent_inner in &inner {
+        for child_inner in &inner {
+            let parent = Constraint::Not(Not::new(parent_inner.clone()));
+            let child = Constraint::Not(Not::new(child_inner.clone()));
+            if parent.validate_attenuation(&child).is_ok() {
+                for value in &values {
+                    assert!(
+                        !child.matches(value).unwrap_or(false)
+                            || parent.matches(value).unwrap_or(false),
+                        "negated delegation widened rejection: {parent:?} -> {child:?}, {value:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn regression_any_cannot_drop_or_reorder_an_error_based_denial() {
+    let rejecting = Constraint::Not(Not::new(Constraint::All(All::new(vec![
+        Constraint::Exact(Exact::new("10.0.0.1")),
+        Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap()),
+    ]))));
+    let allowing = Constraint::Exact(Exact::new("not-an-ip"));
+    let parent = Constraint::Any(Any::new(vec![rejecting.clone(), allowing.clone()]));
+    let value = ConstraintValue::String("not-an-ip".into());
+    assert!(parent.matches(&value).is_err());
+    for child in [
+        allowing.clone(),
+        Constraint::Any(Any::new(vec![allowing.clone()])),
+        Constraint::Any(Any::new(vec![allowing, rejecting])),
+    ] {
+        assert!(child.matches(&value).unwrap());
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+    assert!(parent.validate_attenuation(&parent).is_ok());
+    if let Constraint::Any(parent_any) = &parent {
+        let dropped = Any::new(vec![Constraint::Exact(Exact::new("not-an-ip"))]);
+        assert!(parent_any.validate_attenuation(&dropped).is_err());
+    }
+}
+
+#[test]
+fn regression_negated_glob_identity_survives_serialization() {
+    let fresh = Constraint::Not(Not::new(Constraint::Pattern(
+        Pattern::new("*.exe").unwrap(),
+    )));
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(&fresh, &mut bytes).unwrap();
+    let decoded: Constraint = ciborium::de::from_reader(bytes.as_slice()).unwrap();
+    assert_eq!(decoded, fresh);
+    assert!(decoded.validate_attenuation(&fresh).is_ok());
+    assert!(fresh.validate_attenuation(&decoded).is_ok());
+}
+
+#[test]
+fn regression_nested_negation_validates_urlsafe_policy_off_kind() {
+    let policy = Constraint::UrlSafe(UrlSafe::with_domains(vec!["foo.*.example.com"]));
+    let rule = Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+        Constraint::Not(Not::new(policy)),
+        Constraint::Exact(Exact::new(1000)),
+    ]))));
+    assert!(rule.matches(&ConstraintValue::Integer(5)).is_err());
+}
+
 fn string_value_strategy() -> impl Strategy<Value = ConstraintValue> {
     prop_oneof![
         atom_strategy().prop_map(ConstraintValue::String),
@@ -1459,4 +1556,57 @@ fn deep_constraint_nesting_rejected_on_decode() {
             );
         }
     }
+}
+
+#[test]
+fn total_globs_and_subpaths_allow_valid_attenuation() {
+    let parent = Constraint::Not(Not {
+        constraint: Box::new(Pattern::new("private-*").unwrap().into()),
+    });
+    let child = Constraint::Not(Not {
+        constraint: Box::new(Pattern::new("*").unwrap().into()),
+    });
+    parent.validate_attenuation(&child).unwrap();
+    let parent = Constraint::Any(Any {
+        constraints: vec![
+            Subpath::new("/data").unwrap().into(),
+            Subpath::new("/tmp").unwrap().into(),
+        ],
+    });
+    let child = Constraint::Any(Any {
+        constraints: vec![Subpath::new("/data/reports").unwrap().into()],
+    });
+    parent.validate_attenuation(&child).unwrap();
+}
+
+#[test]
+fn total_urlsafe_policies_allow_any_narrowing() {
+    let parent = Constraint::Any(Any {
+        constraints: vec![UrlSafe::new().into()],
+    });
+    let child = Constraint::Any(Any {
+        constraints: vec![UrlSafe::with_domains(vec!["api.example.com"]).into()],
+    });
+    parent.validate_attenuation(&child).unwrap();
+    assert!(child
+        .matches(&"https://api.example.com/report".into())
+        .unwrap());
+    assert!(!child
+        .matches(&"https://other.example.com/report".into())
+        .unwrap());
+}
+
+#[test]
+fn invalid_empty_all_cannot_grant_an_exact_child() {
+    let empty = Constraint::All(All::new([]));
+    for child in [
+        Exact::new("safe").into(),
+        Exact::new(5).into(),
+        Constraint::All(All::new([])),
+    ] {
+        assert!(empty.validate_attenuation(&child).is_err());
+    }
+    let parent = Constraint::All(All::new([Wildcard.into(), empty]));
+    let child = Constraint::All(All::new([Exact::new("safe").into()]));
+    assert!(parent.validate_attenuation(&child).is_err());
 }

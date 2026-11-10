@@ -523,21 +523,41 @@ pub fn approval_requirement(
         });
     }
 
+    // Negation can change which argument first requires approval. In such
+    // policies every branch and argument must retain its parser denials.
+    let eager = tool_gate.args.as_ref().is_some_and(|gates| {
+        gates.values().any(|gate| match gate {
+            ArgApprovalGate::Constraint(c) | ArgApprovalGate::Exempt(c) => c.has_negation(),
+            ArgApprovalGate::All => false,
+        })
+    });
     let mut exempted = Vec::new();
+    let mut required_argument = None;
     if let Some(arg_gates) = &tool_gate.args {
         for (arg_name, arg_gate) in arg_gates {
-            let Some(arg_value) = args.get(arg_name) else {
-                // SECURITY: absent gated argument fires the gate (fail-safe).
-                return Ok(ApprovalRequirement::Required {
-                    kind: ApprovalGateKind::Argument {
-                        name: arg_name.clone(),
-                    },
-                    message,
-                });
+            let required = if let Some(arg_value) = args.get(arg_name) {
+                match arg_gate {
+                    ArgApprovalGate::All => true,
+                    ArgApprovalGate::Constraint(c) => {
+                        let (matched, off_kind) = c.approval_gate_matches(arg_value, eager)?;
+                        matched || off_kind
+                    }
+                    ArgApprovalGate::Exempt(c) => {
+                        let (matched, off_kind) = c.approval_gate_matches(arg_value, eager)?;
+                        if matched && !off_kind {
+                            exempted.push(arg_name.clone());
+                        }
+                        !matched || off_kind
+                    }
+                }
+            } else {
+                // An absent gated argument still requires approval.
+                true
             };
-
-            match arg_gate {
-                ArgApprovalGate::All => {
+            if required && required_argument.is_none() {
+                if !eager {
+                    // Positive-only gate maps retain their ordered behavior.
+                    // A map containing negation must check remaining gates.
                     return Ok(ApprovalRequirement::Required {
                         kind: ApprovalGateKind::Argument {
                             name: arg_name.clone(),
@@ -545,30 +565,15 @@ pub fn approval_requirement(
                         message,
                     });
                 }
-                ArgApprovalGate::Constraint(constraint) => {
-                    // Same Constraint::matches the authorizer uses.
-                    if constraint.matches(arg_value)? {
-                        return Ok(ApprovalRequirement::Required {
-                            kind: ApprovalGateKind::Argument {
-                                name: arg_name.clone(),
-                            },
-                            message,
-                        });
-                    }
-                }
-                ArgApprovalGate::Exempt(constraint) => {
-                    if !constraint.matches(arg_value)? {
-                        return Ok(ApprovalRequirement::Required {
-                            kind: ApprovalGateKind::Argument {
-                                name: arg_name.clone(),
-                            },
-                            message,
-                        });
-                    }
-                    exempted.push(arg_name.clone());
-                }
+                required_argument = Some(arg_name.clone());
             }
         }
+    }
+    if let Some(name) = required_argument {
+        return Ok(ApprovalRequirement::Required {
+            kind: ApprovalGateKind::Argument { name },
+            message,
+        });
     }
 
     if !exempted.is_empty() {
@@ -703,6 +708,8 @@ pub enum ApprovalGateError {
     ArgApprovalGateRemoved(String, String),
     /// A per-argument gate constraint was weakened.
     ArgApprovalGateWeakened,
+    /// A replacement gate discards a denial from a fallible negated rule.
+    ArgApprovalGateDenialRemoved,
     /// A per-argument gate constraint was widened (child must be at least as strict as parent).
     ArgApprovalGateConstraintChanged,
     /// Inner constraint type not permitted inside `Exempt`.
@@ -726,6 +733,10 @@ impl fmt::Display for ApprovalGateError {
                 write!(f, "arg gate '{}' removed for tool '{}'", arg, tool)
             }
             Self::ArgApprovalGateWeakened => write!(f, "arg gate weakened from All to Constraint"),
+            Self::ArgApprovalGateDenialRemoved => write!(
+                f,
+                "approval gate delegation discards a fallible negated rule"
+            ),
             Self::ArgApprovalGateConstraintChanged => {
                 write!(
                     f,
@@ -798,16 +809,65 @@ pub(crate) fn verify_approval_gate_monotonicity(
                 return Err(ApprovalGateError::ToolApprovalGateWeakened(tool.clone()));
             }
 
-            // Parent per-arg, child whole-tool → strictly stricter, valid
-            (Some(_), None) => {}
+            // Requiring approval for every value cannot replace a parser
+            // denial that remains a refusal even with signed approvals.
+            (Some(parent_args), None) => {
+                let constraints: Vec<_> = parent_args
+                    .values()
+                    .filter_map(|gate| match gate {
+                        ArgApprovalGate::Constraint(c) | ArgApprovalGate::Exempt(c) => Some(c),
+                        ArgApprovalGate::All => None,
+                    })
+                    .collect();
+                if constraints.iter().any(|c| c.has_negation())
+                    && constraints.iter().any(|c| c.can_fail())
+                {
+                    return Err(ApprovalGateError::ArgApprovalGateDenialRemoved);
+                }
+            }
 
             // Both per-arg → each parent arg gate must exist and be ≤ in child
             (Some(parent_args), Some(child_args)) => {
+                let has_negation = parent_args.values().any(|gate| match gate {
+                    ArgApprovalGate::Constraint(c) | ArgApprovalGate::Exempt(c) => c.has_negation(),
+                    ArgApprovalGate::All => false,
+                });
+                if has_negation {
+                    let has_errors = parent_args.values().any(|gate| match gate {
+                        ArgApprovalGate::Constraint(c) | ArgApprovalGate::Exempt(c) => c.can_fail(),
+                        ArgApprovalGate::All => false,
+                    });
+                    let child_has_negation = child_args.values().any(|gate| match gate {
+                        ArgApprovalGate::Constraint(c) | ArgApprovalGate::Exempt(c) => {
+                            c.has_negation()
+                        }
+                        ArgApprovalGate::All => false,
+                    });
+                    if has_errors && !child_has_negation {
+                        return Err(ApprovalGateError::ArgApprovalGateDenialRemoved);
+                    }
+                }
                 for (arg, parent_arg_gate) in parent_args {
                     let child_arg_gate = child_args.get(arg).ok_or_else(|| {
                         ApprovalGateError::ArgApprovalGateRemoved(tool.clone(), arg.clone())
                     })?;
 
+                    if has_negation {
+                        if let ArgApprovalGate::Constraint(parent)
+                        | ArgApprovalGate::Exempt(parent) = parent_arg_gate
+                        {
+                            let preserves_errors = match child_arg_gate {
+                                ArgApprovalGate::Constraint(child)
+                                | ArgApprovalGate::Exempt(child) => {
+                                    child.preserves_gate_errors_of(parent)
+                                }
+                                ArgApprovalGate::All => !parent.can_fail(),
+                            };
+                            if !preserves_errors {
+                                return Err(ApprovalGateError::ArgApprovalGateDenialRemoved);
+                            }
+                        }
+                    }
                     validate_arg_approval_gate_monotonic(child_arg_gate, parent_arg_gate)?;
                 }
             }
@@ -830,7 +890,13 @@ fn validate_arg_approval_gate_monotonic(
         // Identical (any variant) — fast path
         (c, p) if c == p => Ok(()),
 
-        // All is the strictest gate — valid child for any parent variant
+        (ArgApprovalGate::All, ArgApprovalGate::Constraint(c) | ArgApprovalGate::Exempt(c))
+            if c.has_fallible_gate_negation() =>
+        {
+            Err(ApprovalGateError::ArgApprovalGateDenialRemoved)
+        }
+
+        // All retains every approval requirement of a total parent gate.
         (ArgApprovalGate::All, _) => Ok(()),
 
         // Child Constraint, parent All → child gates fewer values (weaker)
@@ -853,6 +919,9 @@ fn validate_arg_approval_gate_monotonic(
             if nc == np {
                 return Ok(());
             }
+            if !nc.preserves_gate_negations_of(&np) {
+                return Err(ApprovalGateError::ArgApprovalGateWeakened);
+            }
             np.validate_attenuation(&nc)
                 .map_err(|_| ApprovalGateError::ArgApprovalGateWeakened)
         }
@@ -873,6 +942,9 @@ fn validate_arg_approval_gate_monotonic(
             let np = normalize_for_gate_comparison(c_parent);
             if nc == np {
                 return Ok(());
+            }
+            if !nc.preserves_gate_negations_of(&np) {
+                return Err(ApprovalGateError::ArgApprovalGateWeakened);
             }
             np.validate_attenuation(&nc)
                 .map_err(|_| ApprovalGateError::ArgApprovalGateConstraintChanged)
@@ -1752,6 +1824,356 @@ mod tests {
         let mut child_tools = BTreeMap::new();
         child_tools.insert(tool.to_string(), crate::constraints::ConstraintSet::new());
         verify_approval_gate_monotonicity(Some(&parent_gm), Some(&child_gm), &child_tools)
+    }
+
+    #[test]
+    fn test_exempt_attenuation_cannot_remove_off_kind_approval_requirement() {
+        use crate::constraints::{All, Any, Exact, Not};
+        let parent_rule = Constraint::All(All {
+            constraints: vec![Constraint::Any(Any {
+                constraints: vec![
+                    Constraint::Not(Not {
+                        constraint: Box::new(Exact::new("prod").into()),
+                    }),
+                    Exact::new(5).into(),
+                ],
+            })],
+        });
+        let child_rule = Constraint::All(All {
+            constraints: vec![Constraint::Any(Any {
+                constraints: vec![Exact::new(5).into()],
+            })],
+        });
+        assert!(parent_rule.validate_attenuation(&child_rule).is_ok());
+        let parent = ArgApprovalGate::exempt(parent_rule).unwrap();
+        let child = ArgApprovalGate::exempt(child_rule).unwrap();
+        assert!(verify_arg_gates(child.clone(), parent.clone()).is_err());
+        assert!(verify_arg_gates(parent.clone(), parent).is_ok());
+        assert!(verify_arg_gates(ArgApprovalGate::All, child).is_ok());
+    }
+
+    #[test]
+    fn test_negated_gate_attenuation_cannot_discard_parser_errors() {
+        use crate::constraints::{All, Cidr, Exact, Not, Range};
+        let negated = Constraint::Not(Not {
+            constraint: Box::new(Range::min(1000.0).unwrap().into()),
+        });
+        let parent_rule = Constraint::All(All {
+            constraints: vec![negated.clone(), Cidr::new("10.0.0.0/8").unwrap().into()],
+        });
+        let child_rule = Constraint::All(All {
+            constraints: vec![negated, Exact::new("10.1.1.1").into()],
+        });
+        assert!(parent_rule.validate_attenuation(&child_rule).is_ok());
+        let parent_gate = ArgApprovalGate::exempt(parent_rule.clone()).unwrap();
+        assert!(verify_arg_gates(ArgApprovalGate::All, parent_gate.clone()).is_err());
+        let mut parent_map = ApprovalGateMap::new();
+        parent_map.insert(
+            "browse".into(),
+            ToolApprovalGate::with_args(BTreeMap::from([("url".into(), parent_gate)])),
+        );
+        let mut child_map = ApprovalGateMap::new();
+        child_map.insert("browse".into(), ToolApprovalGate::whole_tool());
+        let tools = BTreeMap::from([("browse".into(), crate::constraints::ConstraintSet::new())]);
+        assert!(
+            verify_approval_gate_monotonicity(Some(&parent_map), Some(&child_map), &tools).is_err()
+        );
+        for (child, parent) in [
+            (
+                ArgApprovalGate::Constraint(child_rule.clone()),
+                ArgApprovalGate::Constraint(parent_rule.clone()),
+            ),
+            (
+                ArgApprovalGate::exempt(child_rule).unwrap(),
+                ArgApprovalGate::exempt(parent_rule).unwrap(),
+            ),
+        ] {
+            assert!(verify_arg_gates(child, parent).is_err());
+        }
+    }
+
+    #[test]
+    fn empty_conjunction_errors_cannot_disappear_from_approval_gates() {
+        use crate::constraints::{All, Exact, Not};
+        let empty = Constraint::All(All::new([]));
+        let safe: Constraint = Exact::new("safe").into();
+        assert!(empty.preserves_gate_errors_of(&empty));
+        assert!(!safe.preserves_gate_errors_of(&empty));
+        let negated = Constraint::Not(Not {
+            constraint: Box::new(safe.clone()),
+        });
+        let parent = Constraint::All(All::new([negated.clone(), empty.clone()]));
+        let child = Constraint::All(All::new([negated.clone(), safe.clone()]));
+        assert!(!child.preserves_gate_negations_of(&parent));
+        for exempt in [false, true] {
+            let gate = |rule: Constraint| {
+                if exempt {
+                    ArgApprovalGate::exempt(rule).unwrap()
+                } else {
+                    ArgApprovalGate::Constraint(rule)
+                }
+            };
+            assert!(verify_arg_gates(gate(child.clone()), gate(parent.clone())).is_err());
+            let parent_args = BTreeMap::from([
+                ("a".into(), ArgApprovalGate::Constraint(negated.clone())),
+                ("z".into(), gate(empty.clone())),
+            ]);
+            let mut child_args = parent_args.clone();
+            child_args.insert("z".into(), gate(safe.clone()));
+            let parents = ApprovalGateMap(BTreeMap::from([(
+                "action".into(),
+                ToolApprovalGate::with_args(parent_args),
+            )]));
+            let children = ApprovalGateMap(BTreeMap::from([(
+                "action".into(),
+                ToolApprovalGate::with_args(child_args),
+            )]));
+            let tools =
+                BTreeMap::from([("action".into(), crate::constraints::ConstraintSet::new())]);
+            assert!(
+                verify_approval_gate_monotonicity(Some(&parents), Some(&children), &tools).is_err()
+            );
+            assert!(
+                verify_approval_gate_monotonicity(Some(&parents), Some(&parents), &tools).is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn positive_only_gate_maps_preserve_short_circuiting() {
+        use crate::constraints::{All, Any, Exact};
+        let mut unavailable = vec![Constraint::Unknown {
+            type_id: 255,
+            payload: vec![0xa0],
+        }];
+        if !cfg!(feature = "cel") {
+            unavailable.push(Constraint::Cel(crate::constraints::CelConstraint {
+                expression: "false".into(),
+                parent_expression: None,
+            }));
+        }
+        for unsupported in unavailable {
+            let rule = Constraint::Any(Any::new([Exact::new("safe").into(), unsupported]));
+            for (gate, required) in [
+                (ArgApprovalGate::Constraint(rule.clone()), true),
+                (
+                    ArgApprovalGate::exempt(Constraint::All(All::new([rule.clone()]))).unwrap(),
+                    false,
+                ),
+            ] {
+                let mut gates = ApprovalGateMap::new();
+                gates.insert(
+                    "action".into(),
+                    ToolApprovalGate::with_args(BTreeMap::from([("value".into(), gate)])),
+                );
+                assert_eq!(
+                    evaluate_approval_gates(
+                        Some(&gates),
+                        "action",
+                        &HashMap::from([("value".into(), "safe".into())])
+                    )
+                    .unwrap(),
+                    required
+                );
+                assert!(evaluate_approval_gates(
+                    Some(&gates),
+                    "action",
+                    &HashMap::from([("value".into(), "other".into())])
+                )
+                .is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn typed_negation_cannot_weaken_legacy_approval_decisions() {
+        use crate::constraints::{All, Any, Cidr, Exact, Not, NotOneOf, Range, Wildcard};
+        // Independent oracle for pre-change negation and ordered composites.
+        fn legacy_matches(c: &Constraint, value: &ConstraintValue) -> Result<bool> {
+            match c {
+                Constraint::Not(n) => Ok(!legacy_matches(&n.constraint, value)?),
+                Constraint::NotOneOf(n) => Ok(!n.excluded.contains(value)),
+                Constraint::All(a) => {
+                    for clause in &a.constraints {
+                        if !legacy_matches(clause, value)? {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                }
+                Constraint::Any(a) => {
+                    for clause in &a.constraints {
+                        if legacy_matches(clause, value)? {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
+                }
+                _ => c.matches(value),
+            }
+        }
+        let atoms = vec![
+            Constraint::Not(Not {
+                constraint: Box::new(Exact::new("safe").into()),
+            }),
+            Constraint::Not(Not {
+                constraint: Box::new(Range::min(1000.0).unwrap().into()),
+            }),
+            NotOneOf::new(["safe"]).into(),
+            Cidr::new("10.0.0.0/8").unwrap().into(),
+            Exact::new("safe").into(),
+            Exact::new(5).into(),
+            Wildcard.into(),
+        ];
+        let mut composites = atoms.clone();
+        for left in &atoms {
+            for right in &atoms {
+                composites.push(Constraint::All(All::new([left.clone(), right.clone()])));
+                composites.push(Constraint::Any(Any::new([left.clone(), right.clone()])));
+            }
+        }
+        let values: Vec<ConstraintValue> = vec![
+            "safe".into(),
+            "not-an-ip".into(),
+            "10.1.1.1".into(),
+            "192.0.2.1".into(),
+            5.into(),
+            1500.into(),
+            false.into(),
+            ConstraintValue::Null,
+            ConstraintValue::Float(f64::NAN),
+            ConstraintValue::List(vec!["safe".into()]),
+        ];
+        for composite in composites {
+            for rule in [
+                composite.clone(),
+                Constraint::Not(Not {
+                    constraint: Box::new(composite),
+                }),
+            ] {
+                for exempt in [false, true] {
+                    let inner = if exempt {
+                        Constraint::All(All::new([rule.clone()]))
+                    } else {
+                        rule.clone()
+                    };
+                    let gate = if exempt {
+                        ArgApprovalGate::exempt(inner.clone()).unwrap()
+                    } else {
+                        ArgApprovalGate::Constraint(inner.clone())
+                    };
+                    let mut gates = ApprovalGateMap::new();
+                    gates.insert(
+                        "action".into(),
+                        ToolApprovalGate::with_args(BTreeMap::from([("value".into(), gate)])),
+                    );
+                    for value in &values {
+                        let args = HashMap::from([("value".into(), value.clone())]);
+                        let old = legacy_matches(&inner, value).map(|matched| {
+                            if exempt {
+                                !matched
+                            } else {
+                                matched
+                            }
+                        });
+                        let mut multi_gates = gates.clone();
+                        let late_parser: Constraint = Cidr::new("10.0.0.0/8").unwrap().into();
+                        multi_gates
+                            .0
+                            .get_mut("action")
+                            .unwrap()
+                            .args
+                            .as_mut()
+                            .unwrap()
+                            .insert("z".into(), ArgApprovalGate::Constraint(late_parser.clone()));
+                        let mut multi_args = args.clone();
+                        multi_args.insert("z".into(), "not-an-ip".into());
+                        let old_multi = legacy_matches(&inner, value)
+                            .map(|matched| if exempt { !matched } else { matched })
+                            .and_then(|required| {
+                                if required {
+                                    Ok(true)
+                                } else {
+                                    late_parser.matches(&"not-an-ip".into())
+                                }
+                            });
+                        let new_multi =
+                            evaluate_approval_gates(Some(&multi_gates), "action", &multi_args);
+                        assert!(
+                            !matches!(
+                                (old_multi, new_multi),
+                                (Err(_), Ok(_)) | (Ok(true), Ok(false))
+                            ),
+                            "later argument denial disappeared: {inner:?}, {value:?}"
+                        );
+                        let new = evaluate_approval_gates(Some(&gates), "action", &args);
+                        match (old, new) {
+                            (Err(_), Ok(_)) => panic!(
+                                "parser denial became approval-overridable: {inner:?}, {value:?}"
+                            ),
+                            (Ok(true), Ok(false)) => {
+                                panic!("approval requirement disappeared: {inner:?}, {value:?}")
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_negated_multi_argument_gate_retains_later_parser_denials() {
+        use crate::constraints::{Cidr, Exact, Not};
+        let mut parent_args = BTreeMap::from([
+            (
+                "a".into(),
+                ArgApprovalGate::Constraint(Constraint::Not(Not {
+                    constraint: Box::new(Constraint::Not(Not {
+                        constraint: Box::new(Exact::new("safe").into()),
+                    })),
+                })),
+            ),
+            (
+                "z".into(),
+                ArgApprovalGate::Constraint(Cidr::new("10.0.0.0/8").unwrap().into()),
+            ),
+        ]);
+        let parent_map = ApprovalGateMap(BTreeMap::from([(
+            "action".into(),
+            ToolApprovalGate::with_args(parent_args.clone()),
+        )]));
+        let tools = BTreeMap::from([("action".into(), crate::constraints::ConstraintSet::new())]);
+        for replacement in [
+            ArgApprovalGate::All,
+            ArgApprovalGate::Constraint(Exact::new("10.1.1.1").into()),
+        ] {
+            parent_args.insert("z".into(), replacement);
+            let child = ApprovalGateMap(BTreeMap::from([(
+                "action".into(),
+                ToolApprovalGate::with_args(parent_args.clone()),
+            )]));
+            assert!(
+                verify_approval_gate_monotonicity(Some(&parent_map), Some(&child), &tools).is_err()
+            );
+        }
+        let mut without_negation = parent_map.0.get("action").unwrap().args.clone().unwrap();
+        without_negation.insert("a".into(), ArgApprovalGate::All);
+        let child = ApprovalGateMap(BTreeMap::from([(
+            "action".into(),
+            ToolApprovalGate::with_args(without_negation),
+        )]));
+        assert!(
+            verify_approval_gate_monotonicity(Some(&parent_map), Some(&child), &tools).is_err()
+        );
+        let whole_tool = ApprovalGateMap(BTreeMap::from([(
+            "action".into(),
+            ToolApprovalGate::whole_tool(),
+        )]));
+        assert!(
+            verify_approval_gate_monotonicity(Some(&parent_map), Some(&whole_tool), &tools)
+                .is_err()
+        );
     }
 
     #[test]

@@ -20,6 +20,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Negated constraints reject values of unrelated kinds.** `Not` and
+  `NotOneOf` now judge only the kinds their inner rule or exclusion entries
+  cover: for example, negating a string rule cannot admit a list, and negating
+  a numeric rule cannot admit a numeric string. NaN and infinities are rejected
+  by negated constraints. `Not(Subpath(...))` accepts only string arguments;
+  it does not turn a partially matching path list into an allowed call.
+  Approval gates require approval for off-kind negated arguments instead of
+  treating them as an ungated call. Parser errors still reject the call even
+  when approvals are supplied. Gate delegation retains negated subrules so
+  removing an off-kind requirement cannot create a new exemption. Gates with
+  off-kind negation evaluate every composite branch, and their delegation
+  retains fallible subrules, so approvals cannot override a discarded parser error.
+  Gate maps containing negation evaluate all argument gates and composite
+  branches before returning, retaining the first approval reason. Positive-only
+  gate maps keep their existing ordered evaluation. Delegation preserves this
+  error-checking behavior even when negation and parsers occur in different arguments.
+  Empty conjunctions cannot delegate to exact values or be removed from
+  error-preserving gate policies.
+  Delegation cannot add accepted value kinds through negation. Python's
+  annotation and A2A checks preserve the argument's original type, and the
+  same core checks are included in the TypeScript WASM build. Upgrade
+  enforcement points together before relying on these negation semantics.
+  Composite branches inside `Not` must all evaluate successfully: unsupported
+  features, malformed rules, and evaluation errors are never hidden by
+  short-circuiting. Put error-guarding CEL conditions in the CEL expression
+  itself when conditional evaluation is required.
+  Negated delegation must retain potentially failing inner rules unchanged;
+  removing a parsing or evaluation rule cannot discard an error-based denial.
+  Positive `Any` delegation preserves ordered alternatives that can fail,
+  because dropping or reordering them can expose a previously unreachable allow.
+
 - **An integral number matches the same way however it is spelled.**
   `ConstraintValue` compared `Integer(1000)` and `Float(1000.0)` as different
   values, and argument extraction and the Python binding yield `Float` for
