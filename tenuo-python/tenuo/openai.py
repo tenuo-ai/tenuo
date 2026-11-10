@@ -975,6 +975,37 @@ def _require_explicit_allow(
         )
 
 
+def _parsed_arguments_schema(call: Any) -> Optional[Dict[str, Any]]:
+    """JSON Schema of the model a ``parse()`` call validated the arguments into.
+
+    ``parse()`` hands the application ``parsed_arguments``, built by lenient
+    validation of the raw argument JSON that Tenuo authorizes. Returns
+    ``None`` for calls that carry no parsed model.
+    """
+    holder = getattr(call, "function", None) or call
+    parsed = getattr(holder, "parsed_arguments", None)
+    to_schema = getattr(type(parsed), "model_json_schema", None)
+    if parsed is None or not callable(to_schema):
+        return None
+    try:
+        schema = to_schema()
+    except Exception:
+        return None
+    return dict(schema) if isinstance(schema, dict) else None
+
+
+def _require_declared_argument_types(tool_name: str, schema: Any, arguments: Any) -> None:
+    """Deny arguments whose JSON type the tool's schema would convert."""
+    from ._arg_types import argument_type_mismatches
+
+    mismatched = argument_type_mismatches(schema, arguments)
+    if mismatched:
+        raise ToolDenied(
+            tool_name,
+            "argument type does not match the tool schema: " + ", ".join(mismatched),
+        )
+
+
 def _chat_tool_call_parts(tool_call: Any) -> Tuple[str, str, Optional[str]]:
     """Return (name, kind, raw_input) for a chat completion tool call."""
     call_type = getattr(tool_call, "type", None)
@@ -1185,7 +1216,14 @@ class GuardedCompletions:
     def _verify_single_tool_call(self, tool_call: Any, reservations: Optional[List[Any]] = None) -> None:
         """Verify a single tool call (function, custom, or any other type)."""
         tool_name, kind, raw = _chat_tool_call_parts(tool_call)
-        key = self._verify_call(tool_name, kind, raw, getattr(tool_call, "id", None), reservations)
+        key = self._verify_call(
+            tool_name,
+            kind,
+            raw,
+            getattr(tool_call, "id", None),
+            reservations,
+            schema=_parsed_arguments_schema(tool_call),
+        )
         _attach_idempotency_key(tool_call, key)
 
     @staticmethod
@@ -1209,6 +1247,7 @@ class GuardedCompletions:
         raw: Optional[str],
         call_id: Optional[str] = None,
         reservations: Optional[List[Any]] = None,
+        schema: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Authorize one chat tool call and audit the decision (allow or deny).
 
@@ -1217,6 +1256,7 @@ class GuardedCompletions:
         arguments: Dict[str, Any] = {}
         try:
             arguments = self._call_arguments(tool_name, kind, raw)
+            _require_declared_argument_types(tool_name, schema, arguments)
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
             key = verify_tool_call(
                 tool_name,
@@ -1245,11 +1285,13 @@ class GuardedCompletions:
         raw: Optional[str],
         call_id: Optional[str] = None,
         reservations: Optional[List[Any]] = None,
+        schema: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Async variant of _verify_call (awaits approval handlers)."""
         arguments: Dict[str, Any] = {}
         try:
             arguments = self._call_arguments(tool_name, kind, raw)
+            _require_declared_argument_types(tool_name, schema, arguments)
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
             key = await verify_tool_call_async(
                 tool_name,
@@ -1761,6 +1803,7 @@ class GuardedResponses:
             tool_name, kind, arguments = _responses_item_parts(item)
             if not tool_name:
                 raise MalformedToolCall(tool_name, "tool call has no name")
+            _require_declared_argument_types(tool_name, _parsed_arguments_schema(item), arguments)
             _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
             key = verify_tool_call(
                 tool_name,
@@ -3291,6 +3334,34 @@ def _tenuo_tool_input_guardrail() -> Any:
             return _deny(guard, on_denial, tool_name, {}, str(MalformedToolCall(tool_name, str(e))), "tier1")
         if not isinstance(arguments, dict):
             return _deny(guard, on_denial, tool_name, {}, "tool arguments are not a JSON object", "tier1")
+        # The SDK validates these arguments into the tool's parameters after
+        # this guardrail, converting "5000" to 5000.0 or "off" to False.
+        from ._arg_types import argument_type_mismatches, tool_input_schema
+
+        mismatched: List[str] = []
+        try:
+            agent = getattr(data, "agent", None)
+            if agent is None:
+                raise OpenAIConfigurationError("Cannot resolve the invoking agent", "CFG_006")
+            candidates = list(getattr(agent, "tools", None) or [])
+            if not any(getattr(candidate, "name", None) == tool_name for candidate in candidates):
+                if getattr(agent, "mcp_servers", None):
+                    candidates.extend(await agent.get_mcp_tools(data.context))
+            candidate = next((tool for tool in candidates if getattr(tool, "name", None) == tool_name), None)
+            if candidate is None:
+                raise OpenAIConfigurationError("Cannot resolve the invoked tool's input schema", "CFG_006")
+            mismatched = argument_type_mismatches(tool_input_schema(candidate), arguments)
+        except Exception:
+            return _deny(guard, on_denial, tool_name, arguments, "cannot resolve or check the tool input schema", "tier1")
+        if mismatched:
+            return _deny(
+                guard,
+                on_denial,
+                tool_name,
+                arguments,
+                "argument type does not match the tool schema: " + ", ".join(mismatched),
+                "tier1",
+            )
         try:
             await verify_tool_call_async(
                 tool_name,
