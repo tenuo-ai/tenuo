@@ -34,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owner-aware `reserve(nonce_hex, ttl_seconds, owner)` and `release(nonce_hex, owner)`
   operations so a JTI backend failure can release only its own nonce reservation.
   A2A nonce denials honor observe mode and retain denial metadata for receipts,
-  audit logs, and control-plane events in both enforcement modes.
+  audit logs, and control-plane events in both enforcement modes. FastAPI
+  reserves approvals before nonce admission, so an approval-backend failure
+  does not consume the presented PoP; nonce refusals release the current approval reservation.
 
 - **Negated constraints reject values of unrelated kinds.** `Not` and
   `NotOneOf` now judge only the kinds their inner rule or exclusion entries

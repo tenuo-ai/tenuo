@@ -926,3 +926,84 @@ class TestSecondReviewFollowUps:
         )
         key = idempotency_key_for(out.choices[0].message.tool_calls[0])
         assert key and len(key) == 64
+
+
+@pytest.mark.parametrize("after_insert", [False, True], ids=["before_insert", "lost_reply"])
+def test_fastapi_approval_backend_failure_does_not_consume_nonce(setup, after_insert):
+    import base64
+    from fastapi import Depends, FastAPI
+    from fastapi.testclient import TestClient
+    from tenuo.consumption import InMemoryConsumptionBackend
+    from tenuo.fastapi import TenuoGuard, configure_tenuo
+    from tenuo.nonce import disable_default_nonce_store, enable_default_nonce_store
+
+    class RecoveringBackend(InMemoryConsumptionBackend):
+        fail = True
+        failures_seen = 0
+        def reserve(self, key, ttl_seconds, idempotency_key=None, *, owner_token):
+            if self.fail:
+                self.failures_seen += 1
+                if after_insert:
+                    super().reserve(key, ttl_seconds, idempotency_key, owner_token=owner_token)
+                raise ConnectionError("approval backend unavailable")
+            return super().reserve(key, ttl_seconds, idempotency_key, owner_token=owner_token)
+
+    backend = RecoveringBackend()
+    store = enable_default_consumption_store(backend=backend)
+    nonces = enable_default_nonce_store()
+    app = FastAPI()
+    configure_tenuo(app, trusted_issuers=[setup["issuer"].public_key])
+    called = []
+    @app.post("/transfer")
+    async def transfer(amount: int, ctx=Depends(TenuoGuard("transfer"))):
+        called.append(amount)
+        return {"ok": True}
+
+    headers = TestSecondReviewFollowUps._fastapi_headers(setup, "transfer", setup["args"])
+    signature = base64.b64decode(headers["X-Tenuo-PoP"])
+    try:
+        with TestClient(app) as client:
+            denied = client.post("/transfer?amount=100", headers=headers)
+            assert denied.status_code == 403, denied.text
+            assert backend.failures_seen == 1
+            assert not called and len(store) == 0
+            assert not nonces.is_replay(signature)
+            backend.fail = False
+            allowed = client.post("/transfer?amount=100", headers=headers)
+            assert allowed.status_code == 200, allowed.text
+            assert called == [100] and len(store) == 1
+            assert nonces.is_replay(signature)
+    finally:
+        disable_default_nonce_store()
+
+
+@pytest.mark.parametrize("nonce_failure", [False, True], ids=["replay", "backend_failure"])
+def test_shared_inbound_nonce_denial_releases_approval_reservation(setup, nonce_failure):
+    from tenuo import Authorizer
+    from tenuo._enforcement import verify_inbound_call
+    from tenuo.nonce import _RequestNonceAdmissions
+
+    class FailingNonceStore(NonceStore):
+        def check_and_record(self, signature, *, min_ttl_seconds=0):
+            raise ConnectionError("nonce backend unavailable")
+
+    store = enable_default_consumption_store()
+    authorizer = Authorizer(trusted_roots=[setup["issuer"].public_key])
+    now = int(time.time())
+    signature = bytes(setup["warrant"].sign(setup["holder"], "transfer", setup["args"], now))
+    nonces = NonceStore()
+    assert nonces.check_and_record(signature)
+    def call(pop, nonce_store):
+        return verify_inbound_call(
+            tool_name="transfer", tool_args=setup["args"], warrant=setup["warrant"],
+            pop_signature=pop, authorizer=authorizer, approvals=[setup["approval"]],
+            check_replay=True, nonce_store=nonce_store, replay_admissions=_RequestNonceAdmissions(),
+            apply_observe=False,
+        )
+    denied = call(signature, FailingNonceStore() if nonce_failure else nonces)
+    assert not denied.allowed
+    assert ("unavailable" if nonce_failure else "replay") in denied.denial_reason.lower()
+    assert len(store) == 0 and current_idempotency_key() is None
+    fresh = bytes(setup["warrant"].sign(setup["holder"], "transfer", setup["args"], now + 31))
+    assert call(fresh, nonces).allowed
+    assert len(store) == 1

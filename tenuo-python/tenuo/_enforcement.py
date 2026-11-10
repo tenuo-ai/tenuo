@@ -1661,47 +1661,7 @@ def _enforce_tool_call_impl(
                     verified_pop=precomputed_signature,
                 )
 
-        # ── Replay prevention for a presented PoP ───────────────────────
-        # Checked after the chain and PoP verify, so only a valid request can
-        # use up its signature, and before approvals are consumed.
-        if verify_mode == "verify" and verify_replay and precomputed_signature is not None:
-            _ns = nonce_store
-            if _ns is None:
-                from .nonce import get_default_nonce_store as _get_ns
-                _ns = _get_ns()
-            from .nonce import _admit_verified_pop
-            admitted = True
-            if _ns is not None:
-                admitted = (
-                    replay_admissions.admit(_ns, precomputed_signature, authorizer)
-                    if replay_admissions is not None
-                    else _admit_verified_pop(_ns, precomputed_signature, authorizer)
-                )
-            if not admitted:
-                return EnforcementResult(
-                    allowed=False,
-                    tool=tool_name,
-                    arguments=tool_args,
-                    denial_reason="PoP replay detected — this exact authorization token was already consumed.",
-                    error_type="invalid_pop",
-                    warrant_id=warrant_id,
-                    presented_chain=_presented_chain,
-                    pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer,
-                    verified_pop=precomputed_signature,
-                )
-
-        # Success - log for audit trail
-        logger.info(
-            f"Tool authorized: {tool_name}",
-            extra={
-                "tool": tool_name,
-                "warrant_id": bound_warrant.id,
-                "args_keys": list(tool_args.keys()),
-            }
-        )
-
-        return _allowed_result(
+        allowed = _allowed_result(
             tool_name,
             tool_args,
             warrant_id,
@@ -1712,6 +1672,56 @@ def _enforce_tool_call_impl(
             pop_auth_args=_pop_auth_args,
             verified_pop=_pop if verify_mode == "sign" else precomputed_signature,
         )
+        if not allowed.allowed:
+            return allowed
+
+        # Reserve approvals before admitting the nonce. An approval-backend
+        # failure must not consume the presented PoP. If nonce
+        # admission fails, release only this attempt's approval reservation.
+        admission_complete = False
+        try:
+            if verify_mode == "verify" and verify_replay and precomputed_signature is not None:
+                _ns = nonce_store
+                if _ns is None:
+                    from .nonce import get_default_nonce_store as _get_ns
+                    _ns = _get_ns()
+                from .nonce import _admit_verified_pop
+                admitted = True
+                if _ns is not None:
+                    admitted = (
+                        replay_admissions.admit(_ns, precomputed_signature, authorizer)
+                        if replay_admissions is not None
+                        else _admit_verified_pop(_ns, precomputed_signature, authorizer)
+                    )
+                if not admitted:
+                    return EnforcementResult(
+                        allowed=False,
+                        tool=tool_name,
+                        arguments=tool_args,
+                        denial_reason="PoP replay detected — this exact authorization token was already consumed.",
+                        error_type="invalid_pop",
+                        warrant_id=warrant_id,
+                        presented_chain=_presented_chain,
+                        pop_auth_args=_pop_auth_args,
+                        authorizer=authorizer,
+                        verified_pop=precomputed_signature,
+                    )
+
+            admission_complete = True
+        finally:
+            if not admission_complete:
+                if allowed.approval_reservation is not None:
+                    try:
+                        allowed.approval_reservation.release()
+                    except Exception:
+                        logger.exception("Failed to release approvals after inbound nonce denial")
+                _clear_idempotency_key()
+
+        logger.info(
+            f"Tool authorized: {tool_name}",
+            extra={"tool": tool_name, "warrant_id": bound_warrant.id, "args_keys": list(tool_args.keys())},
+        )
+        return allowed
 
     except InsufficientApprovals as e:
         # Multi-sig threshold not met — structurally different from a scope
