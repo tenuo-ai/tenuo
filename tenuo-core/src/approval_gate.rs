@@ -1893,6 +1893,52 @@ mod tests {
     }
 
     #[test]
+    fn positive_only_gate_maps_preserve_short_circuiting() {
+        use crate::constraints::{All, Any, Exact};
+        let mut unavailable = vec![Constraint::Unknown {
+            type_id: 255,
+            payload: vec![0xa0],
+        }];
+        if !cfg!(feature = "cel") {
+            unavailable.push(Constraint::Cel(crate::constraints::CelConstraint {
+                expression: "false".into(),
+                parent_expression: None,
+            }));
+        }
+        for unsupported in unavailable {
+            let rule = Constraint::Any(Any::new([Exact::new("safe").into(), unsupported]));
+            for (gate, required) in [
+                (ArgApprovalGate::Constraint(rule.clone()), true),
+                (
+                    ArgApprovalGate::exempt(Constraint::All(All::new([rule.clone()]))).unwrap(),
+                    false,
+                ),
+            ] {
+                let mut gates = ApprovalGateMap::new();
+                gates.insert(
+                    "action".into(),
+                    ToolApprovalGate::with_args(BTreeMap::from([("value".into(), gate)])),
+                );
+                assert_eq!(
+                    evaluate_approval_gates(
+                        Some(&gates),
+                        "action",
+                        &HashMap::from([("value".into(), "safe".into())])
+                    )
+                    .unwrap(),
+                    required
+                );
+                assert!(evaluate_approval_gates(
+                    Some(&gates),
+                    "action",
+                    &HashMap::from([("value".into(), "other".into())])
+                )
+                .is_err());
+            }
+        }
+    }
+
+    #[test]
     fn typed_negation_cannot_weaken_legacy_approval_decisions() {
         use crate::constraints::{All, Any, Cidr, Exact, Not, NotOneOf, Range, Wildcard};
         // Independent oracle for pre-change negation and ordered composites.

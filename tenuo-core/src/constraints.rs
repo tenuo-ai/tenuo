@@ -655,14 +655,14 @@ impl Constraint {
         value: &ConstraintValue,
         eager: bool,
     ) -> Result<(bool, bool)> {
+        if !eager {
+            // The caller uses ordered evaluation for positive-only gate maps.
+            // Do not inspect a branch that the matcher intentionally skips.
+            return Ok((self.matches(value)?, false));
+        }
         self.value_kinds()?;
         let off_kind = self.has_off_kind_negation(value)?;
-        let matched = if eager || off_kind {
-            self.matches_for_negation(value)?
-        } else {
-            self.matches(value)?
-        };
-        Ok((matched, off_kind))
+        Ok((self.matches_for_negation(value)?, off_kind))
     }
 
     /// Preserve every source of off-kind approval requirements across delegation.
