@@ -259,10 +259,43 @@ async def test_a2a_nonce_replay_observes_the_configured_mode(monkeypatch):
         assert result.allowed and result.observed
         assert result.error_type == "invalid_pop"
         assert result.chain_result is None
+        assert [item.id for item in result.presented_chain] == [warrant.id]
+        assert result.verified_pop == signature
+        assert result.pop_auth_args == {}
         assert "replay" in result.denial_reason.lower()
         assert audit.call_args.args[0].outcome == "denied"
         configure(mode="enforce", trusted_roots=[issuer.public_key])
         with pytest.raises(PopVerificationError):
             await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+    finally:
+        reset_config()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("observe", [False, True])
+async def test_a2a_nonce_denial_produces_a_signed_runtime_receipt(observe):
+    from tenuo import HolderIdentity, Runtime
+    from tenuo.a2a.errors import PopVerificationError
+    from tenuo.a2a.server import A2AServer
+    from tenuo.config import configure, reset_config
+    from tenuo_core import verify_receipt
+
+    issuer, holder = SigningKey.generate(), HolderIdentity.generate()
+    warrant = Warrant.mint_builder().capability("ping").holder(holder.public_key).ttl(300).mint(issuer)
+    signature = bytes(warrant.sign(holder.signing_key, "ping", {}, int(time.time())))
+    runtime = Runtime(identity=holder, trusted_roots=[issuer.public_key], receipts="collect")
+    server = A2AServer(name="receipts", url="https://agent.test", public_key=holder.public_key,
+                       trusted_issuers=[issuer.public_key], check_replay=False,
+                       require_audience=False, audit_log=None, runtime=runtime)
+    enable_default_nonce_store()
+    try:
+        configure(mode="observe" if observe else "enforce", trusted_roots=[issuer.public_key])
+        assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+        if observe:
+            assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+        else:
+            with pytest.raises(PopVerificationError):
+                await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+        assert [verify_receipt(receipt).outcome for receipt in runtime.peek_receipts()] == ["allow", "deny"]
     finally:
         reset_config()

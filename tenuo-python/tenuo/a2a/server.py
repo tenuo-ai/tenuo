@@ -1417,6 +1417,8 @@ class A2AServer:
                         enforcement, allowed=False, denial_reason="PoP replay detected",
                         error_type="invalid_pop", chain_result=None,
                         approval_reservation=None, idempotency_key=None,
+                        presented_chain=[*(_resolved_chain_parents or []), warrant],
+                        verified_pop=pop_signature, pop_auth_args=arguments,
                     ))
                     if not enforcement.allowed:
                         collect_enforcement_receipt(enforcement, None, runtime=runtime)
