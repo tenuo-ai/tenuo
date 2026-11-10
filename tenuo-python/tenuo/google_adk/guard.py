@@ -180,7 +180,9 @@ class TenuoGuard:
                 warrant for this call from a source the model cannot write,
                 for example a server-side store keyed by ``tool_context.user_id``.
                 Accepts the same forms as ``warrant_key`` values, or ``None``
-                for no warrant. When set, session state is not consulted.
+                for no warrant, which denies the call even with local allow
+                rules. Cannot be combined with a static warrant. When set,
+                session state is not consulted.
             skill_map: Map ADK tool names to warrant skill names
             arg_map: Map tool argument names to constraint parameter names
             constraints: Direct constraints for Tier 1 mode (no warrant)
@@ -209,9 +211,15 @@ class TenuoGuard:
                 cryptographically verify the chain, the leaf, or its root.
 
         Raises:
-            ConfigurationError: If ``warrant`` is a multi-warrant stack and
+            ConfigurationError: If static and resolver warrants are combined,
+                the resolver is not callable, ``warrant`` is a multi-warrant stack and
                 ``warrant_chain`` is also given, or a token does not decode.
         """
+        if warrant_resolver is not None:
+            if not callable(warrant_resolver):
+                raise ConfigurationError("warrant_resolver must be callable")
+            if warrant is not None:
+                raise ConfigurationError("Pass either a static warrant or warrant_resolver, not both")
         if on_deny is not None:
             import warnings
             warnings.warn(
@@ -817,6 +825,8 @@ class TenuoGuard:
                 value = self._warrant_resolver(tool_context)
             except Exception as e:
                 raise ConfigurationError(f"warrant_resolver failed: {e}") from e
+            if value is None:
+                raise ConfigurationError("warrant_resolver returned no warrant")
         elif self._warrant_key and tool_context:
             # Check session_state (standard) then state (fallback)
             if hasattr(tool_context, "session_state"):
@@ -1464,8 +1474,9 @@ class GuardBuilder:
 
         The resolver receives the ADK ``ToolContext`` and returns the warrant
         from a source the model cannot write (for example a server-side store
-        keyed by ``tool_context.user_id``), or ``None`` for no warrant. When
-        set, session state is not consulted.
+        keyed by ``tool_context.user_id``), or ``None`` to deny the call even
+        with local allow rules. Cannot be combined with a static warrant.
+        When set, session state is not consulted.
 
         Returns:
             self for chaining

@@ -23,6 +23,7 @@ _SCRIPT = textwrap.dedent(
     from google.adk.agents import Agent
     from google.adk.models import BaseLlm, LlmResponse
     from google.adk.runners import InMemoryRunner
+    from google.adk.code_executors.base_code_executor import BaseCodeExecutor
     from google.genai import types
 
     from tenuo import Pattern, Range, SigningKey, Warrant, Wildcard
@@ -65,8 +66,14 @@ _SCRIPT = textwrap.dedent(
             yield LlmResponse(content=types.Content(
                 role="model", parts=[types.Part(function_call=types.FunctionCall(name=name, args=args))]))
 
-    async def run(tool, args, *, callback=None, plugins=(), state=None, agent_name="assistant"):
+    class NeverExecute(BaseCodeExecutor):
+        def execute_code(self, *args, **kwargs):
+            raise AssertionError("executor must not run in this test")
+
+    async def run(tool, args, *, callback=None, plugins=(), state=None, agent_name="assistant", executor=None):
         kw = {"before_tool_callback": callback} if callback is not None else {}
+        if executor is not None:
+            kw["code_executor"] = executor
         agent = Agent(name=agent_name, model=ScriptedLlm(call=[tool.__name__, args]), tools=[tool], **kw)
         runner = InMemoryRunner(agent=agent, app_name="app", plugins=list(plugins))
         session = await runner.session_service.create_session(app_name="app", user_id="u", state=state or {})
@@ -112,6 +119,24 @@ _SCRIPT = textwrap.dedent(
     builtins.input = lambda *_: answers["value"]
 
     CASES = {
+        "resolver_uses_authenticated_user": lambda: run(
+            read_file, {"path": "/data/a"},
+            plugins=[plugin(warrant_resolver=lambda ctx: read_warrant if ctx.user_id == "u" else None)],
+            state={"__tenuo_warrant__": "malformed model-writable state"}),
+        "resolver_missing_ignores_state": lambda: run(
+            read_file, {"path": "/data/a"}, plugins=[plugin(warrant_resolver=lambda _: None)],
+            state={"__tenuo_warrant__": read_warrant.to_base64()}),
+        "resolver_missing_local_sync": lambda: run(
+            read_file, {"path": "/data/a"}, callback=GuardBuilder().allow("read_file")
+            .warrant_resolver(lambda _: None).build().before_tool),
+        "resolver_missing_local_async": lambda: run(
+            read_file, {"path": "/data/a"}, callback=GuardBuilder().allow("read_file")
+            .warrant_resolver(lambda _: None).build().async_before_tool),
+        "code_executor_rejected": lambda: run(
+            read_file, {"path": "/data/a"}, plugins=[plugin(warrant=read_warrant)], executor=NeverExecute()),
+        "code_executor_explicit_opt_in": lambda: run(
+            read_file, {"path": "/data/a"},
+            plugins=[plugin(warrant=read_warrant, allow_code_execution=True)], executor=NeverExecute()),
         # A1: Tier 1 closed world
         "wildcard_does_not_admit_unlisted": lambda: run(
             fetch, {"url": "https://example.com", "timeout": 1, "headers": "evil"},
@@ -185,6 +210,8 @@ _SCRIPT = textwrap.dedent(
 )
 
 ALLOWED = {
+    "resolver_uses_authenticated_user": ["read_file:/data/a"],
+    "code_executor_explicit_opt_in": ["read_file:/data/a"],
     "listed_args_allowed": ["fetch"],
     "underscore_arg_allowed": ["run_cmd:ls -l"],
     "guard_scoped_same_agent": ["read_file:/data/a"],
@@ -195,6 +222,9 @@ ALLOWED = {
 
 # case -> text the denial message must contain
 DENIED = {
+    "resolver_missing_ignores_state": "returned no warrant",
+    "resolver_missing_local_sync": "returned no warrant",
+    "resolver_missing_local_async": "returned no warrant",
     "wildcard_does_not_admit_unlisted": "Unknown argument 'headers'",
     "omitted_constrained_arg": "Missing required argument 'path'",
     "underscore_arg_checked": "Argument '_cmd' violates constraint",
@@ -224,6 +254,14 @@ def test_permitted_call_runs(results, case):
     result = results[case]
     assert result["error"] is None, result
     assert result["ran"] == ALLOWED[case], result
+
+
+def test_code_executor_is_rejected_before_the_agent_runs(results):
+    result = results["code_executor_rejected"]
+    assert result["ran"] == [], result
+    # ADK may wrap plugin ConfigurationError in a callback RuntimeError.
+    assert result["error"] is not None, result
+    assert "code_executor" in result["error"], result
 
 
 @pytest.mark.parametrize("case", sorted(DENIED))

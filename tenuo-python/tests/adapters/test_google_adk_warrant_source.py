@@ -106,6 +106,53 @@ def test_a_failing_resolver_denies(setup):
     assert read(guard, context("alice", {}), setup.tool, "/data/alice/notes") is not None
 
 
+@pytest.mark.parametrize("entry", ["guard", "builder", "plugin"])
+def test_static_warrant_and_resolver_cannot_be_combined(setup, entry):
+    kwargs = dict(warrant=setup.alice, signing_key=setup.agent, warrant_resolver=lambda _: None)
+    with pytest.raises(ConfigurationError, match="static warrant or warrant_resolver"):
+        if entry == "builder":
+            GuardBuilder().with_warrant(setup.alice, setup.agent).warrant_resolver(lambda _: None).build()
+        elif entry == "plugin":
+            TenuoPlugin(**kwargs)
+        else:
+            TenuoGuard(**kwargs)
+
+
+@pytest.mark.parametrize("hook", ["sync", "async", "plugin"])
+@pytest.mark.parametrize("local_policy", ["allow", "constraints"])
+@pytest.mark.parametrize("failure", ["missing", "raises", "malformed"])
+@pytest.mark.parametrize("require_pop", [False, True])
+def test_resolver_failure_cannot_fall_back_to_local_rules(setup, hook, local_policy, failure, require_pop):
+    def resolver(_):
+        if failure == "raises":
+            raise RuntimeError("resolver unavailable")
+        return None if failure == "missing" else "not a warrant"
+
+    kwargs = dict(warrant_resolver=resolver, require_pop=require_pop)
+    if local_policy == "allow":
+        kwargs["allow_tools"] = ["read_file"]
+    else:
+        kwargs["constraints"] = {"read_file": {"path": Subpath("/data")}}
+    ctx, args = context("alice", {"__tenuo_warrant__": setup.alice}), {"path": "/data/alice/notes"}
+    if hook == "plugin":
+        # Plugins share the same guard but expose ADK's keyword-only async hook.
+        plugin = TenuoPlugin(warrant_resolver=resolver)
+        plugin._guard = TenuoGuard(**kwargs)
+        denied = asyncio.run(plugin.before_tool_callback(tool=setup.tool, tool_args=args, tool_context=ctx))
+    else:
+        guard = TenuoGuard(**kwargs)
+        denied = guard.before_tool(setup.tool, args, ctx) if hook == "sync" else asyncio.run(
+            guard.async_before_tool(setup.tool, args, ctx)
+        )
+    assert denied is not None
+    assert denied["error"] == "authorization_denied"
+
+
+def test_resolver_miss_in_builder_does_not_use_an_allow_rule(setup):
+    guard = GuardBuilder().allow("read_file", path=Subpath("/data")).warrant_resolver(lambda _: None).build()
+    assert read(guard, context("alice", {}), setup.tool, "/data/alice/notes") is not None
+
+
 def test_reading_a_warrant_from_session_state_warns_once(setup, caplog):
     guard = TenuoGuard(
         signing_key=setup.agent,

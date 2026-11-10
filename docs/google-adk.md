@@ -601,7 +601,7 @@ def handle_request(user_id):
     agent.run(...)
 ```
 
-`TenuoPlugin` and `GuardBuilder` accept the same resolver (`warrant_resolver=` / `.warrant_resolver(fn)`). When a resolver is set, session state is not consulted.
+`TenuoPlugin` and `GuardBuilder` accept the same resolver (`warrant_resolver=` / `.warrant_resolver(fn)`). When a resolver is set, session state is not consulted. Combining a static warrant with a resolver is rejected at construction. A resolver that raises or returns `None` denies the call, including when local constraints or allow rules are configured.
 
 ### Session-state warrants
 
