@@ -1578,3 +1578,20 @@ fn total_globs_and_subpaths_allow_valid_attenuation() {
     });
     parent.validate_attenuation(&child).unwrap();
 }
+
+#[test]
+fn total_urlsafe_policies_allow_any_narrowing() {
+    let parent = Constraint::Any(Any {
+        constraints: vec![UrlSafe::new().into()],
+    });
+    let child = Constraint::Any(Any {
+        constraints: vec![UrlSafe::with_domains(vec!["api.example.com"]).into()],
+    });
+    parent.validate_attenuation(&child).unwrap();
+    assert!(child
+        .matches(&"https://api.example.com/report".into())
+        .unwrap());
+    assert!(!child
+        .matches(&"https://other.example.com/report".into())
+        .unwrap());
+}

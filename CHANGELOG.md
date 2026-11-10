@@ -27,7 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by negated constraints. `Not(Subpath(...))` accepts only string arguments;
   it does not turn a partially matching path list into an allowed call.
   Approval gates require approval for off-kind negated arguments instead of
-  treating them as an ungated call.
+  treating them as an ungated call. Parser errors still reject the call even
+  when approvals are supplied. Gate delegation retains negated subrules so
+  removing an off-kind requirement cannot create a new exemption.
   Delegation cannot add accepted value kinds through negation. Python's
   annotation and A2A checks preserve the argument's original type, and the
   same core checks are included in the TypeScript WASM build. Upgrade

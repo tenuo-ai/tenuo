@@ -649,6 +649,34 @@ impl Constraint {
         })
     }
 
+    /// Preserve every source of off-kind approval requirements across delegation.
+    pub(crate) fn preserves_gate_negations_of(&self, parent: &Constraint) -> bool {
+        match parent {
+            Self::Not(_) | Self::NotOneOf(_) => self.contains_gate_negation(parent),
+            Self::All(a) => a
+                .constraints
+                .iter()
+                .all(|c| self.preserves_gate_negations_of(c)),
+            Self::Any(a) => a
+                .constraints
+                .iter()
+                .all(|c| self.preserves_gate_negations_of(c)),
+            _ => true,
+        }
+    }
+
+    fn contains_gate_negation(&self, rule: &Constraint) -> bool {
+        if self == rule {
+            return true;
+        }
+        match self {
+            Self::Not(n) => n.constraint.contains_gate_negation(rule),
+            Self::All(a) => a.constraints.iter().any(|c| c.contains_gate_negation(rule)),
+            Self::Any(a) => a.constraints.iter().any(|c| c.contains_gate_negation(rule)),
+            _ => false,
+        }
+    }
+
     /// Evaluate composites under negation without hiding errors behind a
     /// branch whose result changed due to kind-scoped negation. The caller
     /// first validates availability and structure with `value_kinds()`.
@@ -729,6 +757,7 @@ impl Constraint {
             | Constraint::Subpath(_) => false,
             Constraint::Pattern(p) => p.get_compiled().is_err(),
             Constraint::Regex(r) => r.get_compiled().is_err(),
+            Constraint::UrlSafe(u) => u.validate().is_err(),
             Constraint::All(a) => {
                 a.constraints.is_empty() || a.constraints.iter().any(Self::can_fail)
             }

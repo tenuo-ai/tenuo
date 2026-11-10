@@ -998,3 +998,48 @@ fn off_kind_negation_cannot_bypass_authorizer_approval_gate() {
             .unwrap();
     }
 }
+
+#[test]
+fn composite_off_kind_approval_gate_preserves_parser_errors() {
+    use tenuo::constraints::{Any, Cidr, Not, Range, Wildcard};
+    use tenuo::planes::Authorizer;
+    let issuer = SigningKey::generate();
+    let approver = SigningKey::generate();
+    let rule = Constraint::Any(Any {
+        constraints: vec![
+            Cidr::new("10.0.0.0/8").unwrap().into(),
+            Constraint::Not(Not {
+                constraint: Box::new(Range::min(1000.0).unwrap().into()),
+            }),
+        ],
+    });
+    let mut gates = ApprovalGateMap::new();
+    gates.insert(
+        "action".into(),
+        ToolApprovalGate::with_args(BTreeMap::from([(
+            "value".into(),
+            ArgApprovalGate::Constraint(rule),
+        )])),
+    );
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("value", Wildcard);
+    let warrant = Warrant::builder()
+        .capability("action", constraints)
+        .holder(issuer.public_key())
+        .ttl(Duration::from_secs(300))
+        .required_approvers(vec![approver.public_key()])
+        .min_approvals(1)
+        .extension(
+            "tenuo.approval_gates",
+            encode_approval_gate_map(&gates).unwrap(),
+        )
+        .build(&issuer)
+        .unwrap();
+    let args = HashMap::from([("value".into(), "not-an-ip".into())]);
+    let sig = warrant.sign(&issuer, "action", &args).unwrap();
+    let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+    assert!(matches!(
+        authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[]),
+        Err(tenuo::Error::InvalidIpAddress { .. })
+    ));
+}

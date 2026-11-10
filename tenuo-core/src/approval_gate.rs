@@ -536,18 +536,6 @@ pub fn approval_requirement(
                 });
             };
 
-            if let ArgApprovalGate::Constraint(c) | ArgApprovalGate::Exempt(c) = arg_gate {
-                c.value_kinds()?;
-                if c.has_off_kind_negation(arg_value)? {
-                    return Ok(ApprovalRequirement::Required {
-                        kind: ApprovalGateKind::Argument {
-                            name: arg_name.clone(),
-                        },
-                        message,
-                    });
-                }
-            }
-
             match arg_gate {
                 ArgApprovalGate::All => {
                     return Ok(ApprovalRequirement::Required {
@@ -558,8 +546,11 @@ pub fn approval_requirement(
                     });
                 }
                 ArgApprovalGate::Constraint(constraint) => {
-                    // Same Constraint::matches the authorizer uses.
-                    if constraint.matches(arg_value)? {
+                    // Preserve parser/evaluation errors before the conservative
+                    // off-kind approval requirement can return successfully.
+                    constraint.value_kinds()?;
+                    let matched = constraint.matches(arg_value)?;
+                    if matched || constraint.has_off_kind_negation(arg_value)? {
                         return Ok(ApprovalRequirement::Required {
                             kind: ApprovalGateKind::Argument {
                                 name: arg_name.clone(),
@@ -569,7 +560,9 @@ pub fn approval_requirement(
                     }
                 }
                 ArgApprovalGate::Exempt(constraint) => {
-                    if !constraint.matches(arg_value)? {
+                    constraint.value_kinds()?;
+                    let matched = constraint.matches(arg_value)?;
+                    if !matched || constraint.has_off_kind_negation(arg_value)? {
                         return Ok(ApprovalRequirement::Required {
                             kind: ApprovalGateKind::Argument {
                                 name: arg_name.clone(),
@@ -865,6 +858,9 @@ fn validate_arg_approval_gate_monotonic(
             if nc == np {
                 return Ok(());
             }
+            if !nc.preserves_gate_negations_of(&np) {
+                return Err(ApprovalGateError::ArgApprovalGateWeakened);
+            }
             np.validate_attenuation(&nc)
                 .map_err(|_| ApprovalGateError::ArgApprovalGateWeakened)
         }
@@ -885,6 +881,9 @@ fn validate_arg_approval_gate_monotonic(
             let np = normalize_for_gate_comparison(c_parent);
             if nc == np {
                 return Ok(());
+            }
+            if !nc.preserves_gate_negations_of(&np) {
+                return Err(ApprovalGateError::ArgApprovalGateWeakened);
             }
             np.validate_attenuation(&nc)
                 .map_err(|_| ApprovalGateError::ArgApprovalGateConstraintChanged)
@@ -1764,6 +1763,32 @@ mod tests {
         let mut child_tools = BTreeMap::new();
         child_tools.insert(tool.to_string(), crate::constraints::ConstraintSet::new());
         verify_approval_gate_monotonicity(Some(&parent_gm), Some(&child_gm), &child_tools)
+    }
+
+    #[test]
+    fn test_exempt_attenuation_cannot_remove_off_kind_approval_requirement() {
+        use crate::constraints::{All, Any, Exact, Not};
+        let parent_rule = Constraint::All(All {
+            constraints: vec![Constraint::Any(Any {
+                constraints: vec![
+                    Constraint::Not(Not {
+                        constraint: Box::new(Exact::new("prod").into()),
+                    }),
+                    Exact::new(5).into(),
+                ],
+            })],
+        });
+        let child_rule = Constraint::All(All {
+            constraints: vec![Constraint::Any(Any {
+                constraints: vec![Exact::new(5).into()],
+            })],
+        });
+        assert!(parent_rule.validate_attenuation(&child_rule).is_ok());
+        let parent = ArgApprovalGate::exempt(parent_rule).unwrap();
+        let child = ArgApprovalGate::exempt(child_rule).unwrap();
+        assert!(verify_arg_gates(child.clone(), parent.clone()).is_err());
+        assert!(verify_arg_gates(parent.clone(), parent).is_ok());
+        assert!(verify_arg_gates(ArgApprovalGate::All, child).is_ok());
     }
 
     #[test]
