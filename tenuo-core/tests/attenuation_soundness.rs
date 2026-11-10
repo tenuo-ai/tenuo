@@ -82,6 +82,54 @@ fn regression_negation_cannot_remove_error_based_rejection() {
     }
 }
 
+#[test]
+fn regression_any_cannot_drop_or_reorder_an_error_based_denial() {
+    let rejecting = Constraint::Not(Not::new(Constraint::All(All::new(vec![
+        Constraint::Exact(Exact::new("10.0.0.1")),
+        Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap()),
+    ]))));
+    let allowing = Constraint::Exact(Exact::new("not-an-ip"));
+    let parent = Constraint::Any(Any::new(vec![rejecting.clone(), allowing.clone()]));
+    let value = ConstraintValue::String("not-an-ip".into());
+    assert!(parent.matches(&value).is_err());
+    for child in [
+        allowing.clone(),
+        Constraint::Any(Any::new(vec![allowing.clone()])),
+        Constraint::Any(Any::new(vec![allowing, rejecting])),
+    ] {
+        assert!(child.matches(&value).unwrap());
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+    assert!(parent.validate_attenuation(&parent).is_ok());
+    if let Constraint::Any(parent_any) = &parent {
+        let dropped = Any::new(vec![Constraint::Exact(Exact::new("not-an-ip"))]);
+        assert!(parent_any.validate_attenuation(&dropped).is_err());
+    }
+}
+
+#[test]
+fn regression_negated_glob_identity_survives_serialization() {
+    let fresh = Constraint::Not(Not::new(Constraint::Pattern(
+        Pattern::new("*.exe").unwrap(),
+    )));
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(&fresh, &mut bytes).unwrap();
+    let decoded: Constraint = ciborium::de::from_reader(bytes.as_slice()).unwrap();
+    assert_eq!(decoded, fresh);
+    assert!(decoded.validate_attenuation(&fresh).is_ok());
+    assert!(fresh.validate_attenuation(&decoded).is_ok());
+}
+
+#[test]
+fn regression_nested_negation_validates_urlsafe_policy_off_kind() {
+    let policy = Constraint::UrlSafe(UrlSafe::with_domains(vec!["foo.*.example.com"]));
+    let rule = Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+        Constraint::Not(Not::new(policy)),
+        Constraint::Exact(Exact::new(1000)),
+    ]))));
+    assert!(rule.matches(&ConstraintValue::Integer(5)).is_err());
+}
+
 fn string_value_strategy() -> impl Strategy<Value = ConstraintValue> {
     prop_oneof![
         atom_strategy().prop_map(ConstraintValue::String),
