@@ -97,5 +97,5 @@ class TestInMemoryBackendEviction:
         backend = _InMemoryBackend()
         with patch("tenuo.nonce.time.monotonic", return_value=1000.0):
             backend.record("test_nonce", 0)
-        with patch("tenuo.nonce.time.monotonic", return_value=1150.001):
+        with patch("tenuo.nonce.time.monotonic", return_value=1210.001):
             assert not backend.seen("test_nonce")

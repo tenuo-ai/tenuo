@@ -50,7 +50,7 @@ def call():
 
 
 def test_replayed_pop_is_denied_with_an_explicit_store(call):
-    store = NonceStore(ttl_seconds=150)
+    store = NonceStore()
     first, signature = call(check_replay=True, nonce_store=store)
     assert first.allowed
     replay, _ = call(signature=signature, check_replay=True, nonce_store=store)
@@ -68,7 +68,7 @@ def test_replayed_pop_is_denied_with_the_process_wide_store(call):
 
 
 def test_a_denied_request_does_not_use_up_its_signature(call):
-    store = NonceStore(ttl_seconds=150)
+    store = NonceStore()
     denied, signature = call(path="/etc/x", check_replay=True, nonce_store=store)
     assert not denied.allowed
     assert not store.is_replay(signature)
@@ -97,7 +97,7 @@ def test_retention_covers_the_verifiers_full_acceptance_interval(monkeypatch, wi
     now = [1000.0]
     monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
     authorizer = Authorizer(pop_window_secs=window, pop_max_windows=count)
-    store = NonceStore(ttl_seconds=window * count, pop_window_secs=window)
+    store = NonceStore(ttl_seconds=window * count, pop_window_secs=window, max_clock_skew_seconds=0)
     assert _admit_verified_pop(store, b"signature", authorizer)
     now[0] += window * count - 0.001
     assert not _admit_verified_pop(store, b"signature", authorizer)
@@ -106,7 +106,7 @@ def test_retention_covers_the_verifiers_full_acceptance_interval(monkeypatch, wi
 def test_future_window_pop_remains_recorded_past_120_seconds(call, monkeypatch):
     now = [1000.0]
     monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
-    store = NonceStore(ttl_seconds=150)
+    store = NonceStore()
     first, signature = call(timestamp=int(time.time()) + 60, check_replay=True, nonce_store=store)
     assert first.allowed
     now[0] += 121
@@ -208,7 +208,7 @@ def test_shared_backend_rejects_wider_verifiers_until_the_floor_is_configured(mo
     now = [1000.0]
     monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
     narrow, wide = Authorizer(pop_max_windows=5), Authorizer(pop_max_windows=9)
-    backend = _InMemoryBackend(retention_seconds=150)
+    backend = _InMemoryBackend(retention_seconds=150, max_clock_skew_seconds=0)
     first, second = NonceStore(backend=backend), NonceStore(backend=backend)
     assert _admit_verified_pop(first, b"same-pop", narrow)
     now[0] += 151
@@ -218,7 +218,7 @@ def test_shared_backend_rejects_wider_verifiers_until_the_floor_is_configured(mo
         NonceStore(ttl_seconds=270, backend=backend)
 
     # Every admission uses the namespace floor, including the narrow verifier.
-    backend = _InMemoryBackend(retention_seconds=270)
+    backend = _InMemoryBackend(retention_seconds=270, max_clock_skew_seconds=0)
     first, second = NonceStore(backend=backend), NonceStore(ttl_seconds=270, backend=backend)
     assert _admit_verified_pop(first, b"same-pop", narrow)
     now[0] += 151
@@ -315,7 +315,7 @@ async def test_a2a_nonce_denial_produces_a_signed_runtime_receipt(observe):
 def test_mixed_bucket_sizes_cannot_share_a_nonce_namespace():
     from tenuo.nonce import _admit_verified_pop
     from tenuo.exceptions import ConfigurationError
-    store = NonceStore(ttl_seconds=270, pop_window_secs=30)
+    store = NonceStore(ttl_seconds=270, pop_window_secs=30, max_clock_skew_seconds=0)
     assert _admit_verified_pop(store, b"pop", Authorizer(pop_window_secs=30, pop_max_windows=9))
     with pytest.raises(ConfigurationError, match="window size"):
         _admit_verified_pop(store, b"pop", Authorizer(pop_window_secs=60, pop_max_windows=4))
@@ -327,7 +327,7 @@ def test_nonce_release_does_not_remove_a_replacement_owner(monkeypatch):
     store = NonceStore()
     first = store.reserve(b"pop")
     assert first is not None
-    now[0] += 151
+    now[0] += store.retention_seconds + 1
     second = store.reserve(b"pop")
     assert second is not None
     first.release()
@@ -388,3 +388,43 @@ async def test_a2a_lost_nonce_reservation_reply_can_retry_after_recovery():
     backend.failed = False
     assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
     assert store.is_replay(signature)
+
+
+@pytest.mark.parametrize("skew", [1, 60])
+def test_shared_nonce_retention_includes_clock_disagreement(monkeypatch, skew):
+    from tenuo.exceptions import ConfigurationError
+    from tenuo.nonce import _admit_verified_pop
+    now = [1000.0]
+    monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
+    fast, slow = Authorizer(), Authorizer()
+    span = fast.pop_validity_secs()
+    undersized = NonceStore(ttl_seconds=span, max_clock_skew_seconds=skew)
+    with pytest.raises(ConfigurationError, match="including clock skew"):
+        _admit_verified_pop(undersized, b"same-pop", fast)
+    assert not undersized.is_replay(b"same-pop")
+    store = NonceStore(ttl_seconds=span + skew, max_clock_skew_seconds=skew)
+    assert _admit_verified_pop(store, b"same-pop", fast)
+    # A fast verifier can admit at the beginning of its interval; a slower
+    # verifier can still accept after the unpadded span has elapsed.
+    now[0] += span + skew / 2
+    assert not _admit_verified_pop(store, b"same-pop", slow)
+
+
+def test_wider_verifier_cannot_consume_the_clock_skew_margin():
+    from tenuo.exceptions import ConfigurationError
+    from tenuo.nonce import _InMemoryBackend, _admit_verified_pop
+    backend = _InMemoryBackend(retention_seconds=240, max_clock_skew_seconds=60)
+    first, second = NonceStore(backend=backend), NonceStore(backend=backend)
+    assert _admit_verified_pop(first, b"pop", Authorizer())
+    with pytest.raises(ConfigurationError, match="including clock skew"):
+        _admit_verified_pop(second, b"pop", Authorizer(pop_max_windows=8))
+    with pytest.raises(ValueError, match="clock-skew budget"):
+        NonceStore(backend=backend, max_clock_skew_seconds=0)
+    with pytest.raises(AttributeError):
+        first.max_clock_skew_seconds = 0
+
+
+@pytest.mark.parametrize("budget", [True, -1, 0.5])
+def test_invalid_nonce_clock_skew_budget_is_rejected(budget):
+    with pytest.raises(ValueError, match="clock-skew budget"):
+        NonceStore(max_clock_skew_seconds=budget)

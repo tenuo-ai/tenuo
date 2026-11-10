@@ -591,6 +591,9 @@ while building the tree, not after allocating the complete result.
 
 `MCPVerifier` rejects a repeated PoP signature only when it has a nonce store: pass `nonce_store=NonceStore(...)` (a shared backend such as Redis when you run several servers) or call `tenuo.nonce.enable_default_nonce_store()` at startup. Without one, an identical envelope can be replayed until its PoP window closes. The PoP covers the warrant, tool, arguments and a 30-second time window, so two legitimate identical calls in the same window produce the same signature; with a nonce store the second is rejected as a replay. Enable it for tools with side effects, and expect callers to vary arguments (or wait) when they repeat such a call.
 
+Configure shared nonce namespaces before serving: every client must agree on the retention floor, PoP bucket size, and `max_clock_skew_seconds`. Retention must cover the longest verifier PoP interval plus that clock budget. New stores default to 210 seconds (150 seconds of PoP validity plus a 60-second budget). The budget bounds clock disagreement and backward adjustments; if each verifier stays within S seconds of UTC, allow at least 2*S seconds. Keep actual clocks within the declared bound. Wider verifier configurations cannot consume the reserved margin.
+
+
 ### Envelope and argument contract
 
 The Rust core owns `_meta.tenuo` framing, base64 and decoding. The Rust SDK's

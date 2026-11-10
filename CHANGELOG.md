@@ -29,8 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implement atomic `check_and_record(nonce_hex, ttl_seconds)`, for example
   Redis `SET ... NX EX`. Separate `seen()` and `record()` operations are no
   longer sufficient. Backends must declare and enforce namespace-wide
-  `retention_seconds` and a shared `pop_window_secs`; custom stores must expose
-  both settings and accept `min_ttl_seconds`. A2A backends also need atomic
+  `retention_seconds`, `pop_window_secs`, and `max_clock_skew_seconds`; custom
+  stores must expose these settings and accept `min_ttl_seconds`. Retention
+  covers validity plus the declared clock-skew budget, so wider verifiers cannot
+  consume that safety margin. New stores default to 210 seconds, including a
+  60-second clock budget. Keep verifier clocks within the declared bound. A2A backends also need atomic
   owner-aware `reserve(nonce_hex, ttl_seconds, owner)` and `release(nonce_hex, owner)`
   operations so a JTI backend failure can release only its own nonce reservation.
   A2A nonce denials honor observe mode and retain denial metadata for receipts,
