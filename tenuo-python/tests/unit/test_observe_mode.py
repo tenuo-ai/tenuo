@@ -590,7 +590,7 @@ def test_mcp_observed_replay_is_logged(caplog):
     from tenuo_core import Authorizer
 
     _observe()
-    verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=ROOTS), nonce_store=NonceStore(ttl_seconds=120))
+    verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=ROOTS), nonce_store=NonceStore())
     sig = WARRANT.sign(AGENT, "issue_payout", BAD_ARGS, int(time.time()))
     meta = {"tenuo": {"warrant": WARRANT.to_base64(), "signature": base64.b64encode(bytes(sig)).decode()}}
 

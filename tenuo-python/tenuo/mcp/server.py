@@ -1149,7 +1149,9 @@ class MCPVerifier:
                 _ns = _get_ns()
             replayed = True
             try:
-                replayed = _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig)
+                from ..nonce import _admit_verified_pop
+
+                replayed = _ns is not None and pop_sig is not None and not _admit_verified_pop(_ns, pop_sig, self._authorizer)
             finally:
                 # No action runs on replay denial or a nonce backend failure.
                 # Release only this attempt's reservation so a fresh PoP can
