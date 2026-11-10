@@ -262,6 +262,8 @@ class NonceStore:
         )
         if not callable(getattr(self._backend, "check_and_record", None)):
             raise TypeError("NonceBackend must implement atomic check_and_record(nonce_hex, ttl_seconds)")
+        if not callable(getattr(self._backend, "reserve", None)) or not callable(getattr(self._backend, "release", None)):
+            raise TypeError("NonceBackend must implement atomic owner-aware reserve and release")
         floor = getattr(self._backend, "retention_seconds", None)
         if isinstance(floor, bool) or not isinstance(floor, int) or floor <= 0:
             raise TypeError("NonceBackend must declare an immutable positive retention_seconds floor")
@@ -302,7 +304,7 @@ class NonceStore:
         if min_ttl_seconds > self.retention_seconds:
             raise ValueError("nonce reservation exceeds namespace retention floor")
         if not callable(getattr(self._backend, "reserve", None)) or not callable(getattr(self._backend, "release", None)):
-            raise TypeError("A2A nonce backend requires atomic owner-aware reserve and release")
+            raise TypeError("NonceBackend requires atomic owner-aware reserve and release")
         nonce = hashlib.sha256(pop_bytes).hexdigest()
         owner = secrets.token_hex(16)
         reservation = _NonceReservation(self._backend, nonce, owner)
@@ -327,6 +329,10 @@ class NonceStore:
     def check_and_record(self, pop_bytes: bytes, *, min_ttl_seconds: int = 0) -> bool:
         """Atomically admit an unseen PoP for at least ``min_ttl_seconds``.
 
+        Owner-aware admission rolls back a failed backend operation, including
+        an insertion whose reply was lost, without deleting another caller's
+        nonce. A rollback failure remains fail-closed until nonce expiry.
+
         Returns
         -------
         bool
@@ -341,12 +347,14 @@ class NonceStore:
                 "configure every client of the shared backend for the longest verifier interval before serving"
             )
         nonce_hex = hashlib.sha256(pop_bytes).hexdigest()
-        if not self._backend.check_and_record(nonce_hex, self.retention_seconds):
+        reservation = self.reserve(pop_bytes, min_ttl_seconds=min_ttl_seconds)
+        if reservation is None:
             logger.warning(
                 "PoP replay detected — nonce %s…%s was already consumed.",
                 nonce_hex[:8], nonce_hex[-4:],
             )
             return False
+        reservation.commit()
         return True
 
     def is_replay(self, pop_bytes: bytes) -> bool:

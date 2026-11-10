@@ -146,6 +146,83 @@ def test_shared_backend_must_provide_atomic_admission():
         NonceStore(backend=LegacyBackend())
 
 
+def test_shared_backend_must_support_owner_aware_rollback():
+    from tenuo.nonce import _InMemoryBackend
+
+    class UnownedBackend(_InMemoryBackend):
+        reserve = None
+        release = None
+
+    with pytest.raises(TypeError, match="owner-aware reserve and release"):
+        NonceStore(backend=UnownedBackend())
+
+
+@pytest.mark.parametrize("insert", [False, True], ids=["before_insert", "lost_reply"])
+def test_inbound_nonce_backend_failure_allows_same_proof_retry(call, insert):
+    from tenuo.nonce import _InMemoryBackend
+
+    class RecoveringBackend(_InMemoryBackend):
+        failed = True
+
+        def reserve(self, nonce, ttl, owner):
+            if self.failed:
+                if insert:
+                    assert super().reserve(nonce, ttl, owner)
+                raise ConnectionError("nonce backend unavailable")
+            return super().reserve(nonce, ttl, owner)
+
+    backend = RecoveringBackend()
+    store = NonceStore(backend=backend)
+    denied, signature = call(check_replay=True, nonce_store=store)
+    assert not denied.allowed
+    assert "nonce backend unavailable" in denied.denial_reason
+    assert not store.is_replay(signature)
+    backend.failed = False
+    assert call(signature=signature, check_replay=True, nonce_store=store)[0].allowed
+    assert not call(signature=signature, check_replay=True, nonce_store=store)[0].allowed
+
+
+def test_failed_nonce_reply_cannot_remove_an_existing_callers_nonce():
+    from tenuo.nonce import _InMemoryBackend
+
+    class LostReply(_InMemoryBackend):
+        failed = False
+
+        def reserve(self, nonce, ttl, owner):
+            result = super().reserve(nonce, ttl, owner)
+            if self.failed:
+                assert result is False
+                raise ConnectionError("nonce reply lost")
+            return result
+
+    backend = LostReply()
+    store = NonceStore(backend=backend)
+    assert store.check_and_record(b"same-proof")
+    backend.failed = True
+    with pytest.raises(ConnectionError, match="nonce reply lost"):
+        store.check_and_record(b"same-proof")
+    assert store.is_replay(b"same-proof")
+    backend.failed = False
+    assert not store.check_and_record(b"same-proof")
+
+
+def test_failed_nonce_rollback_stays_fail_closed():
+    from tenuo.nonce import _InMemoryBackend
+
+    class UnavailableRollback(_InMemoryBackend):
+        def reserve(self, nonce, ttl, owner):
+            assert super().reserve(nonce, ttl, owner)
+            raise ConnectionError("nonce reply lost")
+
+        def release(self, nonce, owner):
+            raise ConnectionError("rollback unavailable")
+
+    store = NonceStore(backend=UnavailableRollback())
+    with pytest.raises(ConnectionError, match="nonce reply lost"):
+        store.check_and_record(b"same-proof")
+    assert store.is_replay(b"same-proof")
+
+
 def test_multiple_fastapi_guards_reuse_admission_only_within_the_request():
     import base64
 

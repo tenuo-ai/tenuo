@@ -33,9 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stores must expose these settings and accept `min_ttl_seconds`. Retention
   covers validity plus the declared clock-skew budget, so wider verifiers cannot
   consume that safety margin. New stores default to 210 seconds, including a
-  60-second clock budget. Keep verifier clocks within the declared bound. A2A backends also need atomic
+  60-second clock budget. Keep verifier clocks within the declared bound. All nonce backends also need atomic
   owner-aware `reserve(nonce_hex, ttl_seconds, owner)` and `release(nonce_hex, owner)`
-  operations so a JTI backend failure can release only its own nonce reservation.
+  operations so failed admission, including a lost insertion reply, can release
+  only its own nonce reservation. A failed rollback remains fail-closed until expiry.
   A2A nonce denials honor observe mode and retain denial metadata for receipts,
   audit logs, and control-plane events in both enforcement modes. FastAPI
   reserves approvals before nonce admission, so an approval-backend failure

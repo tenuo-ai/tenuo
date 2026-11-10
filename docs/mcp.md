@@ -594,6 +594,8 @@ while building the tree, not after allocating the complete result.
 Configure shared nonce namespaces before serving: every client must agree on the retention floor, PoP bucket size, and `max_clock_skew_seconds`. Retention must cover the longest verifier PoP interval plus that clock budget. New stores default to 210 seconds (150 seconds of PoP validity plus a 60-second budget). The budget bounds clock disagreement and adjustments across verifiers and expiry backends; if every participating clock stays within S seconds of UTC, allow at least 2*S seconds. Keep actual clocks within the declared bound. Wider verifier configurations cannot consume the reserved margin. The retention floor is an elapsed-time guarantee. [Redis expiry follows its wall clock](https://redis.io/docs/latest/commands/expire/), so the Redis example adds another clock-budget margin to cache TTLs to preserve that floor during a bounded forward adjustment.
 
 
+Nonce backends must implement atomic owner-aware `reserve` and `release` operations as well as `check_and_record`. Admission uses a fresh owner token, so a failed insert reply can be cleaned up without deleting another caller's nonce. If the backend also fails during cleanup, the nonce remains reserved until expiry and the request stays denied.
+
 ### Envelope and argument contract
 
 The Rust core owns `_meta.tenuo` framing, base64 and decoding. The Rust SDK's
