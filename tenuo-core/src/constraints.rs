@@ -650,10 +650,14 @@ impl Constraint {
     }
 
     /// Do not let typed negation suppress a parser error in an approval gate.
-    pub(crate) fn approval_gate_matches(&self, value: &ConstraintValue) -> Result<(bool, bool)> {
+    pub(crate) fn approval_gate_matches(
+        &self,
+        value: &ConstraintValue,
+        eager: bool,
+    ) -> Result<(bool, bool)> {
         self.value_kinds()?;
         let off_kind = self.has_off_kind_negation(value)?;
-        let matched = if off_kind {
+        let matched = if eager || off_kind {
             self.matches_for_negation(value)?
         } else {
             self.matches(value)?
@@ -667,11 +671,15 @@ impl Constraint {
             && (!parent.has_negation() || self.preserves_negation_errors_of(parent))
     }
 
+    pub(crate) fn preserves_gate_errors_of(&self, parent: &Constraint) -> bool {
+        self.preserves_negation_errors_of(parent)
+    }
+
     pub(crate) fn has_fallible_gate_negation(&self) -> bool {
         self.has_negation() && self.can_fail()
     }
 
-    fn has_negation(&self) -> bool {
+    pub(crate) fn has_negation(&self) -> bool {
         match self {
             Self::Not(_) | Self::NotOneOf(_) => true,
             Self::All(a) => a.constraints.iter().any(Self::has_negation),
@@ -774,7 +782,7 @@ impl Constraint {
         }
     }
 
-    fn can_fail(&self) -> bool {
+    pub(crate) fn can_fail(&self) -> bool {
         match self {
             Constraint::Wildcard(_)
             | Constraint::Exact(_)

@@ -1014,20 +1014,52 @@ fn composite_off_kind_approval_gate_preserves_parser_errors() {
         constraints: vec![negated.clone(), cidr.clone()],
     });
     let disjunction = Constraint::Any(Any {
-        constraints: vec![cidr, negated],
+        constraints: vec![cidr.clone(), negated],
     });
+    let mut cases = vec![];
     for gate in [
         ArgApprovalGate::Constraint(disjunction),
         ArgApprovalGate::Constraint(conjunction.clone()),
         ArgApprovalGate::exempt(conjunction).unwrap(),
     ] {
+        cases.push((
+            BTreeMap::from([("value".into(), gate)]),
+            HashMap::<String, ConstraintValue>::from([("value".into(), "not-an-ip".into())]),
+        ));
+    }
+    let single_negation = Constraint::Not(Not {
+        constraint: Box::new(tenuo::constraints::Exact::new("safe").into()),
+    });
+    for gate in [
+        ArgApprovalGate::Constraint(Constraint::Not(Not {
+            constraint: Box::new(single_negation.clone()),
+        })),
+        ArgApprovalGate::exempt(Constraint::All(All::new([single_negation]))).unwrap(),
+    ] {
+        cases.push((
+            BTreeMap::from([
+                ("a".into(), gate),
+                ("z".into(), ArgApprovalGate::Constraint(cidr.clone())),
+            ]),
+            HashMap::from([
+                ("a".into(), ConstraintValue::Integer(5)),
+                ("z".into(), "not-an-ip".into()),
+            ]),
+        ));
+    }
+    // A newly added earlier all-values gate must not hide a later error.
+    let (mut prefix_gates, prefix_args) = cases.last().unwrap().clone();
+    prefix_gates.insert("0".into(), ArgApprovalGate::All);
+    let mut prefix_args = prefix_args;
+    prefix_args.insert("0".into(), true.into());
+    cases.push((prefix_gates, prefix_args));
+    for (arg_gates, args) in cases {
         let mut gates = ApprovalGateMap::new();
-        gates.insert(
-            "action".into(),
-            ToolApprovalGate::with_args(BTreeMap::from([("value".into(), gate)])),
-        );
+        gates.insert("action".into(), ToolApprovalGate::with_args(arg_gates));
         let mut constraints = ConstraintSet::new();
-        constraints.insert("value", Wildcard);
+        for name in args.keys() {
+            constraints.insert(name.clone(), Wildcard);
+        }
         let warrant = Warrant::builder()
             .capability("action", constraints)
             .holder(issuer.public_key())
@@ -1040,7 +1072,6 @@ fn composite_off_kind_approval_gate_preserves_parser_errors() {
             )
             .build(&issuer)
             .unwrap();
-        let args = HashMap::from([("value".into(), "not-an-ip".into())]);
         let sig = warrant.sign(&issuer, "action", &args).unwrap();
         let now = chrono::Utc::now().timestamp() as u64;
         let approval = SignedApproval::create(

@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removing an off-kind requirement cannot create a new exemption. Gates with
   off-kind negation evaluate every composite branch, and their delegation
   retains fallible subrules, so approvals cannot override a discarded parser error.
+  Gate maps containing negation evaluate all argument gates and composite
+  branches before returning, retaining the first approval reason. Positive-only
+  gate maps keep their existing ordered evaluation. Delegation preserves this
+  error-checking behavior even when negation and parsers occur in different arguments.
   Delegation cannot add accepted value kinds through negation. Python's
   annotation and A2A checks preserve the argument's original type, and the
   same core checks are included in the TypeScript WASM build. Upgrade
