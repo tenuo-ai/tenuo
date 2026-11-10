@@ -97,7 +97,7 @@ def test_retention_covers_the_verifiers_full_acceptance_interval(monkeypatch, wi
     now = [1000.0]
     monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
     authorizer = Authorizer(pop_window_secs=window, pop_max_windows=count)
-    store = NonceStore(ttl_seconds=window * count)
+    store = NonceStore(ttl_seconds=window * count, pop_window_secs=window)
     assert _admit_verified_pop(store, b"signature", authorizer)
     now[0] += window * count - 0.001
     assert not _admit_verified_pop(store, b"signature", authorizer)
@@ -265,8 +265,13 @@ async def test_a2a_nonce_replay_observes_the_configured_mode(monkeypatch):
         assert "replay" in result.denial_reason.lower()
         assert audit.call_args.args[0].outcome == "denied"
         configure(mode="enforce", trusted_roots=[issuer.public_key])
+        audit.reset_mock()
+        cp.reset_mock()
         with pytest.raises(PopVerificationError):
             await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+        assert audit.call_args.args[0].outcome == "denied"
+        assert "replay" in audit.call_args.args[0].reason.lower()
+        assert not cp.emit_for_enforcement.call_args.args[0].allowed
     finally:
         reset_config()
 
@@ -274,6 +279,8 @@ async def test_a2a_nonce_replay_observes_the_configured_mode(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("observe", [False, True])
 async def test_a2a_nonce_denial_produces_a_signed_runtime_receipt(observe):
+    import io
+    import json
     from tenuo import HolderIdentity, Runtime
     from tenuo.a2a.errors import PopVerificationError
     from tenuo.a2a.server import A2AServer
@@ -284,9 +291,10 @@ async def test_a2a_nonce_denial_produces_a_signed_runtime_receipt(observe):
     warrant = Warrant.mint_builder().capability("ping").holder(holder.public_key).ttl(300).mint(issuer)
     signature = bytes(warrant.sign(holder.signing_key, "ping", {}, int(time.time())))
     runtime = Runtime(identity=holder, trusted_roots=[issuer.public_key], receipts="collect")
+    audit = io.StringIO()
     server = A2AServer(name="receipts", url="https://agent.test", public_key=holder.public_key,
                        trusted_issuers=[issuer.public_key], check_replay=False,
-                       require_audience=False, audit_log=None, runtime=runtime)
+                       require_audience=False, audit_log=audit, runtime=runtime)
     enable_default_nonce_store()
     try:
         configure(mode="observe" if observe else "enforce", trusted_roots=[issuer.public_key])
@@ -297,5 +305,60 @@ async def test_a2a_nonce_denial_produces_a_signed_runtime_receipt(observe):
             with pytest.raises(PopVerificationError):
                 await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
         assert [verify_receipt(receipt).outcome for receipt in runtime.peek_receipts()] == ["allow", "deny"]
+        events = [json.loads(line) for line in audit.getvalue().splitlines()]
+        assert events[-1]["outcome"] == "denied"
+        assert "replay" in events[-1]["reason"].lower()
     finally:
         reset_config()
+
+
+def test_mixed_bucket_sizes_cannot_share_a_nonce_namespace():
+    from tenuo.nonce import _admit_verified_pop
+    from tenuo.exceptions import ConfigurationError
+    store = NonceStore(ttl_seconds=270, pop_window_secs=30)
+    assert _admit_verified_pop(store, b"pop", Authorizer(pop_window_secs=30, pop_max_windows=9))
+    with pytest.raises(ConfigurationError, match="window size"):
+        _admit_verified_pop(store, b"pop", Authorizer(pop_window_secs=60, pop_max_windows=4))
+
+
+def test_nonce_release_does_not_remove_a_replacement_owner(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr("tenuo.nonce.time.monotonic", lambda: now[0])
+    store = NonceStore()
+    first = store.reserve(b"pop")
+    assert first is not None
+    now[0] += 151
+    second = store.reserve(b"pop")
+    assert second is not None
+    first.release()
+    assert store.reserve(b"pop") is None
+    second.release()
+    final = store.reserve(b"pop")
+    assert final is not None
+    final.commit()
+    final.release()
+    assert store.is_replay(b"pop")
+
+
+@pytest.mark.asyncio
+async def test_a2a_jti_backend_failure_releases_only_its_nonce_reservation():
+    from tenuo.a2a.server import A2AServer
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("ping").holder(holder.public_key).ttl(300).mint(issuer)
+    signature = bytes(warrant.sign(holder, "ping", {}, int(time.time())))
+    class RecoveringCache:
+        failed = True
+        async def check_and_add(self, jti, ttl):
+            if self.failed:
+                raise RuntimeError("JTI cache unavailable")
+            return True
+    cache = RecoveringCache()
+    server = A2AServer(name="agent", url="https://agent.test", public_key=issuer.public_key,
+                       trusted_issuers=[issuer.public_key], check_replay=True, replay_backend=cache)
+    store = enable_default_nonce_store()
+    with pytest.raises(RuntimeError, match="JTI cache unavailable"):
+        await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+    assert not store.is_replay(signature)
+    cache.failed = False
+    assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+    assert store.is_replay(signature)

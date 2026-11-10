@@ -1235,6 +1235,7 @@ class A2AServer:
         # leaves a signed allow behind.
         enforcement = None
         runtime = None
+        nonce_reservation = None
 
         # Verify Proof-of-Possession (I6)
         if self.require_pop:
@@ -1403,10 +1404,13 @@ class A2AServer:
             # Check replay last, so only a request that passed every other gate
             # (proof-of-possession included) can mark the warrant as used.
             if self.require_pop and pop_signature is not None and enforcement is not None and not enforcement.observed:
-                from tenuo.nonce import _admit_verified_pop, get_default_nonce_store
+                from tenuo.nonce import _validate_retention, get_default_nonce_store
 
                 nonce_store = get_default_nonce_store()
-                if nonce_store is not None and not _admit_verified_pop(nonce_store, pop_signature, self._authorizer):
+                if nonce_store is not None:
+                    validity = _validate_retention(nonce_store, self._authorizer)
+                    nonce_reservation = nonce_store.reserve(pop_signature, min_ttl_seconds=validity)
+                if nonce_store is not None and nonce_reservation is None:
                     from dataclasses import replace
                     from tenuo._enforcement import _apply_observe_mode
 
@@ -1420,27 +1424,24 @@ class A2AServer:
                         presented_chain=[*(_resolved_chain_parents or []), warrant],
                         verified_pop=pop_signature, pop_auth_args=arguments,
                     ))
-                    if not enforcement.allowed:
-                        collect_enforcement_receipt(enforcement, None, runtime=runtime)
-                        _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
-            if self.check_replay and jti:
+            if self.check_replay and jti and (enforcement is None or (enforcement.allowed and not enforcement.observed)):
                 is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
                 if not is_new:
                     raise ReplayDetectedError(jti)
 
-            # Every A2A gate has passed: only now record the Authorizer's allow.
+            # Record the final outcome after both local policy and nonce checks.
             if enforcement is not None:
                 collect_enforcement_receipt(enforcement, enforcement.chain_result, runtime=runtime)
 
             # Log audit event
             latency_ms = int((time.time() - start_time) * 1000)
-            observed = bool(enforcement is not None and enforcement.observed)
+            denied = bool(enforcement is not None and (not enforcement.allowed or enforcement.observed))
             await self._audit(
                 AuditEvent(
                     timestamp=datetime.now(timezone.utc),
                     event=(
                         AuditEventType.WARRANT_REJECTED
-                        if observed
+                        if denied
                         else AuditEventType.WARRANT_VALIDATED
                     ),
                     task_id="",
@@ -1448,11 +1449,11 @@ class A2AServer:
                     warrant_jti=jti or "",
                     warrant_iss=issuer_normalized or "",
                     warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
-                    outcome="denied" if observed else "allowed",
+                    outcome="denied" if denied else "allowed",
                     latency_ms=latency_ms,
                     reason=(
                         enforcement.denial_reason
-                        if observed and enforcement is not None
+                        if denied and enforcement is not None
                         else None
                     ),
                 )
@@ -1473,8 +1474,17 @@ class A2AServer:
                 except Exception:
                     logger.warning("Control plane emission failed for '%s'; audit event lost", skill_id, exc_info=True)
 
+            if enforcement is not None and not enforcement.allowed:
+                _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
+            if nonce_reservation is not None:
+                nonce_reservation.commit()
             return warrant
         except BaseException:
+            if nonce_reservation is not None:
+                try:
+                    nonce_reservation.release()
+                except Exception:
+                    logger.exception("Failed to release nonce after A2A admission failure")
             _set_current_idempotency_key(None)
             reservation = getattr(enforcement, "approval_reservation", None)
             if reservation is not None:
