@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Google ADK supports trusted per-call warrant resolution.** Guards, builders,
+  and plugins accept a `warrant_resolver` that bypasses mutable session state.
+  Resolver failures or missing warrants deny the call even with local allow
+  rules, and static warrants cannot be combined with a resolver. Session-state
+  warrant lookup warns once. Plugins reject agents with a `code_executor`
+  unless explicitly opted into execution confined outside tool callbacks.
+
 - **Inbound PoP replay protection uses atomic nonce admission.** FastAPI and
   A2A honor the configured process nonce store after verification. Retention
   uses an immutable backend floor covering every shared Authorizer's complete

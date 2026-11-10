@@ -30,7 +30,7 @@ Multi-Tenant Safety:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,8 @@ if TYPE_CHECKING:
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
     from google.adk.tools.tool_context import ToolContext  # type: ignore[import-not-found,import-untyped]
     from tenuo_core import SigningKey, Warrant
+
+from tenuo.exceptions import ConfigurationError  # noqa: E402
 
 from .guard import TenuoGuard  # noqa: E402
 
@@ -148,6 +150,8 @@ class TenuoPlugin(BasePlugin):
         warrant_chain: Optional[List["Warrant"]] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
+        warrant_resolver: Optional[Callable[[Any], Any]] = None,
+        allow_code_execution: bool = False,
     ):
         """
         Initialize TenuoPlugin.
@@ -173,6 +177,14 @@ class TenuoPlugin(BasePlugin):
                   (e.g. ``cli_prompt(approver_key=...)``). Without one, or
                   when the approver refuses, the call is denied.
             approvals: Pre-obtained ``SignedApproval`` objects for gated calls.
+            warrant_resolver: Callable ``(tool_context) -> warrant`` returning the
+                  warrant from a source the model cannot write. When set,
+                  session state is not consulted; see ``TenuoGuard``.
+            allow_code_execution: An agent's ``code_executor`` runs code the
+                  model writes without calling tool callbacks, so no warrant
+                  constrains it. By default the plugin refuses to run such an
+                  agent; set True only when the executor is confined by other
+                  means.
         """
         if BasePlugin is object:
             self.name = name
@@ -189,8 +201,11 @@ class TenuoPlugin(BasePlugin):
             warrant_chain=warrant_chain,
             approval_handler=approval_handler,
             approvals=approvals,
+            warrant_resolver=warrant_resolver,
         )
         self._warrant_key = warrant_key
+        self._warrant_resolver = warrant_resolver
+        self._allow_code_execution = allow_code_execution
 
     async def before_agent_callback(  # type: ignore[override]
         self,
@@ -209,6 +224,20 @@ class TenuoPlugin(BasePlugin):
             2. Clears expired warrants from state
             3. Prevents cross-agent warrant access
         """
+        if not self._allow_code_execution:
+            # ADK passes the agent being run as ``agent=``.
+            agent = kwargs.get("agent")
+            if getattr(agent, "code_executor", None) is not None:
+                raise ConfigurationError(
+                    f"Agent '{getattr(agent, 'name', callback_context.agent_name)}' has a "
+                    "code_executor. Code it runs does not pass through tool callbacks, so "
+                    "Tenuo cannot authorize it. Remove the executor, or pass "
+                    "allow_code_execution=True if it is confined by other means."
+                )
+
+        if self._warrant_resolver is not None:
+            return None  # The resolver supplies the warrant; state holds none.
+
         # Check session_state (standard) then state (fallback)
         if hasattr(callback_context, "session_state"):
             state = callback_context.session_state
