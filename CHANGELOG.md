@@ -29,7 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Approval gates require approval for off-kind negated arguments instead of
   treating them as an ungated call. Parser errors still reject the call even
   when approvals are supplied. Gate delegation retains negated subrules so
-  removing an off-kind requirement cannot create a new exemption.
+  removing an off-kind requirement cannot create a new exemption. Gates with
+  off-kind negation evaluate every composite branch, and their delegation
+  retains fallible subrules, so approvals cannot override a discarded parser error.
   Delegation cannot add accepted value kinds through negation. Python's
   annotation and A2A checks preserve the argument's original type, and the
   same core checks are included in the TypeScript WASM build. Upgrade

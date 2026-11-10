@@ -649,18 +649,48 @@ impl Constraint {
         })
     }
 
+    /// Do not let typed negation suppress a parser error in an approval gate.
+    pub(crate) fn approval_gate_matches(&self, value: &ConstraintValue) -> Result<(bool, bool)> {
+        self.value_kinds()?;
+        let off_kind = self.has_off_kind_negation(value)?;
+        let matched = if off_kind {
+            self.matches_for_negation(value)?
+        } else {
+            self.matches(value)?
+        };
+        Ok((matched, off_kind))
+    }
+
     /// Preserve every source of off-kind approval requirements across delegation.
     pub(crate) fn preserves_gate_negations_of(&self, parent: &Constraint) -> bool {
+        self.preserves_gate_negation_nodes(parent)
+            && (!parent.has_negation() || self.preserves_negation_errors_of(parent))
+    }
+
+    pub(crate) fn has_fallible_gate_negation(&self) -> bool {
+        self.has_negation() && self.can_fail()
+    }
+
+    fn has_negation(&self) -> bool {
+        match self {
+            Self::Not(_) | Self::NotOneOf(_) => true,
+            Self::All(a) => a.constraints.iter().any(Self::has_negation),
+            Self::Any(a) => a.constraints.iter().any(Self::has_negation),
+            _ => false,
+        }
+    }
+
+    fn preserves_gate_negation_nodes(&self, parent: &Constraint) -> bool {
         match parent {
             Self::Not(_) | Self::NotOneOf(_) => self.contains_gate_negation(parent),
             Self::All(a) => a
                 .constraints
                 .iter()
-                .all(|c| self.preserves_gate_negations_of(c)),
+                .all(|c| self.preserves_gate_negation_nodes(c)),
             Self::Any(a) => a
                 .constraints
                 .iter()
-                .all(|c| self.preserves_gate_negations_of(c)),
+                .all(|c| self.preserves_gate_negation_nodes(c)),
             _ => true,
         }
     }
