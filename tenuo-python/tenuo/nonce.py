@@ -255,9 +255,20 @@ class NonceStore:
             raise TypeError("A2A nonce backend requires atomic owner-aware reserve and release")
         nonce = hashlib.sha256(pop_bytes).hexdigest()
         owner = secrets.token_hex(16)
-        if not self._backend.reserve(nonce, self.retention_seconds, owner):
+        reservation = _NonceReservation(self._backend, nonce, owner)
+        try:
+            admitted = self._backend.reserve(nonce, self.retention_seconds, owner)
+        except BaseException:
+            # The insert may have succeeded even if its response was lost.
+            # A conditional release cannot remove another attempt's entry.
+            try:
+                reservation.release()
+            except Exception:
+                logger.warning("Nonce reservation rollback failed: %s…", nonce[:8], exc_info=True)
+            raise
+        if not admitted:
             return None
-        return _NonceReservation(self._backend, nonce, owner)
+        return reservation
 
     # ------------------------------------------------------------------
     # Core operations

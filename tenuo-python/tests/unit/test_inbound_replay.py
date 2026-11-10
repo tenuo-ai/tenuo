@@ -362,3 +362,29 @@ async def test_a2a_jti_backend_failure_releases_only_its_nonce_reservation():
     cache.failed = False
     assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
     assert store.is_replay(signature)
+
+
+@pytest.mark.asyncio
+async def test_a2a_lost_nonce_reservation_reply_can_retry_after_recovery():
+    from tenuo.a2a.server import A2AServer
+    from tenuo.nonce import _InMemoryBackend
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("ping").holder(holder.public_key).ttl(300).mint(issuer)
+    signature = bytes(warrant.sign(holder, "ping", {}, int(time.time())))
+    class LostReply(_InMemoryBackend):
+        failed = True
+        def reserve(self, nonce, ttl, owner):
+            admitted = super().reserve(nonce, ttl, owner)
+            if self.failed:
+                raise RuntimeError("nonce response lost")
+            return admitted
+    backend = LostReply()
+    store = enable_default_nonce_store(backend=backend)
+    server = A2AServer(name="agent", url="https://agent.test", public_key=issuer.public_key,
+                       trusted_issuers=[issuer.public_key], check_replay=True)
+    with pytest.raises(RuntimeError, match="nonce response lost"):
+        await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+    assert not store.is_replay(signature)
+    backend.failed = False
+    assert await server.validate_warrant(warrant.to_base64(), "ping", {}, pop_signature=signature)
+    assert store.is_replay(signature)
