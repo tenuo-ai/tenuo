@@ -118,6 +118,7 @@ dev = [
     "mypy>=1.0",
     "types-PyYAML",
     "types-requests",
+    "types-jsonschema",
     # Examples/Demos
     "uvicorn",
     "langchain-openai",

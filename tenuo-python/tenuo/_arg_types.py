@@ -135,12 +135,26 @@ def _bounded_keywords(overrides: Dict[str, Any]) -> Dict[str, Any]:
     return {name: _bounded_keyword(check) for name, check in {**Draft202012Validator.VALIDATORS, **overrides}.items()}
 
 
-def _schema_for_validation(schema: Any, depth: int = 0) -> Any:
+def _schema_for_validation(schema: Any, depth: int = 0, *, path: str = "#", nodes: Optional[set[str]] = None, refs: Optional[list[str]] = None) -> Any:
     _consume_schema_work()
+    root_call = nodes is None
+    if nodes is None:
+        nodes, refs = set(), []
+    assert refs is not None
+    nodes.add(path)
     if depth > 64:
         raise ValueError("schema nesting exceeds limit")
     if not isinstance(schema, Mapping):
         return schema
+    reference = schema.get("$ref")
+    if reference is not None:
+        if not isinstance(reference, str) or not reference.startswith("#"):
+            raise ValueError("only local schema references are supported")
+        refs.append(reference)
+    def normalize(rule: Any, *parts: Any) -> Any:
+        suffix = "/".join(str(part).replace("~", "~0").replace("/", "~1") for part in parts)
+        return _schema_for_validation(rule, depth + 1, path=path + "/" + suffix, nodes=nodes, refs=refs)
+
     legacy_tuple = isinstance(schema.get("items"), list)
     if legacy_tuple and "prefixItems" in schema:
         raise ValueError("conflicting tuple schema forms")
@@ -153,17 +167,21 @@ def _schema_for_validation(schema: Any, depth: int = 0) -> Any:
         if key == "additionalItems" and legacy_tuple:
             continue
         if key == "items" and legacy_tuple:
-            result["prefixItems"] = [_schema_for_validation(rule, depth + 1) for rule in value]
-            result["items"] = _schema_for_validation(schema.get("additionalItems", True), depth + 1)
+            result["prefixItems"] = [normalize(rule, key, index) for index, rule in enumerate(value)]
+            result["items"] = normalize(schema.get("additionalItems", True), "additionalItems")
         elif key in {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}:
-            result[key] = {name: _schema_for_validation(rule, depth + 1) for name, rule in value.items()}
+            result[key] = {name: normalize(rule, key, name) for name, rule in value.items()}
         elif key in {"allOf", "anyOf", "oneOf", "prefixItems"}:
-            result[key] = [_schema_for_validation(rule, depth + 1) for rule in value]
+            result[key] = [normalize(rule, key, index) for index, rule in enumerate(value)]
         elif key in {"items", "additionalItems", "additionalProperties", "contains", "not", "if", "then", "else", "propertyNames", "unevaluatedProperties", "unevaluatedItems"}:
-            result[key] = ([_schema_for_validation(rule, depth + 1) for rule in value]
-                           if isinstance(value, list) else _schema_for_validation(value, depth + 1))
+            result[key] = ([normalize(rule, key, index) for index, rule in enumerate(value)]
+                           if isinstance(value, list) else normalize(value, key))
         else:
             result[key] = value
+    if root_call and any(ref not in nodes for ref in refs):
+        # An extension or literal can contain an unnormalized dialect marker.
+        # Never let $ref make evolve() reach such data as executable schema.
+        raise ValueError("reference target is outside normalized schema locations")
     return result
 
 
@@ -260,16 +278,18 @@ def _candidate_type_ok(expected: str, value: Any) -> bool:
 
 
 def _candidate_literal_matches(value: Any, literal: Any) -> bool:
-    # String tags can rule out a discriminator branch. Numeric/boolean enums
-    # can coerce their input, so a raw mismatch cannot rule those branches out.
     if literal is None:
         return value is None
-    if isinstance(literal, str):
-        try:
-            return _COERCIVE_SCALARS["string"].validate_python(value) == literal
-        except Exception:
-            return False
-    return True
+    kind = ("boolean" if isinstance(literal, bool) else
+            "integer" if isinstance(literal, int) else
+            "number" if isinstance(literal, float) else
+            "string" if isinstance(literal, str) else None)
+    if kind is None:
+        return True
+    try:
+        return _literal_equal(_COERCIVE_SCALARS[kind].validate_python(value), literal)
+    except Exception:
+        return False
 
 
 def _candidate_const(validator: Any, expected: Any, value: Any, schema: Any) -> Any:
@@ -291,6 +311,9 @@ _CandidateValidator = validators.extend(
         "oneOf": Draft202012Validator.VALIDATORS["anyOf"],
         # Removing a type error can change which conditional branch applies.
         # Do not infer impossibility from negation or conditionals here.
+        # Set coercion can deduplicate items before enforcing upper bounds.
+        "uniqueItems": lambda *args: (),
+        "maxItems": lambda *args: (),
         "not": lambda *args: (),
         "if": lambda *args: (),
     }),
