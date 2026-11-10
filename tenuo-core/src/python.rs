@@ -35,7 +35,7 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyFloat, PyInt, PyList, PySequence, PyTuple};
+use pyo3::types::{PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -533,10 +533,8 @@ impl PyPattern {
     ///
     /// Raises:
     ///     MonotonicityError: If child would expand capabilities.
-    fn validate_attenuation(&self, child: &PyPattern) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Pattern(self.inner.clone()), child)
     }
 
     /// Check if a value matches this glob pattern.
@@ -595,10 +593,10 @@ pub struct PyExact {
 #[pymethods]
 impl PyExact {
     #[new]
-    fn new(value: &str) -> Self {
-        Self {
-            inner: Exact::new(value),
-        }
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: Exact::new(py_to_literal_value(value)?),
+        })
     }
 
     /// Check if a value matches this exact constraint.
@@ -606,7 +604,7 @@ impl PyExact {
     /// This is the runtime check used for Tier 1 authorization.
     ///
     /// Args:
-    ///     value: Value to check (will be converted to string for comparison)
+    ///     value: Typed value to check, without string coercion.
     ///
     /// Returns:
     ///     True if value matches exactly, False otherwise
@@ -617,8 +615,8 @@ impl PyExact {
     ///     True
     ///     >>> e.matches("staging")
     ///     False
-    fn matches(&self, value: &str) -> bool {
-        self.inner.value.as_str() == Some(value)
+    fn matches(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.satisfies(value)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -627,8 +625,17 @@ impl PyExact {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Exact('{}')", self.inner.value)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = constraint_value_to_py(py, &self.inner.value)?;
+        Ok(format!(
+            "Exact({})",
+            value.bind(py).repr()?.extract::<String>()?
+        ))
+    }
+
+    /// Validate narrowing using the core's generic constraint rules.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Exact(self.inner.clone()), child)
     }
 
     #[getter]
@@ -647,19 +654,21 @@ pub struct PyOneOf {
 #[pymethods]
 impl PyOneOf {
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: OneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_literal_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: OneOf::from_values(values),
+        })
     }
 
-    /// Validate that another OneOf is a valid attenuation (narrowing) of this one.
+    /// Validate a child constraint using the core's generic narrowing rules.
     ///
     /// A child OneOf is valid if its values are a subset of parent's values.
-    fn validate_attenuation(&self, child: &PyOneOf) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::OneOf(self.inner.clone()), child)
     }
 
     /// Check if a value is in the allowed set.
@@ -678,9 +687,8 @@ impl PyOneOf {
     ///     True
     ///     >>> o.contains("development")
     ///     False
-    fn contains(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        self.inner.contains(&cv)
+    fn contains(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.satisfies(value)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -689,8 +697,11 @@ impl PyOneOf {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        format!("OneOf({:?})", self.inner.values)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "OneOf({})",
+            self.values()?.bind(py).repr()?.extract::<String>()?
+        ))
     }
 
     #[getter]
@@ -715,22 +726,25 @@ pub struct PyNotOneOf {
 #[pymethods]
 impl PyNotOneOf {
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: NotOneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_literal_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: NotOneOf::from_values(values),
+        })
     }
 
-    /// Validate that another NotOneOf is a valid attenuation (narrowing) of this one.
+    /// Validate a child constraint using the core's generic narrowing rules.
     ///
-    /// A child NotOneOf is valid if it excludes at least everything parent excludes.
-    fn validate_attenuation(&self, child: &PyNotOneOf) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    /// Within the parent's judged value kinds, a child must exclude at least
+    /// everything the parent excludes. Adding a new judged kind is forbidden.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::NotOneOf(self.inner.clone()), child)
     }
 
-    /// Check whether a string passes the core exclusion constraint.
+    /// Check whether a typed value passes the core exclusion constraint.
     ///
     /// This is the runtime check used for Tier 1 authorization.
     ///
@@ -738,8 +752,8 @@ impl PyNotOneOf {
     ///     value: Value to check
     ///
     /// Returns:
-    ///     True if the constraint judges strings and the value is not excluded.
-    ///     Non-string exclusion lists decoded from warrants reject strings.
+    ///     True if the value's kind is covered by the exclusion list and the
+    ///     value is not excluded. An empty list covers every supported kind.
     ///
     /// Example:
     ///     >>> n = NotOneOf(["admin", "root"])
@@ -747,9 +761,8 @@ impl PyNotOneOf {
     ///     True
     ///     >>> n.allows("admin")
     ///     False
-    fn allows(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        self.inner.matches(&cv).unwrap_or(false)
+    fn allows(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.satisfies(value)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -770,8 +783,12 @@ impl PyNotOneOf {
         })
     }
 
-    fn __repr__(&self) -> String {
-        format!("NotOneOf({:?})", self.inner.excluded)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let values = self.excluded()?.into_py_any(py)?;
+        Ok(format!(
+            "NotOneOf({})",
+            values.bind(py).repr()?.extract::<String>()?
+        ))
     }
 }
 
@@ -802,10 +819,8 @@ impl PyContains {
     /// Validate that another Contains is a valid attenuation (narrowing) of this one.
     ///
     /// A child Contains is valid if it requires at least everything parent requires.
-    fn validate_attenuation(&self, child: &PyContains) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Contains(self.inner.clone()), child)
     }
 
     /// Check if a list contains all required values.
@@ -887,10 +902,8 @@ impl PySubset {
     /// Validate that another Subset is a valid attenuation (narrowing) of this one.
     ///
     /// A child Subset is valid if its allowed values are a subset of parent's.
-    fn validate_attenuation(&self, child: &PySubset) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Subset(self.inner.clone()), child)
     }
 
     /// Check if all values in a list are within the allowed set.
@@ -969,13 +982,11 @@ impl PyAll {
         })
     }
 
-    /// Validate that another All is a valid attenuation (narrowing) of this one.
+    /// Validate a child constraint using the core's generic narrowing rules.
     ///
     /// A child All is valid if it has all parent's constraints plus optionally more.
-    fn validate_attenuation(&self, child: &PyAll) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::All(self.inner.clone()), child)
     }
 
     /// Check if a value matches ALL constraints in this set.
@@ -1047,6 +1058,11 @@ impl PyAnyOf {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
+    /// Validate narrowing using the core's generic constraint rules.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Any(self.inner.clone()), child)
+    }
+
     fn __repr__(&self) -> String {
         "AnyOf(...)".to_string()
     }
@@ -1092,6 +1108,11 @@ impl PyNot {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
+    /// Validate narrowing using the core's generic constraint rules.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Not(self.inner.clone()), child)
+    }
+
     fn __repr__(&self) -> String {
         "Not(...)".to_string()
     }
@@ -1131,10 +1152,8 @@ impl PyRange {
     /// Validate that another Range is a valid attenuation (narrowing) of this one.
     ///
     /// A child Range is valid if its bounds are within parent's bounds.
-    fn validate_attenuation(&self, child: &PyRange) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Range(self.inner.clone()), child)
     }
 
     /// Check if a value is within this range.
@@ -1231,10 +1250,8 @@ impl PyCidr {
     /// Validate that another Cidr is a valid attenuation (narrowing) of this one.
     ///
     /// A child Cidr is valid if its network is a subnet of parent's network.
-    fn validate_attenuation(&self, child: &PyCidr) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Cidr(self.inner.clone()), child)
     }
 
     fn __repr__(&self) -> String {
@@ -1317,10 +1334,8 @@ impl PyUrlPattern {
     /// Validate that another UrlPattern is a valid attenuation (narrowing) of this one.
     ///
     /// A child UrlPattern is valid if it matches a subset of URLs that parent matches.
-    fn validate_attenuation(&self, child: &PyUrlPattern) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::UrlPattern(self.inner.clone()), child)
     }
 
     fn __repr__(&self) -> String {
@@ -1381,10 +1396,8 @@ impl PyCel {
     /// Validate that another CEL is a valid attenuation (narrowing) of this one.
     ///
     /// CEL attenuation is conservative: requires exact match or logical AND extension.
-    fn validate_attenuation(&self, child: &PyCel) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Cel(self.inner.clone()), child)
     }
 
     /// Check if a value matches this CEL expression.
@@ -1440,10 +1453,8 @@ impl PyRegex {
     /// Validate that another Regex is a valid attenuation (narrowing) of this one.
     ///
     /// Regex attenuation is conservative: requires exact pattern match.
-    fn validate_attenuation(&self, child: &PyRegex) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Regex(self.inner.clone()), child)
     }
 
     /// Check if a value matches this regex pattern.
@@ -1727,10 +1738,8 @@ impl PySubpath {
     ///     >>> parent = Subpath("/data/reports")
     ///     >>> child = Subpath("/data")
     ///     >>> parent.validate_attenuation(child)  # Raises MonotonicityError
-    fn validate_attenuation(&self, child: &PySubpath) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Subpath(self.inner.clone()), child)
     }
 }
 
@@ -1967,10 +1976,8 @@ impl PyUrlSafe {
     ///     >>> parent = UrlSafe(allow_domains=["*.example.com"])
     ///     >>> child = UrlSafe(allow_domains=["api.example.com"])
     ///     >>> parent.validate_attenuation(child)  # OK
-    fn validate_attenuation(&self, child: &PyUrlSafe) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::UrlSafe(self.inner.clone()), child)
     }
 }
 
@@ -2145,10 +2152,8 @@ impl PyShlex {
     ///
     /// Raises:
     ///     MonotonicityError: If child would expand capabilities.
-    fn validate_attenuation(&self, child: &PyShlex) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Shlex(self.inner.clone()), child)
     }
 }
 
@@ -2407,6 +2412,24 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAn
     }
 }
 
+/// Validate constraint narrowing without issuing or verifying a warrant.
+///
+/// Returns None when Rust can establish that child narrows or equals parent;
+/// otherwise raises the core's typed exception. Checking is conservative:
+/// rejection can mean that containment cannot be established. Signatures,
+/// trusted roots, expiry, revocation, approvals, and PoP are not checked here.
+/// Actual delegation and authorization must still verify the complete warrant.
+#[pyfunction(name = "validate_attenuation")]
+fn py_validate_attenuation(parent: &Bound<'_, PyAny>, child: &Bound<'_, PyAny>) -> PyResult<()> {
+    validate_child_attenuation(py_to_constraint(parent)?, child)
+}
+
+fn validate_child_attenuation(parent: Constraint, child: &Bound<'_, PyAny>) -> PyResult<()> {
+    parent
+        .validate_attenuation(&py_to_constraint(child)?)
+        .map_err(to_py_err)
+}
+
 /// Convert a Python constraint object to a Rust Constraint.
 ///
 /// Uses `downcast` + `borrow()` rather than `extract()` so constraint instances
@@ -2503,6 +2526,37 @@ fn py_dict_to_constraint_set(
 }
 
 /// Convert a Python value to a ConstraintValue.
+/// Convert a policy literal for `Exact`, `OneOf`, or `NotOneOf`.
+///
+/// Binary values have no literal form. Without this check a `bytes` object
+/// would be read as a sequence and stored as a list of integers.
+fn py_to_literal_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
+    reject_binary_literal(obj)?;
+    py_to_constraint_value(obj)
+}
+
+fn reject_binary_literal(obj: &Bound<'_, PyAny>) -> PyResult<()> {
+    if obj.is_instance_of::<PyBytes>() || obj.is_instance_of::<PyByteArray>() {
+        return Err(py_validation_err(
+            "value must be str, int, float, bool, list, dict, or None",
+        ));
+    }
+    if let Ok(dict) = obj.cast::<PyDict>() {
+        for (_, value) in dict.iter() {
+            reject_binary_literal(&value)?;
+        }
+    } else if let Ok(list) = obj.cast::<PyList>() {
+        for item in list.iter() {
+            reject_binary_literal(&item)?;
+        }
+    } else if let Ok(tuple) = obj.cast::<PyTuple>() {
+        for item in tuple.iter() {
+            reject_binary_literal(&item)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
     // Extraction order matters for canonicalization parity with the Rust
     // core: Python ``bool`` inherits from ``int`` (``True == 1``), so
@@ -7303,6 +7357,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("WARRANT_HEADER", wire::WARRANT_HEADER)?;
 
     // Functions
+    m.add_function(wrap_pyfunction!(py_validate_attenuation, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_diff, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
     m.add_function(wrap_pyfunction!(py_encode_warrant_stack, m)?)?;
