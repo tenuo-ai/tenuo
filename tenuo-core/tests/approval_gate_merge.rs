@@ -944,3 +944,57 @@ fn test_subagent_attenuation_drops_gated_tool_and_gate() {
         .verify_chain(&[parent, child])
         .expect("parent->researcher chain should verify");
 }
+
+#[test]
+fn off_kind_negation_cannot_bypass_authorizer_approval_gate() {
+    use tenuo::constraints::{Exact, Not, NotOneOf, Wildcard};
+    use tenuo::planes::Authorizer;
+    let issuer = SigningKey::generate();
+    let approver = SigningKey::generate();
+    for constraint in [
+        Constraint::Not(Not {
+            constraint: Box::new(Exact::new("safe").into()),
+        }),
+        Constraint::NotOneOf(NotOneOf::new(["safe"])),
+    ] {
+        let mut gates = ApprovalGateMap::new();
+        gates.insert(
+            "action".into(),
+            ToolApprovalGate::with_args(BTreeMap::from([(
+                "value".into(),
+                ArgApprovalGate::Constraint(constraint),
+            )])),
+        );
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("value", Wildcard);
+        let warrant = Warrant::builder()
+            .capability("action", constraints)
+            .holder(issuer.public_key())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver.public_key()])
+            .min_approvals(1)
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+        let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+        for value in [
+            ConstraintValue::List(vec!["safe".into()]),
+            ConstraintValue::Boolean(false),
+        ] {
+            let args = HashMap::from([("value".into(), value)]);
+            let sig = warrant.sign(&issuer, "action", &args).unwrap();
+            assert!(matches!(
+                authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[]),
+                Err(tenuo::Error::ApprovalRequired { .. })
+            ));
+        }
+        let args = HashMap::from([("value".into(), "safe".into())]);
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+        authorizer
+            .authorize_one(&warrant, "action", &args, Some(&sig), &[])
+            .unwrap();
+    }
+}

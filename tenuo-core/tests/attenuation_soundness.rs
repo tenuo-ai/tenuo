@@ -1557,3 +1557,24 @@ fn deep_constraint_nesting_rejected_on_decode() {
         }
     }
 }
+
+#[test]
+fn total_globs_and_subpaths_allow_valid_attenuation() {
+    let parent = Constraint::Not(Not {
+        constraint: Box::new(Pattern::new("private-*").unwrap().into()),
+    });
+    let child = Constraint::Not(Not {
+        constraint: Box::new(Pattern::new("*").unwrap().into()),
+    });
+    parent.validate_attenuation(&child).unwrap();
+    let parent = Constraint::Any(Any {
+        constraints: vec![
+            Subpath::new("/data").unwrap().into(),
+            Subpath::new("/tmp").unwrap().into(),
+        ],
+    });
+    let child = Constraint::Any(Any {
+        constraints: vec![Subpath::new("/data/reports").unwrap().into()],
+    });
+    parent.validate_attenuation(&child).unwrap();
+}
