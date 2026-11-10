@@ -787,18 +787,6 @@ class MCPVerifier:
                 jsonrpc_error_code=-32602, error_type=error_type,
             ))
 
-        if input_schema is not None:
-            mismatched = argument_type_mismatches(input_schema, args)
-            if mismatched:
-                return _emit_and_return(MCPVerificationResult(
-                    allowed=False, tool=tool_name, clean_arguments={}, constraints={},
-                    denial_reason=(
-                        "Argument type does not match the tool schema: "
-                        + ", ".join(mismatched)
-                    ),
-                    jsonrpc_error_code=-32602, error_type="invalid_arguments",
-                ))
-
         # ------------------------------------------------------------------
         # Step 1: resolve the Tenuo envelope from _meta or arguments._tenuo.
         # ------------------------------------------------------------------
@@ -952,6 +940,18 @@ class MCPVerifier:
             constraints = strip_none_values(dict(args))
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
+
+        if input_schema is not None:
+            mismatched = argument_type_mismatches(input_schema, clean_arguments)
+            if mismatched:
+                return _emit_and_return(MCPVerificationResult(
+                    allowed=False, tool=tool_name, clean_arguments={}, constraints={},
+                    denial_reason=(
+                        "Argument type does not match the tool schema: "
+                        + ", ".join(mismatched)
+                    ),
+                    jsonrpc_error_code=-32602, error_type="invalid_arguments",
+                ))
 
         # ------------------------------------------------------------------
         # Step 2: handle missing warrant

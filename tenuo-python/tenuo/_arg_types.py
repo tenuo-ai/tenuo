@@ -7,21 +7,131 @@ would convert must not reach the tool. Adapters call
 :func:`argument_type_mismatches` with the tool's JSON Schema before
 authorizing and deny the call when it reports anything.
 
-Only JSON types are compared, not the schema's value constraints. Missing
-schemas leave validation to the framework. Supplied references and nested
-schemas must be readable within the depth limit or the call is denied.
+Value restrictions determine which union branches the framework could select;
+every such branch must preserve JSON types. Ambiguous unions can be denied.
+Missing schemas leave validation to the framework. Supplied references and
+nested schemas must be readable within the depth limit. Patterns use the
+linear Rust matcher, with 4 KiB patterns and 64 KiB input limits; unsupported
+syntax fails closed.
 """
 
 from __future__ import annotations
 
 import math
-import re
+from functools import lru_cache
 from typing import Any, Dict, List, Mapping, Optional
 
 from jsonschema import Draft202012Validator, FormatChecker, validators
+from jsonschema.exceptions import ValidationError
+from pydantic import ConfigDict, TypeAdapter
 from referencing import Registry
 
 _MAX_DEPTH = 16
+
+
+@lru_cache(maxsize=16)
+def _linear_regex(pattern: str) -> Any:
+    from tenuo_core import Regex
+
+    if len(pattern.encode("utf-8")) > 4096:
+        raise ValueError("schema pattern exceeds limit")
+    return Regex(pattern)
+
+
+def _linear_search(pattern: str, text: str) -> bool:
+    if len(text.encode("utf-8")) > 65536:
+        raise ValueError("schema pattern input exceeds limit")
+    return bool(_linear_regex(pattern).satisfies(text))
+
+
+def _safe_pattern(validator: Any, pattern: Any, value: Any, schema: Any) -> Any:
+    try:
+        _linear_regex(pattern)
+        if isinstance(value, str) and not _linear_search(pattern, value):
+            yield ValidationError("string does not match schema pattern")
+    except Exception:
+        raise ValueError("schema pattern cannot be checked safely") from None
+
+
+def _safe_pattern_properties(validator: Any, patterns: Any, value: Any, schema: Any) -> Any:
+    if not isinstance(value, Mapping):
+        return
+    for pattern, subschema in patterns.items():
+        for name, item in value.items():
+            try:
+                matches = _linear_search(pattern, str(name))
+            except Exception:
+                raise ValueError("schema property pattern cannot be checked safely") from None
+            if matches:
+                yield from validator.descend(item, subschema, path=name, schema_path=pattern)
+
+
+def _safe_additional_properties(validator: Any, additional: Any, value: Any, schema: Any) -> Any:
+    if not isinstance(value, Mapping):
+        return
+    properties = schema.get("properties", {})
+    patterns = schema.get("patternProperties", {})
+    for name, item in value.items():
+        try:
+            covered = name in properties or any(_linear_search(pattern, str(name)) for pattern in patterns)
+        except Exception:
+            raise ValueError("schema property pattern cannot be checked safely") from None
+        if not covered:
+            yield from validator.descend(item, additional, path=name)
+
+
+def _safe_unevaluated_properties(validator: Any, rule: Any, value: Any, schema: Any) -> Any:
+    # jsonschema's evaluated-key discovery uses Python re internally. Refuse
+    # this unsupported form rather than invoking a backtracking matcher.
+    if rule is not True and isinstance(value, Mapping):
+        raise ValueError("unevaluatedProperties cannot be checked safely")
+    return ()
+
+
+_SAFE_FORMATS = FormatChecker()
+
+
+@_SAFE_FORMATS.checks("regex", raises=Exception)
+def _regex_format(value: Any) -> bool:
+    return not isinstance(value, str) or _linear_regex(value) is not None
+
+
+def _safe_format(validator: Any, rule: Any, value: Any, schema: Any) -> Any:
+    if isinstance(value, str) and len(value.encode("utf-8")) > 65536:
+        raise ValueError("schema format input exceeds limit")
+    yield from Draft202012Validator.VALIDATORS["format"](validator, rule, value, schema)
+
+
+_SAFE_KEYWORDS = {
+    "pattern": _safe_pattern,
+    "patternProperties": _safe_pattern_properties,
+    "additionalProperties": _safe_additional_properties,
+    "unevaluatedProperties": _safe_unevaluated_properties,
+    "format": _safe_format,
+}
+
+
+def _schema_for_validation(schema: Any, depth: int = 0) -> Any:
+    if depth > 64:
+        raise ValueError("schema nesting exceeds limit")
+    if not isinstance(schema, Mapping):
+        return schema
+    result: Dict[str, Any] = {}
+    for key, value in schema.items():
+        if key == "$schema":
+            # evolve() must retain the safe validator instead of switching to
+            # a stock dialect validator with Python backtracking regexes.
+            continue
+        if key in {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}:
+            result[key] = {name: _schema_for_validation(rule, depth + 1) for name, rule in value.items()}
+        elif key in {"allOf", "anyOf", "oneOf", "prefixItems"}:
+            result[key] = [_schema_for_validation(rule, depth + 1) for rule in value]
+        elif key in {"items", "additionalItems", "additionalProperties", "contains", "not", "if", "then", "else", "propertyNames", "unevaluatedProperties", "unevaluatedItems"}:
+            result[key] = ([_schema_for_validation(rule, depth + 1) for rule in value]
+                           if isinstance(value, list) else _schema_for_validation(value, depth + 1))
+        else:
+            result[key] = value
+    return result
 
 
 def _literal_equal(left: Any, right: Any) -> bool:
@@ -89,11 +199,82 @@ def _no_remote_schema(uri: str) -> Any:
 
 _BranchValidator = validators.extend(
     Draft202012Validator,
+    validators=_SAFE_KEYWORDS,
     type_checker=Draft202012Validator.TYPE_CHECKER.redefine_many({
         name: (lambda checker, value, expected=name: _json_type_ok(expected, value))
         for name in ("boolean", "integer", "number", "string", "array", "object", "null")
     }),
 )
+
+_COERCIVE_SCALARS: Dict[str, Any] = {
+    "integer": TypeAdapter(int),
+    "number": TypeAdapter(float),
+    "boolean": TypeAdapter(bool),
+    "string": TypeAdapter(str, config=ConfigDict(coerce_numbers_to_str=True)),
+}
+
+
+def _candidate_type_ok(expected: str, value: Any) -> bool:
+    adapter = _COERCIVE_SCALARS.get(expected)
+    if adapter is None:
+        return _json_type_ok(expected, value)
+    try:
+        adapter.validate_python(value)
+        return True
+    except Exception:
+        return False
+
+
+def _candidate_literal_matches(value: Any, literal: Any) -> bool:
+    # String tags can rule out a discriminator branch. Numeric/boolean enums
+    # can coerce their input, so a raw mismatch cannot rule those branches out.
+    if literal is None:
+        return value is None
+    if isinstance(literal, str):
+        try:
+            return _COERCIVE_SCALARS["string"].validate_python(value) == literal
+        except Exception:
+            return False
+    return True
+
+
+def _candidate_const(validator: Any, expected: Any, value: Any, schema: Any) -> Any:
+    if not _candidate_literal_matches(value, expected):
+        yield ValidationError("branch tag does not match")
+
+
+def _candidate_enum(validator: Any, expected: Any, value: Any, schema: Any) -> Any:
+    if not any(_candidate_literal_matches(value, literal) for literal in expected):
+        yield ValidationError("branch tag does not match")
+
+
+_CandidateValidator = validators.extend(
+    Draft202012Validator,
+    validators={
+        **_SAFE_KEYWORDS,
+        "const": _candidate_const,
+        "enum": _candidate_enum,
+        "oneOf": Draft202012Validator.VALIDATORS["anyOf"],
+        # Removing a type error can change which conditional branch applies.
+        # Do not infer impossibility from negation or conditionals here.
+        "not": lambda *args: (),
+        "if": lambda *args: (),
+    },
+    type_checker=Draft202012Validator.TYPE_CHECKER.redefine_many({
+        name: (lambda checker, value, expected=name: _candidate_type_ok(expected, value))
+        for name in ("boolean", "integer", "number", "string", "array", "object", "null")
+    }),
+)
+
+
+def _potential_branch(schema: Any, value: Any, root: Mapping[str, Any]) -> bool:
+    try:
+        registry = Registry(retrieve=_no_remote_schema)  # type: ignore[call-arg]  # attrs-generated constructor
+        return _CandidateValidator(root, registry=registry).evolve(schema=schema).is_valid(value)
+    except Exception:
+        # Inability to disprove selection is not proof that a coercive branch
+        # is impossible. The strict branch check must still pass.
+        return True
 
 
 def _eligible_branch(schema: Any, value: Any, root: Mapping[str, Any]) -> bool:
@@ -103,7 +284,7 @@ def _eligible_branch(schema: Any, value: Any, root: Mapping[str, Any]) -> bool:
     # References remain local; validation must never retrieve remote schemas.
     try:
         registry = Registry(retrieve=_no_remote_schema)  # type: ignore[call-arg]  # attrs-generated constructor
-        validator = _BranchValidator(root, registry=registry, format_checker=FormatChecker())
+        validator = _BranchValidator(root, registry=registry, format_checker=_SAFE_FORMATS)
         return validator.evolve(schema=schema).is_valid(value)
     except Exception:
         return False
@@ -129,9 +310,9 @@ def _matches(schema: Any, value: Any, root: Mapping[str, Any], depth: int) -> bo
         pattern = resolved.get("pattern")
         if isinstance(pattern, str):
             try:
-                if re.search(pattern, value) is None:
+                if not _linear_search(pattern, value):
                     return False
-            except re.error:
+            except Exception:
                 return False
         if isinstance(resolved.get("minLength"), int) and len(value) < resolved["minLength"]:
             return False
@@ -141,9 +322,10 @@ def _matches(schema: Any, value: Any, root: Mapping[str, Any], depth: int) -> bo
     for key in ("anyOf", "oneOf"):
         options = resolved.get(key)
         if isinstance(options, list) and options:
-            if not any(
+            candidates = [option for option in options if _potential_branch(option, value, root)]
+            if not candidates or not all(
                 _eligible_branch(option, value, root) and _matches(option, value, root, depth + 1)
-                for option in options
+                for option in candidates
             ):
                 return False
     parts = resolved.get("allOf")
@@ -189,8 +371,8 @@ def _matches(schema: Any, value: Any, root: Mapping[str, Any], depth: int) -> bo
             if isinstance(patterns, Mapping):
                 for pattern, item_schema in patterns.items():
                     try:
-                        matches = re.search(pattern, str(name)) is not None
-                    except (TypeError, re.error):
+                        matches = _linear_search(pattern, str(name))
+                    except Exception:
                         return False
                     if matches:
                         covered = True
@@ -216,6 +398,10 @@ def argument_type_mismatches(schema: Any, arguments: Any) -> List[str]:
     """
     if not isinstance(schema, Mapping) or not isinstance(arguments, Mapping):
         return []
+    try:
+        schema = _schema_for_validation(schema)
+    except Exception:
+        return sorted(str(name) for name in arguments) or ["<arguments>"]
     if _matches(schema, arguments, schema, 0):
         return []
     mismatches = sorted(
