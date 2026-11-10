@@ -261,7 +261,7 @@ jobs:
           echo "=== Pip show tenuo ==="
           uv pip show tenuo || echo "tenuo not found in pip"
           echo "=== Site packages ==="
-          ls -la $(python -c "import site; print(site.getsitepackages()[0])") | head -20
+          ls -la "$(python -c 'import site; print(site.getsitepackages()[0])')" | sed -n '1,20p'
           echo "=== Installing other deps ==="
           uv pip install --system pytest pytest-asyncio hypothesis ruff mypy
           uv pip install --system langchain langchain-core langchain-openai langgraph
