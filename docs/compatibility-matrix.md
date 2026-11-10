@@ -35,7 +35,7 @@ TypeScript examples must pin that package version as well.
 | **LangGraph** | 1.0 on Python 3.10+; 0.2.0 on Python 3.9 | 1.x latest | 1.2.16 | Stable | Requires `langchain-core>=0.2.27`. On Python 3.10+, the extra also installs `langgraph-prebuilt>=1.0.2`, the first release with the `ToolNode(wrap_tool_call=)` hook that `TenuoToolNode` needs; on older lines it raises `RuntimeError` at construction. |
 | **MCP** | 1.9.4 | 1.x or 2.x | 1.30.0 and 2.3.0 | Stable | Python `tenuo.mcp` supports MCP SDK 1.9.4+ and 2.x (streamable-HTTP transport shape settled in 1.9.4). |
 | **FastMCP** | 3.2.1 | 3.x or 4.x | 3.4.11 and 4.1.3 | Stable | FastMCP 4 requires MCP SDK 2.x. Denials are a real `ToolResult` subclass (`isError=True` on the wire) on every line. |
-| **Google ADK** | 0.1.0 | latest | 2.12.0 | Stable | GuardBuilder / before_tool covered in CI. |
+| **Google ADK** | 0.1.0 | latest | 2.14.0 | Stable | Guard and resolver tests cover 0.1.0 and 2.14.0. Real plugin/Runner and code-executor refusal tests cover 2.14.0. |
 | **Temporal** | 1.33.0 | 1.x latest | 1.34.0 | Stable | The `temporal` extra and weekly minimum-version job both floor at 1.33.0. `SimplePlugin` is required by `TenuoTemporalPlugin`. |
 | **FastAPI** | 0.100.0 | latest | 0.159.1 | Stable | Works with Starlette 1.9.0. |
 | **A2A** | Starlette 0.27 / httpx 0.24 | latest | Starlette 1.9.0 / httpx 0.28.1 | Stable | No upstream A2A SDK dependency. The `a2a` extra installs Starlette (`A2AServer`) and httpx (`A2AClient`). Covered by the main CI suite, not the weekly matrix. |

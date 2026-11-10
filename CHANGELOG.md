@@ -30,59 +30,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unless explicitly opted into execution confined outside tool callbacks.
 
 - **Inbound PoP replay protection uses atomic nonce admission.** FastAPI and
-  A2A honor the configured process nonce store after verification. Retention
-  uses an immutable backend floor covering every shared Authorizer's complete
-  PoP validity interval; incompatible verifier windows are rejected. Configure
-  the floor before serving. Multiple FastAPI guards share admission only within one request;
-  A2A local denials do not consume the nonce. Python nonce backends must now
-  implement atomic `check_and_record(nonce_hex, ttl_seconds)`, for example
-  Redis `SET ... NX EX`. Separate `seen()` and `record()` operations are no
-  longer sufficient. Backends must declare and enforce namespace-wide
-  `retention_seconds`, `pop_window_secs`, and `max_clock_skew_seconds`; custom
-  stores must expose these settings and accept `min_ttl_seconds`. Retention
-  covers validity plus the declared clock-skew budget, so wider verifiers cannot
-  consume that safety margin. New stores default to 210 seconds, including a
-  60-second clock budget. Keep verifier clocks within the declared bound. All nonce backends also need atomic
-  owner-aware `reserve(nonce_hex, ttl_seconds, owner)` and `release(nonce_hex, owner)`
-  operations so failed admission, including a lost insertion reply, can release
-  only its own nonce reservation. A failed rollback remains fail-closed until expiry.
-  A2A nonce denials honor observe mode and retain denial metadata for receipts,
-  audit logs, and control-plane events in both enforcement modes. HTTP error
-  handling avoids duplicate control-plane denials and preserves verification
-  context when retrying a failed emission. FastAPI
-  reserves approvals before nonce admission, so an approval-backend failure
-  does not consume the presented PoP; nonce refusals release the current approval reservation.
+  A2A honor configured nonce stores after signature and authority verification.
+  Repeated FastAPI guards share admission within one request. Approval and JTI
+  admission failures release only their own reservations, including a nonce
+  insertion whose backend reply was lost. Failed cleanup remains fail-closed.
+  Shared namespaces enforce immutable retention, PoP bucket size, and clock-skew
+  settings. New stores retain nonces for 210 seconds, including a 60-second
+  clock budget. A2A replay denials preserve signed receipts, audit evidence,
+  and observe-mode behavior without duplicate HTTP control-plane events.
 
-- **Negated constraints reject values of unrelated kinds.** `Not` and
-  `NotOneOf` now judge only the kinds their inner rule or exclusion entries
-  cover: for example, negating a string rule cannot admit a list, and negating
-  a numeric rule cannot admit a numeric string. NaN and infinities are rejected
-  by negated constraints. `Not(Subpath(...))` accepts only string arguments;
-  it does not turn a partially matching path list into an allowed call.
-  Approval gates require approval for off-kind negated arguments instead of
-  treating them as an ungated call. Parser errors still reject the call even
-  when approvals are supplied. Gate delegation retains negated subrules so
-  removing an off-kind requirement cannot create a new exemption. Gates with
-  off-kind negation evaluate every composite branch, and their delegation
-  retains fallible subrules, so approvals cannot override a discarded parser error.
-  Gate maps containing negation evaluate all argument gates and composite
-  branches before returning, retaining the first approval reason. Positive-only
-  gate maps keep their existing ordered evaluation. Delegation preserves this
-  error-checking behavior even when negation and parsers occur in different arguments.
-  Empty conjunctions cannot delegate to exact values or be removed from
-  error-preserving gate policies.
-  Delegation cannot add accepted value kinds through negation. Python's
-  annotation and A2A checks preserve the argument's original type, and the
-  same core checks are included in the TypeScript WASM build. Upgrade
-  enforcement points together before relying on these negation semantics.
-  Composite branches inside `Not` must all evaluate successfully: unsupported
-  features, malformed rules, and evaluation errors are never hidden by
-  short-circuiting. Put error-guarding CEL conditions in the CEL expression
-  itself when conditional evaluation is required.
-  Negated delegation must retain potentially failing inner rules unchanged;
-  removing a parsing or evaluation rule cannot discard an error-based denial.
-  Positive `Any` delegation preserves ordered alternatives that can fail,
-  because dropping or reordering them can expose a previously unreachable allow.
+- **Negated constraints reject unrelated value kinds.** `Not` and `NotOneOf`
+  judge only kinds covered by their inner rules or exclusion entries. Negating
+  a string rule cannot admit a list, and negating a numeric rule cannot admit
+  a numeric string. NaN and infinities are rejected. Composite branches inside
+  `Not` must all evaluate successfully, so short-circuiting cannot hide parser,
+  unsupported-feature, or evaluation errors. Approval gates containing negation
+  check every argument and branch; approvals cannot override these errors.
+  Delegation preserves accepted kinds, fallible rules, and ordered alternatives
+  whose evaluation can fail. Positive-only gates retain their ordered behavior.
+  Python and the rebuilt TypeScript WASM use the same core semantics.
 
 - **An integral number matches the same way however it is spelled.**
   `ConstraintValue` compared `Integer(1000)` and `Float(1000.0)` as different
@@ -110,6 +76,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Authorization uses the arguments the handler receives.** FastAPI binds
+  positional, keyword, default, and variadic arguments from the handler's
+  signature. Temporal activity and workflow checks bind named arguments and
+  defaults consistently and reject ambiguous or conflicting signed inputs.
+- **Adapters preserve tool-schema JSON types.** Numeric strings, booleans,
+  arrays, and objects cannot be coerced into a different authorized type.
+  Checks cover supported schema alternatives, defaults, and discovered MCP
+  tools, with bounded validation work and local schema references only.
+- **A2A verifies the complete delegation chain before replay admission.**
+  Every link respects issuer trust, revocation, depth, and holder identity;
+  DID key matching uses canonical Ed25519 key material.
+- **CrewAI and OpenAI preserve execution policy.** CrewAI rejects adapter
+  agents whose execution bypasses its tool hooks. OpenAI specialist handoffs
+  retain restrictive policies, and guarded tools require constrained arguments
+  in synchronous and asynchronous calls.
 - **CEL attenuation compares parsed expressions.** Whitespace differences in
   equivalent policies no longer prevent attenuation; different expressions
   remain subject to the existing conservative attenuation rules.
@@ -155,6 +136,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
+- Upgrade negated-policy enforcement points together. Values of unrelated
+  kinds and non-finite numbers now fail negated constraints. Keep conditional
+  CEL error guards inside the CEL expression; an outer composite under `Not`
+  no longer short-circuits away a parsing or evaluation error.
+- Custom Python nonce backends must expose immutable `retention_seconds`,
+  `pop_window_secs`, and `max_clock_skew_seconds`, atomic `check_and_record`,
+  and owner-aware `reserve` / conditional `release`. Custom stores must accept
+  `min_ttl_seconds`. Configure shared namespaces before serving and retain
+  entries for the longest verifier validity interval plus the declared clock
+  budget. Wall-clock expiry backends need extra TTL padding to preserve the
+  elapsed-time floor. Keep actual clocks within the configured bound.
+- Prefer Google ADK `warrant_resolver` over model-writable session state.
+  Static warrants cannot be combined with a resolver, and a missing result
+  denies the call even with local allow rules. Plugins reject code executors
+  unless `allow_code_execution=True` explicitly accepts execution confined by
+  other means.
 - Upgrade numeric-policy enforcement points together. Integral numeric values
   now compare by value across integer and floating-point spellings, including
   deny rules, approval gates, and CEL equality and membership.
