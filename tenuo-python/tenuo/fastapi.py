@@ -523,6 +523,7 @@ class TenuoGuard:
         pop_signature: bytes,
         parents: Optional[List] = None,
         approvals: Optional[List] = None,
+        replay_admissions: Optional[Any] = None,
     ) -> EnforcementResult:
         """
         Adapter for FastAPI's client-side PoP pattern.
@@ -577,6 +578,8 @@ class TenuoGuard:
                 warrant_chain=parents or [],
                 approval_handler=self._approval_handler,
                 approvals=approvals,
+                check_replay=True,
+                replay_admissions=replay_admissions,
             )
             from tenuo.receipts import collect_enforcement_receipt
             collect_enforcement_receipt(
@@ -694,6 +697,9 @@ class TenuoGuard:
 
         # 5. Authorize using Adapter (include delegation chain parents if present)
         parents = getattr(request.state, "tenuo_parents", [])
+        from tenuo.nonce import _RequestNonceAdmissions
+
+        replay_admissions = request.scope.setdefault("tenuo.nonce_admissions", _RequestNonceAdmissions())
         try:
             enforcement = self._enforce_with_pop_signature(
                 warrant=warrant,
@@ -702,6 +708,7 @@ class TenuoGuard:
                 pop_signature=pop_sig_bytes,
                 parents=parents,
                 approvals=decoded_approvals,
+                replay_admissions=replay_admissions,
             )
         except ApprovalRequired as approval_required:
             req = approval_required.request
@@ -875,32 +882,73 @@ def _coerce(field: Any, raw: Any) -> Any:
     return raw
 
 
+def _declared_params(dependant: Any, kind: str) -> List[Any]:
+    """Params of ``kind`` declared by the endpoint or any of its dependencies."""
+    found: List[Any] = []
+    seen: set = set()
+    stack = [dependant]
+    while stack:
+        node = stack.pop()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        found.extend(getattr(node, kind, None) or [])
+        stack.extend(getattr(node, "dependencies", None) or [])
+    return found
+
+
+def _same_argument_view(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_same_argument_view(a, b) for a, b in zip(left, right))
+    return left == right
+
+
 def _default_extract_args(request: Request) -> Dict[str, Any]:
-    """Path + query params, typed from the matched endpoint's own signature.
+    """Path + query params, typed from the endpoint and its dependencies.
 
     The guard should authorize exactly what the handler receives, and PoP
     signs typed values, so ``?limit=5`` for ``limit: int`` is checked as
     ``5``, not ``"5"``. Params the endpoint does not declare stay strings.
+
+    A path param keeps its value when the query string repeats its name,
+    since the handler receives the path value. A list-typed query param is
+    checked with every value, wherever in the dependency tree it is declared.
     """
-    args: Dict[str, Any] = {**request.path_params, **dict(request.query_params)}
+    args: Dict[str, Any] = {**dict(request.query_params), **request.path_params}
     dependant = getattr(request.scope.get("route"), "dependant", None)
     if dependant is None:
         return args
 
-    for field in getattr(dependant, "path_params", []):
-        key = field.alias
-        if key in args:
-            args[key] = _coerce(field, args[key])
+    declared: Dict[str, Any] = {}
 
-    for field in getattr(dependant, "query_params", []):
+    def record(key: str, value: Any) -> None:
+        if key in declared and not _same_argument_view(declared[key], value):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Ambiguous argument {key!r} has different handler/dependency values; "
+                "configure a custom args_extractor that names each value explicitly.",
+            )
+        declared[key] = value
+        args[key] = value
+
+    for field in _declared_params(dependant, "path_params"):
+        key = field.alias
+        if key in request.path_params:
+            record(key, _coerce(field, request.path_params[key]))
+
+    for field in _declared_params(dependant, "query_params"):
         key = field.alias
         if key not in request.query_params:
             continue
+        if key in request.path_params and key not in declared:
+            record(key, request.path_params[key])
         annotation = getattr(field.field_info, "annotation", None) or getattr(field, "outer_type_", None)
         if _is_list_annotation(annotation):
-            args[key] = _coerce(field, request.query_params.getlist(key))
+            record(key, _coerce(field, request.query_params.getlist(key)))
         else:
-            args[key] = _coerce(field, args[key])
+            record(key, _coerce(field, request.query_params[key]))
     return args
 
 

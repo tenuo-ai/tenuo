@@ -222,6 +222,58 @@ def _observe_unresolved(
     return True
 
 
+def _argument_type_denial(
+    request: Any,
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    control_plane: Optional[Any],
+    request_id: str,
+    debug: bool,
+) -> Optional[Any]:
+    """Deny a call whose arguments the tool would convert before running.
+
+    Authorization sees the arguments as the model sent them; the tool then
+    validates them against its schema and may convert ``"22"`` to ``22`` or
+    ``"off"`` to ``False``. A value of another JSON type than the schema
+    declares is refused here, so the tool only runs with the values that
+    were authorized. Returns the denial message, or ``None`` to continue.
+    """
+    from ._arg_types import argument_type_mismatches, tool_input_schema
+    from ._enforcement import EnforcementResult, _apply_observe_mode
+    from .config import should_block_violation
+
+    mismatched = argument_type_mismatches(
+        tool_input_schema(getattr(request, "tool", None)), tool_args
+    )
+    if not mismatched:
+        return None
+    reason = "argument type does not match the tool schema: " + ", ".join(mismatched)
+    result = EnforcementResult(
+        allowed=False,
+        tool=tool_name,
+        arguments=dict(tool_args or {}),
+        denial_reason=reason,
+        constraint_violated=mismatched[0],
+        error_type="constraint_violation",
+    )
+    blocking = should_block_violation()
+    if not blocking:
+        result = _apply_observe_mode(result)
+    if control_plane:
+        try:
+            control_plane.emit_for_enforcement(result, request_id=request_id)
+        except Exception:
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+    if not blocking:
+        return None
+    logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {reason}")
+    return ToolMessage(
+        content=f"Authorization denied: {reason}" if debug else f"Authorization denied (ref: {request_id})",
+        tool_call_id=request.tool_call.get("id", "unknown"),
+        status="error",
+    )
+
+
 def _authorize_tool_request(
     request: Any,
     handler: Callable[..., Any],
@@ -255,6 +307,12 @@ def _authorize_tool_request(
     tool_call = request.tool_call
     tool_name = tool_call.get("name", "unknown")
     tool_args = tool_call.get("args", {})
+
+    type_denial = _argument_type_denial(
+        request, tool_name, tool_args, control_plane, request_id, debug
+    )
+    if type_denial is not None:
+        return type_denial
 
     # A malformed chain is resolved here, alongside the warrant, so it denies
     # the call rather than silently falling back to a leaf-only check.
@@ -344,6 +402,12 @@ async def _authorize_tool_request_async(
     tool_call = request.tool_call
     tool_name = tool_call.get("name", "unknown")
     tool_args = tool_call.get("args", {})
+
+    type_denial = _argument_type_denial(
+        request, tool_name, tool_args, control_plane, request_id, debug
+    )
+    if type_denial is not None:
+        return type_denial
 
     try:
         bw = bw_factory(request)

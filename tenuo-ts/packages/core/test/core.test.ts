@@ -602,6 +602,21 @@ describe("errors", () => {
 });
 
 describe("authorize through WASM", () => {
+  it("rejects off-kind exclusion inputs before executing the tool", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    let executions = 0;
+    const tool = tenuo.tool(
+      { execute: async ({ value }: { value: unknown }) => { executions += 1; return value; } },
+      { capability: "check_value", allow: { value: notOneOf(["prod"]) } },
+    );
+    const session = tenuo.session({ tools: [tool] });
+    await expect(tool.execute({ value: "staging" }, { session })).resolves.toBe("staging");
+    for (const value of ["prod", ["prod"], [], 5, false, {}, null]) {
+      await expect(tool.execute({ value }, { session })).rejects.toThrow(TenuoError);
+    }
+    expect(executions).toBe(1);
+  });
+
   it("allows a path under the session and denies /etc/passwd without calling execute", async () => {
     const tenuo = createTenuo({ root: createTenuo.devRoot() });
     tenuo.ready();

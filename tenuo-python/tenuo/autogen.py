@@ -29,6 +29,7 @@ from typing import (
     Union,
 )
 
+from ._arg_types import argument_type_mismatches
 from ._builder import BaseGuardBuilder
 from ._enforcement import (
     EnforcementResult,
@@ -299,10 +300,21 @@ class _Guard:
 
         raise TypeError("guard_tools expects a list/tuple of tools or a dict of name->tool")
 
-    def guard_stream(self, stream: Iterable[Any]) -> Iterable[Any]:
+    def guard_stream(
+        self,
+        stream: Iterable[Any],
+        tool_schemas: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    ) -> Iterable[Any]:
         """
         Buffer-verify-emit streaming defense (TOCTOU safe).
         Expects chunks with .choices[].delta.tool_calls[].function.arguments (string).
+
+        The stream carries the arguments as the model wrote them. Whatever
+        runs the tool afterwards may validate them leniently and convert
+        ``"22"`` to ``22`` or ``"off"`` to ``False``. Pass ``tool_schemas``
+        (tool name to input JSON Schema) so that an argument of another JSON
+        type than its schema declares is denied here, or also wrap the tool
+        with :meth:`guard_tool`, which checks the converted values.
 
         Buffered tool calls are verified at end of stream, so tool-call
         deltas are never emitted unverified. Each allowed call carries its
@@ -367,6 +379,15 @@ class _Guard:
                     )
 
                 try:
+                    mismatched = argument_type_mismatches(
+                        (tool_schemas or {}).get(name), args_dict
+                    )
+                    if mismatched:
+                        raise ConstraintViolation(
+                            field=mismatched[0],
+                            reason="argument type does not match the tool schema",
+                            value=args_dict.get(mismatched[0]),
+                        )
                     self._authorize(name, args_dict)
                     final_args[cid] = {"name": name, "args": args_dict}
                 except (
