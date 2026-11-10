@@ -153,6 +153,10 @@ check covers only the constraint relationship. Warrant issuance and receiving
 boundaries still verify delegation, signatures, trusted roots, expiry,
 revocation, approvals, and proof of possession as applicable.
 
+Scoped `grant()` and its `preview()` use the same native containment check.
+Literal shorthand means `Exact(value)`, including strings containing `*`;
+use an explicit `Pattern` when you intend a glob.
+
 ## Constraint Types
 
 ### Wildcard

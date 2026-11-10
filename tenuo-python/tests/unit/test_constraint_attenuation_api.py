@@ -9,6 +9,7 @@ from tenuo import (
     All,
     AnyOf,
     Cidr,
+    Capability,
     Contains,
     Exact,
     Not,
@@ -25,7 +26,10 @@ from tenuo import (
     UrlSafe,
     Warrant,
     Wildcard,
+    grant,
+    key_scope,
     validate_attenuation,
+    warrant_scope,
 )
 from tenuo.exceptions import (
     ExactValueMismatch,
@@ -107,3 +111,41 @@ def test_preflight_and_instance_method_match_real_grants(parent, child, error):
 def test_invalid_arguments_are_reported_not_converted_to_a_boolean(parent, child):
     with pytest.raises(ValidationError):
         validate_attenuation(parent, child)
+
+
+@pytest.mark.parametrize("parent,child,error", PAIRS)
+def test_scoped_preview_and_grant_use_native_containment(parent, child, error):
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("t", x=parent).holder(holder.public_key).ttl(300).mint(issuer)
+    with warrant_scope(warrant), key_scope(holder):
+        scope = grant(Capability("t", x=child), ttl=60)
+        if error is None:
+            assert scope.preview().error is None
+            with scope as delegated:
+                assert delegated.capabilities["t"]["x"] is not None
+        else:
+            assert scope.preview().error is not None
+            with pytest.raises(MonotonicityError):
+                with scope:
+                    pytest.fail("invalid constraint narrowing entered a scope")
+
+
+@pytest.mark.parametrize("child", [1, Exact(1), [1], {"x": True}, "O'Reilly", Exact("O'Reilly")])
+def test_scoped_grants_preserve_literal_shorthand_and_structured_set_members(child):
+    parent = OneOf([1, [1], {"x": True}, "O'Reilly"])
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("t", x=parent).holder(holder.public_key).ttl(300).mint(issuer)
+    with warrant_scope(warrant), key_scope(holder):
+        scope = grant(Capability("t", x=child), ttl=60)
+        assert scope.preview().error is None
+        with scope as delegated:
+            assert delegated.capabilities["t"]["x"].satisfies(child.value if isinstance(child, Exact) else child)
+
+
+def test_scoped_preflight_never_treats_literals_as_globs_or_uses_python_equality():
+    from tenuo.scoped import _is_constraint_contained
+
+    assert not _is_constraint_contained("anything", "*")
+    assert _is_constraint_contained("*", "*")
+    assert not _is_constraint_contained(True, OneOf([1]))
+    assert not _is_constraint_contained(object(), Wildcard())

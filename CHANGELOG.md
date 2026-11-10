@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   numbers, booleans, null, lists, and objects. Their convenience checks use the
   same core semantics as `satisfies`, and literal delegation shorthand works
   for non-string values.
+- Scoped `grant()` and `preview()` use native constraint containment instead
+  of Python string and set heuristics, preserving typed and quoted literals.
 
 ### Added
 
