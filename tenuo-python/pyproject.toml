@@ -42,6 +42,7 @@ classifiers = [
 dependencies = [
     "PyYAML>=6.0",     # Used in langchain.py config loading
     "pydantic>=2.0",   # Used for LangChain tool schemas
+    "jsonschema[format]>=4.23.0",  # Select valid schema branches before argument authorization
 ]
 
 [project.optional-dependencies]
@@ -117,6 +118,7 @@ dev = [
     "mypy>=1.0",
     "types-PyYAML",
     "types-requests",
+    "types-jsonschema",
     # Examples/Demos
     "uvicorn",
     "langchain-openai",

@@ -369,7 +369,7 @@ class ResearchFlow(Flow):
     @guarded_step(
         allow={"web_search": {"query": Wildcard()}},
         ttl="10m",
-        strict=True  # Fail if unguarded tools detected
+        strict=True  # Raise for calls reported with report_unguarded_call()
     )
     def research_step(self, state):
         return self.research_crew.kickoff(state)
@@ -393,12 +393,14 @@ class ResearchFlow(Flow):
 | `warrant` | Warrant for Tier 2 |
 | `signing_key` | Key for PoP signature |
 | `ttl` | Step TTL like "10m", "1h", "1d" |
-| `strict` | Fail if unguarded calls detected |
+| `strict` | Raise for tool calls reported with `report_unguarded_call()` |
 | `audit` | Audit callback |
 
 ### Strict Mode
 
-When `strict=True`, the decorator tracks all tool calls during step execution. If any unguarded tool is called, `UnguardedToolError` is raised after the step completes.
+When `strict=True`, `UnguardedToolError` is raised after the step completes if any tool call was reported with `tenuo.crewai.report_unguarded_call()` during it.
+
+Strict mode does not detect unguarded calls on its own. CrewAI reports nothing for tool calls that bypass its `before_tool_call` hooks, such as tools run by agent adapters (`OpenAIAgentAdapter`, `LangGraphAgentAdapter`), and enabling strict mode emits a warning saying so. `GuardedCrew` refuses adapter agents outright.
 
 ```python
 from tenuo.crewai import get_active_guard, is_strict_mode
@@ -782,7 +784,7 @@ Moving from unprotected CrewAI to Tenuo GuardedCrew:
 1. **Audit Phase**: Run with `tenuo.configure(mode="observe")` and add `.audit(callback)`. Calls the policy would deny still run; each one is logged as `OBSERVE: would deny <tool>: <reason>` and audited as a `DENY` with `observed=True`. `.on_denial("log")` is not an audit mode: in enforce mode a CrewAI hook blocks denied calls whatever `on_denial` is set to. Use `guard.explain(tool, args)` to check one call without running the crew.
 2. **Policy Generation**: Map the audit logs to agent roles. Identify which tools are actually used by each agent.
 3. **Constraint Hardening**: Replace `Wildcard()` with `Pattern` or `Subpath` based on observed data (e.g., if agent only reads `/tmp`, restrict to `/tmp`).
-4. **Enforcement**: Remove `mode="observe"` (enforce is the default), keep `.on_denial("raise")`, and enable `.strict()` to prevent future drift.
+4. **Enforcement**: Remove `mode="observe"` (enforce is the default), keep `.on_denial("raise")`, and keep every agent a native `crewai.Agent` so its tool calls reach the guard.
 
 ## Performance Considerations
 
@@ -836,7 +838,7 @@ A: Ensure you are wrapping a standard CrewAI `Tool`. If using custom classes, th
 
 ### Debugging Guide
 
-1. **Enable Strict Mode:** `GuardedCrew(...).strict()` will surface lurking unguarded calls.
+1. **Check agent types:** tool calls made by agent adapters do not reach the guard. `GuardedCrew` refuses adapter agents; with `guard.register()`, use native `crewai.Agent` instances.
 2. **Audit Logs:** Use `.audit(print)` to see exactly what Tenuo sees.
 3. **Introspection:** Print `guard.explain("tool_name", {"arg": "val"})` to dry-run authorization logic.
 

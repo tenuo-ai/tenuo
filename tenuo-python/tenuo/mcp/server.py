@@ -147,6 +147,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from .._arg_types import argument_type_mismatches
 from .._pop_canonicalize import strip_none_values
 from ..meta import _capture_arguments
 from ..approval import ApprovalRequired
@@ -697,6 +698,7 @@ class MCPVerifier:
         tool_name: str,
         arguments: Optional[Dict[str, Any]],
         meta: Any = None,
+        input_schema: Optional[Mapping[str, Any]] = None,
     ) -> MCPVerificationResult:
         """Verify a tool call against the embedded Tenuo warrant.
 
@@ -724,6 +726,12 @@ class MCPVerifier:
                 model — 1.x supplies a model and 2.x a dict. It may carry a
                 ``tenuo`` key with the warrant and PoP signature; when absent,
                 the verifier checks ``arguments._tenuo``.
+
+            input_schema: The tool's input JSON Schema, when the server will
+                validate ``clean_arguments`` against it before running the
+                tool. An argument whose JSON type differs from the schema is
+                denied with ``-32602``, because lenient validation would
+                convert it (``"off"`` to ``False``) after this check.
 
         Returns:
             :class:`MCPVerificationResult` with ``allowed=True`` on success,
@@ -933,6 +941,18 @@ class MCPVerifier:
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
 
+        if input_schema is not None:
+            mismatched = argument_type_mismatches(input_schema, clean_arguments)
+            if mismatched:
+                return _emit_and_return(MCPVerificationResult(
+                    allowed=False, tool=tool_name, clean_arguments={}, constraints={},
+                    denial_reason=(
+                        "Argument type does not match the tool schema: "
+                        + ", ".join(mismatched)
+                    ),
+                    jsonrpc_error_code=-32602, error_type="invalid_arguments",
+                ))
+
         # ------------------------------------------------------------------
         # Step 2: handle missing warrant
         # ------------------------------------------------------------------
@@ -1129,7 +1149,9 @@ class MCPVerifier:
                 _ns = _get_ns()
             replayed = True
             try:
-                replayed = _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig)
+                from ..nonce import _admit_verified_pop
+
+                replayed = _ns is not None and pop_sig is not None and not _admit_verified_pop(_ns, pop_sig, self._authorizer)
             finally:
                 # No action runs on replay denial or a nonce backend failure.
                 # Release only this attempt's reservation so a fresh PoP can

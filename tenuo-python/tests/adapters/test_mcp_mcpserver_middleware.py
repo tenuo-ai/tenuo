@@ -320,9 +320,11 @@ async def test_explicit_signed_default_is_allowed_once(guarded_server, keys):
 
 @pytest.mark.asyncio
 async def test_final_argument_check_does_not_consume_nonce_twice(guarded_server, keys):
+    from tenuo.nonce import NonceStore
+
     server, authorization = guarded_server
-    store = MagicMock()
-    store.check_and_record.return_value = True
+    store = NonceStore()
+    store.check_and_record = MagicMock(wraps=store.check_and_record)
     authorization._verifier._nonce_store = store
     effects = []
 

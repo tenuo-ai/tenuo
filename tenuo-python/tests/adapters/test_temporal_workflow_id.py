@@ -341,3 +341,144 @@ def test_missing_temporal_workflow_identity_fails_closed():
     headers = s.schedule("refund-order-123")
     with pytest.raises(ApplicationError, match="complete workflow identity"):
         s.execute(headers, "refund-order-123", namespace=None)
+
+
+def copy_file(src: str, dst: str) -> str:
+    return f"copied {src} to {dst}"
+
+
+def _with_arg_keys(headers, keys: bytes):
+    tampered = dict(headers)
+    tampered[TENUO_ARG_KEYS_HEADER] = type(headers[TENUO_ARG_KEYS_HEADER])(data=keys)
+    return tampered
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        b"amount,order_id",  # swapped
+        b"order_id,order_id",  # duplicate
+        b"order_id",  # too few
+        b"order_id,amount,extra",  # too many
+        b"order_id,total",  # renamed
+        b"",  # empty
+        b"\xff\xfe",  # not UTF-8
+    ],
+)
+def test_arg_keys_header_must_name_the_dispatched_parameters(keys):
+    s = Setup()
+    headers = _with_arg_keys(s.schedule("refund-order-123"), keys)
+
+    with pytest.raises(ApplicationError, match="x-tenuo-arg-keys"):
+        s.execute(headers, "refund-order-123")
+
+
+def test_arg_keys_header_cannot_rename_arguments_of_another_function():
+    s = Setup()
+    s.warrant = (
+        Warrant.mint_builder()
+        .holder(s.holder.public_key)
+        .capability("copy_file", src=Pattern("/data/*"), dst=Pattern("/tmp/*"))
+        .ttl(600)
+        .mint(s.issuer)
+    )
+    # Signed as src=/data/a, dst=/tmp/b, then presented with the names swapped
+    # so the worker would run copy_file(src="/tmp/b", dst="/data/a").
+    headers = s.schedule("wf", fn=copy_file, args=("/data/a", "/tmp/b"))
+    headers = _with_arg_keys(headers, b"dst,src")
+
+    with pytest.raises(ApplicationError, match="x-tenuo-arg-keys"):
+        s.execute(headers, "wf", fn=copy_file, args=("/tmp/b", "/data/a"))
+
+
+def test_worker_rejects_a_positional_name_collision_before_dispatch():
+    def activity(arg1, *rest):
+        return arg1
+
+    s = Setup()
+    headers = _with_arg_keys(s.schedule("wf"), b"arg1")
+    with pytest.raises(ApplicationError, match="argument name"):
+        s.execute(headers, "wf", fn=activity, args=("secret", "public"))
+
+
+def test_positional_header_cannot_permute_worker_parameter_names():
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    def activity(arg1, arg0):
+        return arg1, arg0
+
+    inbound = TenuoWorkerInterceptor(Setup().config).intercept_activity(MagicMock())
+    with pytest.raises(TenuoContextError, match="reassign"):
+        inbound._extract_arguments(
+            ExecuteActivity(activity, ("/data/a", "/tmp/b"), {}),
+            {TENUO_ARG_KEYS_HEADER: b"arg0,arg1"},
+        )
+
+
+def test_worker_without_a_function_reference_does_not_trust_caller_aliases():
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    inbound = TenuoWorkerInterceptor(Setup().config).intercept_activity(MagicMock())
+    inp = ExecuteActivity(None, ("/private", "/public"), {})
+    with pytest.raises(TenuoContextError, match="without the dispatched"):
+        inbound._extract_arguments(inp, {TENUO_ARG_KEYS_HEADER: b"destination,source"})
+    assert inbound._extract_arguments(inp, {TENUO_ARG_KEYS_HEADER: b"arg0,arg1"}) == {
+        "arg0": "/private", "arg1": "/public",
+    }
+
+
+def test_legacy_dict_view_does_not_discard_additional_arguments():
+    inbound = TenuoWorkerInterceptor(Setup().config).intercept_activity(MagicMock())
+    inp = ExecuteActivity(None, ({"path": "/public"}, "/private"), {})
+    assert inbound._extract_arguments(inp) == {"arg0": {"path": "/public"}, "arg1": "/private"}
+
+
+def test_unbound_caller_and_bound_worker_round_trip():
+    from temporalio import activity
+
+    from tenuo.temporal._decorators import tool
+    from tenuo.temporal._state import _activity_fn_override
+
+    class Activities:
+        @activity.defn
+        @tool("issue_refund")
+        def refund(self, destination: str):
+            return destination
+
+    s = Setup()
+    s.warrant = Warrant.mint_builder().holder(s.holder.public_key).capability(
+        "issue_refund", destination=Pattern("/data/*"),
+    ).ttl(600).mint(s.issuer)
+    worker_fn = Activities().refund
+    s.config._activity_registry["issue_refund"] = worker_fn
+    token = _activity_fn_override.set(Activities.refund)
+    try:
+        headers = s.schedule("wf", fn=None, args=("/data/a",))
+    finally:
+        _activity_fn_override.reset(token)
+    assert headers[TENUO_ARG_KEYS_HEADER].data == b"destination"
+    body = s.execute(headers, "wf", fn=Activities().refund, args=("/data/a",))
+    body.execute_activity.assert_awaited_once()
+    assert body.execute_activity.call_args.args[0].args == ("/data/a",)
+
+
+def test_static_activity_self_parameter_signing_and_worker_round_trip():
+    from temporalio import activity
+
+    class StaticActivities:
+        @staticmethod
+        @activity.defn
+        def issue_refund(self: str, destination: str):
+            return self, destination
+
+    s = Setup()
+    s.warrant = Warrant.mint_builder().holder(s.holder.public_key).capability(
+        "issue_refund", {"self": Exact("sender"), "destination": Pattern("/data/*")},
+    ).ttl(600).mint(s.issuer)
+    s.config._activity_registry["issue_refund"] = StaticActivities.issue_refund
+    args = ("sender", "/data/a")
+    headers = s.schedule("wf", fn=StaticActivities.issue_refund, args=args)
+    assert headers[TENUO_ARG_KEYS_HEADER].data == b"self,destination"
+    body = s.execute(headers, "wf", fn=StaticActivities.issue_refund, args=args)
+    body.execute_activity.assert_awaited_once()
+    assert body.execute_activity.call_args.args[0].args == args

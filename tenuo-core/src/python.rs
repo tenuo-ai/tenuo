@@ -730,7 +730,7 @@ impl PyNotOneOf {
             .map_err(to_py_err)
     }
 
-    /// Check if a value is allowed (not in the excluded set).
+    /// Check whether a string passes the core exclusion constraint.
     ///
     /// This is the runtime check used for Tier 1 authorization.
     ///
@@ -738,7 +738,8 @@ impl PyNotOneOf {
     ///     value: Value to check
     ///
     /// Returns:
-    ///     True if value is NOT in the excluded set, False if it is excluded
+    ///     True if the constraint judges strings and the value is not excluded.
+    ///     Non-string exclusion lists decoded from warrants reject strings.
     ///
     /// Example:
     ///     >>> n = NotOneOf(["admin", "root"])
@@ -748,7 +749,7 @@ impl PyNotOneOf {
     ///     False
     fn allows(&self, value: &str) -> bool {
         let cv = ConstraintValue::String(value.to_string());
-        !self.inner.excluded.contains(&cv)
+        self.inner.matches(&cv).unwrap_or(false)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
