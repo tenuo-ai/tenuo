@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself when conditional evaluation is required.
   Negated delegation must retain potentially failing inner rules unchanged;
   removing a parsing or evaluation rule cannot discard an error-based denial.
+  Positive `Any` delegation preserves ordered alternatives that can fail,
+  because dropping or reordering them can expose a previously unreachable allow.
 
 - **An integral number matches the same way however it is spelled.**
   `ConstraintValue` compared `Integer(1000)` and `Float(1000.0)` as different

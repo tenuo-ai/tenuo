@@ -564,11 +564,14 @@ impl Constraint {
             }
             Constraint::Cidr(_)
             | Constraint::UrlPattern(_)
-            | Constraint::UrlSafe(_)
             | Constraint::Shlex(_)
             // A list satisfies Subpath only when every item does, so the
             // negation of a list match is not "no item is under the root".
             | Constraint::Subpath(_) => ValueKinds::STRING,
+            Constraint::UrlSafe(u) => {
+                u.validate()?;
+                ValueKinds::STRING
+            }
             Constraint::Range(_) => ValueKinds::NUMBER,
             Constraint::Contains(_) | Constraint::Subset(_) => ValueKinds::LIST,
             Constraint::Exact(e) => ValueKinds::of(&e.value),
@@ -692,11 +695,42 @@ impl Constraint {
         }
     }
 
+    fn can_fail(&self) -> bool {
+        match self {
+            Constraint::Wildcard(_)
+            | Constraint::Exact(_)
+            | Constraint::OneOf(_)
+            | Constraint::NotOneOf(_)
+            | Constraint::Range(_)
+            | Constraint::Contains(_)
+            | Constraint::Subset(_)
+            | Constraint::Shlex(_) => false,
+            Constraint::Pattern(p) => p.get_compiled().is_err(),
+            Constraint::Regex(r) => r.get_compiled().is_err(),
+            Constraint::All(a) => {
+                a.constraints.is_empty() || a.constraints.iter().any(Self::can_fail)
+            }
+            Constraint::Any(a) => a.constraints.iter().any(Self::can_fail),
+            Constraint::Not(n) => n.constraint.can_fail(),
+            _ => true,
+        }
+    }
+
     /// Check if `child` is a valid attenuation of `self` (parent).
     ///
     /// Returns `Ok(())` if the child is strictly narrower or equal.
     /// Returns `Err` if the child would expand capabilities.
     pub fn validate_attenuation(&self, child: &Constraint) -> Result<()> {
+        // Positive Any short-circuits. Removing or reordering a potentially
+        // failing alternative can expose a later allow that the parent never
+        // reaches, even when boolean match sets appear to narrow.
+        if let Constraint::Any(parent) = self {
+            if parent.constraints.iter().any(Constraint::can_fail) && self != child {
+                return Err(Error::MonotonicityViolation(
+                    "Any attenuation must preserve ordered alternatives that can fail".to_string(),
+                ));
+            }
+        }
         match (self, child) {
             // Wildcard can attenuate to ANYTHING (it's the universal superset)
             (Constraint::Wildcard(_), _) => Ok(()),
@@ -1299,12 +1333,18 @@ impl From<Wildcard> for Constraint {
 // ============================================================================
 
 /// Glob-style pattern constraint.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pattern {
     pub pattern: String,
     #[serde(skip)]
     compiled: Option<GlobPattern>,
+}
+
+impl PartialEq for Pattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern
+    }
 }
 
 impl Pattern {
@@ -4153,6 +4193,11 @@ impl Any {
     /// `Any` requires the child to only retain alternatives the parent already
     /// permits.
     pub fn validate_attenuation(&self, child: &Any) -> Result<()> {
+        if self.constraints.iter().any(Constraint::can_fail) && self != child {
+            return Err(Error::MonotonicityViolation(
+                "Any attenuation must preserve ordered alternatives that can fail".to_string(),
+            ));
+        }
         for child_c in &child.constraints {
             let covered = self
                 .constraints
