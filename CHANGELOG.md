@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional arguments in the Rust constraint engine.**
+  `ConstraintSet::insert_optional` allows omission while enforcing the value
+  constraint whenever the argument is supplied. Diagnostics, signed CBOR warrants,
+  and attenuation preserve the presence rule; required arguments cannot become
+  optional during delegation. Required-only encodings remain unchanged.
+
 ## [0.3.6] - 2026-11-09
 
 ### Added

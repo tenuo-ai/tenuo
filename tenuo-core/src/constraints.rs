@@ -43,7 +43,7 @@ use glob::Pattern as GlobPattern;
 use regex::Regex as RegexPattern;
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 thread_local! {
     static DESERIALIZATION_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -4730,13 +4730,46 @@ fn is_false(b: &bool) -> bool {
 /// Use `Wildcard` constraint to allow any value for a specific field while
 /// still operating in closed-world mode for other fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "ConstraintSetWire")]
 pub struct ConstraintSet {
     constraints: BTreeMap<String, Constraint>,
     /// When true, arguments not listed in constraints are allowed.
     /// When false (default), unknown arguments are rejected if any constraints exist.
     #[serde(default, skip_serializing_if = "is_false")]
     allow_unknown: bool,
+    /// Declared arguments that may be absent. Present values are still constrained.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    optional_fields: BTreeSet<String>,
+}
+
+// Keep malformed optional declarations out of the engine, including declarations
+// naming fields absent from the constraint map. All nested constraints retain
+// their own strict deserializers.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConstraintSetWire {
+    constraints: BTreeMap<String, Constraint>,
+    #[serde(default)]
+    allow_unknown: bool,
+    #[serde(default)]
+    optional_fields: BTreeSet<String>,
+}
+
+impl TryFrom<ConstraintSetWire> for ConstraintSet {
+    type Error = String;
+
+    fn try_from(wire: ConstraintSetWire) -> std::result::Result<Self, Self::Error> {
+        for field in &wire.optional_fields {
+            if !wire.constraints.contains_key(field) {
+                return Err(format!("optional field '{field}' has no constraint"));
+            }
+        }
+        Ok(Self {
+            constraints: wire.constraints,
+            allow_unknown: wire.allow_unknown,
+            optional_fields: wire.optional_fields,
+        })
+    }
 }
 
 impl ConstraintSet {
@@ -4747,7 +4780,24 @@ impl ConstraintSet {
 
     /// Add a constraint for a field.
     pub fn insert(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
-        self.constraints.insert(field.into(), constraint.into());
+        let field = field.into();
+        self.optional_fields.remove(&field);
+        self.constraints.insert(field, constraint.into());
+    }
+
+    /// Add an argument that may be absent, but must satisfy `constraint` when present.
+    ///
+    /// Explicit null is a present value. This does not validate tool defaults:
+    /// normalize defaults before authorization if the policy must constrain them.
+    pub fn insert_optional(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
+        let field = field.into();
+        self.optional_fields.insert(field.clone());
+        self.constraints.insert(field, constraint.into());
+    }
+
+    /// Whether a declared argument may be absent.
+    pub fn is_optional(&self, field: &str) -> bool {
+        self.optional_fields.contains(field)
     }
 
     /// Get a constraint for a field.
@@ -4832,6 +4882,9 @@ impl ConstraintSet {
 
         for (field, constraint) in &self.constraints {
             let Some(value) = args.get(field) else {
+                if self.is_optional(field) {
+                    continue;
+                }
                 violations.push(ConstraintViolation {
                     field: field.clone(),
                     kind: ConstraintViolationKind::MissingRequired,
@@ -4868,6 +4921,7 @@ impl ConstraintSet {
     /// # Monotonicity Rules
     ///
     /// - Child must have all constraints that parent has (can be narrower)
+    /// - Optional arguments may become required; required arguments cannot become optional
     /// - When the parent map is non-empty, the child must have exactly
     ///   the same argument keys (keyset identity, I4). Adding a key
     ///   produces invocations the parent's closed-world check rejects;
@@ -4894,6 +4948,11 @@ impl ConstraintSet {
                 ))
             })?;
 
+            if !self.is_optional(field) && child.is_optional(field) {
+                return Err(Error::MonotonicityViolation(format!(
+                    "child cannot make required argument '{field}' optional"
+                )));
+            }
             parent_constraint.validate_attenuation(child_constraint)?;
         }
 
@@ -4937,6 +4996,7 @@ impl FromIterator<(String, Constraint)> for ConstraintSet {
         Self {
             constraints: iter.into_iter().collect(),
             allow_unknown: false,
+            optional_fields: BTreeSet::new(),
         }
     }
 }
