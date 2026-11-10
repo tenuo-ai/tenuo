@@ -1,24 +1,26 @@
 # Integration Compatibility Matrix
 
-**Last Updated**: 2026-10-21
+**Artifact versions updated**: 2026-11-09
 
 Tracks compatibility between Tenuo artifacts and upstream integration libraries.
 
-## Tenuo artifacts (0.3.4)
+## Tenuo artifacts (0.3.6)
 
-These four packages share the same protocol line. TypeScript stays on the
-`beta` npm dist-tag (`0.3.4-beta.0`).
+These artifacts share the same protocol line. TypeScript stays on the
+`beta` npm dist-tag (`0.3.6-beta.0`).
 
 | Artifact | Package | Version |
 |----------|---------|---------|
-| Rust core | `tenuo` | 0.3.4 |
-| WASM | `tenuo-wasm` | 0.3.4 |
-| Python | `tenuo` / `tenuo_core` | 0.3.4 |
-| TypeScript | `@tenuo/core` | 0.3.4-beta.0 |
+| Rust core | `tenuo` | 0.3.6 |
+| WASM | `tenuo-wasm` | 0.3.6 |
+| Python | `tenuo` / `tenuo_core` | 0.3.6 |
+| TypeScript | `@tenuo/core` | 0.3.6-beta.0 |
+| TypeScript MCP | `@tenuo/mcp` | 0.3.6-beta.0 |
 
 `make version-check` (and the CI job of the same name) fails if the Rust,
-Python, and WASM crate versions or `tenuo.__version__` diverge, or if `@tenuo/core` does not start
-with the same `MAJOR.MINOR.PATCH`.
+Python, and WASM crate versions or `tenuo.__version__` diverge, or if either
+TypeScript package does not start with the same `MAJOR.MINOR.PATCH`. Runnable
+TypeScript examples must pin that package version as well.
 
 ## Supported Versions
 
@@ -30,10 +32,10 @@ with the same `MAJOR.MINOR.PATCH`.
 | **Hermes Agent** | 0.20 (plugin floor) | latest | upstream `main` (nightly) | Supported | Official plugin package, `hermes-tenuo` 0.1.3. Requires `tenuo>=0.3.2`. |
 | **AutoGen** | 0.7.0 | 0.7+ latest | 0.7.5 | Stable | Use `autogen-agentchat` / `autogen-ext` (not stale `0.0.x` squat packages). |
 | **LangChain** | 0.2.0 | 1.x latest | 1.4.7 / core 1.6.13 | Stable | |
-| **LangGraph** | 0.2.0 | 1.x latest | 1.2.16 | Stable | Requires `langchain-core>=0.2.27`. `TenuoToolNode` needs `langgraph-prebuilt>=1.0.2` (LangGraph 1.x), the first release with the `ToolNode(wrap_tool_call=)` hook; on older lines it raises `RuntimeError` at construction. |
+| **LangGraph** | 1.0 on Python 3.10+; 0.2.0 on Python 3.9 | 1.x latest | 1.2.16 | Stable | Requires `langchain-core>=0.2.27`. On Python 3.10+, the extra also installs `langgraph-prebuilt>=1.0.2`, the first release with the `ToolNode(wrap_tool_call=)` hook that `TenuoToolNode` needs; on older lines it raises `RuntimeError` at construction. |
 | **MCP** | 1.9.4 | 1.x or 2.x | 1.30.0 and 2.3.0 | Stable | Python `tenuo.mcp` supports MCP SDK 1.9.4+ and 2.x (streamable-HTTP transport shape settled in 1.9.4). |
 | **FastMCP** | 3.2.1 | 3.x or 4.x | 3.4.11 and 4.1.3 | Stable | FastMCP 4 requires MCP SDK 2.x. Denials are a real `ToolResult` subclass (`isError=True` on the wire) on every line. |
-| **Google ADK** | 0.1.0 | latest | 2.12.0 | Stable | GuardBuilder / before_tool covered in CI. |
+| **Google ADK** | 0.1.0 | latest | 2.14.0 | Stable | Guard and resolver tests cover 0.1.0 and 2.14.0. Real plugin/Runner and code-executor refusal tests cover 2.14.0. |
 | **Temporal** | 1.33.0 | 1.x latest | 1.34.0 | Stable | The `temporal` extra and weekly minimum-version job both floor at 1.33.0. `SimplePlugin` is required by `TenuoTemporalPlugin`. |
 | **FastAPI** | 0.100.0 | latest | 0.159.1 | Stable | Works with Starlette 1.9.0. |
 | **A2A** | Starlette 0.27 / httpx 0.24 | latest | Starlette 1.9.0 / httpx 0.28.1 | Stable | No upstream A2A SDK dependency. The `a2a` extra installs Starlette (`A2AServer`) and httpx (`A2AClient`). Covered by the main CI suite, not the weekly matrix. |
@@ -85,6 +87,9 @@ with the same `MAJOR.MINOR.PATCH`.
 
 **Version Notes**:
 - **langchain-core 0.2.0-0.2.26**: Incompatible with `langgraph>=0.2` (runtime warning).
+- The `langgraph` extra installs LangGraph 1.0+ and `langgraph-prebuilt>=1.0.2`
+  on Python 3.10+. Python 3.9 retains the older dependency floor and supports
+  the basic node/decorator paths, rather than `TenuoToolNode`.
 - **`TenuoToolNode`**: needs `langgraph-prebuilt>=1.0.2`. Earlier prebuilt releases (including every LangGraph 0.x line) have no `ToolNode(wrap_tool_call=)` hook, so `TenuoToolNode` raises `RuntimeError` and its tests skip on the 0.2.0 floor. `guard_node`, `tenuo_node` and the `@guard` path work from 0.2.0. Check `tenuo.langgraph.WRAP_TOOL_CALL_SUPPORTED` at runtime.
 - LangChain / LangGraph 1.x validated in the hosted compatibility matrix on 2026-10-21.
 

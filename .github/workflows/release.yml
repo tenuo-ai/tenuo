@@ -26,6 +26,10 @@ jobs:
     name: Publish to crates.io
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    env:
+      # Match the manual publisher: deep wire-format tests need a larger
+      # test-thread stack in optimized builds.
+      RUST_MIN_STACK: 8388608
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -36,15 +40,15 @@ jobs:
 
       - name: Verify crate builds
         working-directory: tenuo-core
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Run tests
         working-directory: tenuo-core
-        run: cargo test --release
+        run: cargo test --release --locked
 
       - name: Publish to crates.io
         working-directory: tenuo-core
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # abi3: one wheel per OS/arch. Linux aarch64 uses the same manylinux_2_28
   # container as x86_64, on the native ubuntu-24.04-arm runner.
