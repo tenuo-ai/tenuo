@@ -581,24 +581,35 @@ guard = GuardBuilder().allow("read_file").audit_log("audit.jsonl").build()
 
 ## Advanced: Dynamic Warrants
 
-For per-request warrants (e.g., user-specific capabilities):
+For per-request warrants (e.g., user-specific capabilities), give the guard a `warrant_resolver`. It is called for every tool call with the ADK `ToolContext` and returns the warrant from a source the model cannot write:
 
 ```python
-# Configure guard to look up warrant from session state
+# Server-side store, filled by your request handler after authenticating the user
+warrants_by_user: dict[str, str] = {}
+
+def resolve_warrant(tool_context):
+    return warrants_by_user.get(tool_context.user_id)  # None means no warrant: the call is denied
+
 guard = TenuoGuard(
     signing_key=agent_key,
     trusted_roots=[issuer_key.public_key],
-    warrant_key="user_warrant",  # Key in session state
+    warrant_resolver=resolve_warrant,
 )
 
-# At runtime, inject user-specific warrant
 def handle_request(user_id):
-    warrant = issue_warrant_for_user(user_id)
-    session_state["user_warrant"] = warrant.to_base64()  # ADK copies state; Warrant objects can't be copied
-    
-    # Agent uses the injected warrant
+    warrants_by_user[user_id] = issue_warrant_for_user(user_id).to_base64()
     agent.run(...)
 ```
+
+`TenuoPlugin` and `GuardBuilder` accept the same resolver (`warrant_resolver=` / `.warrant_resolver(fn)`). When a resolver is set, session state is not consulted. Combining a static warrant with a resolver is rejected at construction. A resolver that raises or returns `None` denies the call, including when local constraints or allow rules are configured.
+
+### Session-state warrants
+
+`warrant_key="user_warrant"` reads the warrant from session state instead. Session state can be written by any tool (`tool_context.state[...] = ...`) and by whoever starts the run (`state_delta`), and the guard signs proof-of-possession with its own key for whichever valid warrant it finds there. Anything that can write the key can therefore replace the warrant with another one issued to the same agent key. Use it only when nothing untrusted can write session state; the guard logs a warning the first time it reads a warrant from state.
+
+### Code executors
+
+An agent's `code_executor` runs code the model writes without calling tool callbacks, so no warrant constrains it. `TenuoPlugin` refuses to run an agent that has one; pass `allow_code_execution=True` only when the executor is confined by other means. Gemini built-in tools (search, built-in code execution) also run without tool callbacks.
 
 ---
 
