@@ -76,7 +76,7 @@ def test_mismatches_are_sorted_and_only_top_level_names():
     assert argument_type_mismatches(SCHEMA, args) == ["dry_run", "replicas"]
 
 
-@pytest.mark.parametrize("schema", [None, {}, {"type": "object"}, "not a schema", {"properties": []}])
+@pytest.mark.parametrize("schema", [None, {}, {"type": "object"}, "not a schema"])
 def test_missing_or_unreadable_schema_reports_nothing(schema):
     assert argument_type_mismatches(schema, {"replicas": "22"}) == []
 
@@ -101,7 +101,7 @@ def test_union_must_match_the_whole_argument_object():
         {"properties": {"x": {"type": "boolean"}, "y": {"type": "integer"}}},
         {"properties": {"x": {"type": "integer"}, "y": {"type": "boolean"}}},
     ]}
-    assert argument_type_mismatches(schema, {"x": True, "y": 1}) == []
+    assert argument_type_mismatches(schema, {"x": True, "y": 1}) == ["x", "y"]
     assert argument_type_mismatches(schema, {"x": True, "y": True}) == ["x", "y"]
 
 
@@ -237,8 +237,43 @@ def test_union_validation_never_fetches_remote_references(monkeypatch):
         {"$ref": "https://example.test/schema"}, {"type": "integer"},
     ]}}}
     assert argument_type_mismatches(schema, {"item": "22"}) == ["item"]
-    assert argument_type_mismatches(schema, {"item": 22}) == []
+    assert argument_type_mismatches(schema, {"item": 22}) == ["item"]
     assert requests == []
+
+
+def test_another_strict_branch_cannot_hide_the_frameworks_selected_coercion():
+    from typing import Union
+
+    from pydantic import BaseModel, Field
+
+    class Text(BaseModel):
+        value: str
+
+    class Number(BaseModel):
+        value: int
+        priority: int
+
+    class Args(BaseModel):
+        item: Union[Text, Number]
+
+    args = {"item": {"value": "22", "priority": 1}}
+    assert isinstance(Args.model_validate(args).item, Number)
+    assert argument_type_mismatches(Args.model_json_schema(), args) == ["item"]
+
+    class Scalar(BaseModel):
+        item: Union[int, str] = Field(union_mode="left_to_right")
+
+    assert Scalar.model_validate({"item": "22"}).item == 22
+    assert argument_type_mismatches(Scalar.model_json_schema(), {"item": "22"}) == ["item"]
+
+
+def test_nullable_and_same_type_unions_remain_usable():
+    schema = {"properties": {
+        "maybe": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "number": {"anyOf": [{"type": "integer"}, {"type": "number"}]},
+    }}
+    assert argument_type_mismatches(schema, {"maybe": None, "number": 22}) == []
+    assert argument_type_mismatches(schema, {"maybe": 22, "number": 22.5}) == []
 
 
 def test_tool_input_schema_reads_common_tool_shapes():
@@ -273,3 +308,39 @@ def test_tool_input_schema_reads_a_pydantic_args_schema():
     schema = tool_input_schema(Tool())
     assert argument_type_mismatches(schema, {"port": 22, "force": True}) == []
     assert argument_type_mismatches(schema, {"port": "22", "force": "yes"}) == ["force", "port"]
+
+
+def test_supplied_unreadable_schema_is_denied():
+    assert argument_type_mismatches({"properties": []}, {"replicas": "22"}) == ["replicas"]
+
+
+def test_schema_regex_execution_is_bounded_in_all_validation_paths():
+    import subprocess
+    import sys
+
+    script = r'''from tenuo._arg_types import argument_type_mismatches
+text = "a" * 40000 + "!"
+pattern = "^(a+)+$"
+cases = [
+    ({"properties": {"item": {"type": "string", "pattern": pattern}}}, text),
+    ({"properties": {"item": {"type": "object", "patternProperties": {pattern: {}}, "additionalProperties": False}}}, {text: True}),
+    ({"properties": {"item": {"anyOf": [{"$schema": "http://json-schema.org/draft-07/schema#", "type": "string", "pattern": pattern}, {"type": "null"}]}}}, text),
+    ({"properties": {"item": {"anyOf": [{"type": "object", "patternProperties": {pattern: {}}, "additionalProperties": False}, {"type": "null"}]}}}, {text: True}),
+]
+for schema, value in cases:
+    assert argument_type_mismatches(schema, {"item": value}) == ["item"]
+'''
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=10)
+
+
+def test_schema_metadata_does_not_erase_user_fields_or_literals():
+    schema = {"properties": {"$schema": {"type": "boolean"}}}
+    assert argument_type_mismatches(schema, {"$schema": "off"}) == ["$schema"]
+    schema = {"properties": {"item": {"const": {"$schema": "literal"}}}}
+    assert argument_type_mismatches(schema, {"item": {"$schema": "literal"}}) == []
+    assert argument_type_mismatches(schema, {"item": {"$schema": "other"}}) == ["item"]
+
+
+def test_regex_forms_unsupported_by_the_linear_matcher_fail_closed():
+    schema = {"properties": {"item": {"pattern": "(?=a)a", "type": "string"}}}
+    assert argument_type_mismatches(schema, {"item": "a"}) == ["item"]

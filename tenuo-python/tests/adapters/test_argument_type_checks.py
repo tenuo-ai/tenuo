@@ -71,6 +71,77 @@ async def test_fastmcp_middleware_reads_the_registered_schema_before_execution()
     assert ran == [False]
 
 
+@pytest.mark.asyncio
+async def test_fastmcp_schema_checks_injected_config_defaults(tmp_path):
+    fastmcp = pytest.importorskip("fastmcp")
+    from tenuo import Authorizer, CompiledMcpConfig, McpConfig
+    from tenuo.mcp import MCPVerifier, TenuoMiddleware
+
+    issuer = SigningKey.generate()
+    ran = []
+    config_path = tmp_path / "default.yaml"
+    config_path.write_text('''version: "1"
+tools:
+  deploy:
+    description: Deploy
+    constraints:
+      dry_run:
+        from: body
+        path: dry_run
+        default: "off"
+''')
+
+    async def call():
+        config = CompiledMcpConfig.compile(McpConfig.from_file(str(config_path)))
+        verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[issuer.public_key]),
+                               config=config, require_warrant=False, control_plane=False)
+        server = fastmcp.FastMCP("defaults", middleware=[TenuoMiddleware(verifier)])
+
+        @server.tool()
+        def deploy(dry_run: bool = True) -> str:
+            ran.append(dry_run)
+            return "ok"
+
+        async with fastmcp.Client(server) as client:
+            return await client.call_tool("deploy", {}, raise_on_error=False)
+
+    result = await call()
+    assert result.is_error
+    assert ran == []
+    config_path.write_text(config_path.read_text().replace('"off"', 'false'))
+    result = await call()
+    assert not result.is_error
+    assert ran == [False]
+
+
+@pytest.mark.asyncio
+async def test_fastmcp_left_to_right_union_never_executes_a_converted_value():
+    from typing import Annotated, Union
+
+    fastmcp = pytest.importorskip("fastmcp")
+    from pydantic import Field
+    from tenuo import Authorizer
+    from tenuo.mcp import MCPVerifier, TenuoMiddleware
+
+    issuer = SigningKey.generate()
+    verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[issuer.public_key]),
+                           require_warrant=False, control_plane=False)
+    server = fastmcp.FastMCP("unions", middleware=[TenuoMiddleware(verifier)])
+    ran = []
+
+    @server.tool()
+    def deploy(mode: Annotated[Union[bool, str], Field(union_mode="left_to_right")]) -> str:
+        ran.append(mode)
+        return "ok"
+
+    async with fastmcp.Client(server) as client:
+        assert (await client.call_tool("deploy", {"mode": "off"}, raise_on_error=False)).is_error
+        assert ran == []
+        await client.call_tool("deploy", {"mode": False})
+        await client.call_tool("deploy", {"mode": "draft"})
+    assert ran == [False, "draft"]
+
+
 def test_langgraph_denies_before_the_tool_validates():
     pytest.importorskip("langgraph")
     tools = pytest.importorskip("langchain_core.tools")

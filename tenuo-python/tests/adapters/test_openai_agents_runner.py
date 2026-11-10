@@ -264,3 +264,49 @@ async def test_argument_the_sdk_would_convert_never_runs(tools, ran):
     await Runner.run(agent, "refund")
     assert ran == [("refund", 50)]
     assert any("blocked by Tenuo" in o for o in _tool_outputs(model))
+
+
+@pytest.mark.asyncio
+async def test_mcp_discovered_schema_denies_conversion_before_remote_execution(ran):
+    from agents.mcp import MCPServer
+    from mcp.types import CallToolResult, ListPromptsResult, TextContent, Tool
+
+    class Server(MCPServer):
+        name = "refunds"
+        tool_input_guardrails = None
+
+        async def connect(self):
+            pass
+
+        async def cleanup(self):
+            pass
+
+        async def list_tools(self, *args, **kwargs):
+            return [Tool(name="refund", inputSchema={"type": "object", "properties": {"amount": {"type": "integer"}}, "required": ["amount"]})]
+
+        async def call_tool(self, tool_name, arguments, **kwargs):
+            # Model a remote framework's lenient argument validation.
+            ran.append((tool_name, int(arguments["amount"])))
+            return CallToolResult(content=[TextContent(type="text", text="ok")])
+
+        async def list_prompts(self):
+            return ListPromptsResult(prompts=[])
+
+        async def get_prompt(self, name, arguments=None):
+            raise NotImplementedError
+
+    class GuardrailAgent(Agent):
+        async def get_mcp_tools(self, run_context):
+            # The base SDK currently lacks server guardrail propagation.
+            # This Agent extension supplies that documented capability while
+            # retaining the SDK's real MCP discovery and dispatch.
+            tools = await super().get_mcp_tools(run_context)
+            for tool in tools:
+                tool.tool_input_guardrails = list(self.mcp_servers[0].tool_input_guardrails or [])
+            return tools
+
+    model = ScriptedModel([[_call("refund", {"amount": "50"}, "c1")], [_call("refund", {"amount": 50}, "c2")]])
+    agent = guard_agent(GuardrailAgent(name="a", model=model, mcp_servers=[Server()]), allow_tools=["refund"])
+    await Runner.run(agent, "refund")
+    assert ran == [("refund", 50)]
+    assert any("blocked by Tenuo" in output for output in _tool_outputs(model))

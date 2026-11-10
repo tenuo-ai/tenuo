@@ -3339,10 +3339,20 @@ def _tenuo_tool_input_guardrail() -> Any:
         from ._arg_types import argument_type_mismatches, tool_input_schema
 
         mismatched: List[str] = []
-        for candidate in getattr(getattr(data, "agent", None), "tools", None) or []:
-            if getattr(candidate, "name", None) == tool_name:
-                mismatched = argument_type_mismatches(tool_input_schema(candidate), arguments)
-                break
+        try:
+            agent = getattr(data, "agent", None)
+            if agent is None:
+                raise OpenAIConfigurationError("Cannot resolve the invoking agent", "CFG_006")
+            candidates = list(getattr(agent, "tools", None) or [])
+            if not any(getattr(candidate, "name", None) == tool_name for candidate in candidates):
+                if getattr(agent, "mcp_servers", None):
+                    candidates.extend(await agent.get_mcp_tools(data.context))
+            candidate = next((tool for tool in candidates if getattr(tool, "name", None) == tool_name), None)
+            if candidate is None:
+                raise OpenAIConfigurationError("Cannot resolve the invoked tool's input schema", "CFG_006")
+            mismatched = argument_type_mismatches(tool_input_schema(candidate), arguments)
+        except Exception:
+            return _deny(guard, on_denial, tool_name, arguments, "cannot resolve or check the tool input schema", "tier1")
         if mismatched:
             return _deny(
                 guard,
