@@ -100,6 +100,35 @@ def test_reprs_distinguish_literal_kinds():
     assert repr(NotOneOf([False, 0])) == "NotOneOf([False, 0])"
 
 
+@pytest.fixture(params=["annotation", "a2a"])
+def check(request):
+    if request.param == "annotation":
+        from tenuo.decorators import _check_annotated_constraint
+
+        return _check_annotated_constraint
+    from tenuo.a2a.server import A2AServer
+
+    key = SigningKey.generate().public_key
+    return A2AServer(
+        name="Typed test",
+        url="https://agent.example.test",
+        public_key=key,
+        trusted_issuers=[key],
+    )._check_constraint
+
+
+@pytest.mark.parametrize("value", VALUES)
+@pytest.mark.parametrize("constructor", [Exact, lambda v: OneOf([v])])
+def test_adapter_checks_preserve_typed_values(check, value, constructor):
+    assert check(constructor(value), value)
+
+
+@pytest.mark.parametrize("constructor", [Exact, lambda v: OneOf([v])])
+@pytest.mark.parametrize("policy,value", [("1", 1), (1, "1"), (True, 1), (1, True), ("None", None)])
+def test_adapter_checks_do_not_stringify_or_coerce(check, constructor, policy, value):
+    assert not check(constructor(policy), value)
+
+
 @pytest.mark.parametrize("value", VALUES)
 def test_typed_exact_roundtrips_and_authorizes_the_signed_value(value):
     issuer, holder = SigningKey.generate(), SigningKey.generate()

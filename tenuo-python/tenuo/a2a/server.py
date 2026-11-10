@@ -1874,11 +1874,11 @@ class A2AServer:
 
         # Exact - exact value match (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Exact":
-            return constraint.matches(str(value))
+            return constraint.matches(value)
 
         # OneOf - set membership (Rust core)
         if hasattr(constraint, "contains") and constraint_type == "OneOf":
-            return constraint.contains(str(value))
+            return constraint.contains(value)
 
         # Wildcard - matches anything (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Wildcard":
