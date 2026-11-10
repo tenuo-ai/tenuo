@@ -171,3 +171,16 @@ def test_scoped_literal_conversion_preserves_allow_unknown_metadata(parent_open,
             with scope as delegated:
                 violation = delegated.check_constraints("t", {"x": 1, "extra": 2})
                 assert (violation is None) is child_open
+
+
+def test_scoped_grant_reports_unconvertible_values_with_their_own_error():
+    from tenuo.exceptions import ValidationError
+
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("t", x=OneOf([1, 2])).holder(holder.public_key).ttl(300).mint(issuer)
+    with warrant_scope(warrant), key_scope(holder):
+        scope = grant(Capability("t", x=2**70), ttl=60)
+        assert "64-bit" in scope.preview().error
+        with pytest.raises(ValidationError, match="64-bit"):
+            with scope:
+                pytest.fail("an unconvertible value cannot be granted")

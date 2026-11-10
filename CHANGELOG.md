@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Upgrade note.** `Annotated` constraint checks and the A2A server no longer
+  convert an argument to a string before comparing it with `Exact` or `OneOf`.
+  A policy that wrote a number as a string, such as `Exact("8080")` or
+  `OneOf(["1", "2"])`, no longer matches the integer argument and the call is
+  denied. Write the typed literal instead: `Exact(8080)`, `OneOf([1, 2])`.
+  Warrant authorization already compared typed values and is unchanged.
+- A2A grants keep the JSON types of `OneOf` and `NotOneOf` values instead of
+  converting them to strings.
+- `Exact`, `OneOf`, and `NotOneOf` reject `bytes` and `bytearray` literals.
+
 ### Fixed
 
 - Python `Exact`, `OneOf`, and `NotOneOf` preserve typed literals, including

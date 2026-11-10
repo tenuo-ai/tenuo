@@ -1345,7 +1345,7 @@ Some constraint types can contain different types during attenuation:
 | `Wildcard()` | Any type | Universal parent - contains everything |
 | `Pattern("*@co.com")` | `Exact("cfo@co.com")` | Child matches parent glob |
 | `Regex(r"^dev-.*")` | `Exact("dev-web")` | Child matches parent regex |
-| `Range(min=0, max=100)` | `Exact("50")` | Child numeric value within range |
+| `Range(min=0, max=100)` | `Exact(50)` | Child numeric value within range |
 | `Cidr("10.0.0.0/8")` | `Exact("10.1.2.3")` | Child IP within parent network |
 | `Cidr("10.0.0.0/8")` | `Cidr("10.1.0.0/16")` | Child is subnet of parent |
 | `UrlPattern("https://*.example.com/*")` | `Exact("https://api.example.com/v1")` | Child URL matches parent pattern |
@@ -1407,8 +1407,9 @@ child = Regex(r"^staging-web$")     # FAILS - even if semantically narrower
 
 # Range -> Exact: numeric value must be within range
 parent = Range(min=0, max=100)
-child = Exact("50")   # OK - 50 is in [0, 100]
-child = Exact("150")  # FAILS - 150 > 100
+child = Exact(50)     # OK - 50 is in [0, 100]
+child = Exact(150)    # FAILS - 150 > 100
+child = Exact("50")   # FAILS - a string is not a number
 
 # OneOf -> Exact: exact value must be in the set
 parent = OneOf(["read", "write", "delete"])

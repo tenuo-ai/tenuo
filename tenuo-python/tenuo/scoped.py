@@ -60,6 +60,8 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     except Exception:
         # This boolean preflight fails closed on invalid values or any failure
         # to establish containment. Never substitute Python policy heuristics.
+        # Callers convert the child first, so an unconvertible value reports
+        # its own error instead of a containment failure.
         return False
 
 
@@ -147,6 +149,8 @@ class GrantScope:
             for tool, child_constraints in child_capabilities.items():
                 parent_constraints = parent_caps.get(tool, {})
                 for key, child_value in child_constraints.items():
+                    if key != "_allow_unknown":
+                        ensure_constraint(child_value)  # an unconvertible value reports its own error
                     parent_value = parent_constraints.get(key)
                     if parent_value is not None:
                         if not _is_constraint_contained(child_value, parent_value):
@@ -250,6 +254,10 @@ class GrantScope:
             merged_constraints = dict(parent_tool_constraints)
 
             for key, child_value in child_constraints.items():
+                # This reserved option configures the constraint set itself.
+                # The native builder validates its boolean type and narrowing.
+                # Converting first lets an unconvertible value report its own error.
+                child_constraint = child_value if key == "_allow_unknown" else ensure_constraint(child_value)
                 parent_value = parent_tool_constraints.get(key)
                 if parent_value is not None:
                     if not _is_constraint_contained(child_value, parent_value):
@@ -257,9 +265,7 @@ class GrantScope:
                             f"Constraint '{key}': '{child_value}' is not contained within "
                             f"parent's '{parent_value}' for tool '{tool}'"
                         )
-                # This reserved option configures the constraint set itself.
-                # The native builder validates its boolean type and narrowing.
-                merged_constraints[key] = child_value if key == "_allow_unknown" else ensure_constraint(child_value)
+                merged_constraints[key] = child_constraint
 
             builder.capability(tool, merged_constraints)
 

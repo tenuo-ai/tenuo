@@ -154,3 +154,23 @@ def test_typed_sets_roundtrip_without_collapsing_boolean_and_integer(constructor
     assert actual == values
     assert [type(v) for v in actual] == [type(v) for v in values]
     assert not OneOf([1]).contains(True)
+
+
+@pytest.mark.parametrize("value", [b"ab", bytearray(b"ab"), [b"ab"], {"k": b"ab"}, (1, b"ab")])
+@pytest.mark.parametrize("constructor", [Exact, lambda v: OneOf([v]), lambda v: NotOneOf([v])])
+def test_binary_literals_are_rejected_instead_of_becoming_integer_lists(value, constructor):
+    with pytest.raises(Exception, match="value must be"):
+        constructor(value)
+
+
+@pytest.mark.parametrize("kind", ["OneOf", "NotOneOf"])
+def test_a2a_parsed_sets_keep_json_value_types(kind):
+    from tenuo.a2a.server import A2AServer
+
+    key = SigningKey.generate().public_key
+    server = A2AServer(name="Typed test", url="https://agent.example.test", public_key=key, trusted_issuers=[key])
+    constraint = server._deserialize_constraint({"type": kind, "values": [1, 2]})
+    values = constraint.values if kind == "OneOf" else constraint.excluded
+    assert values == [1, 2]
+    assert server._check_constraint(constraint, 2) is (kind == "OneOf")
+    assert server._check_constraint(constraint, "2") is False

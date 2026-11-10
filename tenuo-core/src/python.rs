@@ -35,7 +35,7 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyFloat, PyInt, PyList, PySequence, PyTuple};
+use pyo3::types::{PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -595,7 +595,7 @@ impl PyExact {
     #[new]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: Exact::new(py_to_constraint_value(value)?),
+            inner: Exact::new(py_to_literal_value(value)?),
         })
     }
 
@@ -657,7 +657,7 @@ impl PyOneOf {
     fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
         let values = values
             .iter()
-            .map(py_to_constraint_value)
+            .map(py_to_literal_value)
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: OneOf::from_values(values),
@@ -729,7 +729,7 @@ impl PyNotOneOf {
     fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
         let values = values
             .iter()
-            .map(py_to_constraint_value)
+            .map(py_to_literal_value)
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: NotOneOf::from_values(values),
@@ -2526,6 +2526,37 @@ fn py_dict_to_constraint_set(
 }
 
 /// Convert a Python value to a ConstraintValue.
+/// Convert a policy literal for `Exact`, `OneOf`, or `NotOneOf`.
+///
+/// Binary values have no literal form. Without this check a `bytes` object
+/// would be read as a sequence and stored as a list of integers.
+fn py_to_literal_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
+    reject_binary_literal(obj)?;
+    py_to_constraint_value(obj)
+}
+
+fn reject_binary_literal(obj: &Bound<'_, PyAny>) -> PyResult<()> {
+    if obj.is_instance_of::<PyBytes>() || obj.is_instance_of::<PyByteArray>() {
+        return Err(py_validation_err(
+            "value must be str, int, float, bool, list, dict, or None",
+        ));
+    }
+    if let Ok(dict) = obj.cast::<PyDict>() {
+        for (_, value) in dict.iter() {
+            reject_binary_literal(&value)?;
+        }
+    } else if let Ok(list) = obj.cast::<PyList>() {
+        for item in list.iter() {
+            reject_binary_literal(&item)?;
+        }
+    } else if let Ok(tuple) = obj.cast::<PyTuple>() {
+        for item in tuple.iter() {
+            reject_binary_literal(&item)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
     // Extraction order matters for canonicalization parity with the Rust
     // core: Python ``bool`` inherits from ``int`` (``True == 1``), so
