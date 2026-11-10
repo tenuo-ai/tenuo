@@ -257,7 +257,9 @@ class GrantScope:
                             f"Constraint '{key}': '{child_value}' is not contained within "
                             f"parent's '{parent_value}' for tool '{tool}'"
                         )
-                merged_constraints[key] = ensure_constraint(child_value)
+                # This reserved option configures the constraint set itself.
+                # The native builder validates its boolean type and narrowing.
+                merged_constraints[key] = child_value if key == "_allow_unknown" else ensure_constraint(child_value)
 
             builder.capability(tool, merged_constraints)
 

@@ -149,3 +149,25 @@ def test_scoped_preflight_never_treats_literals_as_globs_or_uses_python_equality
     assert _is_constraint_contained("*", "*")
     assert not _is_constraint_contained(True, OneOf([1]))
     assert not _is_constraint_contained(object(), Wildcard())
+
+
+@pytest.mark.parametrize("parent_open,child_open", [(True, True), (True, False), (False, False), (False, True)])
+def test_scoped_literal_conversion_preserves_allow_unknown_metadata(parent_open, child_open):
+    issuer, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = (
+        Warrant.mint_builder()
+        .capability("t", x=OneOf([1, 2]), _allow_unknown=parent_open)
+        .holder(holder.public_key)
+        .ttl(300)
+        .mint(issuer)
+    )
+    with warrant_scope(warrant), key_scope(holder):
+        scope = grant(Capability("t", x=1, _allow_unknown=child_open), ttl=60)
+        if child_open and not parent_open:
+            with pytest.raises(MonotonicityError):
+                with scope:
+                    pytest.fail("a closed parent cannot grant an open child")
+        else:
+            with scope as delegated:
+                violation = delegated.check_constraints("t", {"x": 1, "extra": 2})
+                assert (violation is None) is child_open
