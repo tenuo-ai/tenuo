@@ -374,3 +374,39 @@ def test_legacy_tuple_inside_union_preserves_types_and_additional_items():
     assert argument_type_mismatches(schema, {"item": None}) == []
     assert argument_type_mismatches(schema, {"item": ["22", "off"]}) == ["item"]
     assert argument_type_mismatches(schema, {"item": [22, False, True]}) == ["item"]
+
+
+def test_extension_reference_cannot_switch_to_an_unsafe_validator():
+    import subprocess
+    import sys
+    script = r'''from tenuo._arg_types import argument_type_mismatches
+schema = {"x-schema": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "string", "pattern": "^(a+)+$"}, "properties": {"item": {"anyOf": [{"$ref": "#/x-schema"}, {"type": "null"}]}}}
+assert argument_type_mismatches(schema, {"item": "a" * 40000 + "!"}) == ["item"]
+'''
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=10)
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+def test_deduplicating_set_union_cannot_hide_item_coercion(bounded):
+    from typing import Annotated, Union
+    from pydantic import BaseModel, Field
+    item_type = Annotated[set[int], Field(max_length=1)] if bounded else set[int]
+    class Args(BaseModel):
+        item: Union[item_type, list[str]] = Field(union_mode="left_to_right")
+    raw = {"item": ["22", "22"]}
+    assert Args.model_validate(raw).item == {22}
+    assert argument_type_mismatches(Args.model_json_schema(), raw) == ["item"]
+
+
+def test_numeric_literals_rule_out_impossible_union_branches():
+    from typing import Literal, Union
+    from pydantic import BaseModel, PositiveInt
+    class Args(BaseModel):
+        item: Union[Literal[-1], PositiveInt]
+    schema = Args.model_json_schema()
+    assert argument_type_mismatches(schema, {"item": 5}) == []
+    assert argument_type_mismatches(schema, {"item": -1}) == []
+    assert argument_type_mismatches(schema, {"item": "-1"}) == ["item"]
+    schema = {"properties": {"item": {"anyOf": [{"enum": [-1, -2]}, {"type": "integer", "minimum": 1}]}}}
+    assert argument_type_mismatches(schema, {"item": 5}) == []
+    assert argument_type_mismatches(schema, {"item": "-2"}) == ["item"]
