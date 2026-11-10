@@ -132,6 +132,27 @@ api_call(url="https://api.example.com/v1", timeout=30, retries=3)
 
 ---
 
+## Checking a proposed narrowing
+
+Python can check the core's attenuation rules without issuing a warrant:
+
+```python
+from tenuo import Exact, OneOf, validate_attenuation
+
+parent = OneOf(["Paris", "Lyon"])
+validate_attenuation(parent, Exact("Paris"))  # Returns None
+parent.validate_attenuation(Exact("Paris"))  # Same check
+validate_attenuation(parent, Exact("Rome"))  # Raises ValueNotInParentSet
+```
+
+`validate_attenuation(parent, child)` is also available from `tenuo_core`.
+It uses Rust's existing rules and typed exceptions, including cross-type
+narrowing such as `Range` to a numeric `Exact`. Checking is conservative:
+rejection can mean that the core cannot establish containment. A successful
+check covers only the constraint relationship. Warrant issuance and receiving
+boundaries still verify delegation, signatures, trusted roots, expiry,
+revocation, approvals, and proof of possession as applicable.
+
 ## Constraint Types
 
 ### Wildcard
@@ -263,6 +284,12 @@ Exact("production")
 
 # Only allows this specific ID
 Exact("user-12345")
+
+# Typed literals, including nested values
+Exact(180)
+Exact(True)
+Exact(None)
+Exact({"items": [1, "1", False]})
 ```
 
 ---
@@ -279,9 +306,24 @@ OneOf(["staging", "production", "dev"])
 
 # Allows specific actions
 OneOf(["read", "list"])
+
+# A numeric allowlist does not admit numeric strings or booleans
+OneOf([1, 2, 3])
 ```
 
 ---
+
+Python's `Exact`, `OneOf`, and `NotOneOf` accept strings, signed 64-bit integers,
+floats, booleans, null (`None`), lists, and objects with string keys. Values keep
+their types: `1` differs from `True` and `"1"`. Integer and floating-point
+spellings of the same numeric value compare equally, so `Exact(1)` also matches
+`1.0`. Their `matches`, `contains`, and `allows` convenience methods use the
+same typed checks as `satisfies`.
+
+The shared Python `enforce_tool_call` helpers omit top-level `None` arguments
+and `None` elements in lists from their constraint view. Policies used with
+those helpers must match that normalized view. Native constraint checks and
+`Authorizer` preserve null values.
 
 ### Range
 
@@ -896,6 +938,13 @@ NotOneOf(["admin", "root"])
 ```
 
 **Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist). `NotOneOf` can only appear in root warrants or attenuate from another `NotOneOf` or `Wildcard` parent. Attenuating from `OneOf` to `NotOneOf` is **forbidden** because `NotOneOf` accepts values outside the parent's allowlist. To narrow an `OneOf`, use `OneOf(subset)` instead.
+
+An exclusion list judges only the value kinds represented by its entries.
+`NotOneOf([1])` accepts other numbers, but rejects booleans, strings, null,
+lists, and objects. An empty list judges every supported kind. Non-finite
+numbers do not pass exclusions. Adding an exclusion of a new kind during
+delegation is rejected because it would admit values of that kind that the
+parent rejects.
 
 ---
 

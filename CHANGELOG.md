@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Python `Exact`, `OneOf`, and `NotOneOf` preserve typed literals, including
+  numbers, booleans, null, lists, and objects. Their convenience checks use the
+  same core semantics as `satisfies`, and literal delegation shorthand works
+  for non-string values.
+
+### Added
+
+- Python `validate_attenuation(parent, child)` checks cross-type constraint
+  narrowing through the existing Rust core and raises its typed exceptions.
+  Constraint instance methods use the same generic rules. This preflight
+  checks the constraint relationship; grants and authorization still perform
+  full warrant verification.
+
 ## [0.3.6] - 2026-11-09
 
 ### Added
