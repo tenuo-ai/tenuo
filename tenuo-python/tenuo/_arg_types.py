@@ -2,8 +2,8 @@
 
 Frameworks validate tool arguments leniently: ``"22"`` becomes ``22`` for an
 integer parameter and ``"off"`` becomes ``False`` for a boolean one. Tenuo
-authorizes the arguments as the caller sent them, so a value the framework
-would convert must not reach the tool. Adapters call
+authorizes the arguments as the caller sent them, so a value whose JSON type
+the framework would convert must not reach the tool. Adapters call
 :func:`argument_type_mismatches` with the tool's JSON Schema before
 authorizing and deny the call when it reports anything.
 
@@ -13,12 +13,15 @@ Missing schemas leave validation to the framework. Supplied references and
 nested schemas must be readable within the depth limit. Patterns use the
 linear Rust matcher, with 4 KiB patterns and 64 KiB input limits; unsupported
 syntax fails closed.
+Custom value-changing validators still require authorization at the final
+tool boundary. Schema evaluation also has a per-call work limit.
 """
 
 from __future__ import annotations
 
 import math
 from functools import lru_cache
+from contextvars import ContextVar
 from typing import Any, Dict, List, Mapping, Optional
 
 from jsonschema import Draft202012Validator, FormatChecker, validators
@@ -27,6 +30,15 @@ from pydantic import ConfigDict, TypeAdapter
 from referencing import Registry
 
 _MAX_DEPTH = 16
+_SCHEMA_WORK: ContextVar[Optional[List[int]]] = ContextVar("tenuo_schema_work", default=None)
+
+
+def _consume_schema_work() -> None:
+    budget = _SCHEMA_WORK.get()
+    if budget is not None:
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise ValueError("schema evaluation exceeds work limit")
 
 
 @lru_cache(maxsize=16)
@@ -39,6 +51,7 @@ def _linear_regex(pattern: str) -> Any:
 
 
 def _linear_search(pattern: str, text: str) -> bool:
+    _consume_schema_work()
     if len(text.encode("utf-8")) > 65536:
         raise ValueError("schema pattern input exceeds limit")
     return bool(_linear_regex(pattern).satisfies(text))
@@ -111,18 +124,38 @@ _SAFE_KEYWORDS = {
 }
 
 
+def _bounded_keyword(check: Any) -> Any:
+    def bounded(validator: Any, rule: Any, value: Any, schema: Any) -> Any:
+        _consume_schema_work()
+        yield from check(validator, rule, value, schema)
+    return bounded
+
+
+def _bounded_keywords(overrides: Dict[str, Any]) -> Dict[str, Any]:
+    return {name: _bounded_keyword(check) for name, check in {**Draft202012Validator.VALIDATORS, **overrides}.items()}
+
+
 def _schema_for_validation(schema: Any, depth: int = 0) -> Any:
+    _consume_schema_work()
     if depth > 64:
         raise ValueError("schema nesting exceeds limit")
     if not isinstance(schema, Mapping):
         return schema
+    legacy_tuple = isinstance(schema.get("items"), list)
+    if legacy_tuple and "prefixItems" in schema:
+        raise ValueError("conflicting tuple schema forms")
     result: Dict[str, Any] = {}
     for key, value in schema.items():
         if key == "$schema":
             # evolve() must retain the safe validator instead of switching to
             # a stock dialect validator with Python backtracking regexes.
             continue
-        if key in {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}:
+        if key == "additionalItems" and legacy_tuple:
+            continue
+        if key == "items" and legacy_tuple:
+            result["prefixItems"] = [_schema_for_validation(rule, depth + 1) for rule in value]
+            result["items"] = _schema_for_validation(schema.get("additionalItems", True), depth + 1)
+        elif key in {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}:
             result[key] = {name: _schema_for_validation(rule, depth + 1) for name, rule in value.items()}
         elif key in {"allOf", "anyOf", "oneOf", "prefixItems"}:
             result[key] = [_schema_for_validation(rule, depth + 1) for rule in value]
@@ -135,6 +168,7 @@ def _schema_for_validation(schema: Any, depth: int = 0) -> Any:
 
 
 def _literal_equal(left: Any, right: Any) -> bool:
+    _consume_schema_work()
     if isinstance(left, bool) or isinstance(right, bool):
         return type(left) is type(right) and left == right
     if isinstance(left, (int, float)) and isinstance(right, (int, float)):
@@ -199,7 +233,7 @@ def _no_remote_schema(uri: str) -> Any:
 
 _BranchValidator = validators.extend(
     Draft202012Validator,
-    validators=_SAFE_KEYWORDS,
+    validators=_bounded_keywords(_SAFE_KEYWORDS),
     type_checker=Draft202012Validator.TYPE_CHECKER.redefine_many({
         name: (lambda checker, value, expected=name: _json_type_ok(expected, value))
         for name in ("boolean", "integer", "number", "string", "array", "object", "null")
@@ -250,7 +284,7 @@ def _candidate_enum(validator: Any, expected: Any, value: Any, schema: Any) -> A
 
 _CandidateValidator = validators.extend(
     Draft202012Validator,
-    validators={
+    validators=_bounded_keywords({
         **_SAFE_KEYWORDS,
         "const": _candidate_const,
         "enum": _candidate_enum,
@@ -259,7 +293,7 @@ _CandidateValidator = validators.extend(
         # Do not infer impossibility from negation or conditionals here.
         "not": lambda *args: (),
         "if": lambda *args: (),
-    },
+    }),
     type_checker=Draft202012Validator.TYPE_CHECKER.redefine_many({
         name: (lambda checker, value, expected=name: _candidate_type_ok(expected, value))
         for name in ("boolean", "integer", "number", "string", "array", "object", "null")
@@ -291,6 +325,7 @@ def _eligible_branch(schema: Any, value: Any, root: Mapping[str, Any]) -> bool:
 
 
 def _matches(schema: Any, value: Any, root: Mapping[str, Any], depth: int) -> bool:
+    _consume_schema_work()
     if isinstance(schema, bool):
         return schema
     if depth > _MAX_DEPTH:
@@ -383,7 +418,7 @@ def _matches(schema: Any, value: Any, root: Mapping[str, Any], depth: int) -> bo
     return True
 
 
-def argument_type_mismatches(schema: Any, arguments: Any) -> List[str]:
+def _argument_type_mismatches(schema: Any, arguments: Any) -> List[str]:
     """Names of arguments whose JSON type differs from the tool's schema.
 
     Args:
@@ -412,6 +447,17 @@ def argument_type_mismatches(schema: Any, arguments: Any) -> List[str]:
     # Different fields can each match a different union branch while the
     # complete argument object matches none. Report the whole conflicting set.
     return mismatches or sorted(str(name) for name in arguments) or ["<arguments>"]
+
+
+def argument_type_mismatches(schema: Any, arguments: Any) -> List[str]:
+    """Report incompatible argument names with bounded schema evaluation."""
+    token = _SCHEMA_WORK.set([32768])
+    try:
+        return _argument_type_mismatches(schema, arguments)
+    except Exception:
+        return sorted(str(name) for name in arguments) if isinstance(arguments, Mapping) and arguments else ["<arguments>"]
+    finally:
+        _SCHEMA_WORK.reset(token)
 
 
 def tool_input_schema(tool: Any) -> Optional[Dict[str, Any]]:

@@ -344,3 +344,33 @@ def test_schema_metadata_does_not_erase_user_fields_or_literals():
 def test_regex_forms_unsupported_by_the_linear_matcher_fail_closed():
     schema = {"properties": {"item": {"pattern": "(?=a)a", "type": "string"}}}
     assert argument_type_mismatches(schema, {"item": "a"}) == ["item"]
+
+
+def test_shared_reference_expansion_cannot_exhaust_a_worker():
+    import subprocess
+    import sys
+
+    script = r'''from tenuo._arg_types import argument_type_mismatches
+rules = {"leaf": {"const": "match"}}
+previous = "leaf"
+for index in range(20):
+    name = "node" + str(index)
+    rules[name] = {"anyOf": [{"$ref": "#/$defs/" + previous}] * 2}
+    previous = name
+schema = {"$defs": rules, "properties": {"item": {"anyOf": [{"$ref": "#/$defs/" + previous}, {"type": "null"}]}}}
+assert argument_type_mismatches(schema, {"item": "miss"}) == ["item"]
+'''
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=10)
+
+
+def test_legacy_tuple_inside_union_preserves_types_and_additional_items():
+    schema = {"$schema": "http://json-schema.org/draft-07/schema#", "properties": {
+        "item": {"anyOf": [
+            {"type": "array", "items": [{"type": "integer"}, {"type": "boolean"}], "additionalItems": False},
+            {"type": "null"},
+        ]},
+    }}
+    assert argument_type_mismatches(schema, {"item": [22, False]}) == []
+    assert argument_type_mismatches(schema, {"item": None}) == []
+    assert argument_type_mismatches(schema, {"item": ["22", "off"]}) == ["item"]
+    assert argument_type_mismatches(schema, {"item": [22, False, True]}) == ["item"]
