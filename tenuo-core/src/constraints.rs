@@ -631,6 +631,24 @@ impl Constraint {
         }
     }
 
+    /// Approval gates must not turn an out-of-kind negation into a bypass.
+    pub(crate) fn has_off_kind_negation(&self, value: &ConstraintValue) -> Result<bool> {
+        Ok(match self {
+            Self::Not(n) => {
+                !n.constraint.value_kinds()?.accepts(value)
+                    || n.constraint.has_off_kind_negation(value)?
+            }
+            Self::NotOneOf(n) => !n.value_kinds().accepts(value),
+            Self::All(a) => a.constraints.iter().try_fold(false, |found, c| {
+                Ok::<_, Error>(found | c.has_off_kind_negation(value)?)
+            })?,
+            Self::Any(a) => a.constraints.iter().try_fold(false, |found, c| {
+                Ok::<_, Error>(found | c.has_off_kind_negation(value)?)
+            })?,
+            _ => false,
+        })
+    }
+
     /// Evaluate composites under negation without hiding errors behind a
     /// branch whose result changed due to kind-scoped negation. The caller
     /// first validates availability and structure with `value_kinds()`.
@@ -658,6 +676,9 @@ impl Constraint {
     /// negation. Reversed positive attenuation only compares boolean match
     /// sets, so it cannot prove that removing a parser preserves denials.
     fn preserves_negation_errors_of(&self, parent: &Constraint) -> bool {
+        if !parent.can_fail() {
+            return true;
+        }
         match parent {
             Constraint::All(all) => all
                 .constraints
@@ -704,7 +725,8 @@ impl Constraint {
             | Constraint::Range(_)
             | Constraint::Contains(_)
             | Constraint::Subset(_)
-            | Constraint::Shlex(_) => false,
+            | Constraint::Shlex(_)
+            | Constraint::Subpath(_) => false,
             Constraint::Pattern(p) => p.get_compiled().is_err(),
             Constraint::Regex(r) => r.get_compiled().is_err(),
             Constraint::All(a) => {

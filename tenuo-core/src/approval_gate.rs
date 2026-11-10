@@ -536,6 +536,18 @@ pub fn approval_requirement(
                 });
             };
 
+            if let ArgApprovalGate::Constraint(c) | ArgApprovalGate::Exempt(c) = arg_gate {
+                c.value_kinds()?;
+                if c.has_off_kind_negation(arg_value)? {
+                    return Ok(ApprovalRequirement::Required {
+                        kind: ApprovalGateKind::Argument {
+                            name: arg_name.clone(),
+                        },
+                        message,
+                    });
+                }
+            }
+
             match arg_gate {
                 ArgApprovalGate::All => {
                     return Ok(ApprovalRequirement::Required {
