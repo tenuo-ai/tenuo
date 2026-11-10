@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An opt-in release notification workflow for downstream integration update
+  PRs, with immutable release validation and repository-scoped App tokens.
 - Python `validate_attenuation(parent, child)` checks cross-type constraint
   narrowing through the existing Rust core and raises its typed exceptions.
   Constraint instance methods use the same generic rules. This preflight
