@@ -22,6 +22,8 @@ class DownstreamReleaseTests(unittest.TestCase):
         }
 
     def mock_api(self, path):
+        if "/actions/workflows/release.yml/" in path:
+            return {"workflow_runs": [self.run]}
         if "/git/ref/" in path:
             return {"object": {"type": "tag", "sha": "b" * 40}}
         if "/git/tags/" in path:
@@ -117,6 +119,35 @@ class DownstreamReleaseTests(unittest.TestCase):
                     {"workflow_run": {**self.run, "name": "Authorizer Binaries"}},
                 )
             )
+
+    def test_successful_manual_runs_and_other_tags_do_not_prove_publication(self):
+        for change in [
+            {"event": "workflow_dispatch"},
+            {"head_branch": "v0.3.5"},
+            {"conclusion": "failure"},
+        ]:
+
+            def incomplete(path, change=change):
+                if "/actions/workflows/release.yml/" in path:
+                    return {"workflow_runs": [{**self.run, **change}]}
+                return self.mock_api(path)
+
+            with (
+                self.subTest(change=change),
+                patch.object(downstream, "api", side_effect=incomplete),
+            ):
+                self.assertIsNone(
+                    downstream.prepare(
+                        "tenuo-ai/tenuo",
+                        "workflow_run",
+                        {"workflow_run": {**self.run, "name": "Authorizer Binaries"}},
+                    )
+                )
+                self.assertIsNone(
+                    downstream.prepare(
+                        "tenuo-ai/tenuo", "workflow_dispatch", {}, "v0.3.6"
+                    )
+                )
 
 
 if __name__ == "__main__":

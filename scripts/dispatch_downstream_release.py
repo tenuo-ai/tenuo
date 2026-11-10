@@ -68,12 +68,15 @@ def prepare(source, event_name, event, manual_tag=""):
         raise ValueError("invalid source commit")
     if run is not None and run["head_sha"] != ref["sha"]:
         raise ValueError("publisher commit does not match the immutable release tag")
-    if run is not None and run["name"] == "Authorizer Binaries":
+    if run is None or run["name"] == "Authorizer Binaries":
         publishers = api(
             f"repos/{source}/actions/workflows/release.yml/runs?head_sha={ref['sha']}&per_page=30"
         )
         if not any(
-            publisher["head_sha"] == ref["sha"] and publisher["conclusion"] == "success"
+            publisher.get("head_sha") == ref["sha"]
+            and publisher.get("conclusion") == "success"
+            and publisher.get("event") == "release"
+            and publisher.get("head_branch") == tag
             for publisher in publishers["workflow_runs"]
         ):
             return None
