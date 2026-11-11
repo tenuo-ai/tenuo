@@ -264,11 +264,23 @@ fn regenerate_python_optional_fixtures() {
     );
     let mut null = ConstraintSet::new();
     null.insert_optional("head", tenuo::Exact::new(ConstraintValue::Null));
+    let mut unknown = ConstraintSet::new();
+    unknown.insert_optional(
+        "head",
+        Any::new([
+            tenuo::Wildcard.into(),
+            Constraint::Unknown {
+                type_id: 99,
+                payload: vec![0xf6],
+            },
+        ]),
+    );
     let mut fixtures = serde_json::Map::new();
     for (name, tool, set) in [
         ("range", "read", range_set(true, 200.0)),
         ("list", "read", list),
         ("null", "read", null),
+        ("unknown", "read", unknown),
         ("wildcard", "*", range_set(true, 200.0)),
         ("exact_precedence", "*", range_set(true, 200.0)),
     ] {

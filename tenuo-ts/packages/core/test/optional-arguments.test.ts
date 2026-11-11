@@ -27,6 +27,8 @@ describe("optional arguments from signed Rust warrants", () => {
     ["exact_precedence", {}, false],
     ["exact_precedence", { head: 100 }, true],
     ["exact_precedence", { head: 101 }, false],
+    ["unknown", {}, false],
+    ["unknown", { head: 1 }, false],
   ] as const)("%s with %j allows=%s", (name, args, allowed) => {
     const wire = fixtures[name]!;
     const session = SdkSession.fromWire(wire, key);
@@ -35,6 +37,13 @@ describe("optional arguments from signed Rust warrants", () => {
     const pop = issuer.signPop(session, "read", args);
     const decision = verifier.authorizePresented([wire], "read", args, pop, [], null);
     expect(decision.outcome).toBe(allowed ? "allow" : "deny");
+    const explanation = verifier.explain(session, "read", args);
+    expect(explanation.outcome).toBe(allowed ? "allow" : "deny");
+    if (!("head" in args)) {
+      const required = name === "exact_precedence";
+      expect(explanation.missing_fields).toEqual(required ? ["head"] : []);
+    }
+    expect(explanation.fields[0].satisfied).toBe(allowed);
     session.free();
   });
 });
