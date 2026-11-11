@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Delegation checks are stricter for the `*` tool entry, issuer
+  `constraint_bounds` and clearance.** The builder and the verifier now apply
+  the same rules to all three. A child's `*` entry must stay within what the
+  parent allows for every tool the child does not name. Chains that follow
+  these rules verify as before.
+
 ### Changed
 
 - **Upgrade note.** `Annotated` constraint checks and the A2A server no longer
