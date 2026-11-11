@@ -2107,6 +2107,8 @@ Optionality does not permit undeclared arguments. During delegation, an optional
 argument may become required, but a required argument cannot become optional.
 The value constraint must still narrow, and the existing keyset rules still apply:
 an optional key cannot be dropped from a nonempty parent constraint set.
+Unsupported optional parent predicates cannot confer authority through
+delegation, including when a child makes the argument required.
 
 Omission is distinct from explicit null. The engine checks the arguments it is
 given; it does not resolve tool defaults. If a default must satisfy the policy,

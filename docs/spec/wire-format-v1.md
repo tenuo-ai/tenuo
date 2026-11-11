@@ -995,6 +995,8 @@ set or a constraint payload MUST be rejected.
 
 Delegation MAY change optional to required, but MUST NOT change required to
 optional. Value attenuation and keyset restrictions still apply. Implementations
+MUST reject delegation from an optional parent predicate they cannot implement,
+including when the child makes that argument required. Implementations
 that predate `optional_fields` and enforce strict decoding reject this member;
 required-only sets retain their existing encoding.
 

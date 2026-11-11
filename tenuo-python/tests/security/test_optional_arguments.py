@@ -100,6 +100,19 @@ def test_chain_preserves_parent_optional_fields_and_legacy_normalization(policy)
     assert warrants["exact_precedence"].optional_fields("other") == ["head"]
 
 
+def test_required_child_cannot_revive_unsupported_optional_parent(policy):
+    key, warrants = policy
+    child = warrants["unknown_required_child"]
+    args = {"head": 1}
+    # Valid leaf predicate and PoP must not erase the parent's refusal.
+    assert child.check_constraints("read", args) is None
+    signature = child.sign(key, "read", args, int(time.time()))
+    with pytest.raises(Exception, match="unknown constraint type ID 99"):
+        Authorizer(trusted_roots=[key.public_key]).check_chain(
+            [warrants["unknown"], child], "read", args, signature=signature,
+        )
+
+
 @pytest.mark.parametrize("async_path", [False, True])
 @pytest.mark.asyncio
 async def test_required_child_cannot_erase_optional_parent_list_nulls(policy, async_path):

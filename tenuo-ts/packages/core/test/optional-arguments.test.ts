@@ -12,6 +12,17 @@ const issuer = SdkContext.fromIssuerSecret(key, []);
 const verifier = SdkContext.fromTrustedRoots([issuer.issuerPublicKey()]);
 
 describe("optional arguments from signed Rust warrants", () => {
+  it("a required leaf cannot revive its unsupported optional parent", () => {
+    const wire = fixtures.unknown_required_child!;
+    const session = SdkSession.fromWire(wire, key);
+    const args = { head: 1 };
+    const pop = issuer.signPop(session, "read", args);
+    const decision = verifier.authorizePresented([fixtures.unknown!, wire], "read", args, pop, [], null);
+    expect(decision.outcome).toBe("deny");
+    expect(decision.message).toContain("unknown constraint type ID 99");
+    session.free();
+  });
+
   it.each([
     ["range", {}, true],
     ["range", { head: null }, false],

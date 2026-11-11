@@ -4979,6 +4979,11 @@ impl ConstraintSet {
                     "child cannot make required argument '{field}' optional"
                 )));
             }
+            if self.is_optional(field) {
+                // Requiring the argument must not revive a parent policy that
+                // refuses every invocation because its predicate is unsupported.
+                parent_constraint.validate_optional_support()?;
+            }
             parent_constraint.validate_attenuation(child_constraint)?;
         }
 

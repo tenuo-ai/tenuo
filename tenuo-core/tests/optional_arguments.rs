@@ -1,5 +1,6 @@
 //! Presence is part of argument authority, independently of its value constraint.
 use proptest::prelude::*;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
@@ -250,6 +251,116 @@ fn optional_cel_requires_cel_support_even_when_omitted() {
     );
 }
 
+fn hand_signed_required_child(
+    parent: &Warrant,
+    constraint: Constraint,
+    key: &SigningKey,
+) -> Warrant {
+    // Model a holder signing directly, without the attenuation builder's checks.
+    let mut payload = parent.payload.clone();
+    payload.id = tenuo::WarrantId::new();
+    payload.depth += 1;
+    payload.issuer = key.public_key();
+    payload.parent_hash = Some(Sha256::digest(parent.payload_bytes()).into());
+    let mut required = ConstraintSet::new();
+    required.insert("head", constraint);
+    payload.tools = [("read".to_string(), required)].into();
+    let payload = cbor(&payload);
+    let signature = key.sign_raw(&[tenuo::SIGNATURE_CONTEXT, &[1], &payload].concat());
+    let envelope = cbor(&(1u8, serde_bytes::Bytes::new(&payload), signature));
+    tenuo::wire::decode(&envelope).unwrap()
+}
+
+fn optional_parent(constraint: Constraint, issuer: &SigningKey, holder: &SigningKey) -> Warrant {
+    let mut set = ConstraintSet::new();
+    set.insert_optional("head", constraint);
+    Warrant::builder()
+        .capability("read", set)
+        .holder(holder.public_key())
+        .ttl(Duration::from_secs(3600))
+        .build(issuer)
+        .unwrap()
+}
+
+fn assert_unsupported_optional_parent_cannot_delegate(constraint: Constraint) {
+    let key = SigningKey::generate();
+    let issuer = SigningKey::generate();
+    let parent = optional_parent(constraint.clone(), &issuer, &key);
+    let invocation = args(Some(1.into()));
+    let refusal = parent
+        .check_constraints("read", &invocation)
+        .unwrap_err()
+        .to_string();
+    let verifier = Authorizer::new().with_trusted_root(issuer.public_key());
+    for child_constraint in [constraint.clone(), tenuo::Exact::new(1).into()] {
+        let child = hand_signed_required_child(&parent, child_constraint.clone(), &key);
+        child.verify(&key.public_key()).unwrap();
+        // The required leaf alone accepts the value. Only chain validation can
+        // preserve the unsupported optional parent's refusal.
+        child.check_constraints("read", &invocation).unwrap();
+        let signature = child.sign(&key, "read", &invocation).unwrap();
+        let error = verifier
+            .check_chain(
+                &[parent.clone(), child.clone()],
+                "read",
+                &invocation,
+                Some(&signature),
+                &[],
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains(&refusal), "{error}");
+        assert!(verifier.verify_chain(&[parent.clone(), child]).is_err());
+        let mut required = ConstraintSet::new();
+        required.insert("head", child_constraint);
+        assert!(parent
+            .attenuate()
+            .capability("read", required)
+            .build(&key)
+            .is_err());
+    }
+}
+
+#[test]
+fn signed_required_children_cannot_revive_unknown_optional_parent() {
+    assert_unsupported_optional_parent_cannot_delegate(
+        Any::new([
+            tenuo::Wildcard.into(),
+            Constraint::Unknown {
+                type_id: 99,
+                payload: vec![0xf6],
+            },
+        ])
+        .into(),
+    );
+}
+
+#[cfg(not(feature = "cel"))]
+#[test]
+fn signed_required_children_cannot_revive_unavailable_cel_parent() {
+    assert_unsupported_optional_parent_cannot_delegate(
+        Any::new([
+            tenuo::Wildcard.into(),
+            tenuo::CelConstraint::new("true").into(),
+        ])
+        .into(),
+    );
+}
+
+#[test]
+fn hand_signed_supported_optional_to_required_chain_is_valid() {
+    let key = SigningKey::generate();
+    let constraint: Constraint = Range::max(200.0).unwrap().into();
+    let issuer = SigningKey::generate();
+    let parent = optional_parent(constraint.clone(), &issuer, &key);
+    let child = hand_signed_required_child(&parent, constraint, &key);
+    let invocation = args(Some(1.into()));
+    let signature = child.sign(&key, "read", &invocation).unwrap();
+    Authorizer::new()
+        .with_trusted_root(issuer.public_key())
+        .check_chain(&[parent, child], "read", &invocation, Some(&signature), &[])
+        .unwrap();
+}
+
 /// Regenerate the signed cross-language fixtures with:
 /// cargo test --test optional_arguments regenerate_python_optional_fixtures -- --ignored
 #[test]
@@ -303,6 +414,14 @@ fn regenerate_python_optional_fixtures() {
         let signature = key.sign_raw(&signed);
         let envelope = cbor(&(1u8, serde_bytes::Bytes::new(&payload), signature));
         let decoded = tenuo::wire::decode(&envelope).unwrap();
+        if name == "unknown" {
+            let constraint = decoded.payload.tools["read"].get("head").unwrap().clone();
+            let child = hand_signed_required_child(&decoded, constraint, &key);
+            fixtures.insert(
+                "unknown_required_child".into(),
+                tenuo::wire::encode_base64(&child).unwrap().into(),
+            );
+        }
         fixtures.insert(
             name.into(),
             tenuo::wire::encode_base64(&decoded).unwrap().into(),
