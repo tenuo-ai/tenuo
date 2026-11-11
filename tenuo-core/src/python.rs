@@ -4253,6 +4253,21 @@ impl PyWarrant {
         }
     }
 
+    /// Fields whose presence is optional for this tool's effective policy.
+    /// Exact tool entries take precedence over the wildcard entry.
+    fn optional_fields(&self, tool: &str) -> Vec<String> {
+        self.inner
+            .capabilities()
+            .and_then(|caps| caps.get(tool).or_else(|| caps.get("*")))
+            .map(|set| {
+                set.iter()
+                    .filter(|(field, _)| set.is_optional(field))
+                    .map(|(field, _)| field.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Get constraint bounds as a Python dict (Issuer warrants only).
     fn constraint_bounds_dict<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         if let Some(bounds) = self.inner.constraint_bounds() {

@@ -2111,6 +2111,9 @@ an optional key cannot be dropped from a nonempty parent constraint set.
 Omission is distinct from explicit null. The engine checks the arguments it is
 given; it does not resolve tool defaults. If a default must satisfy the policy,
 normalize the default into the invocation before authorization and execution.
+Optional declarations still require verifier support for the entire value
+constraint. Unknown types, including those inside composite constraints, and
+CEL constraints on builds without CEL support are rejected even when omitted.
 
 This API is in the shared Rust engine; Python and TypeScript authoring helpers do
 not yet expose optional declarations. CBOR stores a sorted `optional_fields`
@@ -2118,3 +2121,10 @@ array alongside `constraints`, omitted when empty. Existing required-only
 encodings remain unchanged. Strict older decoders reject the new member; older
 permissive decoders treat the arguments as required. Upgrade verifiers before
 issuing warrants that depend on omission being accepted.
+
+Python and TypeScript receivers preserve supplied values for optional fields
+throughout the presented chain, including explicit nulls and nulls inside lists.
+Required-only fields retain the SDK's existing null normalization. In Python,
+`warrant.optional_fields(tool)` reports the signed presence declarations for the
+effective tool entry, using the same exact-tool precedence and wildcard fallback
+as authorization.

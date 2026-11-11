@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constraint whenever the argument is supplied. Diagnostics, signed CBOR warrants,
   and attenuation preserve the presence rule; required arguments cannot become
   optional during delegation. Required-only encodings remain unchanged.
+  Python and TypeScript receivers preserve supplied optional values, including
+  nulls. Unknown constraint types and unavailable CEL evaluators fail closed
+  even on omission.
 
 - An opt-in release notification workflow for downstream integration update
   PRs, with immutable release validation and repository-scoped App tokens.

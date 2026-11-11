@@ -1059,6 +1059,8 @@ class TestValidateToolSplitView:
         assert kwargs["pop_args"] == {"path": "/tmp/x.txt", "maxSize": None}
         assert kwargs["constraint_args"] == {
             "path": "/tmp/x.txt",
+            # Enforcement needs the signed presence policy before normalizing nulls.
+            "maxSize": None,
             "max_size": 1024,
         }
 

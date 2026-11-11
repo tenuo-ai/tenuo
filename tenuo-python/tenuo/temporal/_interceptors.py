@@ -1451,14 +1451,14 @@ class TenuoActivityInboundInterceptor:
             # alone as a preflight would let an invalid signature look like an
             # approval-required call.
             from tenuo._enforcement import parents_from_presented_chain, verify_inbound_call
-            from tenuo._pop_canonicalize import strip_none_values
+            from tenuo._pop_canonicalize import constraint_view
             from tenuo.runtime import bind_runtime, get_runtime
             from tenuo.runtime import apply_runtime_revocation
 
             runtime = getattr(self._config, "runtime", None) or get_runtime()
             presented_parents = parents_from_presented_chain(chain, warrant)
             full_chain = list(presented_parents) + [warrant]
-            constraint_args = strip_none_values(args)
+            constraint_args = constraint_view(args, tool_name, full_chain)
             with bind_runtime(runtime):
                 apply_runtime_revocation(authorizer)
                 try:

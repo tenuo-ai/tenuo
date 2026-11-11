@@ -631,6 +631,29 @@ impl Constraint {
         }
     }
 
+    /// Absence must not bypass an unsupported predicate, including one hidden
+    /// inside a short-circuiting composite. No argument value is needed here.
+    fn validate_optional_support(&self) -> Result<()> {
+        match self {
+            Self::Unknown { type_id, .. } => Err(Error::ConstraintNotSatisfied {
+                field: "constraint".to_string(),
+                reason: format!("unknown constraint type ID {}", type_id),
+            }),
+            Self::All(a) => a
+                .constraints
+                .iter()
+                .try_for_each(Self::validate_optional_support),
+            Self::Any(a) => a
+                .constraints
+                .iter()
+                .try_for_each(Self::validate_optional_support),
+            Self::Not(n) => n.constraint.validate_optional_support(),
+            #[cfg(not(feature = "cel"))]
+            Self::Cel(_) => Err(Error::FeatureNotEnabled { feature: "cel" }),
+            _ => Ok(()),
+        }
+    }
+
     /// Approval gates must not turn an out-of-kind negation into a bypass.
     pub(crate) fn has_off_kind_negation(&self, value: &ConstraintValue) -> Result<bool> {
         Ok(match self {
@@ -4881,6 +4904,9 @@ impl ConstraintSet {
         }
 
         for (field, constraint) in &self.constraints {
+            if self.is_optional(field) {
+                constraint.validate_optional_support()?;
+            }
             let Some(value) = args.get(field) else {
                 if self.is_optional(field) {
                     continue;

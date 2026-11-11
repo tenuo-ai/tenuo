@@ -2,7 +2,10 @@
 use proptest::prelude::*;
 use std::collections::HashMap;
 use std::time::Duration;
-use tenuo::{ConstraintSet, ConstraintValue, Range, SigningKey, Warrant};
+use tenuo::{
+    All, Any, Authorizer, Constraint, ConstraintSet, ConstraintValue, Not, Range, SigningKey,
+    Warrant,
+};
 
 fn range_set(optional: bool, max: f64) -> ConstraintSet {
     let mut set = ConstraintSet::new();
@@ -188,4 +191,116 @@ proptest! {
             prop_assert!(parent.matches(&invocation).is_ok());
         }
     }
+}
+
+fn assert_unsupported_optional_denied(constraint: Constraint) {
+    let mut set = ConstraintSet::new();
+    set.insert_optional("head", constraint);
+    let key = SigningKey::generate();
+    let warrant = Warrant::builder()
+        .capability("read", set)
+        .holder(key.public_key())
+        .ttl(Duration::from_secs(3600))
+        .build(&key)
+        .unwrap();
+    // Exercise the public wire decoder and trusted, PoP-authenticated receiver.
+    let warrant = tenuo::wire::decode(&tenuo::wire::encode(&warrant).unwrap()).unwrap();
+    let mut verifier = Authorizer::new();
+    verifier.add_trusted_root(key.public_key());
+    for invocation in [args(None), args(Some(1.into()))] {
+        let signature = warrant.sign(&key, "read", &invocation).unwrap();
+        assert!(verifier
+            .authorize_one(&warrant, "read", &invocation, Some(&signature), &[])
+            .is_err());
+        assert!(warrant.diagnose_constraints("read", &invocation).is_err());
+    }
+}
+
+#[test]
+fn optional_unknown_constraints_fail_closed_through_composites() {
+    let unknown = Constraint::Unknown {
+        type_id: 99,
+        payload: vec![0xf6],
+    };
+    for constraint in [
+        unknown.clone(),
+        All::new([unknown.clone()]).into(),
+        Any::new([tenuo::Wildcard.into(), unknown.clone()]).into(),
+        Not::new(unknown.clone()).into(),
+        Any::new([
+            tenuo::Wildcard.into(),
+            All::new([Not::new(unknown).into()]).into(),
+        ])
+        .into(),
+    ] {
+        assert_unsupported_optional_denied(constraint);
+    }
+}
+
+#[cfg(not(feature = "cel"))]
+#[test]
+fn optional_cel_requires_cel_support_even_when_omitted() {
+    assert_unsupported_optional_denied(tenuo::CelConstraint::new("true").into());
+    assert_unsupported_optional_denied(
+        Any::new([
+            tenuo::Wildcard.into(),
+            tenuo::CelConstraint::new("true").into(),
+        ])
+        .into(),
+    );
+}
+
+/// Regenerate the signed cross-language fixtures with:
+/// cargo test --test optional_arguments regenerate_python_optional_fixtures -- --ignored
+#[test]
+#[ignore]
+fn regenerate_python_optional_fixtures() {
+    // Public synthetic fixture key. Never a deployed trust root.
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let mut list = ConstraintSet::new();
+    list.insert_optional(
+        "head",
+        tenuo::Exact::new(ConstraintValue::List(vec![1.into()])),
+    );
+    let mut null = ConstraintSet::new();
+    null.insert_optional("head", tenuo::Exact::new(ConstraintValue::Null));
+    let mut fixtures = serde_json::Map::new();
+    for (name, tool, set) in [
+        ("range", "read", range_set(true, 200.0)),
+        ("list", "read", list),
+        ("null", "read", null),
+        ("wildcard", "*", range_set(true, 200.0)),
+        ("exact_precedence", "*", range_set(true, 200.0)),
+    ] {
+        let mut builder = Warrant::builder().capability(tool, set);
+        if name == "exact_precedence" {
+            builder = builder.capability("read", range_set(false, 100.0));
+        }
+        let warrant = builder
+            .holder(key.public_key())
+            .ttl(Duration::from_secs(3600))
+            .build(&key)
+            .unwrap();
+        let mut payload: tenuo::payload::WarrantPayload =
+            ciborium::de::from_reader(warrant.payload_bytes()).unwrap();
+        // Clock-independent test fixtures, valid from 2023 through 2100.
+        payload.issued_at = 1_700_000_000;
+        payload.expires_at = 4_102_444_800;
+        let payload = cbor(&payload);
+        let signed = [tenuo::SIGNATURE_CONTEXT, &[1], &payload].concat();
+        let signature = key.sign_raw(&signed);
+        let envelope = cbor(&(1u8, serde_bytes::Bytes::new(&payload), signature));
+        let decoded = tenuo::wire::decode(&envelope).unwrap();
+        fixtures.insert(
+            name.into(),
+            tenuo::wire::encode_base64(&decoded).unwrap().into(),
+        );
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/optional_arguments.json");
+    std::fs::write(
+        path,
+        serde_json::to_string_pretty(&fixtures).unwrap() + "\n",
+    )
+    .unwrap();
 }

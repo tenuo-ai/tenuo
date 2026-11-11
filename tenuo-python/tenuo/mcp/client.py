@@ -14,7 +14,6 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
-from .._pop_canonicalize import strip_none_values
 from ..meta import argument_json, signed_arguments
 from ..approval import ApprovalHandler
 from ..config import allow_passthrough, is_configured
@@ -37,10 +36,10 @@ logger = logging.getLogger(__name__)
 def _constraint_view(
     pop_args: Dict[str, Any], extracted: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
-    """Warrant matching ignores null. The proof map still contains it."""
-    view = strip_none_values(pop_args)
+    """Merge extraction without losing values before policy-aware enforcement."""
+    view = dict(pop_args)
     if extracted is not None:
-        view.update(strip_none_values(extracted))
+        view.update(extracted)
     return view
 
 
