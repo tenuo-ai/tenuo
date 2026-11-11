@@ -1422,31 +1422,17 @@ impl DataPlane {
                 if let (Some(parent_caps), Some(child_caps)) =
                     (parent.capabilities(), child.capabilities())
                 {
-                    for (tool, child_constraints) in child_caps {
-                        let parent_constraints =
-                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
-
-                        if let Some(parent_constraints) = parent_constraints {
-                            parent_constraints.validate_attenuation(child_constraints)?;
-                        } else {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "tool '{}' not in parent's capabilities",
-                                tool
-                            )));
-                        }
-                    }
+                    crate::constraints::validate_tool_map_attenuation(
+                        parent_caps,
+                        child_caps,
+                        "capabilities",
+                    )?;
                 }
-                // Clearance monotonicity: child clearance cannot exceed parent's
-                if let (Some(parent_trust), Some(child_trust)) =
-                    (parent.clearance(), child.clearance())
-                {
-                    if child_trust > parent_trust {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "clearance cannot increase: parent {:?}, child {:?}",
-                            parent_trust, child_trust
-                        )));
-                    }
-                }
+                // Clearance may not increase, and may not appear where the parent has none.
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
                 // NOTE: Self-issuance (holder == issuer) is NOT blocked for Execution → Execution.
                 // Monotonicity invariants (I2-I4) ensure a self-issued delegation can only
                 // attenuate capabilities, not escalate them. Self-delegation is harmless.
@@ -1466,12 +1452,23 @@ impl DataPlane {
                         }
                     }
                 }
-                // Constraint bounds must be monotonic
-                if let (Some(parent_bounds), Some(child_bounds)) =
-                    (parent.constraint_bounds(), child.constraint_bounds())
-                {
-                    parent_bounds.validate_attenuation(child_bounds)?;
+                // Constraint bounds must be monotonic. A child that carries none
+                // would issue without the parent's bounds.
+                match (parent.constraint_bounds(), child.constraint_bounds()) {
+                    (Some(parent_bounds), Some(child_bounds)) => {
+                        parent_bounds.validate_attenuation(child_bounds)?;
+                    }
+                    (Some(parent_bounds), None) if !parent_bounds.is_empty() => {
+                        return Err(Error::MonotonicityViolation(
+                            "child issuer warrant drops the parent's constraint_bounds".to_string(),
+                        ));
+                    }
+                    _ => {}
                 }
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
             }
             (WarrantType::Issuer, WarrantType::Execution) => {
                 // ISSUER -> EXECUTION: Validate issuance constraints
@@ -1488,17 +1485,11 @@ impl DataPlane {
                         }
                     }
                 }
-                // 2. Child clearance must not exceed issuer's clearance (monotonicity)
-                if let Some(parent_trust) = parent.clearance() {
-                    if let Some(child_trust) = child.clearance() {
-                        if child_trust > parent_trust {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "clearance {:?} exceeds issuer's clearance {:?}",
-                                child_trust, parent_trust
-                            )));
-                        }
-                    }
-                }
+                // 2. Child clearance must not exceed, or appear without, the issuer's clearance
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
                 // 3. Child constraints must respect issuer's constraint_bounds
                 if let (Some(bounds), Some(child_caps)) =
                     (parent.constraint_bounds(), child.capabilities())
@@ -2785,31 +2776,17 @@ impl Authorizer {
                 if let (Some(parent_caps), Some(child_caps)) =
                     (parent.capabilities(), child.capabilities())
                 {
-                    for (tool, child_constraints) in child_caps {
-                        let parent_constraints =
-                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
-
-                        if let Some(parent_constraints) = parent_constraints {
-                            parent_constraints.validate_attenuation(child_constraints)?;
-                        } else {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "tool '{}' not in parent's capabilities",
-                                tool
-                            )));
-                        }
-                    }
+                    crate::constraints::validate_tool_map_attenuation(
+                        parent_caps,
+                        child_caps,
+                        "capabilities",
+                    )?;
                 }
-                // Clearance monotonicity: child clearance cannot exceed parent's
-                if let (Some(parent_trust), Some(child_trust)) =
-                    (parent.clearance(), child.clearance())
-                {
-                    if child_trust > parent_trust {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "clearance cannot increase: parent {:?}, child {:?}",
-                            parent_trust, child_trust
-                        )));
-                    }
-                }
+                // Clearance may not increase, and may not appear where the parent has none.
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
                 // NOTE: Self-issuance (holder == issuer) is NOT blocked for Execution → Execution.
                 // Monotonicity invariants (I2-I4) ensure a self-issued delegation can only
                 // attenuate capabilities, not escalate them. Self-delegation is harmless.
@@ -2829,12 +2806,23 @@ impl Authorizer {
                         }
                     }
                 }
-                // Constraint bounds must be monotonic
-                if let (Some(parent_bounds), Some(child_bounds)) =
-                    (parent.constraint_bounds(), child.constraint_bounds())
-                {
-                    parent_bounds.validate_attenuation(child_bounds)?;
+                // Constraint bounds must be monotonic. A child that carries none
+                // would issue without the parent's bounds.
+                match (parent.constraint_bounds(), child.constraint_bounds()) {
+                    (Some(parent_bounds), Some(child_bounds)) => {
+                        parent_bounds.validate_attenuation(child_bounds)?;
+                    }
+                    (Some(parent_bounds), None) if !parent_bounds.is_empty() => {
+                        return Err(Error::MonotonicityViolation(
+                            "child issuer warrant drops the parent's constraint_bounds".to_string(),
+                        ));
+                    }
+                    _ => {}
                 }
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
             }
             (WarrantType::Issuer, WarrantType::Execution) => {
                 // ISSUER -> EXECUTION: Validate issuance constraints
@@ -2854,17 +2842,11 @@ impl Authorizer {
                     }
                 }
 
-                // 2. Child clearance must not exceed issuer's clearance (monotonicity)
-                if let Some(parent_trust) = parent.clearance() {
-                    if let Some(child_trust) = child.clearance() {
-                        if child_trust > parent_trust {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "clearance {:?} exceeds issuer's clearance {:?}",
-                                child_trust, parent_trust
-                            )));
-                        }
-                    }
-                }
+                // 2. Child clearance must not exceed, or appear without, the issuer's clearance
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
 
                 // 3. Child constraints must respect issuer's constraint_bounds
                 if let (Some(bounds), Some(child_caps)) =

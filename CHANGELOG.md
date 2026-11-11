@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Delegation checks are stricter for the `*` tool entry, issuer
+  `constraint_bounds` and clearance.** The builder and the verifier now apply
+  the same rules to all three. A child's `*` entry must stay within what the
+  parent allows for every tool the child does not name. Chains that follow
+  these rules verify as before.
+
 ### Changed
 
 - **Upgrade note.** `Annotated` constraint checks and the A2A server no longer
@@ -36,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and attenuation preserve the presence rule; required arguments cannot become
   optional during delegation. Required-only encodings remain unchanged.
 
+- An opt-in release notification workflow for downstream integration update
+  PRs, with immutable release validation and repository-scoped App tokens.
 - Python `validate_attenuation(parent, child)` checks cross-type constraint
   narrowing through the existing Rust core and raises its typed exceptions.
   Constraint instance methods use the same generic rules. This preflight

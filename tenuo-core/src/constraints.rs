@@ -4991,6 +4991,47 @@ impl ConstraintSet {
     }
 }
 
+/// Validate that a child's tool map attenuates its parent's.
+///
+/// A tool resolves to its own entry, or to the `*` entry when it has none.
+/// So a child's `*` entry governs every tool the child does not name, and
+/// must stay within what the parent allows for each of those tools.
+///
+/// `noun` names the parent map in errors ("tools" or "capabilities").
+pub(crate) fn validate_tool_map_attenuation(
+    parent: &BTreeMap<String, ConstraintSet>,
+    child: &BTreeMap<String, ConstraintSet>,
+    noun: &str,
+) -> Result<()> {
+    for (tool, child_constraints) in child {
+        let parent_constraints = parent
+            .get(tool)
+            .or_else(|| parent.get("*"))
+            .ok_or_else(|| {
+                Error::MonotonicityViolation(format!("tool '{}' not in parent's {}", tool, noun))
+            })?;
+        parent_constraints.validate_attenuation(child_constraints)?;
+    }
+
+    if let Some(child_wildcard) = child.get("*") {
+        for (tool, parent_constraints) in parent {
+            if tool == "*" || child.contains_key(tool) {
+                continue;
+            }
+            parent_constraints
+                .validate_attenuation(child_wildcard)
+                .map_err(|e| {
+                    Error::MonotonicityViolation(format!(
+                        "the child's '*' entry would widen tool '{}': {}",
+                        tool, e
+                    ))
+                })?;
+        }
+    }
+
+    Ok(())
+}
+
 impl FromIterator<(String, Constraint)> for ConstraintSet {
     fn from_iter<T: IntoIterator<Item = (String, Constraint)>>(iter: T) -> Self {
         Self {
