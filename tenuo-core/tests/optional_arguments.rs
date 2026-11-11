@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
     All, Any, Authorizer, Constraint, ConstraintSet, ConstraintValue, Not, Range, SigningKey,
-    Warrant,
+    Warrant, WarrantType,
 };
 
 fn range_set(optional: bool, max: f64) -> ConstraintSet {
@@ -361,6 +361,97 @@ fn hand_signed_supported_optional_to_required_chain_is_valid() {
         .unwrap();
 }
 
+fn sign_payload(payload: &tenuo::payload::WarrantPayload, key: &SigningKey) -> Warrant {
+    let payload = cbor(payload);
+    let signature = key.sign_raw(&[tenuo::SIGNATURE_CONTEXT, &[1], &payload].concat());
+    let envelope = cbor(&(1u8, serde_bytes::Bytes::new(&payload), signature));
+    tenuo::wire::decode(&envelope).unwrap()
+}
+
+fn issuer_bounds_chain(
+    tool: &str,
+    fixed_clock: bool,
+) -> (Warrant, Warrant, SigningKey, SigningKey) {
+    // Three distinct public synthetic keys model root, issuer holder, and executor.
+    let root = SigningKey::from_bytes(&[8; 32]);
+    let manager = SigningKey::from_bytes(&[9; 32]);
+    let executor = SigningKey::from_bytes(&[7; 32]);
+    let exact = tenuo::Exact::new(ConstraintValue::List(vec![1.into()]));
+    let issuer = Warrant::builder()
+        .r#type(WarrantType::Issuer)
+        .issuable_tools(vec![tool.into()])
+        .constraint_bound("head", exact.clone())
+        .holder(manager.public_key())
+        .ttl(Duration::from_secs(3600))
+        .build(&root)
+        .unwrap();
+    let mut payload = issuer.payload.clone();
+    let mut bounds = ConstraintSet::new();
+    bounds.insert_optional("head", exact.clone());
+    payload.constraint_bounds = Some(bounds);
+    if fixed_clock {
+        payload.issued_at = 1_700_000_000;
+        payload.expires_at = 4_102_444_800;
+    }
+    let issuer = sign_payload(&payload, &root);
+    let mut required = ConstraintSet::new();
+    required.insert("head", exact);
+    let child = issuer
+        .issue_execution_warrant()
+        .unwrap()
+        .tool("read", required)
+        .holder(executor.public_key())
+        .ttl(Duration::from_secs(600))
+        .build(&manager)
+        .unwrap();
+    let child = if fixed_clock {
+        let mut payload = child.payload.clone();
+        payload.issued_at = issuer.payload.issued_at + 1;
+        payload.expires_at = issuer.payload.expires_at - 1;
+        sign_payload(&payload, &manager)
+    } else {
+        child
+    };
+    (issuer, child, root, executor)
+}
+
+#[test]
+fn issuer_optional_bounds_authorize_required_child_without_erasing_values() {
+    for tool in ["read", "*"] {
+        let (issuer, child, root, executor) = issuer_bounds_chain(tool, false);
+        assert_eq!(issuer.optional_fields("read").collect::<Vec<_>>(), ["head"]);
+        assert_eq!(
+            issuer.optional_fields("other").collect::<Vec<_>>(),
+            if tool == "*" { vec!["head"] } else { vec![] }
+        );
+        assert_eq!(child.optional_fields("read").count(), 0);
+        let verifier = Authorizer::new().with_trusted_root(root.public_key());
+        for (value, allowed) in [
+            (ConstraintValue::List(vec![1.into()]), true),
+            (
+                ConstraintValue::List(vec![1.into(), ConstraintValue::Null]),
+                false,
+            ),
+            (ConstraintValue::Null, false),
+        ] {
+            let invocation = args(Some(value));
+            let pop = child.sign(&executor, "read", &invocation).unwrap();
+            assert_eq!(
+                verifier
+                    .check_chain(
+                        &[issuer.clone(), child.clone()],
+                        "read",
+                        &invocation,
+                        Some(&pop),
+                        &[],
+                    )
+                    .is_ok(),
+                allowed
+            );
+        }
+    }
+}
+
 /// Regenerate the signed cross-language fixtures with:
 /// cargo test --test optional_arguments regenerate_python_optional_fixtures -- --ignored
 #[test]
@@ -425,6 +516,17 @@ fn regenerate_python_optional_fixtures() {
         fixtures.insert(
             name.into(),
             tenuo::wire::encode_base64(&decoded).unwrap().into(),
+        );
+    }
+    for (name, tool) in [("issuer_bounds", "read"), ("issuer_wildcard_bounds", "*")] {
+        let (issuer, child, _, _) = issuer_bounds_chain(tool, true);
+        fixtures.insert(
+            name.into(),
+            tenuo::wire::encode_base64(&issuer).unwrap().into(),
+        );
+        fixtures.insert(
+            format!("{name}_child"),
+            tenuo::wire::encode_base64(&child).unwrap().into(),
         );
     }
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

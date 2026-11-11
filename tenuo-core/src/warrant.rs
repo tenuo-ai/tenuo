@@ -597,6 +597,31 @@ impl Warrant {
         }
     }
 
+    /// Inspect optional arguments in the signed policy applicable to a tool.
+    ///
+    /// Execution entries use exact-tool precedence over wildcard fallback.
+    /// Issuer bounds apply only to tools authorized by `issuable_tools`.
+    pub fn optional_fields(&self, tool: &str) -> impl Iterator<Item = &str> {
+        let constraints = match self.r#type() {
+            WarrantType::Execution => self
+                .payload
+                .tools
+                .get(tool)
+                .or_else(|| self.payload.tools.get("*")),
+            WarrantType::Issuer => self
+                .issuable_tools()
+                .filter(|tools| {
+                    tools
+                        .iter()
+                        .any(|candidate| candidate == tool || candidate == "*")
+                })
+                .and(self.constraint_bounds()),
+        };
+        constraints
+            .into_iter()
+            .flat_map(ConstraintSet::optional_fields)
+    }
+
     /// Retain only specific tools (attenuation).
     pub fn retain_capabilities(&mut self, tools: &[String]) {
         let tools_set: std::collections::HashSet<_> = tools.iter().map(|s| s.as_str()).collect();

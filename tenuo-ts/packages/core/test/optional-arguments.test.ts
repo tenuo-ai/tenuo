@@ -23,6 +23,27 @@ describe("optional arguments from signed Rust warrants", () => {
     session.free();
   });
 
+  it.each(["issuer_bounds", "issuer_wildcard_bounds"])(
+    "%s preserves optional bounds through a required execution child", (name) => {
+      const root = SdkContext.fromIssuerSecret(new Uint8Array(32).fill(8), []);
+      const receiver = SdkContext.fromTrustedRoots([root.issuerPublicKey()]);
+      const wire = fixtures[`${name}_child`]!;
+      const session = SdkSession.fromWire(wire, key);
+      for (const [args, allowed] of [
+        [{ head: [1] }, true],
+        [{ head: [1, null] }, false],
+        [{ head: null }, false],
+      ] as const) {
+        const pop = issuer.signPop(session, "read", args);
+        const decision = receiver.authorizePresented([fixtures[name]!, wire], "read", args, pop, [], null);
+        expect(decision.outcome).toBe(allowed ? "allow" : "deny");
+      }
+      session.free();
+      receiver.free();
+      root.free();
+    },
+  );
+
   it.each([
     ["range", {}, true],
     ["range", { head: null }, false],

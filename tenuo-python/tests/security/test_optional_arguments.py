@@ -193,3 +193,55 @@ async def test_temporal_signed_receiver(policy, args, allowed):
             with pytest.raises(ApplicationError):
                 await interceptor.execute_activity(inp)
             next_activity.execute_activity.assert_not_awaited()
+
+
+@pytest.mark.parametrize("name", ["issuer_bounds", "issuer_wildcard_bounds"])
+@pytest.mark.parametrize("args,allowed", [({"head": [1]}, True), ({"head": [1, None]}, False),
+                                         ({"head": None}, False)])
+@pytest.mark.parametrize("async_path", [False, True])
+@pytest.mark.asyncio
+async def test_signed_issuer_bounds_preserve_optional_values(policy, name, args, allowed, async_path):
+    key, warrants = policy
+    issuer, child = warrants[name], warrants[f"{name}_child"]
+    root = SigningKey.from_bytes(bytes([8] * 32)).public_key
+    authorizer = Authorizer(trusted_roots=[root])
+    signature = child.sign(key, "read", args, int(time.time()))
+    if allowed:
+        authorizer.check_chain([issuer, child], "read", args, signature=signature)
+    else:
+        with pytest.raises(Exception):
+            authorizer.check_chain([issuer, child], "read", args, signature=signature)
+    kwargs = dict(tool_name="read", tool_args=args, bound_warrant=child.bind(key),
+                  warrant_chain=[issuer], trusted_roots=[root], verify_mode="verify",
+                  authorizer=authorizer, precomputed_signature=signature)
+    result = await enforce_tool_call_async(**kwargs) if async_path else enforce_tool_call(**kwargs)
+    assert result.allowed == allowed, result.denial_reason
+
+
+@pytest.mark.parametrize("name", ["issuer_bounds", "issuer_wildcard_bounds"])
+@pytest.mark.parametrize("args,allowed", [({"head": [1]}, True), ({"head": [1, None]}, False)])
+def test_mcp_signed_issuer_bounds_preserve_optional_values(policy, name, args, allowed):
+    from tenuo_core import encode_warrant_stack
+
+    from tenuo.mcp.server import MCPVerifier
+
+    key, warrants = policy
+    issuer, child = warrants[name], warrants[f"{name}_child"]
+    root = SigningKey.from_bytes(bytes([8] * 32)).public_key
+    signature = child.sign(key, "read", args, int(time.time()))
+    result = MCPVerifier(authorizer=Authorizer(trusted_roots=[root])).verify(
+        "read", args, meta={"tenuo": {
+            "warrant": encode_warrant_stack([issuer, child]),
+            "signature": base64.b64encode(bytes(signature)).decode(),
+        }},
+    )
+    assert result.allowed == allowed, result.denial_reason
+
+
+def test_optional_issuer_bounds_inspection_respects_issuable_tools(policy):
+    _, warrants = policy
+    assert warrants["issuer_bounds"].optional_fields("read") == ["head"]
+    assert warrants["issuer_bounds"].optional_fields("other") == []
+    assert warrants["issuer_wildcard_bounds"].optional_fields("read") == ["head"]
+    assert warrants["issuer_wildcard_bounds"].optional_fields("other") == ["head"]
+    assert warrants["issuer_bounds_child"].optional_fields("read") == []

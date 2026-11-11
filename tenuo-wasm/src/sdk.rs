@@ -2533,10 +2533,7 @@ fn constraint_view(
     args.iter()
         .filter_map(|(key, value)| match value {
             _ if chain.iter().any(|warrant| {
-                warrant
-                    .capabilities()
-                    .and_then(|caps| caps.get(tool).or_else(|| caps.get("*")))
-                    .is_some_and(|set| set.is_optional(key))
+                warrant.optional_fields(tool).any(|field| field == key)
             }) =>
             {
                 Some((key.clone(), value.clone()))

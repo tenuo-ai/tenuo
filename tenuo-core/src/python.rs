@@ -4253,19 +4253,13 @@ impl PyWarrant {
         }
     }
 
-    /// Fields whose presence is optional for this tool's effective policy.
-    /// Exact tool entries take precedence over the wildcard entry.
+    /// Optional fields in the signed execution policy or issuable tool's bounds.
+    /// Exact execution entries take precedence over the wildcard entry.
     fn optional_fields(&self, tool: &str) -> Vec<String> {
         self.inner
-            .capabilities()
-            .and_then(|caps| caps.get(tool).or_else(|| caps.get("*")))
-            .map(|set| {
-                set.iter()
-                    .filter(|(field, _)| set.is_optional(field))
-                    .map(|(field, _)| field.clone())
-                    .collect()
-            })
-            .unwrap_or_default()
+            .optional_fields(tool)
+            .map(str::to_owned)
+            .collect()
     }
 
     /// Get constraint bounds as a Python dict (Issuer warrants only).

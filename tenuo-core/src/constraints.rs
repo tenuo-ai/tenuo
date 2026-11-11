@@ -4823,6 +4823,11 @@ impl ConstraintSet {
         self.optional_fields.contains(field)
     }
 
+    /// Iterate over declared optional argument names in deterministic order.
+    pub fn optional_fields(&self) -> impl Iterator<Item = &str> {
+        self.optional_fields.iter().map(String::as_str)
+    }
+
     /// Get a constraint for a field.
     pub fn get(&self, field: &str) -> Option<&Constraint> {
         self.constraints.get(field)

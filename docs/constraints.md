@@ -2129,4 +2129,5 @@ throughout the presented chain, including explicit nulls and nulls inside lists.
 Required-only fields retain the SDK's existing null normalization. In Python,
 `warrant.optional_fields(tool)` reports the signed presence declarations for the
 effective tool entry, using the same exact-tool precedence and wildcard fallback
-as authorization.
+as authorization. For issuer warrants, it reports optional constraint bounds only
+when the tool is issuable, including wildcard issuance.
