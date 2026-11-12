@@ -642,7 +642,8 @@ pub fn propagate_approval_gates(
 // Approval Gate Merging (for attenuation / issuance)
 // ---------------------------------------------------------------------------
 
-/// Merge two approval gate maps, taking the union (more-restrictive wins for conflicts).
+/// Merge approval gate maps, preserving parent gates and adding new gates.
+/// For the same argument, the parent exemption wins; whole-tool gates dominate.
 ///
 /// Used when a child explicitly adds gates during attenuation or issuance.
 /// Parent gates are always preserved; additional gates are unioned in.
