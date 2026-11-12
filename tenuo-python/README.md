@@ -5,8 +5,6 @@
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
-> **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](https://github.com/tenuo-ai/tenuo/blob/main/CHANGELOG.md).
-
 The Python SDK for [Tenuo](https://github.com/tenuo-ai/tenuo). A warrant is a signed grant of which tools an agent may call, with which argument constraints, and for how long. Tenuo checks every tool call against it before the tool runs, so a prompt-injected or confused agent cannot act outside its task. Warrants are bound to the agent holding them, can only narrow when delegated to another agent, verify offline, and produce signed allow/deny receipts. Adapters cover LangChain, LangGraph, CrewAI, the OpenAI Agents SDK, Google ADK, AutoGen, MCP (official SDK and FastMCP), A2A, FastAPI, and Temporal.
 
 ## Installation

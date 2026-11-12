@@ -39,6 +39,13 @@ npm install @tenuo/core@beta
 cargo add tenuo --features sdk
 ```
 
+To try Tenuo without installing an SDK:
+
+<a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
+<a href="https://tenuo.ai/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a" alt="Explorer"></a>
+<a href="https://tenuo.ai/demo.html"><img src="https://img.shields.io/badge/Docker_Demo-delegation_chain-333333" alt="Docker Demo"></a>
+<a href="https://niyikiza.com/posts/tenuo-launch/"><img src="https://img.shields.io/badge/Blog-Why_Tenuo%3F-ff6b6b" alt="Blog"></a>
+
 <a id="quick-start-from-one-tool-to-delegated-work"></a>
 
 ## Quick Start
@@ -111,11 +118,13 @@ Requested 3 replicas
 Blocked before the function ran
 ```
 
-These examples keep issuance and enforcement in one process for development. Python's `dev_mode=True` also relaxes trust-root and audit-log checks. To enforce limits against an untrusted agent, keep issuance keys outside its reach and verify at a tool service or gateway it cannot bypass.
+These examples keep issuance and enforcement in one process for development. Python's `dev_mode=True` also relaxes trust-root and audit-log checks. To enforce limits against an untrusted agent, keep issuance keys outside its reach and verify at a tool service or gateway it cannot bypass. The [MCP walkthrough](./docs/mcp.md) shows that setup with a server that holds only the issuer's public key. The [Production Guide](./docs/production-guide.md) covers enforcement modes, rollout, and key management.
 
 Leaving the scoped block ends its local authorization context; it does not revoke a signed warrant. Keep warrant lifetimes short.
 
 **Continue with:** [Python guide](./docs/quickstart.md) · [TypeScript guide](./tenuo-ts/README.md) · [Rust guide](#rust) · [MCP walkthrough](./docs/mcp.md)
+
+For the TypeScript guide's development examples, set `NODE_ENV=development`.
 
 ## Delegate Across Boundaries
 
@@ -129,11 +138,53 @@ Grants authority   →    Narrows for a subtask   →   Presents warrant
                                                Verifies before acting
 ```
 
-For example, a Python orchestrator can delegate a narrower warrant to a TypeScript worker calling a Rust service. The receiving service verifies the chain, the caller's proof of possession, and the requested action against its configured trusted roots.
+For example, a Python orchestrator can delegate a narrower warrant to a TypeScript worker calling a Rust service. The receiving service verifies the chain against its configured trusted roots, then checks the caller's proof of possession and the requested action against the warrant.
+
+A delegated warrant can only narrow its parent.
+
+**Examples:** [Python delegation example](#python-delegation-example) · [TypeScript delegation guide](./tenuo-ts/README.md#delegate-to-another-agent)
+
+<a id="python-delegation-example"></a>
+
+<details>
+<summary>Python delegation example</summary>
+
+```python
+from tenuo import Range, SigningKey, Warrant
+from tenuo.exceptions import MonotonicityError
+
+issuer = SigningKey.generate()
+orchestrator = SigningKey.generate()
+worker = SigningKey.generate()
+
+root = (Warrant.mint_builder()
+    .capability("scale", replicas=Range.max_value(10))
+    .holder(orchestrator.public_key)
+    .ttl(300)
+    .mint(issuer))
+
+# The orchestrator hands the worker a lower limit and a shorter lifetime.
+worker_warrant = (root.grant_builder()
+    .capability("scale", replicas=Range.max_value(5))
+    .holder(worker.public_key)
+    .ttl(60)
+    .grant(orchestrator))
+
+try:
+    (root.grant_builder()
+        .capability("scale", replicas=Range.max_value(50))
+        .holder(worker.public_key)
+        .ttl(60)
+        .grant(orchestrator))
+except MonotonicityError:
+    print("Rejected: a child cannot raise the limit")
+```
+
+</details>
 
 Sensitive actions can also require a [signed human approval](./docs/approvals.md).
 
-**Explore:** [End-to-end delegation example](./tenuo-python/examples/mcp/mcp_delegation_demo.py) · [Security model](./docs/security.md) · [Supported integrations](#integrate-at-the-boundary-you-control)
+**Explore:** [Python MCP delegation demo](./tenuo-python/examples/mcp/mcp_delegation_demo.py) · [Security model](./docs/security.md) · [Supported integrations](#integrate-at-the-boundary-you-control)
 
 ## Integrate at the Boundary You Control
 
@@ -170,7 +221,7 @@ The self-hosted core and sidecar are Apache-2.0 and run entirely in your infrast
 - Ensure `dry_run` is disabled and warrants are required in all enforcement points
 - Enable audit callbacks and metrics for observability
 
-See [Security Model](https://tenuo.ai/security) for the full threat model and production hardening guidance.
+See the [Production Guide](./docs/production-guide.md) for enforcement modes, gradual rollout, and key management, and the [Security Model](https://tenuo.ai/security) for the full threat model.
 
 ### Tenuo Cloud (Optional)
 
@@ -241,13 +292,6 @@ The skill distinguishes an in-process guardrail from an independently enforced
 boundary and reports the guarantee and remaining bypasses explicitly. It does
 not ask the agent to reimplement Tenuo's cryptography or protocol.
 
-To try Tenuo without installing an SDK:
-
-<a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
-<a href="https://tenuo.ai/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a" alt="Explorer"></a>
-<a href="https://tenuo.ai/demo.html"><img src="https://img.shields.io/badge/Docker_Demo-delegation_chain-333333" alt="Docker Demo"></a>
-<a href="https://niyikiza.com/posts/tenuo-launch/"><img src="https://img.shields.io/badge/Blog-Why_Tenuo%3F-ff6b6b" alt="Blog"></a>
-
 ## Try It: The AI Agent Delegation Security Lab
 
 A travel assistant made of six AI agents is booking a spring-break trip. One of them has been told to do something it shouldn't. Secure the system so the trip still happens and the rogue agent gets nowhere.
@@ -274,20 +318,22 @@ Five main levels plus two optional bosses, no agent-framework experience needed.
 
 ### Optional Dependencies
 
+With uv, use `uv pip install` in place of `pip install`.
+
 ```bash
-uv pip install tenuo                  # Core only
-uv pip install "tenuo[openai]"        # + OpenAI Agents SDK
-uv pip install "tenuo[google_adk]"    # + Google ADK
-uv pip install "tenuo[a2a]"           # + A2A (inter-agent delegation)
-uv pip install "tenuo[fastapi]"       # + FastAPI integration
-uv pip install "tenuo[langchain]"     # + LangChain (langchain-core ≥0.2)
-uv pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
-uv pip install "tenuo[crewai]"        # + CrewAI
-uv pip install "tenuo[temporal]"      # + Temporal workflows
-uv pip install "tenuo[autogen]"       # + AutoGen AgentChat (Python ≥3.10)
-uv pip install "tenuo[mcp]"           # + official MCP SDK, client & server verification (Python ≥3.10)
-uv pip install "tenuo[fastmcp]"       # + FastMCP (TenuoMiddleware / FastMCP servers)
-uv pip install "tenuo[cloud]"         # + Tenuo Cloud SDK (proprietary control-plane client)
+pip install tenuo                     # Core only
+pip install "tenuo[openai]"           # + OpenAI Agents SDK
+pip install "tenuo[google_adk]"       # + Google ADK
+pip install "tenuo[a2a]"              # + A2A (inter-agent delegation)
+pip install "tenuo[fastapi]"          # + FastAPI integration
+pip install "tenuo[langchain]"        # + LangChain (langchain-core ≥0.2)
+pip install "tenuo[langgraph]"        # + LangGraph (includes LangChain)
+pip install "tenuo[crewai]"           # + CrewAI
+pip install "tenuo[temporal]"         # + Temporal workflows
+pip install "tenuo[autogen]"          # + AutoGen AgentChat (Python ≥3.10)
+pip install "tenuo[mcp]"              # + official MCP SDK, client & server verification (Python ≥3.10)
+pip install "tenuo[fastmcp]"          # + FastMCP (TenuoMiddleware / FastMCP servers)
+pip install "tenuo[cloud]"            # + Tenuo Cloud SDK (proprietary control-plane client)
 ```
 
 ---
