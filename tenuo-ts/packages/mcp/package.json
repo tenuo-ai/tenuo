@@ -64,7 +64,7 @@
     "@modelcontextprotocol/server": "2.4.0",
     "@tenuo/core": "workspace:*",
     "@types/node": "^22.13.10",
-    "typescript": "~5.8.2",
+    "typescript": "~7.0.2",
     "vitest": "^4.1.12",
     "zod": "^4.6.7"
   }
