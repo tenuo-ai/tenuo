@@ -16,274 +16,124 @@
   <a href="https://deepwiki.com/tenuo-ai/tenuo"><img src="https://img.shields.io/badge/Ask-DeepWiki-blue.svg" alt="Ask DeepWiki"></a>
 </p>
 
-Tenuo gives each task only the authority it needs. That authority travels with the work, can only shrink when handed off, and is checked where the action runs. It works alongside your existing identity and policy systems.
+Tenuo lets you define what an agent may do for a task, carry that authority across services and agent handoffs, and enforce it where actions execute. Each handoff can only narrow the authority granted.
 
-A **warrant** is a signed grant of which tools an agent can call, under what constraints, and for how long. It works like a prepaid card for one task. Sensitive actions can also require a [signed human approval](./docs/approvals.md). Deploy in-process, in a sidecar, or at a gateway.
+That authority travels as a **warrant**: a signed grant specifying allowed tools, argument constraints, and an expiry.
 
-> **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](./CHANGELOG.md).
->
-> **Tenuo Cloud: Open Beta.** Managed control plane with revocation, observability, and multi-tenant warrant issuance. [Sign Up](https://cloud.tenuo.ai/)
+- **Across frameworks and runtimes.** Delegate between agents and services using different languages and frameworks.
+- **Across organizations and trust domains.** Grant limited authority to others and independently verify the authority you receive.
+- **Online or air-gapped.** Verify locally without contacting a central authorization service, using provisioned trust keys and local revocation state.
+
+Open source. Works alongside your existing identity and policy systems.
 
 ## Install
 
 ```bash
-# Using uv (recommended)
-uv pip install tenuo
-
-# Or standard pip
+# Python
 pip install tenuo
 
-# TypeScript SDK (beta, Node 20+)
-npm i @tenuo/core@beta
+# TypeScript (beta, Node 20+)
+npm install @tenuo/core@beta
 
-# Rust SDK
+# Rust
 cargo add tenuo --features sdk
 ```
 
-See [`tenuo-ts/README.md`](tenuo-ts/README.md) for TypeScript. Rust is [below](#rust).
+<a id="quick-start-from-one-tool-to-delegated-work"></a>
 
-### AI coding agents
+## Quick Start
 
-Install Tenuo's implementation skill so a supported coding agent can place
-authorization at the effect boundary, use the SDK version in your project, and
-generate both allow and deny-before-effect tests:
+Give an agent permission to request up to ten replicas. Calls outside that limit are blocked before the function executes. These examples simulate the action by returning a message.
 
-```bash
-npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
-```
+### Python
 
-The skill distinguishes an in-process guardrail from an independently enforced
-boundary and reports the guarantee and remaining bypasses explicitly. It does
-not ask the agent to reimplement Tenuo's cryptography or protocol.
-
-To try Tenuo without installing an SDK:
-
-<a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
-<a href="https://tenuo.ai/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a" alt="Explorer"></a>
-<a href="https://tenuo.ai/demo.html"><img src="https://img.shields.io/badge/Docker_Demo-delegation_chain-333333" alt="Docker Demo"></a>
-<a href="https://niyikiza.com/posts/tenuo-launch/"><img src="https://img.shields.io/badge/Blog-Why_Tenuo%3F-ff6b6b" alt="Blog"></a>
-
-## Quick Start: From One Tool to Delegated Work
-
-### 1. Protect One Tool
-
-Start with a normal Python function. The warrant limits both which tool can run and the arguments it can receive.
+Save as `quickstart.py` and run `python quickstart.py`.
 
 ```python
-from tenuo import Capability, Pattern, Range, SigningKey, configure, guard, mint_sync
+from tenuo import Capability, Range, SigningKey, configure, guard, mint_sync
 from tenuo.exceptions import AuthorizationDenied
 
+# Local development setup.
 configure(issuer_key=SigningKey.generate(), dev_mode=True, audit_log=False)
 
-@guard(tool="scale_cluster")
-def scale_cluster(cluster: str, replicas: int) -> str:
-    return f"Scaled {cluster} to {replicas} replicas"
+@guard(tool="scale")
+def scale(replicas: int) -> str:
+    return f"Requested {replicas} replicas"
 
-authority = Capability(
-    "scale_cluster",
-    cluster=Pattern("staging-*"),
-    replicas=Range.max_value(10),
-)
+with mint_sync(Capability("scale", replicas=Range.max_value(10)), ttl=60):
+    print(scale(3))
 
-with mint_sync(authority):
-    print(scale_cluster("staging-web", 3))
     try:
-        scale_cluster("production-web", 20)
+        scale(20)
     except AuthorizationDenied:
         print("Blocked before the function ran")
 ```
 
+### TypeScript · Beta
+
+Save as `quickstart.mts` and run `npx tsx quickstart.mts`.
+
+```typescript
+import { AuthorizationDeniedError, createTenuo, range } from "@tenuo/core";
+
+// Local development setup: this process holds the issuance key.
+const tenuo = createTenuo({
+  root: createTenuo.issuerKeyFromBytes(createTenuo.generateIssuerKey()),
+});
+
+const scale = tenuo.tool(
+  {
+    execute: async ({ replicas }: { replicas: number }) =>
+      `Requested ${replicas} replicas`,
+  },
+  { capability: "scale", allow: { replicas: range({ max: 10 }) } },
+);
+
+const session = tenuo.session({ tools: [scale], ttlSeconds: 60 });
+
+await tenuo.withSession(session, async () => {
+  console.log(await scale.execute({ replicas: 3 }));
+
+  try {
+    await scale.execute({ replicas: 20 });
+  } catch (error) {
+    if (!(error instanceof AuthorizationDeniedError) ||
+        error.code !== "TENUO_CONSTRAINT_VIOLATION") throw error;
+    console.log("Blocked before the function ran");
+  }
+});
+```
+
+Both examples produce:
+
 ```text
-Scaled staging-web to 3 replicas
+Requested 3 replicas
 Blocked before the function ran
 ```
 
-`dev_mode=True` is for local development only. It relaxes trust-root and audit-log checks so you can paste the snippet. For production, follow the [Production Guide](./docs/production-guide.md).
+These examples keep issuance and enforcement in one process for development. Python's `dev_mode=True` also relaxes trust-root and audit-log checks. To enforce limits against an untrusted agent, keep issuance keys outside its reach and verify at a tool service or gateway it cannot bypass.
 
-Even if the agent is prompt-injected, it cannot scale a production cluster or exceed ten replicas through this tool. The check happens before the function runs.
+Leaving the scoped block ends its local authorization context; it does not revoke a signed warrant. Keep warrant lifetimes short.
 
-When the `mint_sync` block exits, that task no longer has a warrant in scope. The signed warrant remains valid until its TTL expires, so keep TTLs short.
+**Continue with:** [Python guide](./docs/quickstart.md) · [TypeScript guide](./tenuo-ts/README.md) · [Rust guide](#rust) · [MCP walkthrough](./docs/mcp.md)
 
-### 2. Enforce Across a Real Boundary
+## Delegate Across Boundaries
 
-Run the same check on the MCP server. The server trusts the issuer's public key; the agent sends a warrant and proof of possession with the tool call. Verification is local.
+A task can move between agents, frameworks, and services while retaining its authorization limits.
 
-```python
-# server.py  (pip install "tenuo[fastmcp]")
-import os
-
-from fastmcp import FastMCP
-from tenuo import Authorizer, PublicKey
-from tenuo.mcp import MCPVerifier, TenuoMiddleware
-
-# The server receives the issuer's public key, never its signing key.
-issuer_public_key = PublicKey.from_bytes(
-    bytes.fromhex(os.environ["TENUO_ISSUER_PUB"])
-)
-authorizer = Authorizer(trusted_roots=[issuer_public_key])
-verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
-mcp = FastMCP("infrastructure", middleware=[TenuoMiddleware(verifier)])
-
-@mcp.tool()
-async def scale_cluster(cluster: str, replicas: int) -> str:
-    return f"Scaled {cluster} to {replicas}"
-
-if __name__ == "__main__":
-    mcp.run(transport="stdio")
+```text
+Issuer                  Orchestrator               Worker
+Grants authority   →    Narrows for a subtask   →   Presents warrant
+                                                    ↓
+                                               Receiving service
+                                               Verifies before acting
 ```
 
-```python
-# agent.py  (run from the same directory as server.py)
-import asyncio
-import sys
+For example, a Python orchestrator can delegate a narrower warrant to a TypeScript worker calling a Rust service. The receiving service verifies the chain, the caller's proof of possession, and the requested action against its configured trusted roots.
 
-from tenuo import Capability, Pattern, Range, SigningKey, configure, mint
-from tenuo.mcp import SecureMCPClient
+Sensitive actions can also require a [signed human approval](./docs/approvals.md).
 
-issuer_key = SigningKey.generate()
-configure(issuer_key=issuer_key, trusted_roots=[issuer_key.public_key])
-
-async def main() -> None:
-    async with SecureMCPClient(
-        sys.executable,
-        ["server.py"],  # relative to the process cwd
-        inject_warrant=True,
-        env={"TENUO_ISSUER_PUB": bytes(issuer_key.public_key_bytes()).hex()},
-    ) as client:
-        async with mint(Capability(
-            "scale_cluster",
-            cluster=Pattern("staging-*"),
-            replicas=Range.max_value(10),
-        )):
-            await client.tools["scale_cluster"](cluster="staging-web", replicas=3)
-
-asyncio.run(main())
-```
-
-See the [MCP walkthrough](./docs/mcp.md) for the full server and client pair.
-
-### 3. Delegate Without Expanding Authority
-
-An orchestrator can only narrow what it passes to a worker.
-
-```python
-from tenuo import Pattern, Range, SigningKey, Warrant
-from tenuo.exceptions import MonotonicityError
-
-platform = SigningKey.generate()
-orchestrator = SigningKey.generate()
-worker = SigningKey.generate()
-
-root = (Warrant.mint_builder()
-    .capability(
-        "scale_cluster",
-        cluster=Pattern("staging-*"),
-        replicas=Range.max_value(10),
-    )
-    .holder(orchestrator.public_key)
-    .ttl(300)
-    .mint(platform))
-
-# Narrower child: staging only, cap 5, shorter TTL.
-worker_warrant = (root.grant_builder()
-    .capability(
-        "scale_cluster",
-        cluster=Pattern("staging-*"),
-        replicas=Range.max_value(5),
-    )
-    .holder(worker.public_key)
-    .ttl(60)
-    .grant(orchestrator))
-
-try:
-    (root.grant_builder()
-        .capability(
-            "scale_cluster",
-            cluster=Pattern("staging-*"),
-            replicas=Range.max_value(50),
-        )
-        .holder(worker.public_key)
-        .ttl(60)
-        .grant(orchestrator))
-except MonotonicityError:
-    print("Rejected: child cannot raise the replica cap")
-```
-
-Adding tools or widening constraints fails the same way. A child TTL longer than the parent has left is clamped to the parent's expiry. The same chain works over MCP, A2A, HTTP, or a workflow engine. The last hop verifies it.
-
-Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_delegation_demo.py).
-
----
-
-## Try It: The AI Agent Delegation Security Lab
-
-A travel assistant made of six AI agents is booking a spring-break trip. One of them has been told to do something it shouldn't. Secure the system so the trip still happens and the rogue agent gets nowhere.
-
-```bash
-git clone https://github.com/tenuo-ai/tenuo
-cd tenuo/labs/agent-delegation
-npm install
-npm run lab
-```
-
-Five main levels plus two optional bosses, no agent-framework experience needed. Book the trip, stop the rogue agent, and learn why each handoff should carry only the authority its task needs. Runs offline with free retries and no API key. The guide is at [tenuo.ai/lab](https://tenuo.ai/lab/); the code is in [`labs/agent-delegation`](./labs/agent-delegation/README.md).
-
----
-
-## How It Works
-
-Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. The verifier uses the trusted issuer key and locally available revocation state.
-
-**Holder-bound.** Every warrant names a public key. Every call carries a signature from that key over the warrant, the tool, the exact arguments, and a short time window. A copied warrant is useless without the key.
-
-**Verified offline.** The warrant carries its own authority and signature. Checking it needs no lookup and no network. Checks run in under 50 μs, and enforcement keeps working when the control plane is down.
-
-**Attenuates monotonically.** Delegation mints a child warrant signed by the parent's holder. The verifier walks the whole chain from a trusted root to the leaf. Each link may drop tools, tighten constraints, or shorten expiry. No delegated warrant can exceed its parent. Tenuo calls this **Subtractive Delegation**.
-
-**Holds under prompt injection.** The check never asks the model. It runs at the tool boundary, on the real arguments, after the model has chosen what to call. A hijacked agent can only make the calls its warrant already allowed.
-
-```
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Control Plane   │     │  Orchestrator    │     │  Worker          │
-│                  │     │                  │     │                  │
-│  Issues root     │────▶│  Attenuates      │────▶│  Executes with   │
-│  warrant         │     │  for task        │     │  proof           │
-└──────────────────┘     └──────────────────┘     └──────────────────┘
-     Full scope     -->     Narrower      -->      Narrowest
-```
-
-1. **Control plane** issues a root warrant with broad capabilities
-2. **Orchestrator** attenuates it for a specific task; scope can only shrink
-3. **Worker** proves possession of the bound key and executes
-
-See [Concepts](https://tenuo.ai/concepts) for the model and [Related Work](./docs/related-work.md) for how this compares to Biscuit, Macaroons, UCAN, and [CaMeL](https://arxiv.org/abs/2503.18813).
-
----
-
-## Why Tenuo?
-
-IAM answers who you are. Tenuo answers what this workload may do for this task, right now. Agents stay free to plan and pick tools. The warrant still applies after they choose.
-
-| Existing limitation | Tenuo |
-|---------------------|-------|
-| IAM typically grants authority by identity or role | Warrants limit authority to the current task |
-| Conventional agent handoffs do not carry the original authorization context | Authority travels with the work and can only narrow |
-| Plain bearer tokens can be copied or replayed | Every warrant is bound to the key using it |
-| Central policy checks introduce a runtime dependency | Signed authority is verified locally at execution |
-| Generic string matching can disagree with downstream systems | [Semantic constraints](https://tenuo.ai/constraints) interpret arguments as the target does ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)) |
-
-Signed authorization receipts are opt-in when you need to show why a call was allowed or denied.
-
----
-
-## What Tenuo Is Not
-
-- **Not a sandbox**: Tenuo authorizes the call. Run the process in a container or VM if you need isolation.
-- **Not prompt engineering**: The tool boundary checks the warrant and the arguments.
-- **Not an LLM filter**: Checks happen at execution. They read tool name and arguments.
-- **Not a replacement for IAM**: Tenuo sits on top of identity.
-
----
+**Explore:** [End-to-end delegation example](./tenuo-python/examples/mcp/mcp_delegation_demo.py) · [Security model](./docs/security.md) · [Supported integrations](#integrate-at-the-boundary-you-control)
 
 ## Integrate at the Boundary You Control
 
@@ -301,55 +151,30 @@ These are deployment choices for one authorization system. A warrant can be veri
 
 ---
 
-## Documentation
+## Security Boundaries
 
-| Resource | Description |
-|----------|-------------|
-| **[AI Agent Delegation Security Lab](./labs/agent-delegation/README.md)** | A hands-on lab: six agents, one rogue, five core levels plus two optional bosses |
-| **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
-| **[Concepts](https://tenuo.ai/concepts)** | How warrants and attenuation work |
-| **[Constraints](https://tenuo.ai/constraints)** | All 11 constraint types explained |
-| **[Security](https://tenuo.ai/security)** | Threat model and guarantees |
-| **[OpenAI](https://tenuo.ai/openai)** | Direct API protection with streaming |
-| **[Google ADK](https://tenuo.ai/google-adk)** | ADK agent tool protection |
-| **[AutoGen](https://tenuo.ai/autogen)** | AgentChat tool protection |
-| **[Hermes Agent](https://tenuo.ai/hermes)** | Official Hermes plugin for signed, expiring tool authorization |
-| **[A2A](https://tenuo.ai/a2a)** | Inter-agent delegation |
-| **[FastAPI](https://tenuo.ai/fastapi)** | Protect FastAPI routes |
-| **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
-| **[LangGraph](https://tenuo.ai/langgraph)** | Multi-agent graph security |
-| **[CrewAI](https://tenuo.ai/crewai)** | Multi-agent crew protection |
-| **[Temporal](https://tenuo.ai/temporal)** | Durable workflow authorization |
-| **[MCP](https://tenuo.ai/mcp)** | Model Context Protocol client + server verification |
+Tenuo checks the warrant and the actual tool arguments before an action executes. Enforcement must run at a boundary the agent cannot modify or bypass; an in-process guard alone does not isolate an untrusted agent.
 
----
+Tenuo complements your identity system and policy controls. Use a container or VM when you need process isolation. For disconnected deployments, provision trusted keys and revocation state in advance; offline verification cannot discover revocations it has not received.
 
-## Requirements
+See the [security model](./docs/security.md) for guarantees and limitations.
 
-| Component | Supported |
-|-----------|-----------|
-| **Python** | 3.9 - 3.14 |
-| **Node.js** | **Beta**. Node 20+ (`npm i @tenuo/core@beta`) |
-| **OS** | Linux, macOS, Windows |
-| **Python installation** | Prebuilt wheels for Linux (x86_64 and aarch64), macOS (arm64), and Windows (x64). Other platforms build from source and need Rust |
+## Deploying to Production
 
-### Optional Dependencies
+The self-hosted core and sidecar are Apache-2.0 and run entirely in your infrastructure, with no external calls at verification time.
 
-```bash
-uv pip install tenuo                  # Core only
-uv pip install "tenuo[openai]"        # + OpenAI Agents SDK
-uv pip install "tenuo[google_adk]"    # + Google ADK
-uv pip install "tenuo[a2a]"           # + A2A (inter-agent delegation)
-uv pip install "tenuo[fastapi]"       # + FastAPI integration
-uv pip install "tenuo[langchain]"     # + LangChain (langchain-core ≥0.2)
-uv pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
-uv pip install "tenuo[crewai]"        # + CrewAI
-uv pip install "tenuo[temporal]"      # + Temporal workflows
-uv pip install "tenuo[autogen]"       # + AutoGen AgentChat (Python ≥3.10)
-uv pip install "tenuo[mcp]"           # + official MCP SDK, client & server verification (Python ≥3.10)
-uv pip install "tenuo[fastmcp]"       # + FastMCP (TenuoMiddleware / FastMCP servers)
-uv pip install "tenuo[cloud]"         # + Tenuo Cloud SDK (proprietary control-plane client)
-```
+**Self-hosted checklist:**
+
+- Store signing keys in a secrets manager (Vault, AWS Secrets Manager, GCP Secret Manager). Keep them out of environment variables
+- Configure `trusted_roots` with your control plane's public keys
+- Ensure `dry_run` is disabled and warrants are required in all enforcement points
+- Enable audit callbacks and metrics for observability
+
+See [Security Model](https://tenuo.ai/security) for the full threat model and production hardening guidance.
+
+### Tenuo Cloud (Optional)
+
+[Tenuo Cloud](https://cloud.tenuo.ai/) is an optional managed control plane for issuance, key rotation, hosted revocation distribution, observability, and multi-tenant isolation. Verification stays local. Self-hosted Tenuo already verifies warrants and signed revocation lists (SRLs) in your own infrastructure.
 
 ---
 
@@ -381,20 +206,89 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 
 ---
 
-## Deploying to Production
+## Documentation
 
-The self-hosted core and sidecar are Apache-2.0 and run entirely in your infrastructure, with no external calls at verification time.
+| Resource | Description |
+|----------|-------------|
+| **[AI Agent Delegation Security Lab](./labs/agent-delegation/README.md)** | A hands-on lab: six agents, one rogue, five core levels plus two optional bosses |
+| **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
+| **[Concepts](https://tenuo.ai/concepts)** | How warrants and attenuation work |
+| **[Constraints](https://tenuo.ai/constraints)** | All 11 constraint types explained |
+| **[Security](https://tenuo.ai/security)** | Threat model and guarantees |
+| **[OpenAI](https://tenuo.ai/openai)** | Direct API protection with streaming |
+| **[Google ADK](https://tenuo.ai/google-adk)** | ADK agent tool protection |
+| **[AutoGen](https://tenuo.ai/autogen)** | AgentChat tool protection |
+| **[Hermes Agent](https://tenuo.ai/hermes)** | Official Hermes plugin for signed, expiring tool authorization |
+| **[A2A](https://tenuo.ai/a2a)** | Inter-agent delegation |
+| **[FastAPI](https://tenuo.ai/fastapi)** | Protect FastAPI routes |
+| **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
+| **[LangGraph](https://tenuo.ai/langgraph)** | Multi-agent graph security |
+| **[CrewAI](https://tenuo.ai/crewai)** | Multi-agent crew protection |
+| **[Temporal](https://tenuo.ai/temporal)** | Durable workflow authorization |
+| **[MCP](https://tenuo.ai/mcp)** | Model Context Protocol client + server verification |
 
-**Self-hosted checklist:**
+### AI Coding Agents
 
-- Store signing keys in a secrets manager (Vault, AWS Secrets Manager, GCP Secret Manager). Keep them out of environment variables
-- Configure `trusted_roots` with your control plane's public keys
-- Ensure `dry_run` is disabled and warrants are required in all enforcement points
-- Enable audit callbacks and metrics for observability
+Install Tenuo's implementation skill so a supported coding agent can place
+authorization at the effect boundary, use the SDK version in your project, and
+generate both allow and deny-before-effect tests:
 
-See [Security Model](https://tenuo.ai/security) for the full threat model and production hardening guidance.
+```bash
+npx skills add tenuo-ai/tenuo --skill tenuo-agent-authorization
+```
 
-Self-hosted Tenuo already verifies warrants and signed revocation lists (SRLs) locally. **[Tenuo Cloud](https://tenuo.ai/early-access.html)** adds managed issuance, key rotation, hosted SRL distribution, observability dashboards, and multi-tenant isolation.
+The skill distinguishes an in-process guardrail from an independently enforced
+boundary and reports the guarantee and remaining bypasses explicitly. It does
+not ask the agent to reimplement Tenuo's cryptography or protocol.
+
+To try Tenuo without installing an SDK:
+
+<a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
+<a href="https://tenuo.ai/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a" alt="Explorer"></a>
+<a href="https://tenuo.ai/demo.html"><img src="https://img.shields.io/badge/Docker_Demo-delegation_chain-333333" alt="Docker Demo"></a>
+<a href="https://niyikiza.com/posts/tenuo-launch/"><img src="https://img.shields.io/badge/Blog-Why_Tenuo%3F-ff6b6b" alt="Blog"></a>
+
+## Try It: The AI Agent Delegation Security Lab
+
+A travel assistant made of six AI agents is booking a spring-break trip. One of them has been told to do something it shouldn't. Secure the system so the trip still happens and the rogue agent gets nowhere.
+
+```bash
+git clone https://github.com/tenuo-ai/tenuo
+cd tenuo/labs/agent-delegation
+npm install
+npm run lab
+```
+
+Five main levels plus two optional bosses, no agent-framework experience needed. Book the trip, stop the rogue agent, and learn why each handoff should carry only the authority its task needs. Runs offline with free retries and no API key. The guide is at [tenuo.ai/lab](https://tenuo.ai/lab/); the code is in [`labs/agent-delegation`](./labs/agent-delegation/README.md).
+
+---
+
+## Requirements
+
+| Component | Supported |
+|-----------|-----------|
+| **Python** | 3.9 - 3.14 |
+| **Node.js** | **Beta**. Node 20+ (`npm i @tenuo/core@beta`) |
+| **OS** | Linux, macOS, Windows |
+| **Python installation** | Prebuilt wheels for Linux (x86_64 and aarch64), macOS (arm64), and Windows (x64). Other platforms build from source and need Rust |
+
+### Optional Dependencies
+
+```bash
+uv pip install tenuo                  # Core only
+uv pip install "tenuo[openai]"        # + OpenAI Agents SDK
+uv pip install "tenuo[google_adk]"    # + Google ADK
+uv pip install "tenuo[a2a]"           # + A2A (inter-agent delegation)
+uv pip install "tenuo[fastapi]"       # + FastAPI integration
+uv pip install "tenuo[langchain]"     # + LangChain (langchain-core ≥0.2)
+uv pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
+uv pip install "tenuo[crewai]"        # + CrewAI
+uv pip install "tenuo[temporal]"      # + Temporal workflows
+uv pip install "tenuo[autogen]"       # + AutoGen AgentChat (Python ≥3.10)
+uv pip install "tenuo[mcp]"           # + official MCP SDK, client & server verification (Python ≥3.10)
+uv pip install "tenuo[fastmcp]"       # + FastMCP (TenuoMiddleware / FastMCP servers)
+uv pip install "tenuo[cloud]"         # + Tenuo Cloud SDK (proprietary control-plane client)
+```
 
 ---
 
@@ -445,6 +339,52 @@ Use Rust for authorizer sidecars, gateways, MCP servers built on `rmcp`, and any
 - API docs: [docs.rs/tenuo](https://docs.rs/tenuo)
 - Security model: [tenuo.ai/security](https://tenuo.ai/security)
 - Constraints reference: [tenuo.ai/constraints](https://tenuo.ai/constraints)
+
+---
+
+## How It Works
+
+Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. The verifier uses the trusted issuer key and locally available revocation state.
+
+**Holder-bound.** Every warrant names a public key. Every call carries a signature from that key over the warrant, the tool, the exact arguments, and a short time window. A copied warrant is useless without the key.
+
+**Verified offline.** The warrant carries its own authority and signature. Checking it needs no lookup and no network. Checks run in under 50 μs, and enforcement keeps working when the control plane is down.
+
+**Attenuates monotonically.** Delegation mints a child warrant signed by the parent's holder. The verifier walks the whole chain from a trusted root to the leaf. Each link may drop tools, tighten constraints, or shorten expiry. No delegated warrant can exceed its parent. Tenuo calls this **Subtractive Delegation**.
+
+**Holds under prompt injection.** The check never asks the model. It runs at the tool boundary, on the real arguments, after the model has chosen what to call. A hijacked agent can only make the calls its warrant already allowed.
+
+```
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Control Plane   │     │  Orchestrator    │     │  Worker          │
+│                  │     │                  │     │                  │
+│  Issues root     │────▶│  Attenuates      │────▶│  Executes with   │
+│  warrant         │     │  for task        │     │  proof           │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+     Full scope     -->     Narrower      -->      Narrowest
+```
+
+1. **Control plane** issues a root warrant with broad capabilities
+2. **Orchestrator** attenuates it for a specific task; scope can only shrink
+3. **Worker** proves possession of the bound key and executes
+
+See [Concepts](https://tenuo.ai/concepts) for the model and [Related Work](./docs/related-work.md) for how this compares to Biscuit, Macaroons, UCAN, and [CaMeL](https://arxiv.org/abs/2503.18813).
+
+---
+
+## Why Tenuo?
+
+IAM answers who you are. Tenuo answers what this workload may do for this task, right now. Agents stay free to plan and pick tools. The warrant still applies after they choose.
+
+| Existing limitation | Tenuo |
+|---------------------|-------|
+| IAM typically grants authority by identity or role | Warrants limit authority to the current task |
+| Conventional agent handoffs do not carry the original authorization context | Authority travels with the work and can only narrow |
+| Plain bearer tokens can be copied or replayed | Every warrant is bound to the key using it |
+| Central policy checks introduce a runtime dependency | Signed authority is verified locally at execution |
+| Generic string matching can disagree with downstream systems | [Semantic constraints](https://tenuo.ai/constraints) interpret arguments as the target does ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)) |
+
+Signed authorization receipts are opt-in when you need to show why a call was allowed or denied.
 
 ---
 
