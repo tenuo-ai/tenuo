@@ -413,11 +413,12 @@ jobs:
           VERSION: ${{ steps.npm-policy.outputs.version }}
         run: |
           set -euo pipefail
-          for attempt in {1..12}; do
+          # Accepted uploads may remain in npm's processing queue for several minutes.
+          for attempt in {1..120}; do
             if npm view "@tenuo/core@${VERSION}" version >/dev/null 2>&1; then
               exit 0
             fi
-            echo "Waiting for @tenuo/core@${VERSION} to become visible (attempt ${attempt}/12)"
+            echo "Waiting for @tenuo/core@${VERSION} to become visible (attempt ${attempt}/120)"
             sleep 5
           done
           echo "@tenuo/core@${VERSION} did not become visible" >&2
@@ -449,15 +450,15 @@ jobs:
           for package in @tenuo/core @tenuo/mcp; do
             actual=""
             query_succeeded=false
-            for attempt in {1..12}; do
+            for attempt in {1..120}; do
               if actual=$(npm view "${package}@${VERSION}" "dist-tags.${DIST_TAG}" 2>/dev/null); then
                 query_succeeded=true
                 if [ "$actual" = "$VERSION" ]; then
                   break
                 fi
-                echo "Waiting for $package dist-tag $DIST_TAG (attempt ${attempt}/12)"
+                echo "Waiting for $package dist-tag $DIST_TAG (attempt ${attempt}/120)"
               else
-                echo "Registry query for $package dist-tag $DIST_TAG failed (attempt ${attempt}/12)" >&2
+                echo "Registry query for $package dist-tag $DIST_TAG failed (attempt ${attempt}/120)" >&2
               fi
               sleep 5
             done

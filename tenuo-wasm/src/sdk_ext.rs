@@ -503,10 +503,38 @@ impl SdkContext {
         if let Some(set) = set {
             for (field, constraint) in set.iter() {
                 let expr = serde_json::to_value(constraint).unwrap_or(serde_json::Value::Null);
+                if set.is_optional(field) {
+                    // Use the core's omission check to validate support before
+                    // explaining either an omitted or a supplied optional value.
+                    let mut field_set = ConstraintSet::new();
+                    field_set.insert_optional(field, constraint.clone());
+                    if let Err(error) = field_set.matches(&HashMap::new()) {
+                        fields.push(ExplainFieldDto {
+                            field: field.clone(),
+                            kind: constraint.type_name().to_string(),
+                            constraint: expr,
+                            value: args.get(field).map(cv_to_json),
+                            satisfied: false,
+                            reason_code: Some(map_code(&error).to_string()),
+                            reason: Some(error.to_string()),
+                        });
+                        continue;
+                    }
+                }
                 match args.get(field) {
+                    None if set.is_optional(field) => {
+                        fields.push(ExplainFieldDto {
+                            field: field.clone(),
+                            kind: constraint.type_name().to_string(),
+                            constraint: expr,
+                            value: None,
+                            satisfied: true,
+                            reason_code: None,
+                            reason: None,
+                        });
+                    }
                     None => {
-                        // Every named field is required, wildcard included:
-                        // wildcard admits any value, not the absence of one.
+                        // A required wildcard admits every value, not absence.
                         missing.push(field.clone());
                         fields.push(ExplainFieldDto {
                             field: field.clone(),

@@ -407,8 +407,9 @@ class TestConstraintContainment:
         from tenuo_core import Exact, Range
 
         # Range parent can contain Exact child with numeric value
-        assert _is_constraint_contained(Exact("50"), Range(0, 100))  # In range
-        assert not _is_constraint_contained(Exact("200"), Range(0, 100))  # Out of range
+        assert _is_constraint_contained(Exact(50), Range(0, 100))  # In range
+        assert not _is_constraint_contained(Exact(200), Range(0, 100))  # Out of range
+        assert not _is_constraint_contained(Exact("50"), Range(0, 100))  # String is not numeric
         assert not _is_constraint_contained(Exact("abc"), Range(0, 100))  # Non-numeric
 
     def test_incompatible_oneof_pattern(self):
@@ -505,14 +506,14 @@ class TestConstraintContainment:
 
         parent = Range(0, 100)
 
-        # Exact with numeric string within range
-        assert _is_constraint_contained(Exact("50"), parent)
-        assert _is_constraint_contained(Exact("0"), parent)  # At min
-        assert _is_constraint_contained(Exact("100"), parent)  # At max
+        # Exact with numeric value within range
+        assert _is_constraint_contained(Exact(50), parent)
+        assert _is_constraint_contained(Exact(0), parent)  # At min
+        assert _is_constraint_contained(Exact(100), parent)  # At max
 
         # Exact outside range
-        assert not _is_constraint_contained(Exact("-1"), parent)
-        assert not _is_constraint_contained(Exact("101"), parent)
+        assert not _is_constraint_contained(Exact(-1), parent)
+        assert not _is_constraint_contained(Exact(101), parent)
 
     def test_range_to_exact_string_fails(self):
         """Range -> Exact with non-numeric string should fail."""
