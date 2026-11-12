@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Optional arguments in the Rust constraint engine.**
+  `ConstraintSet::insert_optional` allows omission while enforcing the value
+  constraint whenever the argument is supplied. Diagnostics, signed CBOR warrants,
+  and attenuation preserve the presence rule; required arguments cannot become
+  optional during delegation. Required-only encodings remain unchanged.
+  Python and TypeScript receivers preserve supplied optional values, including
+  nulls, across execution policies and issuer constraint bounds. Unknown
+  constraint types and unavailable CEL evaluators fail closed
+  even on omission.
+  Making an argument required cannot bypass an unsupported optional parent
+  predicate during delegation or signed-chain verification.
+
 - An opt-in release notification workflow for downstream integration update
   PRs, with immutable release validation and repository-scoped App tokens.
 - Python `validate_attenuation(parent, child)` checks cross-type constraint

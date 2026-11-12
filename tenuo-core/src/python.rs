@@ -4253,6 +4253,15 @@ impl PyWarrant {
         }
     }
 
+    /// Optional fields in the signed execution policy or issuable tool's bounds.
+    /// Exact execution entries take precedence over the wildcard entry.
+    fn optional_fields(&self, tool: &str) -> Vec<String> {
+        self.inner
+            .optional_fields(tool)
+            .map(str::to_owned)
+            .collect()
+    }
+
     /// Get constraint bounds as a Python dict (Issuer warrants only).
     fn constraint_bounds_dict<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         if let Some(bounds) = self.inner.constraint_bounds() {

@@ -980,8 +980,25 @@ pub struct WarrantPayload {
 pub struct ConstraintSet {
     /// Map of argument name to constraint
     pub constraints: BTreeMap<String, Constraint>,
+    /// Default false; omitted when false.
+    pub allow_unknown: bool,
+    /// Sorted field names; default empty and omitted when empty.
+    pub optional_fields: BTreeSet<String>,
 }
 ```
+
+Every `optional_fields` entry MUST name a field in `constraints`; decoders MUST
+reject other entries. A declared field is required unless it is listed in
+`optional_fields`. An optional field may be absent, but a present value (including
+null) MUST satisfy its value constraint. Unknown members in either the constraint
+set or a constraint payload MUST be rejected.
+
+Delegation MAY change optional to required, but MUST NOT change required to
+optional. Value attenuation and keyset restrictions still apply. Implementations
+MUST reject delegation from an optional parent predicate they cannot implement,
+including when the child makes that argument required. Implementations
+that predate `optional_fields` and enforce strict decoding reject this member;
+required-only sets retain their existing encoding.
 
 **Example:**
 

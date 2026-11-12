@@ -889,7 +889,7 @@ pub fn sdk_diagnose_constraints(
     init_panic_hook();
     let warrant = parse_warrant(wire)?;
     let args = canonical_args(&args_json).map_err(|e| JsError::new(&e))?;
-    let constraints = constraint_view(&args);
+    let constraints = constraint_view(&args, tool, std::slice::from_ref(&warrant));
     let diagnostics = warrant
         .diagnose_constraints(tool, &constraints)
         .map_err(|e| JsError::new(&e.to_string()))?;
@@ -1270,7 +1270,7 @@ impl SdkContext {
             }
         };
 
-        let constraints = constraint_view(&args);
+        let constraints = constraint_view(&args, tool, &session.chain);
         let result = match as_of {
             Some(t) => self.authorizer.check_chain_with_pop_args_as_of(
                 &session.chain,
@@ -1521,7 +1521,7 @@ impl SdkContext {
             }
         };
 
-        let constraints = constraint_view(&args);
+        let constraints = constraint_view(&args, tool, &chain);
         let result = match as_of {
             Some(t) => self.authorizer.check_chain_with_pop_args_as_of(
                 &chain,
@@ -2523,10 +2523,21 @@ fn canonical_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, S
     js_to_args(value)
 }
 
-/// Constraint matching ignores JSON null. The proof still covers it.
-fn constraint_view(args: &HashMap<String, ConstraintValue>) -> HashMap<String, ConstraintValue> {
+/// Preserve optional values from every presented policy. Required-only fields
+/// retain legacy null normalization; the proof always covers all raw values.
+fn constraint_view(
+    args: &HashMap<String, ConstraintValue>,
+    tool: &str,
+    chain: &[Warrant],
+) -> HashMap<String, ConstraintValue> {
     args.iter()
         .filter_map(|(key, value)| match value {
+            _ if chain.iter().any(|warrant| {
+                warrant.optional_fields(tool).any(|field| field == key)
+            }) =>
+            {
+                Some((key.clone(), value.clone()))
+            }
             ConstraintValue::Null => None,
             ConstraintValue::List(items) => {
                 Some((key.clone(), ConstraintValue::List(clean_nulls(items))))

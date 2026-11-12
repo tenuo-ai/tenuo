@@ -2081,3 +2081,53 @@ $ tenuo-authorizer serve --config gateway.yaml
 - [Security](./security): How constraints fit into the security model
 - [LangGraph Integration](./langgraph): Using constraints with LangGraph
 - [Enforcement Architecture](./enforcement): Deployment models and proxy configurations
+
+
+## Optional arguments (Rust core)
+
+A constraint normally requires its argument to be present. Use
+`ConstraintSet::insert_optional` when omission is allowed but a supplied value
+must still satisfy a constraint:
+
+```rust
+use tenuo::{ConstraintSet, Range};
+
+let mut args = ConstraintSet::new();
+args.insert_optional("head", Range::max(200.0)?);
+// {} and {"head": 200} pass; {"head": 201} and {"head": null} fail.
+# Ok::<(), tenuo::Error>(())
+```
+
+`is_optional("head")` reports the presence rule. Calling `insert` for the same
+field makes it required again. `get` and `iter` expose value constraints; use
+`is_optional` as well when inspecting presence rules. Collecting value constraints
+into a new set creates required arguments.
+
+Optionality does not permit undeclared arguments. During delegation, an optional
+argument may become required, but a required argument cannot become optional.
+The value constraint must still narrow, and the existing keyset rules still apply:
+an optional key cannot be dropped from a nonempty parent constraint set.
+Unsupported optional parent predicates cannot confer authority through
+delegation, including when a child makes the argument required.
+
+Omission is distinct from explicit null. The engine checks the arguments it is
+given; it does not resolve tool defaults. If a default must satisfy the policy,
+normalize the default into the invocation before authorization and execution.
+Optional declarations still require verifier support for the entire value
+constraint. Unknown types, including those inside composite constraints, and
+CEL constraints on builds without CEL support are rejected even when omitted.
+
+This API is in the shared Rust engine; Python and TypeScript authoring helpers do
+not yet expose optional declarations. CBOR stores a sorted `optional_fields`
+array alongside `constraints`, omitted when empty. Existing required-only
+encodings remain unchanged. Strict older decoders reject the new member; older
+permissive decoders treat the arguments as required. Upgrade verifiers before
+issuing warrants that depend on omission being accepted.
+
+Python and TypeScript receivers preserve supplied values for optional fields
+throughout the presented chain, including explicit nulls and nulls inside lists.
+Required-only fields retain the SDK's existing null normalization. In Python,
+`warrant.optional_fields(tool)` reports the signed presence declarations for the
+effective tool entry, using the same exact-tool precedence and wildcard fallback
+as authorization. For issuer warrants, it reports optional constraint bounds only
+when the tool is issuable, including wildcard issuance.
