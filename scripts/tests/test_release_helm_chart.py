@@ -1,9 +1,11 @@
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
+from contextlib import chdir
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +15,22 @@ SPEC = importlib.util.spec_from_file_location(
 chart = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(chart)
 DIGEST = "sha256:" + "a" * 64
+
+
+def checkout_fixture(directory, version):
+    root = Path(directory) / "checkout"
+    source = Path(__file__).resolve().parents[2] / "charts/tenuo-authorizer"
+    destination = root / "charts/tenuo-authorizer"
+    shutil.copytree(source, destination)
+    metadata = (destination / "Chart.yaml").read_text()
+    for field in ["version", "appVersion"]:
+        metadata = re.sub(
+            rf"^{field}:.*$", f'{field}: "{version}"', metadata, flags=re.MULTILINE
+        )
+    (destination / "Chart.yaml").write_text(metadata)
+    (root / "tenuo-core").mkdir()
+    (root / "tenuo-core/Cargo.toml").write_text(f'[package]\nversion = "{version}"\n')
+    return root
 
 
 class ChartReleaseTests(unittest.TestCase):
@@ -95,18 +113,41 @@ class ChartReleaseTests(unittest.TestCase):
     @unittest.skipUnless(
         shutil.which("helm"), "Helm is required for package integration"
     )
+    def test_prerelease_checkout_packages_without_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = checkout_fixture(tmp, "0.4.0-rc.1")
+            output = Path(tmp) / "output"
+            with (
+                chdir(fixture),
+                patch(
+                    "sys.argv",
+                    [
+                        "release_helm_chart.py",
+                        "--tag",
+                        "v0.4.0-rc.1",
+                        "--output",
+                        str(output),
+                    ],
+                ),
+            ):
+                chart.main()
+                self.assertTrue((output / "tenuo-authorizer-0.4.0-rc.1.tgz").exists())
+            with (
+                chdir(fixture),
+                patch(
+                    "sys.argv",
+                    ["release_helm_chart.py", "--tag", "v0.4.0-rc.1", "--publish"],
+                ),
+                self.assertRaises(ValueError),
+            ):
+                chart.main()
+
+    @unittest.skipUnless(
+        shutil.which("helm"), "Helm is required for package integration"
+    )
     def test_publication_retries_and_public_access(self):
         real_run = subprocess.run
-        version = chart.version_from_tag(
-            "v"
-            + next(
-                line.split(":", 1)[1].strip()
-                for line in Path("charts/tenuo-authorizer/Chart.yaml")
-                .read_text()
-                .splitlines()
-                if line.startswith("version:")
-            )
-        )
+        version = "0.3.6"
         for mode in [
             "new",
             "existing",
@@ -116,6 +157,7 @@ class ChartReleaseTests(unittest.TestCase):
             "different",
         ]:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                fixture = checkout_fixture(tmp, version)
                 output = Path(tmp) / "output"
                 package = output / f"tenuo-authorizer-{version}.tgz"
                 pushes = []
@@ -209,6 +251,7 @@ class ChartReleaseTests(unittest.TestCase):
                     ),
                     patch.object(chart.subprocess, "run", side_effect=fake_run),
                     patch.object(chart, "chart_files", side_effect=files),
+                    chdir(fixture),
                 ):
                     if mode in ["denied", "unavailable", "private", "different"]:
                         with self.assertRaises((RuntimeError, ValueError)):
