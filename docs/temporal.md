@@ -76,7 +76,7 @@ worker = Worker(
 `TenuoPluginConfig` requires two things:
 
 - **`trusted_roots`** — public keys of warrant issuers (for verification on the activity worker)
-- **`key_resolver` or `signing_key`** — the holder key the workflow worker uses to sign PoP. The call runs inside the workflow sandbox, so it has to return a key already in memory. `signing_key=` does that. `EnvKeyResolver` does too, after preload, and is for development. `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and `GCPSecretManagerKeyResolver` start a thread the sandbox blocks, including when their cache is full.
+- **`key_resolver` or `signing_key`** — the holder key the workflow worker uses to sign PoP. The call runs inside the workflow sandbox, so it has to return a key already in memory. `signing_key=` does that. `EnvKeyResolver` does too, after preload, and is for development. `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, and `GCPSecretManagerKeyResolver` read unexpired cached keys synchronously. Call `await resolver.preload_keys(key_ids)` before starting the worker and schedule `await resolver.refresh_keys(key_ids)` from a host task before cache expiry. Missing or expired workflow keys fail closed.
 
 `EnvKeyResolver` maps `key_id` to environment variables using the convention **`TENUO_KEY_<key_id>`** with **base64-encoded** signing key bytes:
 

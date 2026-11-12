@@ -63,9 +63,10 @@ class KeyResolver(ABC):
     def resolve_sync(self, key_id: str) -> Any:  # Returns SigningKey
         """Resolve a key ID to a signing key (synchronous).
 
-        This method handles the async->sync conversion and is safe to call
-        from both sync and async contexts, including from within running
-        event loops (e.g., Temporal workflows).
+        This bridge handles async-to-sync conversion in ordinary host code,
+        including running event loops. Workflow resolvers must override it
+        with a memory-only implementation; the default starts threads that
+        Temporal's workflow sandbox blocks.
 
         Default implementation:
         - If no event loop is running: creates temporary loop and runs resolve()
@@ -276,6 +277,21 @@ class _CachedKeyResolver(KeyResolver):
     _cache_lock: Any
     _cache_ttl: int
 
+    async def resolve(self, key_id: str) -> Any:
+        with self._cache_lock:
+            entry = self._cache.get(key_id)
+            if entry is not None and time.time() - entry[1] < self._cache_ttl:
+                return entry[0]
+        key = await self._fetch_key(key_id)
+        with self._cache_lock:
+            self._cache[key_id] = (key, time.time())
+        return key
+
+    @abstractmethod
+    async def _fetch_key(self, key_id: str) -> Any:
+        """Fetch fresh material without reading or writing the shared cache."""
+        ...
+
     def resolve_sync(self, key_id: str) -> Any:
         # This module is passed through by the Tenuo plugin. Keep the clock
         # binding at module scope so a cache hit imports nothing in the sandbox.
@@ -309,9 +325,14 @@ class _CachedKeyResolver(KeyResolver):
         if workflow.in_workflow():
             raise KeyResolutionError("Cloud keys must be refreshed outside workflow execution")
         for key_id in key_ids:
+            try:
+                key = await self._fetch_key(key_id)
+            except BaseException:
+                with self._cache_lock:
+                    self._cache.pop(key_id, None)
+                raise
             with self._cache_lock:
-                self._cache.pop(key_id, None)
-            await self.resolve(key_id)
+                self._cache[key_id] = (key, time.time())
 
 
 class VaultKeyResolver(_CachedKeyResolver):
@@ -350,17 +371,8 @@ class VaultKeyResolver(_CachedKeyResolver):
         self._cache: Dict[str, tuple[Any, float]] = {}
         self._cache_lock = threading.Lock()
 
-    async def resolve(self, key_id: str) -> Any:
-        """Resolve key from Vault."""
+    async def _fetch_key(self, key_id: str) -> Any:
         import os
-
-        now = time.time()
-        with self._cache_lock:
-            if key_id in self._cache:
-                cached_key, cached_at = self._cache[key_id]
-                if now - cached_at < self._cache_ttl:
-                    logger.debug(f"Vault cache hit for key: {key_id}")
-                    return cached_key
 
         token = self._token or os.environ.get("VAULT_TOKEN")
         if not token:
@@ -394,8 +406,6 @@ class VaultKeyResolver(_CachedKeyResolver):
                     logger.error(f"Vault returned undecodable key for {key_id}: {e}")
                     raise KeyResolutionError(key_id=key_id) from e
 
-                with self._cache_lock:
-                    self._cache[key_id] = (key, now)
                 logger.debug(f"Vault resolved key: {key_id}")
                 return key
 
@@ -451,17 +461,8 @@ class AWSSecretsManagerKeyResolver(_CachedKeyResolver):
         self._cache: Dict[str, tuple[Any, float]] = {}
         self._cache_lock = threading.Lock()
 
-    async def resolve(self, key_id: str) -> Any:
-        """Resolve key from AWS Secrets Manager."""
+    async def _fetch_key(self, key_id: str) -> Any:
         import asyncio
-
-        now = time.time()
-        with self._cache_lock:
-            if key_id in self._cache:
-                cached_key, cached_at = self._cache[key_id]
-                if now - cached_at < self._cache_ttl:
-                    logger.debug(f"AWS Secrets Manager cache hit for key: {key_id}")
-                    return cached_key
 
         secret_name = f"{self._secret_prefix}{key_id}"
 
@@ -491,8 +492,6 @@ class AWSSecretsManagerKeyResolver(_CachedKeyResolver):
 
             signing_key = SigningKey.from_bytes(key_bytes)
 
-            with self._cache_lock:
-                self._cache[key_id] = (signing_key, now)
             logger.debug(f"AWS Secrets Manager resolved key: {key_id}")
             return signing_key
 
@@ -549,17 +548,8 @@ class GCPSecretManagerKeyResolver(_CachedKeyResolver):
         self._cache: Dict[str, tuple[Any, float]] = {}
         self._cache_lock = threading.Lock()
 
-    async def resolve(self, key_id: str) -> Any:
-        """Resolve key from GCP Secret Manager."""
+    async def _fetch_key(self, key_id: str) -> Any:
         import asyncio
-
-        now = time.time()
-        with self._cache_lock:
-            if key_id in self._cache:
-                cached_key, cached_at = self._cache[key_id]
-                if now - cached_at < self._cache_ttl:
-                    logger.debug(f"GCP Secret Manager cache hit for key: {key_id}")
-                    return cached_key
 
         secret_name = f"{self._secret_prefix}{key_id}"
         resource_name = f"projects/{self._project_id}/secrets/{secret_name}/versions/{self._version}"
@@ -580,8 +570,6 @@ class GCPSecretManagerKeyResolver(_CachedKeyResolver):
 
             signing_key = SigningKey.from_bytes(key_bytes)
 
-            with self._cache_lock:
-                self._cache[key_id] = (signing_key, now)
             logger.debug(f"GCP Secret Manager resolved key: {key_id}")
             return signing_key
 

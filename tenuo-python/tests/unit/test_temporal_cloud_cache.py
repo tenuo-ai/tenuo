@@ -57,13 +57,13 @@ async def test_preload_and_refresh_outside_workflow(resolver):
         resolver._cache[key_id] = (new, time.time())
         return new
 
-    with patch.object(resolver, "resolve", side_effect=fetch):
+    with patch.object(resolver, "_fetch_key", side_effect=fetch):
         await resolver.preload_keys(["agent"])
         assert resolver.resolve_sync("agent") is new
         resolver._cache["agent"] = (old, time.time())
         await resolver.refresh_keys(["agent"])
         assert resolver.resolve_sync("agent") is new
-    with patch.object(resolver, "resolve", side_effect=KeyResolutionError(key_id="agent")):
+    with patch.object(resolver, "_fetch_key", side_effect=KeyResolutionError(key_id="agent")):
         with pytest.raises(KeyResolutionError):
             await resolver.refresh_keys(["agent"])
     assert "agent" not in resolver._cache
@@ -101,3 +101,34 @@ async def test_cached_reads_under_real_temporal_sandbox_restrictions(resolver):
         # The old inherited bridge fails under these same real restrictions.
         with pytest.raises(RestrictedWorkflowAccessError):
             KeyResolver.resolve_sync(resolver, "agent")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_refresh_keeps_unexpired_key_until_fetch_finishes(resolver, fails):
+    import asyncio
+
+    old, new = SigningKey.generate(), SigningKey.generate()
+    resolver._cache["agent"] = (old, time.time())
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def fetch(key_id):
+        started.set()
+        await finish.wait()
+        if fails:
+            raise KeyResolutionError(key_id=key_id)
+        return new
+
+    with patch.object(resolver, "_fetch_key", side_effect=fetch):
+        refresh = asyncio.create_task(resolver.refresh_keys(["agent"]))
+        await started.wait()
+        with patch("temporalio.workflow.in_workflow", return_value=True):
+            assert resolver.resolve_sync("agent") is old
+        finish.set()
+        if fails:
+            with pytest.raises(KeyResolutionError):
+                await refresh
+            assert "agent" not in resolver._cache
+        else:
+            await refresh
+            assert resolver.resolve_sync("agent") is new
