@@ -331,16 +331,15 @@ class _CachedKeyResolver(KeyResolver):
             raise KeyResolutionError("Cloud keys must be refreshed outside workflow execution")
         for key_id in key_ids:
             with self._cache_lock:
-                old_entry = self._cache.get(key_id)
                 generation = self._generations.get(key_id, 0) + 1
                 self._generations[key_id] = generation
             try:
                 key = await self._fetch_key(key_id)
             except BaseException:
                 with self._cache_lock:
-                    # Do not discard a newer successful refresh's key.
-                    if self._cache.get(key_id) is old_entry:
-                        self._cache.pop(key_id, None)
+                    # Failure invalidates even entries admitted by a concurrent
+                    # host fetch while this refresh was pending.
+                    self._cache.pop(key_id, None)
                     self._generations[key_id] = self._generations.get(key_id, 0) + 1
                 raise
             with self._cache_lock:

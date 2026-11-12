@@ -171,3 +171,32 @@ async def test_older_fetch_cannot_undo_refresh_result(resolver, refresh_fails):
                     resolver.resolve_sync("agent")
             else:
                 assert resolver.resolve_sync("agent") is fresh
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_evicts_host_fetch_completed_while_pending(resolver):
+    import asyncio
+
+    key = SigningKey.generate()
+    started, finish = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def fetch(key_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            await finish.wait()
+            raise KeyResolutionError(key_id=key_id)
+        return key
+
+    with patch.object(resolver, "_fetch_key", side_effect=fetch):
+        refresh = asyncio.create_task(resolver.refresh_keys(["agent"]))
+        await started.wait()
+        assert await resolver.resolve("agent") is key
+        finish.set()
+        with pytest.raises(KeyResolutionError):
+            await refresh
+        with patch("temporalio.workflow.in_workflow", return_value=True):
+            with pytest.raises(KeyResolutionError):
+                resolver.resolve_sync("agent")
