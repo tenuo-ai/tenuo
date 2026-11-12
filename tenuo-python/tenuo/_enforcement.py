@@ -1364,7 +1364,7 @@ def _enforce_tool_call_impl(
         # with the PoP check.
         # =================================================================
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
-        from ._pop_canonicalize import strip_none_values as _strip_none_values
+        from ._pop_canonicalize import constraint_view
 
         _warrant_obj = bound_warrant.warrant
         # Transport approvals (MCP _approvals, headers) are only consumed when
@@ -1375,10 +1375,11 @@ def _enforce_tool_call_impl(
             constraint_args if constraint_args is not None else tool_args
         )
         # The proof covers the argument map the caller passed, including None.
-        # Constraint matching still drops None so an omitted optional field and
-        # an extracted constraint view stay the same shape.
+        # Signed optional fields retain every supplied value for Rust to check.
         _pop_auth_args = _raw_pop_args
-        _constraint_auth_args = _strip_none_values(_raw_constraint_args)
+        _constraint_auth_args = constraint_view(
+            _raw_constraint_args, tool_name, _presented_chain
+        )
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
             # Refuse, before asking anyone, a call authorization would refuse anyway.
@@ -1935,7 +1936,7 @@ async def _enforce_tool_call_async_impl(
     _pop_auth_args = tool_args
     try:
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
-        from ._pop_canonicalize import strip_none_values as _strip_none_values
+        from ._pop_canonicalize import constraint_view
 
         _warrant_obj = bound_warrant.warrant
         # Transport approvals (MCP _approvals, headers) are only consumed when
@@ -1946,9 +1947,11 @@ async def _enforce_tool_call_async_impl(
             constraint_args if constraint_args is not None else tool_args
         )
         # The proof covers the argument map the caller passed, including None.
-        # Constraint matching still drops None.
+        # Signed optional fields retain every supplied value for Rust to check.
         _pop_auth_args = _raw_pop_args
-        _constraint_auth_args = _strip_none_values(_raw_constraint_args)
+        _constraint_auth_args = constraint_view(
+            _raw_constraint_args, tool_name, _presented_chain
+        )
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
             # Refuse, before asking anyone, a call authorization would refuse anyway.

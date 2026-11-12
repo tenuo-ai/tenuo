@@ -141,6 +141,28 @@ impl<'de> Deserialize<'de> for WarrantType {
 #[serde(transparent)]
 pub struct Clearance(pub u8);
 
+/// Clearance may only stay the same, decrease, or be dropped along a chain.
+///
+/// A warrant without a clearance is untrusted, so a child cannot introduce a
+/// clearance its parent never had.
+pub(crate) fn validate_clearance_attenuation(
+    parent: Option<Clearance>,
+    child: Option<Clearance>,
+) -> Result<()> {
+    match (parent, child) {
+        (_, None) => Ok(()),
+        (Some(parent), Some(child)) if child <= parent => Ok(()),
+        (Some(parent), Some(child)) => Err(Error::MonotonicityViolation(format!(
+            "clearance cannot increase: parent {:?}, child {:?}",
+            parent, child
+        ))),
+        (None, Some(child)) => Err(Error::MonotonicityViolation(format!(
+            "cannot introduce clearance {:?} in child when parent has none",
+            child
+        ))),
+    }
+}
+
 impl Clearance {
     /// Untrusted - anonymous or unauthenticated entities (0).
     pub const UNTRUSTED: Self = Self(0);
@@ -573,6 +595,31 @@ impl Warrant {
         } else {
             Some(&self.payload.tools)
         }
+    }
+
+    /// Inspect optional arguments in the signed policy applicable to a tool.
+    ///
+    /// Execution entries use exact-tool precedence over wildcard fallback.
+    /// Issuer bounds apply only to tools authorized by `issuable_tools`.
+    pub fn optional_fields(&self, tool: &str) -> impl Iterator<Item = &str> {
+        let constraints = match self.r#type() {
+            WarrantType::Execution => self
+                .payload
+                .tools
+                .get(tool)
+                .or_else(|| self.payload.tools.get("*")),
+            WarrantType::Issuer => self
+                .issuable_tools()
+                .filter(|tools| {
+                    tools
+                        .iter()
+                        .any(|candidate| candidate == tool || candidate == "*")
+                })
+                .and(self.constraint_bounds()),
+        };
+        constraints
+            .into_iter()
+            .flat_map(ConstraintSet::optional_fields)
     }
 
     /// Retain only specific tools (attenuation).
@@ -2534,18 +2581,11 @@ impl<'a> AttenuationBuilder<'a> {
             WarrantType::Execution => {
                 let parent_tools = &self.parent.payload.tools;
 
-                for (tool, constraints) in &self.tools {
-                    if let Some(parent_constraints) = parent_tools.get(tool) {
-                        parent_constraints.validate_attenuation(constraints)?;
-                    } else if let Some(parent_wildcard) = parent_tools.get("*") {
-                        parent_wildcard.validate_attenuation(constraints)?;
-                    } else {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "tool '{}' not in parent's tools",
-                            tool
-                        )));
-                    }
-                }
+                crate::constraints::validate_tool_map_attenuation(
+                    parent_tools,
+                    &self.tools,
+                    "tools",
+                )?;
 
                 if self.tools.is_empty() {
                     return Err(Error::Validation(
@@ -2575,6 +2615,7 @@ impl<'a> AttenuationBuilder<'a> {
                 }
             }
             WarrantType::Issuer => {
+                validate_clearance_attenuation(self.parent.payload.clearance, self.clearance)?;
                 if let Some(parent_issuable) = &self.parent.payload.issuable_tools {
                     if let Some(ref child_issuable) = self.issuable_tools {
                         for tool in child_issuable {
@@ -3517,19 +3558,11 @@ impl OwnedAttenuationBuilder {
                 // For execution warrants, validate tool attenuation
                 let parent_tools = &self.parent.payload.tools;
 
-                for (tool, constraints) in &self.tools {
-                    if let Some(parent_constraints) = parent_tools.get(tool) {
-                        // Constraints must be a subset (monotonicity)
-                        parent_constraints.validate_attenuation(constraints)?;
-                    } else if let Some(parent_wildcard) = parent_tools.get("*") {
-                        parent_wildcard.validate_attenuation(constraints)?;
-                    } else {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "tool '{}' not in parent's tools",
-                            tool
-                        )));
-                    }
-                }
+                crate::constraints::validate_tool_map_attenuation(
+                    parent_tools,
+                    &self.tools,
+                    "tools",
+                )?;
 
                 if self.tools.is_empty() {
                     return Err(Error::Validation(
@@ -3559,6 +3592,7 @@ impl OwnedAttenuationBuilder {
                 }
             }
             WarrantType::Issuer => {
+                validate_clearance_attenuation(self.parent.payload.clearance, self.clearance)?;
                 if let Some(parent_issuable) = &self.parent.payload.issuable_tools {
                     if let Some(ref child_issuable) = self.issuable_tools {
                         for tool in child_issuable {

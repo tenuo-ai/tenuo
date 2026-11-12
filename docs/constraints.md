@@ -132,6 +132,31 @@ api_call(url="https://api.example.com/v1", timeout=30, retries=3)
 
 ---
 
+## Checking a proposed narrowing
+
+Python can check the core's attenuation rules without issuing a warrant:
+
+```python
+from tenuo import Exact, OneOf, validate_attenuation
+
+parent = OneOf(["Paris", "Lyon"])
+validate_attenuation(parent, Exact("Paris"))  # Returns None
+parent.validate_attenuation(Exact("Paris"))  # Same check
+validate_attenuation(parent, Exact("Rome"))  # Raises ValueNotInParentSet
+```
+
+`validate_attenuation(parent, child)` is also available from `tenuo_core`.
+It uses Rust's existing rules and typed exceptions, including cross-type
+narrowing such as `Range` to a numeric `Exact`. Checking is conservative:
+rejection can mean that the core cannot establish containment. A successful
+check covers only the constraint relationship. Warrant issuance and receiving
+boundaries still verify delegation, signatures, trusted roots, expiry,
+revocation, approvals, and proof of possession as applicable.
+
+Scoped `grant()` and its `preview()` use the same native containment check.
+Literal shorthand means `Exact(value)`, including strings containing `*`;
+use an explicit `Pattern` when you intend a glob.
+
 ## Constraint Types
 
 ### Wildcard
@@ -263,6 +288,12 @@ Exact("production")
 
 # Only allows this specific ID
 Exact("user-12345")
+
+# Typed literals, including nested values
+Exact(180)
+Exact(True)
+Exact(None)
+Exact({"items": [1, "1", False]})
 ```
 
 ---
@@ -279,9 +310,24 @@ OneOf(["staging", "production", "dev"])
 
 # Allows specific actions
 OneOf(["read", "list"])
+
+# A numeric allowlist does not admit numeric strings or booleans
+OneOf([1, 2, 3])
 ```
 
 ---
+
+Python's `Exact`, `OneOf`, and `NotOneOf` accept strings, signed 64-bit integers,
+floats, booleans, null (`None`), lists, and objects with string keys. Values keep
+their types: `1` differs from `True` and `"1"`. Integer and floating-point
+spellings of the same numeric value compare equally, so `Exact(1)` also matches
+`1.0`. Their `matches`, `contains`, and `allows` convenience methods use the
+same typed checks as `satisfies`.
+
+The shared Python `enforce_tool_call` helpers omit top-level `None` arguments
+and `None` elements in lists from their constraint view. Policies used with
+those helpers must match that normalized view. Native constraint checks and
+`Authorizer` preserve null values.
 
 ### Range
 
@@ -897,6 +943,13 @@ NotOneOf(["admin", "root"])
 
 **Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist). `NotOneOf` can only appear in root warrants or attenuate from another `NotOneOf` or `Wildcard` parent. Attenuating from `OneOf` to `NotOneOf` is **forbidden** because `NotOneOf` accepts values outside the parent's allowlist. To narrow an `OneOf`, use `OneOf(subset)` instead.
 
+An exclusion list judges only the value kinds represented by its entries.
+`NotOneOf([1])` accepts other numbers, but rejects booleans, strings, null,
+lists, and objects. An empty list judges every supported kind. Non-finite
+numbers do not pass exclusions. Adding an exclusion of a new kind during
+delegation is rejected because it would admit values of that kind that the
+parent rejects.
+
 ---
 
 ### Contains
@@ -1292,7 +1345,7 @@ Some constraint types can contain different types during attenuation:
 | `Wildcard()` | Any type | Universal parent - contains everything |
 | `Pattern("*@co.com")` | `Exact("cfo@co.com")` | Child matches parent glob |
 | `Regex(r"^dev-.*")` | `Exact("dev-web")` | Child matches parent regex |
-| `Range(min=0, max=100)` | `Exact("50")` | Child numeric value within range |
+| `Range(min=0, max=100)` | `Exact(50)` | Child numeric value within range |
 | `Cidr("10.0.0.0/8")` | `Exact("10.1.2.3")` | Child IP within parent network |
 | `Cidr("10.0.0.0/8")` | `Cidr("10.1.0.0/16")` | Child is subnet of parent |
 | `UrlPattern("https://*.example.com/*")` | `Exact("https://api.example.com/v1")` | Child URL matches parent pattern |
@@ -1354,8 +1407,9 @@ child = Regex(r"^staging-web$")     # FAILS - even if semantically narrower
 
 # Range -> Exact: numeric value must be within range
 parent = Range(min=0, max=100)
-child = Exact("50")   # OK - 50 is in [0, 100]
-child = Exact("150")  # FAILS - 150 > 100
+child = Exact(50)     # OK - 50 is in [0, 100]
+child = Exact(150)    # FAILS - 150 > 100
+child = Exact("50")   # FAILS - a string is not a number
 
 # OneOf -> Exact: exact value must be in the set
 parent = OneOf(["read", "write", "delete"])
@@ -2027,3 +2081,53 @@ $ tenuo-authorizer serve --config gateway.yaml
 - [Security](./security): How constraints fit into the security model
 - [LangGraph Integration](./langgraph): Using constraints with LangGraph
 - [Enforcement Architecture](./enforcement): Deployment models and proxy configurations
+
+
+## Optional arguments (Rust core)
+
+A constraint normally requires its argument to be present. Use
+`ConstraintSet::insert_optional` when omission is allowed but a supplied value
+must still satisfy a constraint:
+
+```rust
+use tenuo::{ConstraintSet, Range};
+
+let mut args = ConstraintSet::new();
+args.insert_optional("head", Range::max(200.0)?);
+// {} and {"head": 200} pass; {"head": 201} and {"head": null} fail.
+# Ok::<(), tenuo::Error>(())
+```
+
+`is_optional("head")` reports the presence rule. Calling `insert` for the same
+field makes it required again. `get` and `iter` expose value constraints; use
+`is_optional` as well when inspecting presence rules. Collecting value constraints
+into a new set creates required arguments.
+
+Optionality does not permit undeclared arguments. During delegation, an optional
+argument may become required, but a required argument cannot become optional.
+The value constraint must still narrow, and the existing keyset rules still apply:
+an optional key cannot be dropped from a nonempty parent constraint set.
+Unsupported optional parent predicates cannot confer authority through
+delegation, including when a child makes the argument required.
+
+Omission is distinct from explicit null. The engine checks the arguments it is
+given; it does not resolve tool defaults. If a default must satisfy the policy,
+normalize the default into the invocation before authorization and execution.
+Optional declarations still require verifier support for the entire value
+constraint. Unknown types, including those inside composite constraints, and
+CEL constraints on builds without CEL support are rejected even when omitted.
+
+This API is in the shared Rust engine; Python and TypeScript authoring helpers do
+not yet expose optional declarations. CBOR stores a sorted `optional_fields`
+array alongside `constraints`, omitted when empty. Existing required-only
+encodings remain unchanged. Strict older decoders reject the new member; older
+permissive decoders treat the arguments as required. Upgrade verifiers before
+issuing warrants that depend on omission being accepted.
+
+Python and TypeScript receivers preserve supplied values for optional fields
+throughout the presented chain, including explicit nulls and nulls inside lists.
+Required-only fields retain the SDK's existing null normalization. In Python,
+`warrant.optional_fields(tool)` reports the signed presence declarations for the
+effective tool entry, using the same exact-tool precedence and wildcard fallback
+as authorization. For issuer warrants, it reports optional constraint bounds only
+when the tool is issuable, including wildcard issuance.
