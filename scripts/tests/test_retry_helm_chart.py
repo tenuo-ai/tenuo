@@ -88,6 +88,19 @@ class RetryChartTests(unittest.TestCase):
             posts = [c for c in api.call_args_list if c.kwargs.get("method") == "POST"]
             self.assertEqual(len(posts), 1)
 
+    def test_tag_move_after_readiness_cannot_rerun(self):
+        with (
+            patch.object(retry_chart, "api", side_effect=self.mock_api) as api,
+            patch.object(
+                retry_chart, "release_commit", side_effect=["a" * 40, "b" * 40]
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "tag moved"):
+                retry_chart.retry("tenuo-ai/tenuo", "v0.3.6")
+            self.assertFalse(
+                any(c.kwargs.get("method") == "POST" for c in api.call_args_list)
+            )
+
     def test_wrong_commit_event_repository_and_incomplete_runs_are_refused(self):
         for change in [
             {"head_sha": "b" * 40},

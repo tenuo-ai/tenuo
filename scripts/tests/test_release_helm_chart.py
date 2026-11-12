@@ -69,6 +69,36 @@ class ChartReleaseTests(unittest.TestCase):
         self.assertTrue(chart.chart_not_found("chart:1.2.403: not found"))
         self.assertTrue(chart.chart_not_found("unexpected status code 404"))
 
+    def test_moved_tag_or_wrong_checkout_cannot_publish(self):
+        for actual, tag in [("b" * 40, "a" * 40), ("a" * 40, "b" * 40)]:
+            with (
+                patch.object(
+                    chart,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 0, actual),
+                ),
+                patch.object(chart, "release_commit", return_value=tag),
+                self.assertRaises(ValueError),
+            ):
+                chart.validate_release_source("tenuo-ai/tenuo", "v0.3.6", "a" * 40)
+
+    def test_release_commit_rejects_invalid_release_or_tag_shape(self):
+        good = {"draft": False, "prerelease": False, "tag_name": "v0.3.6"}
+        for release, ref in [
+            ({**good, "draft": True}, {"type": "commit", "sha": "a" * 40}),
+            ({**good, "prerelease": True}, {"type": "commit", "sha": "a" * 40}),
+            ({**good, "tag_name": "v0.3.7"}, {"type": "commit", "sha": "a" * 40}),
+            (good, {"type": "commit", "sha": "bad"}),
+            (good, {"type": "blob", "sha": "a" * 40}),
+            (good, {"type": "tag", "sha": "a" * 40}),
+        ]:
+
+            def request(path, release=release, ref=ref):
+                return release if "/releases/" in path else {"object": ref}
+
+            with self.assertRaises(ValueError):
+                chart.release_commit("tenuo-ai/tenuo", "v0.3.6", request=request)
+
     def test_digest_must_be_complete_and_unique(self):
         self.assertEqual(chart.digest_from_output(f"Digest: {DIGEST}\n"), DIGEST)
         for value in [
@@ -155,6 +185,7 @@ class ChartReleaseTests(unittest.TestCase):
             "unavailable",
             "private",
             "different",
+            "moved",
         ]:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
                 fixture = checkout_fixture(tmp, version)
@@ -174,6 +205,9 @@ class ChartReleaseTests(unittest.TestCase):
                 ):
                     args = list(args)
                     result = subprocess.CompletedProcess(args, 0, "", "")
+                    if args[:3] == ["git", "rev-parse", "HEAD"]:
+                        result.stdout = "a" * 40
+                        return result
                     if args[:3] == ["docker", "buildx", "imagetools"]:
                         return result
                     if args[:3] == ["helm", "registry", "login"]:
@@ -234,6 +268,8 @@ class ChartReleaseTests(unittest.TestCase):
                         {
                             "GITHUB_REPOSITORY_OWNER": "tenuo-ai",
                             "GITHUB_ACTOR": "test",
+                            "GITHUB_SHA": "a" * 40,
+                            "GITHUB_REPOSITORY": "tenuo-ai/tenuo",
                             "GH_TOKEN": "fake-token",
                             "GITHUB_STEP_SUMMARY": str(Path(tmp) / "test-summary.md"),
                         },
@@ -251,9 +287,20 @@ class ChartReleaseTests(unittest.TestCase):
                     ),
                     patch.object(chart.subprocess, "run", side_effect=fake_run),
                     patch.object(chart, "chart_files", side_effect=files),
+                    patch.object(
+                        chart,
+                        "release_commit",
+                        side_effect=["a" * 40, ("b" if mode == "moved" else "a") * 40],
+                    ),
                     chdir(fixture),
                 ):
-                    if mode in ["denied", "unavailable", "private", "different"]:
+                    if mode in [
+                        "denied",
+                        "unavailable",
+                        "private",
+                        "different",
+                        "moved",
+                    ]:
                         with self.assertRaises((RuntimeError, ValueError)):
                             chart.main()
                         self.assertFalse((output / "chart-reference.txt").exists())

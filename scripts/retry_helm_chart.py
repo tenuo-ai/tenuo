@@ -4,9 +4,8 @@ import argparse
 import json
 import os
 import subprocess
-from urllib.parse import quote
 
-from release_helm_chart import version_from_tag
+from release_helm_chart import release_commit, version_from_tag
 
 
 def api(path, method="GET"):
@@ -16,6 +15,8 @@ def api(path, method="GET"):
         text=True,
         capture_output=True,
     )
+    if result.returncode:
+        raise RuntimeError(f"GitHub request failed: {result.stderr.strip()}")
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
@@ -39,22 +40,15 @@ def retryable_chart_job(jobs):
 
 def retry(repository, tag):
     version_from_tag(tag)
-    release = api(f"repos/{repository}/releases/tags/{quote(tag, safe='')}")
-    if release["draft"] or release["prerelease"] or release["tag_name"] != tag:
-        raise ValueError("Expected the published stable release")
-    ref = api(f"repos/{repository}/git/ref/tags/{quote(tag, safe='')}")["object"]
-    while ref["type"] == "tag":
-        ref = api(f"repos/{repository}/git/tags/{ref['sha']}")["object"]
-    if ref["type"] != "commit":
-        raise ValueError("Release tag must resolve to a commit")
+    source_sha = release_commit(repository, tag, request=api)
     runs = api(
-        f"repos/{repository}/actions/workflows/release.yml/runs?event=release&head_sha={ref['sha']}&per_page=100"
+        f"repos/{repository}/actions/workflows/release.yml/runs?event=release&head_sha={source_sha}&per_page=100"
     )["workflow_runs"]
     runs = [
         r
         for r in runs
         if r["event"] == "release"
-        and r["head_sha"] == ref["sha"]
+        and r["head_sha"] == source_sha
         and r["head_repository"]["full_name"] == repository
         and r["head_branch"] == tag
     ]
@@ -74,6 +68,8 @@ def retry(repository, tag):
             break
         page += 1
     job_id = retryable_chart_job(jobs)
+    if release_commit(repository, tag, request=api) != source_sha:
+        raise ValueError("Release tag moved while preparing chart retry")
     api(f"repos/{repository}/actions/jobs/{job_id}/rerun", method="POST")
     return latest["html_url"]
 

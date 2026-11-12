@@ -31,7 +31,7 @@ jobs:
           jq -e --arg tag "$RELEASE_TAG" '.isDraft == false and .isPrerelease == false and .tagName == $tag' /tmp/release.json
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ inputs.release_tag }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Install Helm
         run: |

@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -61,6 +62,37 @@ def digest_from_output(output):
     return matches[0]
 
 
+def github_api(path):
+    return json.loads(run("gh", "api", path).stdout)
+
+
+def release_commit(repository, tag, *, request=None):
+    request = request or github_api
+    version_from_tag(tag)
+    release = request(f"repos/{repository}/releases/tags/{tag}")
+    if release["draft"] or release["prerelease"] or release["tag_name"] != tag:
+        raise ValueError("Expected the published stable release")
+    ref = request(f"repos/{repository}/git/ref/tags/{tag}")["object"]
+    for _ in range(5):
+        if ref["type"] == "commit":
+            if not re.fullmatch(r"[a-f0-9]{40}", ref["sha"]):
+                raise ValueError("Invalid release commit")
+            return ref["sha"]
+        if ref["type"] != "tag":
+            break
+        ref = request(f"repos/{repository}/git/tags/{ref['sha']}")["object"]
+    raise ValueError("Release tag must resolve to a commit within five tag links")
+
+
+def validate_release_source(repository, tag, expected):
+    if not re.fullmatch(r"[a-f0-9]{40}", expected):
+        raise ValueError("Expected the original Release run commit")
+    if run("git", "rev-parse", "HEAD").stdout.strip() != expected:
+        raise ValueError("Checkout differs from the original Release run commit")
+    if release_commit(repository, tag) != expected:
+        raise ValueError("Release tag moved away from the original Release run commit")
+
+
 def chart_not_found(error):
     statuses = re.findall(r"(?i)\bstatus(?: code)?[:= ]+(\d{3})\b", error)
     if any(code != "404" for code in statuses) or re.search(
@@ -105,6 +137,9 @@ def main():
     if not args.publish:
         print(f"Chart {version}: lint, package, and render passed")
         return
+    source_sha = os.environ["GITHUB_SHA"]
+    source_repository = os.environ["GITHUB_REPOSITORY"]
+    validate_release_source(source_repository, args.tag, source_sha)
     owner = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", owner):
         raise ValueError("Invalid registry owner")
@@ -179,7 +214,8 @@ def main():
             str(public / package.name),
             env=public_env,
         )
-    record = f"Helm chart: {immutable}\nAuthorizer image: tenuo/authorizer:{version}\n"
+    validate_release_source(source_repository, args.tag, source_sha)
+    record = f"Helm chart: {immutable}\nAuthorizer image: tenuo/authorizer:{version}\nSource commit: {source_sha}\n"
     (args.output / "chart-reference.txt").write_text(record)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:

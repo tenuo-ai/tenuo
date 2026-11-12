@@ -45,7 +45,9 @@ helm install tenuo-authorizer oci://ghcr.io/tenuo-ai/charts/tenuo-authorizer@sha
   -f my-values.yaml
 ```
 
-The chart version and `appVersion` match the release and use
+The chart is built from the original Release run commit, which is recorded in
+`chart-reference.txt`. Publication and retries reject tags that move away from
+that source. The chart version and `appVersion` match the release and use
 `tenuo/authorizer:<version>`. Earlier releases without the reference asset can
 still be installed from their source checkout as shown above.
 
