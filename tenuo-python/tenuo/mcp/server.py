@@ -148,7 +148,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from .._arg_types import argument_type_mismatches
-from .._pop_canonicalize import strip_none_values
+from .._pop_canonicalize import constraint_view
 from ..meta import _capture_arguments
 from ..approval import ApprovalRequired
 from ..exceptions import (
@@ -924,9 +924,6 @@ class MCPVerifier:
                     jsonrpc_error_code=-32602,
                     error_type="invalid_arguments",
                 ))
-            # Strip None from constraints too: extraction may propagate None
-            # defaults, which the Rust canonicalizer rejects.
-            constraints = strip_none_values(constraints)
 
             # Note: PoP covers the raw wire args (pop_args), not the extracted
             # constraint view. That means every wire arg is covered by the
@@ -935,9 +932,9 @@ class MCPVerifier:
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
         else:
-            # Raw mode: arguments are the constraints. Strip None there too.
+            # Raw mode: arguments are the constraints.
             clean_arguments = dict(args)
-            constraints = strip_none_values(dict(args))
+            constraints = dict(args)
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
 
@@ -1063,6 +1060,7 @@ class MCPVerifier:
 
         warrant_id: Optional[str] = getattr(warrant, "id", None)
         presented[:] = list(_chain_parents or []) + [warrant]
+        constraints = constraint_view(constraints, tool_name, presented)
 
         pop_sig: Optional[bytes] = None
         if signature_b64:

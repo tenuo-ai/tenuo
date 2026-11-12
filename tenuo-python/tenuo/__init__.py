@@ -98,6 +98,7 @@ from tenuo_core import (  # type: ignore
     UrlPattern,
     Warrant,
     Wildcard,
+    validate_attenuation,
     verify_receipt,
 )
 from tenuo_core import (
@@ -347,6 +348,7 @@ __all__ = [
     # Common constraints
     "Pattern",
     "Exact",
+    "validate_attenuation",
     "OneOf",
     "Range",
     "Contains",

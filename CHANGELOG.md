@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Delegation checks are stricter for the `*` tool entry, issuer
+  `constraint_bounds` and clearance.** The builder and the verifier now apply
+  the same rules to all three. A child's `*` entry must stay within what the
+  parent allows for every tool the child does not name. Chains that follow
+  these rules verify as before.
+
+### Changed
+
+- **Upgrade note.** `Annotated` constraint checks and the A2A server no longer
+  convert an argument to a string before comparing it with `Exact` or `OneOf`.
+  A policy that wrote a number as a string, such as `Exact("8080")` or
+  `OneOf(["1", "2"])`, no longer matches the integer argument and the call is
+  denied. Write the typed literal instead: `Exact(8080)`, `OneOf([1, 2])`.
+  Warrant authorization already compared typed values and is unchanged.
+- A2A grants keep the JSON types of `OneOf` and `NotOneOf` values instead of
+  converting them to strings.
+- `Exact`, `OneOf`, and `NotOneOf` reject `bytes` and `bytearray` literals.
+
+### Fixed
+
+- Python `Exact`, `OneOf`, and `NotOneOf` preserve typed literals, including
+  numbers, booleans, null, lists, and objects. Their convenience checks use the
+  same core semantics as `satisfies`, and literal delegation shorthand works
+  for non-string values.
+- Scoped `grant()` and `preview()` use native constraint containment instead
+  of Python string and set heuristics, preserving typed and quoted literals.
+
+### Added
+
+- **Optional arguments in the Rust constraint engine.**
+  `ConstraintSet::insert_optional` allows omission while enforcing the value
+  constraint whenever the argument is supplied. Diagnostics, signed CBOR warrants,
+  and attenuation preserve the presence rule; required arguments cannot become
+  optional during delegation. Required-only encodings remain unchanged.
+  Python and TypeScript receivers preserve supplied optional values, including
+  nulls, across execution policies and issuer constraint bounds. Unknown
+  constraint types and unavailable CEL evaluators fail closed
+  even on omission.
+  Making an argument required cannot bypass an unsupported optional parent
+  predicate during delegation or signed-chain verification.
+
+- An opt-in release notification workflow for downstream integration update
+  PRs, with immutable release validation and repository-scoped App tokens.
+- Python `validate_attenuation(parent, child)` checks cross-type constraint
+  narrowing through the existing Rust core and raises its typed exceptions.
+  Constraint instance methods use the same generic rules. This preflight
+  checks the constraint relationship; grants and authorization still perform
+  full warrant verification.
+
 ## [0.3.6] - 2026-11-09
 
 ### Added
