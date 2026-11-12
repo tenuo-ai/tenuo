@@ -427,3 +427,21 @@ Every approval binds to `(warrant_id, tool, args, holder)` via SHA-256 (`compute
 - [FastAPI](fastapi.md#error-handling) - HTTP 409 approval responses
 - [Wire format §16](spec/wire-format-v1.md#16-approval-wire-format-multi-sig) - `SignedApproval` bytes
 - [Cloud approvals API reference](https://docs.tenuo.ai/api-reference/approvals) - Managed approval routing for Tenuo Cloud customers (sign-in required)
+
+### Strengthening approvals during Python delegation
+
+`grant_builder()` exposes Rust's additive approval operations:
+
+```python
+child = (parent.grant_builder()
+    .inherit_all()
+    .add_approvers([additional_approver.public_key])
+    .raise_min_approvals(2)
+    .grant(holder_key))
+```
+
+`add_approvers()` preserves inherited approvers and deduplicates keys.
+`raise_min_approvals()` cannot lower an existing threshold. The core validates
+the final threshold at grant time, including the required increase when new
+approvers are added; an impossible threshold is rejected. The native
+`attenuate_builder()` exposes the same two operations.
