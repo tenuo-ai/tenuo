@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Temporal Vault, AWS, and GCP key resolvers read warm caches synchronously
+  inside the workflow sandbox. Explicit host-side preload and refresh APIs
+  support cache renewal; missing or expired workflow keys fail closed.
+
 - Python `Exact`, `OneOf`, and `NotOneOf` preserve typed literals, including
   numbers, booleans, null, lists, and objects. Their convenience checks use the
   same core semantics as `satisfies`, and literal delegation shorthand works
