@@ -38,10 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Releases publish the authorizer Helm chart to GHCR as OCI, verify public
-  digest-based pulls and packaged rendering, and attach the immutable chart
-  reference. A chart-only workflow supports retries without overwriting versions.
-
 - **Optional arguments in the Rust constraint engine.**
   `ConstraintSet::insert_optional` allows omission while enforcing the value
   constraint whenever the argument is supplied. Diagnostics, signed CBOR warrants,
@@ -61,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Constraint instance methods use the same generic rules. This preflight
   checks the constraint relationship; grants and authorization still perform
   full warrant verification.
+
+- Releases publish the authorizer Helm chart to GHCR as OCI, verify public
+  digest-based pulls and packaged rendering, and attach the immutable chart
+  reference. A chart-only workflow supports retries without overwriting versions.
 
 ## [0.3.6] - 2026-11-09
 

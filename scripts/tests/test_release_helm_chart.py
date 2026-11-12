@@ -22,6 +22,15 @@ class ChartReleaseTests(unittest.TestCase):
                 chart.version_from_tag(tag)
         self.assertEqual(chart.version_from_tag("v0.3.6"), "0.3.6")
 
+    def test_prerelease_packaging_checks_are_allowed_without_publication(self):
+        self.assertEqual(
+            chart.version_from_tag("v0.4.0-rc.1", stable_only=False), "0.4.0-rc.1"
+        )
+        with self.assertRaises(ValueError):
+            chart.version_from_tag("v0.4.0-rc.01", stable_only=False)
+        with self.assertRaises(ValueError):
+            chart.version_from_tag("v0.4.0-rc.1")
+
     def test_digest_must_be_complete_and_unique(self):
         self.assertEqual(chart.digest_from_output(f"Digest: {DIGEST}\n"), DIGEST)
         for value in [
@@ -40,11 +49,28 @@ class ChartReleaseTests(unittest.TestCase):
             with (
                 patch("sys.argv", ["release_helm_chart.py", "--tag", "v0.3.6"]),
                 patch.object(chart.Path, "read_text", return_value=metadata),
+                patch.object(
+                    chart.tomllib,
+                    "load",
+                    return_value={"package": {"version": "0.3.6"}},
+                ),
                 patch.object(chart, "run") as command,
             ):
                 with self.assertRaises(ValueError):
                     chart.main()
                 command.assert_not_called()
+
+    def test_core_version_mismatch_is_rejected_before_helm(self):
+        with (
+            patch("sys.argv", ["release_helm_chart.py", "--tag", "v0.3.6"]),
+            patch.object(
+                chart.tomllib, "load", return_value={"package": {"version": "0.3.7"}}
+            ),
+            patch.object(chart, "run") as command,
+        ):
+            with self.assertRaisesRegex(ValueError, "Core version"):
+                chart.main()
+            command.assert_not_called()
 
     @unittest.skipUnless(
         shutil.which("helm"), "Helm is required for package integration"
@@ -147,7 +173,7 @@ class ChartReleaseTests(unittest.TestCase):
                             "GITHUB_REPOSITORY_OWNER": "tenuo-ai",
                             "GITHUB_ACTOR": "test",
                             "GH_TOKEN": "fake-token",
-                        "GITHUB_STEP_SUMMARY": str(Path(tmp) / "test-summary.md"),
+                            "GITHUB_STEP_SUMMARY": str(Path(tmp) / "test-summary.md"),
                         },
                     ),
                     patch(

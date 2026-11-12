@@ -60,8 +60,10 @@ the Release workflow.
 GHCR creates new packages as private. On first publication, make
 `tenuo-ai/charts/tenuo-authorizer` public in the package settings. The anonymous
 pull check fails until that visibility is configured. Then retry the
-**Publish Helm chart** workflow with the published release tag. The same workflow
-can recover subsequent chart-only failures without rerunning other publishers.
+**Retry Helm chart** workflow with the published release tag. It verifies that the other jobs in the original
+Release run succeeded, then reruns only its failed chart job. The original Release
+run can then complete successfully and trigger downstream notifications. Other
+failed publishers must be recovered before chart-only retry can proceed.
 An existing chart is reused only if its packaged files match the release; the
 publisher refuses to overwrite different contents under the same version.
 

@@ -6,12 +6,6 @@ on:
       release_tag:
         required: true
         type: string
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: Published stable release tag to publish or verify
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -19,7 +13,7 @@ permissions:
 
 jobs:
   publish:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'release' && !github.event.release.prerelease
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:

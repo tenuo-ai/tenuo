@@ -7,6 +7,7 @@ import re
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 from pathlib import Path
 
 
@@ -19,10 +20,23 @@ def run(*args, env=None, input=None):
     return result
 
 
-def version_from_tag(tag):
-    match = re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag)
+def version_from_tag(tag, *, stable_only=True):
+    base = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    suffix = r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    match = re.fullmatch(base if stable_only else base + suffix, tag)
     if not match:
-        raise ValueError("Expected a stable release tag vX.Y.Z")
+        raise ValueError(
+            "Expected a release tag vX.Y.Z" + (" (stable only)" if stable_only else "")
+        )
+    if (
+        not stable_only
+        and match[4]
+        and any(
+            part.isdigit() and len(part) > 1 and part.startswith("0")
+            for part in match[4].split(".")
+        )
+    ):
+        raise ValueError("Prerelease numeric identifiers cannot have leading zeroes")
     return tag[1:]
 
 
@@ -53,7 +67,10 @@ def main():
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--output", type=Path, default=Path("helm-release"))
     args = parser.parse_args()
-    version = version_from_tag(args.tag)
+    version = version_from_tag(args.tag, stable_only=args.publish)
+    with open("tenuo-core/Cargo.toml", "rb") as manifest:
+        if tomllib.load(manifest)["package"]["version"] != version:
+            raise ValueError("Core version must match the release tag")
     chart = Path("charts/tenuo-authorizer")
     metadata = (chart / "Chart.yaml").read_text()
     for field in ["version", "appVersion"]:

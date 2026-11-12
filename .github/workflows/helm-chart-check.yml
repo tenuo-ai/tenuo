@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - 'charts/**'
+      - 'tenuo-core/Cargo.toml'
       - 'scripts/release_helm_chart.py'
+      - 'scripts/retry_helm_chart.py'
       - 'scripts/tests/test_release_helm_chart.py'
       - '.github/workflows/*helm*'
       - '.github/workflows/release.yml'
@@ -12,7 +14,9 @@ on:
     branches: [main]
     paths:
       - 'charts/**'
+      - 'tenuo-core/Cargo.toml'
       - 'scripts/release_helm_chart.py'
+      - 'scripts/retry_helm_chart.py'
       - '.github/workflows/*helm*'
 
 permissions:
@@ -36,6 +40,6 @@ jobs:
           sudo install linux-amd64/helm /usr/local/bin/helm
       - name: Validate packaged chart
         run: |
-          version="$(awk '/^version:/{print $2}' charts/tenuo-authorizer/Chart.yaml)"
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("tenuo-core/Cargo.toml", "rb"))["package"]["version"])')"
           python3 scripts/release_helm_chart.py --tag "v$version"
           python3 -m unittest discover -s scripts/tests -p 'test_release_helm_chart.py'

@@ -737,7 +737,7 @@ jobs:
 
   publish-helm-chart:
     name: Publish Helm chart
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && !github.event.release.prerelease
     needs: [docker-authorizer-merge]
     uses: ./.github/workflows/publish-helm-chart.yml
     permissions:
