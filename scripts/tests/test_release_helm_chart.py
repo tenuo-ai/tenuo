@@ -31,6 +31,26 @@ class ChartReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             chart.version_from_tag("v0.4.0-rc.1")
 
+    def test_registry_status_is_not_taken_from_version_or_url(self):
+        self.assertFalse(
+            chart.chart_not_found(
+                "https://ghcr.io/chart:1.2.404: 503 Service Unavailable"
+            )
+        )
+        self.assertFalse(
+            chart.chart_not_found(
+                "https://ghcr.io/404/chart: status code 503; 404 not found"
+            )
+        )
+        self.assertFalse(
+            chart.chart_not_found("https://ghcr.io/chart:1.2.404: connection reset")
+        )
+        self.assertTrue(
+            chart.chart_not_found("request to chart:1.2.503: 404 Not Found")
+        )
+        self.assertTrue(chart.chart_not_found("chart:1.2.403: not found"))
+        self.assertTrue(chart.chart_not_found("unexpected status code 404"))
+
     def test_digest_must_be_complete_and_unique(self):
         self.assertEqual(chart.digest_from_output(f"Digest: {DIGEST}\n"), DIGEST)
         for value in [
@@ -132,7 +152,7 @@ class ChartReleaseTests(unittest.TestCase):
                             result.returncode = 1
                             result.stderr = {
                                 "denied": "403 denied",
-                                "unavailable": "503 unavailable",
+                                "unavailable": "request https://ghcr.io/charts:1.2.404 returned status code 503 Service Unavailable",
                             }.get(mode, "404 not found")
                             return result
                         if public:

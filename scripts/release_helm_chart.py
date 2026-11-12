@@ -61,6 +61,21 @@ def digest_from_output(output):
     return matches[0]
 
 
+def chart_not_found(error):
+    statuses = re.findall(r"(?i)\bstatus(?: code)?[:= ]+(\d{3})\b", error)
+    if any(code != "404" for code in statuses) or re.search(
+        r"(?i)\b(unauthorized|denied)\b", error
+    ):
+        return False
+    return bool(
+        re.search(
+            r"(?im)(?<![\w./-])404\s+not found\b|\bmanifest_unknown\b|:\s*not found\s*$",
+            error,
+        )
+        or statuses
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", required=True)
@@ -135,9 +150,7 @@ def main():
             digest = digest_from_output(probe.stdout + probe.stderr)
         else:
             error = probe.stdout + probe.stderr
-            if not re.search(
-                r"(?i)(404|manifest_unknown|: not found)", error
-            ) or re.search(r"(?i)(401|403|unauthorized|denied)", error):
+            if not chart_not_found(error):
                 raise RuntimeError(
                     "Could not check existing chart publication: " + error
                 )
