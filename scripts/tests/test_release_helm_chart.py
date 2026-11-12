@@ -112,6 +112,8 @@ class ChartReleaseTests(unittest.TestCase):
                         if public:
                             public_pulls.append(args)
                             env = kwargs["env"]
+                            self.assertFalse(Path(env["HELM_CACHE_HOME"]).exists())
+                            self.assertFalse(Path(env["HELM_CONFIG_HOME"]).exists())
                             self.assertEqual(
                                 Path(env["HELM_REGISTRY_CONFIG"]).read_text(),
                                 '{"auths": {}}',

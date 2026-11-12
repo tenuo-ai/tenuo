@@ -134,6 +134,8 @@ def main():
             os.environ,
             HELM_REGISTRY_CONFIG=f"{public}/credentials.json",
             DOCKER_CONFIG=str(public),
+            HELM_CACHE_HOME=str(public / "cache"),
+            HELM_CONFIG_HOME=str(public / "config"),
         )
         (public / "credentials.json").write_text('{"auths": {}}')
         (public / "config.json").write_text('{"auths": {}}')
