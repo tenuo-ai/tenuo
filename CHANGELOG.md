@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-11-11
+
 ### Security
 
 - **Delegation checks are stricter for the `*` tool entry, issuer
@@ -16,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   these rules verify as before.
 
 ### Changed
+
+- Warrants using optional argument metadata require compatible verifiers.
+  Upgrade receivers before issuing these warrants. Strict older decoders reject
+  the metadata; older permissive decoders treat the arguments as required.
+- Update the Rust core lockfile to `serde_json` 1.0.154 and `smallvec` 1.16.5,
+  and npm release tooling `semver` to 7.8.6.
 
 - **Upgrade note.** `Annotated` constraint checks and the A2A server no longer
   convert an argument to a string before comparing it with `Exact` or `OneOf`.
