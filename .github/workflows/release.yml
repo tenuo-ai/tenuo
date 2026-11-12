@@ -734,3 +734,14 @@ jobs:
 
       - name: Inspect image
         run: docker buildx imagetools inspect tenuo/control:${{ steps.meta.outputs.version }}
+
+  publish-helm-chart:
+    name: Publish Helm chart
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    needs: [docker-authorizer-merge]
+    uses: ./.github/workflows/publish-helm-chart.yml
+    permissions:
+      contents: write
+      packages: write
+    with:
+      release_tag: ${{ github.event.release.tag_name }}

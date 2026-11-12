@@ -65,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checks the constraint relationship; grants and authorization still perform
   full warrant verification.
 
+- Releases publish the authorizer Helm chart to GHCR as OCI, verify public
+  digest-based pulls and packaged rendering, and attach the immutable chart
+  reference. A chart-only workflow supports retries without overwriting versions.
+
 ## [0.3.6] - 2026-11-09
 
 ### Added

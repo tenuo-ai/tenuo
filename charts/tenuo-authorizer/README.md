@@ -12,7 +12,7 @@ helm install tenuo-authorizer ./charts/tenuo-authorizer \
 ## Prerequisites
 
 - Kubernetes 1.19+
-- Helm 3.2.0+
+- Helm 3.8.0+ for OCI installation
 
 ## Installing the Chart
 
@@ -26,6 +26,48 @@ helm install tenuo-authorizer ./charts/tenuo-authorizer -f my-values.yaml
 # Install in a specific namespace
 helm install tenuo-authorizer ./charts/tenuo-authorizer --namespace tenuo-system --create-namespace
 ```
+
+## Installing a published OCI chart
+
+For releases with a `chart-reference.txt` asset, install without cloning the
+repository. Replace `<version>` with that release's chart version:
+
+```bash
+helm install tenuo-authorizer oci://ghcr.io/tenuo-ai/charts/tenuo-authorizer \
+  --version <version> -f my-values.yaml
+```
+
+For a reproducible installation, use the complete digest reference recorded in
+`chart-reference.txt` instead of the version tag:
+
+```bash
+helm install tenuo-authorizer oci://ghcr.io/tenuo-ai/charts/tenuo-authorizer@sha256:<digest> \
+  -f my-values.yaml
+```
+
+The chart is built from the original Release run commit, which is recorded in
+`chart-reference.txt`. Publication and retries reject tags that move away from
+that source. The chart version and `appVersion` match the release and use
+`tenuo/authorizer:<version>`. Earlier releases without the reference asset can
+still be installed from their source checkout as shown above.
+
+### Chart publication and retries
+
+The Release workflow publishes the chart after the authorizer image. Publication
+checks chart versions, strict lint, packaged rendering, image availability, and
+an anonymous pull by digest. The immutable reference is attached to the release
+and recorded in the workflow summary. Publication or verification failures fail
+the Release workflow.
+
+GHCR creates new packages as private. On first publication, make
+`tenuo-ai/charts/tenuo-authorizer` public in the package settings. The anonymous
+pull check fails until that visibility is configured. Then retry the
+**Retry Helm chart** workflow with the published release tag. It verifies that the other jobs in the original
+Release run succeeded, then reruns only its failed chart job. The original Release
+run can then complete successfully and trigger downstream notifications. Other
+failed publishers must be recovered before chart-only retry can proceed.
+An existing chart is reused only if its packaged files match the release; the
+publisher refuses to overwrite different contents under the same version.
 
 ## Uninstalling the Chart
 
