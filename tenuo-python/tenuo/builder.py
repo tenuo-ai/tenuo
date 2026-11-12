@@ -657,6 +657,19 @@ class GrantBuilder:
         self._rust_builder.terminal()
         return self
 
+    def add_approvers(self, approvers: List[PublicKey]) -> "GrantBuilder":
+        """Add approvers to the inherited set; duplicates have no effect.
+
+        The Rust builder checks threshold monotonicity when granting.
+        """
+        self._rust_builder.add_approvers(approvers)
+        return self
+
+    def raise_min_approvals(self, count: int) -> "GrantBuilder":
+        """Raise the approval threshold; a smaller count cannot lower it."""
+        self._rust_builder.raise_min_approvals(count)
+        return self
+
     def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "GrantBuilder":
         """Add or merge approval gates into the attenuated warrant.
 

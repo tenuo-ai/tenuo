@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python grant and native attenuation builders expose `add_approvers()` and
+  `raise_min_approvals()`, using the existing monotone Rust operations.
+
 - **Optional arguments in the Rust constraint engine.**
   `ConstraintSet::insert_optional` allows omission while enforcing the value
   constraint whenever the argument is supplied. Diagnostics, signed CBOR warrants,

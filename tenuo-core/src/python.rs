@@ -3552,6 +3552,19 @@ impl PyAttenuationBuilder {
         self.inner.set_intent(intent);
     }
 
+    /// Add approvers without removing any inherited approvers.
+    fn add_approvers(&mut self, approvers: Vec<PyPublicKey>) {
+        self.inner = self
+            .inner
+            .clone()
+            .add_approvers(approvers.into_iter().map(|key| key.inner).collect());
+    }
+
+    /// Raise the approval threshold without lowering the current value.
+    fn raise_min_approvals(&mut self, min: u32) {
+        self.inner = self.inner.clone().raise_min_approvals(min);
+    }
+
     /// Add or merge approval gates into this attenuated warrant.
     ///
     /// Accepts `{"tool_name": None}` (whole-tool) or
