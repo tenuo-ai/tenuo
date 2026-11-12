@@ -205,13 +205,19 @@ def main():
         (public / "credentials.json").write_text('{"auths": {}}')
         (public / "config.json").write_text('{"auths": {}}')
         run("helm", "pull", immutable, "--destination", str(public), env=public_env)
-        if chart_files(public / package.name) != chart_files(package):
+        # Helm names digest pulls after the digest rather than Chart.version.
+        # The destination is fresh, so require exactly one returned archive.
+        pulled = list(public.glob("*.tgz"))
+        if len(pulled) != 1:
+            raise ValueError("Expected exactly one public chart archive")
+        public_package = pulled[0]
+        if chart_files(public_package) != chart_files(package):
             raise ValueError("Public chart does not match the packaged release")
         run(
             "helm",
             "template",
             "release-smoke",
-            str(public / package.name),
+            str(public_package),
             env=public_env,
         )
     validate_release_source(source_repository, args.tag, source_sha)
