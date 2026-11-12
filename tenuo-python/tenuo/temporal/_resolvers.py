@@ -273,17 +273,22 @@ class EnvKeyResolver(KeyResolver):
 class _CachedKeyResolver(KeyResolver):
     """Cloud resolver cache shared by async callers and workflow signing."""
 
-    _cache: Dict[str, tuple[Any, float]]
-    _cache_lock: Any
-    _cache_ttl: int
+    def __init__(self, cache_ttl: int) -> None:
+        self._cache_ttl = cache_ttl
+        self._cache: Dict[str, tuple[Any, float]] = {}
+        self._cache_lock = threading.Lock()
+        self._generations: Dict[str, int] = {}
 
     async def resolve(self, key_id: str) -> Any:
         with self._cache_lock:
             entry = self._cache.get(key_id)
             if entry is not None and time.time() - entry[1] < self._cache_ttl:
                 return entry[0]
+            generation = self._generations.get(key_id, 0)
         key = await self._fetch_key(key_id)
         with self._cache_lock:
+            if generation != self._generations.get(key_id, 0):
+                raise KeyResolutionError(key_id=key_id)
             self._cache[key_id] = (key, time.time())
         return key
 
@@ -325,14 +330,24 @@ class _CachedKeyResolver(KeyResolver):
         if workflow.in_workflow():
             raise KeyResolutionError("Cloud keys must be refreshed outside workflow execution")
         for key_id in key_ids:
+            with self._cache_lock:
+                old_entry = self._cache.get(key_id)
+                generation = self._generations.get(key_id, 0) + 1
+                self._generations[key_id] = generation
             try:
                 key = await self._fetch_key(key_id)
             except BaseException:
                 with self._cache_lock:
-                    self._cache.pop(key_id, None)
+                    # Do not discard a newer successful refresh's key.
+                    if self._cache.get(key_id) is old_entry:
+                        self._cache.pop(key_id, None)
+                    self._generations[key_id] = self._generations.get(key_id, 0) + 1
                 raise
             with self._cache_lock:
+                if generation != self._generations.get(key_id, 0):
+                    raise KeyResolutionError(key_id=key_id)
                 self._cache[key_id] = (key, time.time())
+                self._generations[key_id] = generation + 1
 
 
 class VaultKeyResolver(_CachedKeyResolver):
@@ -367,9 +382,7 @@ class VaultKeyResolver(_CachedKeyResolver):
         self._mount = mount
         self._path_template = path_template
         self._token = token
-        self._cache_ttl = cache_ttl
-        self._cache: Dict[str, tuple[Any, float]] = {}
-        self._cache_lock = threading.Lock()
+        super().__init__(cache_ttl)
 
     async def _fetch_key(self, key_id: str) -> Any:
         import os
@@ -457,9 +470,7 @@ class AWSSecretsManagerKeyResolver(_CachedKeyResolver):
     ) -> None:
         self._secret_prefix = secret_prefix
         self._region_name = region_name
-        self._cache_ttl = cache_ttl
-        self._cache: Dict[str, tuple[Any, float]] = {}
-        self._cache_lock = threading.Lock()
+        super().__init__(cache_ttl)
 
     async def _fetch_key(self, key_id: str) -> Any:
         import asyncio
@@ -544,9 +555,7 @@ class GCPSecretManagerKeyResolver(_CachedKeyResolver):
         self._project_id = project_id
         self._secret_prefix = secret_prefix
         self._version = version
-        self._cache_ttl = cache_ttl
-        self._cache: Dict[str, tuple[Any, float]] = {}
-        self._cache_lock = threading.Lock()
+        super().__init__(cache_ttl)
 
     async def _fetch_key(self, key_id: str) -> Any:
         import asyncio
