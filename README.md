@@ -124,7 +124,7 @@ Leaving the scoped block ends its local authorization context; it does not revok
 
 **Continue with:** [Python guide](./docs/quickstart.md) · [TypeScript guide](./tenuo-ts/README.md) · [Rust guide](#rust) · [MCP walkthrough](./docs/mcp.md)
 
-The TypeScript guide's examples use `createTenuo.devRoot()`, which requires `NODE_ENV=development`.
+For the TypeScript guide's development examples, set `NODE_ENV=development`.
 
 ## Delegate Across Boundaries
 
@@ -140,7 +140,14 @@ Grants authority   →    Narrows for a subtask   →   Presents warrant
 
 For example, a Python orchestrator can delegate a narrower warrant to a TypeScript worker calling a Rust service. The receiving service verifies the chain against its configured trusted roots, then checks the caller's proof of possession and the requested action against the warrant.
 
-A delegated warrant can only narrow its parent:
+A delegated warrant can only narrow its parent.
+
+**Examples:** [Python delegation example](#python-delegation-example) · [TypeScript delegation guide](./tenuo-ts/README.md#delegate-to-another-agent)
+
+<a id="python-delegation-example"></a>
+
+<details>
+<summary>Python delegation example</summary>
 
 ```python
 from tenuo import Range, SigningKey, Warrant
@@ -173,7 +180,7 @@ except MonotonicityError:
     print("Rejected: a child cannot raise the limit")
 ```
 
-In TypeScript, use [`tenuo.narrow()`](./tenuo-ts/README.md#delegate-to-another-agent).
+</details>
 
 Sensitive actions can also require a [signed human approval](./docs/approvals.md).
 
