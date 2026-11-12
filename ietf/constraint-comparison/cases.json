@@ -1,0 +1,1546 @@
+{
+  "title": "Constraint narrowing cases for three delegation chain drafts",
+  "drafts": {
+    "aat": "draft-niyikiza-oauth-attenuating-agent-tokens-02",
+    "asor": "draft-asor-wimse-agent-delegation-chain-03",
+    "hulea": "draft-hulea-wimse-agent-mandate-01"
+  },
+  "status": {
+    "aat": "run through the -02 reference verifier",
+    "asor": "read from the draft text; not yet reviewed by the draft's author",
+    "hulea": "read from the draft text; not yet reviewed by the draft's author"
+  },
+  "conventions": [
+    "Each case gives the same narrowing in each draft's own syntax: a parent, where relevant a child, and a request.",
+    "aat: parent and child are constraint maps for the tool \"export\"; request is the argument object; chain lists [del_depth, del_max_depth] from the root.",
+    "asor: parent and child are agent_delegation authorization details; request is an informal description of the action.",
+    "hulea: parent and child are Permissions; request is the requested authorization detail; type_profile_admitted lists the members the Type Profile admits.",
+    "child_text carries the child as literal JSON text where the spelling of a number matters.",
+    "result is PERMIT, DENY, OPEN (no rule deciding the case was found in the text; the draft's author may know one) or N/A (the draft has no such construct).",
+    "The aat results come from the -02 reference verifier; step is the Section 8 step that denies. The asor and hulea results are read from the draft text, have not been run against an implementation, and are their authors' to correct."
+  ],
+  "cases": [
+    {
+      "id": "CC-1",
+      "title": "Leaf at the maximum depth",
+      "aat": {
+        "chain": [
+          [
+            0,
+            8
+          ],
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            3,
+            8
+          ],
+          [
+            4,
+            8
+          ],
+          [
+            5,
+            8
+          ],
+          [
+            6,
+            8
+          ],
+          [
+            7,
+            8
+          ],
+          [
+            8,
+            8
+          ]
+        ],
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": "J.10.f",
+        "basis": "Section 4.3; Section 8 step 4e"
+      },
+      "asor": {
+        "chain": [
+          {
+            "del_depth": 0,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 1,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 2,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 3,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 4,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 5,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 6,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 7,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 8,
+            "del_max_depth": 8
+          }
+        ],
+        "result": "DENY",
+        "outcome": "depth_invalid",
+        "basis": "Section 6 step 3: n < DT_0.del_max_depth, and here n is 8"
+      },
+      "hulea": {
+        "chain": [
+          {
+            "max_depth": 8
+          },
+          {
+            "max_depth": 7
+          },
+          {
+            "max_depth": 6
+          },
+          {
+            "max_depth": 5
+          },
+          {
+            "max_depth": 4
+          },
+          {
+            "max_depth": 3
+          },
+          {
+            "max_depth": 2
+          },
+          {
+            "max_depth": 1
+          },
+          {
+            "max_depth": 0
+          }
+        ],
+        "result": "PERMIT",
+        "basis": "Section 4.8: each max_depth is at most the parent's minus 1",
+        "note": "Needs a Validation Profile whose max_chain_length is at least 9 (Section 8)."
+      }
+    },
+    {
+      "id": "CC-2",
+      "title": "A holder lowers the depth limit",
+      "aat": {
+        "chain": [
+          [
+            0,
+            8
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            3,
+            2
+          ]
+        ],
+        "result": "DENY",
+        "step": "4e",
+        "suite_vector": null,
+        "basis": "Section 4.3; Section 8 step 4e: child.del_depth <= parent.del_max_depth",
+        "note": "The first three tokens alone are permitted."
+      },
+      "asor": {
+        "chain": [
+          {
+            "del_depth": 0,
+            "del_max_depth": 8
+          },
+          {
+            "del_depth": 1,
+            "del_max_depth": 2
+          },
+          {
+            "del_depth": 2,
+            "del_max_depth": 2
+          },
+          {
+            "del_depth": 3,
+            "del_max_depth": 2
+          }
+        ],
+        "result": "PERMIT",
+        "basis": "Section 6 step 3 compares the leaf's depth with DT_0.del_max_depth (3 < 8); Section 4.3 rule 5 holds at every link"
+      },
+      "hulea": {
+        "chain": [
+          {
+            "max_depth": 8
+          },
+          {
+            "max_depth": 1
+          },
+          {
+            "max_depth": 0
+          },
+          {
+            "max_depth": 0
+          }
+        ],
+        "result": "DENY",
+        "code": "depth_exceeded",
+        "basis": "Section 4.8: a mandate with max_depth 0 cannot be sub-delegated; Section 9.3 step 8",
+        "note": "max_depth counts the levels still allowed, so AAT's (1, 2) is 1 here and (2, 2) is 0."
+      }
+    },
+    {
+      "id": "CC-3a",
+      "title": "Child constrains an input the parent did not name",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          }
+        },
+        "child": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          },
+          "limit": {
+            "constraint_type": "range",
+            "max": 10
+          }
+        },
+        "request": {
+          "format": "pdf",
+          "limit": 5
+        },
+        "result": "DENY",
+        "step": "4p2",
+        "suite_vector": "J.22.15",
+        "basis": "Section 4.5: each argument the derived map names must be named by the parent's map, unless the parent's map contains \"*\""
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            },
+            {
+              "key": "limit",
+              "max": 10
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "format": "pdf",
+          "limit": 5
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.3 rules 2 and 3 apply to constraints present in the parent; an absent constraint means unbounded"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            },
+            {
+              "pred": "max",
+              "ptr": "/limit",
+              "value": "10"
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf",
+          "limit": "5"
+        },
+        "result": "DENY",
+        "code": "not_attenuated",
+        "basis": "Section 4.7 rule 5: every constrained member of the child must be admitted by the parent; Appendix B"
+      }
+    },
+    {
+      "id": "CC-3b",
+      "title": "Child constrains an input the parent left open",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          },
+          "*": {
+            "constraint_type": "wildcard"
+          }
+        },
+        "child": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          },
+          "limit": {
+            "constraint_type": "range",
+            "max": 10
+          }
+        },
+        "request": {
+          "format": "pdf",
+          "limit": 5
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": "J.22.13",
+        "basis": "Section 4.5: a key named only under the parent's \"*\" may be constrained"
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            },
+            {
+              "key": "limit",
+              "max": 10
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "format": "pdf",
+          "limit": 5
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.3 rules 2 and 3, as in CC-3a"
+      },
+      "hulea": {
+        "type_profile_admitted": [
+          "limit"
+        ],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            },
+            {
+              "pred": "max",
+              "ptr": "/limit",
+              "value": "10"
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf",
+          "limit": "5"
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.7 rule 5 with Section 8.1: the Type Profile admits limit"
+      }
+    },
+    {
+      "id": "CC-4a",
+      "title": "Request carries an input the leaf does not name",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          }
+        },
+        "request": {
+          "format": "pdf",
+          "limit": 5000
+        },
+        "result": "DENY",
+        "step": "6b",
+        "suite_vector": "J.9.1",
+        "basis": "Section 3.3; Section 8 step 6b (closed-world mode)"
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "format": "pdf",
+          "limit": 5000
+        },
+        "result": "PERMIT",
+        "basis": "Section 6 step 8 checks the action against the constraints the leaf carries; Section 4.3 rule 3: absence means unbounded"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf",
+          "limit": "5000"
+        },
+        "result": "DENY",
+        "code": "action_not_permitted",
+        "basis": "Section 4.4 rule 4: every top-level member of the request must be admitted by the Permission",
+        "note": "If the Type Profile's schema does not allow the member, the code is request_malformed (Section 8.1)."
+      }
+    },
+    {
+      "id": "CC-4b",
+      "title": "Request carries an input the leaf left open",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          },
+          "*": {
+            "constraint_type": "wildcard"
+          }
+        },
+        "request": {
+          "format": "pdf",
+          "limit": 5000
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": "J.22.4",
+        "basis": "Section 3.3: \"*\" permits arguments the map does not name"
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "format": "pdf",
+          "limit": 5000
+        },
+        "result": "PERMIT",
+        "basis": "As in CC-4a"
+      },
+      "hulea": {
+        "type_profile_admitted": [
+          "limit"
+        ],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf",
+          "limit": "5000"
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.4 rule 4: an admitted member the Permission neither contains nor constrains may take any value"
+      }
+    },
+    {
+      "id": "CC-5",
+      "title": "Request omits a constrained input",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          },
+          "limit": {
+            "constraint_type": "range",
+            "max": 100
+          }
+        },
+        "request": {
+          "format": "pdf"
+        },
+        "result": "DENY",
+        "step": "6b",
+        "suite_vector": "J.9.2",
+        "basis": "Section 3.3: named arguments are required by default; Section 8 step 6b",
+        "note": "Permitted when the limit entry carries optional: true (J.22.1)."
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            },
+            {
+              "key": "limit",
+              "max": 100
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "format": "pdf"
+        },
+        "result": "OPEN",
+        "basis": "Section 4.2 bounds the quantity in an action; no rule was found for an action that carries no such quantity"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            },
+            {
+              "pred": "max",
+              "ptr": "/limit",
+              "value": "100"
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf"
+        },
+        "result": "DENY",
+        "code": "action_not_permitted",
+        "basis": "Section 4.5: if a pointer does not resolve, the constraint is not satisfied",
+        "note": "If the Type Profile's schema requires the member, the code is request_malformed (Section 8.1)."
+      }
+    },
+    {
+      "id": "CC-6",
+      "title": "Child stops naming an input",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          },
+          "limit": {
+            "constraint_type": "range",
+            "max": 100,
+            "optional": true
+          }
+        },
+        "child": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          }
+        },
+        "request": {
+          "format": "pdf"
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": "J.22.10",
+        "basis": "Section 4.5: the derived map may omit a key the parent marks optional; the argument then becomes forbidden",
+        "note": "A request that carries limit is then denied at 6b (J.22.9). If the parent requires limit, the derivation is denied at 4p2 (J.22.11)."
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            },
+            {
+              "key": "limit",
+              "max": 100
+            }
+          ]
+        },
+        "child": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "format": "pdf"
+        },
+        "result": "DENY",
+        "outcome": "not_narrower",
+        "basis": "Section 4.3 rule 3: a constraint present in the parent must not be absent in the child"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            },
+            {
+              "pred": "max",
+              "ptr": "/limit",
+              "value": "100"
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf"
+        },
+        "result": "DENY",
+        "code": "not_attenuated",
+        "basis": "Section 4.7 rule 6: for every constraint in the parent, the child has one with the same ptr"
+      }
+    },
+    {
+      "id": "CC-7",
+      "title": "Pin a number by replacing the bound",
+      "aat": {
+        "parent": {
+          "limit": {
+            "constraint_type": "range",
+            "max": 100
+          }
+        },
+        "child": {
+          "limit": {
+            "constraint_type": "exact",
+            "value": 50
+          }
+        },
+        "request": {
+          "limit": 50
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": "J.19.8",
+        "basis": "Section 4.5 table, row range: an exact whose value is a number the parent range accepts"
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "limit",
+              "max": 100
+            }
+          ]
+        },
+        "child": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "limit",
+              "one_of": [
+                50
+              ]
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "limit": 50
+        },
+        "result": "DENY",
+        "outcome": "not_narrower",
+        "basis": "Section 4.3 rule 3, and the paragraph after rule 5: no inference is made across constraint types"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "max",
+              "ptr": "/limit",
+              "value": "100"
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "eq",
+              "ptr": "/limit",
+              "value": "50"
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "limit": "50"
+        },
+        "result": "DENY",
+        "code": "not_attenuated",
+        "basis": "Section 4.7 rule 6 and Table 2, row max: the child needs a max with a value less than or equal"
+      }
+    },
+    {
+      "id": "CC-8",
+      "title": "Pin a number by tightening both bounds",
+      "aat": {
+        "parent": {
+          "limit": {
+            "constraint_type": "range",
+            "max": 100
+          }
+        },
+        "child": {
+          "limit": {
+            "constraint_type": "range",
+            "min": 50,
+            "max": 50
+          }
+        },
+        "request": {
+          "limit": 50
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": null,
+        "basis": "Section 4.5, range rule: the derived max is no greater, and a derived min may be added where the parent has none"
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "limit",
+              "max": 100
+            }
+          ]
+        },
+        "child": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "limit",
+              "max": 50
+            },
+            {
+              "key": "limit",
+              "min": 50
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "limit": 50
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.3 rule 2 for max; Section 4.2 permits a min and a max on one key"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "max",
+              "ptr": "/limit",
+              "value": "100"
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "max",
+              "ptr": "/limit",
+              "value": "50"
+            },
+            {
+              "pred": "min",
+              "ptr": "/limit",
+              "value": "50"
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "limit": "50"
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.7 rule 6 and Table 2, row max; rule 5 lets the child add a min on a member the parent constrains"
+      }
+    },
+    {
+      "id": "CC-9",
+      "title": "Narrow a set to one element",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          }
+        },
+        "child": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf"
+            ]
+          }
+        },
+        "request": {
+          "format": "pdf"
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": "J.3",
+        "basis": "Section 4.5 table, row one_of: a non-empty subset"
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "format": "pdf"
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.3 rule 2: the child's array is a subset of the parent's"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf"
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.7 Table 2, row in: in with value a subset"
+      }
+    },
+    {
+      "id": "CC-10",
+      "title": "Narrow a set to a single-value constraint",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          }
+        },
+        "child": {
+          "format": {
+            "constraint_type": "exact",
+            "value": "pdf"
+          }
+        },
+        "request": {
+          "format": "pdf"
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": "J.3",
+        "basis": "Section 4.5 table, row one_of: an exact whose value is a member of the parent's values"
+      },
+      "asor": {
+        "result": "N/A",
+        "basis": "Section 4.2 defines no single-value type; the one-element one_of of CC-9 is the equivalent"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "eq",
+              "ptr": "/format",
+              "value": "pdf"
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf"
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.7 Table 2, row in: eq with value an element"
+      }
+    },
+    {
+      "id": "CC-11",
+      "title": "Narrow a set to the empty set",
+      "aat": {
+        "parent": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": [
+              "pdf",
+              "csv"
+            ]
+          }
+        },
+        "child": {
+          "format": {
+            "constraint_type": "one_of",
+            "values": []
+          }
+        },
+        "request": {
+          "format": "pdf"
+        },
+        "result": "DENY",
+        "step": "4o",
+        "suite_vector": null,
+        "basis": "Section 3.4: one_of.values is a non-empty array; Section 4.5: a derived one_of cannot be empty",
+        "note": "J.8.17 covers the same rule in a root token (step 3n)."
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "format",
+              "one_of": []
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "format": "pdf"
+        },
+        "result": "OPEN",
+        "basis": "No rule was found on whether an empty one_of is well-formed; the subset rule of Section 4.3 holds for it, and no value then satisfies it"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": [
+                "pdf",
+                "csv"
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/format",
+              "value": []
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "format": "pdf"
+        },
+        "result": "DENY",
+        "code": "malformed",
+        "basis": "Section 4.5: the value of in is a non-empty array"
+      }
+    },
+    {
+      "id": "CC-12",
+      "title": "One number written two ways",
+      "aat": {
+        "parent": {
+          "limit": {
+            "constraint_type": "one_of",
+            "values": [
+              1,
+              2
+            ]
+          }
+        },
+        "child_text": "{\"limit\":{\"constraint_type\":\"exact\",\"value\":1.0}}",
+        "request": {
+          "limit": 1
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": null,
+        "basis": "Section 3.4: values are compared by their JCS serializations, and 1.0 and 1 share one"
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "limit",
+              "one_of": [
+                1,
+                2
+              ]
+            }
+          ]
+        },
+        "child_text": "{\"type\":\"agent_delegation\",\"scopes\":[\"crm.export\"],\"constraints\":[{\"key\":\"limit\",\"one_of\":[1.0]}]}",
+        "request": {
+          "scope": "crm.export",
+          "limit": 1
+        },
+        "result": "DENY",
+        "outcome": "non_canonical",
+        "basis": "Section 3: a payload must be exactly its own JCS serialization, which writes this number as 1",
+        "note": "In a valid token the number is written 1, and the child then narrows."
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/limit",
+              "value": [
+                1,
+                2
+              ]
+            }
+          ]
+        },
+        "child_text": "{\"type\":\"export\",\"constraints\":[{\"pred\":\"eq\",\"ptr\":\"/limit\",\"value\":1.0}]}",
+        "request": {
+          "type": "export",
+          "limit": 1
+        },
+        "result": "DENY",
+        "code": "not_attenuated",
+        "basis": "Section 4.6: JSON numbers are identical only if their textual representations are identical",
+        "note": "Section 4.6 discourages JSON numbers. As strings, \"1.0\" and \"1\" are not identical for eq and in either, while max and min compare them as equal decimals (Section 4.5)."
+      }
+    },
+    {
+      "id": "CC-13",
+      "title": "Pin an object with a one-element set",
+      "aat": {
+        "parent": {
+          "filter": {
+            "constraint_type": "one_of",
+            "values": [
+              {
+                "region": "eu"
+              },
+              {
+                "region": "us"
+              }
+            ]
+          }
+        },
+        "child": {
+          "filter": {
+            "constraint_type": "one_of",
+            "values": [
+              {
+                "region": "eu"
+              }
+            ]
+          }
+        },
+        "request": {
+          "filter": {
+            "region": "eu"
+          }
+        },
+        "result": "PERMIT",
+        "step": null,
+        "suite_vector": null,
+        "basis": "Section 4.5 table, row one_of"
+      },
+      "asor": {
+        "parent": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "filter",
+              "one_of": [
+                {
+                  "region": "eu"
+                },
+                {
+                  "region": "us"
+                }
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "agent_delegation",
+          "scopes": [
+            "crm.export"
+          ],
+          "constraints": [
+            {
+              "key": "filter",
+              "one_of": [
+                {
+                  "region": "eu"
+                }
+              ]
+            }
+          ]
+        },
+        "request": {
+          "scope": "crm.export",
+          "filter": {
+            "region": "eu"
+          }
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.3 rule 2",
+        "note": "Section 4.2 does not say how members are compared; the payload is JCS, so equal objects have equal bytes."
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/filter",
+              "value": [
+                {
+                  "region": "eu"
+                },
+                {
+                  "region": "us"
+                }
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/filter",
+              "value": [
+                {
+                  "region": "eu"
+                }
+              ]
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "filter": {
+            "region": "eu"
+          }
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.7 Table 2, row in; Section 4.6 defines identity for objects"
+      }
+    },
+    {
+      "id": "CC-14",
+      "title": "Pin an object with a single-value constraint",
+      "aat": {
+        "parent": {
+          "filter": {
+            "constraint_type": "one_of",
+            "values": [
+              {
+                "region": "eu"
+              },
+              {
+                "region": "us"
+              }
+            ]
+          }
+        },
+        "child": {
+          "filter": {
+            "constraint_type": "exact",
+            "value": {
+              "region": "eu"
+            }
+          }
+        },
+        "request": {
+          "filter": {
+            "region": "eu"
+          }
+        },
+        "result": "DENY",
+        "step": "4o",
+        "suite_vector": null,
+        "basis": "Section 3.4: exact.value is a string, number, boolean, or null",
+        "note": "J.8.18 covers the same rule in a root token (step 3n). CC-13 is the shape to use."
+      },
+      "asor": {
+        "result": "N/A",
+        "basis": "Section 4.2 defines no single-value type; see CC-13"
+      },
+      "hulea": {
+        "type_profile_admitted": [],
+        "parent": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "in",
+              "ptr": "/filter",
+              "value": [
+                {
+                  "region": "eu"
+                },
+                {
+                  "region": "us"
+                }
+              ]
+            }
+          ]
+        },
+        "child": {
+          "type": "export",
+          "constraints": [
+            {
+              "pred": "eq",
+              "ptr": "/filter",
+              "value": {
+                "region": "eu"
+              }
+            }
+          ]
+        },
+        "request": {
+          "type": "export",
+          "filter": {
+            "region": "eu"
+          }
+        },
+        "result": "PERMIT",
+        "basis": "Section 4.5: the value of eq is any JSON value; Section 4.7 Table 2, row in"
+      }
+    }
+  ]
+}
