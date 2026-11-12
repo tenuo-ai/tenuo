@@ -147,6 +147,7 @@ class ChartReleaseTests(unittest.TestCase):
                             "GITHUB_REPOSITORY_OWNER": "tenuo-ai",
                             "GITHUB_ACTOR": "test",
                             "GH_TOKEN": "fake-token",
+                        "GITHUB_STEP_SUMMARY": str(Path(tmp) / "test-summary.md"),
                         },
                     ),
                     patch(
