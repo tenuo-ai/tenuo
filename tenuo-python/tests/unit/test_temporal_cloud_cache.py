@@ -200,3 +200,42 @@ async def test_failed_refresh_evicts_host_fetch_completed_while_pending(resolver
         with patch("temporalio.workflow.in_workflow", return_value=True):
             with pytest.raises(KeyResolutionError):
                 resolver.resolve_sync("agent")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("newer_finishes_first", [False, True])
+async def test_superseded_failure_cannot_invalidate_newer_refresh(resolver, newer_finishes_first):
+    import asyncio
+
+    old, fresh = SigningKey.generate(), SigningKey.generate()
+    resolver._cache["agent"] = (old, time.time())
+    first_started, second_started = asyncio.Event(), asyncio.Event()
+    fail_first, finish_second = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def fetch(key_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_started.set()
+            await fail_first.wait()
+            raise KeyResolutionError(key_id=key_id)
+        second_started.set()
+        await finish_second.wait()
+        return fresh
+
+    with patch.object(resolver, "_fetch_key", side_effect=fetch):
+        first = asyncio.create_task(resolver.refresh_keys(["agent"]))
+        await first_started.wait()
+        second = asyncio.create_task(resolver.refresh_keys(["agent"]))
+        await second_started.wait()
+        if newer_finishes_first:
+            finish_second.set()
+            await second
+        fail_first.set()
+        with pytest.raises(KeyResolutionError):
+            await first
+        if not newer_finishes_first:
+            finish_second.set()
+            await second
+        assert resolver.resolve_sync("agent") is fresh

@@ -1378,7 +1378,9 @@ From a host task outside workflow execution, call
 `await resolver.refresh_keys(["agent"])` before the cache TTL expires. Schedule
 and stop that task with the worker's lifecycle. Refresh fetches fresh key material
 while retaining an unexpired entry for concurrent signing, then atomically
-replaces it on success. A failed refresh removes the old entry. Older in-flight fetches cannot repopulate
+replaces it on success. A failed current refresh removes the old entry. When refreshes overlap, the
+newer request supersedes older requests; an older completion or failure cannot
+replace or invalidate the newer request’s key. Older in-flight fetches cannot repopulate
 the cache after that invalidation. A workflow cache miss or expired entry raises `KeyResolutionError` without
 starting threads or contacting the secret store. Host-side `resolve_sync()`
 retains its fetch-on-miss behavior. Preloading and refresh cannot run in workflow

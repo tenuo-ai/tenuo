@@ -337,10 +337,11 @@ class _CachedKeyResolver(KeyResolver):
                 key = await self._fetch_key(key_id)
             except BaseException:
                 with self._cache_lock:
-                    # Failure invalidates even entries admitted by a concurrent
-                    # host fetch while this refresh was pending.
-                    self._cache.pop(key_id, None)
-                    self._generations[key_id] = self._generations.get(key_id, 0) + 1
+                    # A superseded refresh cannot invalidate a newer refresh.
+                    # The current refresh evicts every concurrent admission.
+                    if generation == self._generations.get(key_id, 0):
+                        self._cache.pop(key_id, None)
+                        self._generations[key_id] = generation + 1
                 raise
             with self._cache_lock:
                 if generation != self._generations.get(key_id, 0):
