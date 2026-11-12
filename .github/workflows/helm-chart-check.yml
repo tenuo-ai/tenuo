@@ -1,0 +1,41 @@
+name: Helm chart
+
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+      - 'scripts/release_helm_chart.py'
+      - 'scripts/tests/test_release_helm_chart.py'
+      - '.github/workflows/*helm*'
+      - '.github/workflows/release.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'charts/**'
+      - 'scripts/release_helm_chart.py'
+      - '.github/workflows/*helm*'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Helm
+        run: |
+          curl --fail --silent --show-error --location https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          curl --fail --silent --show-error --location https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz.sha256sum -o /tmp/helm.sha256
+          cd /tmp
+          printf '%s  helm.tar.gz\n' "$(cut -d ' ' -f1 helm.sha256)" | sha256sum --check
+          tar -xzf helm.tar.gz
+          sudo install linux-amd64/helm /usr/local/bin/helm
+      - name: Validate packaged chart
+        run: |
+          version="$(awk '/^version:/{print $2}' charts/tenuo-authorizer/Chart.yaml)"
+          python3 scripts/release_helm_chart.py --tag "v$version"
+          python3 -m unittest discover -s scripts/tests -p 'test_release_helm_chart.py'

@@ -1,0 +1,64 @@
+name: Publish Helm chart
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published stable release tag to publish or verify
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: helm-chart-${{ inputs.release_tag }}
+      cancel-in-progress: false
+    steps:
+      - name: Validate published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          gh release view "$RELEASE_TAG" --repo "$REPOSITORY" --json isDraft,isPrerelease,tagName > /tmp/release.json
+          jq -e --arg tag "$RELEASE_TAG" '.isDraft == false and .isPrerelease == false and .tagName == $tag' /tmp/release.json
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+      - name: Install Helm
+        run: |
+          curl --fail --silent --show-error --location https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          curl --fail --silent --show-error --location https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz.sha256sum -o /tmp/helm.sha256
+          cd /tmp
+          printf '%s  helm.tar.gz\n' "$(cut -d ' ' -f1 helm.sha256)" | sha256sum --check
+          tar -xzf helm.tar.gz
+          sudo install linux-amd64/helm /usr/local/bin/helm
+      - name: Publish and verify public chart
+        run: python3 scripts/release_helm_chart.py --tag "$RELEASE_TAG" --publish
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+      - name: Attach immutable chart reference to release
+        run: gh release upload "$RELEASE_TAG" helm-release/chart-reference.txt --clobber --repo "$GITHUB_REPOSITORY"
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: helm-${{ inputs.release_tag }}
+          path: helm-release/
+          if-no-files-found: error
