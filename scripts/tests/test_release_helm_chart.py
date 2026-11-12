@@ -186,6 +186,8 @@ class ChartReleaseTests(unittest.TestCase):
             "private",
             "different",
             "moved",
+            "empty",
+            "multiple",
         ]:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
                 fixture = checkout_fixture(tmp, version)
@@ -248,7 +250,15 @@ class ChartReleaseTests(unittest.TestCase):
                                 result.returncode, result.stderr = 1, "401 unauthorized"
                                 return result
                         destination = Path(args[args.index("--destination") + 1])
-                        shutil.copyfile(package, destination / package.name)
+                        filename = (
+                            "tenuo-authorizer@" + DIGEST.replace(":", "-") + ".tgz"
+                            if public
+                            else package.name
+                        )
+                        if not (public and mode == "empty"):
+                            shutil.copyfile(package, destination / filename)
+                        if public and mode == "multiple":
+                            shutil.copyfile(package, destination / "extra.tgz")
                         result.stderr = f"Digest: {DIGEST}\n"
                         return result
                     return real_run(args, **kwargs)
@@ -300,6 +310,8 @@ class ChartReleaseTests(unittest.TestCase):
                         "private",
                         "different",
                         "moved",
+                        "empty",
+                        "multiple",
                     ]:
                         with self.assertRaises((RuntimeError, ValueError)):
                             chart.main()
