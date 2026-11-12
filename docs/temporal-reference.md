@@ -1361,3 +1361,25 @@ transform_warrant = (
 - [Tenuo Core Concepts](./concepts.md)
 - [Security Model](./security.md)
 - [Example Code](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal)
+
+### Cloud resolver cache lifecycle
+
+Vault, AWS Secrets Manager, and GCP Secret Manager resolvers support synchronous
+workflow signing from a warm cache. Load the needed key IDs before starting the
+worker:
+
+```python
+resolver = VaultKeyResolver(url="https://vault.example.com", cache_ttl=300)
+await resolver.preload_keys(["agent"])
+# Configure the worker with key_resolver=resolver after preloading.
+```
+
+From a host task outside workflow execution, call
+`await resolver.refresh_keys(["agent"])` before the cache TTL expires. Schedule
+and stop that task with the worker's lifecycle. Refresh fetches fresh key material
+even when the old entry has not expired, and a failed refresh removes the old
+entry. A workflow cache miss or expired entry raises `KeyResolutionError` without
+starting threads or contacting the secret store. Host-side `resolve_sync()`
+retains its fetch-on-miss behavior. Preloading and refresh cannot run in workflow
+code. On replay, the resolver must still hold the key matching the warrant holder;
+rotating a key does not change the holder of an already signed warrant.

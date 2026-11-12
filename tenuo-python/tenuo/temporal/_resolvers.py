@@ -10,6 +10,7 @@ import base64
 import binascii
 import logging
 import threading
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
@@ -268,7 +269,52 @@ class EnvKeyResolver(KeyResolver):
         return self._load_key_from_env(key_id)
 
 
-class VaultKeyResolver(KeyResolver):
+class _CachedKeyResolver(KeyResolver):
+    """Cloud resolver cache shared by async callers and workflow signing."""
+
+    _cache: Dict[str, tuple[Any, float]]
+    _cache_lock: Any
+    _cache_ttl: int
+
+    def resolve_sync(self, key_id: str) -> Any:
+        # This module is passed through by the Tenuo plugin. Keep the clock
+        # binding at module scope so a cache hit imports nothing in the sandbox.
+        with self._cache_lock:
+            entry = self._cache.get(key_id)
+            if entry is not None and time.time() - entry[1] < self._cache_ttl:
+                return entry[0]
+        from temporalio import workflow
+
+        if workflow.in_workflow():
+            raise KeyResolutionError(key_id=key_id)
+        return super().resolve_sync(key_id)
+
+    async def preload_keys(self, key_ids: list[str]) -> None:
+        """Warm keys before worker startup; never call from workflow code."""
+        from temporalio import workflow
+
+        if workflow.in_workflow():
+            raise KeyResolutionError("Cloud keys must be loaded outside workflow execution")
+        for key_id in key_ids:
+            await self.resolve(key_id)
+
+    async def refresh_keys(self, key_ids: list[str]) -> None:
+        """Refetch keys outside workflows, dropping old entries on failure.
+
+        Schedule this from the host before cache TTL expiry. An expired or
+        missing workflow key always fails closed, without network access.
+        """
+        from temporalio import workflow
+
+        if workflow.in_workflow():
+            raise KeyResolutionError("Cloud keys must be refreshed outside workflow execution")
+        for key_id in key_ids:
+            with self._cache_lock:
+                self._cache.pop(key_id, None)
+            await self.resolve(key_id)
+
+
+class VaultKeyResolver(_CachedKeyResolver):
     """Resolve keys from HashiCorp Vault.
 
     Production-ready key resolver using Vault's KV secrets engine.
@@ -307,7 +353,6 @@ class VaultKeyResolver(KeyResolver):
     async def resolve(self, key_id: str) -> Any:
         """Resolve key from Vault."""
         import os
-        import time
 
         now = time.time()
         with self._cache_lock:
@@ -371,7 +416,7 @@ class VaultKeyResolver(KeyResolver):
             raise KeyResolutionError(key_id=key_id) from e
 
 
-class AWSSecretsManagerKeyResolver(KeyResolver):
+class AWSSecretsManagerKeyResolver(_CachedKeyResolver):
     """Resolve keys from AWS Secrets Manager.
 
     Secrets Manager handles both storage and encryption (via KMS under the hood).
@@ -409,7 +454,6 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
     async def resolve(self, key_id: str) -> Any:
         """Resolve key from AWS Secrets Manager."""
         import asyncio
-        import time
 
         now = time.time()
         with self._cache_lock:
@@ -468,7 +512,7 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
             raise KeyResolutionError(key_id=key_id) from e
 
 
-class GCPSecretManagerKeyResolver(KeyResolver):
+class GCPSecretManagerKeyResolver(_CachedKeyResolver):
     """Resolve keys from GCP Secret Manager.
 
     Secret Manager handles both storage and encryption (via Cloud KMS under the hood).
@@ -508,7 +552,6 @@ class GCPSecretManagerKeyResolver(KeyResolver):
     async def resolve(self, key_id: str) -> Any:
         """Resolve key from GCP Secret Manager."""
         import asyncio
-        import time
 
         now = time.time()
         with self._cache_lock:
