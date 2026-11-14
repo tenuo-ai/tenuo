@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@tenuo/core": "0.3.7-beta.0",
-    "bullmq": "6.3.4"
+    "bullmq": "6.7.2"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
