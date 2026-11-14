@@ -1,6 +1,8 @@
 # TypeScript integration
 
-Use this reference only for projects using the current `@tenuo/core` or `@tenuo/mcp` APIs. Confirm the resolved version and its shipped README before editing code. The TypeScript API may be on a beta release line.
+Apply the [freshness contract](../SKILL.md#freshness-contract) first. Consult [framework status](framework-status.md) before choosing a path. These references describe invariants and version-conditional options; an API name here is not evidence that the target exports it.
+
+Use this reference only for projects using `@tenuo/core` or `@tenuo/mcp`. Confirm the resolved version and its shipped README before editing code. The TypeScript API may be on a beta release line.
 
 Do not treat this reference as an API specification. Inspect the resolved package's README, `package.json`, exports, and declaration files in `dist` first. The npm package does not ship the repository examples. If installed artifacts are insufficient, compare the resolved package with the TypeScript entry in the [release contract](../release.json). Use these immutable sources only when the versions match:
 

@@ -20,8 +20,11 @@ with a released package.
 | `.ttl(seconds)` | `ttlSeconds: seconds` |
 | `.terminal()` | `terminal: true` |
 
-`allow: {}` means no argument ceiling; it does not mean a zero-argument
-capability. Use only zero-argument APIs confirmed in the installed declarations.
+In reviewed `@tenuo/core@0.3.2-beta.0`, a per-tool empty policy such as
+`allow: { ping: {} }` grants `ping` with arbitrary arguments; it does not mean
+a zero-argument capability. Top-level `session({ allow: {} })` without tools
+is rejected. Use only zero-argument APIs confirmed in the installed declarations;
+pending zero-argument policy work does not change the installed package.
 
 ## Grounding checklist
 

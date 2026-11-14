@@ -1,5 +1,7 @@
 # Framework-neutral integration
 
+Apply the [freshness contract](../SKILL.md#freshness-contract) first. Consult [framework status](framework-status.md) before choosing a path. These references describe invariants and version-conditional options; an API name here is not evidence that the target exports it.
+
 Use this reference when a project has no official Tenuo adapter or verified framework recipe. The goal is to apply the protocol at a reliable extension point without implying official framework support.
 
 ## Classify the result
