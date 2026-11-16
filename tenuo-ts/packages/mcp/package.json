@@ -65,7 +65,7 @@
     "@tenuo/core": "workspace:*",
     "@types/node": "^22.13.10",
     "typescript": "~5.8.2",
-    "vitest": "^4.1.12",
+    "vitest": "^5.1.0",
     "zod": "^4.6.7"
   }
 }
