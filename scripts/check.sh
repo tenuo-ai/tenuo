@@ -19,6 +19,7 @@ for arg in "$@"; do
 done
 
 echo "[INFO] Starting Pre-commit Checks..."
+bash scripts/check-website-boundary.sh
 
 # Project Structure Validation
 echo -e "\n${GREEN}[0a/9] Validating project structure...${NC}"
@@ -189,43 +190,12 @@ else
     echo "  1. cd tenuo-explorer && npm install"
 fi
 
-# 7. Explorer Build Sync Check
+# 7. Explorer Build Check (website assembly belongs to tenuo-ai/website)
 if [ -d "tenuo-explorer/node_modules" ]; then
-    echo -e "\n${GREEN}[7/9] Checking Explorer build sync...${NC}"
-    cd tenuo-explorer
-    
-    # Build explorer (rebuilds WASM too if needed)
-    npm run build > /dev/null 2>&1
-    
-    cd ..
-    
-    # Compare index.html to detect if assets have changed
-    if [ -f "docs/explorer/index.html" ]; then
-        DIST_HASH=$(cat tenuo-explorer/dist/index.html | sha256sum | cut -d' ' -f1)
-        DOCS_HASH=$(cat docs/explorer/index.html | sha256sum | cut -d' ' -f1)
-        
-        if [ "$DIST_HASH" != "$DOCS_HASH" ]; then
-            if [ "$CHECK_MODE" = "1" ]; then
-                echo -e "${RED}  ✗ docs/explorer is out of sync with tenuo-explorer/dist${NC}"
-                echo -e "${RED}  → Run: rm -rf docs/explorer && cp -r tenuo-explorer/dist docs/explorer${NC}"
-                exit 1
-            else
-                echo -e "${YELLOW}  → docs/explorer out of sync, updating...${NC}"
-                rm -rf docs/explorer
-                cp -r tenuo-explorer/dist docs/explorer
-                echo "  → docs/explorer updated"
-            fi
-        else
-            echo "  → docs/explorer in sync"
-        fi
-    else
-        echo -e "${YELLOW}  → docs/explorer doesn't exist, creating...${NC}"
-        mkdir -p docs/explorer
-        cp -r tenuo-explorer/dist/* docs/explorer/
-        echo "  → docs/explorer created"
-    fi
+    echo -e "\n${GREEN}[7/9] Checking Explorer build...${NC}"
+    (cd tenuo-explorer && npm run build)
 else
-    echo -e "\n${YELLOW}[7/9] Skipping Explorer build sync (no node_modules)${NC}"
+    echo -e "\n${YELLOW}[7/9] Skipping Explorer build (no node_modules)${NC}"
 fi
 
 # 8. Version Sync Check
