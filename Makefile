@@ -257,20 +257,12 @@ version-check:
 	echo "✓ All versions in sync: $$PYPROJECT ($$TS_CORE, $$TS_MCP, examples)"
 
 # ============================================================================
-# EXPLORER SYNC CHECK
+# WEBSITE REPOSITORY BOUNDARY
 # ============================================================================
 
-explorer-sync:
-	@if [ -d "tenuo-explorer/node_modules" ] && [ -f "docs/explorer/index.html" ]; then \
-		cd tenuo-explorer && npm run build > /dev/null 2>&1; \
-		DIST_HASH=$$(cat dist/index.html | shasum -a 256 | cut -d' ' -f1); \
-		DOCS_HASH=$$(cat ../docs/explorer/index.html | shasum -a 256 | cut -d' ' -f1); \
-		if [ "$$DIST_HASH" != "$$DOCS_HASH" ]; then \
-			echo "❌ docs/explorer out of sync - run:"; \
-			echo "  rm -rf docs/explorer && cp -r tenuo-explorer/dist docs/explorer"; \
-			exit 1; \
-		fi; \
-		echo "✓ docs/explorer in sync"; \
-	else \
-		echo "Skipping explorer sync check"; \
-	fi
+.PHONY: website-boundary explorer-sync
+website-boundary:
+	@bash scripts/check-website-boundary.sh
+
+# Compatibility alias: build locally, but never assemble a website in docs/.
+explorer-sync: website-boundary build-explorer

@@ -5,12 +5,6 @@ import { ROOT } from "../src/state.ts";
 
 const REPO = join(ROOT, "..", "..");
 
-function token(source: string, name: string): string {
-  const match = source.match(new RegExp(`--${name}:\\s*([^;]+);`));
-  expect(match, `missing --${name}`).not.toBeNull();
-  return match![1]!.replace(/\s/g, "");
-}
-
 /** Collect text nodes in source order without treating this as HTML sanitization. */
 function textContent(source: string): string {
   return Array.from(source.matchAll(/>([^<]+)</g), (match) => match[1])
@@ -19,7 +13,7 @@ function textContent(source: string): string {
     .trim();
 }
 
-describe("public-site theme", () => {
+describe("lab guide accessibility", () => {
   it("gives diagrams a clean text equivalent and extractable word boundaries", () => {
     const index = readFileSync(join(REPO, "docs", "lab", "index.md"), "utf8");
     const figure = /<figure class="lab-figure">([\s\S]*?)<\/figure>/.exec(index)?.[1];
@@ -39,62 +33,5 @@ describe("public-site theme", () => {
     expect(chain).toContain("Flight Agent narrows it to reservation UA214 for Check-in Agent");
   });
 
-  it("keeps the lab and explorer on the main website palette and background", () => {
-    const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
-    const lab = readFileSync(join(REPO, "docs", "_layouts", "lab.html"), "utf8");
-    const explorer = readFileSync(join(REPO, "tenuo-explorer", "src", "index.css"), "utf8");
-
-    for (const name of ["bg", "surface", "surface-2", "text", "text-bright", "accent", "accent2", "green", "red", "gold"]) {
-      expect(token(lab, name), `lab --${name}`).toBe(token(main, name));
-      expect(token(explorer, name), `explorer --${name}`).toBe(token(main, name));
-    }
-
-    expect(lab).toContain("background-size: 48px 48px");
-    expect(lab).toContain("radial-gradient(ellipse, rgba(56, 189, 248, 0.07)");
-    expect(explorer).toContain("background-size: 48px 48px");
-    expect(explorer).toContain(".app-shell");
-    expect(explorer).not.toContain("radial-gradient(");
-    expect(explorer).not.toContain(".site-glow");
-    expect(explorer).not.toContain(".orb-1");
-  });
-
-  it("keeps the documentation, lab, and explorer footer aligned with the main website", () => {
-    const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
-    const docs = readFileSync(join(REPO, "docs", "_layouts", "default.html"), "utf8");
-    const explorer = readFileSync(join(REPO, "tenuo-explorer", "src", "App.tsx"), "utf8");
-    const explorerCss = readFileSync(join(REPO, "tenuo-explorer", "src", "index.css"), "utf8");
-
-    for (const surface of [main, docs, explorer]) {
-      expect(surface).toContain("© 2026 Tenuo");
-      expect(surface).toContain(">Docs<");
-      expect(surface).toContain(">GitHub<");
-      expect(surface).toContain(">Early Access<");
-    }
-
-    for (const surface of [main, docs, explorerCss]) {
-      expect(surface).toContain("padding: 48px");
-      expect(surface).toContain("font-family: 'JetBrains Mono', monospace");
-      expect(surface).toContain("font-size: 0.75rem");
-      expect(surface).toContain("letter-spacing: 0.04em");
-    }
-  });
-
-  it("keeps the documentation and challenge header as focused as the main website", () => {
-    const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
-    const docs = readFileSync(join(REPO, "docs", "_layouts", "default.html"), "utf8");
-    const mainNav = /<nav>([\s\S]*?)<\/nav>/.exec(main)?.[1];
-    const docsNav = /<nav class="top-nav">([\s\S]*?)<\/nav>/.exec(docs)?.[1];
-
-    expect(mainNav).toBeDefined();
-    expect(docsNav).toBeDefined();
-    expect(docsNav?.match(/<a /g)).toHaveLength(6); // brand plus the five main-site links
-    for (const label of ["Docs", "Explorer", "Blog", "GitHub", "Tenuo Cloud"]) {
-      expect(mainNav).toContain(`>${label}<`);
-      expect(docsNav).toContain(`>${label}<`);
-    }
-    for (const label of ["OpenAI", "CrewAI", "LangChain", "Temporal", "Google ADK"]) {
-      expect(docsNav).not.toContain(`>${label}<`);
-    }
-    expect(docs).toContain("@media (max-width: 480px)");
-  });
+  // Website layout, palette, and navigation checks belong to tenuo-ai/website.
 });
