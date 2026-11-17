@@ -17,7 +17,9 @@ for path in \
 done
 
 # Do not reintroduce a public-repository Pages deployment under another name.
-if grep -En 'uses:.*actions/(configure-pages|jekyll-build-pages|upload-pages-artifact|deploy-pages)@' .github/workflows/*.yml; then
+shopt -s nullglob
+workflows=(.github/workflows/*.yml .github/workflows/*.yaml)
+if [ ${#workflows[@]} -gt 0 ] && grep -En 'uses:.*actions/(configure-pages|jekyll-build-pages|upload-pages-artifact|deploy-pages)@' "${workflows[@]}"; then
   echo "GitHub Pages deployment belongs in tenuo-ai/website." >&2
   failed=1
 fi
