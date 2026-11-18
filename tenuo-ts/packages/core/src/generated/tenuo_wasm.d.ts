@@ -38,6 +38,17 @@ export class SdkContext {
      */
     authorizePresented(warrants: any, tool: string, args_json: any, pop: string, approvals: any, tool_allow: any, request_id?: string | null): any;
     /**
+     * Check a warrant chain held by someone else, without proof-of-possession.
+     *
+     * Verifies the chain against this context's trusted roots and loaded
+     * revocation list (signatures, linkage, narrowing, expiry), the leaf's
+     * constraints for `tool(args)`, its approval gate, and the signed
+     * approvals. No holder secret and no PoP: an `allow` says the warrant and
+     * approvals cover the call, not that the caller holds the key. Not an
+     * authorization decision and emits no receipt.
+     */
+    checkWithoutPop(warrants: any, tool: string, args_json: any, approvals_json: any): any;
+    /**
      * Explain what the leaf would decide for `tool(args)`, field by field.
      * No proof-of-possession is signed, so this works on any session,
      * including one issued to another holder.
@@ -331,6 +342,12 @@ export function parse_strict_json(json_text: string): void;
  * can encode the same Ed25519 signature.
  */
 export function sdkCanonicalMetaSignature(signature: string): string;
+
+/**
+ * Decode a warrant chain (stack string, single token, or token array), root
+ * first. Not authorization: no trusted root, linkage, expiry, or revocation check.
+ */
+export function sdkDecodeChain(warrants: any): any;
 
 /**
  * Diagnose all capability-constraint failures without authorizing the call.

@@ -716,6 +716,197 @@ impl SdkContext {
             warrants, tool, args_json, pop, approvals, tool_allow, None, request_id,
         )
     }
+
+    /// Check a warrant chain held by someone else, without proof-of-possession.
+    ///
+    /// Verifies the chain against this context's trusted roots and loaded
+    /// revocation list (signatures, linkage, narrowing, expiry), the leaf's
+    /// constraints for `tool(args)`, its approval gate, and the signed
+    /// approvals. No holder secret and no PoP: an `allow` says the warrant and
+    /// approvals cover the call, not that the caller holds the key. Not an
+    /// authorization decision and emits no receipt.
+    #[wasm_bindgen(js_name = checkWithoutPop)]
+    pub fn check_without_pop(
+        &self,
+        warrants: JsValue,
+        tool: &str,
+        args_json: JsValue,
+        approvals_json: JsValue,
+    ) -> JsValue {
+        init_panic_hook();
+        to_js_value(&self.check_without_pop_inner(warrants, tool, args_json, approvals_json))
+    }
+}
+
+#[derive(Serialize)]
+struct PopFreeApprovalsDto {
+    valid: u32,
+    required: u32,
+    rejected: u32,
+}
+
+#[derive(Serialize)]
+struct PopFreeCheckDto {
+    outcome: &'static str,
+    chain_valid: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root_public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    holder_public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approvals: Option<PopFreeApprovalsDto>,
+}
+
+impl PopFreeCheckDto {
+    fn deny(code: &str, message: String) -> Self {
+        PopFreeCheckDto {
+            outcome: "deny",
+            chain_valid: false,
+            code: Some(code.into()),
+            message: Some(message),
+            root_public_key: None,
+            holder_public_key: None,
+            approvals: None,
+        }
+    }
+}
+
+impl SdkContext {
+    fn check_without_pop_inner(
+        &self,
+        warrants: JsValue,
+        tool: &str,
+        args_json: JsValue,
+        approvals_json: JsValue,
+    ) -> PopFreeCheckDto {
+        let chain = match parse_presented_chain(&warrants) {
+            Ok(c) if !c.is_empty() => c,
+            Ok(_) => {
+                return PopFreeCheckDto::deny(
+                    "TENUO_CONFIGURATION",
+                    "warrant chain must not be empty".into(),
+                )
+            }
+            Err(e) => return PopFreeCheckDto::deny("TENUO_CHAIN_INVALID", format!("{e:?}")),
+        };
+        let args = match canonical_args(&args_json) {
+            Ok(a) => a,
+            Err(e) => return PopFreeCheckDto::deny("TENUO_CANONICALIZATION", e),
+        };
+        let approvals = match parse_approvals(&approvals_json) {
+            Ok(a) => a,
+            Err(e) => return PopFreeCheckDto::deny("TENUO_CANONICALIZATION", e),
+        };
+
+        // Signatures, trust anchor, revocation, linkage, narrowing, expiry.
+        let verified = match self.authorizer.verify_chain(&chain) {
+            Ok(v) => v,
+            Err(e) => {
+                let d = deny_from_error(&e);
+                return PopFreeCheckDto::deny(
+                    d.code.as_deref().unwrap_or("TENUO_CHAIN_INVALID"),
+                    e.to_string(),
+                );
+            }
+        };
+        let leaf = chain.last().expect("non-empty chain");
+        let mut out = PopFreeCheckDto {
+            outcome: "allow",
+            chain_valid: true,
+            code: None,
+            message: None,
+            root_public_key: verified.root_issuer.map(hex::encode),
+            holder_public_key: Some(hex::encode(leaf.authorized_holder().to_bytes())),
+            approvals: None,
+        };
+
+        let constraints = constraint_view(&args, tool, &chain);
+        if let Err(e) = leaf.check_constraints(tool, &constraints) {
+            let d = deny_from_error(&e);
+            out.outcome = "deny";
+            out.code = d.code;
+            out.message = Some(e.to_string());
+            return out;
+        }
+
+        let requirement = match leaf.approval_requirement(tool, &args) {
+            Ok(r) => r,
+            Err(e) => {
+                // Fail closed: a gate that cannot be evaluated is required.
+                out.outcome = "approval_required";
+                out.code = Some("TENUO_APPROVAL_REQUIRED".into());
+                out.message = Some(format!("approval gate could not be evaluated: {e}"));
+                return out;
+            }
+        };
+        match requirement {
+            tenuo::ApprovalRequirement::NotGated | tenuo::ApprovalRequirement::Exempt { .. } => {
+                return out
+            }
+            tenuo::ApprovalRequirement::Denied { code, reason } => {
+                out.outcome = "deny";
+                out.code = Some(code);
+                out.message = Some(reason);
+                return out;
+            }
+            // Required, and any future variant: fail closed to the approval check.
+            _ => {}
+        }
+
+        let approvers = leaf.required_approvers().cloned().unwrap_or_default();
+        let required = leaf.approval_threshold();
+        if approvers.is_empty() || required == 0 {
+            // Gated with nobody able to approve: fail closed.
+            out.outcome = "approval_required";
+            out.code = Some("TENUO_APPROVAL_REQUIRED".into());
+            out.message = Some("approval required but the warrant names no approvers".into());
+            out.approvals = Some(PopFreeApprovalsDto {
+                valid: 0,
+                required,
+                rejected: approvals.len() as u32,
+            });
+            return out;
+        }
+
+        // Approvals commit to (warrant id, tool, args, holder). Each envelope is
+        // verified before it counts, and each approver counts once, so an
+        // invalid envelope cannot displace a valid one from the same key.
+        let request_hash = compute_request_hash(
+            &leaf.id().to_string(),
+            tool,
+            &args,
+            Some(leaf.authorized_holder()),
+        );
+        let mut counted: std::collections::BTreeSet<[u8; 32]> = std::collections::BTreeSet::new();
+        let mut rejected = 0u32;
+        for approval in &approvals {
+            let ok = approvers.contains(&approval.approver_key)
+                && matches!(approval.verify(), Ok(p) if p.request_hash == request_hash);
+            if !ok || !counted.insert(approval.approver_key.to_bytes()) {
+                rejected += 1;
+            }
+        }
+        let valid = counted.len() as u32;
+        out.approvals = Some(PopFreeApprovalsDto {
+            valid,
+            required,
+            rejected,
+        });
+        if valid < required {
+            out.outcome = "approval_required";
+            out.code = Some(if valid == 0 {
+                "TENUO_APPROVAL_REQUIRED".into()
+            } else {
+                "TENUO_INSUFFICIENT_APPROVALS".into()
+            });
+            out.message = Some(format!("{valid} of {required} required approvals"));
+        }
+        out
+    }
 }
 
 #[wasm_bindgen]
@@ -877,6 +1068,20 @@ pub fn sdk_inspect_warrant(wire: &str) -> Result<JsValue, JsError> {
     init_panic_hook();
     let warrant = parse_warrant(wire)?;
     Ok(inspect_js(&warrant))
+}
+
+/// Decode a warrant chain (stack string, single token, or token array), root
+/// first. Not authorization: no trusted root, linkage, expiry, or revocation check.
+#[wasm_bindgen(js_name = sdkDecodeChain)]
+pub fn sdk_decode_chain(warrants: JsValue) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let chain = parse_presented_chain(&warrants)?;
+    if chain.is_empty() {
+        return Err(JsError::new("warrant chain must not be empty"));
+    }
+    let decoded: Vec<crate::DecodedWarrant> =
+        chain.iter().map(crate::extract_decoded_warrant).collect();
+    Ok(to_js_value(&decoded))
 }
 
 /// Diagnose all capability-constraint failures without authorizing the call.

@@ -600,6 +600,27 @@ agent.revoke(list);            // now TENUO_REVOKED for that chain
 `createTenuo.signRevocationList(input, issuerSecret)` does the same with an
 explicit secret. Version numbers only go up.
 
+### Check a warrant someone else holds
+
+An auditor or CI job can check a warrant chain and its approvals without the
+holder key. It trusts the issuer's public key and nothing else:
+
+```ts
+const checker = createTenuo({ trustedRoots: [issuerPublicKey] });
+
+createTenuo.inspectWarrant(warrant); // decoded chain, root first. Not authorization.
+
+const result = checker.checkWithoutPop(warrant, "merge_pr", args, { approvals });
+// { outcome: "allow" | "deny" | "approval_required", chainValid, popChecked: false,
+//   approvals?: { valid, required, rejected }, code?, message? }
+```
+
+`checkWithoutPop()` verifies the chain (signatures, trusted root, revocation,
+narrowing, expiry), the constraints, the approval gate, and each approval. It
+never checks proof-of-possession, so an `allow` means the warrant and approvals
+cover the call, not that the caller holds the key. The service that runs the
+action still verifies a presented call with `verify()`.
+
 ### Present authority across any boundary
 
 `mcp.attach()` and `mcp.verify()` are one instance of a general pattern:

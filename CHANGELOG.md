@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TypeScript: check a warrant without its holder key.**
+  `createTenuo.inspectWarrant()` decodes a chain, and
+  `tenuo.checkWithoutPop()` verifies the chain against the context's trusted
+  roots and revocation list, then the constraints, approval gate and signed
+  approvals for a call. It checks no proof-of-possession, so it suits audits
+  and CI checks; enforcement points still use `verify()`.
+
+### Fixed
+
+- **WASM:** the dry-run mode of `check_chain_access` now runs full chain
+  verification (expiry and narrowing between links) before the policy check.
+- **WASM:** `verify_approval_set` counts an approver only after its envelope
+  verifies, so an invalid envelope cannot displace a valid one from the same
+  key.
+
 ## [0.3.7] - 2026-11-11
 
 ### Security

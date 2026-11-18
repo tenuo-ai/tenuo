@@ -457,7 +457,7 @@ fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap>
 }
 
 /// Extract decoded warrant fields including extensions and approval gates.
-fn extract_decoded_warrant(warrant: &Warrant) -> DecodedWarrant {
+pub(crate) fn extract_decoded_warrant(warrant: &Warrant) -> DecodedWarrant {
     let capabilities: HashMap<String, HashMap<String, JsonValue>> = warrant
         .capabilities()
         .map(|caps| {
@@ -732,7 +732,17 @@ pub fn check_chain_access(
     let leaf = chain.last().unwrap();
 
     if dry_run {
-        // Dry run: check policy only, skip PoP
+        // Dry run skips PoP only: signatures, expiry and narrowing still apply.
+        if let Err(e) = Authorizer::new().with_trusted_root(root_key).verify_chain(&chain) {
+            return serde_wasm_bindgen::to_value(&AuthResult {
+                authorized: false,
+                reason: Some(format!("Chain verification failed: {}", e)),
+                deny_code: Some("CHAIN_INVALID".to_string()),
+                field: None,
+            })
+            .unwrap();
+        }
+        // Then the policy check, skipping PoP
         if let Some(caps) = leaf.capabilities() {
             if let Some(constraints) = caps.get(tool) {
                 match constraints.matches(&args) {
@@ -1207,14 +1217,14 @@ pub fn verify_approval_set(
         if !required_approvers.contains(&approval.approver_key) {
             continue;
         }
-        // No duplicates — deduplicate by approver public key, not by list index
-        if !seen.insert(approval.approver_key.to_bytes()) {
-            continue;
-        }
-        // Verify signature and check hash
+        // Verify signature and check hash before counting
         match approval.verify() {
-            Ok(payload) if payload.request_hash == request_hash => valid_count += 1,
+            Ok(payload) if payload.request_hash == request_hash => {}
             _ => continue,
+        }
+        // No duplicates: one count per approver key, among verified approvals
+        if seen.insert(approval.approver_key.to_bytes()) {
+            valid_count += 1;
         }
     }
 

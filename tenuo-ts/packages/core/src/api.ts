@@ -387,6 +387,59 @@ export type ApprovalInfo = {
   readonly error?: string;
 };
 
+/**
+ * Decoded view of one warrant. Not authorization: decoding checks no trusted
+ * root, chain linkage, expiry, or revocation. Use `checkWithoutPop()` or
+ * `verify()` for decisions.
+ */
+export type WarrantInfo = {
+  readonly id: string;
+  /** Hex public key that signed this warrant (the root issuer at depth 0). */
+  readonly issuerPublicKey: string;
+  /** Hex public key the warrant is bound to. */
+  readonly holderPublicKey: string;
+  readonly depth: number;
+  readonly tools: readonly string[];
+  /** Constraint map per tool, as decoded. */
+  readonly capabilities: Readonly<Record<string, unknown>>;
+  readonly issuedAt: number;
+  readonly expiresAt: number;
+  readonly expired: boolean;
+  readonly terminal: boolean;
+  /** Hex keys whose signed approvals the gated tools need. Empty when ungated. */
+  readonly requiredApprovers: readonly string[];
+  readonly minApprovals?: number;
+};
+
+export type CheckWithoutPopOptions = {
+  /** Signed approval envelopes (hex, standard or URL-safe base64, or CBOR bytes). */
+  readonly approvals?: readonly (string | Uint8Array)[];
+};
+
+/**
+ * Result of `checkWithoutPop()`. Proof-of-possession is never checked, so an
+ * `allow` here says the warrant and approvals cover the call, not that the
+ * caller holds the key. Enforcement points that run the action use `verify()`.
+ */
+export type CheckWithoutPopResult = {
+  readonly outcome: "allow" | "deny" | "approval_required";
+  readonly popChecked: false;
+  /** Chain signatures, linkage, narrowing and expiry verified to a trusted root. */
+  readonly chainValid: boolean;
+  readonly code?: TenuoErrorCode;
+  readonly message?: string;
+  /** Hex key of the trusted root the chain verified to. */
+  readonly rootPublicKey?: string;
+  readonly holderPublicKey: string;
+  /** Present when the leaf gates this call on approvals. */
+  readonly approvals?: {
+    readonly valid: number;
+    readonly required: number;
+    /** Envelopes dropped before counting: unreadable, bad signature, or expired. */
+    readonly rejected: number;
+  };
+};
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
@@ -736,6 +789,20 @@ export interface Tenuo {
   issuerPublicKey(): PublicKeyHandle;
   /** What the session would decide for `tool(args)`, field by field. Never runs the tool. */
   explain(session: Session, tool: string, args: Readonly<Record<string, unknown>>): Explanation;
+  /**
+   * Check a warrant chain issued to someone else against this context's
+   * trusted roots and loaded revocation lists: chain, constraints, approval
+   * gates and signed approvals. Needs no holder key and checks no
+   * proof-of-possession, so it suits audits and CI checks. It does not
+   * authorize running the tool; the enforcement point still calls `verify()`.
+   * `warrant` is a single token or the token array from `toWire()`.
+   */
+  checkWithoutPop(
+    warrant: string | readonly string[],
+    tool: string,
+    args: Readonly<Record<string, unknown>>,
+    options?: CheckWithoutPopOptions,
+  ): CheckWithoutPopResult;
   /** Everything an approval service needs to present `tool(args)` to a human. */
   approvalRequest(session: Session, tool: string, args: Readonly<Record<string, unknown>>): ApprovalRequest;
   /** Holder-signed proof that this session is the one asking for `tool(args)`. */
