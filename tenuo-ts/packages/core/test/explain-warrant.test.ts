@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTenuo, exact, pattern } from "../src/index.ts";
+import { createTenuo, exact, pattern, TenuoConfigurationError } from "../src/index.ts";
+import type { PresentedCall, Session } from "../src/index.ts";
 import { loadWasm } from "../src/wasm.ts";
 
 const T = createTenuo;
@@ -268,7 +269,7 @@ describe("diagnostic/enforcement boundary", () => {
 
   it("rejects expired approvals even while the warrant remains valid", async () => {
     const { checker, tokens, author, authorSession, request, reviewerKey } = setup();
-    const approval = T.signApproval(request, reviewerKey, { externalId: "r", ttlSeconds: 1 });
+    const approval = T.signApproval(request, reviewerKey, { externalId: "r", ttlSeconds: 60 });
     const presented = author.present(authorSession, "merge_pr", args, { approvals: [approval] });
     const expires = T.inspectApproval(approval).expiresAt;
     vi.useFakeTimers();
@@ -307,5 +308,155 @@ describe("diagnostic/enforcement boundary", () => {
         approvals: { status: "not_evaluated" },
       });
     } finally { vi.useRealTimers(); }
+  });
+});
+
+
+/** These casts intentionally bypass TypeScript: the boundary must hold at runtime. */
+describe("diagnostics cannot become execution credentials", () => {
+  function boundary() {
+    const fx = setup();
+    const approvals = [fx.sign(fx.reviewerKey, "reviewer")];
+    const presented = fx.author.present(fx.authorSession, "merge_pr", args, { approvals });
+    const report = fx.checker.explainWarrant(fx.tokens, "merge_pr", args, { approvals });
+    expect(report).toMatchObject({
+      chain: { status: "valid" }, constraints: { status: "satisfied" },
+      approvals: { status: "satisfied" }, possession: { status: "not_checked" },
+    });
+    const body = vi.fn(async (input: Readonly<Record<string, unknown>>) => input);
+    const handler = fx.checker.mcp.handler("merge_pr", body);
+    const tool = fx.checker.tool({ execute: body }, { capability: "merge_pr", allow: {} });
+    return { ...fx, approvals, presented, report, body, handler, tool };
+  }
+
+  it("rejects a report as a presented call and as MCP metadata before execution", async () => {
+    const { checker, report, handler, body, presented } = boundary();
+    await expect(checker.verify(report as unknown as PresentedCall, "merge_pr", args))
+      .rejects.toBeInstanceOf(TenuoConfigurationError);
+    await expect(handler(args, { _meta: { tenuo: report } }))
+      .rejects.toBeInstanceOf(TenuoConfigurationError);
+    expect(body).not.toHaveBeenCalled();
+    // Positive control: the same real boundary invokes the body with valid proof.
+    await expect(handler(args, { _meta: { tenuo: presented } })).resolves.toEqual(args);
+    expect(body).toHaveBeenCalledExactlyOnceWith(args);
+  });
+
+  it("rejects a report as a Session even inside a valid ambient session", async () => {
+    const { checker, report, tool, body, authorSession, approvals } = boundary();
+    const counterfeit = report as unknown as Session;
+    expect(() => checker.present(counterfeit, "merge_pr", args, { approvals }))
+      .toThrow(TenuoConfigurationError);
+    await expect(checker.withSession(authorSession, () => tool.execute(args, {
+      session: counterfeit, approvals,
+    }))).rejects.toBeInstanceOf(TenuoConfigurationError);
+    expect(body).not.toHaveBeenCalled();
+    await expect(tool.execute(args, { session: authorSession, approvals })).resolves.toEqual(args);
+    expect(body).toHaveBeenCalledExactlyOnceWith(args, undefined);
+  });
+
+  it.each(["missing", "empty", "invalid", "other_holder"] as const)(
+    "%s proof cannot execute despite satisfied diagnostics and approvals",
+    async (proof) => {
+      const { cp, presented, report, handler, body } = boundary();
+      const envelope: Record<string, unknown> = { ...report, ...presented, outcome: "allow", authorized: true };
+      if (proof === "missing") delete envelope.signature;
+      if (proof === "empty") envelope.signature = "";
+      if (proof === "invalid") envelope.signature = "00".repeat(64);
+      if (proof === "other_holder") {
+        // A real signed invocation from another holder cannot be transplanted.
+        const otherKey = T.generateHolderKey();
+        const otherGrant = cp.session({ allow: { merge_pr: {} }, holder: T.publicKeyFromHolderKey(otherKey) });
+        const otherSession = cp.sessionFromWire({ warrant: otherGrant.toWire(), holderKey: otherKey });
+        envelope.signature = cp.present(otherSession, "merge_pr", args).signature;
+      }
+      await expect(handler(args, { _meta: { tenuo: envelope } })).rejects.toMatchObject({
+        code: proof === "missing" || proof === "empty" ? "TENUO_CONFIGURATION" : "TENUO_INVALID_POP",
+      });
+      expect(body).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not let a satisfied report authorize changed invocation arguments", async () => {
+    const { handler, body, presented, report } = boundary();
+    const changed = { ...args, head_sha: "b".repeat(40) };
+    await expect(handler(changed, { _meta: { tenuo: { ...report, ...presented } } }))
+      .rejects.toMatchObject({ code: "TENUO_INVALID_POP" });
+    expect(body).not.toHaveBeenCalled();
+  });
+
+  it("a satisfied report cannot replace the invocation's signed approvals", async () => {
+    const { handler, body, presented, report } = boundary();
+    const { approvals: _approvals, ...withoutApprovals } = presented;
+    await expect(handler(args, { _meta: { tenuo: { ...report, ...withoutApprovals, approvals: [] } } }))
+      .rejects.toMatchObject({ code: "TENUO_APPROVAL_REQUIRED" });
+    expect(body).not.toHaveBeenCalled();
+  });
+
+  it("rechecks approval expiry after satisfied diagnostics without executing", async () => {
+    const { checker, tokens, author, authorSession, request, reviewerKey, handler, body, tool } = boundary();
+    const approval = T.signApproval(request, reviewerKey, { externalId: "r", ttlSeconds: 60 });
+    const approvals = [approval];
+    const presented = author.present(authorSession, "merge_pr", args, { approvals });
+    expect(checker.explainWarrant(tokens, "merge_pr", args, { approvals }).approvals.status).toBe("satisfied");
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(T.inspectApproval(approval).expiresAt * 1000));
+      await expect(handler(args, { _meta: { tenuo: presented } }))
+        .rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
+      await expect(tool.execute(args, { session: authorSession, approvals }))
+        .rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
+      expect(body).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("rechecks revocation after a satisfied report, on both execution paths", async () => {
+    const { cp, checker, issued, tool, authorSession, approvals, handler, body, presented } = boundary();
+    checker.revoke(cp.revocationList({ revoke: issued.inspect().warrantIds }));
+    await expect(handler(args, { _meta: { tenuo: presented } }))
+      .rejects.toMatchObject({ code: "TENUO_REVOKED" });
+    await expect(tool.execute(args, { session: authorSession, approvals }))
+      .rejects.toMatchObject({ code: "TENUO_REVOKED" });
+    expect(body).not.toHaveBeenCalled();
+  });
+
+  it("rechecks warrant expiry after a satisfied report, on both execution paths", async () => {
+    const { issued, tool, authorSession, approvals, handler, body, presented } = boundary();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date((issued.inspect().expiresAt + 120) * 1000));
+      await expect(handler(args, { _meta: { tenuo: presented } }))
+        .rejects.toMatchObject({ code: "TENUO_WARRANT_EXPIRED" });
+      await expect(tool.execute(args, { session: authorSession, approvals }))
+        .rejects.toMatchObject({ code: "TENUO_WARRANT_EXPIRED" });
+      expect(body).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("diagnostics emit no receipts or execution credentials and never invoke a registered tool", async () => {
+    const { root, tokens, approvals, presented } = boundary();
+    const runtime = T.runtime({ identity: T.generateIdentity(), trustedRoots: [root], receipts: "collect" });
+    const body = vi.fn(async (input: Readonly<Record<string, unknown>>) => input);
+    const handler = runtime.tenuo.mcp.handler("merge_pr", body);
+    const cases = [
+      runtime.tenuo.explainWarrant(tokens, "merge_pr", args, { approvals }),
+      runtime.tenuo.explainWarrant(tokens, "merge_pr", args),
+      runtime.tenuo.explainWarrant(tokens, "merge_pr", { ...args, repo: "elsewhere/repo" }),
+      runtime.tenuo.explainWarrant([tamperLastByte(tokens[0]!)], "merge_pr", args),
+      runtime.tenuo.explainWarrant(tokens, "merge_pr", { value: Number.NaN }),
+    ];
+    for (const report of cases) {
+      expect(report.kind).toBe("diagnostic");
+      expect(report.possession.status).toBe("not_checked");
+      for (const key of ["outcome", "authorized", "allow", "ok", "success", "receipt", "session", "warrant", "signature", "execute"]) {
+        expect(report).not.toHaveProperty(key);
+      }
+    }
+    expect(body).not.toHaveBeenCalled();
+    expect(runtime.peekReceipts()).toEqual([]);
+    // Verify that the observer really collects receipts and the handler runs.
+    await handler(args, { _meta: { tenuo: presented } });
+    expect(body).toHaveBeenCalledExactlyOnceWith(args);
+    expect(runtime.peekReceipts()).toHaveLength(1);
+    expect(T.verifyReceipt(runtime.peekReceipts()[0]!)).toMatchObject({ outcome: "allow" });
   });
 });

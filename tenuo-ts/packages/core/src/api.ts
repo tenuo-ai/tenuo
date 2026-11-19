@@ -419,6 +419,12 @@ export type ExplainWarrantOptions = {
 /** Diagnostic evidence only. Never authorizes execution; use verify() for that.
  * Uses current time and loaded revocation state, not historical execution evidence.
  * Does not evaluate boundary-specific policy callbacks or tool ceilings.
+ *
+ * Invariants: every result retains kind="diagnostic" and possession="not_checked".
+ * No aggregate authorization verdict, Session, PresentedCall, or receipt is issued.
+ * A report is never accepted in place of a Session or presented proof at execution.
+ * Execution rechecks current validity and the exact invocation independently;
+ * successful diagnostics must never be used to bypass verify() or a protected tool.
  */
 export type WarrantExplanation = {
   readonly kind: "diagnostic";
