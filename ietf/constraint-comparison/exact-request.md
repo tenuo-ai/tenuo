@@ -18,7 +18,7 @@ reading of the text that its author has not reviewed yet
 | Pin one value from a set | `exact` under `one_of`, or a one-element `one_of` (CC-9, CC-10) | A one-element `one_of` (CC-9) | `eq` under `in`, or a one-element `in` (CC-9, CC-10) |
 | Pin a number under a bound | `exact` under `range`, or a `range` whose `min` equals its `max` (CC-7, CC-8) | A `max` and a `min` of the same value (CC-8) | A `max` and a `min` of the same value, or the `max` with an added `eq` (CC-8) |
 | Pin an object or an array | A one-element `one_of`; `exact` holds scalars only (CC-13, CC-14) | A one-element `one_of` (CC-13) | `eq`, or a one-element `in` (CC-13, CC-14) |
-| Rule out every input the token does not pin | The default: a map without `"*"` (CC-4a) | By naming each input: a key with no constraint is unbounded (CC-4a) | The default, apart from members the Type Profile admits (CC-4a) |
+| Rule out every input the token does not pin | The default, unless the map has `"*"` or is empty (CC-4a) | Not expressible in the token: a key with no constraint is unbounded (CC-4a) | The default, apart from members the Type Profile admits (CC-4a) |
 | A constraint on a digest of the request | No such type; a new type needs registering (5) | No such type; a new type needs registering (10) | No such predicate; a new one needs registering (15.4) |
 | A separate token for the one request | None; the leaf token is presented with the holder's proof (7.4) | None; the leaf token is presented with the holder's proof (7) | The access token issued under the mandate. A token exchange request carries exactly one authorization details object (7.1). The access token carries only that object and authorizes a single execution, which the resource server enforces (10.2) |
 

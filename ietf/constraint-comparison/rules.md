@@ -12,7 +12,7 @@ reading of the text that its author has not reviewed yet
 | What is authorized | A tool, named by an identifier compared as an exact string (3.3) | A scope string: literal, wildcard such as `crm.*`, or opaque (4.1) | A Permission shaped like an RFC 9396 authorization detail: `type`, plus `locations`, `actions`, `datatypes`, `privileges` and other members (4.4) |
 | What a constraint targets | One named argument of the tool (3.3) | A `key` naming a dimension of the action (4.2) | A JSON Pointer `ptr` into the requested authorization detail (4.5) |
 | Constraints per target | One; `all` and `any` combine several (3.4) | One per (key, type); different types on one key all apply (4.2) | Several per pointer; all apply (4.4 rule 5) |
-| An input no constraint names | Denied, unless the map has `"*"` (3.3) | Unbounded (4.3 rule 3) | Rejected, unless the Type Profile admits the member (4.4 rule 4, 8.1) |
+| An input no constraint names | Denied, unless the map has `"*"` or is empty (3.3) | Unbounded (4.3 rule 3) | Rejected, unless the Type Profile admits the member (4.4 rule 4, 8.1) |
 | Numbers | JSON numbers that survive a JCS round trip (3.4) | JSON numbers, with integers up to 2^53-1; the payload must be JCS (3) | Decimal strings for amounts, where JSON numbers must not be used (4.5). Elsewhere JSON numbers should not be used (4.6) |
 | Narrowing what is authorized | The child's tools are a subset of the parent's (4.5) | Each child scope is covered by a parent scope (4.3 rule 1) | Same `type`; the four array members shrink; other members stay identical (4.7 rules 1 to 4) |
 

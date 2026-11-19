@@ -1,13 +1,12 @@
 """Check the aat entries of cases.json against the AAT -02 reference verifier.
 
-usage: python3 -I check_aat_column.py <dir holding gen_vectors.py> <cases.json>
+usage: python3 -I check_aat.py <dir holding gen_vectors.py> <cases.json>
 
 For every case it builds a real chain with the suite's own helpers, presents it
 with a PoP, and requires verify_chain to return the recorded result and step.
 It also checks that each cited suite vector exists and has the same result.
 It writes nothing.
 """
-import json
 import sys
 
 sys.path.insert(0, sys.argv[1])
@@ -52,7 +51,8 @@ def present(chain, args):
         return "DENY", e.step
 
 
-doc = json.load(open(sys.argv[2]))
+# The verifier's own parser, so a number with a fraction or an exponent stays exact.
+doc, _ = gv._loads(open(sys.argv[2], encoding="utf-8").read())
 bad = 0
 for c in doc["cases"]:
     a = c["aat"]

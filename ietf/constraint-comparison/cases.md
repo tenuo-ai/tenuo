@@ -52,9 +52,10 @@ The drafts start from different defaults, and each result follows from its
 draft's default.
 
 - In AAT a constraint map is closed. An argument it does not name is denied,
-  unless the map carries `"*"`. A child may name a new argument only under
-  its parent's `"*"`. A child may stop naming an argument its parent marks
-  optional, and the argument is then forbidden.
+  unless the map carries `"*"`. An empty map counts as carrying it. A child
+  may name a new argument only under its parent's `"*"`. A child that
+  carries no `"*"` may stop naming an argument its parent marks optional,
+  and the argument is then forbidden.
 - In asor a key with no constraint is unbounded. A child may add a
   constraint on any key, and may never drop one.
 - In hulea a request member must be admitted by the Permission or by the

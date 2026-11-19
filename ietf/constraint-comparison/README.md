@@ -34,7 +34,7 @@ one-element set.
 |---|---|---|---|---|
 | What a depth limit of 8 allows | Nine tokens | Eight tokens | Nine mandates | CC-1 |
 | A limit that a holder lowers | Binds the tokens below it | The depth check uses the root's value | Binds the mandates below it | CC-2 |
-| An input no constraint names | Denied, unless the map has `"*"` | Unbounded | Rejected, unless the Type Profile admits it | CC-3a to CC-6 |
+| An input no constraint names | Denied, unless the map has `"*"` or is empty | Unbounded | Rejected, unless the Type Profile admits it | CC-3a to CC-6 |
 | Replacing a constraint with one of another type | A `range` or a `one_of`, by an `exact` | No; each key and type is kept | An `in`, by an `eq` | CC-7, CC-10 |
 | A single-value type | `exact`, scalars only | None; a one-element `one_of` | `eq`, any JSON value | CC-10, CC-14 |
 | An empty set | Denied | No rule found in the text | Malformed | CC-11 |

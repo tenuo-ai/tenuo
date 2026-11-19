@@ -1299,7 +1299,7 @@
             }
           ]
         },
-        "child_text": "{\"type\":\"agent_delegation\",\"scopes\":[\"crm.export\"],\"constraints\":[{\"key\":\"limit\",\"one_of\":[1.0]}]}",
+        "child_text": "{\"constraints\":[{\"key\":\"limit\",\"one_of\":[1.0]}],\"scopes\":[\"crm.export\"],\"type\":\"agent_delegation\"}",
         "request": {
           "scope": "crm.export",
           "limit": 1
