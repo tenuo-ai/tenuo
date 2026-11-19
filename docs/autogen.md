@@ -1,3 +1,14 @@
+---
+title: "AutoGen agent authorization and human approvals"
+description: "Authorize AutoGen AgentChat tool calls with task-scoped warrants, spending limits and human approval gates. Open-source AI agent authorization."
+og_image: /images/og/guide-autogen.png
+og_image_alt: "Tenuo for AutoGen"
+guide_name: "AutoGen"
+guide_logo: autogen
+guide_install: 'uv pip install "tenuo[autogen]"'
+
+---
+
 # AutoGen (AgentChat)
 
 Tenuo can protect tools used by [AutoGen AgentChat](https://microsoft.github.io/autogen/stable//index.html) so that **every tool call is authorized** by a warrant.
@@ -105,6 +116,5 @@ The child warrant cannot escalate beyond what the parent allows — Rust enforce
 
 ## See also
 
-- [Quickstart](./quickstart)
+- [Quickstart](/quickstart/)
 - [Debugging](./debugging)
-

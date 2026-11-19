@@ -1,3 +1,8 @@
+---
+title: "Tenuo Protocol Specification"
+description: "Tenuo warrant semantics and verification rules: task-scoped capabilities, holder binding, attenuation and delegation depth."
+---
+
 # Tenuo Protocol Specification
 
 **Version:** 1.0  

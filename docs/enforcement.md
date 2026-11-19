@@ -1,3 +1,8 @@
+---
+title: "Enforcement Architecture"
+description: "Warrants, proof-of-possession, attenuation, and where checks run."
+---
+
 # Enforcement Architecture
 
 > [!NOTE]

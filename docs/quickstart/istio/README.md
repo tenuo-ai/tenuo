@@ -1,3 +1,9 @@
+---
+title: Istio Quickstart
+description: Deploy Tenuo with Istio and get your first denied request in under five minutes.
+permalink: /quickstart/istio/
+---
+
 # Istio Quickstart
 
 Enforce Tenuo warrants on a workload in an Istio mesh, using an Istio
