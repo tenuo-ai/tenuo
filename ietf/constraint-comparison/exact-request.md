@@ -6,8 +6,9 @@ and state around it. A request can be bound in two ways, and they are
 separate entries: in the token itself, or by a proof that travels with the
 request.
 
-Numbers in parentheses are sections of the draft in that column. The asor and hulea columns are a reading of the text that their
-authors have not reviewed yet
+Numbers in parentheses are sections of the draft in that column. The hulea
+column has been reviewed by that draft's author. The asor column is a
+reading of the text that its author has not reviewed yet
 ([status](README.md#status-and-how-to-add-to-it)).
 
 ## In the token
@@ -19,9 +20,11 @@ authors have not reviewed yet
 | Pin an object or an array | A one-element `one_of`; `exact` holds scalars only (CC-13, CC-14) | A one-element `one_of` (CC-13) | `eq`, or a one-element `in` (CC-13, CC-14) |
 | Rule out every input the token does not pin | The default: a map without `"*"` (CC-4a) | By naming each input: a key with no constraint is unbounded (CC-4a) | The default, apart from members the Type Profile admits (CC-4a) |
 | A constraint on a digest of the request | No such type; a new type needs registering (5) | No such type; a new type needs registering (10) | No such predicate; a new one needs registering (15.4) |
+| A separate token for the one request | None; the leaf token is presented with the holder's proof (7.4) | None; the leaf token is presented with the holder's proof (7) | The access token issued under the mandate. A token exchange request carries exactly one authorization details object (7.1). The access token carries only that object and authorizes a single execution, which the resource server enforces (10.2) |
 
 All three can pin every value they name. None has a constraint on a digest
-of the whole request.
+of the whole request. In hulea, the access token issued under a mandate
+carries only the one requested action and authorizes a single execution.
 
 ## By a proof that travels with the request
 
@@ -41,8 +44,8 @@ a revoked token.
 
 | | AAT -02 | asor -03 | hulea -01 |
 |---|---|---|---|
-| Mechanism | None in the core. A status mechanism on the root token ends every chain under it (9.8) | An optional Token Status List reference in each token (6 step 7) | Status evidence the relying party checks at authorization time (10.2) |
-| A new action is admitted until | The presented token expires. An enforcement point that checks the root's status stops sooner; -02 sets no interval for that check (9.8) | The cached status answer's time to live runs out; after that the verifier denies (6 step 7) | The status evidence is older than the profile's `max_status_age` (8) |
+| Mechanism | None in the core. A status mechanism on the root token ends every chain under it (9.8) | An optional Token Status List reference in each token (6 step 7) | A Token Status List reference in the `status` claim (4.1), required for the artifact types the profile lists in `status_required` (8). The Validator checks it at validation time (9.3 step 7). At authorization time the relying party checks again that the Status List Token is still within `max_status_age` (10.2) |
+| A new action is admitted until | The presented token expires. An enforcement point that checks the root's status stops sooner; -02 sets no interval for that check (9.8) | The cached status answer's time to live runs out; after that the verifier denies (6 step 7) | The Status List Token is older than `max_status_age` at authorization time; after that no access token is issued (10.2). An access token already issued can still be used once, until its `exp`, at most `max_token_lifetime` after authorization, unless the relying party validates again at execution (10.2). Where the profile does not require status and the mandate carries none, a revoked mandate is not detected before it expires (9.3) |
 
 ## What has to be remembered, and who shares it
 
@@ -53,7 +56,7 @@ remembered, and how far that memory has to be shared.
 | | AAT -02 | asor -03 | hulea -01 |
 |---|---|---|---|
 | The holder's proof, accepted at most once | A proof names its leaf token (`aat_hash`, 7.2). For tools with side effects, the enforcement point keeps the ids of accepted proofs until they leave the proof window, and replicas of one enforcement point share them (7.3). Where several enforcement points accept the same chain, each shares that state with the others, or requires a nonce, or requires an audience no other accepts (9.5) | A DPoP proof bound to the request (6 step 6), with replay handled as RFC 9449 describes | The authorization server rejects a signature nonce it has already accepted within the signature's validity period (7.2). `aud` restricts where a mandate may be presented (13) |
-| A running total | None in the core (9.1.2) | Checked only where the total is held; an enforcement point with no access to it denies (4.2, 6 step 8). Splitting a budget among children needs a single writer (9.4) | The relying party checks and records in one atomic operation (9.5). Relying parties that share no state each enforce the budget separately, so a mandate with `sum_max` should name exactly one of them in `aud` (13) |
+| A running total | None in the core (9.1.2) | Checked only where the total is held; an enforcement point with no access to it denies (4.2, 6 step 8). Splitting a budget among children needs a single writer (9.4) | The relying party checks and records in one atomic operation (9.5). A relying party that neither holds the total nor has the action authorized by a component that does must deny, the same rule as asor's (9.5). Relying parties that share no state each enforce the budget separately, so a mandate with `sum_max` should name exactly one of them in `aud`, unless the Trust Framework defines shared accounting (13) |
 | A second party's approval, used at most once | Not in the core; a profile needs its own enforcement state (9.1.2) | Placed at root issuance (9.7) | The relying party discharges the `cosign_above` obligation in the atomic operation that issues a single-use access token (9.5, 10.2) |
 
 ## Credential Delegation -02

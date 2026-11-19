@@ -9,10 +9,11 @@ three Internet-Drafts and gives a test case wherever they differ.
 | asor | [draft-asor-wimse-agent-delegation-chain-03](https://datatracker.ietf.org/doc/html/draft-asor-wimse-agent-delegation-chain-03) |
 | hulea | [draft-hulea-wimse-agent-mandate-01](https://datatracker.ietf.org/doc/html/draft-hulea-wimse-agent-mandate-01) |
 
-This is a working document, written by the author of AAT. The asor and
-hulea columns are a reading of the text that their authors have not
-reviewed yet, and an author's own reading replaces it. A difference is not a
-fault in either draft, and nothing here ranks them.
+This is a working document, written by the author of AAT. The hulea column
+has been reviewed by that draft's author. The asor column is a reading of
+the text that its author has not reviewed yet, and an author's own reading
+replaces it. A difference is not a fault in either draft, and nothing here
+ranks them.
 
 ## Where the three agree
 
@@ -60,7 +61,12 @@ says what is particular to it.
 |---|---|---|
 | AAT | Run through the -02 reference verifier ([gen_vectors.py](../vectors/gen_vectors.py)) | Yes |
 | asor | Read from the -03 text | Not yet |
-| hulea | Read from the -01 text | Not yet |
+| hulea | Read from the -01 text | Yes, 19 November 2026 |
+
+The hulea column describes -01. Its author intends the next revision to
+carry the chain in asor's format and to keep hulea's own types for decimal
+amounts and per-period totals (-01, Appendix D). Depth counting and most of
+the narrowing rules in the hulea column would then follow asor.
 
 Corrections and additions are welcome from anyone, and most of all from the
 authors of the drafts. An issue, a pull request or a message on the OAuth

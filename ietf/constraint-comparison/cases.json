@@ -8,7 +8,7 @@
   "status": {
     "aat": "run through the -02 reference verifier",
     "asor": "read from the draft text; not yet reviewed by the draft's author",
-    "hulea": "read from the draft text; not yet reviewed by the draft's author"
+    "hulea": "read from the draft text; reviewed by the draft's author"
   },
   "conventions": [
     "Each case gives the same narrowing in each draft's own syntax: a parent, where relevant a child, and a request.",

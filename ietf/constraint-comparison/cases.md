@@ -11,8 +11,9 @@ How to read the tables:
   author may know where it is decided.
 - For AAT, a step is the verification step that denies, and an id such as
   J.19.8 is the vector in the -02 suite that covers the rule.
-- The asor and hulea columns are a reading of the text that their authors
-  have not reviewed yet ([status](README.md#status-and-how-to-add-to-it)).
+- The hulea column has been reviewed by that draft's author. The asor
+  column is a reading of the text that its author has not reviewed yet
+  ([status](README.md#status-and-how-to-add-to-it)).
 - Numbers in parentheses are sections of the draft in that column.
 
 ## Depth

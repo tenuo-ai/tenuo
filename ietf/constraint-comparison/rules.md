@@ -1,7 +1,8 @@
 # The narrowing rules
 
-Numbers in parentheses are sections of the draft in that column. The asor and hulea columns are a reading of the text that their
-authors have not reviewed yet
+Numbers in parentheses are sections of the draft in that column. The hulea
+column has been reviewed by that draft's author. The asor column is a
+reading of the text that its author has not reviewed yet
 ([status](README.md#status-and-how-to-add-to-it)).
 
 ## Where a constraint attaches
@@ -12,7 +13,7 @@ authors have not reviewed yet
 | What a constraint targets | One named argument of the tool (3.3) | A `key` naming a dimension of the action (4.2) | A JSON Pointer `ptr` into the requested authorization detail (4.5) |
 | Constraints per target | One; `all` and `any` combine several (3.4) | One per (key, type); different types on one key all apply (4.2) | Several per pointer; all apply (4.4 rule 5) |
 | An input no constraint names | Denied, unless the map has `"*"` (3.3) | Unbounded (4.3 rule 3) | Rejected, unless the Type Profile admits the member (4.4 rule 4, 8.1) |
-| Numbers | JSON numbers that survive a JCS round trip (3.4) | JSON numbers, with integers up to 2^53-1; the payload must be JCS (3) | Decimal strings for amounts; JSON numbers are discouraged (4.5, 4.6) |
+| Numbers | JSON numbers that survive a JCS round trip (3.4) | JSON numbers, with integers up to 2^53-1; the payload must be JCS (3) | Decimal strings for amounts, where JSON numbers must not be used (4.5). Elsewhere JSON numbers should not be used (4.6) |
 | Narrowing what is authorized | The child's tools are a subset of the parent's (4.5) | Each child scope is covered by a parent scope (4.3 rule 1) | Same `type`; the four array members shrink; other members stay identical (4.7 rules 1 to 4) |
 
 ## The rule for each kind of constraint
