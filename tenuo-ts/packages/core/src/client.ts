@@ -1431,6 +1431,9 @@ function requireWarrantInput(warrant: unknown, name: string): string | string[] 
     }
     return warrant;
   }
+  if (Array.isArray(warrant) && warrant.length > protocolLimits().max_delegation_depth) {
+    throw new TenuoConfigurationError(`${name}() chain exceeds the protocol token limit`);
+  }
   if (Array.isArray(warrant) && warrant.length > 0 && warrant.every((t) => typeof t === "string" && t.trim().length > 0)) {
     return [...warrant];
   }

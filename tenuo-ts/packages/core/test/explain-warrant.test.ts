@@ -500,3 +500,31 @@ describe("diagnostic approval input budget", () => {
     expect(report.approvals).toMatchObject({ status: "required", rejected: maximum });
   });
 });
+
+
+describe("diagnostic chain input budget", () => {
+  it.each(["inspect", "explain", "wasm"] as const)(
+    "%s rejects oversized token arrays before reading or copying elements",
+    (entry) => {
+      const { checker } = setup();
+      const chain = new Array<string>(protocolLimits().max_delegation_depth + 1);
+      const read = vi.fn(() => { throw new Error("must not read oversized chain"); });
+      Object.defineProperty(chain, 0, { get: read });
+      const invoke = () => entry === "inspect" ? T.inspectWarrant(chain)
+        : entry === "explain" ? checker.explainWarrant(chain, "merge_pr", args)
+        : loadWasm().sdkDecodeChain(chain);
+      expect(invoke).toThrow(/chain exceeds/);
+      expect(read).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts the exact token limit for decoding without implying chain validity", () => {
+    const { tokens, checker } = setup();
+    const maximum = protocolLimits().max_delegation_depth;
+    const chain = Array.from({ length: maximum }, () => tokens[0]!);
+    expect(T.inspectWarrant(chain)).toHaveLength(maximum);
+    expect(checker.explainWarrant(chain, "merge_pr", args)).toMatchObject({
+      chain: { status: "invalid" }, possession: { status: "not_checked" },
+    });
+  });
+});

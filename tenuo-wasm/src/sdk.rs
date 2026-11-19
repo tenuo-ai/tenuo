@@ -23,6 +23,7 @@ use tenuo::{
     MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS,
 };
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 use crate::init_panic_hook;
 
@@ -2871,6 +2872,14 @@ fn parse_pop_signature(input: &str) -> Result<Signature, String> {
 }
 
 fn parse_chain_parts(parts: JsValue) -> Result<Vec<Warrant>, JsError> {
+    // Reject oversized JS arrays before serde traverses or allocates their contents.
+    if js_sys::Array::is_array(&parts)
+        && parts.unchecked_ref::<js_sys::Array>().length() > MAX_DELEGATION_DEPTH
+    {
+        return Err(JsError::new(
+            "TENUO_CHAIN_INVALID: chain exceeds the WASM input budget",
+        ));
+    }
     let value: serde_json::Value = serde_wasm_bindgen::from_value(parts)
         .map_err(|e| JsError::new(&format!("invalid chain: {e}")))?;
     let arr = value
