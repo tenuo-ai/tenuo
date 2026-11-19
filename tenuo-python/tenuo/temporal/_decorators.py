@@ -114,3 +114,30 @@ def _warrant_tool_name_for_activity_type(
     if config is None:
         return default_tool
     return config.tool_mappings.get(activity_type, default_tool)
+
+
+# ---------------------------------------------------------------------------
+# unwarranted_activities — internal-plumbing allowlist
+# ---------------------------------------------------------------------------
+# Matching itself lives in ``_activity_patterns`` (shared with
+# ``mcp_call_tool_activities``): anchored whole-string glob, ``*`` the only
+# wildcard, never substring/``in`` matching.
+
+
+def is_unwarranted_activity(activity_type: str, config: Optional[Any]) -> bool:
+    """True if *activity_type* is exempt from warrant authorization.
+
+    ``config`` is the active ``TenuoPluginConfig``, or ``None``. Exemption
+    only ever waives the "no warrant presented" denial (see
+    ``TenuoPluginConfig.unwarranted_activities``) — it is resolved from a
+    plain attribute lookup so it works identically whether the caller is the
+    outbound workflow interceptor or the inbound activity interceptor.
+    """
+    if config is None:
+        return False
+    patterns = getattr(config, "unwarranted_activities", ())
+    if not patterns:
+        return False
+    from tenuo.temporal._activity_patterns import activity_name_matches_any
+
+    return activity_name_matches_any(activity_type, patterns)
