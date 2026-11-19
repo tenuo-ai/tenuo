@@ -66,8 +66,8 @@ describe("participant CLI", () => {
     expect(state.attempts?.["5"]?.firstGreen).toBeUndefined();
 
     const attack = cli(labHome, "attack", 5, "answers/05-tenuo/chain.ts");
-    expect(attack).toContain("npm run star");
-    expect(attack).toContain("works locally and in Codespaces");
+    expect(attack).toContain("The code that did it is open source: github.com/tenuo-ai/tenuo");
+    expect(attack).not.toContain("npm run star");
     state = JSON.parse(readFileSync(join(labHome, "state.json"), "utf8")) as LabState;
     expect(state.attempts?.["5"]?.count).toBe(2);
     expect(state.attempts?.["5"]?.firstGreen).toBeDefined();
@@ -75,8 +75,7 @@ describe("participant CLI", () => {
 
     const share = cli(labHome, "share", 5, "answers/05-tenuo/chain.ts");
     expect(share).toMatch(/ROGUE ATTEMPTS BLOCKED \(2 SCENARIOS\)\s+14 \/ 14/);
-    expect(share).toContain("npm run star");
-    expect(share).toContain("works locally and in Codespaces");
+    expect(share).not.toContain("npm run star");
     const report = JSON.parse(readFileSync(join(labHome, "share-stage-5.json"), "utf8")) as {
       schema: string;
       sessionId: string;
@@ -180,12 +179,31 @@ describe("participant CLI", () => {
     const labHome = home();
     for (let stage = 1; stage < 7; stage += 1) cli(labHome, "next");
     const output = cli(labHome, "next");
-    expect(output).toContain("Challenge complete.");
     expect(output).toContain("https://tenuo.ai/lab/wrap-up");
     expect(output).toContain("npm run share");
-    expect(output).toContain("npm run star");
+    expect(output).not.toContain("npm run star");
     expect(output).not.toContain("Stages run 1 to 7");
+    // Skipping past an unsolved final stage is allowed but is not a win.
+    expect(output).not.toContain("Challenge complete.");
+    expect(output).toContain("Stage 7 is not contained yet");
   });
+
+  it("completes the incident stage only once the rogue is contained", () => {
+    const labHome = home();
+    for (let stage = 1; stage < 7; stage += 1) cli(labHome, "next");
+    const starter = cli(labHome, "score", 7);
+    expect(starter).toMatch(/The trip works, but \d+ rogue attempts? still land/);
+    expect(starter).not.toContain("Challenge complete.");
+    let state = JSON.parse(readFileSync(join(labHome, "state.json"), "utf8")) as LabState;
+    expect(state.completed).not.toContain(7);
+
+    const solved = cli(labHome, "score", 7, "answers/07-incident/chain.ts");
+    expect(solved).toContain("Challenge complete.");
+    expect(solved).not.toContain("still land");
+    state = JSON.parse(readFileSync(join(labHome, "state.json"), "utf8")) as LabState;
+    expect(state.completed).toContain(7);
+    expect(cli(labHome, "next")).toContain("Challenge complete.");
+  }, 120_000);
 
   it("keeps the explorer payload out of normal terminal output", () => {
     const labHome = home();
@@ -204,7 +222,7 @@ describe("generated lab guide", () => {
     expect(page).toContain("A ninety-minute security challenge");
     expect(page).not.toMatch(/security (?:game|lab)/);
     expect(page).toContain("The core challenge runs locally");
-    expect(page).toContain("only <code>npm run share</code> and the optional star command use the network");
+    expect(page).toContain("only <code>npm run share</code> uses the network");
     expect(page).not.toContain("skip if you are not signed in");
     expect(page).toContain('<details class="lab-reveal lab-expect">');
     expect(page).toContain("5 stages · about 90 min · 2 optional bosses");
@@ -215,15 +233,15 @@ describe("generated lab guide", () => {
     expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|lab)/);
   });
 
-  it("keeps the first action focused on setup and offers the optional star in both terminals", () => {
+  it("keeps the first action focused on setup in both terminals", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "lab.html"), "utf8");
     expect(page).not.toContain("Run the breach");
     expect(page).not.toContain("data-lab-browser-run");
     expect(layout).not.toContain("lab-browser-run");
-    expect(page.match(/npm run star/g)).toHaveLength(2);
-    expect(page).toMatch(/git clone[\s\S]*npm install[\s\S]*npm run star[\s\S]*npm run lab/);
-    expect(page).toMatch(/At the Codespaces terminal:[\s\S]*npm run star[\s\S]*npm run lab/);
+    expect(page).not.toContain("npm run star");
+    expect(page).toMatch(/git clone[\s\S]*npm install\nnpm run lab/);
+    expect(page).toMatch(/At the Codespaces terminal:[\s\S]*npm run lab/);
   });
 
   it("uses the challenge artwork on the homepage and its social card", () => {
@@ -247,13 +265,13 @@ describe("generated lab guide", () => {
     expect(layout).toContain('<meta name="twitter:title" content="{{ social_title }}">');
   });
 
-  it("links the IETF draft and repeats star and share at the end of the lab", () => {
+  it("links the IETF draft and offers share, not a star prompt, at the end of the lab", () => {
     const wrapUp = readFileSync(join(ROOT, "..", "..", "docs", "lab", "wrap-up.md"), "utf8");
     const contribute = readFileSync(join(ROOT, "..", "..", "docs", "lab", "contribute.md"), "utf8");
     expect(wrapUp).toContain('href="https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/"');
-    expect(wrapUp).toContain("npm run star");
+    expect(wrapUp).not.toContain("npm run star");
     expect(wrapUp).toContain("npm run share");
-    expect(contribute).toContain("npm run star");
+    expect(contribute).not.toContain("npm run star");
   });
 
   it("states both secure Stage 4 branches and names their intentional over-grant", () => {
