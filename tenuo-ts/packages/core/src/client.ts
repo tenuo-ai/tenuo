@@ -652,6 +652,11 @@ class TenuoClient implements Tenuo {
     if (!Array.isArray(presented)) {
       throw new TenuoConfigurationError("explainWarrant() options.approvals must be an array");
     }
+    // Bound untrusted input before any signature inspection or byte copying.
+    const maxApprovals = protocolLimits().max_approvals;
+    if (presented.length > maxApprovals) {
+      throw new TenuoConfigurationError(`explainWarrant() accepts at most ${maxApprovals} approval envelopes`);
+    }
     // An envelope that does not parse is dropped and counted, so one bad
     // entry cannot turn the whole check into a canonicalization failure.
     let unreadable = 0;

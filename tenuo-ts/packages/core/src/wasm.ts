@@ -122,6 +122,7 @@ export type WasmSessionInfo = {
 export type WasmProtocolLimits = {
   max_delegation_depth: number;
   max_warrant_ttl_seconds: number;
+  max_approvals: number;
 };
 
 /** Mirrors `NarrowOptions` in tenuo-wasm. Unknown keys are rejected there. */

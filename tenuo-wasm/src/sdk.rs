@@ -188,6 +188,7 @@ struct SessionInfoDto {
 struct ProtocolLimitsDto {
     max_delegation_depth: u32,
     max_warrant_ttl_seconds: u64,
+    max_approvals: usize,
 }
 
 /// `narrow(session, allow, options)` options. Unknown keys are rejected so a
@@ -1106,6 +1107,7 @@ pub fn sdk_protocol_limits() -> Result<JsValue, JsError> {
     Ok(to_js_value(&ProtocolLimitsDto {
         max_delegation_depth: MAX_DELEGATION_DEPTH,
         max_warrant_ttl_seconds: MAX_WARRANT_TTL_SECS,
+        max_approvals: tenuo::meta_envelope::MAX_APPROVALS,
     }))
 }
 

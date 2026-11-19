@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTenuo, exact, pattern, TenuoConfigurationError } from "../src/index.ts";
 import type { PresentedCall, Session } from "../src/index.ts";
-import { loadWasm } from "../src/wasm.ts";
+import { loadWasm, protocolLimits } from "../src/wasm.ts";
 
 const T = createTenuo;
 const REPO = "acme/app";
@@ -458,5 +458,45 @@ describe("diagnostics cannot become execution credentials", () => {
     expect(body).toHaveBeenCalledExactlyOnceWith(args);
     expect(runtime.peekReceipts()).toHaveLength(1);
     expect(T.verifyReceipt(runtime.peekReceipts()[0]!)).toMatchObject({ outcome: "allow" });
+  });
+});
+
+
+describe("diagnostic approval input budget", () => {
+  it.each(["signed", "bytes", "unreadable"] as const)(
+    "rejects too many %s envelopes before signature inspection",
+    (encoding) => {
+      const { checker, tokens, sign, reviewerKey } = setup();
+      const good = sign(reviewerKey, "reviewer");
+      const envelope = encoding === "signed" ? good
+        : encoding === "bytes" ? new Uint8Array(Buffer.from(good, "base64")) : "unreadable";
+      const approvals = Array.from({ length: protocolLimits().max_approvals + 1 }, () => envelope);
+      const inspect = vi.spyOn(loadWasm(), "sdkInspectApproval");
+      try {
+        expect(() => checker.explainWarrant(tokens, "merge_pr", args, { approvals }))
+          .toThrow(/accepts at most .* approval envelopes/);
+        expect(inspect).not.toHaveBeenCalled();
+      } finally { inspect.mockRestore(); }
+    },
+  );
+
+  it("checks length before even reading an oversized array element", () => {
+    const { checker, tokens } = setup();
+    const approvals = new Array<string>(protocolLimits().max_approvals + 1);
+    const read = vi.fn(() => { throw new Error("must not read oversized input"); });
+    Object.defineProperty(approvals, 0, { get: read });
+    expect(() => checker.explainWarrant(tokens, "merge_pr", args, { approvals }))
+      .toThrow(/accepts at most .* approval envelopes/);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("accepts the core limit itself without an off-by-one rejection", () => {
+    const { checker, tokens } = setup();
+    const maximum = protocolLimits().max_approvals;
+    expect(maximum).toBeGreaterThan(0);
+    const report = checker.explainWarrant(tokens, "merge_pr", args, {
+      approvals: Array.from({ length: maximum }, () => "unreadable"),
+    });
+    expect(report.approvals).toMatchObject({ status: "required", rejected: maximum });
   });
 });
