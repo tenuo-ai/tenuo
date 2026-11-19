@@ -1133,11 +1133,45 @@ pub fn sdk_decode_chain(warrants: JsValue) -> Result<JsValue, JsError> {
         .map(inspect_chain_warrant)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| JsError::new(&format!("failed to inspect chain: {e}")))?;
+    // JSON numbers cannot retain every protocol i64. Reject rather than silently
+    // changing signed policy values during JSON.parse in JavaScript.
+    for warrant in &decoded {
+        check_inspection_integer_precision(warrant).map_err(|e| JsError::new(&e))?;
+    }
     // JSON.parse defines own data properties, including __proto__. The generic
     // map serializer uses property assignment and can lose signed policy keys.
     let json = serde_json::to_string(&decoded)
         .map_err(|e| JsError::new(&format!("failed to serialize chain: {e}")))?;
     js_sys::JSON::parse(&json).map_err(|_| JsError::new("failed to parse decoded chain JSON"))
+}
+
+fn check_inspection_integer_precision(value: &serde_json::Value) -> Result<(), String> {
+    const MAX_SAFE: i64 = 9_007_199_254_740_991;
+    match value {
+        serde_json::Value::Number(number) => {
+            let unsafe_integer = number
+                .as_i64()
+                .is_some_and(|n| !(-MAX_SAFE..=MAX_SAFE).contains(&n))
+                || number.as_u64().is_some_and(|n| n > MAX_SAFE as u64);
+            if unsafe_integer {
+                return Err(format!(
+                    "inspection cannot represent integer {number} exactly in JavaScript"
+                ));
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                check_inspection_integer_precision(item)?;
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for field in fields.values() {
+                check_inspection_integer_precision(field)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn inspect_chain_warrant(warrant: &Warrant) -> Result<serde_json::Value, serde_json::Error> {
@@ -3215,6 +3249,24 @@ mod constraint_expr_tests {
 #[cfg(test)]
 mod inspection_tests {
     use super::*;
+
+    #[test]
+    fn inspection_rejects_unsafe_nested_integers_without_rounding() {
+        for value in [
+            i64::MIN,
+            i64::MAX,
+            9_007_199_254_740_992_i64,
+            -9_007_199_254_740_992_i64,
+        ] {
+            let nested = serde_json::json!({"constraints": {"amount": [1, {"value": value}]}});
+            assert!(check_inspection_integer_precision(&nested)
+                .unwrap_err()
+                .contains(&value.to_string()));
+        }
+        for value in [-9_007_199_254_740_991_i64, 0, 9_007_199_254_740_991_i64] {
+            assert!(check_inspection_integer_precision(&serde_json::json!(value)).is_ok());
+        }
+    }
 
     #[test]
     fn inspection_preserves_optional_fields_and_unknown_argument_policy() {

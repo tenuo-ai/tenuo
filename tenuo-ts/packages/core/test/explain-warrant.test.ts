@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { createTenuo, exact, pattern, range, TenuoConfigurationError } from "../src/index.ts";
 import type { PresentedCall, Session } from "../src/index.ts";
@@ -606,5 +607,27 @@ describe("prototype-safe warrant inspection", () => {
     expect(Object.getPrototypeOf(info.capabilities)).toBe(Object.prototype);
     expect(Object.keys(info.capabilities)).toEqual(["__proto__"]);
     expect(Object.hasOwn(JSON.parse(JSON.stringify(info)).capabilities, "__proto__")).toBe(true);
+  });
+});
+
+
+// Signed by Rust using Exact::new(i64), so the inputs never pass through a
+// JavaScript number. These are decode-only fixtures; expiry is intentionally irrelevant.
+const importedIntegerWarrants = JSON.parse(readFileSync(
+  new URL("./fixtures/inspection-integers.json", import.meta.url), "utf8",
+)) as { exactInteger: string; warrant: string }[];
+
+describe("precision-safe imported warrant inspection", () => {
+  it.each(importedIntegerWarrants)("rejects imported Exact($exactInteger) rather than rounding it", ({ exactInteger, warrant }) => {
+    expect(() => T.inspectWarrant(warrant)).toThrow(`inspection cannot represent integer ${exactInteger} exactly in JavaScript`);
+    expect(() => loadWasm().sdkDecodeChain([warrant])).toThrow(/cannot represent integer/);
+  });
+
+  it.each([Number.MAX_SAFE_INTEGER, Number.MIN_SAFE_INTEGER])("preserves the safe-integer boundary %s", (value) => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const issued = cp.session({ allow: { pay: { amount: exact(value) } } });
+    const info = T.inspectWarrant(issued.toWire())[0]!;
+    expect(JSON.stringify(info.capabilities)).toContain(String(value));
+    expect(cp.explainWarrant(issued.toWire(), "pay", { amount: value }).constraints.status).toBe("satisfied");
   });
 });

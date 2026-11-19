@@ -617,7 +617,10 @@ const report = checker.explainWarrant(warrant, "merge_pr", args, { approvals });
 `inspectWarrant().capabilities` preserves each tool's core `ConstraintSet`:
 `constraints` (encoded as `[type_id, body]`), plus `optional_fields` and
 `allow_unknown` when set. Exclusive range bounds and other constraint details
-are retained; this is not the explorer's simplified display map.
+are retained; this is not the explorer's simplified display map. Inspection
+rejects integers outside JavaScript's safe-integer range instead of rounding
+signed policy values. This is an inspection limitation, not a protocol limit;
+use the original warrant with a precision-preserving native decoder in that case.
 
 This reports chain validity (trusted root, signatures, narrowing, expiry and
 loaded revocation state), constraints, and approval evidence separately. Checks

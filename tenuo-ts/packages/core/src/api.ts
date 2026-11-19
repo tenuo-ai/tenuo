@@ -402,7 +402,8 @@ export type WarrantInfo = {
   readonly tools: readonly string[];
   /** Lossless core ConstraintSet representation per tool: constraints plus
    * optional_fields / allow_unknown when set. Constraints use [type_id, body]
-   * encoding, retaining details such as exclusive range bounds.
+   * encoding, retaining details such as exclusive range bounds. Inspection rejects
+   * integers outside JavaScript's safe range rather than returning rounded values.
    */
   readonly capabilities: Readonly<Record<string, unknown>>;
   readonly issuedAt: number;
