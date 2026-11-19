@@ -175,7 +175,7 @@ class TestGrantMethod:
             child = parent.grant(
                 to=worker_kp.public_key,
                 allow=["read_file"],
-                ttl=300,
+                ttl=60,  # shorter than the parent's default 300s
                 key=kp,
                 path=Exact("/data/q3.pdf"),  # Narrower constraint
             )
@@ -207,7 +207,7 @@ class TestGrantMethod:
             child = parent.grant(
                 to=worker_kp.public_key,
                 allow=["read_file", "send_email"],  # Inherit all tools
-                ttl=300,
+                ttl=60,  # shorter than the parent's default 300s
                 key=kp,
             )
 
