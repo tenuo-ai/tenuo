@@ -23,6 +23,7 @@ use tenuo::{
     MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS,
 };
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 use crate::init_panic_hook;
 
@@ -188,6 +189,7 @@ struct SessionInfoDto {
 struct ProtocolLimitsDto {
     max_delegation_depth: u32,
     max_warrant_ttl_seconds: u64,
+    max_approvals: usize,
 }
 
 /// `narrow(session, allow, options)` options. Unknown keys are rejected so a
@@ -716,6 +718,243 @@ impl SdkContext {
             warrants, tool, args_json, pop, approvals, tool_allow, None, request_id,
         )
     }
+
+    /// Diagnose a warrant and proposed call without a holder secret.
+    /// Reports chain, constraint and approval evidence independently. Possession
+    /// is never checked, no authorization verdict or receipt is produced, and
+    /// execution must still use authorizePresented with a valid PoP.
+    #[wasm_bindgen(js_name = explainWarrant)]
+    pub fn explain_warrant(
+        &self,
+        warrants: JsValue,
+        tool: &str,
+        args_json: JsValue,
+        approvals_json: JsValue,
+    ) -> JsValue {
+        init_panic_hook();
+        to_js_value(&self.explain_warrant_inner(warrants, tool, args_json, approvals_json))
+    }
+}
+
+#[derive(Serialize)]
+struct DiagnosticCheck {
+    status: &'static str,
+}
+
+impl DiagnosticCheck {
+    fn new(status: &'static str) -> Self {
+        Self { status }
+    }
+}
+
+#[derive(Serialize)]
+struct ApprovalDiagnosticsDto {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    valid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rejected: Option<u32>,
+}
+
+impl ApprovalDiagnosticsDto {
+    fn status(status: &'static str) -> Self {
+        Self {
+            status,
+            valid: None,
+            required: None,
+            rejected: None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct WarrantExplanationDto {
+    kind: &'static str,
+    chain: DiagnosticCheck,
+    constraints: DiagnosticCheck,
+    approvals: ApprovalDiagnosticsDto,
+    possession: DiagnosticCheck,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root_public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    holder_public_key: Option<String>,
+}
+
+impl WarrantExplanationDto {
+    fn deny(code: &str, message: String) -> Self {
+        Self {
+            kind: "diagnostic",
+            chain: DiagnosticCheck::new(if code == "TENUO_CANONICALIZATION" {
+                "not_evaluated"
+            } else {
+                "invalid"
+            }),
+            constraints: DiagnosticCheck::new("not_evaluated"),
+            approvals: ApprovalDiagnosticsDto::status("not_evaluated"),
+            possession: DiagnosticCheck::new("not_checked"),
+            code: Some(code.into()),
+            message: Some(message),
+            root_public_key: None,
+            holder_public_key: None,
+        }
+    }
+}
+
+impl SdkContext {
+    fn explain_warrant_inner(
+        &self,
+        warrants: JsValue,
+        tool: &str,
+        args_json: JsValue,
+        approvals_json: JsValue,
+    ) -> WarrantExplanationDto {
+        let chain = match parse_presented_chain(&warrants) {
+            Ok(c) if !c.is_empty() => c,
+            Ok(_) => {
+                return WarrantExplanationDto::deny(
+                    "TENUO_CONFIGURATION",
+                    "warrant chain must not be empty".into(),
+                )
+            }
+            Err(e) => return WarrantExplanationDto::deny("TENUO_CHAIN_INVALID", format!("{e:?}")),
+        };
+        let args = match canonical_args(&args_json) {
+            Ok(a) => a,
+            Err(e) => return WarrantExplanationDto::deny("TENUO_CANONICALIZATION", e),
+        };
+        let approvals = match parse_approvals(&approvals_json) {
+            Ok(a) => a,
+            Err(e) => return WarrantExplanationDto::deny("TENUO_CANONICALIZATION", e),
+        };
+
+        // Signatures, trust anchor, revocation, linkage, narrowing, expiry.
+        let verified = match self.authorizer.verify_chain(&chain) {
+            Ok(v) => v,
+            Err(e) => {
+                let d = deny_from_error(&e);
+                return WarrantExplanationDto::deny(
+                    d.code.as_deref().unwrap_or("TENUO_CHAIN_INVALID"),
+                    e.to_string(),
+                );
+            }
+        };
+        let leaf = chain.last().expect("non-empty chain");
+        let mut out = WarrantExplanationDto {
+            kind: "diagnostic",
+            chain: DiagnosticCheck::new("valid"),
+            constraints: DiagnosticCheck::new("satisfied"),
+            possession: DiagnosticCheck::new("not_checked"),
+            code: None,
+            message: None,
+            root_public_key: verified.root_issuer.map(hex::encode),
+            holder_public_key: Some(hex::encode(leaf.authorized_holder().to_bytes())),
+            approvals: ApprovalDiagnosticsDto::status("not_evaluated"),
+        };
+
+        let constraints = constraint_view(&args, tool, &chain);
+        if let Err(e) = leaf.check_constraints(tool, &constraints) {
+            let d = deny_from_error(&e);
+            out.constraints.status = "unsatisfied";
+            out.code = d.code;
+            out.message = Some(e.to_string());
+            return out;
+        }
+
+        // Constraints use the normalized view above; gates and approval hashes
+        // use wire arguments, exactly as enforcement does.
+        let requirement = match leaf
+            .approval_gate_map()
+            .and_then(|map| tenuo::approval_gate::approval_requirement(map.as_ref(), tool, &args))
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // An unevaluable gate is not evidence that approvals are satisfied.
+                out.approvals.status = "not_evaluated";
+                out.code = Some("TENUO_APPROVAL_REQUIRED".into());
+                out.message = Some(format!("approval gate could not be evaluated: {e}"));
+                return out;
+            }
+        };
+        match requirement {
+            tenuo::ApprovalRequirement::NotGated | tenuo::ApprovalRequirement::Exempt { .. } => {
+                out.approvals.status = "not_required";
+                return out;
+            }
+            tenuo::ApprovalRequirement::Denied { code, reason } => {
+                out.constraints.status = "unsatisfied";
+                out.code = Some(code);
+                out.message = Some(reason);
+                return out;
+            }
+            // Required, and any future variant: fail closed to the approval check.
+            _ => {}
+        }
+
+        let approvers = leaf.required_approvers().cloned().unwrap_or_default();
+        let required = leaf.approval_threshold();
+        if approvers.is_empty() || required == 0 {
+            // Gated with nobody able to approve: fail closed.
+            out.approvals.status = "required";
+            out.code = Some("TENUO_APPROVAL_REQUIRED".into());
+            out.message = Some("approval required but the warrant names no approvers".into());
+            out.approvals = ApprovalDiagnosticsDto {
+                status: "required",
+                valid: Some(0),
+                required: Some(required),
+                rejected: Some(approvals.len() as u32),
+            };
+            return out;
+        }
+
+        if approvals.len() > approvers.len().saturating_mul(2) {
+            out.approvals.status = "not_evaluated";
+            out.code = Some("TENUO_INSUFFICIENT_APPROVALS".into());
+            out.message = Some("too many approval envelopes".into());
+            return out;
+        }
+
+        // Approvals commit to (warrant id, tool, args, holder). Each envelope is
+        // verified before it counts, and each approver counts once, so an
+        // invalid envelope cannot displace a valid one from the same key.
+        let request_hash = compute_request_hash(
+            &leaf.id().to_string(),
+            tool,
+            &args,
+            Some(leaf.authorized_holder()),
+        );
+        let mut counted: std::collections::BTreeSet<[u8; 32]> = std::collections::BTreeSet::new();
+        let mut rejected = 0u32;
+        for approval in &approvals {
+            let ok = approvers.contains(&approval.approver_key)
+                && matches!(approval.verify(), Ok(p) if p.request_hash == request_hash && !p.is_expired());
+            if !ok || !counted.insert(approval.approver_key.to_bytes()) {
+                rejected += 1;
+            }
+        }
+        let valid = counted.len() as u32;
+        out.approvals = ApprovalDiagnosticsDto {
+            status: "satisfied",
+            valid: Some(valid),
+            required: Some(required),
+            rejected: Some(rejected),
+        };
+        if valid < required {
+            out.approvals.status = "required";
+            out.code = Some(if valid == 0 {
+                "TENUO_APPROVAL_REQUIRED".into()
+            } else {
+                "TENUO_INSUFFICIENT_APPROVALS".into()
+            });
+            out.message = Some(format!("{valid} of {required} required approvals"));
+        }
+        out
+    }
 }
 
 #[wasm_bindgen]
@@ -869,6 +1108,7 @@ pub fn sdk_protocol_limits() -> Result<JsValue, JsError> {
     Ok(to_js_value(&ProtocolLimitsDto {
         max_delegation_depth: MAX_DELEGATION_DEPTH,
         max_warrant_ttl_seconds: MAX_WARRANT_TTL_SECS,
+        max_approvals: tenuo::meta_envelope::MAX_APPROVALS,
     }))
 }
 
@@ -877,6 +1117,72 @@ pub fn sdk_inspect_warrant(wire: &str) -> Result<JsValue, JsError> {
     init_panic_hook();
     let warrant = parse_warrant(wire)?;
     Ok(inspect_js(&warrant))
+}
+
+/// Decode a warrant chain (stack string, single token, or token array), root
+/// first. Not authorization: no trusted root, linkage, expiry, or revocation check.
+#[wasm_bindgen(js_name = sdkDecodeChain)]
+pub fn sdk_decode_chain(warrants: JsValue) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let chain = parse_presented_chain(&warrants)?;
+    if chain.is_empty() {
+        return Err(JsError::new("warrant chain must not be empty"));
+    }
+    let decoded = chain
+        .iter()
+        .map(inspect_chain_warrant)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| JsError::new(&format!("failed to inspect chain: {e}")))?;
+    // JSON numbers cannot retain every protocol i64. Reject rather than silently
+    // changing signed policy values during JSON.parse in JavaScript.
+    for warrant in &decoded {
+        check_inspection_integer_precision(warrant).map_err(|e| JsError::new(&e))?;
+    }
+    // JSON.parse defines own data properties, including __proto__. The generic
+    // map serializer uses property assignment and can lose signed policy keys.
+    let json = serde_json::to_string(&decoded)
+        .map_err(|e| JsError::new(&format!("failed to serialize chain: {e}")))?;
+    js_sys::JSON::parse(&json).map_err(|_| JsError::new("failed to parse decoded chain JSON"))
+}
+
+fn check_inspection_integer_precision(value: &serde_json::Value) -> Result<(), String> {
+    const MAX_SAFE: i64 = 9_007_199_254_740_991;
+    match value {
+        serde_json::Value::Number(number) => {
+            let unsafe_integer = number
+                .as_i64()
+                .is_some_and(|n| !(-MAX_SAFE..=MAX_SAFE).contains(&n))
+                || number.as_u64().is_some_and(|n| n > MAX_SAFE as u64);
+            if unsafe_integer {
+                return Err(format!(
+                    "inspection cannot represent integer {number} exactly in JavaScript"
+                ));
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                check_inspection_integer_precision(item)?;
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for field in fields.values() {
+                check_inspection_integer_precision(field)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn inspect_chain_warrant(warrant: &Warrant) -> Result<serde_json::Value, serde_json::Error> {
+    let mut decoded = serde_json::to_value(crate::extract_decoded_warrant(warrant))?;
+    // The explorer's legacy readable map omits constraint-set rules and some
+    // constraint fields. SDK inspection must retain the core serialization.
+    decoded["capabilities"] = match warrant.capabilities() {
+        Some(capabilities) => serde_json::to_value(capabilities)?,
+        None => serde_json::json!({}),
+    };
+    Ok(decoded)
 }
 
 /// Diagnose all capability-constraint failures without authorizing the call.
@@ -1692,7 +1998,8 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
     if !js_sys::Array::is_array(value) {
         return Err("approvals must be an array of SignedApproval envelopes".into());
     }
-    let arr = js_sys::Array::from(value);
+    // Array::from would copy all elements before the budget check.
+    let arr = value.unchecked_ref::<js_sys::Array>();
     if arr.length() as usize > tenuo::meta_envelope::MAX_APPROVALS {
         return Err("too many approvals".into());
     }
@@ -2532,9 +2839,9 @@ fn constraint_view(
 ) -> HashMap<String, ConstraintValue> {
     args.iter()
         .filter_map(|(key, value)| match value {
-            _ if chain.iter().any(|warrant| {
-                warrant.optional_fields(tool).any(|field| field == key)
-            }) =>
+            _ if chain
+                .iter()
+                .any(|warrant| warrant.optional_fields(tool).any(|field| field == key)) =>
             {
                 Some((key.clone(), value.clone()))
             }
@@ -2618,6 +2925,14 @@ fn parse_pop_signature(input: &str) -> Result<Signature, String> {
 }
 
 fn parse_chain_parts(parts: JsValue) -> Result<Vec<Warrant>, JsError> {
+    // Reject oversized JS arrays before serde traverses or allocates their contents.
+    if js_sys::Array::is_array(&parts)
+        && parts.unchecked_ref::<js_sys::Array>().length() > MAX_DELEGATION_DEPTH
+    {
+        return Err(JsError::new(
+            "TENUO_CHAIN_INVALID: chain exceeds the WASM input budget",
+        ));
+    }
     let value: serde_json::Value = serde_wasm_bindgen::from_value(parts)
         .map_err(|e| JsError::new(&format!("invalid chain: {e}")))?;
     let arr = value
@@ -2928,5 +3243,57 @@ mod constraint_expr_tests {
             let err = constraint_from_expr(&expr).unwrap_err();
             assert_eq!(err, expected, "{expr}");
         }
+    }
+}
+
+#[cfg(test)]
+mod inspection_tests {
+    use super::*;
+
+    #[test]
+    fn inspection_rejects_unsafe_nested_integers_without_rounding() {
+        for value in [
+            i64::MIN,
+            i64::MAX,
+            9_007_199_254_740_992_i64,
+            -9_007_199_254_740_992_i64,
+        ] {
+            let nested = serde_json::json!({"constraints": {"amount": [1, {"value": value}]}});
+            assert!(check_inspection_integer_precision(&nested)
+                .unwrap_err()
+                .contains(&value.to_string()));
+        }
+        for value in [-9_007_199_254_740_991_i64, 0, 9_007_199_254_740_991_i64] {
+            assert!(check_inspection_integer_precision(&serde_json::json!(value)).is_ok());
+        }
+    }
+
+    #[test]
+    fn inspection_preserves_optional_fields_and_unknown_argument_policy() {
+        let key = SigningKey::generate();
+        let mut required = ConstraintSet::new();
+        required.insert("value", Exact::new("a"));
+        let mut optional = ConstraintSet::new();
+        optional.insert_optional("value", Exact::new("a"));
+        let mut open = required.clone();
+        open.set_allow_unknown(true);
+        let mut views = Vec::new();
+        for constraints in [&required, &optional, &open] {
+            let warrant = Warrant::builder()
+                .capability("read", constraints.clone())
+                .holder(key.public_key())
+                .ttl(std::time::Duration::from_secs(60))
+                .build(&key)
+                .unwrap();
+            let view = inspect_chain_warrant(&warrant).unwrap()["capabilities"]["read"].clone();
+            // Lossless: round-tripping the view reconstructs every set rule.
+            let roundtrip: ConstraintSet = serde_json::from_value(view.clone()).unwrap();
+            assert_eq!(&roundtrip, constraints);
+            views.push(view);
+        }
+        assert_ne!(views[0], views[1]);
+        assert_ne!(views[0], views[2]);
+        assert_eq!(views[1]["optional_fields"], serde_json::json!(["value"]));
+        assert_eq!(views[2]["allow_unknown"], serde_json::json!(true));
     }
 }

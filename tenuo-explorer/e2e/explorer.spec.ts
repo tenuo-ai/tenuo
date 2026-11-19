@@ -33,17 +33,28 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
         await expect(page.getByText('read_file').first()).toBeVisible();
     });
 
-    test('authorization flow works with dry run', async ({ page }) => {
+    test('diagnostics report policy evidence without authorizing execution', async ({ page }) => {
         // Load sample
         await page.click('button:has-text("Samples")');
         await page.getByText('Valid Read').click();
         await page.click('button:has-text("Decode Warrant")');
 
-        // The explorer intentionally performs policy-only checks in dry-run mode.
-        await page.click('button:has-text("Check Authorization")');
+        // Use the shared diagnostic path, which never establishes possession.
+        await page.click('button:has-text("Explain Call")');
 
         // Verify result appears
-        await expect(page.locator('text=/Authorized|Denied/').first()).toBeVisible();
+        await expect(page.getByText('Policy checks passed', { exact: true })).toBeVisible();
+        await expect(page.getByText(/Chain: valid; constraints: satisfied; approvals: not_required; possession: not_checked/)).toBeVisible();
+        await expect(page.getByText('Authorized', { exact: true })).toHaveCount(0);
+    });
+
+    test('chain diagnostics use the same evidence statuses', async ({ page }) => {
+        await page.keyboard.press('Meta+4');
+        await page.getByRole('button', { name: 'Load Sample Chain' }).click();
+        await page.getByRole('button', { name: 'Explain Chain', exact: true }).click();
+        await expect(page.getByText('✓ Policy checks passed', { exact: true })).toBeVisible();
+        await expect(page.getByText(/Chain: valid; constraints: satisfied; approvals: not_required; possession: not_checked/)).toBeVisible();
+        await expect(page.getByText('✓ Chain Authorized', { exact: true })).toHaveCount(0);
     });
 
     test('decode shortcut and clear action work', async ({ page }) => {

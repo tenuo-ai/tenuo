@@ -44,6 +44,13 @@ export class SdkContext {
      */
     explain(session: SdkSession, tool: string, args_json: any): any;
     /**
+     * Diagnose a warrant and proposed call without a holder secret.
+     * Reports chain, constraint and approval evidence independently. Possession
+     * is never checked, no authorization verdict or receipt is produced, and
+     * execution must still use authorizePresented with a valid PoP.
+     */
+    explainWarrant(warrants: any, tool: string, args_json: any, approvals_json: any): any;
+    /**
      * Issuer context from a stable 32-byte Ed25519 secret. Its own public
      * key is trusted; `extra_roots` (hex) are trusted as well, so one
      * process can verify chains from several control planes.
@@ -331,6 +338,12 @@ export function parse_strict_json(json_text: string): void;
  * can encode the same Ed25519 signature.
  */
 export function sdkCanonicalMetaSignature(signature: string): string;
+
+/**
+ * Decode a warrant chain (stack string, single token, or token array), root
+ * first. Not authorization: no trusted root, linkage, expiry, or revocation check.
+ */
+export function sdkDecodeChain(warrants: any): any;
 
 /**
  * Diagnose all capability-constraint failures without authorizing the call.

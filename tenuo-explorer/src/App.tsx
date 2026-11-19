@@ -1,13 +1,36 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
+import init, { decode_warrant, SdkContext, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
 import wasmUrl from './wasm/tenuo_wasm_bg.wasm?url'
 import { cleanInput, truncate, generateId } from './utils';
 
 // Types
-interface AuthResult {
-  authorized: boolean;
+interface DiagnosticResult {
+  checksPassed: boolean;
+  chainStatus?: string;
+  constraintStatus?: string;
+  approvalStatus?: string;
   reason?: string;
   deny_code?: string;
+}
+
+/** Diagnostic projection for the explorer UI; never an execution decision. */
+function explainCall(warrants: string[], tool: string, args: unknown, root: string): DiagnosticResult {
+  const context = SdkContext.fromTrustedRoots([root]);
+  try {
+    const report = context.explainWarrant(warrants, tool, args, []);
+    return {
+      checksPassed: report.chain.status === 'valid'
+        && report.constraints.status === 'satisfied'
+        && ['satisfied', 'not_required'].includes(report.approvals.status),
+      chainStatus: report.chain.status,
+      constraintStatus: report.constraints.status,
+      approvalStatus: report.approvals.status,
+      reason: `Chain: ${report.chain.status}; constraints: ${report.constraints.status}; approvals: ${report.approvals.status}; possession: ${report.possession.status}. ${report.message ?? ''}`,
+      deny_code: report.code,
+    };
+  } finally {
+    context.free();
+  }
 }
 
 interface DecodedWarrant {
@@ -488,7 +511,7 @@ const VerificationSteps = ({ decoded, tool, args: _args, authResult }: {
   decoded: DecodedWarrant | null;
   tool: string;
   args: string;
-  authResult: AuthResult | null;
+  authResult: DiagnosticResult | null;
 }) => {
   if (!decoded) return null;
 
@@ -499,10 +522,12 @@ const VerificationSteps = ({ decoded, tool, args: _args, authResult }: {
 
 
   const steps = [
-    { name: 'Signature Chain', status: 'pass', detail: 'Cryptographic signatures verified (dry run mode)' },
+    { name: 'Signature Chain', status: authResult?.chainStatus === 'valid' ? 'pass' : authResult?.chainStatus === 'invalid' ? 'fail' : 'pending', detail: authResult?.chainStatus ?? 'Not evaluated' },
     { name: 'Expiration Check', status: isExpired ? 'fail' : 'pass', detail: isExpired ? `Expired ${Math.floor(now - decoded.expires_at)}s ago` : `Valid for ${Math.floor(decoded.expires_at - now)}s` },
     { name: 'Tool Matching', status: toolMatch ? 'pass' : 'fail', detail: toolMatch ? `"${tool}" found in authorized tools` : `"${tool}" not in [${decoded.tools.join(', ')}]` },
-    { name: 'Constraint Evaluation', status: authResult?.authorized ? 'pass' : (authResult ? 'fail' : 'pending'), detail: authResult?.reason || 'Run authorization check to evaluate constraints' },
+    { name: 'Constraint Evaluation', status: authResult?.constraintStatus === 'satisfied' ? 'pass' : authResult?.constraintStatus === 'unsatisfied' ? 'fail' : 'pending', detail: authResult?.constraintStatus ?? 'Not evaluated' },
+    { name: 'Approvals', status: ['satisfied', 'not_required'].includes(authResult?.approvalStatus ?? '') ? 'pass' : authResult?.approvalStatus === 'required' ? 'fail' : 'pending', detail: authResult?.approvalStatus ?? 'Not evaluated' },
+    { name: 'Possession', status: 'pending', detail: 'Not checked. Execution requires verify() with a holder-signed invocation.' },
   ];
 
   return (
@@ -1492,7 +1517,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
     if (initial && initial.chain.length > 0) return decodeChainInput(initial.chain[0]).decoded?.issuer ?? '';
     return '';
   });
-  const [verifyResult, setVerifyResult] = useState<AuthResult | null>(null);
+  const [verifyResult, setVerifyResult] = useState<DiagnosticResult | null>(null);
 
   // Load sample chain: Root → Orchestrator → Worker
   const loadSampleChain = () => {
@@ -1602,23 +1627,23 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
   const verifyChain = () => {
     const validWarrants = warrants.filter(w => w.b64.trim());
     if (validWarrants.length < 1) {
-      setVerifyResult({ authorized: false, reason: 'Need at least one warrant' });
+      setVerifyResult({ checksPassed: false, reason: 'Need at least one warrant' });
       return;
     }
 
     if (!rootKeyHex.trim()) {
-      setVerifyResult({ authorized: false, reason: 'Root key (issuer public key) is required' });
+      setVerifyResult({ checksPassed: false, reason: 'Root key (issuer public key) is required' });
       return;
     }
 
     try {
       const args = JSON.parse(argsJson || '{}');
       const warrantList = validWarrants.map(w => w.b64.trim());
-      // Always dry_run in explorer (we don't have holder private keys to sign PoP)
-      const result = check_chain_access(warrantList, tool, args, rootKeyHex.trim(), true);
+      // Shared diagnostics only; this never establishes possession.
+      const result = explainCall(warrantList, tool, args, rootKeyHex.trim());
       setVerifyResult(result);
     } catch (e) {
-      setVerifyResult({ authorized: false, reason: `Error: ${e instanceof Error ? e.message : 'Unknown'}` });
+      setVerifyResult({ checksPassed: false, reason: `Error: ${e instanceof Error ? e.message : 'Unknown'}` });
     }
   };
 
@@ -1674,7 +1699,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
 
               {warrant.decoded && (
                 <div style={{ fontSize: '11px', marginTop: '8px', padding: '8px', background: 'var(--surface-2)', borderRadius: '6px' }}>
-                  <div style={{ color: 'var(--green)', marginBottom: '4px' }}>✓ Valid warrant</div>
+                  <div style={{ color: 'var(--green)', marginBottom: '4px' }}>✓ Decoded warrant</div>
 
                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
                     <strong>Capabilities:</strong>
@@ -1789,7 +1814,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
 
       {/* Authorization Test */}
       <div style={{ marginTop: '20px', padding: '16px', background: 'var(--surface-2)', borderRadius: '8px' }}>
-        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>Test Authorization</div>
+        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>Explain Proposed Call</div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
           <div>
@@ -1820,7 +1845,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
         </div>
 
         <button onClick={verifyChain} className="btn btn-primary" style={{ width: '100%' }} disabled={validCount < 1}>
-          Verify Chain Authorization
+          Explain Chain
         </button>
 
         {verifyResult && (
@@ -1828,16 +1853,16 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
             marginTop: '12px',
             padding: '12px',
             borderRadius: '8px',
-            background: verifyResult.authorized ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-            border: `1px solid ${verifyResult.authorized ? 'var(--green)' : 'var(--red)'}`,
+            background: verifyResult.checksPassed ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            border: `1px solid ${verifyResult.checksPassed ? 'var(--green)' : 'var(--red)'}`,
           }}>
             <div style={{
               fontSize: '14px',
               fontWeight: 600,
-              color: verifyResult.authorized ? 'var(--green)' : 'var(--red)',
+              color: verifyResult.checksPassed ? 'var(--green)' : 'var(--red)',
               marginBottom: '4px'
             }}>
-              {verifyResult.authorized ? '✓ Chain Authorized' : '✗ Chain Denied'}
+              {verifyResult.checksPassed ? '✓ Policy checks passed' : '✗ Requirements not satisfied'}
             </div>
             {verifyResult.reason && (
               <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
@@ -1856,7 +1881,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
           <li><strong>Signature chain</strong>: Each delegation must be signed by the parent's holder</li>
           <li><strong>TTL cascade</strong>: Child TTL ≤ parent TTL</li>
         </ul>
-        <p style={{ marginTop: '8px' }}>The root key must match the first warrant's issuer.</p>
+        <p style={{ marginTop: '8px' }}>The root key must match the first warrant's issuer. It is initially copied from the warrant; replace it with an independently trusted key when checking trust. Possession is not checked, no approvals are supplied, and no revocation lists are loaded.</p>
       </Explainer>
     </div>
   );
@@ -2383,7 +2408,7 @@ function App() {
   const [tool, setTool] = useState("");
   const [argsJson, setArgsJson] = useState("{}");
   const [decoded, setDecoded] = useState<DecodedWarrant | string | null>(null);
-  const [authResult, setAuthResult] = useState<AuthResult | null>(null);
+  const [authResult, setDiagnosticResult] = useState<DiagnosticResult | null>(null);
   const [shareUrl, setShareUrl] = useState("");
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showSamples, setShowSamples] = useState(false);
@@ -2508,7 +2533,7 @@ function App() {
       setTool(sample.tool);
       setArgsJson(sample.args);
       setDecoded(null);
-      setAuthResult(null);
+      setDiagnosticResult(null);
       setShowSamples(false);
     }
   };
@@ -2600,7 +2625,7 @@ function App() {
       }
 
       setPemDetected(isPem);
-      setAuthResult(null);
+      setDiagnosticResult(null);
       setValidationErrors({});
 
       // Add to history
@@ -2630,27 +2655,14 @@ function App() {
     try {
       const args = JSON.parse(argsJson || '{}');
 
-      // Check expiration first (WASM dry run doesn't check TTL)
-      if (decodedWarrant) {
-        const now = Date.now() / 1000;
-        if (decodedWarrant.expires_at < now) {
-          setAuthResult({
-            authorized: false,
-            reason: `Warrant expired ${Math.floor(now - decodedWarrant.expires_at)} seconds ago`,
-            deny_code: 'EXPIRED'
-          });
-          return;
-        }
-      }
-
       // For single-warrant auth, the trusted root is the warrant's own issuer
       // Decode inline if not already decoded
       const issuer = decodedWarrant?.issuer || decode_warrant(warrantB64.trim()).issuer;
-      const result = check_access(warrantB64.trim(), tool.trim(), args, issuer, true);
-      setAuthResult(result);
+      const result = explainCall([warrantB64.trim()], tool.trim(), args, issuer);
+      setDiagnosticResult(result);
       setValidationErrors({});
     } catch (e) {
-      setAuthResult({ authorized: false, reason: `Error: ${e instanceof Error ? e.message : 'Invalid input'}` });
+      setDiagnosticResult({ checksPassed: false, reason: `Error: ${e instanceof Error ? e.message : 'Invalid input'}` });
     }
   };
 
@@ -2659,7 +2671,7 @@ function App() {
     setTool("");
     setArgsJson("{}");
     setDecoded(null);
-    setAuthResult(null);
+    setDiagnosticResult(null);
   };
 
   const handleShare = async () => {
@@ -2703,7 +2715,7 @@ function App() {
     setTool(item.tool);
     setArgsJson(item.args);
     setDecoded(null);
-    setAuthResult(null);
+    setDiagnosticResult(null);
   };
 
   const clearHistory = () => {
@@ -2974,7 +2986,7 @@ function App() {
                   {/* Authorization Check Panel */}
                   <div className="panel">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Check Authorization</h2>
+                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Explain Call</h2>
                     </div>
 
                     {decodedWarrant && decodedWarrant.tools.length > 0 && (
@@ -3034,11 +3046,11 @@ function App() {
                         <p style={{ marginTop: '8px' }}><strong>Why this matters:</strong></p>
                         <p>• Without PoP: Intercepted warrant = full access</p>
                         <p>• With PoP: Intercepted warrant = useless (no private key)</p>
-                        <p style={{ marginTop: '8px', color: 'var(--accent)' }}>This explorer runs in <strong>dry run mode</strong> (policy-only check). Real PoP requires the holder's private key, which we don't have.</p>
+                        <p style={{ marginTop: '8px', color: 'var(--accent)' }}>This explorer reports <strong>diagnostic checks only</strong>. Possession is not checked, no approvals are supplied, and no revocation lists are loaded. Execution still requires a holder-signed invocation and full verification. The single-warrant preview uses the embedded issuer as its trust root; it does not establish that you trust that issuer.</p>
                       </Explainer>
 
                       <button onClick={handleAuthorize} disabled={!wasmReady || !warrantB64 || !tool} className="btn btn-primary">
-                        Check Authorization
+                        Explain Call
                       </button>
                     </div>
                   </div>
@@ -3242,18 +3254,18 @@ function App() {
                   {/* Result Panel */}
                   <div className="panel">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Authorization Result</h2>
+                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Diagnostic Result</h2>
                     </div>
 
                     {authResult ? (
-                      <div className={`result-box ${authResult.authorized ? 'success' : 'error'}`}>
-                        <div style={{ fontSize: '40px', marginBottom: '8px' }}>{authResult.authorized ? '✓' : '✕'}</div>
-                        <p style={{ fontSize: '20px', fontWeight: 600, marginBottom: '6px', color: authResult.authorized ? 'var(--green)' : 'var(--red)' }}>
-                          {authResult.authorized ? 'Authorized' : 'Denied'}
+                      <div className={`result-box ${authResult.checksPassed ? 'success' : 'error'}`}>
+                        <div style={{ fontSize: '40px', marginBottom: '8px' }}>{authResult.checksPassed ? '✓' : '✕'}</div>
+                        <p style={{ fontSize: '20px', fontWeight: 600, marginBottom: '6px', color: authResult.checksPassed ? 'var(--green)' : 'var(--red)' }}>
+                          {authResult.checksPassed ? 'Policy checks passed' : 'Requirements not satisfied'}
                         </p>
-                        {authResult.authorized ? (
+                        {authResult.checksPassed ? (
                           <p style={{ fontSize: '13px', color: 'var(--muted)' }}>
-                            Policy check passed <span style={{ opacity: 0.6 }}>(dry run)</span>
+                            {authResult.reason}
                           </p>
                         ) : (
                           <>
@@ -3264,7 +3276,7 @@ function App() {
                       </div>
                     ) : (
                       <div className="empty-state">
-                        <p>Run an authorization check to see results</p>
+                        <p>Explain a proposed call to see diagnostic results</p>
                       </div>
                     )}
                   </div>

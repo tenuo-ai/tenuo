@@ -141,6 +141,23 @@ class SdkContext {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
+     * Diagnose a warrant and proposed call without a holder secret.
+     * Reports chain, constraint and approval evidence independently. Possession
+     * is never checked, no authorization verdict or receipt is produced, and
+     * execution must still use authorizePresented with a valid PoP.
+     * @param {any} warrants
+     * @param {string} tool
+     * @param {any} args_json
+     * @param {any} approvals_json
+     * @returns {any}
+     */
+    explainWarrant(warrants, tool, args_json, approvals_json) {
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_explainWarrant(this.__wbg_ptr, warrants, ptr0, len0, args_json, approvals_json);
+        return ret;
+    }
+    /**
      * Issuer context from a stable 32-byte Ed25519 secret. Its own public
      * key is trusted; `extra_roots` (hex) are trusted as well, so one
      * process can verify chains from several control planes.
@@ -1002,6 +1019,21 @@ function sdkCanonicalMetaSignature(signature) {
 exports.sdkCanonicalMetaSignature = sdkCanonicalMetaSignature;
 
 /**
+ * Decode a warrant chain (stack string, single token, or token array), root
+ * first. Not authorization: no trusted root, linkage, expiry, or revocation check.
+ * @param {any} warrants
+ * @returns {any}
+ */
+function sdkDecodeChain(warrants) {
+    const ret = wasm.sdkDecodeChain(warrants);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkDecodeChain = sdkDecodeChain;
+
+/**
  * Diagnose all capability-constraint failures without authorizing the call.
  * @param {string} wire
  * @param {string} tool
@@ -1694,6 +1726,10 @@ function __wbg_get_imports() {
         },
         __wbg_now_ad5c9ea5a44932af: function() { return handleError(function () {
             const ret = Date.now();
+            return ret;
+        }, arguments); },
+        __wbg_parse_1f9d3f9cbc8a7da2: function() { return handleError(function (arg0, arg1) {
+            const ret = JSON.parse(getStringFromWasm0(arg0, arg1));
             return ret;
         }, arguments); },
         __wbg_prototypesetcall_d721637c7ca66eb8: function(arg0, arg1, arg2) {

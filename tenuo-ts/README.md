@@ -600,6 +600,63 @@ agent.revoke(list);            // now TENUO_REVOKED for that chain
 `createTenuo.signRevocationList(input, issuerSecret)` does the same with an
 explicit secret. Version numbers only go up.
 
+### Explain a warrant someone else holds
+
+Inspect or diagnose a proposed call without importing the holder's secret:
+
+```ts
+const checker = createTenuo({ trustedRoots: [issuerPublicKey] });
+createTenuo.inspectWarrant(warrant); // decoded, unverified contents, root first
+const report = checker.explainWarrant(warrant, "merge_pr", args, { approvals });
+// { kind: "diagnostic", chain: { status: "valid" },
+//   constraints: { status: "satisfied" },
+//   approvals: { status: "satisfied", valid: 1, required: 1, rejected: 0 },
+//   possession: { status: "not_checked" } }
+```
+
+`inspectWarrant().capabilities` preserves each tool's core `ConstraintSet`:
+`constraints` (encoded as `[type_id, body]`), plus `optional_fields` and
+`allow_unknown` when set. Exclusive range bounds and other constraint details
+are retained; this is not the explorer's simplified display map. Inspection
+rejects integers outside JavaScript's safe-integer range instead of rounding
+signed policy values. This is an inspection limitation, not a protocol limit;
+use the original warrant with a precision-preserving native decoder in that case.
+
+This reports chain validity (trusted root, signatures, narrowing, expiry and
+loaded revocation state), constraints, and approval evidence separately. Checks
+that cannot run are `not_evaluated`; missing approvals are `required`.
+It produces no authorization verdict or receipt. It uses current time, not
+historical execution evidence, and does not evaluate boundary-specific policy
+callbacks or tool ceilings. Even satisfied diagnostics do not authorize a call.
+
+For CI that **executes or gates an action**, the holder uses `present()` and the
+execution boundary uses `verify()`. That verifier needs only public keys and the
+presented proof, never the holder's secret. Recheck at execution; a diagnostic
+report cannot substitute for the invocation's proof of possession.
+
+#### Diagnostic safety invariants
+
+- Every diagnostic result has `kind: "diagnostic"` and
+  `possession: { status: "not_checked" }`, including failed or unevaluated checks.
+- Diagnostics never issue an authorization verdict, receipt, `Session`, or
+  `PresentedCall`, and never invoke a tool. They do not populate receipt outboxes.
+- Reports are not execution credentials. Passing one as a session or presented
+  call is rejected at runtime, including when TypeScript checks are bypassed.
+  Adding success flags cannot substitute for a valid holder signature.
+- Execution independently checks the exact invocation and current validity.
+  A previously satisfied report cannot bypass changed arguments, expiry,
+  revocation, missing approvals, or missing/invalid proof of possession.
+
+Keep verification coupled to execution: use `tenuo.tool()` or `mcp.handler()`
+when possible. At a custom boundary, await `verify()` and execute only its
+returned arguments. Never branch directly from diagnostic statuses to a tool
+call. Diagnostics can inform a review or block a proposal; they cannot grant
+execution permission. Tenuo cannot protect application code that calls the
+underlying action directly and bypasses its enforcement boundary.
+
+These invariants are exercised by the diagnostic boundary tests: rejected calls
+must leave the tool invocation count at zero, with valid-call positive controls.
+
 ### Present authority across any boundary
 
 `mcp.attach()` and `mcp.verify()` are one instance of a general pattern:
