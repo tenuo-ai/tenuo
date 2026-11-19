@@ -229,5 +229,5 @@ comes from the Temporal plugin and the warrant.
 - [Temporal Integration](./temporal.md) — the main guide.
 - [Temporal Integration Reference](./temporal-reference.md) — production
   configuration, replay safety, revocation, approvals, and troubleshooting.
-- [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md) — cross-namespace
+- [Tenuo for Temporal Nexus](https://tenuo.ai/solutions/temporal-nexus/) — cross-namespace
   and cross-organization examples.
