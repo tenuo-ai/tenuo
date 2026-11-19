@@ -61,3 +61,9 @@ Report this property separately from the states above when enforcement runs insi
 - It can prevent accidental or model-driven calls through the protected path.
 - It does not constrain a process that can bypass, replace, or disable the guard.
 - Use an independently operated server, sidecar, gateway, or worker when the threat model includes compromise of the agent process.
+
+## Chains and observation across versions
+
+Trust only independently provisioned roots. A delegated leaf must arrive with the complete parent chain in the target adapter's supported representation; intermediate keys are not replacement roots. Prove a narrower child succeeds with root-only trust and the missing-chain case has zero effects. Inspect installed helper signatures: Temporal and other transports have differing chain conventions across releases and pending PRs.
+
+When observation is implemented, decision=DENY and enforcement not applied can accompany an effect that runs. Report the decision, enforcement mode, and measured effect count separately. A deny receipt alone does not prove a blocked action. Pending observe-mode and receipt-format APIs are context only until present in the target source; do not infer semantics from a mode name.

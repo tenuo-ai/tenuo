@@ -1,6 +1,8 @@
 # Python integration
 
-Use this reference only for projects using the current `tenuo` Python package. Confirm the resolved package version and inspect its shipped API, framework module, and tests before generating code; adapters evolve faster than the core warrant types.
+Apply the [freshness contract](../SKILL.md#freshness-contract) first. Consult [framework status](framework-status.md) before choosing a path. These references describe invariants and version-conditional options; an API name here is not evidence that the target exports it.
+
+Use this reference only for projects using the `tenuo` Python package. Confirm the resolved package version and inspect its shipped API, framework module, and tests before generating code; adapters evolve faster than the core warrant types.
 
 Do not treat this reference as an API specification. First locate the importable `tenuo` package and its distribution metadata, then inspect the modules used by the project. Python wheels do not reliably include this repository's top-level examples. If local source is insufficient, compare the resolved package with the Python entry in the [release contract](../release.json). Use these immutable sources only when the versions match:
 
@@ -11,6 +13,9 @@ Do not treat this reference as an API specification. First locate the importable
 For another version, verify that a `v<version>` tag exists and that `tenuo-python/pyproject.toml` at that tag declares the resolved version before using its examples. Pre-release and language-package versions do not always map mechanically to repository tags.
 
 ## Choose the boundary
+
+For local CLI setup and YAML issuance, read the repository's `docs/local-cli.md`
+only after checking the target exports those unreleased helpers. Keep code-first issuance for task-derived values.
 
 - Use the top-level `@guard` wrapper for a generic in-process guardrail when that matches the threat model. `GuardBuilder` is not a top-level `tenuo` export; use it only from a supported adapter module, such as `tenuo.openai`, `tenuo.crewai`, `tenuo.autogen`, or `tenuo.google_adk`, after checking the installed adapter API.
 - Use `Authorizer` at a server or worker boundary for independent warrant, trust-chain, PoP, capability, and constraint verification.
