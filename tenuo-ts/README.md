@@ -614,6 +614,11 @@ const report = checker.explainWarrant(warrant, "merge_pr", args, { approvals });
 //   possession: { status: "not_checked" } }
 ```
 
+`inspectWarrant().capabilities` preserves each tool's core `ConstraintSet`:
+`constraints` (encoded as `[type_id, body]`), plus `optional_fields` and
+`allow_unknown` when set. Exclusive range bounds and other constraint details
+are retained; this is not the explorer's simplified display map.
+
 This reports chain validity (trusted root, signatures, narrowing, expiry and
 loaded revocation state), constraints, and approval evidence separately. Checks
 that cannot run are `not_evaluated`; missing approvals are `required`.

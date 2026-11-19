@@ -15,6 +15,7 @@ use tenuo::{
     wire, Authorizer, PublicKey, SignedRevocationList, SigningKey, Warrant,
 };
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 mod sdk;
 mod sdk_ext;
@@ -1193,6 +1194,17 @@ pub fn verify_approval_set(
         }).unwrap(),
     };
     let threshold = warrant.approval_threshold();
+
+    // Bound input before serde allocation, decoding, or signature verification.
+    if js_sys::Array::is_array(&approvals_b64)
+        && approvals_b64.unchecked_ref::<js_sys::Array>().length() as usize
+            > tenuo::meta_envelope::MAX_APPROVALS
+    {
+        return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+            satisfied: false, valid_count: 0, required: threshold,
+            error: Some("too many approval envelopes".into()),
+        }).unwrap();
+    }
 
     let approval_b64_list: Vec<String> = match serde_wasm_bindgen::from_value(approvals_b64) {
         Ok(v) => v,

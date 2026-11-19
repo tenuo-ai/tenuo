@@ -400,7 +400,10 @@ export type WarrantInfo = {
   readonly holderPublicKey: string;
   readonly depth: number;
   readonly tools: readonly string[];
-  /** Constraint map per tool, as decoded. */
+  /** Lossless core ConstraintSet representation per tool: constraints plus
+   * optional_fields / allow_unknown when set. Constraints use [type_id, body]
+   * encoding, retaining details such as exclusive range bounds.
+   */
   readonly capabilities: Readonly<Record<string, unknown>>;
   readonly issuedAt: number;
   readonly expiresAt: number;

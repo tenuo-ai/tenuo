@@ -1128,9 +1128,23 @@ pub fn sdk_decode_chain(warrants: JsValue) -> Result<JsValue, JsError> {
     if chain.is_empty() {
         return Err(JsError::new("warrant chain must not be empty"));
     }
-    let decoded: Vec<crate::DecodedWarrant> =
-        chain.iter().map(crate::extract_decoded_warrant).collect();
+    let decoded = chain
+        .iter()
+        .map(inspect_chain_warrant)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| JsError::new(&format!("failed to inspect chain: {e}")))?;
     Ok(to_js_value(&decoded))
+}
+
+fn inspect_chain_warrant(warrant: &Warrant) -> Result<serde_json::Value, serde_json::Error> {
+    let mut decoded = serde_json::to_value(crate::extract_decoded_warrant(warrant))?;
+    // The explorer's legacy readable map omits constraint-set rules and some
+    // constraint fields. SDK inspection must retain the core serialization.
+    decoded["capabilities"] = match warrant.capabilities() {
+        Some(capabilities) => serde_json::to_value(capabilities)?,
+        None => serde_json::json!({}),
+    };
+    Ok(decoded)
 }
 
 /// Diagnose all capability-constraint failures without authorizing the call.
@@ -1946,7 +1960,8 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
     if !js_sys::Array::is_array(value) {
         return Err("approvals must be an array of SignedApproval envelopes".into());
     }
-    let arr = js_sys::Array::from(value);
+    // Array::from would copy all elements before the budget check.
+    let arr = value.unchecked_ref::<js_sys::Array>();
     if arr.length() as usize > tenuo::meta_envelope::MAX_APPROVALS {
         return Err("too many approvals".into());
     }
@@ -3190,5 +3205,39 @@ mod constraint_expr_tests {
             let err = constraint_from_expr(&expr).unwrap_err();
             assert_eq!(err, expected, "{expr}");
         }
+    }
+}
+
+#[cfg(test)]
+mod inspection_tests {
+    use super::*;
+
+    #[test]
+    fn inspection_preserves_optional_fields_and_unknown_argument_policy() {
+        let key = SigningKey::generate();
+        let mut required = ConstraintSet::new();
+        required.insert("value", Exact::new("a"));
+        let mut optional = ConstraintSet::new();
+        optional.insert_optional("value", Exact::new("a"));
+        let mut open = required.clone();
+        open.set_allow_unknown(true);
+        let mut views = Vec::new();
+        for constraints in [&required, &optional, &open] {
+            let warrant = Warrant::builder()
+                .capability("read", constraints.clone())
+                .holder(key.public_key())
+                .ttl(std::time::Duration::from_secs(60))
+                .build(&key)
+                .unwrap();
+            let view = inspect_chain_warrant(&warrant).unwrap()["capabilities"]["read"].clone();
+            // Lossless: round-tripping the view reconstructs every set rule.
+            let roundtrip: ConstraintSet = serde_json::from_value(view.clone()).unwrap();
+            assert_eq!(&roundtrip, constraints);
+            views.push(view);
+        }
+        assert_ne!(views[0], views[1]);
+        assert_ne!(views[0], views[2]);
+        assert_eq!(views[1]["optional_fields"], serde_json::json!(["value"]));
+        assert_eq!(views[2]["allow_unknown"], serde_json::json!(true));
     }
 }

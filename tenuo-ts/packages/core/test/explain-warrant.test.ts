@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTenuo, exact, pattern, TenuoConfigurationError } from "../src/index.ts";
+import { createTenuo, exact, pattern, range, TenuoConfigurationError } from "../src/index.ts";
 import type { PresentedCall, Session } from "../src/index.ts";
 import { loadWasm, protocolLimits } from "../src/wasm.ts";
 
@@ -490,6 +490,21 @@ describe("diagnostic approval input budget", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it("direct WASM diagnostics reject oversized approvals without copying elements", () => {
+    const { root, tokens } = setup();
+    const context = loadWasm().SdkContext.fromTrustedRoots([root.hex]);
+    const approvals = new Array<string>(protocolLimits().max_approvals + 1);
+    const read = vi.fn(() => { throw new Error("must not copy oversized approvals"); });
+    Object.defineProperty(approvals, 0, { get: read });
+    try {
+      expect(context.explainWarrant(tokens, "merge_pr", args, approvals)).toMatchObject({
+        kind: "diagnostic", code: "TENUO_CANONICALIZATION",
+        approvals: { status: "not_evaluated" }, possession: { status: "not_checked" },
+      });
+      expect(read).not.toHaveBeenCalled();
+    } finally { (context as typeof context & { free(): void }).free(); }
+  });
+
   it("accepts the core limit itself without an off-by-one rejection", () => {
     const { checker, tokens } = setup();
     const maximum = protocolLimits().max_approvals;
@@ -526,5 +541,42 @@ describe("diagnostic chain input budget", () => {
     expect(checker.explainWarrant(chain, "merge_pr", args)).toMatchObject({
       chain: { status: "invalid" }, possession: { status: "not_checked" },
     });
+  });
+});
+
+
+describe("legacy approval helper input budget", () => {
+  it("rejects oversized duplicate approvals before reading any envelope", () => {
+    const { tokens, request, sign, reviewerKey } = setup();
+    const good = sign(reviewerKey, "r");
+    const maximum = protocolLimits().max_approvals;
+    const wasm = loadWasm() as unknown as {
+      verify_approval_set(warrant: string, hash: string, approvals: string[]): { satisfied: boolean; valid_count: number; error?: string };
+    };
+    const approvals = Array.from({ length: maximum + 1 }, () => good);
+    const read = vi.fn(() => { throw new Error("must not read oversized approval set"); });
+    Object.defineProperty(approvals, 0, { get: read });
+    expect(wasm.verify_approval_set(tokens[0]!, request.requestHash, approvals)).toMatchObject({
+      satisfied: false, valid_count: 0, error: "too many approval envelopes",
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(wasm.verify_approval_set(tokens[0]!, request.requestHash, Array(maximum).fill(good))).toMatchObject({
+      satisfied: true, valid_count: 1,
+    });
+  });
+});
+
+describe("lossless warrant inspection", () => {
+  it("distinguishes inclusive and exclusive range bounds in the decoded policy", () => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const inclusive = cp.session({ allow: { pay: { amount: range({ min: 0 }) } } });
+    const exclusive = cp.session({ allow: { pay: { amount: range({ min: 0, minExclusive: true }) } } });
+    const inclusivePolicy = T.inspectWarrant(inclusive.toWire())[0]!.capabilities.pay;
+    const exclusivePolicy = T.inspectWarrant(exclusive.toWire())[0]!.capabilities.pay;
+    expect(inclusivePolicy).not.toEqual(exclusivePolicy);
+    expect(inclusivePolicy).toHaveProperty("constraints.amount");
+    expect(exclusivePolicy).toHaveProperty("constraints.amount");
+    expect(cp.explainWarrant(inclusive.toWire(), "pay", { amount: 0 }).constraints.status).toBe("satisfied");
+    expect(cp.explainWarrant(exclusive.toWire(), "pay", { amount: 0 }).constraints.status).toBe("unsatisfied");
   });
 });
