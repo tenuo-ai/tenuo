@@ -580,3 +580,31 @@ describe("lossless warrant inspection", () => {
     expect(cp.explainWarrant(exclusive.toWire(), "pay", { amount: 0 }).constraints.status).toBe("unsatisfied");
   });
 });
+
+
+describe("prototype-safe warrant inspection", () => {
+  it("preserves __proto__ as an own signed constraint in enumeration and JSON", () => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const fields = JSON.parse('{"__proto__":{"kind":"exact","value":"a"},"constructor":{"kind":"exact","value":"b"}}');
+    const issued = cp.session({ allow: { read: fields } });
+    const info = T.inspectWarrant(issued.toWire())[0]!;
+    const policy = info.capabilities.read as { constraints: Record<string, unknown> };
+    expect(Object.getPrototypeOf(policy.constraints)).toBe(Object.prototype);
+    expect(Object.hasOwn(policy.constraints, "__proto__")).toBe(true);
+    expect(Object.keys(policy.constraints).sort()).toEqual(["__proto__", "constructor"]);
+    const roundtrip = JSON.parse(JSON.stringify(info));
+    expect(Object.hasOwn(roundtrip.capabilities.read.constraints, "__proto__")).toBe(true);
+    expect(roundtrip.capabilities.read.constraints).toEqual(policy.constraints);
+    // The decoded entry corresponds to a real constraint, not injected metadata.
+    expect(cp.explainWarrant(issued.toWire(), "read", JSON.parse('{"__proto__":"wrong","constructor":"b"}')).constraints.status).toBe("unsatisfied");
+  });
+
+  it("preserves __proto__ as an own capability name", () => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const allow = JSON.parse('{"__proto__":{"value":{"kind":"exact","value":"a"}}}');
+    const info = T.inspectWarrant(cp.session({ allow }).toWire())[0]!;
+    expect(Object.getPrototypeOf(info.capabilities)).toBe(Object.prototype);
+    expect(Object.keys(info.capabilities)).toEqual(["__proto__"]);
+    expect(Object.hasOwn(JSON.parse(JSON.stringify(info)).capabilities, "__proto__")).toBe(true);
+  });
+});

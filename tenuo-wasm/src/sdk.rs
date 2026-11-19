@@ -1133,7 +1133,11 @@ pub fn sdk_decode_chain(warrants: JsValue) -> Result<JsValue, JsError> {
         .map(inspect_chain_warrant)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| JsError::new(&format!("failed to inspect chain: {e}")))?;
-    Ok(to_js_value(&decoded))
+    // JSON.parse defines own data properties, including __proto__. The generic
+    // map serializer uses property assignment and can lose signed policy keys.
+    let json = serde_json::to_string(&decoded)
+        .map_err(|e| JsError::new(&format!("failed to serialize chain: {e}")))?;
+    js_sys::JSON::parse(&json).map_err(|_| JsError::new("failed to parse decoded chain JSON"))
 }
 
 fn inspect_chain_warrant(warrant: &Warrant) -> Result<serde_json::Value, serde_json::Error> {
