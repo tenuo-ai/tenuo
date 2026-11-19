@@ -77,5 +77,3 @@ list is enough.
 - **Cover what only one draft has.** `prefix`, `rank`, `max_lifetime` and
   `max_subtree` in asor, and `window`, `sum_max` and `cosign_above` in
   hulea, have no case yet, because no second draft has a counterpart.
-
-If the authors would rather keep this somewhere neutral, it can move.
