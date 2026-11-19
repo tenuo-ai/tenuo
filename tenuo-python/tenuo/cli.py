@@ -1062,6 +1062,57 @@ def verify_receipt_chain(path: str, *, verbose: bool = False, authorizers=None) 
     return False
 
 
+def _parse_public_key(value: str):
+    """A public key given as hex or base64."""
+    import base64
+    import binascii
+
+    from tenuo import PublicKey
+
+    text = value.strip()
+    try:
+        raw = bytes.fromhex(text)
+    except ValueError:
+        try:
+            raw = base64.b64decode(text, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError(f"not a hex or base64 public key: {value!r}") from None
+    return PublicKey.from_bytes(raw)
+
+
+def run_mcp_gateway(args) -> int:
+    """``tenuo mcp gateway``: serve a verifying proxy in front of one MCP server."""
+    try:
+        from tenuo.mcp.gateway import create_gateway
+    except ImportError as exc:
+        print(f"❌ {exc}")
+        return 1
+    from tenuo.identity import HolderIdentity
+
+    try:
+        roots = [_parse_public_key(value) for value in args.root]
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return 1
+    if args.receipts and not args.key:
+        print("❌ --receipts needs --key: receipts are signed with the gateway's own key")
+        return 1
+    host, sep, port = args.listen.rpartition(":")
+    if not sep or not port.isdigit():
+        print(f"❌ --listen must be HOST:PORT, got {args.listen!r}")
+        return 1
+
+    identity = HolderIdentity.load_or_create(args.key) if args.key else None
+    gateway = create_gateway(
+        args.upstream, trusted_roots=roots, identity=identity, receipts=args.receipts
+    )
+    print(f"Tenuo MCP gateway on http://{host}:{port}/mcp -> {args.upstream}", file=sys.stderr)
+    if identity is not None:
+        print(f"Receipt signer: {identity.public_key.to_bytes().hex()}", file=sys.stderr)
+    gateway.run(transport="http", host=host.strip("[]"), port=int(port), path="/mcp", show_banner=False)
+    return 0
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -1174,6 +1225,47 @@ def main():
         metavar="HEX",
         help="Enforcement-point key you recognize; repeatable. Every receipt "
         "in the stream must be signed by one.",
+    )
+
+    # mcp command
+    mcp_parser = subparsers.add_parser(
+        "mcp",
+        help="Protect MCP servers",
+    )
+    mcp_sub = mcp_parser.add_subparsers(dest="mcp_command")
+    mcp_gateway = mcp_sub.add_parser(
+        "gateway",
+        help="Verify every tool call against trusted roots, then forward it to an MCP server",
+    )
+    mcp_gateway.add_argument(
+        "upstream",
+        help="MCP server URL to forward verified calls to (keep it reachable only through the gateway)",
+    )
+    mcp_gateway.add_argument(
+        "--root",
+        action="append",
+        required=True,
+        metavar="KEY",
+        help="Trusted root public key (hex or base64); repeatable.",
+    )
+    mcp_gateway.add_argument(
+        "--listen",
+        default="127.0.0.1:8080",
+        metavar="HOST:PORT",
+        help="Address to serve MCP on (streamable HTTP at /mcp). Default: 127.0.0.1:8080",
+    )
+    mcp_gateway.add_argument(
+        "--receipts",
+        default=None,
+        metavar="PATH",
+        help="Append a signed receipt for every decision to this JSONL file "
+        "(check it with `tenuo receipt chain`).",
+    )
+    mcp_gateway.add_argument(
+        "--key",
+        default=None,
+        metavar="PATH",
+        help="The gateway's signing key (hex file), created if missing. Required with --receipts.",
     )
 
     # mint command
@@ -1330,6 +1422,12 @@ def main():
         else:
             receipt_parser.print_help()
             sys.exit(1)
+
+    elif args.command == "mcp":
+        if args.mcp_command == "gateway":
+            sys.exit(run_mcp_gateway(args))
+        mcp_parser.print_help()
+        sys.exit(1)
 
     elif args.command == "init":
         init_project()
