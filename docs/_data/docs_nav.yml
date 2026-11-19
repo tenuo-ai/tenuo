@@ -1,0 +1,111 @@
+# Docs navigation for tenuo.ai.
+#
+# The website renders this file as the docs sidebar and as the Previous / Next
+# links at the foot of each page. Order is reading order: a newcomer who clicks
+# Next from the top should meet ideas in the order they need them.
+#
+# A page appears in the sidebar only if it is listed here. Pages that are not
+# listed keep the plain layout.
+#
+# url: the path on tenuo.ai. Write it the way the page is served: "/quickstart/"
+# for pages with a trailing-slash permalink, "/openai" for flat pages. The site
+# ignores a trailing ".html" or "/" when matching, so either form works.
+#
+# Some URLs point at pages the website repo owns (/concepts, /lab/). That is
+# intended: this file orders the whole docs journey, wherever a page lives.
+
+- title: Get started
+  pages:
+    - title: Docs home
+      url: /docs/
+    - title: Why Tenuo
+      url: /concepts
+    - title: Quickstart
+      url: /quickstart/
+    - title: Hands-on lab
+      url: /lab/
+
+- title: Concepts
+  pages:
+    - title: Agent security patterns
+      url: /ai-agents
+
+- title: Guides
+  pages:
+    - title: Constraints
+      url: /constraints
+    - title: Human approvals
+      url: /approvals
+    - title: Debug a denial
+      url: /debugging
+
+- title: Integrations
+  pages:
+    - title: Overview
+      url: /integrations/
+    - title: OpenAI
+      url: /openai
+    - title: LangChain
+      url: /langchain
+    - title: LangGraph
+      url: /langgraph
+    - title: CrewAI
+      url: /crewai
+    - title: Google ADK
+      url: /google-adk
+    - title: AutoGen
+      url: /autogen
+    - title: Hermes Agent
+      url: /hermes
+    - title: MCP
+      url: /mcp
+    - title: A2A
+      url: /a2a
+    - title: Temporal
+      url: /temporal
+    - title: Temporal quickstart
+      url: /temporal-quickstart
+    - title: Temporal Nexus
+      url: /temporal-nexus
+    - title: FastAPI
+      url: /fastapi
+
+- title: Deploy and operate
+  pages:
+    - title: Choose where the check runs
+      url: /enforcement
+    - title: Going to production
+      url: /production-guide
+    - title: Kubernetes
+      url: /kubernetes
+    - title: Envoy gateway
+      url: /quickstart/envoy/
+    - title: Istio mesh
+      url: /quickstart/istio/
+    - title: Versions and compatibility
+      url: /compatibility-matrix
+
+- title: Security
+  pages:
+    - title: Security model
+      url: /security
+    - title: OWASP Agentic Top 10
+      url: /owasp
+    - title: EU AI Act
+      url: /eu-act
+
+- title: Reference
+  pages:
+    - title: Python API
+      url: /api-reference
+    - title: Temporal reference
+      url: /temporal-reference
+    - title: Protocol specification
+      url: /spec/
+
+- title: Background
+  pages:
+    - title: Related work
+      url: /related-work
+    - title: IETF AAT draft
+      url: /aat-ietf-summary
