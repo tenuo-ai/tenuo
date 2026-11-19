@@ -717,16 +717,12 @@ impl SdkContext {
         )
     }
 
-    /// Check a warrant chain held by someone else, without proof-of-possession.
-    ///
-    /// Verifies the chain against this context's trusted roots and loaded
-    /// revocation list (signatures, linkage, narrowing, expiry), the leaf's
-    /// constraints for `tool(args)`, its approval gate, and the signed
-    /// approvals. No holder secret and no PoP: an `allow` says the warrant and
-    /// approvals cover the call, not that the caller holds the key. Not an
-    /// authorization decision and emits no receipt.
-    #[wasm_bindgen(js_name = checkWithoutPop)]
-    pub fn check_without_pop(
+    /// Diagnose a warrant and proposed call without a holder secret.
+    /// Reports chain, constraint and approval evidence independently. Possession
+    /// is never checked, no authorization verdict or receipt is produced, and
+    /// execution must still use authorizePresented with a valid PoP.
+    #[wasm_bindgen(js_name = explainWarrant)]
+    pub fn explain_warrant(
         &self,
         warrants: JsValue,
         tool: &str,
@@ -734,21 +730,50 @@ impl SdkContext {
         approvals_json: JsValue,
     ) -> JsValue {
         init_panic_hook();
-        to_js_value(&self.check_without_pop_inner(warrants, tool, args_json, approvals_json))
+        to_js_value(&self.explain_warrant_inner(warrants, tool, args_json, approvals_json))
     }
 }
 
 #[derive(Serialize)]
-struct PopFreeApprovalsDto {
-    valid: u32,
-    required: u32,
-    rejected: u32,
+struct DiagnosticCheck {
+    status: &'static str,
+}
+
+impl DiagnosticCheck {
+    fn new(status: &'static str) -> Self {
+        Self { status }
+    }
 }
 
 #[derive(Serialize)]
-struct PopFreeCheckDto {
-    outcome: &'static str,
-    chain_valid: bool,
+struct ApprovalDiagnosticsDto {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    valid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rejected: Option<u32>,
+}
+
+impl ApprovalDiagnosticsDto {
+    fn status(status: &'static str) -> Self {
+        Self {
+            status,
+            valid: None,
+            required: None,
+            rejected: None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct WarrantExplanationDto {
+    kind: &'static str,
+    chain: DiagnosticCheck,
+    constraints: DiagnosticCheck,
+    approvals: ApprovalDiagnosticsDto,
+    possession: DiagnosticCheck,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -757,49 +782,53 @@ struct PopFreeCheckDto {
     root_public_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     holder_public_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    approvals: Option<PopFreeApprovalsDto>,
 }
 
-impl PopFreeCheckDto {
+impl WarrantExplanationDto {
     fn deny(code: &str, message: String) -> Self {
-        PopFreeCheckDto {
-            outcome: "deny",
-            chain_valid: false,
+        Self {
+            kind: "diagnostic",
+            chain: DiagnosticCheck::new(if code == "TENUO_CANONICALIZATION" {
+                "not_evaluated"
+            } else {
+                "invalid"
+            }),
+            constraints: DiagnosticCheck::new("not_evaluated"),
+            approvals: ApprovalDiagnosticsDto::status("not_evaluated"),
+            possession: DiagnosticCheck::new("not_checked"),
             code: Some(code.into()),
             message: Some(message),
             root_public_key: None,
             holder_public_key: None,
-            approvals: None,
         }
     }
 }
 
 impl SdkContext {
-    fn check_without_pop_inner(
+    fn explain_warrant_inner(
         &self,
         warrants: JsValue,
         tool: &str,
         args_json: JsValue,
         approvals_json: JsValue,
-    ) -> PopFreeCheckDto {
+    ) -> WarrantExplanationDto {
         let chain = match parse_presented_chain(&warrants) {
             Ok(c) if !c.is_empty() => c,
             Ok(_) => {
-                return PopFreeCheckDto::deny(
+                return WarrantExplanationDto::deny(
                     "TENUO_CONFIGURATION",
                     "warrant chain must not be empty".into(),
                 )
             }
-            Err(e) => return PopFreeCheckDto::deny("TENUO_CHAIN_INVALID", format!("{e:?}")),
+            Err(e) => return WarrantExplanationDto::deny("TENUO_CHAIN_INVALID", format!("{e:?}")),
         };
         let args = match canonical_args(&args_json) {
             Ok(a) => a,
-            Err(e) => return PopFreeCheckDto::deny("TENUO_CANONICALIZATION", e),
+            Err(e) => return WarrantExplanationDto::deny("TENUO_CANONICALIZATION", e),
         };
         let approvals = match parse_approvals(&approvals_json) {
             Ok(a) => a,
-            Err(e) => return PopFreeCheckDto::deny("TENUO_CANONICALIZATION", e),
+            Err(e) => return WarrantExplanationDto::deny("TENUO_CANONICALIZATION", e),
         };
 
         // Signatures, trust anchor, revocation, linkage, narrowing, expiry.
@@ -807,37 +836,44 @@ impl SdkContext {
             Ok(v) => v,
             Err(e) => {
                 let d = deny_from_error(&e);
-                return PopFreeCheckDto::deny(
+                return WarrantExplanationDto::deny(
                     d.code.as_deref().unwrap_or("TENUO_CHAIN_INVALID"),
                     e.to_string(),
                 );
             }
         };
         let leaf = chain.last().expect("non-empty chain");
-        let mut out = PopFreeCheckDto {
-            outcome: "allow",
-            chain_valid: true,
+        let mut out = WarrantExplanationDto {
+            kind: "diagnostic",
+            chain: DiagnosticCheck::new("valid"),
+            constraints: DiagnosticCheck::new("satisfied"),
+            possession: DiagnosticCheck::new("not_checked"),
             code: None,
             message: None,
             root_public_key: verified.root_issuer.map(hex::encode),
             holder_public_key: Some(hex::encode(leaf.authorized_holder().to_bytes())),
-            approvals: None,
+            approvals: ApprovalDiagnosticsDto::status("not_evaluated"),
         };
 
         let constraints = constraint_view(&args, tool, &chain);
         if let Err(e) = leaf.check_constraints(tool, &constraints) {
             let d = deny_from_error(&e);
-            out.outcome = "deny";
+            out.constraints.status = "unsatisfied";
             out.code = d.code;
             out.message = Some(e.to_string());
             return out;
         }
 
-        let requirement = match leaf.approval_requirement(tool, &args) {
+        // Constraints use the normalized view above; gates and approval hashes
+        // use wire arguments, exactly as enforcement does.
+        let requirement = match leaf
+            .approval_gate_map()
+            .and_then(|map| tenuo::approval_gate::approval_requirement(map.as_ref(), tool, &args))
+        {
             Ok(r) => r,
             Err(e) => {
-                // Fail closed: a gate that cannot be evaluated is required.
-                out.outcome = "approval_required";
+                // An unevaluable gate is not evidence that approvals are satisfied.
+                out.approvals.status = "not_evaluated";
                 out.code = Some("TENUO_APPROVAL_REQUIRED".into());
                 out.message = Some(format!("approval gate could not be evaluated: {e}"));
                 return out;
@@ -845,10 +881,11 @@ impl SdkContext {
         };
         match requirement {
             tenuo::ApprovalRequirement::NotGated | tenuo::ApprovalRequirement::Exempt { .. } => {
-                return out
+                out.approvals.status = "not_required";
+                return out;
             }
             tenuo::ApprovalRequirement::Denied { code, reason } => {
-                out.outcome = "deny";
+                out.constraints.status = "unsatisfied";
                 out.code = Some(code);
                 out.message = Some(reason);
                 return out;
@@ -861,14 +898,22 @@ impl SdkContext {
         let required = leaf.approval_threshold();
         if approvers.is_empty() || required == 0 {
             // Gated with nobody able to approve: fail closed.
-            out.outcome = "approval_required";
+            out.approvals.status = "required";
             out.code = Some("TENUO_APPROVAL_REQUIRED".into());
             out.message = Some("approval required but the warrant names no approvers".into());
-            out.approvals = Some(PopFreeApprovalsDto {
-                valid: 0,
-                required,
-                rejected: approvals.len() as u32,
-            });
+            out.approvals = ApprovalDiagnosticsDto {
+                status: "required",
+                valid: Some(0),
+                required: Some(required),
+                rejected: Some(approvals.len() as u32),
+            };
+            return out;
+        }
+
+        if approvals.len() > approvers.len().saturating_mul(2) {
+            out.approvals.status = "not_evaluated";
+            out.code = Some("TENUO_INSUFFICIENT_APPROVALS".into());
+            out.message = Some("too many approval envelopes".into());
             return out;
         }
 
@@ -885,19 +930,20 @@ impl SdkContext {
         let mut rejected = 0u32;
         for approval in &approvals {
             let ok = approvers.contains(&approval.approver_key)
-                && matches!(approval.verify(), Ok(p) if p.request_hash == request_hash);
+                && matches!(approval.verify(), Ok(p) if p.request_hash == request_hash && !p.is_expired());
             if !ok || !counted.insert(approval.approver_key.to_bytes()) {
                 rejected += 1;
             }
         }
         let valid = counted.len() as u32;
-        out.approvals = Some(PopFreeApprovalsDto {
-            valid,
-            required,
-            rejected,
-        });
+        out.approvals = ApprovalDiagnosticsDto {
+            status: "satisfied",
+            valid: Some(valid),
+            required: Some(required),
+            rejected: Some(rejected),
+        };
         if valid < required {
-            out.outcome = "approval_required";
+            out.approvals.status = "required";
             out.code = Some(if valid == 0 {
                 "TENUO_APPROVAL_REQUIRED".into()
             } else {
@@ -2737,9 +2783,9 @@ fn constraint_view(
 ) -> HashMap<String, ConstraintValue> {
     args.iter()
         .filter_map(|(key, value)| match value {
-            _ if chain.iter().any(|warrant| {
-                warrant.optional_fields(tool).any(|field| field == key)
-            }) =>
+            _ if chain
+                .iter()
+                .any(|warrant| warrant.optional_fields(tool).any(|field| field == key)) =>
             {
                 Some((key.clone(), value.clone()))
             }

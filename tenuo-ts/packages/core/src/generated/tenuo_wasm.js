@@ -122,27 +122,6 @@ class SdkContext {
         return ret;
     }
     /**
-     * Check a warrant chain held by someone else, without proof-of-possession.
-     *
-     * Verifies the chain against this context's trusted roots and loaded
-     * revocation list (signatures, linkage, narrowing, expiry), the leaf's
-     * constraints for `tool(args)`, its approval gate, and the signed
-     * approvals. No holder secret and no PoP: an `allow` says the warrant and
-     * approvals cover the call, not that the caller holds the key. Not an
-     * authorization decision and emits no receipt.
-     * @param {any} warrants
-     * @param {string} tool
-     * @param {any} args_json
-     * @param {any} approvals_json
-     * @returns {any}
-     */
-    checkWithoutPop(warrants, tool, args_json, approvals_json) {
-        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.sdkcontext_checkWithoutPop(this.__wbg_ptr, warrants, ptr0, len0, args_json, approvals_json);
-        return ret;
-    }
-    /**
      * Explain what the leaf would decide for `tool(args)`, field by field.
      * No proof-of-possession is signed, so this works on any session,
      * including one issued to another holder.
@@ -160,6 +139,23 @@ class SdkContext {
             throw takeFromExternrefTable0(ret[1]);
         }
         return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Diagnose a warrant and proposed call without a holder secret.
+     * Reports chain, constraint and approval evidence independently. Possession
+     * is never checked, no authorization verdict or receipt is produced, and
+     * execution must still use authorizePresented with a valid PoP.
+     * @param {any} warrants
+     * @param {string} tool
+     * @param {any} args_json
+     * @param {any} approvals_json
+     * @returns {any}
+     */
+    explainWarrant(warrants, tool, args_json, approvals_json) {
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_explainWarrant(this.__wbg_ptr, warrants, ptr0, len0, args_json, approvals_json);
+        return ret;
     }
     /**
      * Issuer context from a stable 32-byte Ed25519 secret. Its own public

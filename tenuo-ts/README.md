@@ -600,26 +600,31 @@ agent.revoke(list);            // now TENUO_REVOKED for that chain
 `createTenuo.signRevocationList(input, issuerSecret)` does the same with an
 explicit secret. Version numbers only go up.
 
-### Check a warrant someone else holds
+### Explain a warrant someone else holds
 
-An auditor or CI job can check a warrant chain and its approvals without the
-holder key. It trusts the issuer's public key and nothing else:
+Inspect or diagnose a proposed call without importing the holder's secret:
 
 ```ts
 const checker = createTenuo({ trustedRoots: [issuerPublicKey] });
-
-createTenuo.inspectWarrant(warrant); // decoded chain, root first. Not authorization.
-
-const result = checker.checkWithoutPop(warrant, "merge_pr", args, { approvals });
-// { outcome: "allow" | "deny" | "approval_required", chainValid, popChecked: false,
-//   approvals?: { valid, required, rejected }, code?, message? }
+createTenuo.inspectWarrant(warrant); // decoded, unverified contents, root first
+const report = checker.explainWarrant(warrant, "merge_pr", args, { approvals });
+// { kind: "diagnostic", chain: { status: "valid" },
+//   constraints: { status: "satisfied" },
+//   approvals: { status: "satisfied", valid: 1, required: 1, rejected: 0 },
+//   possession: { status: "not_checked" } }
 ```
 
-`checkWithoutPop()` verifies the chain (signatures, trusted root, revocation,
-narrowing, expiry), the constraints, the approval gate, and each approval. It
-never checks proof-of-possession, so an `allow` means the warrant and approvals
-cover the call, not that the caller holds the key. The service that runs the
-action still verifies a presented call with `verify()`.
+This reports chain validity (trusted root, signatures, narrowing, expiry and
+loaded revocation state), constraints, and approval evidence separately. Checks
+that cannot run are `not_evaluated`; missing approvals are `required`.
+It produces no authorization verdict or receipt. It uses current time, not
+historical execution evidence, and does not evaluate boundary-specific policy
+callbacks or tool ceilings. Even satisfied diagnostics do not authorize a call.
+
+For CI that **executes or gates an action**, the holder uses `present()` and the
+execution boundary uses `verify()`. That verifier needs only public keys and the
+presented proof, never the holder's secret. Recheck at execution; a diagnostic
+report cannot substitute for the invocation's proof of possession.
 
 ### Present authority across any boundary
 

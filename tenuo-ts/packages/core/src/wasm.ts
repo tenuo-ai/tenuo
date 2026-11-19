@@ -312,17 +312,19 @@ export type WasmContext = {
     toolAllow?: unknown,
     requestId?: string,
   ): WasmDecision;
-  checkWithoutPop(warrants: unknown, tool: string, args: unknown, approvals: unknown): WasmPopFreeCheck;
+  explainWarrant(warrants: unknown, tool: string, args: unknown, approvals: unknown): WasmWarrantExplanation;
 };
 
-export type WasmPopFreeCheck = {
-  outcome: "allow" | "deny" | "approval_required";
-  chain_valid: boolean;
+export type WasmWarrantExplanation = {
+  kind: "diagnostic";
+  chain: { status: "valid" | "invalid" | "not_evaluated" };
+  constraints: { status: "satisfied" | "unsatisfied" | "not_evaluated" };
+  possession: { status: "not_checked" };
+  approvals: { status: "satisfied" | "required" | "not_required" | "not_evaluated"; valid?: number; required?: number; rejected?: number };
   code?: string;
   message?: string;
   root_public_key?: string;
   holder_public_key?: string;
-  approvals?: { valid: number; required: number; rejected: number };
 };
 
 export type WasmDecodedWarrant = {

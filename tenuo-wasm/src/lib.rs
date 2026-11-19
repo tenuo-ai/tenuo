@@ -1219,7 +1219,7 @@ pub fn verify_approval_set(
         }
         // Verify signature and check hash before counting
         match approval.verify() {
-            Ok(payload) if payload.request_hash == request_hash => {}
+            Ok(payload) if payload.request_hash == request_hash && !payload.is_expired() => {}
             _ => continue,
         }
         // No duplicates: one count per approver key, among verified approvals

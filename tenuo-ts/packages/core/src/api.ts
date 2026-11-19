@@ -389,8 +389,8 @@ export type ApprovalInfo = {
 
 /**
  * Decoded view of one warrant. Not authorization: decoding checks no trusted
- * root, chain linkage, expiry, or revocation. Use `checkWithoutPop()` or
- * `verify()` for decisions.
+ * root, chain linkage, expiry, or revocation. Use `explainWarrant()` for diagnostics and
+ * `verify()` for authorization.
  */
 export type WarrantInfo = {
   readonly id: string;
@@ -411,33 +411,31 @@ export type WarrantInfo = {
   readonly minApprovals?: number;
 };
 
-export type CheckWithoutPopOptions = {
+export type ExplainWarrantOptions = {
   /** Signed approval envelopes (hex, standard or URL-safe base64, or CBOR bytes). */
   readonly approvals?: readonly (string | Uint8Array)[];
 };
 
-/**
- * Result of `checkWithoutPop()`. Proof-of-possession is never checked, so an
- * `allow` here says the warrant and approvals cover the call, not that the
- * caller holds the key. Enforcement points that run the action use `verify()`.
+/** Diagnostic evidence only. Never authorizes execution; use verify() for that.
+ * Uses current time and loaded revocation state, not historical execution evidence.
+ * Does not evaluate boundary-specific policy callbacks or tool ceilings.
  */
-export type CheckWithoutPopResult = {
-  readonly outcome: "allow" | "deny" | "approval_required";
-  readonly popChecked: false;
-  /** Chain signatures, linkage, narrowing and expiry verified to a trusted root. */
-  readonly chainValid: boolean;
+export type WarrantExplanation = {
+  readonly kind: "diagnostic";
+  readonly chain: { readonly status: "valid" | "invalid" | "not_evaluated" };
+  readonly constraints: { readonly status: "satisfied" | "unsatisfied" | "not_evaluated" };
+  readonly approvals: {
+    readonly status: "satisfied" | "required" | "not_required" | "not_evaluated";
+    readonly valid?: number;
+    readonly required?: number;
+    /** Invalid, expired, unrelated or duplicate envelopes excluded from the count. */
+    readonly rejected?: number;
+  };
+  readonly possession: { readonly status: "not_checked" };
   readonly code?: TenuoErrorCode;
   readonly message?: string;
-  /** Hex key of the trusted root the chain verified to. */
   readonly rootPublicKey?: string;
-  readonly holderPublicKey: string;
-  /** Present when the leaf gates this call on approvals. */
-  readonly approvals?: {
-    readonly valid: number;
-    readonly required: number;
-    /** Envelopes dropped before counting: unreadable, bad signature, or expired. */
-    readonly rejected: number;
-  };
+  readonly holderPublicKey?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -789,20 +787,16 @@ export interface Tenuo {
   issuerPublicKey(): PublicKeyHandle;
   /** What the session would decide for `tool(args)`, field by field. Never runs the tool. */
   explain(session: Session, tool: string, args: Readonly<Record<string, unknown>>): Explanation;
-  /**
-   * Check a warrant chain issued to someone else against this context's
-   * trusted roots and loaded revocation lists: chain, constraints, approval
-   * gates and signed approvals. Needs no holder key and checks no
-   * proof-of-possession, so it suits audits and CI checks. It does not
-   * authorize running the tool; the enforcement point still calls `verify()`.
-   * `warrant` is a single token or the token array from `toWire()`.
+  /** Diagnose chain, constraints and approvals without a holder key.
+   * Never authorizes execution: possession remains not_checked.
+   * Accepts a token, stack string, or token array from toWire().
    */
-  checkWithoutPop(
+  explainWarrant(
     warrant: string | readonly string[],
     tool: string,
     args: Readonly<Record<string, unknown>>,
-    options?: CheckWithoutPopOptions,
-  ): CheckWithoutPopResult;
+    options?: ExplainWarrantOptions,
+  ): WarrantExplanation;
   /** Everything an approval service needs to present `tool(args)` to a human. */
   approvalRequest(session: Session, tool: string, args: Readonly<Record<string, unknown>>): ApprovalRequest;
   /** Holder-signed proof that this session is the one asking for `tool(args)`. */

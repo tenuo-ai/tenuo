@@ -38,22 +38,18 @@ export class SdkContext {
      */
     authorizePresented(warrants: any, tool: string, args_json: any, pop: string, approvals: any, tool_allow: any, request_id?: string | null): any;
     /**
-     * Check a warrant chain held by someone else, without proof-of-possession.
-     *
-     * Verifies the chain against this context's trusted roots and loaded
-     * revocation list (signatures, linkage, narrowing, expiry), the leaf's
-     * constraints for `tool(args)`, its approval gate, and the signed
-     * approvals. No holder secret and no PoP: an `allow` says the warrant and
-     * approvals cover the call, not that the caller holds the key. Not an
-     * authorization decision and emits no receipt.
-     */
-    checkWithoutPop(warrants: any, tool: string, args_json: any, approvals_json: any): any;
-    /**
      * Explain what the leaf would decide for `tool(args)`, field by field.
      * No proof-of-possession is signed, so this works on any session,
      * including one issued to another holder.
      */
     explain(session: SdkSession, tool: string, args_json: any): any;
+    /**
+     * Diagnose a warrant and proposed call without a holder secret.
+     * Reports chain, constraint and approval evidence independently. Possession
+     * is never checked, no authorization verdict or receipt is produced, and
+     * execution must still use authorizePresented with a valid PoP.
+     */
+    explainWarrant(warrants: any, tool: string, args_json: any, approvals_json: any): any;
     /**
      * Issuer context from a stable 32-byte Ed25519 secret. Its own public
      * key is trusted; `extra_roots` (hex) are trusted as well, so one

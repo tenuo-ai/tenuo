@@ -5,8 +5,8 @@ import type {
   ApprovalContextAttestation,
   ApprovalInfo,
   ApprovalRequest,
-  CheckWithoutPopOptions,
-  CheckWithoutPopResult,
+  ExplainWarrantOptions,
+  WarrantExplanation,
   Clearance,
   ControlPlaneApprovalRequestV1,
   ControlPlaneApprovalResponseV1,
@@ -62,7 +62,7 @@ import {
   type WasmIssueOptions,
   type WasmMintOptions,
   type WasmNarrowOptions,
-  type WasmPopFreeCheck,
+  type WasmWarrantExplanation,
   type WasmRequireApproval,
 } from "./wasm.ts";
 
@@ -637,20 +637,20 @@ class TenuoClient implements Tenuo {
     }
   }
 
-  checkWithoutPop(
+  explainWarrant(
     warrant: string | readonly string[],
     tool: string,
     args: Readonly<Record<string, unknown>>,
-    options?: CheckWithoutPopOptions,
-  ): CheckWithoutPopResult {
-    const input = requireWarrantInput(warrant, "checkWithoutPop");
+    options?: ExplainWarrantOptions,
+  ): WarrantExplanation {
+    const input = requireWarrantInput(warrant, "explainWarrant");
     requireLabel(tool, "tool");
     if (args === null || typeof args !== "object" || Array.isArray(args)) {
-      throw new TenuoConfigurationError("checkWithoutPop() requires an arguments object");
+      throw new TenuoConfigurationError("explainWarrant() requires an arguments object");
     }
     const presented = options?.approvals ?? [];
     if (!Array.isArray(presented)) {
-      throw new TenuoConfigurationError("checkWithoutPop() options.approvals must be an array");
+      throw new TenuoConfigurationError("explainWarrant() options.approvals must be an array");
     }
     // An envelope that does not parse is dropped and counted, so one bad
     // entry cannot turn the whole check into a canonicalization failure.
@@ -668,27 +668,25 @@ class TenuoClient implements Tenuo {
         unreadable += 1;
       }
     }
-    let raw: WasmPopFreeCheck;
+    let raw: WasmWarrantExplanation;
     try {
-      raw = this.context.checkWithoutPop(input, tool, args, approvals);
+      raw = this.context.explainWarrant(input, tool, args, approvals);
     } catch (error) {
       throw new TenuoConfigurationError(errorMessage(error));
     }
-    const out: { -readonly [K in keyof CheckWithoutPopResult]: CheckWithoutPopResult[K] } = {
-      outcome: raw.outcome,
-      popChecked: false,
-      chainValid: raw.chain_valid,
-      holderPublicKey: raw.holder_public_key ?? "",
+    const out: { -readonly [K in keyof WarrantExplanation]: WarrantExplanation[K] } = {
+      kind: "diagnostic",
+      chain: raw.chain,
+      constraints: raw.constraints,
+      possession: { status: "not_checked" },
+      approvals: { ...raw.approvals },
     };
     if (raw.code !== undefined) out.code = raw.code as TenuoErrorCode;
     if (raw.message !== undefined) out.message = raw.message;
     if (raw.root_public_key !== undefined) out.rootPublicKey = raw.root_public_key;
-    if (raw.approvals !== undefined) {
-      out.approvals = {
-        valid: raw.approvals.valid,
-        required: raw.approvals.required,
-        rejected: raw.approvals.rejected + unreadable,
-      };
+    if (raw.holder_public_key !== undefined) out.holderPublicKey = raw.holder_public_key;
+    if (raw.approvals.rejected !== undefined) {
+      out.approvals = { ...raw.approvals, rejected: raw.approvals.rejected + unreadable };
     }
     return out;
   }

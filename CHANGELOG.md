@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **TypeScript: check a warrant without its holder key.**
-  `createTenuo.inspectWarrant()` decodes a chain, and
-  `tenuo.checkWithoutPop()` verifies the chain against the context's trusted
-  roots and revocation list, then the constraints, approval gate and signed
-  approvals for a call. It checks no proof-of-possession, so it suits audits
-  and CI checks; enforcement points still use `verify()`.
+- **TypeScript: holder-independent warrant diagnostics.**
+  `createTenuo.inspectWarrant()` decodes unverified contents and
+  `tenuo.explainWarrant()` reports chain, constraint and approval evidence.
+  Possession is always `not_checked`; no authorization verdict or receipt is
+  produced. Execution still requires `present()` / `verify()` and PoP.
+- **Explorer:** use the same WASM diagnostic operation for single warrants and
+  chains, and display requirement statuses instead of claiming authorization.
 
 ### Fixed
 
