@@ -150,23 +150,25 @@ def test_expired_parent_in_chain_rejected():
     worker_kp = SigningKey.generate()
     auth = Authorizer(trusted_roots=[root_kp.public_key])
 
+    # Two seconds rather than one, so the root is still valid when the grant
+    # below runs even if the clock has moved on to the next second.
     root_warrant = (
         Warrant.mint_builder()
         .capability("read_file", path=Pattern("/data/*"))
         .holder(delegator_kp.public_key)
-        .ttl(1)
+        .ttl(2)
         .mint(root_kp)
     )
 
+    # No TTL on the child, so it inherits the root's expiry.
     child_warrant = (
         root_warrant.grant_builder()
         .capability("read_file", path=Pattern("/data/*"))
         .holder(worker_kp.public_key)
-        .ttl(1)
         .grant(delegator_kp)
     )
 
-    time.sleep(1.5)
+    time.sleep(2.1)  # past the root's expiry
 
     pop = child_warrant.sign(worker_kp, "read_file", {"path": "/data/test.txt"}, int(time.time()))
     with pytest.raises(TenuoError) as excinfo:

@@ -1674,7 +1674,7 @@ class TestInvariantAttenuation:
             parent_warrant.attenuate(
                 signing_key=keys,
                 holder=keys.public_key,
-                ttl_seconds=3600,
+                ttl_seconds=60,
                 capabilities={"action": {"type": Wildcard()}},
             )
 
@@ -1697,7 +1697,7 @@ class TestInvariantAttenuation:
         child_warrant = parent_warrant.attenuate(
             signing_key=keys,
             holder=keys.public_key,
-            ttl_seconds=3600,
+            ttl_seconds=60,
             capabilities={"action": {"type": Exact("read")}},
         )
 
