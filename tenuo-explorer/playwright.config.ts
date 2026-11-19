@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const externalBaseURL = process.env.EXPLORER_E2E_BASE_URL;
+
 export default defineConfig({
     testDir: './e2e',
     fullyParallel: true,
@@ -10,7 +12,7 @@ export default defineConfig({
 
     use: {
         // Preview serves at /explorer/, dev redirects / to /explorer/
-        baseURL: process.env.CI ? 'http://localhost:4173/explorer' : 'http://localhost:5173',
+        baseURL: externalBaseURL ?? (process.env.CI ? 'http://localhost:4173/explorer/' : 'http://localhost:5173/explorer/'),
         trace: 'on-first-retry',
         screenshot: 'only-on-failure',
     },
@@ -30,7 +32,7 @@ export default defineConfig({
         },
     ],
 
-    webServer: {
+    webServer: externalBaseURL ? undefined : {
         // Use preview in CI (serves built dist/, fast), dev locally (HMR)
         command: process.env.CI ? 'npm run preview' : 'npm run dev',
         url: process.env.CI ? 'http://localhost:4173/explorer/' : 'http://localhost:5173',
