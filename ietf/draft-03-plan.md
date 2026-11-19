@@ -61,9 +61,10 @@ SHA-256.
 
 ## Alongside -03
 
-- [ ] Constraint comparison with
+- [x] Constraint comparison with
       [draft-asor-wimse-agent-delegation-chain](https://datatracker.ietf.org/doc/draft-asor-wimse-agent-delegation-chain/)
       and
       [draft-hulea-wimse-agent-mandate](https://datatracker.ietf.org/doc/draft-hulea-wimse-agent-mandate/):
       for each constraint type, the narrowing rule in each draft, and a
-      shared vector for each difference. Before IETF 127.
+      test case for each difference. On main since 19 November 2026:
+      [ietf/constraint-comparison](https://github.com/tenuo-ai/tenuo/tree/main/ietf/constraint-comparison).
