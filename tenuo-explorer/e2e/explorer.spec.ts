@@ -194,3 +194,55 @@ test.describe('Regression Tests', () => {
         await expect(codeBlock).toContainText('.build(&');
     });
 });
+
+test.describe('Feedback regressions', () => {
+    test.beforeEach(async ({ page }) => {
+        await page.clock.install();
+        await page.goto('/');
+        await expect(page.getByText('Decode Warrant')).toBeVisible({ timeout: 30000 });
+    });
+
+    test('an expired warrant is denied without decoding first', async ({ page }) => {
+        await page.click('button:has-text("Samples")');
+        await page.getByText('Expiring (10s)').click();
+        await page.clock.fastForward('00:13');
+        await page.click('button:has-text("Explain Call")');
+        await expect(page.getByText('Requirements not satisfied', { exact: true })).toBeVisible();
+        await expect(page.getByText(/expired/i).first()).toBeVisible();
+        await expect(page.getByText('Policy checks passed', { exact: true })).toHaveCount(0);
+    });
+
+    test('invalid input clears an earlier decode', async ({ page }) => {
+        await page.click('button:has-text("Samples")');
+        await page.getByText('Denied: Wrong Path').click();
+        await page.click('button:has-text("Decode Warrant")');
+        await expect(page.getByText('Authorized Tools')).toBeVisible();
+        await page.locator('textarea').first().fill('not a warrant');
+        await expect(page.getByText('Authorized Tools')).toHaveCount(0);
+        await page.click('button:has-text("Decode Warrant")');
+        await expect(page.getByText('Authorized Tools')).toHaveCount(0);
+        await expect(page.getByText(/Invalid base64|too short|Failed to decode|Decode failed/).first()).toBeVisible();
+    });
+
+    test('an invalid constraint disables Generate Preview', async ({ page }) => {
+        await page.getByRole('tab', { name: 'Build' }).click();
+        await page.getByRole('button', { name: 'Limited Spend' }).click();
+        const amount = page.locator('input[value="0-1000"]');
+        await amount.fill('1000-0');
+        await expect(page.getByText('Min cannot be greater than max')).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Generate Preview' })).toBeDisabled();
+        await page.locator('input[value="1000-0"]').fill('0-1000');
+        await expect(page.getByRole('button', { name: 'Generate Preview' })).toBeEnabled();
+    });
+
+    test('sample receipts: allow and deny verify, the tampered line fails', async ({ page }) => {
+        await page.getByRole('tab', { name: 'Verify' }).click();
+        await page.getByRole('button', { name: 'Load sample receipts' }).click();
+        await expect(page.getByText(/2 of 3 receipts verify/)).toBeVisible();
+        await expect(page.getByText(/ALLOW · read_file/)).toBeVisible();
+        await expect(page.getByText(/DENY · read_file/)).toBeVisible();
+        await expect(page.getByTestId('receipt-failed')).toHaveCount(1);
+        await expect(page.getByText('Line 3: signature does not verify')).toBeVisible();
+        await expect(page.getByTestId('sample-receipts-note')).toContainText('does not show the signing key speaks for anyone you trust');
+    });
+});

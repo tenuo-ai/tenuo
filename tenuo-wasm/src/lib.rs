@@ -577,7 +577,20 @@ pub fn check_access(
     }
 
     if dry_run {
-        // Skip Authorizer::check and do policy check manually to skip PoP
+        // Dry run skips PoP only: expiry and the rest of chain validity still apply.
+        if let Err(e) = Authorizer::new()
+            .with_trusted_root(root_key)
+            .verify_chain(std::slice::from_ref(&warrant))
+        {
+            return serde_wasm_bindgen::to_value(&AuthResult {
+                authorized: false,
+                reason: Some(format!("Chain verification failed: {}", e)),
+                deny_code: Some("CHAIN_INVALID".to_string()),
+                field: None,
+            })
+            .unwrap();
+        }
+        // Then the policy check, skipping PoP
         if let Some(caps) = warrant.capabilities() {
             if let Some(constraints) = caps.get(tool) {
                 match constraints.matches(&args) {
@@ -1826,39 +1839,57 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
     }
 
     // Generate or parse keypairs
-    let issuer_key = if let Some(hex_str) = &config.signing_key_hex {
-        match hex::decode(hex_str) {
-            Ok(bytes) => match bytes.try_into() {
-                Ok(arr) => SigningKey::from_bytes(&arr),
-                Err(_) => SigningKey::generate(), // Fallback (should handle error ideally)
-            },
-            Err(_) => SigningKey::generate(),
+    // A supplied key that does not parse is an error, never a fresh random key.
+    let parse_key = |hex_str: &Option<String>, what: &str| -> Result<SigningKey, String> {
+        match hex_str {
+            None => Ok(SigningKey::generate()),
+            Some(h) => hex::decode(h.trim())
+                .ok()
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+                .map(|arr| SigningKey::from_bytes(&arr))
+                .ok_or_else(|| format!("{what} must be 32 bytes of hex")),
         }
-    } else {
-        SigningKey::generate()
     };
-
-    let holder_key = if let Some(hex_str) = &config.holder_key_hex {
-        match hex::decode(hex_str) {
-            Ok(bytes) => match bytes.try_into() {
-                Ok(arr) => SigningKey::from_bytes(&arr),
-                Err(_) => SigningKey::generate(),
-            },
-            Err(_) => SigningKey::generate(),
-        }
-    } else {
-        SigningKey::generate()
+    let issuer_key = match parse_key(&config.signing_key_hex, "signing_key_hex") {
+        Ok(k) => k,
+        Err(e) => return invalid_config(e),
+    };
+    let holder_key = match parse_key(&config.holder_key_hex, "holder_key_hex") {
+        Ok(k) => k,
+        Err(e) => return invalid_config(e),
     };
 
     // Collect tool names
     let tool_names: Vec<String> = config.tools.keys().cloned().collect();
+
+    // Every listed entry must be a string; dropping one could widen a deny list
+    // or turn an allow list into "anything".
+    fn json_strings(v: &JsonValue, what: &str, field: &str) -> Result<Vec<String>, String> {
+        let arr = v
+            .as_array()
+            .ok_or_else(|| format!("{what} for field '{field}' must be a list"))?;
+        let out = arr
+            .iter()
+            .map(|x| x.as_str().map(str::to_string))
+            .collect::<Option<Vec<String>>>()
+            .ok_or_else(|| format!("{what} for field '{field}' must contain only strings"))?;
+        if out.is_empty() {
+            return Err(format!("{what} for field '{field}' must not be empty"));
+        }
+        Ok(out)
+    }
 
     // Helper to parse constraints from JSON into ConstraintSet
     let parse_constraints =
         |constraints: &HashMap<String, serde_json::Value>| -> Result<ConstraintSet, String> {
             let mut constraint_set = ConstraintSet::new();
             for (field, constraint_value) in constraints {
-                if let Some(obj) = constraint_value.as_object() {
+                // Fail closed: every supplied constraint becomes a restriction or
+                // an error. A skipped constraint would mint a broader warrant.
+                let obj = constraint_value.as_object().ok_or_else(|| {
+                    format!("constraint for field '{field}' must be an object, got {constraint_value}")
+                })?;
+                {
                     // Dispatch Shlex first so a valid sibling cannot hide a
                     // malformed Shlex or an unsupported boundary option.
                     if obj.contains_key("shlex") {
@@ -1873,6 +1904,12 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                         let constraint = parse_shlex_json(constraint_value, true)?;
                         constraint_set.insert(field.clone(), constraint);
                         continue;
+                    }
+                    if !obj.contains_key("type") && obj.len() != 1 {
+                        let keys: Vec<&String> = obj.keys().collect();
+                        return Err(format!(
+                            "constraint for field '{field}' must have exactly one kind, got {keys:?}"
+                        ));
                     }
                     // Pattern constraint
                     if let Some(pattern_val) = obj.get("pattern").and_then(|v| v.as_str()) {
@@ -1911,11 +1948,14 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                 if let (Ok(min), Ok(max)) =
                                     (min_str.parse::<f64>(), max_str.parse::<f64>())
                                 {
-                                    if min <= max {
-                                        if let Ok(r) = Range::new(Some(min), Some(max)) {
-                                            constraint_set
-                                                .insert(field.clone(), Constraint::Range(r));
-                                        }
+                                    if min > max {
+                                        return Err(format!(
+                                            "range for field '{field}': min {min} is greater than max {max}"
+                                        ));
+                                    }
+                                    if let Ok(r) = Range::new(Some(min), Some(max)) {
+                                        constraint_set
+                                            .insert(field.clone(), Constraint::Range(r));
                                     }
                                 }
                             }
@@ -1941,15 +1981,13 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                     else if let Some(anyof_val) = obj.get("anyof").and_then(|v| v.as_str()) {
                         let patterns: Vec<Pattern> = anyof_val
                             .split(',')
-                            .filter_map(|s| {
-                                let trimmed = s.trim();
-                                if trimmed.is_empty() {
-                                    None
-                                } else {
-                                    Pattern::new(trimmed).ok()
-                                }
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| {
+                                Pattern::new(s)
+                                    .map_err(|e| format!("anyof pattern '{s}' for field '{field}': {e}"))
                             })
-                            .collect();
+                            .collect::<Result<_, _>>()?;
                         if !patterns.is_empty() {
                             constraint_set.insert(
                                 field.clone(),
@@ -2028,37 +2066,26 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                         let url_safe_obj = obj.get("url_safe").or_else(|| obj.get("urlsafe"));
                         if let Some(inner) = url_safe_obj.and_then(|v| v.as_object()) {
                             let mut us = UrlSafe::new();
-                            if let Some(arr) = inner.get("allow_domains").and_then(|v| v.as_array()) {
-                                let domains: Vec<String> = arr.iter()
-                                    .filter_map(|d| d.as_str().map(|s| s.to_string()))
-                                    .collect();
-                                if !domains.is_empty() {
-                                    us.allow_domains = Some(domains);
-                                }
+                            if let Some(v) = inner.get("allow_domains") {
+                                us.allow_domains = Some(json_strings(v, "allow_domains", field)?);
                             }
-                            if let Some(arr) = inner.get("deny_domains").and_then(|v| v.as_array()) {
-                                let domains: Vec<String> = arr.iter()
-                                    .filter_map(|d| d.as_str().map(|s| s.to_string()))
-                                    .collect();
-                                if !domains.is_empty() {
-                                    us.deny_domains = Some(domains);
-                                }
+                            if let Some(v) = inner.get("deny_domains") {
+                                us.deny_domains = Some(json_strings(v, "deny_domains", field)?);
                             }
-                            if let Some(arr) = inner.get("allow_ports").and_then(|v| v.as_array()) {
-                                let ports: Vec<u16> = arr.iter()
-                                    .filter_map(|v| v.as_u64().and_then(|n| u16::try_from(n).ok()))
-                                    .collect();
-                                if !ports.is_empty() {
-                                    us.allow_ports = Some(ports);
-                                }
+                            if let Some(v) = inner.get("allow_ports") {
+                                let ports = v
+                                    .as_array()
+                                    .and_then(|arr| {
+                                        arr.iter()
+                                            .map(|p| p.as_u64().and_then(|n| u16::try_from(n).ok()))
+                                            .collect::<Option<Vec<u16>>>()
+                                    })
+                                    .filter(|p| !p.is_empty())
+                                    .ok_or_else(|| format!("allow_ports for field '{field}' must be a non-empty list of ports"))?;
+                                us.allow_ports = Some(ports);
                             }
-                            if let Some(arr) = inner.get("schemes").and_then(|v| v.as_array()) {
-                                let schemes: Vec<String> = arr.iter()
-                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                    .collect();
-                                if !schemes.is_empty() {
-                                    us.schemes = schemes;
-                                }
+                            if let Some(v) = inner.get("schemes") {
+                                us.schemes = json_strings(v, "schemes", field)?;
                             }
                             if let Some(v) = inner.get("block_private").and_then(|v| v.as_bool()) {
                                 us.block_private = v;
@@ -2102,37 +2129,29 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                 }
                             }
                             "Range" => {
-                                let min = obj.get("min").and_then(|v| v.as_f64());
-                                let max = obj.get("max").and_then(|v| v.as_f64());
+                                let bound = |k: &str| -> Result<Option<f64>, String> {
+                                    match obj.get(k) {
+                                        None | Some(JsonValue::Null) => Ok(None),
+                                        Some(v) => v.as_f64().map(Some).ok_or_else(|| {
+                                            format!("range {k} for field '{field}' must be a number")
+                                        }),
+                                    }
+                                };
+                                let (min, max) = (bound("min")?, bound("max")?);
+                                if min.is_none() && max.is_none() {
+                                    return Err(format!("range for field '{field}' needs min or max"));
+                                }
                                 if let Ok(r) = Range::new(min, max) {
                                     constraint_set.insert(field.clone(), Constraint::Range(r));
                                 }
                             }
                             "OneOf" => {
-                                if let Some(arr) = obj.get("values").and_then(|v| v.as_array()) {
-                                    let values: Vec<String> = arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect();
-                                    if !values.is_empty() {
-                                        constraint_set.insert(
-                                            field.clone(),
-                                            Constraint::OneOf(OneOf::new(values)),
-                                        );
-                                    }
-                                }
+                                let values = json_strings(obj.get("values").unwrap_or(&JsonValue::Null), "OneOf values", field)?;
+                                constraint_set.insert(field.clone(), Constraint::OneOf(OneOf::new(values)));
                             }
                             "NotOneOf" => {
-                                if let Some(arr) = obj.get("values").and_then(|v| v.as_array()) {
-                                    let values: Vec<String> = arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect();
-                                    if !values.is_empty() {
-                                        constraint_set.insert(
-                                            field.clone(),
-                                            Constraint::NotOneOf(NotOneOf::new(values)),
-                                        );
-                                    }
-                                }
+                                let values = json_strings(obj.get("values").unwrap_or(&JsonValue::Null), "NotOneOf values", field)?;
+                                constraint_set.insert(field.clone(), Constraint::NotOneOf(NotOneOf::new(values)));
                             }
                             "Cidr" => {
                                 if let Some(cidr_val) = obj.get("cidr").and_then(|v| v.as_str()) {
@@ -2157,17 +2176,8 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                 }
                             }
                             "Contains" => {
-                                if let Some(arr) = obj.get("values").and_then(|v| v.as_array()) {
-                                    let values: Vec<String> = arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect();
-                                    if !values.is_empty() {
-                                        constraint_set.insert(
-                                            field.clone(),
-                                            Constraint::Contains(Contains::new(values)),
-                                        );
-                                    }
-                                }
+                                let values = json_strings(obj.get("values").unwrap_or(&JsonValue::Null), "Contains values", field)?;
+                                constraint_set.insert(field.clone(), Constraint::Contains(Contains::new(values)));
                             }
                             "Subpath" => {
                                 // Accepts both "base" (openclaw) and "root" (canonical)
@@ -2184,27 +2194,15 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                 let mut us = UrlSafe::new();
                                 // "deniedHosts" (openclaw) or "deny_domains" (canonical)
                                 let deny = obj.get("deniedHosts")
-                                    .or_else(|| obj.get("deny_domains"))
-                                    .and_then(|v| v.as_array());
-                                if let Some(arr) = deny {
-                                    let hosts: Vec<String> = arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect();
-                                    if !hosts.is_empty() {
-                                        us.deny_domains = Some(hosts);
-                                    }
+                                    .or_else(|| obj.get("deny_domains"));
+                                if let Some(v) = deny {
+                                    us.deny_domains = Some(json_strings(v, "deny_domains", field)?);
                                 }
                                 // "allowedHosts" (openclaw) or "allow_domains" (canonical)
                                 let allow = obj.get("allowedHosts")
-                                    .or_else(|| obj.get("allow_domains"))
-                                    .and_then(|v| v.as_array());
-                                if let Some(arr) = allow {
-                                    let hosts: Vec<String> = arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect();
-                                    if !hosts.is_empty() {
-                                        us.allow_domains = Some(hosts);
-                                    }
+                                    .or_else(|| obj.get("allow_domains"));
+                                if let Some(v) = allow {
+                                    us.allow_domains = Some(json_strings(v, "allow_domains", field)?);
                                 }
                                 // Block flags (camelCase and snake_case)
                                 for (camel, snake, field_ref) in [
@@ -2236,6 +2234,11 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                             keys, field
                         ));
                     }
+                }
+                if constraint_set.get(field).is_none() {
+                    return Err(format!(
+                        "invalid constraint for field '{field}': {constraint_value}"
+                    ));
                 }
             }
             Ok(constraint_set)

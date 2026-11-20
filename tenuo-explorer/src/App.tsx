@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import init, { decode_warrant, SdkContext, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
 import wasmUrl from './wasm/tenuo_wasm_bg.wasm?url'
 import { cleanInput, truncate, generateId } from './utils';
+import { SAMPLE_RECEIPTS } from './sampleReceipts';
 
 // Types
 interface DiagnosticResult {
@@ -1244,11 +1245,51 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
   }
 };
 
-const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void }) => {
-  const [tools, setTools] = useState<ToolConstraint[]>([{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'docs/*' }] }]);
-  const [ttl, setTtl] = useState(3600);
+/**
+ * Every problem that should stop generation, keyed by row. Derived from the
+ * current input on each render so edits, removals and templates never leave a
+ * stale verdict behind. A row that cannot be sent as written blocks generation
+ * rather than being dropped, since dropping a constraint broadens the warrant.
+ */
+export function builderIssues(tools: ToolConstraint[], ttl: number): { rows: Record<string, string>; form: string[] } {
+  const rows: Record<string, string> = {};
+  const form: string[] = [];
+  if (!Number.isInteger(ttl) || ttl <= 0) form.push('TTL must be a positive whole number of seconds');
+  if (!tools.some(t => t.name.trim())) form.push('Add at least one tool');
+  const names = new Set<string>();
+  tools.forEach((tool, ti) => {
+    const name = tool.name.trim();
+    if (!name) {
+      if (tool.constraints.length > 0) rows[`${ti}`] = 'Tool name is required';
+    } else if (names.has(name)) {
+      rows[`${ti}`] = `Duplicate tool "${name}"`;
+    }
+    names.add(name);
+    const keys = new Set<string>();
+    tool.constraints.forEach((con, ci) => {
+      const id = `${ti}-${ci}`;
+      const key = con.key.trim();
+      if (!key) { rows[id] = 'Argument name is required'; return; }
+      if (keys.has(key)) { rows[id] = `Duplicate argument "${key}"`; return; }
+      keys.add(key);
+      if (con.type !== 'url_safe' && !con.value.trim()) { rows[id] = 'Value is required'; return; }
+      const v = validateConstraintValue(con.type, con.value);
+      if (!v.valid) rows[id] = v.error || 'Invalid';
+    });
+  });
+  return { rows, form };
+}
+
+const WarrantBuilder = ({ onGenerate, onEdit }: { onGenerate: (config: unknown) => void; onEdit?: () => void }) => {
+  const [tools, setToolsState] = useState<ToolConstraint[]>([{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'docs/*' }] }]);
+  const [ttl, setTtlState] = useState(3600);
   const [maxDepth, setMaxDepth] = useState(3);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  // Any edit makes an earlier preview describe a different configuration.
+  const setTools = (next: ToolConstraint[]) => { setToolsState(next); onEdit?.(); };
+  const setTtl = (next: number) => { setTtlState(next); onEdit?.(); };
+  const issues = useMemo(() => builderIssues(tools, ttl), [tools, ttl]);
+  const errors = issues.rows;
+  const issueCount = Object.keys(issues.rows).length + issues.form.length;
 
   const addTool = () => setTools([...tools, { name: '', constraints: [] }]);
   const removeTool = (i: number) => setTools(tools.filter((_, idx) => idx !== i));
@@ -1259,29 +1300,19 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
   };
   const addConstraint = (toolIdx: number) => {
     const updated = [...tools];
-    updated[toolIdx].constraints.push({ key: '', type: 'pattern', value: '' });
+    updated[toolIdx] = { ...updated[toolIdx], constraints: [...updated[toolIdx].constraints, { key: '', type: 'pattern', value: '' }] };
     setTools(updated);
   };
   const updateConstraint = (toolIdx: number, constIdx: number, field: string, value: string) => {
     const updated = [...tools];
-    const constraint = { ...updated[toolIdx].constraints[constIdx], [field]: value };
-    updated[toolIdx].constraints[constIdx] = constraint;
+    const constraints = [...updated[toolIdx].constraints];
+    constraints[constIdx] = { ...constraints[constIdx], [field]: value };
+    updated[toolIdx] = { ...updated[toolIdx], constraints };
     setTools(updated);
-
-    // Validate on change
-    const errorKey = `${toolIdx}-${constIdx}`;
-    if (field === 'value' || field === 'type') {
-      const validation = validateConstraintValue(constraint.type, constraint.value);
-      if (!validation.valid) {
-        setErrors(prev => ({ ...prev, [errorKey]: validation.error || 'Invalid' }));
-      } else {
-        setErrors(prev => { const { [errorKey]: _, ...rest } = prev; return rest; });
-      }
-    }
   };
   const removeConstraint = (toolIdx: number, constIdx: number) => {
     const updated = [...tools];
-    updated[toolIdx].constraints = updated[toolIdx].constraints.filter((_, i) => i !== constIdx);
+    updated[toolIdx] = { ...updated[toolIdx], constraints: updated[toolIdx].constraints.filter((_, i) => i !== constIdx) };
     setTools(updated);
   };
 
@@ -1297,11 +1328,14 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
   ];
 
   const applyTemplate = (template: typeof templates[0]) => {
-    setTools(template.tools);
+    // Copy, so editing a row never mutates the template itself.
+    setTools(template.tools.map(t => ({ ...t, constraints: t.constraints.map(c => ({ ...c })) })));
     setTtl(template.ttl);
   };
 
   const generatePreview = () => {
+    // Revalidate at submission; the button state alone is not the check.
+    if (issueCount > 0) return;
     const config = {
       tools: tools.reduce((acc, t) => {
         if (t.name) {
@@ -1373,6 +1407,9 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
               <input className="input" placeholder="Tool name (e.g., read_file)" value={tool.name} onChange={e => updateTool(ti, 'name', e.target.value)} style={{ flex: 1 }} />
               <button onClick={() => removeTool(ti)} className="close-btn">✕</button>
             </div>
+            {errors[`${ti}`] && (
+              <div style={{ fontSize: '11px', color: 'var(--red)', margin: '-4px 0 8px' }}>❌ {errors[`${ti}`]}</div>
+            )}
 
             {tool.constraints.map((con, ci) => {
               const errorKey = `${ti}-${ci}`;
@@ -1429,7 +1466,15 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
         ))}
       </div>
 
-      <button onClick={generatePreview} className="btn btn-primary" style={{ width: '100%' }}>
+      {issueCount > 0 && (
+        <div role="alert" style={{ fontSize: '12px', color: 'var(--red)', marginBottom: '8px' }}>
+          {issues.form.map(f => <div key={f}>❌ {f}</div>)}
+          {Object.keys(issues.rows).length > 0 && (
+            <div>Fix {Object.keys(issues.rows).length} highlighted row{Object.keys(issues.rows).length === 1 ? '' : 's'} before generating. Nothing is dropped from a warrant to make it valid.</div>
+          )}
+        </div>
+      )}
+      <button onClick={generatePreview} className="btn btn-primary" style={{ width: '100%' }} disabled={issueCount > 0}>
         Generate Preview
       </button>
 
@@ -2196,31 +2241,36 @@ function ReceiptMode() {
   const [rootsText, setRootsText] = useState('');
   const [authText, setAuthText] = useState('');
   const [rows, setRows] = useState<ReceiptRow[]>([]);
+  const [failed, setFailed] = useState<{ line: number; error: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [usingSample, setUsingSample] = useState(false);
 
-  const verify = async () => {
+  const verify = async (inputText = input, rootsInput = rootsText, authInput = authText) => {
     setError(null);
     setRows([]);
+    setFailed([]);
 
-    const lines = input
+    const lines = inputText
       .split('\n')
       .map((l) => l.trim())
-      .filter(Boolean)
-      // accept the JSONL a FileReceiptSink writes, or bare hex
-      .map((l) => (l.startsWith('{') ? (JSON.parse(l).receipt as string) : l));
+      .filter(Boolean);
 
     if (lines.length === 0) {
       setError('Paste a receipt in hex or the JSONL a FileReceiptSink writes.');
       return;
     }
 
-    const roots = rootsText.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean);
-    const authSet = new Set(authText.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean));
+    const roots = rootsInput.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean);
+    const authSet = new Set(authInput.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean));
 
+    // Each line stands or falls on its own: one bad receipt must not hide
+    // whether the others verify.
     const verified: ReceiptRow[] = [];
+    const rejected: { line: number; error: string }[] = [];
     for (let i = 0; i < lines.length; i += 1) {
-      const wire = lines[i];
       try {
+        // accept the JSONL a FileReceiptSink writes, or bare hex
+        const wire = lines[i].startsWith('{') ? String(JSON.parse(lines[i]).receipt ?? '') : lines[i];
         const payload = sdkVerifyReceipt(wire) as VerifiedReceipt;
         const row: ReceiptRow = { line: i + 1, wire, digest: await sha256Hex(hexToBytes(wire)), payload };
         // Root-anchored: the chain is signed by the root and the holder, not
@@ -2235,11 +2285,20 @@ function ReceiptMode() {
         }
         verified.push(row);
       } catch (e) {
-        setError(`Receipt on line ${i + 1} does not verify: ${e instanceof Error ? e.message : String(e)}`);
-        return;
+        rejected.push({ line: i + 1, error: e instanceof Error ? e.message : String(e) });
       }
     }
     setRows(verified);
+    setFailed(rejected);
+  };
+
+  const loadSample = () => {
+    const text = SAMPLE_RECEIPTS.receipts.join('\n');
+    setInput(text);
+    setRootsText(SAMPLE_RECEIPTS.trustedRoot);
+    setAuthText('');
+    setUsingSample(true);
+    void verify(text, SAMPLE_RECEIPTS.trustedRoot, '');
   };
 
   // A link pointing at a receipt that is not present means one was removed from
@@ -2256,7 +2315,7 @@ function ReceiptMode() {
         <textarea
           className="input"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => { setInput(e.target.value); setUsingSample(false); }}
           placeholder="a46f7265636569707476657273696f6e01…"
           rows={12}
           style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
@@ -2283,9 +2342,23 @@ function ReceiptMode() {
             style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
           />
         </div>
-        <button onClick={verify} className="btn" style={{ marginTop: '12px' }}>
-          Verify
-        </button>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+          <button onClick={() => { setUsingSample(false); void verify(); }} className="btn">
+            Verify
+          </button>
+          <button onClick={loadSample} className="btn btn-secondary">
+            Load sample receipts
+          </button>
+        </div>
+        {usingSample && (
+          <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '12px', lineHeight: 1.5 }} data-testid="sample-receipts-note">
+            Three receipts from a real Tenuo run: an allowed <code>read_file</code> of
+            <code> docs/readme.md</code>, a denied one for <code>secrets/.env</code>, and the denial
+            again with one byte changed. The trusted root is the sample's own issuer key, generated
+            for this page. A verified signature shows a receipt is unchanged since it was signed. It
+            does not show the signing key speaks for anyone you trust.
+          </p>
+        )}
         <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '12px', lineHeight: 1.5 }}>
           Paste a whole stream to check the chain. Everything runs locally in
           WebAssembly. No receipt leaves your browser.
@@ -2299,6 +2372,19 @@ function ReceiptMode() {
           </div>
         )}
 
+        {failed.map((f) => (
+          <div key={`failed-${f.line}`} className="panel" style={{ borderColor: '#dc2626' }} data-testid="receipt-failed">
+            <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '8px', color: '#dc2626' }}>
+              ❌ Line {f.line}: signature does not verify
+            </h2>
+            <p style={{ fontSize: '12px', lineHeight: 1.6 }}>
+              This receipt was altered after signing, or it is not a Tenuo receipt. Nothing in it
+              can be relied on, including its outcome.
+            </p>
+            <p style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'monospace', marginTop: '6px', wordBreak: 'break-word' }}>{f.error}</p>
+          </div>
+        ))}
+
         {rows.length > 0 && (
           <>
             <div className="panel" style={{ borderColor: breaks.length ? '#dc2626' : undefined }}>
@@ -2306,7 +2392,9 @@ function ReceiptMode() {
                 {breaks.length === 0 ? '✅' : '❌'} Chain
               </h2>
               <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
-                {rows.length} receipt{rows.length === 1 ? '' : 's'}, all signatures verify.
+                {failed.length === 0
+                  ? <>{rows.length} receipt{rows.length === 1 ? '' : 's'}, all signatures verify.</>
+                  : <>{rows.length} of {rows.length + failed.length} receipts verify. Links are checked among those that do.</>}
                 {breaks.length === 0 ? (
                   <div style={{ marginTop: '8px' }}>Every link resolves to a receipt you pasted.</div>
                 ) : (
@@ -2545,6 +2633,19 @@ function App() {
     args?: string;
   }>({});
 
+  // Results describe the input they were computed from. Editing the warrant
+  // invalidates its decode and any check; editing the call invalidates the check.
+  useEffect(() => {
+    setDecoded(null);
+    setChainResult(null);
+    setDiagnosticResult(null);
+    setPemDetected(false);
+    setValidationErrors({});
+  }, [warrantB64]);
+  useEffect(() => {
+    setDiagnosticResult(null);
+  }, [tool, argsJson]);
+
   const validateInputs = (forAuth: boolean = false): boolean => {
     const errors: typeof validationErrors = {};
 
@@ -2595,6 +2696,10 @@ function App() {
       console.warn('[Tenuo Explorer] Decode blocked: WASM not ready');
       return;
     }
+    // Never leave an earlier decode on screen next to new input.
+    setDecoded(null);
+    setChainResult(null);
+    setDiagnosticResult(null);
     if (!validateInputs(false)) {
       console.warn('[Tenuo Explorer] Decode blocked: validation failed', validationErrors);
       return;
@@ -2650,14 +2755,20 @@ function App() {
 
   const handleAuthorize = () => {
     if (!wasmReady) return;
+    setDiagnosticResult(null);
     if (!validateInputs(true)) return;
 
     try {
       const args = JSON.parse(argsJson || '{}');
 
-      // For single-warrant auth, the trusted root is the warrant's own issuer
-      // Decode inline if not already decoded
-      const issuer = decodedWarrant?.issuer || decode_warrant(warrantB64.trim()).issuer;
+      // For single-warrant auth, the trusted root is the warrant's own issuer.
+      // Always read it from the current input, never from an earlier decode.
+      const current = decode_warrant(warrantB64.trim()) as DecodedWarrant | string;
+      if (typeof current === 'string') {
+        setValidationErrors({ warrant: current });
+        return;
+      }
+      const issuer = current.issuer;
       const result = explainCall([warrantB64.trim()], tool.trim(), args, issuer);
       setDiagnosticResult(result);
       setValidationErrors({});
@@ -2770,7 +2881,7 @@ function App() {
           {/* Builder Mode */}
           {mode === 'builder' && (
             <div className="two-column-grid">
-              <WarrantBuilder onGenerate={(config) => {
+              <WarrantBuilder onEdit={() => setBuilderPreview(null)} onGenerate={(config) => {
                 // Generate real warrant from config using WASM
                 const result = create_warrant_from_config(config);
                 // Store both the WASM result and the original config for code generation
@@ -2958,7 +3069,11 @@ function App() {
                           placeholder="Paste your warrant here..."
                           value={warrantB64}
                           onChange={(e) => setWarrantB64(e.target.value)}
+                          aria-invalid={!!validationErrors.warrant}
                         />
+                        {validationErrors.warrant && (
+                          <div role="alert" data-testid="warrant-error" style={{ fontSize: '12px', color: 'var(--red)', marginTop: '4px' }}>❌ {validationErrors.warrant}</div>
+                        )}
                       </div>
 
                       <button onClick={handleDecode} disabled={!wasmReady || !warrantB64} className="btn btn-secondary">
@@ -3033,11 +3148,17 @@ function App() {
                       <div>
                         <label className="label">Tool Name</label>
                         <input className="input" placeholder="e.g., read_file" value={tool} onChange={(e) => setTool(e.target.value)} />
+                        {validationErrors.tool && (
+                          <div role="alert" data-testid="tool-error" style={{ fontSize: '12px', color: 'var(--red)', marginTop: '4px' }}>❌ {validationErrors.tool}</div>
+                        )}
                       </div>
 
                       <div>
                         <label className="label">Arguments (JSON)</label>
                         <textarea className="input" style={{ height: '80px', minHeight: '50px', maxHeight: '200px', resize: 'vertical' }} value={argsJson} onChange={(e) => setArgsJson(e.target.value)} />
+                        {validationErrors.args && (
+                          <div role="alert" data-testid="args-error" style={{ fontSize: '12px', color: 'var(--red)', marginTop: '4px' }}>❌ {validationErrors.args}</div>
+                        )}
                       </div>
 
                       <Explainer title="About Proof-of-Possession (PoP)" docLink="https://tenuo.ai/security">
