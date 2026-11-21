@@ -6407,6 +6407,8 @@ pub struct PyAuthorizer {
     /// Receipt keys 12 and 13. `None` until a list is installed, which is the
     /// honest claim that revocation was never consulted.
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    /// Per-tool host ceilings, set once per tool. Receipt key 11.
+    host_policies: BTreeMap<String, crate::host_policy::HostPolicy>,
 }
 
 impl PyAuthorizer {
@@ -6418,6 +6420,27 @@ impl PyAuthorizer {
     /// Receipt keys 12 and 13, for callers inside the crate.
     pub(crate) fn srl_commitment_value(&self) -> Option<(Option<u64>, [u8; 32])> {
         self.srl_commitment
+    }
+
+    /// Receipt key 11 per tool, for callers inside the crate.
+    pub(crate) fn host_policy_digests(&self) -> BTreeMap<String, [u8; 32]> {
+        self.host_policies
+            .iter()
+            .map(|(tool, policy)| (tool.clone(), policy.digest()))
+            .collect()
+    }
+
+    /// Apply the tool's host ceiling after the warrant chain has authorized
+    /// the call. No ceiling configured for the tool means no extra gate.
+    fn enforce_host_policy(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> PyResult<()> {
+        match self.host_policies.get(tool) {
+            Some(policy) => policy.check(args).map_err(to_py_err),
+            None => Ok(()),
+        }
     }
 }
 
@@ -6477,6 +6500,7 @@ impl PyAuthorizer {
             inner: authorizer,
             trusted_roots: root_bytes,
             srl_commitment: None,
+            host_policies: BTreeMap::new(),
         })
     }
 
@@ -6574,6 +6598,71 @@ impl PyAuthorizer {
         self.inner
             .require_clearance(&tool, level.inner)
             .map_err(to_py_err)
+    }
+
+    /// Set this enforcement point's own ceiling for a tool.
+    ///
+    /// A call to ``tool`` must satisfy both the presented warrant chain and
+    /// this policy. The policy is checked after the chain authorizes the call,
+    /// by every authorization method on this object. Like a warrant's
+    /// constraints it is closed-world: name every argument the tool accepts.
+    /// An empty dict is an open ceiling that receipts still commit to.
+    ///
+    /// A ceiling cannot be replaced once set, so a receipt's
+    /// ``policy_definition_hash`` always names the ceiling the decision was
+    /// made under. Build a new Authorizer to change it.
+    ///
+    /// Args:
+    ///     tool: Tool name (exact match)
+    ///     allow: Dict of argument name -> constraint (Exact, OneOf, Range, ...)
+    ///
+    /// Raises:
+    ///     ValidationError: If a ceiling is already set for ``tool``, a value is
+    ///         not a constraint, or a constraint's configuration cannot be
+    ///         expressed in the policy commitment.
+    ///
+    /// Example:
+    ///     ```text
+    ///     authorizer.set_host_policy("route_ticket", {
+    ///         "ticket_id": Wildcard(),
+    ///         "queue": OneOf(["general", "billing"]),
+    ///     })
+    ///     ```
+    fn set_host_policy(&mut self, tool: String, allow: &Bound<'_, PyDict>) -> PyResult<()> {
+        if tool.is_empty() {
+            return Err(py_validation_err("host policy tool name must not be empty"));
+        }
+        if self.host_policies.contains_key(&tool) {
+            return Err(py_validation_err(format!(
+                "host policy for '{tool}' is already set and cannot be replaced"
+            )));
+        }
+        let mut fields = BTreeMap::new();
+        for (key, value) in allow.iter() {
+            let field: String = key
+                .extract()
+                .map_err(|_| py_validation_err("host policy argument names must be strings"))?;
+            let constraint = py_to_constraint(&value)
+                .map_err(|e| py_validation_err(format!("host policy field '{field}': {e}")))?;
+            fields.insert(field, constraint);
+        }
+        let policy =
+            crate::host_policy::HostPolicy::new(fields).map_err(|e| py_validation_err(&e))?;
+        self.host_policies.insert(tool, policy);
+        Ok(())
+    }
+
+    /// Receipt ``policy_definition_hash`` for a tool's host ceiling, or None
+    /// when no ceiling is set for it.
+    fn host_policy_hash<'py>(&self, py: Python<'py>, tool: &str) -> Option<Bound<'py, PyBytes>> {
+        self.host_policies
+            .get(tool)
+            .map(|policy| PyBytes::new(py, &policy.digest()))
+    }
+
+    /// Tools that have a host ceiling, sorted.
+    fn host_policy_tools(&self) -> Vec<String> {
+        self.host_policies.keys().cloned().collect()
     }
 
     /// Get the required clearance for a tool.
@@ -6677,8 +6766,8 @@ impl PyAuthorizer {
                 sig.as_ref(),
                 &rust_approvals,
             )
-            .map(|_| ())
-            .map_err(to_py_err)
+            .map_err(to_py_err)?;
+        self.enforce_host_policy(tool, &rust_args)
     }
 
     /// Alias for `authorize()`. Verifies and authorizes in one call.
@@ -6762,6 +6851,7 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
+        self.enforce_host_policy(tool, &rust_args)?;
         Ok(PyChainVerificationResult { inner: result })
     }
 
@@ -6891,6 +6981,7 @@ impl PyAuthorizer {
             }
         }
         .map_err(to_py_err)?;
+        self.enforce_host_policy(tool, &rust_args)?;
         Ok(PyChainVerificationResult { inner: result })
     }
 
@@ -6965,6 +7056,7 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
+        self.enforce_host_policy(tool, &rust_constraint_args)?;
         Ok(PyChainVerificationResult { inner: result })
     }
 
@@ -7036,6 +7128,7 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
+        self.enforce_host_policy(tool, &rust_constraint_args)?;
         Ok(PyChainVerificationResult { inner: result })
     }
 }

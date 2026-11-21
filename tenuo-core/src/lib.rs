@@ -138,6 +138,9 @@ pub use gateway_config::{
 pub use mcp::{CompiledMcpConfig, CompiledTool, McpConfig, McpSettings};
 
 #[cfg(feature = "python")]
+pub(crate) mod host_policy;
+
+#[cfg(feature = "python")]
 pub mod python;
 
 pub mod connect_token;

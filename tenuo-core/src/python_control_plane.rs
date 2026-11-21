@@ -141,6 +141,7 @@ impl PyReceiptIssuer {
         let context = TrustContext {
             trusted_roots_hash: authorizer.trusted_roots_hash_bytes(),
             srl_commitment: authorizer.srl_commitment_value(),
+            host_policies: authorizer.host_policy_digests(),
         };
         let mut guard = self.trust.lock().map_err(|_| {
             pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned")
@@ -255,10 +256,12 @@ impl PyControlPlaneClient {
 }
 
 #[cfg(feature = "python-server")]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct TrustContext {
     trusted_roots_hash: [u8; 32],
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    /// Receipt key 11 per tool, from the authorizer's host ceilings.
+    host_policies: std::collections::BTreeMap<String, [u8; 32]>,
 }
 
 #[cfg(feature = "python-server")]
@@ -266,7 +269,7 @@ fn read_trust(trust: &Arc<Mutex<Option<TrustContext>>>) -> PyResult<Option<Trust
     let guard = trust
         .lock()
         .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned"))?;
-    Ok(*guard)
+    Ok(guard.clone())
 }
 
 #[cfg(feature = "python-server")]
@@ -309,6 +312,7 @@ fn issue_allow_receipt(
         payload.srl_version = version;
         payload.srl_hash = Some(digest);
     }
+    payload.policy_definition_hash = trust.host_policies.get(tool).copied();
 
     encode_signed_receipt(signer, last_receipt_hash, payload)
 }
@@ -385,6 +389,7 @@ fn issue_deny_receipt(
         payload.srl_version = version;
         payload.srl_hash = Some(digest);
     }
+    payload.policy_definition_hash = trust.host_policies.get(tool).copied();
 
     encode_signed_receipt(signer, last_receipt_hash, payload)
 }
@@ -633,8 +638,8 @@ impl PyControlPlaneClient {
 
     /// Copy the enforcement point's trust context from its authorizer.
     ///
-    /// Receipts commit to the trusted root set and the revocation list in force
-    /// (payload keys 15, 12 and 13). Those values are read from the authorizer
+    /// Receipts commit to the trusted root set, the revocation list and the
+    /// tool's host policy in force (payload keys 15, 12, 13 and 11). Those values are read from the authorizer
     /// itself rather than configured here, so a receipt cannot claim a trust
     /// context this enforcement point never had. Call again after installing a
     /// new revocation list.
@@ -645,6 +650,7 @@ impl PyControlPlaneClient {
         let context = TrustContext {
             trusted_roots_hash: authorizer.trusted_roots_hash_bytes(),
             srl_commitment: authorizer.srl_commitment_value(),
+            host_policies: authorizer.host_policy_digests(),
         };
         let mut guard = self.trust.lock().map_err(|_| {
             pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned")

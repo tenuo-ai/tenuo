@@ -836,6 +836,45 @@ print(authorizer.get_required_clearance("delete_file"))  # Clearance.PRIVILEGED
 | `require_clearance(pattern, level)` | Set minimum clearance for tool pattern |
 | `get_required_clearance(tool)` | Get required clearance level (or None) |
 
+#### Host Policy Ceilings (Optional)
+
+An enforcement point can set its own per-argument limit for a tool. A call must
+satisfy both the presented warrant chain and the host policy, so a service can
+refuse what its warrants would otherwise allow. This is the Python form of the
+TypeScript SDK's `verify(..., { allow })`.
+
+```python
+from tenuo import Authorizer, OneOf, Wildcard
+
+authorizer = Authorizer(trusted_roots=[root_key])
+authorizer.set_host_policy("route_ticket", {
+    "ticket_id": Wildcard(),
+    "queue": OneOf(["general", "billing"]),
+})
+```
+
+- Every authorization method checks the policy after the chain authorizes the
+  call. A failure raises the same constraint error a warrant constraint does.
+- A non-empty policy is closed-world, like a warrant: name every argument the
+  tool accepts. `{}` is an open policy that receipts still commit to.
+- Tools without a policy are unaffected.
+- A policy cannot be replaced once set. Receipts signed by a `ReceiptIssuer` or
+  `ControlPlaneClient` bound to this authorizer carry its digest as
+  `policy_definition_hash`, so each receipt names the policy its decision was
+  made under. Construct a new `Authorizer` to change it.
+- The digest is computed over the same constraint-expression form the
+  TypeScript SDK uses, so the same policy has the same digest in both SDKs.
+  Constraints that form cannot fully describe are rejected: `UrlSafe` with
+  options beyond `schemes`, `allow_domains` and `deny_domains`, non-string
+  `OneOf` / `NotOneOf` values, and CEL constraints derived from a parent.
+  Numeric `Range` bounds and `min`/`max` spellings are written as `range`.
+
+| Method | Description |
+|--------|-------------|
+| `set_host_policy(tool, allow)` | Set the tool's ceiling (dict of argument name to constraint) |
+| `host_policy_hash(tool)` | 32-byte `policy_definition_hash` for the tool, or None |
+| `host_policy_tools()` | Tools that have a ceiling |
+
 ### ChainVerificationResult
 
 Returned by `Authorizer.authorize_one()`, `verify_chain()`, and `check_chain()`. Provides full visibility into the delegation chain that was verified.

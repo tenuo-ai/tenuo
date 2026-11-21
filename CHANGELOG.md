@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python `Authorizer.set_host_policy(tool, allow)`: a per-tool argument
+  ceiling an enforcement point applies on top of any warrant, matching the
+  TypeScript SDK's `verify(..., { allow })`. Receipts from a `ReceiptIssuer` or
+  `ControlPlaneClient` bound to the authorizer carry the policy digest as
+  `policy_definition_hash` (key 11), computed the same way as in TypeScript.
+  Tools without a policy behave as before.
+
 ## [0.3.7] - 2026-11-11
 
 ### Security
