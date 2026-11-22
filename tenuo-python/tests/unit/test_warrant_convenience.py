@@ -18,6 +18,8 @@ import pytest
 
 from tenuo import (
     BoundWarrant,
+    Exact,
+    OneOf,
     SigningKey,
     Warrant,
     diagnose,
@@ -111,6 +113,22 @@ class TestDebuggingMethods:
         assert "search" in explanation
         assert "read" in explanation
         assert "TTL" in explanation
+
+    def test_explain_shows_constraints(self):
+        """explain() and inspect() list each tool's argument constraints."""
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("route_ticket", queue=OneOf(["a", "b"]), auto_close=Exact(False))
+            .capability("ping")
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        for text in (warrant.explain(), warrant.inspect()):
+            assert "queue: OneOf(['a', 'b'])" in text
+            assert "auto_close: Exact(False)" in text
+            assert "ping: (no argument constraints)" in text
 
     def test_explain_with_chain(self):
         """Test explain with include_chain=True."""

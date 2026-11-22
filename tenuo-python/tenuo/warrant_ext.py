@@ -666,6 +666,18 @@ def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
         f"  Expires: {self.expires_at()}",  # Rust method returns RFC3339 string
     ]
 
+    caps = self.capabilities or {}
+    if caps:
+        lines.append("  Constraints:")
+        for tool in sorted(caps):
+            args = caps[tool] or {}
+            if not args:
+                lines.append(f"    {tool}: (no argument constraints)")
+                continue
+            lines.append(f"    {tool}:")
+            for arg in sorted(args):
+                lines.append(f"      {arg}: {args[arg]!r}")
+
     if self.clearance is not None:
         lines.append(f"  Clearance: {self.clearance}")
 
