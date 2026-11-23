@@ -123,7 +123,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Network handling
 ipnetwork = "0.21"
-url = "2.5"
+url = "2.5.9"
 
 # HTTP client (optional - only needed for demo binaries)
 reqwest = { version = "0.13", features = ["blocking", "json"], optional = true }
