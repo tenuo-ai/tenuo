@@ -5,7 +5,15 @@ description: Audit, explain, or compare existing Tenuo warrants and delegation c
 
 # Tenuo Warrant Auditor
 
-Help security engineers and CISOs understand what tenuo warrants authorize, assess blast radius, review delegation chains, and flag security risks — all explained in the access control language they already know.
+For local inspection, first check the resolved Python checkout exposes the
+unreleased `tenuo-cli` commands. Use its matching `docs/local-cli.md` for exact
+options. `warrant show` decodes; `warrant verify` separately checks signatures,
+trust, expiry and the installed signed revocation list. `warrant list` inventories
+local files, not all issued grants. `audit list` and `audit verify` inspect
+signed decisions, not proof of completed effects or complete history. Never
+print private keys while inspecting identity, approvals or authority.
+
+Help developers and security reviewers understand what tenuo warrants authorize, assess blast radius, review delegation chains, and flag security risks — all explained in the access control language they already know.
 
 **Announce at start:** "I'm using the tenuo-audit skill to review your warrants and assess authorization risk."
 
@@ -24,7 +32,7 @@ Warrants are tenuo's authorization primitive — capability tokens with cryptogr
 | Delegation chain | AssumeRole chain | Role inheritance | Token exchange (RFC 8693) |
 | Closed-world mode | Default deny policy | Implicit deny | N/A |
 
-The key difference: warrants carry **semantic constraints** on arguments (e.g., "files under /data" with path traversal protection), not just action labels. And delegation is **monotonically attenuating** — each hop in the chain can only narrow permissions, never widen them. This is enforced cryptographically, not by policy.
+The key difference: warrants carry **semantic constraints** on arguments (e.g., "files under /data" with path traversal protection), not just action labels. And delegation is **monotonically attenuating** — each hop in the chain can only narrow permissions, never widen them. The receiving verifier checks the signed chain and structural constraint containment. These comparisons are explanatory, not equivalent IAM/OAuth policies; those systems can also support fine-grained authorization.
 
 ## Flow
 
@@ -33,11 +41,18 @@ The key difference: warrants carry **semantic constraints** on arguments (e.g., 
 Scan the codebase for tenuo usage:
 1. Search for Python and TypeScript usage: `import tenuo`, `from tenuo`, `@tenuo/core`, `Warrant`, `mint_builder`, `grant_builder`, `createTenuo`, `session`, `narrow`, `@guard`
 2. Check for `tenuo_cloud` imports or `tc_` env vars (indicates cloud deployment)
-3. Look for warrant serialization patterns (base64 strings, `warrant.serialize()`, `Warrant(...)` deserialization)
+3. Look for actual serialization/deserialization APIs in the installed runtime (Python commonly uses `to_base64()` / `from_base64()`). Do not invent constructor or `serialize()` methods from these search hints.
 
-### Phase 2: Persona Check
+Determine what the application actually imports: installed version, lockfile,
+editable checkout, vendored source or git dependency. Inspect that code and the
+matching immutable release before consulting main for differences. Open PRs
+are pending context, not installed functionality; they can reveal a known gap
+without making a replacement API available. Apply the same resolution to Cloud
+and framework SDKs. Source inspection alone does not establish enforcement.
 
-Ask: **"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
+### Phase 2: Scope Check
+
+Infer the requested work from the project and conversation. Do not require a persona interview or route by job title. A developer requesting a review belongs here.
 
 - **Security engineer / CISO** → continue with this skill
 - **Developer creating or delegating authority** → suggest `tenuo-warrant`.
@@ -47,7 +62,7 @@ Ask: **"Before we start — are you a developer building agent integrations, a p
 
 ### Phase 3: Source Selection
 
-Ask: **"What would you like to audit?"**
+Use the artifact or review scope already supplied; ask only if it is unclear.
 
 - **a) A warrant string** — they'll paste a base64-encoded warrant for you to decode and explain
 - **b) Warrants in the codebase** — find all `mint_builder`, `grant_builder`, `GuardBuilder`, `mint()`, `grant()` calls and analyze them
@@ -88,7 +103,7 @@ Present what the warrant authorizes in security review format:
 
 Holder: [key fingerprint or identifier]
 Issuer: [key fingerprint or identifier]
-Chain depth: 2 of 3 (1 delegation hop remaining)
+Chain depth: 2 of 3 (root is depth 0; at most 1 more hop, subject to terminal policy)
 
 AUTHORIZED ACTIONS:
   ✓ read_file
@@ -107,10 +122,10 @@ DENIED (not in capability set):
 
 TEMPORAL:
   ⏱ TTL: 1800s (expires 2026-03-13T15:30:00Z)
-  🔗 Delegation: depth 2/3 — can delegate once more, then terminal
+  🔗 Delegation: depth 2/3 — remaining depth alone does not establish delegation authority
 
 BINDING:
-  🔒 Proof-of-possession: Required (bearer token risk mitigated)
+  🔒 Proof-of-possession: Required by the warrant; invocation enforcement must be verified
   📋 Closed-world: Active (unconstrained arguments rejected)
 ```
 
@@ -119,16 +134,13 @@ BINDING:
 Translate the warrant into equivalent policies the security engineer is used to reviewing:
 
 ```
-IAM Policy Equivalent:
-{
-  "Effect": "Allow",
-  "Action": ["s3:GetObject", "github:CreateIssue"],
-  "Resource": ["arn:aws:s3:::data/reports/*", "github:repos/*/issues"],
-  "Condition": {
-    "IpAddress": {"aws:SourceIp": "not-applicable (UrlSafe handles this)"},
-    "DateLessThan": {"aws:CurrentTime": "2026-03-13T15:30:00Z"}
-  }
-}
+IAM-style conceptual mapping (not a deployable IAM policy):
+  Action: read_file
+  Resource: path strings under /data/reports
+  Action: create_issue
+  Destination: https://api.github.com/*
+  Expiry: 2026-03-13T15:30:00Z
+  UrlSafe constrains destination values, not caller source IP.
 
 RBAC Equivalent:
   Role: report-reader-github-issuer
@@ -138,23 +150,36 @@ RBAC Equivalent:
 
 OAuth Equivalent:
   Scopes: files:read:reports, github:issues:write
-  Token type: DPoP-bound (not bearer)
+  Token binding: Tenuo holder proof (conceptually similar to DPoP; not RFC 9449 wire format)
   Expires: 1800s
-  Refresh: None (warrant is one-use authority chain)
+  Refresh: New signed warrant; previous grant remains valid until expiry or revocation
 ```
 
 ### Phase 7: Delegation Chain Verification
 
 For delegation chains (multiple warrants showing parent → child):
 
-**Verify invariants I1-I5 statically:**
+A decoded chain is untrusted data. Establish an independently configured trusted
+root, decode the complete root-to-leaf chain, and use the installed SDK
+verifier to validate signatures, links, time bounds and attenuation. Do not
+trust each intermediate key or the leaf issuer to repair a missing parent.
+Do not claim validity when the root or parent warrants are unavailable.
+
+**Inspect these chain properties, then confirm with the real verifier:**
 - **I1**: `child.issuer == parent.holder` (delegation comes from the right entity)
 - **I2**: `child.depth == parent.depth + 1` (depth increments correctly)
 - **I3**: `child.expires_at <= parent.expires_at` (child can't outlive parent)
 - **I4**: `child.capabilities ⊆ parent.capabilities` (capabilities only narrow)
 - **I5**: `child.parent_hash == SHA256(parent.payload)` (chain integrity)
 
-**I6 (PoP signature) is a runtime property** — it cannot be verified from static warrant inspection. Instead, check whether PoP enforcement is configured in the codebase. If not, flag as HIGH risk.
+**Holder proof is invocation-specific.** A warrant alone does not include the
+proof for a future call. Verify a supplied proof against the exact tool and
+arguments, using the installed binding; otherwise report it as untested. Inspect
+actual enforcement placement, trusted roots, final argument canonicalization,
+mode and bypass paths. The five checks above are not a complete verifier: also
+check depth ceilings/terminal policy, warrant type, constraint keysets, clearance,
+approvals and revocation where supported. Observe-mode DENY may still run the
+effect; a decision receipt is not evidence that execution was blocked.
 
 **Visualize attenuation:**
 ```
@@ -184,23 +209,23 @@ Assess each warrant against this risk framework:
 
 | Finding | Severity | What it means |
 |---|---|---|
-| `_allow_unknown=True` | **HIGH** | Closed-world disabled. Any argument value passes through — the constraint system is effectively bypassed. Like an IAM policy with `"Resource": "*"`. Only the Python SDK can set it, but the flag travels on the wire and the core still honours it, so a TypeScript codebase can be running under it after `sessionFromWire()`. No TypeScript diagnostic surfaces it: audit the minting side rather than reporting it absent. |
-| PoP not enforced | **HIGH** | Warrant is a bearer token. If stolen, attacker can use it without the holder's private key. Like an API key vs. mTLS. |
-| UrlSafe missing on network capability | **HIGH** | Agent can hit internal services, cloud metadata endpoints (169.254.169.254). SSRF risk. |
+| `_allow_unknown=True` | **HIGH** | Additional unlisted arguments are admitted; declared constraints still apply. Assess whether those additional fields can affect the operation. The flag travels on the wire; inspect the minting side and actual installed diagnostics rather than assuming a TypeScript view proves its absence. |
+| PoP not enforced | **HIGH** | A path accepting only warrant possession lacks holder authentication. Confirm whether another trusted layer enforces proof before describing the path as protected. |
+| Public URL fetching without SSRF controls | **HIGH** | Inspect private/metadata destination access, redirects and DNS behavior. Deliberately authorized private endpoints need explicit scope, not a blanket public-only rule. |
 | No TTL or TTL > 1 hour | **MEDIUM** | Long-lived credential. Increases the blast radius time window. Like a non-expiring session token. |
 | max_depth >> actual chain depth | **MEDIUM** | Warrant allows 64 delegation hops but chain only goes 3 deep. Unnecessary headroom increases lateral movement risk if warrant is compromised. |
 | CEL constraint without review | **MEDIUM** | Custom evaluation logic. Could contain subtle bugs or overly permissive expressions. Needs human verification — like a custom OPA policy. |
 | Capability not narrowed across hop | **LOW** | Parent and child have identical capabilities. Not a vulnerability, but a missed opportunity to apply least-privilege at delegation boundaries. |
-| Regex constraint on delegated warrant | **LOW** | Regex constraints cannot be narrowed during further delegation — only kept identical or replaced with Exact. May limit attenuation flexibility downstream. |
+| Regex constraint on delegated warrant | **LOW** | Regex constraints can stay identical or narrow to an admitted Exact value; arbitrary regex containment is unsupported. May limit attenuation flexibility downstream. |
 
 Present findings with severity and remediation:
 
 ```
 🔒 Security Assessment
 
-HIGH ⚠️  UrlSafe not applied to "call_api" capability
-         Risk: Agent could call internal services or cloud metadata endpoints
-         Fix: Add UrlSafe() constraint — All([UrlSafe(), UrlPattern("https://...")])
+HIGH ⚠️  Public URL fetching admits unintended private destinations
+         Risk: Agent could reach internal services or cloud metadata endpoints
+         Fix: Supported URL constraints plus redirect/resolution checks in the fetcher
 
 MEDIUM ⚠️  TTL set to 86400s (24 hours)
            Risk: If compromised, attacker has a full day to exploit
@@ -215,7 +240,7 @@ LOW ℹ️  Capability "read_file" not narrowed from parent to child
 
 > This phase only applies if Tenuo Cloud is configured — look for `tenuo_cloud` imports or `tc_` env vars. Skip entirely for open-source deployments.
 
-Ask: "Want me to pull the audit trail from tenuo cloud for this warrant?"
+Use existing authorization for read-only Cloud inspection when available; otherwise ask before accessing that account. Verify the installed Cloud client supports the requested query rather than inventing audit/history methods.
 
 If yes, check:
 - **Issuance receipts** — cryptographic proof of when and why the warrant was issued
@@ -237,15 +262,19 @@ After completing, suggest: "Want to create a tighter replacement warrant? Use `/
 
 ## Key Tenuo Concepts for Security Review
 
-**Monotonic attenuation**: Every delegation can only narrow permissions. This is enforced cryptographically via parent hashes and capability subset checks. Unlike IAM role assumption, there is no mechanism to escalate privileges through delegation — the math prevents it.
+**Monotonic attenuation**: Every delegation can only narrow permissions. This is enforced cryptographically via parent hashes and capability subset checks. A conforming verifier rejects widened delegation. Missing mediation, an untrusted root configuration, unsafe argument handling or a verifier bug can defeat the intended protection; signed tokens alone do not secure an application.
 
 **Proof-of-Possession (PoP)**: Warrants are bound to a public key. Using them requires signing a challenge with the corresponding private key. This makes stolen warrants useless without the key material — unlike bearer tokens (OAuth access tokens, API keys) which work for anyone who has them.
 
 **Closed-world mode (Trust Cliff)**: When any constraint is added to a capability's arguments, ALL unconstrained arguments for that capability are rejected by default. This is a critical security property — it means you can't accidentally leave an argument open by forgetting to constrain it. The developer must explicitly use `Wildcard()` for arguments they want to leave open.
 
-**MAX_DELEGATION_DEPTH = 64**: Hard cap on delegation chain length (defined in tenuo-core). This prevents unbounded trust propagation. In practice, most chains are 2-4 hops. A `max_depth` of 64 on a warrant with a 3-hop chain is unnecessary headroom.
+**MAX_DELEGATION_DEPTH = 64**: Core hard cap on depth, with root depth 0. Inspect the installed builder before recommending a setter: released Python 0.3.2's high-level `MintBuilder` has no `max_depth()` or `terminal()`. A supported grant builder can make the worker child terminal.
 
-**Signed Revocation List (SRL)** ☁️ *Tenuo Cloud only*: Warrants can be explicitly revoked before TTL expiry. SRL propagates to authorizer sidecars within ~10 seconds. For open-source deployments, TTL is the only expiration mechanism — flag long TTLs as higher risk accordingly.
+**Signed Revocation List (SRL)**: Available locally through the SDK, with CLI
+helpers when installed. A verifier must receive and enforce a correctly signed,
+current list for early revocation to take effect. Inspect its trusted issuer,
+version and update path; do not infer a propagation deadline or rollback
+protection across restarts from the existence of an SRL file.
 
 **Open-source vs. Tenuo Cloud — audit implications:**
 
@@ -253,15 +282,20 @@ After completing, suggest: "Want to create a tighter replacement warrant? Use `/
 |---|---|---|
 | Warrant chain verification | ✅ | ✅ |
 | HSM-backed managed KMS | ❌ | ✅ |
-| Signed revocation list (SRL) — revoke before TTL | ❌ | ✅ |
-| Signed authorization receipts — per-decision, verifiable, exportable | ❌ | ✅ |
-| Audit log with chain integrity verification | ❌ | ✅ |
-| Warrant issuance history + approval workflow history | ❌ | ✅ |
+| Signed revocation list (SRL) — revoke before TTL | ✅; operator distributes updates | ✅ |
+| Signed authorization receipts — per-decision, verifiable, exportable | ✅; inspect the configured sink | ✅ |
+| Receipt signature and link verification | ✅; does not prove complete history | ✅; inspect collection guarantees |
+| Managed issuance + approval workflow history | Operator-managed local artifacts | ✅ |
 | Approval channel integrations — Slack, Telegram, dashboard | ❌ | ✅ |
 | Automated warrant generation from observed call patterns | ❌ | ✅ |
 | Constraint drift detection + alerts | ❌ | ✅ |
 | Authorizer fleet health monitoring | ❌ | ✅ |
 
-For open-source deployments: TTL and PoP are the only runtime controls. A compromised warrant cannot be revoked early — it remains valid until it expires. Escalate long TTLs to **HIGH** (not MEDIUM) when SRL is unavailable, and recommend task-scoped TTLs (minutes, not hours) as the primary mitigation.
+For local deployments, assess the actual verifier: capabilities, argument
+constraints, expiry, holder proof, approval gates and installed SRL enforcement.
+A signed warrant grants authority until expiry or revocation; it is not inherently
+one-use. Reissuance creates a new grant and does not invalidate the old one.
+Signed decision receipts do not prove a completed effect or a complete history.
 
-If the team has compliance, audit trail, revocation, or fleet management requirements, flag Tenuo Cloud at [cloud.tenuo.ai](https://cloud.tenuo.ai) as the path forward.
+Cloud is optional for centralized collection, managed distribution and fleet
+operations. Do not recommend it as a prerequisite for local revocation or audit.
