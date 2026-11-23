@@ -1,0 +1,855 @@
+"""The HTTP-level token meter, driven through httpx with no network."""
+
+import gzip
+import json
+from types import SimpleNamespace
+
+import httpx
+import pytest
+
+from tenuo import SigningKey, Warrant
+from tenuo.budget import BudgetStore, TokenMeter, llm_capability
+from tenuo.budget_http import (
+    AsyncMeteredTransport,
+    MeteredTransport,
+    is_budget_error,
+    metered_async_client,
+    metered_client,
+)
+
+MODEL = "gpt-4o-mini"
+INPUT = 30
+CHAT = "https://provider.test/v1/chat/completions"
+MESSAGES = [{"role": "user", "content": "hello there"}]
+
+
+# ---------------------------------------------------------------------------
+# A provider behind httpx.MockTransport
+# ---------------------------------------------------------------------------
+
+
+def sse(events, done=True):
+    text = "".join(f"data: {json.dumps(e)}\n\n" for e in events)
+    return (text + ("data: [DONE]\n\n" if done else "")).encode()
+
+
+class Provider:
+    """Answers the wire formats the meter knows, recording every request."""
+
+    def __init__(self, generates=100, status=200, fail=None, chunk_size=None, gzip_stream=False):
+        self.generates, self.status, self.fail = generates, status, fail
+        self.chunk_size, self.gzip_stream = chunk_size, gzip_stream
+        self.requests = []
+        self.bodies = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if request.method != "POST":
+            return httpx.Response(200, json={"data": []})
+        body = json.loads(request.content) if request.content else {}
+        self.bodies.append(body)
+        if self.fail is not None:
+            raise self.fail
+        if self.status != 200:
+            return httpx.Response(self.status, json={"error": {"message": "nope"}})
+        path = request.url.path
+        if path.endswith("/messages"):
+            return self._anthropic(body)
+        if path.endswith("/responses"):
+            return self._responses(body)
+        return self._chat(body)
+
+    def _stream(self, payload: bytes) -> httpx.Response:
+        headers = {"content-type": "text/event-stream"}
+        if self.gzip_stream:
+            payload = gzip.compress(payload)
+            headers["content-encoding"] = "gzip"
+        size = self.chunk_size or len(payload)
+        parts = [payload[i:i + size] for i in range(0, len(payload), size)]
+        return httpx.Response(200, headers=headers, stream=httpx.ByteStream(b"") if not parts else _Chunks(parts))
+
+    def _chat(self, body):
+        cap = body.get("max_completion_tokens") or body.get("max_tokens") or 10**9
+        out = min(self.generates, cap) * (body.get("n") or 1)
+        usage = {"prompt_tokens": INPUT, "completion_tokens": out, "total_tokens": INPUT + out}
+        if not body.get("stream"):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}], "usage": usage})
+        events = [{"choices": [{"index": 0, "delta": {"content": part}}]} for part in ("he", "llo")]
+        if (body.get("stream_options") or {}).get("include_usage"):
+            events.append({"choices": [], "usage": usage})
+        return self._stream(sse(events))
+
+    def _responses(self, body):
+        out = min(self.generates, body.get("max_output_tokens") or 10**9)
+        usage = {"input_tokens": INPUT, "output_tokens": out, "total_tokens": INPUT + out}
+        if not body.get("stream"):
+            return httpx.Response(200, json={"output": [], "usage": usage})
+        return self._stream(sse([
+            {"type": "response.output_text.delta", "delta": "hello"},
+            {"type": "response.completed", "response": {"output": [], "usage": usage}},
+        ], done=False))
+
+    def _anthropic(self, body):
+        out = min(self.generates, body["max_tokens"])
+        if not body.get("stream"):
+            return httpx.Response(200, json={
+                "type": "message", "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 10, "cache_read_input_tokens": 15, "cache_creation_input_tokens": 5,
+                          "output_tokens": out},
+            })
+        text = "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in [
+            {"type": "message_start", "message": {"usage": {
+                "input_tokens": 10, "cache_read_input_tokens": 15, "cache_creation_input_tokens": 5, "output_tokens": 1}}},
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": out}},
+            {"type": "message_stop"},
+        ])
+        return self._stream(text.encode())
+
+
+class _Chunks(httpx.SyncByteStream, httpx.AsyncByteStream):
+    def __init__(self, parts):
+        self.parts = parts
+        self.closed = False
+
+    def __iter__(self):
+        yield from self.parts
+
+    async def __aiter__(self):
+        for part in self.parts:
+            yield part
+
+    def close(self):
+        self.closed = True
+
+    async def aclose(self):
+        self.closed = True
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def keys():
+    return SimpleNamespace(issuer=SigningKey.generate(), lead=SigningKey.generate(), worker=SigningKey.generate())
+
+
+def mint(keys, model=MODEL, **caps):
+    return (
+        Warrant.mint_builder()
+        .capability("llm.chat", llm_capability(models=[model], **caps))
+        .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer)
+    )
+
+
+def client_for(keys, warrant, provider, *, key=None, chain=None, store=None, events=None, **extra):
+    meter = TokenMeter(store, input_estimator=lambda request: INPUT)
+    http = metered_client(
+        transport=httpx.MockTransport(provider), warrant=warrant, signing_key=key or keys.lead,
+        trusted_roots=[keys.issuer.public_key], warrant_chain=chain, budget_store=meter,
+        audit_callback=events.append if events is not None else None, **extra,
+    )
+    return http, meter
+
+
+def chat(http, **extra):
+    return http.post(CHAT, json={"model": MODEL, "messages": MESSAGES, **extra})
+
+
+def used(meter, warrant):
+    return meter.store.used(warrant.id)[warrant.id]
+
+
+# ---------------------------------------------------------------------------
+# Chat Completions
+# ---------------------------------------------------------------------------
+
+
+class TestChatCompletions:
+    def test_caps_the_request_and_counts_the_response(self, keys):
+        warrant = mint(keys, total_tokens=1000, max_tokens=400)
+        provider, events = Provider(), []
+        http, meter = client_for(keys, warrant, provider, events=events)
+
+        response = chat(http)
+
+        assert response.status_code == 200 and response.json()["usage"]["total_tokens"] == INPUT + 100
+        assert provider.bodies[0]["max_completion_tokens"] == 400
+        assert int(provider.requests[0].headers["content-length"]) == len(provider.requests[0].content)
+        assert used(meter, warrant) == INPUT + 100
+        (event,) = events
+        assert (event.decision, event.tool_name, event.model) == ("ALLOW", "llm.chat", MODEL)
+        assert event.usage["budget"] == [{"warrant_id": warrant.id, "used": INPUT + 100, "limit": 1000}]
+        assert event.url == CHAT
+
+    def test_callers_cap_name_is_kept_and_lowered_when_little_is_left(self, keys):
+        warrant = mint(keys, total_tokens=200)
+        provider = Provider(generates=500)
+        http, meter = client_for(keys, warrant, provider)
+        chat(http, max_tokens=500)
+        assert provider.bodies[0]["max_tokens"] == 170 and "max_completion_tokens" not in provider.bodies[0]
+        assert used(meter, warrant) == 200
+
+    def test_older_cap_name_can_be_the_default(self, keys):
+        warrant = mint(keys, total_tokens=1000, max_tokens=64)
+        provider = Provider()
+        http, _ = client_for(keys, warrant, provider, chat_output_param="max_tokens")
+        chat(http)
+        assert provider.bodies[0]["max_tokens"] == 64 and "max_completion_tokens" not in provider.bodies[0]
+
+    def test_spent_budget_is_refused_locally_as_403(self, keys):
+        warrant = mint(keys, total_tokens=150)
+        provider, events = Provider(), []
+        http, meter = client_for(keys, warrant, provider, events=events)
+        assert chat(http).status_code == 200  # 130 used
+
+        refused = chat(http)
+
+        assert refused.status_code == 403
+        assert refused.headers["x-should-retry"] == "false"
+        error = refused.json()["error"]
+        assert error["code"] == "token_budget_exceeded" and "token budget reached" in error["message"]
+        assert len(provider.requests) == 1  # never sent
+        assert used(meter, warrant) == 130
+        assert events[-1].decision == "DENY"
+        assert events[-1].usage == {"budget": [{"warrant_id": warrant.id, "used": 130, "limit": 150}]}
+
+    def test_model_outside_the_warrant_is_refused(self, keys):
+        warrant = mint(keys, model="some-other-model", total_tokens=1000)
+        provider = Provider()
+        http, meter = client_for(keys, warrant, provider)
+        refused = chat(http)
+        assert refused.status_code == 403 and refused.json()["error"]["code"] == "model_call_denied"
+        assert provider.requests == [] and used(meter, warrant) == 0
+
+    def test_wrong_holder_key_is_refused(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider()
+        http, _ = client_for(keys, warrant, provider, key=keys.worker)
+        assert chat(http).status_code == 403
+        assert provider.requests == []
+
+    def test_several_choices_are_reserved_for(self, keys):
+        warrant = mint(keys, total_tokens=330)
+        provider = Provider(generates=500)
+        http, meter = client_for(keys, warrant, provider)
+        chat(http, n=3, max_tokens=500)
+        assert provider.bodies[0]["max_tokens"] == 100 and used(meter, warrant) == 330
+
+    def test_other_request_fields_and_headers_survive(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider()
+        http, _ = client_for(keys, warrant, provider)
+        http.post(CHAT + "?api-version=1", headers={"authorization": "Bearer abc", "x-custom": "1"},
+                  json={"model": MODEL, "messages": MESSAGES, "temperature": 0.2, "tools": [{"type": "function"}]})
+        sent = provider.requests[0]
+        assert sent.headers["authorization"] == "Bearer abc" and sent.headers["x-custom"] == "1"
+        assert sent.url.query == b"api-version=1"
+        assert provider.bodies[0]["temperature"] == 0.2 and provider.bodies[0]["tools"] == [{"type": "function"}]
+        assert provider.bodies[0]["messages"] == MESSAGES
+
+
+class TestDelegation:
+    def test_workers_spend_from_the_parent(self, keys):
+        other = SigningKey.generate()
+        root = mint(keys, total_tokens=300)
+
+        def worker(holder):
+            return (root.grant_builder().capability("llm.chat", llm_capability(models=[MODEL], total_tokens=250))
+                    .holder(holder.public_key).ttl(600).grant(keys.lead))
+
+        one, two = worker(keys.worker), worker(other)
+        store, provider = BudgetStore(), Provider(generates=150)
+        http_one, _ = client_for(keys, one, provider, key=keys.worker, chain=[root], store=store)
+        http_two, _ = client_for(keys, two, provider, key=other, chain=[root], store=store)
+
+        assert chat(http_one, max_tokens=150).status_code == 200  # 180 of the parent's 300
+        assert chat(http_two, max_tokens=150).status_code == 200  # capped to 90
+        assert provider.bodies[1]["max_tokens"] == 90
+        refused = chat(http_two)
+        assert refused.status_code == 403 and "delegated from" in refused.json()["error"]["message"]
+        assert store.used(root.id, one.id, two.id) == {root.id: 300, one.id: 180, two.id: 120}
+
+
+# ---------------------------------------------------------------------------
+# Streams
+# ---------------------------------------------------------------------------
+
+
+class TestStreams:
+    @pytest.mark.parametrize("chunk_size", [None, 1, 7, 64])
+    def test_usage_chunk_is_requested_counted_and_hidden(self, keys, chunk_size):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider(chunk_size=chunk_size)
+        http, meter = client_for(keys, warrant, provider)
+
+        with http.stream("POST", CHAT, json={"model": MODEL, "messages": MESSAGES, "stream": True}) as response:
+            text = b"".join(response.iter_raw()).decode()
+
+        assert provider.bodies[0]["stream_options"] == {"include_usage": True}
+        assert provider.requests[0].headers["accept-encoding"] == "identity"
+        assert '"usage"' not in text and text.count("data: ") == 3 and text.endswith("data: [DONE]\n\n")
+        assert used(meter, warrant) == INPUT + 100
+
+    def test_usage_chunk_is_kept_when_the_caller_asked(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider(chunk_size=5)
+        http, meter = client_for(keys, warrant, provider)
+        body = {"model": MODEL, "messages": MESSAGES, "stream": True, "stream_options": {"include_usage": True}}
+        with http.stream("POST", CHAT, json=body) as response:
+            text = b"".join(response.iter_raw())
+        assert text == sse([{"choices": [{"index": 0, "delta": {"content": p}}]} for p in ("he", "llo")]
+                           + [{"choices": [], "usage": {"prompt_tokens": INPUT, "completion_tokens": 100,
+                                                        "total_tokens": INPUT + 100}}])
+        assert used(meter, warrant) == INPUT + 100
+
+    def test_stream_without_usage_is_charged_the_reservation(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        events = []
+        http, meter = client_for(keys, warrant, Provider(), events=events)
+        body = {"model": MODEL, "messages": MESSAGES, "stream": True, "max_tokens": 200,
+                "stream_options": {"include_usage": False}}
+        with http.stream("POST", CHAT, json=body) as response:
+            response.read()
+        assert used(meter, warrant) == INPUT + 200 and events[-1].usage["estimated"] is True
+
+    def test_compressed_stream_passes_through_and_is_charged_the_reservation(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        http, meter = client_for(keys, warrant, Provider(gzip_stream=True))
+        with http.stream("POST", CHAT, json={"model": MODEL, "messages": MESSAGES, "stream": True,
+                                             "max_tokens": 200}) as response:
+            text = response.read().decode()  # httpx decodes it for the caller as usual
+        assert "hello" in text.replace('"}}]}\n\ndata: {"choices": [{"index": 0, "delta": {"content": "', "")
+        assert used(meter, warrant) == INPUT + 200
+
+    def test_abandoned_stream_is_charged_the_reservation(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        http, meter = client_for(keys, warrant, Provider(chunk_size=4))
+        with http.stream("POST", CHAT, json={"model": MODEL, "messages": MESSAGES, "stream": True,
+                                             "max_tokens": 200}) as response:
+            next(response.iter_raw())
+        assert used(meter, warrant) == INPUT + 200
+
+
+# ---------------------------------------------------------------------------
+# Other wire formats
+# ---------------------------------------------------------------------------
+
+
+class TestResponsesApi:
+    URL = "https://provider.test/v1/responses"
+
+    def test_plain(self, keys):
+        warrant = mint(keys, total_tokens=1000, max_tokens=150)
+        provider = Provider()
+        http, meter = client_for(keys, warrant, provider)
+        http.post(self.URL, json={"model": MODEL, "input": "hi"})
+        assert provider.bodies[0]["max_output_tokens"] == 150 and used(meter, warrant) == INPUT + 100
+
+    def test_stream_reads_usage_from_the_closing_event(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider(chunk_size=9)
+        http, meter = client_for(keys, warrant, provider)
+        with http.stream("POST", self.URL, json={"model": MODEL, "input": "hi", "stream": True}) as response:
+            text = response.read().decode()
+        assert "response.completed" in text and "stream_options" not in provider.bodies[0]
+        assert used(meter, warrant) == INPUT + 100
+
+
+class TestAnthropicMessages:
+    URL = "https://api.anthropic.test/v1/messages"
+    MODEL = "claude-opus-5-5"
+
+    def body(self, **extra):
+        return {"model": self.MODEL, "max_tokens": 1024, "system": "Be brief.", "messages": MESSAGES, **extra}
+
+    def test_plain_counts_cached_input_too(self, keys):
+        warrant = mint(keys, model=self.MODEL, total_tokens=1000, max_tokens=400)
+        provider = Provider()
+        http, meter = client_for(keys, warrant, provider)
+        refused_cap = http.post(self.URL, json=self.body())  # asks for more than the warrant's per-call cap
+        assert refused_cap.status_code == 403 and refused_cap.json()["type"] == "error"
+        assert refused_cap.json()["error"]["code"] == "model_call_denied"
+
+        response = http.post(self.URL, json=self.body(max_tokens=400))
+        assert response.status_code == 200 and provider.bodies[0]["max_tokens"] == 400
+        assert used(meter, warrant) == 30 + 100  # 10 fresh + 15 cache read + 5 cache write, plus output
+
+    def test_cap_is_lowered_and_budget_refusal_has_the_anthropic_shape(self, keys):
+        warrant = mint(keys, model=self.MODEL, total_tokens=180)
+        provider = Provider(generates=500)
+        http, meter = client_for(keys, warrant, provider)
+        http.post(self.URL, json=self.body())
+        assert provider.bodies[0]["max_tokens"] == 150 and used(meter, warrant) == 180
+        refused = http.post(self.URL, json=self.body())
+        assert refused.status_code == 403
+        assert refused.json() == {"type": "error", "error": {
+            "type": "permission_error", "code": "token_budget_exceeded", "message": refused.json()["error"]["message"]}}
+
+    def test_stream_adds_input_from_the_first_event_and_output_from_the_last(self, keys):
+        warrant = mint(keys, model=self.MODEL, total_tokens=1000)
+        provider = Provider(chunk_size=11)
+        http, meter = client_for(keys, warrant, provider)
+        with http.stream("POST", self.URL, json=self.body(stream=True, max_tokens=300)) as response:
+            text = response.read().decode()
+        assert "message_stop" in text and used(meter, warrant) == 30 + 100
+
+
+# ---------------------------------------------------------------------------
+# Failures
+# ---------------------------------------------------------------------------
+
+
+class TestFailures:
+    def test_error_answer_gives_the_tokens_back_and_passes_through(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        http, meter = client_for(keys, warrant, Provider(status=429))
+        response = chat(http)
+        assert response.status_code == 429 and response.json() == {"error": {"message": "nope"}}
+        assert "x-tenuo-denial" not in response.headers and used(meter, warrant) == 0
+
+    def test_connection_never_made_gives_the_tokens_back(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        http, meter = client_for(keys, warrant, Provider(fail=httpx.ConnectError("refused")))
+        with pytest.raises(httpx.ConnectError):
+            chat(http)
+        assert used(meter, warrant) == 0
+
+    def test_read_timeout_keeps_the_reservation(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        events = []
+        http, meter = client_for(keys, warrant, Provider(fail=httpx.ReadTimeout("slow")), events=events)
+        with pytest.raises(httpx.ReadTimeout):
+            chat(http, max_tokens=200)
+        assert used(meter, warrant) == INPUT + 200 and events[-1].usage["estimated"] is True
+
+    def test_unreadable_store_blocks_the_call(self, keys):
+        class Broken:
+            def add(self, deltas, expires_at):
+                raise OSError("disk gone")
+
+            def used(self, keys):
+                return {k: 0 for k in keys}
+
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider()
+        http, _ = client_for(keys, warrant, provider, store=BudgetStore(backend=Broken()))
+        with pytest.raises(OSError):
+            chat(http)
+        assert provider.requests == []
+
+
+# ---------------------------------------------------------------------------
+# What is and is not metered
+# ---------------------------------------------------------------------------
+
+
+class TestRouting:
+    def test_get_requests_pass_through(self, keys):
+        warrant = mint(keys, total_tokens=1)
+        provider = Provider()
+        http, _ = client_for(keys, warrant, provider)
+        assert http.get("https://provider.test/v1/models").status_code == 200
+        assert len(provider.requests) == 1
+
+    def test_unknown_post_is_refused_unless_listed(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider()
+        http, _ = client_for(keys, warrant, provider)
+        refused = http.post("https://provider.test/v1/embeddings", json={"model": "e", "input": "x"})
+        assert refused.status_code == 403 and refused.json()["error"]["code"] == "unmetered_endpoint"
+        assert provider.requests == []
+
+        allowed, meter = client_for(keys, warrant, provider, unmetered_paths=["/embeddings"])
+        assert allowed.post("https://provider.test/v1/embeddings", json={"model": "e", "input": "x"}).status_code == 200
+        assert used(meter, warrant) == 0
+
+    def test_token_counting_endpoints_are_free(self, keys):
+        warrant = mint(keys, total_tokens=1)
+        provider = Provider()
+        http, _ = client_for(keys, warrant, provider)
+        assert http.post("https://api.anthropic.test/v1/messages/count_tokens", json={}).status_code == 200
+
+    def test_body_that_is_not_json_is_refused(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider()
+        http, _ = client_for(keys, warrant, provider)
+        assert http.post(CHAT, content=b"not json").status_code == 403
+        assert provider.requests == []
+
+    def test_azure_style_path_is_recognized(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider()
+        http, meter = client_for(keys, warrant, provider)
+        http.post("https://x.test/openai/deployments/d/chat/completions?api-version=2024", json={"model": MODEL, "messages": MESSAGES})
+        assert used(meter, warrant) == INPUT + 100
+
+    def test_needs_a_warrant_and_key(self, keys):
+        with pytest.raises(ValueError):
+            MeteredTransport(httpx.MockTransport(Provider()), warrant=None, signing_key=keys.lead)
+
+    def test_monitor_only_changes_nothing_but_counts(self, keys):
+        warrant = mint(keys, total_tokens=50)
+        provider = Provider()
+        meter = TokenMeter(enforce=False)
+        http = metered_client(transport=httpx.MockTransport(provider), warrant=warrant, signing_key=keys.lead,
+                              trusted_roots=[keys.issuer.public_key], budget_store=meter)
+        for _ in range(2):
+            assert chat(http).status_code == 200
+        assert all("max_completion_tokens" not in b and "max_tokens" not in b for b in provider.bodies)
+        assert used(meter, warrant) == 2 * (INPUT + 100)
+
+
+class TestIsBudgetError:
+    def test_recognizes_sdk_style_errors(self):
+        assert is_budget_error(SimpleNamespace(code="token_budget_exceeded", __cause__=None, __context__=None))  # type: ignore[arg-type]
+
+    def test_follows_the_cause_chain(self):
+        inner = RuntimeError("x")
+        inner.body = {"error": {"code": "token_budget_exceeded"}}  # type: ignore[attr-defined]
+        try:
+            try:
+                raise inner
+            except RuntimeError as e:
+                raise ValueError("wrapped") from e
+        except ValueError as outer:
+            assert is_budget_error(outer)
+        assert not is_budget_error(RuntimeError("something else"))
+
+
+# ---------------------------------------------------------------------------
+# Async
+# ---------------------------------------------------------------------------
+
+
+class TestAsync:
+    def aclient(self, keys, warrant, provider):
+        meter = TokenMeter(input_estimator=lambda request: INPUT)
+        http = metered_async_client(transport=httpx.MockTransport(provider), warrant=warrant, signing_key=keys.lead,
+                                    trusted_roots=[keys.issuer.public_key], budget_store=meter)
+        return http, meter
+
+    async def test_plain_and_refusal(self, keys):
+        warrant = mint(keys, total_tokens=150)
+        provider = Provider()
+        http, meter = self.aclient(keys, warrant, provider)
+        async with http:
+            first = await http.post(CHAT, json={"model": MODEL, "messages": MESSAGES})
+            second = await http.post(CHAT, json={"model": MODEL, "messages": MESSAGES})
+        assert first.status_code == 200 and second.status_code == 403
+        assert len(provider.requests) == 1 and used(meter, warrant) == INPUT + 100
+
+    async def test_stream(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider = Provider(chunk_size=6)
+        http, meter = self.aclient(keys, warrant, provider)
+        async with http, http.stream("POST", CHAT, json={"model": MODEL, "messages": MESSAGES, "stream": True}) as r:
+            text = (await r.aread()).decode()
+        assert '"usage"' not in text and text.endswith("data: [DONE]\n\n")
+        assert used(meter, warrant) == INPUT + 100
+
+    async def test_transport_class_directly(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        transport = AsyncMeteredTransport(httpx.MockTransport(Provider()), warrant=warrant, signing_key=keys.lead,
+                                          trusted_roots=[keys.issuer.public_key])
+        async with httpx.AsyncClient(transport=transport) as http:
+            await http.post(CHAT, json={"model": MODEL, "messages": MESSAGES})
+        assert transport.meter.store.used(warrant.id)[warrant.id] > 0
+
+
+# ---------------------------------------------------------------------------
+# The other HTTP library, and picking one for an SDK
+# ---------------------------------------------------------------------------
+
+
+class TestHttpx2:
+    """Current OpenAI and Anthropic SDKs are built on httpx2, not httpx."""
+
+    def setup_method(self):
+        self.h2 = pytest.importorskip("httpx2")
+
+    def provider(self):
+        h2, calls = self.h2, []
+
+        def handle(request):
+            body = json.loads(request.content)
+            calls.append(body)
+            usage = {"prompt_tokens": INPUT, "completion_tokens": 100, "total_tokens": INPUT + 100}
+            if body.get("stream"):
+                return h2.Response(200, headers={"content-type": "text/event-stream"}, content=sse([
+                    {"choices": [{"index": 0, "delta": {"content": "hi"}}]}, {"choices": [], "usage": usage}]))
+            return h2.Response(200, json={"choices": [], "usage": usage})
+
+        return h2.MockTransport(handle), calls
+
+    def test_plain_stream_and_refusal(self, keys):
+        warrant = mint(keys, total_tokens=270)  # two calls of 130 leave less than a third needs
+        transport, calls = self.provider()
+        meter = TokenMeter(input_estimator=lambda request: INPUT)
+        http = metered_client(library=self.h2, transport=transport, warrant=warrant, signing_key=keys.lead,
+                              trusted_roots=[keys.issuer.public_key], budget_store=meter)
+        assert isinstance(http, self.h2.Client)
+
+        assert http.post(CHAT, json={"model": MODEL, "messages": MESSAGES}).status_code == 200
+        with http.stream("POST", CHAT, json={"model": MODEL, "messages": MESSAGES, "stream": True}) as response:
+            text = response.read().decode()
+        assert '"usage"' not in text and used(meter, warrant) == 2 * (INPUT + 100)
+
+        refused = http.post(CHAT, json={"model": MODEL, "messages": MESSAGES})
+        assert isinstance(refused, self.h2.Response) and refused.status_code == 403
+        assert len(calls) == 2
+
+    async def test_async(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        transport, _ = self.provider()
+        meter = TokenMeter(input_estimator=lambda request: INPUT)
+        http = metered_async_client(library=self.h2, transport=transport, warrant=warrant, signing_key=keys.lead,
+                                    trusted_roots=[keys.issuer.public_key], budget_store=meter)
+        async with http:
+            await http.post(CHAT, json={"model": MODEL, "messages": MESSAGES})
+        assert used(meter, warrant) == INPUT + 100
+
+
+class TestSdkArgument:
+    @pytest.mark.parametrize("name", ["openai", "anthropic"])
+    def test_client_is_the_sdks_own_class_on_the_sdks_library(self, keys, name):
+        sdk = pytest.importorskip(name)
+        warrant = mint(keys, total_tokens=1000)
+        common = dict(sdk=sdk, warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key])
+        http, ahttp = metered_client(**common), metered_async_client(**common)
+        assert isinstance(http, sdk.DefaultHttpxClient) and isinstance(ahttp, sdk.DefaultAsyncHttpxClient)
+        # The SDK accepts it: constructing a client with a foreign library's client raises.
+        client_class = sdk.OpenAI if name == "openai" else sdk.Anthropic
+        client_class(api_key="unused", http_client=http)
+
+    def test_unknown_meter_argument_is_rejected(self, keys):
+        with pytest.raises(TypeError):
+            MeteredTransport(httpx.MockTransport(Provider()), warrant=mint(keys), signing_key=keys.lead, budgt_store=1)
+
+
+# ---------------------------------------------------------------------------
+# Google generateContent (Gemini API and Vertex AI)
+# ---------------------------------------------------------------------------
+
+
+class GoogleProvider:
+    def __init__(self, generates=100, chunk_size=None, thoughts=0):
+        self.generates, self.chunk_size, self.thoughts = generates, chunk_size, thoughts
+        self.requests, self.bodies = [], []
+
+    def __call__(self, request):
+        self.requests.append(request)
+        body = json.loads(request.content)
+        self.bodies.append(body)
+        cap = (body.get("generationConfig") or {}).get("maxOutputTokens") or 10**9
+        out = min(self.generates, cap)
+        meta = {"promptTokenCount": INPUT, "candidatesTokenCount": out, "totalTokenCount": INPUT + out + self.thoughts}
+        if self.thoughts:
+            meta["thoughtsTokenCount"] = self.thoughts
+        chunk = {"candidates": [{"content": {"role": "model", "parts": [{"text": "ok"}]}}], "usageMetadata": meta}
+        if ":streamGenerateContent" not in request.url.path:
+            return httpx.Response(200, json=chunk)
+        early = {"candidates": chunk["candidates"],
+                 "usageMetadata": {"promptTokenCount": INPUT, "candidatesTokenCount": 1, "totalTokenCount": INPUT + 1}}
+        if request.url.params.get("alt") == "sse":
+            payload = sse([early, chunk], done=False)
+            size = self.chunk_size or len(payload)
+            parts = [payload[i:i + size] for i in range(0, len(payload), size)]
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=_Chunks(parts))
+        return httpx.Response(200, json=[early, chunk])
+
+
+class TestGoogleGenerate:
+    MODEL = "gemini-2.5-flash"
+    URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+    STREAM = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:streamGenerateContent"
+    BODY = {"contents": [{"role": "user", "parts": [{"text": "hello there"}]}]}
+
+    def test_model_comes_from_the_path_and_the_cap_goes_in_generation_config(self, keys):
+        warrant = mint(keys, model=self.MODEL, total_tokens=1000, max_tokens=400)
+        provider, events = GoogleProvider(), []
+        http, meter = client_for(keys, warrant, provider, events=events)
+        response = http.post(self.URL, json={**self.BODY, "generationConfig": {"temperature": 0.1}})
+        assert response.status_code == 200
+        assert provider.bodies[0]["generationConfig"] == {"temperature": 0.1, "maxOutputTokens": 400}
+        assert used(meter, warrant) == INPUT + 100
+        assert events[0].model == self.MODEL and events[0].max_tokens == 400
+
+    def test_other_model_in_the_path_is_refused_in_googles_error_shape(self, keys):
+        warrant = mint(keys, model="gemini-other", total_tokens=1000)
+        provider = GoogleProvider()
+        http, _ = client_for(keys, warrant, provider)
+        refused = http.post(self.URL, json=self.BODY)
+        assert refused.status_code == 403 and provider.requests == []
+        error = refused.json()["error"]
+        assert (error["code"], error["status"]) == (403, "PERMISSION_DENIED")
+        assert error["details"][0]["reason"] == "model_call_denied"
+
+    def test_callers_cap_is_lowered_and_thinking_counts_as_output(self, keys):
+        warrant = mint(keys, model=self.MODEL, total_tokens=200)
+        provider, events = GoogleProvider(generates=500, thoughts=20), []
+        http, meter = client_for(keys, warrant, provider, events=events)
+        http.post(self.URL, json={**self.BODY, "generationConfig": {"maxOutputTokens": 500}})
+        assert provider.bodies[0]["generationConfig"]["maxOutputTokens"] == 170
+        assert events[0].usage["output_tokens"] == 190 and used(meter, warrant) == 220
+        assert events[0].usage["over_budget"] == [warrant.id]  # the provider thought past the cap
+        refused = http.post(self.URL, json=self.BODY)
+        assert refused.json()["error"]["details"][0]["reason"] == "token_budget_exceeded"
+
+    @pytest.mark.parametrize("chunk_size", [None, 3, 40])
+    def test_sse_stream_takes_the_last_chunks_totals(self, keys, chunk_size):
+        warrant = mint(keys, model=self.MODEL, total_tokens=1000)
+        http, meter = client_for(keys, warrant, GoogleProvider(chunk_size=chunk_size))
+        with http.stream("POST", self.STREAM + "?alt=sse", json=self.BODY) as response:
+            text = response.read().decode()
+        assert text.count("usageMetadata") == 2 and used(meter, warrant) == INPUT + 100
+
+    def test_json_array_stream(self, keys):
+        warrant = mint(keys, model=self.MODEL, total_tokens=1000)
+        http, meter = client_for(keys, warrant, GoogleProvider())
+        assert len(http.post(self.STREAM, json=self.BODY).json()) == 2
+        assert used(meter, warrant) == INPUT + 100
+
+    def test_vertex_path_and_free_token_counting(self, keys):
+        warrant = mint(keys, model=self.MODEL, total_tokens=1000)
+        provider = GoogleProvider()
+        http, meter = client_for(keys, warrant, provider)
+        vertex = ("https://aiplatform.googleapis.com/v1/projects/p/locations/global/publishers/google/models/"
+                  f"{self.MODEL}:generateContent")
+        assert http.post(vertex, json=self.BODY).status_code == 200 and used(meter, warrant) == INPUT + 100
+        count = f"https://generativelanguage.googleapis.com/v1beta/models/{self.MODEL}:countTokens"
+        assert http.post(count, json=self.BODY).status_code == 200 and used(meter, warrant) == INPUT + 100
+
+
+# ---------------------------------------------------------------------------
+# install(): no wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def installed(keys):
+    from tenuo.budget_http import install, uninstall
+
+    def do(warrant=None, key=None, **extra):
+        return install(warrant=warrant, signing_key=key, trusted_roots=[keys.issuer.public_key],
+                       budget_store=TokenMeter(input_estimator=lambda request: INPUT), **extra)
+
+    yield do
+    uninstall()
+
+
+class TestInstall:
+    OPENAI = "https://api.openai.com/v1/chat/completions"
+
+    def plain_client(self, provider, lib=httpx):
+        return lib.Client(transport=lib.MockTransport(provider))
+
+    def test_any_client_is_metered_without_wiring(self, keys, installed):
+        warrant = mint(keys, total_tokens=150)
+        meter = installed(warrant, keys.lead)
+        provider = Provider()
+        http = self.plain_client(provider)
+        assert http.post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES}).status_code == 200
+        assert provider.bodies[0]["max_completion_tokens"] == 120  # 150 total, 30 of it input
+        refused = http.post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES})
+        assert refused.status_code == 403 and refused.json()["error"]["code"] == "token_budget_exceeded"
+        assert len(provider.requests) == 1 and used(meter, warrant) == INPUT + 100
+
+    def test_clients_made_before_install_are_metered_too(self, keys, installed):
+        provider = Provider()
+        http = self.plain_client(provider)
+        warrant = mint(keys, total_tokens=1000)
+        meter = installed(warrant, keys.lead)
+        http.post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES})
+        assert used(meter, warrant) == INPUT + 100
+
+    def test_other_hosts_are_left_alone(self, keys, installed):
+        warrant = mint(keys, total_tokens=1)
+        meter = installed(warrant, keys.lead)
+        seen = []
+
+        def chat_app(request):  # some other service whose path happens to end in /messages
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": True})
+
+        http = httpx.Client(transport=httpx.MockTransport(chat_app))
+        body = {"channel": "general", "text": "hello"}
+        assert http.post("https://chat.example.test/api/messages", json=body).status_code == 200
+        assert seen == [body] and used(meter, warrant) == 0
+
+    def test_extra_hosts_and_subdomains(self, keys, installed):
+        warrant = mint(keys, total_tokens=1000)
+        meter = installed(warrant, keys.lead, hosts=["gateway.internal:8080"])
+        provider = Provider()
+        http = self.plain_client(provider)
+        http.post("http://gateway.internal:8080/v1/chat/completions", json={"model": MODEL, "messages": MESSAGES})
+        http.post("https://myresource.openai.azure.com/openai/deployments/d/chat/completions",
+                  json={"model": MODEL, "messages": MESSAGES})
+        assert used(meter, warrant) == 2 * (INPUT + 100)
+
+    def test_each_agent_spends_from_the_warrant_in_scope(self, keys, installed):
+        from tenuo import key_scope, warrant_scope
+
+        other = SigningKey.generate()
+        one = mint(keys, total_tokens=1000)
+        two = (Warrant.mint_builder().capability("llm.chat", llm_capability(models=[MODEL], total_tokens=1000))
+               .holder(other.public_key).ttl(600).mint(keys.issuer))
+        meter = installed()  # no default credentials
+        provider = Provider()
+        http = self.plain_client(provider)
+        request = {"model": MODEL, "messages": MESSAGES}
+
+        no_warrant = http.post(self.OPENAI, json=request)
+        assert no_warrant.status_code == 403 and "no warrant" in no_warrant.json()["error"]["message"]
+        with warrant_scope(one), key_scope(keys.lead):
+            http.post(self.OPENAI, json=request)
+        with warrant_scope(two), key_scope(other):
+            http.post(self.OPENAI, json=request)
+            http.post(self.OPENAI, json=request)
+        assert meter.store.used(one.id, two.id) == {one.id: INPUT + 100, two.id: 2 * (INPUT + 100)}
+        assert len(provider.requests) == 3
+
+    def test_explicitly_metered_client_is_not_counted_twice(self, keys, installed):
+        warrant = mint(keys, total_tokens=1000)
+        meter = installed(warrant, keys.lead)
+        http = metered_client(transport=httpx.MockTransport(Provider()), warrant=warrant, signing_key=keys.lead,
+                              trusted_roots=[keys.issuer.public_key], budget_store=meter)
+        http.post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES})
+        assert used(meter, warrant) == INPUT + 100
+
+    def test_uninstall_restores_the_clients(self, keys, installed):
+        from tenuo.budget_http import uninstall
+
+        original = httpx.Client._transport_for_url
+        warrant = mint(keys, total_tokens=1)
+        installed(warrant, keys.lead)
+        assert httpx.Client._transport_for_url is not original
+        provider = Provider()
+        http = self.plain_client(provider)
+        assert http.post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES}).status_code == 403
+        uninstall()
+        assert httpx.Client._transport_for_url is original
+        assert http.post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES}).status_code == 200
+
+    def test_httpx2_clients(self, keys, installed):
+        h2 = pytest.importorskip("httpx2")
+        warrant = mint(keys, total_tokens=1000)
+        meter = installed(warrant, keys.lead)
+        calls = []
+
+        def handle(request):
+            calls.append(json.loads(request.content))
+            return h2.Response(200, json={"choices": [], "usage": {"prompt_tokens": INPUT, "completion_tokens": 100,
+                                                                    "total_tokens": INPUT + 100}})
+
+        h2.Client(transport=h2.MockTransport(handle)).post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES})
+        assert "max_completion_tokens" in calls[0] and used(meter, warrant) == INPUT + 100
+
+    async def test_async_clients(self, keys, installed):
+        warrant = mint(keys, total_tokens=1000)
+        meter = installed(warrant, keys.lead)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(Provider())) as http:
+            await http.post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES})
+        assert used(meter, warrant) == INPUT + 100

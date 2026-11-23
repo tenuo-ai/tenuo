@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Token budgets for model calls (Python, experimental).** A warrant can carry
+  a token budget as a `Range` constraint on an `llm.chat` capability
+  (`tenuo.budget.llm_capability`). `tenuo.budget_http.install()` meters the
+  model calls of every `httpx` / `httpx2` client in the process against the
+  warrant in scope, and `metered_client()` does the same for one client. Calls
+  are authorized before they are sent, output caps are lowered to what is
+  left, and reported usage is counted per warrant and per presented parent.
+  See [Token Budgets](docs/token-budgets.md).
+
 ## [0.3.7] - 2026-11-11
 
 ### Security

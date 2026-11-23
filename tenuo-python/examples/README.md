@@ -139,6 +139,7 @@ This demo shows Tenuo's key capabilities:
   - **[async_patterns.py](openai/async_patterns.py)**: Async/streaming patterns with TOCTOU protection
   - **[agents_sdk.py](openai/agents_sdk.py)**: OpenAI Agents SDK integration
 - **[handoff.py](openai/handoff.py)**: Native Agents SDK handoff to a refund specialist with a narrower warrant (offline test)
+- **[token_budget.py](openai/token_budget.py)**: Token budgets for model calls, shared between a lead and two workers (local stand-in provider, no API key)
 
 ### CrewAI Integration
 - **[crewai/](crewai/)**: Complete CrewAI integration examples
