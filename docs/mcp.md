@@ -340,6 +340,33 @@ async with MultiServerMCPClient({
 > It is _not_ interchangeable with LangChain's `MultiServerMCPClient`.
 > Use `guard_tools()` to protect LangChain adapter tools.
 
+### Pattern 5: Gateway in Front of a Server You Don't Change
+
+For a server you can't add middleware to (a third-party server, another
+language, a container image), run `tenuo mcp gateway` in front of it. Clients
+connect to the gateway; it verifies every tool call against your trusted roots
+exactly as Pattern 1 does, forwards the allowed ones, and passes tool names and
+schemas through unchanged.
+
+```bash
+pip install "tenuo[fastmcp]"
+tenuo mcp gateway http://internal-server:8000/mcp \
+    --root <root public key, hex or base64> \
+    --listen 0.0.0.0:8080 \
+    --key gateway.key --receipts receipts.jsonl
+```
+
+- The gateway trusts roots, not agents: a delegated child warrant verifies
+  because its chain ends at the root and can only narrow.
+- With `--receipts`, every decision over a presented warrant (allowed or
+  refused) is signed with the gateway's own key (`--key`, created if missing)
+  and appended to the file. Check it with `tenuo receipt chain receipts.jsonl`.
+- Put the upstream where only the gateway can reach it (a private network or
+  loopback). Otherwise callers can skip the gateway.
+
+From Python, `tenuo.mcp.gateway.create_gateway(upstream, trusted_roots=[...])`
+returns the FastMCP server, for embedding or other transports.
+
 ---
 
 ## Approval Gates

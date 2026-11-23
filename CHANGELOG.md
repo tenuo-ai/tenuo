@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tenuo mcp gateway`** puts Tenuo in front of an MCP server you don't change. It
+  verifies every tool call against trusted roots, forwards the allowed ones, and can
+  append a signed receipt for each decision to a file (`--receipts`). Python:
+  `tenuo.mcp.gateway.create_gateway`.
+
 ## [0.3.7] - 2026-11-11
 
 ### Security
