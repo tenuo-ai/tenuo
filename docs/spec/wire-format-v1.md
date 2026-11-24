@@ -4,7 +4,7 @@
 **Status:** Normative  
 **Date:** 2026-01-01  
 
-**Documentation Revision:** 5 (2026-10-20)
+**Documentation Revision:** 6 (2026-11-24)
 
 **Related Documents:**
 - [protocol-spec-v1.md](protocol-spec-v1.md) - Protocol Specification (concepts, invariants, algorithms)
@@ -14,6 +14,11 @@
 
 ## Revision History
 
+- **Rev 6** (2026-11-24): Stated the delegation rules for a constraint set's
+  arguments in §7: a child may declare an argument its parent admits without
+  declaring, and may leave out an optional one when it admits no undeclared
+  arguments. Verifiers enforce `MAX_WARRANT_TTL_SECS` (I3). No wire bytes or
+  type IDs changed.
 - **Rev 5** (2026-10-20): Security erratum for `UrlSafe` host policy. Clarified
   that `allow_domains` constrains every host, including IP literals; domain
   patterns are canonicalized with the URL host parser; and malformed patterns
@@ -234,7 +239,8 @@ child.ttl <= MAX_WARRANT_TTL_SECS (90 days)
 
 **Enforcement points:**
 1. **Builder**: Cap child TTL at parent's remaining time
-2. **Verifier**: Check expiration doesn't exceed parent
+2. **Verifier**: Check expiration doesn't exceed parent, and that no warrant's
+   lifetime (`expires_at - issued_at`) exceeds `MAX_WARRANT_TTL_SECS`
 
 #### I4: Capability Monotonicity
 ```
@@ -993,10 +999,22 @@ reject other entries. A declared field is required unless it is listed in
 null) MUST satisfy its value constraint. Unknown members in either the constraint
 set or a constraint payload MUST be rejected.
 
-Delegation MAY change optional to required, but MUST NOT change required to
-optional. Value attenuation and keyset restrictions still apply. Implementations
-MUST reject delegation from an optional parent predicate they cannot implement,
-including when the child makes that argument required. Implementations
+A constraint set admits undeclared arguments when it is empty or
+`allow_unknown` is true. Delegation narrows a set under these rules:
+
+- A child MUST NOT admit undeclared arguments unless the parent does.
+- A child MAY declare an argument the parent does not declare only if the
+  parent admits undeclared arguments.
+- A child MUST declare every argument the parent requires, with a value
+  constraint at least as narrow.
+- A child MAY change optional to required, but MUST NOT change required to
+  optional.
+- A child MAY leave out an argument the parent marks optional only if the
+  child admits no undeclared arguments. The child then refuses that argument.
+
+Implementations MUST reject delegation from an optional parent predicate they
+cannot implement, whether the child makes that argument required or leaves it
+out. Implementations
 that predate `optional_fields` and enforce strict decoding reject this member;
 required-only sets retain their existing encoding.
 
