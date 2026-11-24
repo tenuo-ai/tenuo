@@ -205,13 +205,13 @@ export const STAGES: readonly StageSpec[] = [
         file: "answers/04-two-travelers/per-task.ts",
         symbols: ["config"],
         caption: "One identity per task",
-        note: "Notice that `checkin-agent:trip-alice-cun` still carries `issue_boarding_pass`. Check-in Agent never issues a boarding pass itself; it holds the tool only because Boarding Agent inherits its whole credential. The score doesn't charge for it, since handing that tool on is part of Check-in Agent's job, but nothing stops Check-in Agent from using it directly. Act 2 exploits exactly this.",
+        note: "Notice that `checkin-agent:trip-alice-cun` still carries `issue_boarding_pass`. Check-in Agent never issues a boarding pass itself; it holds the tool only because Boarding Agent inherits its whole credential. The score doesn't charge for it, since handing that tool on is part of Check-in Agent's job, but nothing stops Check-in Agent from using it directly. Act 2 exploits exactly this over-grant.",
       },
       {
         file: "answers/04-two-travelers/policy-service.ts",
         symbols: ["config"],
         caption: "Another way that works: policyService: true, and the per-task fields come from a service asked on every call",
-        note: "The same thing remains here: Check-in Agent carries `issue_boarding_pass` only so its whole credential can power Boarding Agent, and could use it directly. Act 2 exploits it.",
+        note: "The same over-grant remains here: Check-in Agent carries `issue_boarding_pass` only so its whole credential can power Boarding Agent, and could use it directly. Act 2 exploits it.",
       },
     ],
     stuck: [
