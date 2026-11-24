@@ -377,6 +377,18 @@ describe("diagnostics cannot become execution credentials", () => {
     },
   );
 
+  it("satisfied diagnostics do not bypass a host-policy ceiling", async () => {
+    const { checker, presented, report, body, authorSession, approvals } = boundary();
+    const allow = { repo: exact("other/repo"), pr: pattern("*"), head_sha: pattern("*") };
+    expect(report.constraints.status).toBe("satisfied");
+    await expect(checker.verify(presented, "merge_pr", args, { allow }))
+      .rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
+    const restricted = checker.tool({ execute: body }, { capability: "merge_pr", allow });
+    await expect(restricted.execute(args, { session: authorSession, approvals }))
+      .rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
+    expect(body).not.toHaveBeenCalled();
+  });
+
   it("does not let a satisfied report authorize changed invocation arguments", async () => {
     const { handler, body, presented, report } = boundary();
     const changed = { ...args, head_sha: "b".repeat(40) };

@@ -9,6 +9,32 @@ description: How to use constraints to scope authority precisely
 
 ---
 
+## Tool arguments must retain their meaning at execution
+
+Structured arguments and a valid proof-of-possession signature do not make an
+argument safe for the program that consumes it. For example, a `kubectl` resource
+name such as `--filename=/tmp/fixture.yaml` can be interpreted as an option rather
+than a name. [CVE-2026-134817's upstream fix](https://github.com/Flux159/mcp-server-kubernetes/pull/390)
+rejects flag-shaped values in positional operand fields.
+
+Use field-specific constraints that describe valid resource names, and enforce
+runtime input validation in the tool handler. A broad wildcard does not provide
+this protection. Reject invalid operands before invoking the executor. Do not
+apply a global ban on dash-prefixed strings: other fields may legitimately
+contain them.
+
+Perform application normalization before signing and authorization, then execute
+the verified arguments without further rewriting. Canonical serialization binds
+the supplied values; it does not model a downstream command's option parser.
+Passing an argument array with `shell=False` or using `execve()` avoids shell
+interpretation but does not stop the executable from interpreting options.
+
+The synthetic MCP boundary tests in
+`tenuo-python/tests/security/test_mcp_argument_boundary.py` exercise explicit
+operand constraints, unchanged argument forwarding, and proof-of-possession
+binding with a recording executor. They do not replace upstream server tests or
+validate a complete Kubernetes input schema.
+
 ## Overview
 
 Constraints are key-value pairs that restrict what a warrant authorizes. When a tool is invoked, Tenuo checks that the arguments satisfy the warrant's constraints.
@@ -2105,8 +2131,11 @@ into a new set creates required arguments.
 
 Optionality does not permit undeclared arguments. During delegation, an optional
 argument may become required, but a required argument cannot become optional.
-The value constraint must still narrow, and the existing keyset rules still apply:
-an optional key cannot be dropped from a nonempty parent constraint set.
+The value constraint must still narrow. A child may leave an optional argument
+out only when it admits no undeclared arguments (it is not empty and does not
+set `allow_unknown`); the child then refuses that argument. A child may declare
+an argument its parent does not only when the parent admits undeclared
+arguments.
 Unsupported optional parent predicates cannot confer authority through
 delegation, including when a child makes the argument required.
 

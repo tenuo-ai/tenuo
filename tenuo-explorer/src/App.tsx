@@ -88,7 +88,7 @@ interface ValidationWarning {
 type ExplorerMode = 'decoder' | 'builder' | 'chain' | 'diff' | 'receipt';
 
 const MODE_META: Record<ExplorerMode, { label: string; description: string }> = {
-  decoder: { label: 'Inspect', description: 'Decode a warrant and simulate an authorization decision.' },
+  decoder: { label: 'Inspect', description: 'Decode a warrant and examine a proposed call.' },
   builder: { label: 'Build', description: 'Create a scoped warrant from real constraints and export working code.' },
   diff: { label: 'Compare', description: 'See exactly how authority changes between two warrants.' },
   chain: { label: 'Delegate', description: 'Validate multi-hop delegation and monotonic attenuation.' },
@@ -130,7 +130,7 @@ const SAMPLE_TEMPLATES: Record<string, {
 }> = {
   valid_read: {
     name: "Valid Read",
-    description: "Authorized: path matches docs/* constraint",
+    description: "Policy match: path matches docs/* constraint",
     wasmTool: "read_file",
     wasmField: "path",
     wasmPattern: "docs/*",
@@ -140,7 +140,7 @@ const SAMPLE_TEMPLATES: Record<string, {
   },
   valid_nested: {
     name: "Nested Path",
-    description: "Authorized: nested paths like docs/api/guide.md",
+    description: "Policy match: nested paths like docs/api/guide.md",
     wasmTool: "read_file",
     wasmField: "path",
     wasmPattern: "docs/*",

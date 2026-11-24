@@ -255,7 +255,7 @@ impl PyControlPlaneClient {
 }
 
 #[cfg(feature = "python-server")]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct TrustContext {
     trusted_roots_hash: [u8; 32],
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
@@ -266,7 +266,7 @@ fn read_trust(trust: &Arc<Mutex<Option<TrustContext>>>) -> PyResult<Option<Trust
     let guard = trust
         .lock()
         .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned"))?;
-    Ok(*guard)
+    Ok(guard.clone())
 }
 
 #[cfg(feature = "python-server")]
@@ -287,6 +287,11 @@ fn issue_allow_receipt(
         None => return Ok(None),
     };
 
+    if allowed && chain_result.host_policy_denied {
+        return Err(PyValueError::new_err(
+            "a host-policy denial cannot produce an allow receipt",
+        ));
+    }
     let outcome = if allowed {
         crate::receipt::Outcome::Allow
     } else {
@@ -309,6 +314,7 @@ fn issue_allow_receipt(
         payload.srl_version = version;
         payload.srl_hash = Some(digest);
     }
+    payload.policy_definition_hash = chain_result.host_policy_hash;
 
     encode_signed_receipt(signer, last_receipt_hash, payload)
 }
@@ -385,6 +391,7 @@ fn issue_deny_receipt(
         payload.srl_version = version;
         payload.srl_hash = Some(digest);
     }
+    // No evaluated decision accompanies this raw denial: do not claim a ceiling.
 
     encode_signed_receipt(signer, last_receipt_hash, payload)
 }
@@ -633,8 +640,8 @@ impl PyControlPlaneClient {
 
     /// Copy the enforcement point's trust context from its authorizer.
     ///
-    /// Receipts commit to the trusted root set and the revocation list in force
-    /// (payload keys 15, 12 and 13). Those values are read from the authorizer
+    /// Receipts commit to the trusted root set, the revocation list and the
+    /// tool's host policy in force (payload keys 15, 12, 13 and 11). Those values are read from the authorizer
     /// itself rather than configured here, so a receipt cannot claim a trust
     /// context this enforcement point never had. Call again after installing a
     /// new revocation list.
