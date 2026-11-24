@@ -23,7 +23,7 @@ import { measureMargin, type Margin } from "../harness/margin.ts";
 import { runScenario, type Built } from "../harness/run.ts";
 import { score, type Score } from "../harness/score.ts";
 import type { AuditRecord } from "../audit.ts";
-import { AGENTS } from "../mission.ts";
+import { AGENTS, ALICE } from "../mission.ts";
 import { LAB_HOME, loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
 import { recordAttempt, snapshot } from "../telemetry.ts";
@@ -410,6 +410,17 @@ async function evaluateStage(def: StageDef): Promise<{ runs: Evaluated[]; functi
   return { runs, functionality, probes, margin, score: score(functionality, probes, margin) };
 }
 
+/** Say which setting stopped the chain: a terminal link, or the root's maxDepth. */
+function terminalCredit(built: Built): string {
+  const tenuo = built.runtime.tenuo;
+  const root = tenuo?.session("travel-agent", ALICE.taskId)?.inspect();
+  const checkin = tenuo?.session("checkin-agent", ALICE.taskId)?.inspect();
+  if (root !== undefined && checkin !== undefined && checkin.maxDepth >= root.maxDepth) {
+    return `The root's maxDepth (${root.maxDepth}) stopped the chain at Check-in Agent, so it could not forward authority.`;
+  }
+  return "The deliberately terminal link blocked Check-in Agent from forwarding authority.";
+}
+
 async function cmdScore(def: StageDef): Promise<void> {
   header(def, def.scenario);
   const e = await evaluateStage(def);
@@ -425,12 +436,12 @@ async function cmdScore(def: StageDef): Promise<void> {
     const terminal = probes.find((probe) => probe.section === "TERMINAL");
     console.log(bold("TERMINAL HANDOFF"));
     if (terminal?.ok === true) {
-      console.log(`  ${green("✓")} The deliberately terminal link blocked Check-in Agent from forwarding authority.`);
+      console.log(`  ${green("✓")} ${terminalCredit(e.runs[0]!.built)}`);
       console.log(dim("  That break is the point of this exercise, so this boss level is complete and is not scored out of 100."));
       if (markComplete(def.n)) console.log(green(`  Stage ${def.n} done.`) + dim(`  Next: npm run next, then ${guideUrl(def.n + 1)}`));
     } else {
       console.log(`  ${red("✗")} The handoff is not terminal yet.`);
-      console.log(dim("  Make the final Check-in → Boarding link terminal, then run npm run score again."));
+      console.log(dim("  Add terminal: true to the Flight → Check-in link (or lower the root's maxDepth), then run npm run score again."));
     }
     console.log("");
     return;
