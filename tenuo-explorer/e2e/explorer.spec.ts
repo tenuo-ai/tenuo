@@ -299,6 +299,30 @@ test.describe('Feedback regressions', () => {
         await expect(page.getByRole('button', { name: 'Generate Preview' })).toBeDisabled();
     });
 
+    test('switching modes clears the preview when builder inputs reset', async ({ page }) => {
+        await page.getByRole('tab', { name: 'Build' }).click();
+        await page.locator('input[type="number"]').nth(1).fill('0');
+        await page.getByRole('button', { name: 'Generate Preview' }).click();
+        await expect(page.locator('textarea[readonly]')).toBeVisible();
+        await page.getByRole('tab', { name: 'Inspect' }).click();
+        await page.getByRole('tab', { name: 'Build' }).click();
+        await expect(page.locator('input[type="number"]').nth(1)).toHaveValue('3');
+        await expect(page.getByText('Click "Generate Preview" to create a real warrant')).toBeVisible();
+        await expect(page.locator('textarea[readonly]')).toHaveCount(0);
+    });
+
+    test('receipt errors retain physical line numbers across blank lines', async ({ page }) => {
+        await page.getByRole('tab', { name: 'Verify' }).click();
+        await page.getByRole('button', { name: 'Load sample receipts' }).click();
+        await expect(page.getByText(/2 of 3 receipts verify/)).toBeVisible();
+        const input = page.getByPlaceholder('a46f7265636569707476657273696f6e01…');
+        const receipts = (await input.inputValue()).split('\n');
+        await input.fill(`\n${receipts[0]}\n  \n${receipts[2]}\n`);
+        await page.getByRole('button', { name: 'Verify', exact: true }).click();
+        await expect(page.getByText(/1 of 2 receipts verify/)).toBeVisible();
+        await expect(page.getByText('Line 4: verification failed')).toBeVisible();
+    });
+
     test('an in-flight receipt check cannot restore results after an edit', async ({ page }) => {
         await page.getByRole('tab', { name: 'Verify' }).click();
         await page.evaluate(() => {

@@ -2268,10 +2268,9 @@ function ReceiptMode() {
 
     const lines = inputText
       .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
+      .map((l) => l.trim());
 
-    if (lines.length === 0) {
+    if (!lines.some(Boolean)) {
       setError('Paste a receipt in hex or the JSONL a FileReceiptSink writes.');
       return;
     }
@@ -2284,6 +2283,7 @@ function ReceiptMode() {
     const verified: ReceiptRow[] = [];
     const rejected: { line: number; error: string }[] = [];
     for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i]) continue;
       try {
         // accept the JSONL a FileReceiptSink writes, or bare hex
         const wire = lines[i].startsWith('{') ? String(JSON.parse(lines[i]).receipt ?? '') : lines[i];
@@ -2522,6 +2522,7 @@ function App() {
   const [sharedChain, setSharedChain] = useState<SharedChain | undefined>(undefined);
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
   const [showBuilderJson, setShowBuilderJson] = useState(false);
+  useEffect(() => { setBuilderPreview(null); }, [mode]);
   const [showShortcuts, setShowShortcuts] = useState(true);
   const [navOpen, setNavOpen] = useState(false);
   const [samples, setSamples] = useState<Record<string, SampleDef>>({});
