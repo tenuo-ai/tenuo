@@ -1326,3 +1326,55 @@ class TestOtherRequestFields:
         first = SimpleNamespace(id="tnu_wrt_same", to_base64=lambda: "first")
         second = SimpleNamespace(id="tnu_wrt_same", to_base64=lambda: "second")
         assert _warrant_key(first) != _warrant_key(second)
+
+
+class TestTheRequestAsSent:
+    RESPONSES = "https://provider.test/v1/responses"
+    GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent"
+
+    def warrant(self, keys, total, **fields):
+        from tenuo import Range
+
+        capability = llm_capability(total_tokens=total, models=[MODEL])
+        capability.update({name: Range(min=low, max=high) for name, (low, high) in fields.items()})
+        return (Warrant.mint_builder().capability("llm.chat", capability)
+                .holder(keys.lead.public_key).ttl(600).mint(keys.issuer))
+
+    def test_a_cap_the_warrant_fixes_is_not_lowered_behind_its_back(self, keys):
+        # The warrant wants exactly 100 output tokens. With room for 100 the call runs as written.
+        warrant = self.warrant(keys, INPUT + 100, max_output_tokens=(100, 100))
+        sent = []
+        http, meter = client_for(keys, warrant, lambda r: (sent.append(json.loads(r.content)), httpx.Response(200, json={}))[1])
+        body = {"model": MODEL, "input": "hello", "max_output_tokens": 100}
+        assert http.post(self.RESPONSES, json=body).status_code == 200 and sent[0]["max_output_tokens"] == 100
+        # With room for only 40 it would have to be sent with 40, which the warrant does not allow.
+        warrant = self.warrant(keys, INPUT + 40, max_output_tokens=(100, 100))
+        sent.clear()
+        http, meter = client_for(keys, warrant, lambda r: (sent.append(json.loads(r.content)), httpx.Response(200, json={}))[1])
+        refused = http.post(self.RESPONSES, json=body)
+        assert refused.status_code == 403 and "max_output_tokens" in refused.text
+        assert not sent and used(meter, warrant) == 0
+
+    def test_a_lowered_cap_inside_the_warrants_range_is_sent(self, keys):
+        warrant = self.warrant(keys, INPUT + 40, max_output_tokens=(0, 500))
+        sent = []
+        http, _ = client_for(keys, warrant, lambda r: (sent.append(json.loads(r.content)), httpx.Response(200, json={}))[1])
+        assert http.post(self.RESPONSES, json={"model": MODEL, "input": "hello", "max_output_tokens": 100}).status_code == 200
+        assert sent[0]["max_output_tokens"] == 40
+
+    def test_gemini_settings_are_checked_as_sent(self, keys):
+        body = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "generationConfig": {"maxOutputTokens": 150}}
+        sent = []
+        provider = lambda r: (sent.append(json.loads(r.content)), httpx.Response(200, json={}))[1]  # noqa: E731
+        http, _ = client_for(keys, self.warrant(keys, INPUT + 150, maxOutputTokens=(100, 200)), provider)
+        assert http.post(self.GEMINI, json=body).status_code == 200
+        assert sent[0]["generationConfig"]["maxOutputTokens"] == 150
+        http, meter = client_for(keys, self.warrant(keys, INPUT + 40, maxOutputTokens=(100, 200)), provider)
+        assert http.post(self.GEMINI, json=body).status_code == 403 and len(sent) == 1
+
+    def test_the_callers_own_body_is_left_as_it_was(self, keys):
+        warrant = mint(keys, total_tokens=INPUT + 40)
+        sent = []
+        http, _ = client_for(keys, warrant, lambda r: (sent.append(json.loads(r.content)), httpx.Response(200, json={}))[1])
+        assert chat(http, max_tokens=100, stream_options={"x": 1}).status_code == 200
+        assert sent[0]["max_tokens"] == 40 and sent[0]["stream_options"] == {"x": 1}

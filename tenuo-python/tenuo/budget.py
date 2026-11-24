@@ -739,6 +739,7 @@ class TokenMeter:
         requested_output: Optional[int],
         choices: int = 1,
         authorize: Callable[[str, Dict[str, Any]], Any],
+        as_sent: Optional[Callable[[int], Mapping[str, Any]]] = None,
     ) -> MeteredCall:
         """Reserve tokens for one model call and have the warrant authorize it.
 
@@ -752,6 +753,9 @@ class TokenMeter:
             authorize: ``(tool, args) -> result`` run by the adapter for the
                 caller's own warrant. ``result.allowed`` decides; on refusal
                 ``result.constraint_violated`` names the field.
+            as_sent: ``output cap -> request`` for an adapter that changes the
+                request before sending it (the cap, for one). The warrant then
+                checks the fields of what is sent, not of what was written.
 
         Raises:
             BudgetExceeded: A total in the chain would be passed.
@@ -791,13 +795,14 @@ class TokenMeter:
             cap = max(1, min(want, (min(rooms) - input_estimate) // choices))
         clamped = requested_output is not None and cap < requested_output
         reserved = input_estimate + cap * choices
+        checked = as_sent(cap) if as_sent is not None else request
 
         call = MeteredCall(self.tool, model, cap, reserved, input_estimate, clamped, True, levels, self.store)
         totals = self.store.add(
             {lv.warrant_id: reserved for lv in levels}, {lv.warrant_id: lv.expires_at for lv in levels}
         )
         try:
-            self._decide(call, own, request, totals, before, input_estimate + choices, authorize)
+            self._decide(call, own, checked, totals, before, input_estimate + choices, authorize)
         except BaseException:
             call.release()
             raise

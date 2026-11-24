@@ -638,11 +638,26 @@ class _Core:
             from tenuo.decorators import chain_scope
 
             chain = list(chain_scope() or []) or None
+
+        # The meter changes the request before it goes out (the output cap,
+        # the usage option of a stream). The warrant checks that final form.
+        final: Dict[str, Any] = {}
+
+        def as_sent(cap: int) -> Mapping[str, Any]:
+            out = dict(body)
+            dialect.write_cap(out, param, cap)
+            final["hide"] = dialect.prepare_stream(out) if streaming else False
+            final["body"] = out
+            seen = dict(dialect.view(out))
+            seen["model"] = model
+            return seen
+
         try:
             call = self.meter.begin(
                 self.warrant, chain, view,
                 requested_output=requested, choices=dialect.choices(body),
                 authorize=lambda tool, args: self._authorize(tool, args, chain),
+                as_sent=as_sent,
             )
         except BudgetExceeded as e:
             snapshot: Dict[str, Any] = {"warrant_id": e.warrant_id, "used": e.used}
@@ -659,11 +674,10 @@ class _Core:
             # it. Usage is recorded when the response carries it.
             return _Plan(request, call=call, dialect=dialect)
         try:
-            hide = False
-            dialect.write_cap(body, param, call.max_output)  # type: ignore[arg-type]
-            if streaming:
-                hide = dialect.prepare_stream(body)
-            content = json.dumps(body, separators=(",", ":")).encode()
+            if "body" not in final:
+                as_sent(call.max_output)  # type: ignore[arg-type]
+            hide = final["hide"]
+            content = json.dumps(final["body"], separators=(",", ":")).encode()
             headers = self.http.Headers(request.headers)
             headers["content-length"] = str(len(content))
             headers.pop("transfer-encoding", None)
