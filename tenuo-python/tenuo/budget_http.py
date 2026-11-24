@@ -282,14 +282,22 @@ class _AnthropicMessages(_Dialect):
         }
 
     @staticmethod
-    def _total(usage: Mapping[str, Any]) -> Dict[str, int]:
+    def _total(usage: Mapping[str, Any]) -> Optional[Dict[str, int]]:
+        """Input, output and total from a usage object, or None when it holds no count at all."""
+        seen = []
+
         def read(name: str) -> int:
             value = usage.get(name)
-            return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                seen.append(name)
+                return int(value)
+            return 0
 
         # Cached input is reported apart from input_tokens; all of it is input.
         inp = read("input_tokens") + read("cache_creation_input_tokens") + read("cache_read_input_tokens")
         out = read("output_tokens")
+        if not seen:
+            return None  # nothing was reported: the reservation stands, as for missing usage
         return {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out}
 
     def response_usage(self, payload: Any) -> Any:
@@ -306,8 +314,9 @@ class _AnthropicMessages(_Dialect):
             merged.update({k: v for k, v in message["usage"].items() if v is not None})
         if isinstance(event.get("usage"), Mapping):
             merged.update({k: v for k, v in event["usage"].items() if v is not None})
-        if merged:
-            state["usage"] = self._total(merged)
+        total = self._total(merged) if merged else None
+        if total is not None:
+            state["usage"] = total
         # message_start reports one output token; the real count comes with the
         # closing message_delta.
         if event.get("type") in ("message_delta", "message_stop"):
@@ -361,14 +370,23 @@ class _GoogleGenerate(_Dialect):
         }
 
     @staticmethod
-    def _total(meta: Mapping[str, Any]) -> Dict[str, int]:
+    def _total(meta: Mapping[str, Any]) -> Optional[Dict[str, int]]:
+        """Input, output and total from usageMetadata, or None when it holds no count at all."""
+        seen = []
+
         def read(name: str) -> int:
             value = meta.get(name)
-            return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                seen.append(name)
+                return int(value)
+            return 0
 
         inp = read("promptTokenCount") + read("toolUsePromptTokenCount")
         out = read("candidatesTokenCount") + read("thoughtsTokenCount")  # thinking is billed as output
-        return {"input_tokens": inp, "output_tokens": out, "total_tokens": read("totalTokenCount") or inp + out}
+        total = read("totalTokenCount") or inp + out
+        if not seen:
+            return None  # nothing was reported: the reservation stands, as for missing usage
+        return {"input_tokens": inp, "output_tokens": out, "total_tokens": total}
 
     def response_usage(self, payload: Any) -> Any:
         # A stream without alt=sse arrives as one JSON array of chunks.
@@ -381,8 +399,9 @@ class _GoogleGenerate(_Dialect):
 
     def event_usage(self, state: Dict[str, Any], event: Any) -> None:
         meta = event.get("usageMetadata") if isinstance(event, Mapping) else None
-        if isinstance(meta, Mapping):
-            state["usage"] = self._total(meta)  # cumulative: the last chunk has the totals
+        total = self._total(meta) if isinstance(meta, Mapping) else None
+        if total is not None:
+            state["usage"] = total  # cumulative: the last chunk has the totals
         candidates = event.get("candidates") if isinstance(event, Mapping) else None
         if isinstance(candidates, list) and any(isinstance(c, Mapping) and c.get("finishReason") for c in candidates):
             state["complete"] = True

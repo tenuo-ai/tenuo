@@ -1115,3 +1115,54 @@ class TestInstallEdges:
                         budget_store=TokenMeter(input_estimator=lambda request: INPUT))
         assert http.post(self.OPENAI + "/chat/completions", json=body).status_code == 200
         assert used(meter, root) == INPUT + 100
+
+
+class TestMoreEdges:
+    def test_a_wildcard_parents_budget_is_shared_by_its_delegates(self, keys):
+        # The parent grants every tool, with one token total for all of it.
+        root = (Warrant.mint_builder().capability("*", llm_capability(total_tokens=200))
+                .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer))
+        worker = (root.grant_builder().capability("llm.chat", llm_capability(total_tokens=200))
+                  .holder(keys.worker.public_key).ttl(600).grant(keys.lead))
+        http, meter = client_for(keys, worker, Provider(), key=keys.worker, chain=[root])
+        assert [(lv.own, lv.limit) for lv in meter.levels(worker, [root])] == [(False, 200), (True, 200)]
+        assert chat(http).status_code == 200 and used(meter, root) == INPUT + 100
+        meter.store.add({root.id: 60})  # another delegate of the same parent
+        refused = chat(http)
+        assert refused.status_code == 403 and "delegated from" in refused.json()["error"]["message"]
+        # The tool's own capability wins over the wildcard, as in the warrant check.
+        both = (Warrant.mint_builder().capability("*", llm_capability(total_tokens=5))
+                .capability("llm.chat", llm_capability(total_tokens=900))
+                .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer))
+        assert meter.levels(both)[0].limit == 900
+
+    @pytest.mark.parametrize("usage", [{}, {"service_tier": "standard"}, {"input_tokens": None, "output_tokens": "many"}])
+    def test_an_anthropic_usage_object_without_counts_keeps_the_reservation(self, keys, usage):
+        model = "claude-sonnet-4-5"
+        warrant = mint(keys, model=model, total_tokens=1000)
+        events = []
+        http, meter = client_for(
+            keys, warrant, lambda r: httpx.Response(200, json={"type": "message", "content": [], "usage": usage}), events=events)
+        response = http.post("https://provider.test/v1/messages",
+                             json={"model": model, "max_tokens": 200, "messages": [{"role": "user", "content": "hello there"}]})
+        assert response.status_code == 200 and used(meter, warrant) == INPUT + 200 and events[0].usage["estimated"]
+
+    @pytest.mark.parametrize("meta", [{}, {"trafficType": "ON_DEMAND"}])
+    def test_google_usage_metadata_without_counts_keeps_the_reservation(self, keys, meta):
+        model = "gemini-2.5-flash"
+        warrant = mint(keys, model=model, total_tokens=1000)
+        events = []
+        answer = {"candidates": [{"content": {"role": "model", "parts": [{"text": "ok"}]}, "finishReason": "STOP"}], "usageMetadata": meta}
+        http, meter = client_for(keys, warrant, lambda r: httpx.Response(200, json=answer), events=events)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        response = http.post(url, json={"contents": [{"role": "user", "parts": [{"text": "hello there"}]}],
+                                        "generationConfig": {"maxOutputTokens": 200}})
+        assert response.status_code == 200 and used(meter, warrant) == INPUT + 200 and events[0].usage["estimated"]
+        # The same in a completed stream.
+        sse_url = url.replace(":generateContent", ":streamGenerateContent") + "?alt=sse"
+        stream = httpx.Response(200, headers={"content-type": "text/event-stream"}, content=sse([answer], done=False))
+        http, meter = client_for(keys, warrant, lambda r: stream)
+        with http.stream("POST", sse_url, json={"contents": [{"role": "user", "parts": [{"text": "hello there"}]}],
+                                                 "generationConfig": {"maxOutputTokens": 200}}) as streamed:
+            streamed.read()
+        assert used(meter, warrant) == INPUT + 200

@@ -620,8 +620,13 @@ class TokenMeter:
         return out
 
     def _constraints(self, warrant: Any) -> Dict[str, Any]:
+        # As the warrant check does: the tool's own capability, else the wildcard.
         caps = getattr(warrant, "capabilities", None) or {}
-        found = caps.get(self.tool) if isinstance(caps, Mapping) else None
+        if not isinstance(caps, Mapping):
+            return {}
+        found = caps.get(self.tool)
+        if found is None:
+            found = caps.get("*")
         return dict(found) if isinstance(found, Mapping) else {}
 
     # -- the call ----------------------------------------------------------
