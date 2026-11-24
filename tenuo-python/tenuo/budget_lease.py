@@ -296,6 +296,7 @@ class LeasedBudget:
         self._blocked: Optional[Tuple[str, bool, Optional[float]]] = None
         self._retry_returns_at = 0.0
         self._closes = 0  # how many times close() has run: a rotation that spans one must not leave a lease behind
+        self._closing = False  # closed and not in use again: what is still out goes back as soon as it can
         self._pid = os.getpid()
         _BUDGETS.add(self)
         atexit.register(_close_at_exit, weakref.ref(self))
@@ -369,6 +370,15 @@ class LeasedBudget:
         ids = list(warrant_ids)
         with self._lock:
             self._after_fork()
+            now = self._clock()
+            for warrant_id in ids:
+                held = self._held.get(warrant_id)
+                if held is not None and not held.retired and held.usable_until <= now:
+                    # Past its deadline: the issuer no longer counts on it, so
+                    # nothing new starts on it, whoever holds a warrant from it.
+                    self._retire(held)
+                    if self._current is held:
+                        self._current = None
             if any(w in self._retired for w in ids):
                 return False
             for warrant_id in ids:
@@ -389,13 +399,17 @@ class LeasedBudget:
                     counts = held.usage.setdefault(model or "unknown", [0, 0])
                     counts[0] += int(usage.get("input_tokens") or 0)
                     counts[1] += int(usage.get("output_tokens") or 0)
-        self._return_idle()
+            closing = self._closing
+        # After close() no later call will come by to retry a return, so the
+        # last calls to end send theirs without waiting out a retry interval.
+        self._return_idle(force=closing)
 
     def close(self) -> None:
         """Return every lease that has no call running on it. Safe to call twice."""
         with self._lock:
             self._after_fork()
             self._closes += 1
+            self._closing = True
             for held in self._held.values():
                 self._retire(held)
             self._current = None
@@ -493,6 +507,7 @@ class LeasedBudget:
                     self._retire(fresh)
                 else:
                     self._current = fresh
+                    self._closing = False  # in use again
                 self._forget()
         self._return_idle(force=closed)
         if closed:

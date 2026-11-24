@@ -48,9 +48,11 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import sqlite3
 import threading
 import time
+import weakref
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
@@ -194,12 +196,30 @@ class BudgetBackend(Protocol):
         ...
 
 
+# Stores whose locks a forked child must not inherit as they were: one held by
+# another thread at the fork would never open in the child.
+_LOCKED: "weakref.WeakSet[Any]" = weakref.WeakSet()
+
+
+def _reset_locks_in_child() -> None:
+    for owner in list(_LOCKED):
+        owner._reset_locks()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_locks_in_child)
+
+
 class InMemoryBudgetBackend:
     """Thread-safe totals for one process."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
         self._rows: Dict[str, List[float]] = {}  # key -> [used, expires_at]
+        self._reset_locks()
+        _LOCKED.add(self)
+
+    def _reset_locks(self) -> None:
+        self._lock = threading.Lock()
 
     def add(self, deltas: Mapping[str, int], expires_at: Mapping[str, float]) -> Dict[str, int]:
         with self._lock:
@@ -345,6 +365,10 @@ class BudgetStore:
         # is spent against these warrants until the total is right again.
         self._owed: Dict[str, int] = {}
         self._owed_expiries: Dict[str, float] = {}
+        self._reset_locks()
+        _LOCKED.add(self)
+
+    def _reset_locks(self) -> None:
         self._owed_lock = threading.Lock()
         self._flush_lock = threading.Lock()  # one writer at a time carries the owed usage
 

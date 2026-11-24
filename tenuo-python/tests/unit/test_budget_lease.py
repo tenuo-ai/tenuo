@@ -724,6 +724,54 @@ class TestLeasedBudget:
         assert getattr(sent[1], "_tenuo_runtime_receipt", False) is False
         assert sent[0].arguments["llm_usage"] == {"total_tokens": 5}
 
+    def test_nothing_starts_on_a_lease_past_its_deadline(self, keys):
+        now = [time.time()]
+        pool = Pool(keys, limit=10**6, slice_=300, clock=lambda: now[0], ttl=600.0)
+        budget = LeasedBudget(pool, clock=lambda: now[0])
+        budget.warrant()
+        first = budget.current.warrant_id
+        assert budget.enter([first]) is True
+        budget.exit([first], MODEL, {"input_tokens": 30, "output_tokens": 10})
+        now[0] += 601  # the issuer's deadline has passed; the signed warrant is good for an hour
+        # A warrant delegated from the lease comes in without asking for the current one.
+        assert budget.enter(["a-delegated-warrant", first]) is False and budget.current is None
+        assert budget.warrant() is not None and budget.current.warrant_id != first
+        assert pool.returned == [(first, 40)]
+
+    def test_after_close_the_last_call_to_end_returns_its_lease_at_once(self, keys):
+        pool = Pool(keys, limit=1000, slice_=400)
+        budget = LeasedBudget(pool, recheck_after=30)
+        budget.warrant()
+        first = budget.current.warrant_id
+        assert budget.enter([first]) is True
+        budget._retry_returns_at = budget._mono() + 1000  # an earlier return failed a moment ago
+        budget.close()  # a call is still running on the lease
+        assert first in pool.out
+        budget.exit([first], MODEL, {"input_tokens": 30, "output_tokens": 10})
+        assert pool.returned == [(first, 40)]
+
+    def test_locks_held_at_a_fork_are_replaced_in_the_child(self, keys, leased):
+        from tenuo.budget import BudgetStore, InMemoryBudgetBackend
+
+        backend = InMemoryBudgetBackend()
+        store = BudgetStore(backend=backend)
+        pool = Pool(keys, limit=10_000, slice_=400)
+        leased(pool)
+        installed = tenuo.budget_http._INSTALLED
+        held = [backend._lock, store._owed_lock, store._flush_lock, installed.lock, tenuo.budget_http._SHARED_LOCK]
+        for lock in held:
+            assert lock.acquire(timeout=1)  # as if other threads held them at the fork
+        try:
+            tenuo.budget._reset_locks_in_child()
+            tenuo.budget_http._reset_locks_in_child()
+            store.owe({"w": 5})
+            assert store.add({"w": 1}) == {"w": 6}
+            assert tenuo.budget_http._shared_meter() is not None
+            assert call(Provider()).status_code == 200
+        finally:
+            for lock in held:
+                lock.release()
+
     def test_taking_a_lease_does_not_hold_the_event_loop(self, keys, leased):
         pool = Pool(keys, limit=10_000, slice_=400)
         slow = pool.acquire

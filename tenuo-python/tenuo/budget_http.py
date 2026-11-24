@@ -78,6 +78,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -882,7 +883,7 @@ class _Core:
             call.adapter_state["charged"] = []
             if renew:
                 return _Plan(request, retry=True)
-            reason = "tenuo: token budget reached: the lease this call would spend from has been returned"
+            reason = "tenuo: token budget reached: the lease this call would spend from is closed"
             return _Plan(request, refusal=self._refuse(request, dialect, BUDGET_CODE, reason, model,
                                                        failed=self.meter.field))
 
@@ -1627,6 +1628,19 @@ class _Installation:
 
 
 _INSTALLED: Optional[_Installation] = None
+
+
+def _reset_locks_in_child() -> None:
+    """A forked child gets locks of its own: one held by another thread at the fork would never open."""
+    global _SHARED_LOCK
+    _SHARED_LOCK = threading.Lock()
+    installed = _INSTALLED
+    if installed is not None:
+        installed.lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_locks_in_child)
 _VERTEX_HOST = "aiplatform.googleapis.com"
 
 
