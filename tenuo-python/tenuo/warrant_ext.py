@@ -657,6 +657,11 @@ patch_native(Warrant, "why_denied", _warrant_why_denied, if_missing=True)
 # ============================================================================
 
 
+def _escape_diagnostic_line(text: str) -> str:
+    """Keep untrusted metadata on one printable terminal line."""
+    return "".join(char if char.isprintable() else ascii(char)[1:-1] for char in text)
+
+
 def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
     """Human-readable warrant explanation (diagnostic)."""
     lines = [
@@ -676,10 +681,15 @@ def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
                 args = caps[tool] or {}
                 if not args:
                     constraint_lines.append(f"    {tool}: (no argument constraints)")
+                    constraint_lines.append("      Unknown arguments: allowed")
                     continue
                 constraint_lines.append(f"    {tool}:")
+                policy = "allowed" if self.allows_unknown_arguments(tool) else "rejected"
+                constraint_lines.append(f"      Unknown arguments: {policy}")
+                optional = set(self.optional_fields(tool))
                 for arg in sorted(args):
-                    constraint_lines.append(f"      {arg}: {args[arg]!r}")
+                    marker = " (optional)" if arg in optional else " (required)"
+                    constraint_lines.append(f"      {arg}: {args[arg]!r}{marker}")
     except ValidationError:
         # Newer runtimes may issue constraint types these bindings cannot
         # convert, including composite children. Do not imply unrestricted access.
@@ -704,7 +714,7 @@ def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
     if include_chain and self.parent_hash:
         lines.append(f"  Parent: {self.parent_hash[:12]}...")
 
-    return "\n".join(lines)
+    return "\n".join(_escape_diagnostic_line(line) for line in lines)
 
 
 def _warrant_inspect(self: Warrant) -> str:

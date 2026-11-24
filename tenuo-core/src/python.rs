@@ -1209,7 +1209,10 @@ impl PyRange {
     }
 
     fn __repr__(&self) -> String {
-        format!("Range(min={:?}, max={:?})", self.inner.min, self.inner.max)
+        format!(
+            "Range(min={:?}, max={:?}, min_inclusive={}, max_inclusive={})",
+            self.inner.min, self.inner.max, self.inner.min_inclusive, self.inner.max_inclusive
+        )
     }
 
     #[getter]
@@ -4290,6 +4293,16 @@ impl PyWarrant {
         } else {
             Ok(None)
         }
+    }
+
+    /// Whether the execution policy allows undeclared arguments for this tool.
+    /// Exact entries take precedence over wildcard fallback. Returns None if
+    /// there is no execution policy for the tool; this is not authorization.
+    fn allows_unknown_arguments(&self, tool: &str) -> Option<bool> {
+        self.inner
+            .capabilities()
+            .and_then(|caps| caps.get(tool).or_else(|| caps.get("*")))
+            .map(|constraints| constraints.is_empty() || constraints.allow_unknown())
     }
 
     /// Optional fields in the signed execution policy or issuable tool's bounds.

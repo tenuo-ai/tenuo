@@ -21,6 +21,7 @@ from tenuo import (
     AnyOf,
     Not,
     Pattern,
+    Range,
     BoundWarrant,
     Exact,
     OneOf,
@@ -30,6 +31,23 @@ from tenuo import (
     info,
 )
 from tenuo.testing import allow_all, deterministic_headers
+
+
+def _replace_signed_payload(warrant, key, old, new):
+    """Model a Rust/newer issuer without adding a CBOR test dependency."""
+    raw = bytes(warrant.to_bytes())
+    assert raw[:2] == b"\x83\x01"
+    assert raw[2] in (0x58, 0x59)
+    length_bytes = 1 if raw[2] == 0x58 else 2
+    start = 3 + length_bytes
+    end = start + int.from_bytes(raw[3:start], "big")
+    payload = raw[start:end]
+    assert payload.count(old) == 1
+    payload = payload.replace(old, new)
+    assert len(payload) < 65536
+    header = (b"\x58" + bytes([len(payload)])) if len(payload) < 256 else b"\x59" + len(payload).to_bytes(2, "big")
+    signature = bytes(key.sign_raw(b"tenuo-warrant-v1\x01" + payload))
+    return Warrant.from_bytes(b"\x83\x01" + header + payload + b"\x82\x01\x58\x40" + signature)
 
 
 class TestCoreProperties:
@@ -160,18 +178,9 @@ class TestDebuggingMethods:
             .ttl(3600)
             .mint(key)
         )
-        # Replace the CBOR Exact tag (1) with an unknown tag (23), retaining
-        # the payload length, then sign the altered payload as a newer issuer
-        # would. The fixture uses a one-byte CBOR byte-string length.
-        raw = bytes(warrant.to_bytes())
+        # Preserve a signed but unsupported type, including inside composites.
         exact = b"\x82\x01\xa1\x65value\x6cfuture-value"
-        assert raw.count(exact) == 1
-        assert raw[:3] == b"\x83\x01\x58"
-        payload_end = 4 + raw[3]
-        payload = raw[4:payload_end].replace(exact, b"\x82\x17" + exact[2:])
-        assert raw[payload_end : payload_end + 4] == b"\x82\x01\x58\x40"
-        signature = bytes(key.sign_raw(b"tenuo-warrant-v1\x01" + payload))
-        decoded = Warrant.from_bytes(raw[:4] + payload + raw[payload_end : payload_end + 4] + signature)
+        decoded = _replace_signed_payload(warrant, key, exact, b"\x82\x17" + exact[2:])
         with pytest.raises(ValidationError, match="Unknown constraint type"):
             repr(decoded.capabilities)
         for text in (decoded.explain(), decoded.inspect()):
@@ -188,6 +197,72 @@ class TestDebuggingMethods:
         output = capsys.readouterr().out
         assert "Constraints: unavailable" in output
         assert "Error inspecting warrant" not in output
+
+    @pytest.mark.parametrize("allow_unknown", [False, True])
+    @pytest.mark.parametrize("optional", [False, True])
+    def test_explain_distinguishes_argument_policy(self, allow_unknown, optional):
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read", {"path": Exact("a"), "_allow_unknown": allow_unknown})
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        if optional:
+            # Add optional_fields to the ConstraintSet map as a Rust issuer can.
+            old = (b"\xa2" if allow_unknown else b"\xa1") + b"\x6bconstraints"
+            new = (b"\xa3" if allow_unknown else b"\xa2") + b"\x6foptional_fields\x81\x64path\x6bconstraints"
+            warrant = _replace_signed_payload(warrant, key, old, new)
+        assert warrant.allows_unknown_arguments("read") is allow_unknown
+        assert warrant.allows_unknown_arguments("absent") is None
+        for text in (warrant.explain(), warrant.inspect()):
+            assert f"Unknown arguments: {'allowed' if allow_unknown else 'rejected'}" in text
+            assert f"path: Exact('a') ({'optional' if optional else 'required'})" in text
+
+    @pytest.mark.parametrize("endpoint", ["min", "max"])
+    def test_explain_shows_exclusive_range_endpoints(self, endpoint):
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("scale", count=All([Range(1, 5)]))
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        old = f"{endpoint}_inclusive".encode() + b"\xf5"
+        warrant = _replace_signed_payload(warrant, key, old, old[:-1] + b"\xf4")
+        constraint = warrant.capabilities["scale"]["count"]
+        assert not constraint.satisfies(1 if endpoint == "min" else 5)
+        assert constraint.satisfies(3)
+        for text in (warrant.explain(), warrant.inspect()):
+            assert f"{endpoint}_inclusive=false" in text
+
+    def test_explain_escapes_control_characters(self, monkeypatch, capsys):
+        from tenuo import cli
+
+        key = SigningKey.generate()
+        tool, field = "read\nFORGED", "path\tFIELD"
+        warrant = (
+            Warrant.mint_builder()
+            .capability(tool, {field: All([Pattern("/data/\nFORGED\x1b*")])})
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        for text in (warrant.explain(), warrant.inspect()):
+            assert "read\\nFORGED" in text
+            assert "path\\tFIELD" in text
+            assert "\\x1b" in text
+            assert "\nFORGED" not in text
+            assert "\x1b" not in text
+            assert "\t" not in text
+        monkeypatch.setattr(cli, "print_rich_warrant", lambda warrant: False)
+        cli.inspect_warrant(warrant.to_base64())
+        output = capsys.readouterr().out
+        assert "Error inspecting warrant" not in output
+        assert "\nFORGED" not in output
+        assert "\x1b" not in output
 
     def test_explain_with_chain(self):
         """Test explain with include_chain=True."""
