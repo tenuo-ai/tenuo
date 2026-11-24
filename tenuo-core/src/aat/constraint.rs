@@ -408,6 +408,8 @@ pub(crate) fn check_arguments(map: &ConstraintMap, args: &Obj) -> Result<(), Den
 mod draft_rules;
 #[cfg(test)]
 mod engine_parity;
+#[cfg(test)]
+mod map_parity;
 
 #[cfg(test)]
 mod tests {
