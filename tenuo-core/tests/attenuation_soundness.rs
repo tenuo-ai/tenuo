@@ -1781,3 +1781,17 @@ fn a_child_of_an_empty_set_may_still_admit_undeclared_arguments() {
         .validate_attenuation(&set_of(&named, &None, true))
         .is_err());
 }
+
+/// An optional argument the child keeps is held to the parent's value
+/// constraint like any other.
+#[test]
+fn a_retained_optional_argument_must_still_narrow() {
+    let narrow = Some((exact("x"), true));
+    let wide = Some((Constraint::Wildcard(Wildcard), true));
+    assert!(set_of(&narrow, &None, false)
+        .validate_attenuation(&set_of(&wide, &None, false))
+        .is_err());
+    set_of(&wide, &None, false)
+        .validate_attenuation(&set_of(&narrow, &None, false))
+        .unwrap();
+}

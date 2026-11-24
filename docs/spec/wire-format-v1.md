@@ -1003,8 +1003,9 @@ A constraint set admits undeclared arguments when it is empty or
 - A child MUST NOT admit undeclared arguments unless the parent does.
 - A child MAY declare an argument the parent does not declare only if the
   parent admits undeclared arguments.
-- A child MUST declare every argument the parent requires, with a value
-  constraint at least as narrow.
+- A child MUST declare every argument the parent requires.
+- For every argument both declare, required or optional, the child's value
+  constraint MUST be at least as narrow as the parent's.
 - A child MAY change optional to required, but MUST NOT change required to
   optional.
 - A child MAY leave out an argument the parent marks optional only if the
