@@ -140,6 +140,8 @@ pub use gateway_config::{
 // Re-export MCP config types
 pub use mcp::{CompiledMcpConfig, CompiledTool, McpConfig, McpSettings};
 
+pub mod host_policy;
+
 #[cfg(feature = "python")]
 pub mod python;
 

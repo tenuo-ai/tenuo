@@ -5147,6 +5147,9 @@ impl PyVerifiedApproval {
 #[derive(Clone)]
 pub struct PyChainVerificationResult {
     pub(crate) inner: RustChainVerificationResult,
+    // Immutable decision-time evidence, never read from a rebound issuer.
+    pub(crate) host_policy_hash: Option<[u8; 32]>,
+    pub(crate) host_policy_denied: bool,
 }
 
 #[pymethods]
@@ -6465,6 +6468,8 @@ pub struct PyAuthorizer {
     /// Receipt keys 12 and 13. `None` until a list is installed, which is the
     /// honest claim that revocation was never consulted.
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    /// Per-tool host ceilings, set once per tool. Receipt key 11.
+    host_policies: BTreeMap<String, crate::host_policy::HostPolicy>,
 }
 
 impl PyAuthorizer {
@@ -6476,6 +6481,33 @@ impl PyAuthorizer {
     /// Receipt keys 12 and 13, for callers inside the crate.
     pub(crate) fn srl_commitment_value(&self) -> Option<(Option<u64>, [u8; 32])> {
         self.srl_commitment
+    }
+
+    /// Preserve the evaluated ceiling on both successful and denied decisions.
+    fn finish_authorization(
+        &self,
+        py: Python<'_>,
+        inner: RustChainVerificationResult,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> PyResult<PyChainVerificationResult> {
+        let policy = self.host_policies.get(tool);
+        let mut result = PyChainVerificationResult {
+            inner,
+            host_policy_hash: policy.map(|p| p.digest()),
+            host_policy_denied: false,
+        };
+        if let Some(policy) = policy {
+            if let Err(error) = policy.check(args) {
+                result.host_policy_denied = true;
+                let error = to_py_err(error);
+                error
+                    .value(py)
+                    .setattr("_chain_result", Py::new(py, result)?)?;
+                return Err(error);
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -6535,6 +6567,7 @@ impl PyAuthorizer {
             inner: authorizer,
             trusted_roots: root_bytes,
             srl_commitment: None,
+            host_policies: BTreeMap::new(),
         })
     }
 
@@ -6634,6 +6667,71 @@ impl PyAuthorizer {
             .map_err(to_py_err)
     }
 
+    /// Set this enforcement point's own ceiling for a tool.
+    ///
+    /// A call to ``tool`` must satisfy both the presented warrant chain and
+    /// this policy. The policy is checked after the chain authorizes the call,
+    /// by every authorization method on this object. Like a warrant's
+    /// constraints it is closed-world: name every argument the tool accepts.
+    /// An empty dict is an open ceiling that receipts still commit to.
+    ///
+    /// A ceiling cannot be replaced once set, so a receipt's
+    /// ``policy_definition_hash`` always names the ceiling the decision was
+    /// made under. Build a new Authorizer to change it.
+    ///
+    /// Args:
+    ///     tool: Tool name (exact match)
+    ///     allow: Dict of argument name -> constraint (Exact, OneOf, Range, ...)
+    ///
+    /// Raises:
+    ///     ValidationError: If a ceiling is already set for ``tool``, a value is
+    ///         not a constraint, or a constraint's configuration cannot be
+    ///         expressed in the policy commitment.
+    ///
+    /// Example:
+    ///     ```text
+    ///     authorizer.set_host_policy("route_ticket", {
+    ///         "ticket_id": Wildcard(),
+    ///         "queue": OneOf(["general", "billing"]),
+    ///     })
+    ///     ```
+    fn set_host_policy(&mut self, tool: String, allow: &Bound<'_, PyDict>) -> PyResult<()> {
+        if tool.is_empty() {
+            return Err(py_validation_err("host policy tool name must not be empty"));
+        }
+        if self.host_policies.contains_key(&tool) {
+            return Err(py_validation_err(format!(
+                "host policy for '{tool}' is already set and cannot be replaced"
+            )));
+        }
+        let mut fields = BTreeMap::new();
+        for (key, value) in allow.iter() {
+            let field: String = key
+                .extract()
+                .map_err(|_| py_validation_err("host policy argument names must be strings"))?;
+            let constraint = py_to_constraint(&value)
+                .map_err(|e| py_validation_err(format!("host policy field '{field}': {e}")))?;
+            fields.insert(field, constraint);
+        }
+        let policy =
+            crate::host_policy::HostPolicy::new(fields).map_err(|e| py_validation_err(&e))?;
+        self.host_policies.insert(tool, policy);
+        Ok(())
+    }
+
+    /// Receipt ``policy_definition_hash`` for a tool's host ceiling, or None
+    /// when no ceiling is set for it.
+    fn host_policy_hash<'py>(&self, py: Python<'py>, tool: &str) -> Option<Bound<'py, PyBytes>> {
+        self.host_policies
+            .get(tool)
+            .map(|policy| PyBytes::new(py, &policy.digest()))
+    }
+
+    /// Tools that have a host ceiling, sorted.
+    fn host_policy_tools(&self) -> Vec<String> {
+        self.host_policies.keys().cloned().collect()
+    }
+
     /// Get the required clearance for a tool.
     ///
     /// Args:
@@ -6727,7 +6825,8 @@ impl PyAuthorizer {
             .map(|a| a.inner.clone())
             .collect();
 
-        self.inner
+        let result = self
+            .inner
             .authorize_one(
                 &warrant.inner,
                 tool,
@@ -6735,8 +6834,9 @@ impl PyAuthorizer {
                 sig.as_ref(),
                 &rust_approvals,
             )
+            .map_err(to_py_err)?;
+        self.finish_authorization(args.py(), result, tool, &rust_args)
             .map(|_| ())
-            .map_err(to_py_err)
     }
 
     /// Alias for `authorize()`. Verifies and authorizes in one call.
@@ -6820,7 +6920,7 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        self.finish_authorization(args.py(), result, tool, &rust_args)
     }
 
     /// Verify a complete delegation chain.
@@ -6869,7 +6969,11 @@ impl PyAuthorizer {
             None => self.inner.verify_chain(&warrants),
         }
         .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        Ok(PyChainVerificationResult {
+            inner: result,
+            host_policy_hash: None,
+            host_policy_denied: false,
+        })
     }
 
     /// Verify chain and authorize an action.
@@ -6949,7 +7053,7 @@ impl PyAuthorizer {
             }
         }
         .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        self.finish_authorization(args.py(), result, tool, &rust_args)
     }
 
     /// Split-view single-warrant authorization.
@@ -6969,10 +7073,14 @@ impl PyAuthorizer {
     ///         ``CompiledMcpConfig.extract_constraints``.
     ///     signature: Optional PoP signature bytes (64 bytes)
     ///     approvals: Optional list of SignedApproval objects
+    ///     host_policy_args: Unstripped extracted arguments for the host ceiling.
+    ///         Defaults to constraint_args. Supply this separately when warrant
+    ///         matching uses legacy null normalization.
     ///
     /// Returns:
     ///     ChainVerificationResult on success, raises exception on failure
-    #[pyo3(signature = (warrant, tool, pop_args, constraint_args, signature=None, approvals=None))]
+    #[pyo3(signature = (warrant, tool, pop_args, constraint_args, signature=None, approvals=None, *, host_policy_args=None))]
+    #[allow(clippy::too_many_arguments)]
     fn authorize_one_with_pop_args(
         &self,
         warrant: &PyWarrant,
@@ -6981,6 +7089,7 @@ impl PyAuthorizer {
         constraint_args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
+        host_policy_args: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyChainVerificationResult> {
         let mut rust_pop_args = HashMap::new();
         for (key, value) in pop_args.iter() {
@@ -7023,14 +7132,24 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        // Warrant compatibility normalization must never erase values from
+        // the host ceiling's extracted/renamed argument view.
+        let rust_host_args = match host_policy_args {
+            Some(args) if self.host_policies.contains_key(tool) => args
+                .iter()
+                .map(|(key, value)| Ok((key.extract::<String>()?, py_to_constraint_value(&value)?)))
+                .collect::<PyResult<HashMap<_, _>>>()?,
+            _ => rust_constraint_args,
+        };
+        self.finish_authorization(constraint_args.py(), result, tool, &rust_host_args)
     }
 
     /// Split-view delegation-chain authorization.
     ///
     /// See :meth:`authorize_one_with_pop_args` for semantics — this is the
     /// multi-warrant form for delegation chains.
-    #[pyo3(signature = (chain, tool, pop_args, constraint_args, signature=None, approvals=None))]
+    #[pyo3(signature = (chain, tool, pop_args, constraint_args, signature=None, approvals=None, *, host_policy_args=None))]
+    #[allow(clippy::too_many_arguments)]
     fn check_chain_with_pop_args(
         &self,
         chain: &Bound<'_, PySequence>,
@@ -7039,6 +7158,7 @@ impl PyAuthorizer {
         constraint_args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
+        host_policy_args: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
@@ -7094,7 +7214,16 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        // Warrant compatibility normalization must never erase values from
+        // the host ceiling's extracted/renamed argument view.
+        let rust_host_args = match host_policy_args {
+            Some(args) if self.host_policies.contains_key(tool) => args
+                .iter()
+                .map(|(key, value)| Ok((key.extract::<String>()?, py_to_constraint_value(&value)?)))
+                .collect::<PyResult<HashMap<_, _>>>()?,
+            _ => rust_constraint_args,
+        };
+        self.finish_authorization(constraint_args.py(), result, tool, &rust_host_args)
     }
 }
 

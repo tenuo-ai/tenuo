@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python `Authorizer.set_host_policy(tool, allow)`: a per-tool argument
+  ceiling an enforcement point applies on top of any warrant, matching the
+  TypeScript SDK's `verify(..., { allow })`. Receipts from a `ReceiptIssuer` or
+  `ControlPlaneClient` bound to the authorizer carry the policy digest as
+  `policy_definition_hash` (key 11), computed the same way as in TypeScript.
+  Tools without a policy behave as before. Policy commitments are captured at
+  decision time, including ceiling denials, rather than looked up when signed.
+- TypeScript host-policy receipt commitments now use the same normalized
+  constraint expressions as Python: normalized path roots, omitted defaults,
+  and compiled aliases. Newly issued hashes can differ from earlier SDKs for
+  noncanonical expressions; existing signed receipts remain verifiable.
 - **`tenuo::aat`: verify Attenuating Agent Tokens in their JWT/JWS encoding**
   (Rust, behind the `aat-jws` feature). `verify_chain` runs the chain
   verification algorithm of `draft-niyikiza-oauth-attenuating-agent-tokens-02`
