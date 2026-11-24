@@ -1211,13 +1211,19 @@ pub fn verify_approval_set(
         }).unwrap();
     }
 
-    let approval_b64_list: Vec<String> = match serde_wasm_bindgen::from_value(approvals_b64) {
-        Ok(v) => v,
-        Err(_) => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
-            satisfied: false, valid_count: 0, required: threshold,
-            error: Some("approvals must be array of base64 strings".to_string()),
-        }).unwrap(),
-    };
+    let array = approvals_b64.unchecked_ref::<js_sys::Array>();
+    let mut approval_b64_list = Vec::with_capacity(array.length() as usize);
+    for index in 0..array.length() {
+        // Read each element once: getters cannot swap in an unchecked value
+        // between the size check and the copy into Rust.
+        match sdk::bounded_approval_text(&array.get(index)) {
+            Ok(text) => approval_b64_list.push(text),
+            Err(error) => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+                satisfied: false, valid_count: 0, required: threshold,
+                error: Some(error),
+            }).unwrap(),
+        }
+    }
 
     let mut valid_count = 0u32;
     let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();

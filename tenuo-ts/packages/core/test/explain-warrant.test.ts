@@ -579,6 +579,34 @@ describe("diagnostic chain input budget", () => {
 
 
 describe("legacy approval helper input budget", () => {
+  it.each(["A".repeat(8193), "é".repeat(4097)])("rejects a single oversized string envelope", (envelope) => {
+    const { tokens, request, checker } = setup();
+    const wasm = loadWasm() as unknown as {
+      verify_approval_set(warrant: string, hash: string, approvals: unknown): unknown;
+    };
+    expect(wasm.verify_approval_set(tokens[0]!, request.requestHash, [envelope])).toMatchObject({
+      satisfied: false, valid_count: 0, error: "approval exceeds size limit",
+    });
+    expect(() => loadWasm().sdkInspectApproval(envelope)).toThrow(/approval exceeds size limit/);
+    expect(checker.explainWarrant(tokens, "merge_pr", args, { approvals: [envelope] }).approvals)
+      .toMatchObject({ status: "required", rejected: 1 });
+  });
+
+  it("reads each approval string only once before copying", () => {
+    const { tokens, request, sign, reviewerKey } = setup();
+    const good = sign(reviewerKey, "r");
+    const read = vi.fn().mockReturnValueOnce(good).mockReturnValue("A".repeat(8193));
+    const approvals = [good];
+    Object.defineProperty(approvals, 0, { get: read });
+    const wasm = loadWasm() as unknown as {
+      verify_approval_set(warrant: string, hash: string, approvals: unknown): unknown;
+    };
+    expect(wasm.verify_approval_set(tokens[0]!, request.requestHash, approvals)).toMatchObject({
+      satisfied: true, valid_count: 1,
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects oversized generators without consuming any envelope", () => {
     const { tokens, request, sign, reviewerKey } = setup();
     const good = sign(reviewerKey, "r");

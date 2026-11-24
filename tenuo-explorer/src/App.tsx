@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import init, { decode_warrant, SdkContext, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
+import init, { decode_warrant, SdkContext, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkDecodeChain, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
 import wasmUrl from './wasm/tenuo_wasm_bg.wasm?url'
 import { cleanInput, truncate, generateId } from './utils';
 
@@ -2659,11 +2659,9 @@ function App() {
       // but the preview trust anchor is always its first warrant's issuer.
       const { b64, isPem } = cleanInput(warrantB64);
       const input = isPem ? warrantB64.trim() : b64;
-      const preview = decode_pem_chain_wasm(input) as ChainDecodeResult;
-      if (preview.error || !preview.warrants.length) {
-        throw new Error(preview.error || 'Warrant chain is empty');
-      }
-      const result = explainCall(input, tool.trim(), args, preview.warrants[0].issuer);
+      const preview = sdkDecodeChain(input) as { issuer: string }[];
+      if (!preview.length) throw new Error('Warrant chain is empty');
+      const result = explainCall(input, tool.trim(), args, preview[0].issuer);
       setDiagnosticResult(result);
       setValidationErrors({});
     } catch (e) {

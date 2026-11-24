@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { createRequire } from 'node:module';
 
 test.describe('Tenuo Explorer - Critical User Flows', () => {
     test.beforeEach(async ({ page }) => {
@@ -64,6 +65,30 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
         await expect(page.getByText('Policy checks passed', { exact: true })).toBeVisible();
         await expect(page.getByText(/Chain: valid; constraints: satisfied/)).toBeVisible();
     });
+
+    for (const delegated of [false, true]) {
+        test(`exported ${delegated ? 'delegated' : 'single'} stack diagnostics pass`, async ({ page }) => {
+            // The same native export used by Session.toWireString()/PresentedCall.warrant.
+            const { SdkContext } = createRequire(import.meta.url)('../../tenuo-ts/packages/core/src/generated/tenuo_wasm.js');
+            const context = new SdkContext();
+            const allow = { read_file: { path: { kind: 'pattern', pattern: 'docs/*' } } };
+            const root = context.mint(allow, 600, undefined, undefined, undefined);
+            const session = delegated ? context.narrow(root, allow, undefined) : root;
+            let wire: string;
+            try { wire = session.toStackWire(); }
+            finally {
+                if (session !== root) session.free();
+                root.free();
+                context.free();
+            }
+            await page.getByPlaceholder('Paste your warrant here...').fill(wire);
+            await page.getByPlaceholder('e.g., read_file').fill('read_file');
+            await page.locator('textarea').nth(1).fill('{"path":"docs/readme.md"}');
+            await page.getByRole('button', { name: 'Explain Call', exact: true }).click();
+            await expect(page.getByText('Policy checks passed', { exact: true })).toBeVisible();
+            await expect(page.getByText(/Chain: valid; constraints: satisfied/)).toBeVisible();
+        });
+    }
 
     test('chain diagnostics use the same evidence statuses', async ({ page }) => {
         await page.keyboard.press('Meta+4');

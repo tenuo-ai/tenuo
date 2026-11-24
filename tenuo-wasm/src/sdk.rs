@@ -2015,12 +2015,27 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
     Ok(out)
 }
 
+pub(crate) fn bounded_approval_text(value: &JsValue) -> Result<String, String> {
+    if !value.is_string() {
+        return Err("approvals must be array of base64 strings".into());
+    }
+    // Check UTF-16 length on the borrowed JS value before copying into Rust.
+    if value.unchecked_ref::<js_sys::JsString>().length() as usize
+        > tenuo::meta_envelope::APPROVAL_STRING_MAX
+    {
+        return Err("approval exceeds size limit".into());
+    }
+    let text = value.as_string().ok_or("approval must be a string")?;
+    // Non-ASCII input can take more UTF-8 bytes than UTF-16 code units.
+    if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+        return Err("approval exceeds size limit".into());
+    }
+    Ok(text)
+}
+
 pub(crate) fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
-    if let Some(text) = value.as_string() {
-        if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
-            return Err("approval exceeds size limit".into());
-        }
-        return signed_approval_from_text(&text);
+    if value.is_string() {
+        return signed_approval_from_text(&bounded_approval_text(value)?);
     }
     if js_sys::Uint8Array::instanceof(value) {
         let bytes = value.unchecked_ref::<js_sys::Uint8Array>();
