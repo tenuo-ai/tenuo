@@ -1,6 +1,6 @@
 # Token Budgets
 
-> **Experimental.** Put a token budget in a warrant and have every model call counted against it.
+> Put a token budget in a warrant and have every model call counted against it.
 
 A warrant can say how many tokens its holder may spend on model calls. The budget is signed with the rest of the warrant, a delegated warrant can only narrow it, and a meter at the HTTP layer counts each call's real usage and stops calls once the budget is spent.
 

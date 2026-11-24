@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verification algorithm of `draft-niyikiza-oauth-attenuating-agent-tokens-02`
   Section 8 over a presentation and passes the draft's 229 test vectors on
   verdict and failing step. Issuing and deriving JWS tokens is not included.
-- **Token budgets for model calls (Python, experimental).** A warrant can carry
+- **Token budgets for model calls (Python).** A warrant can carry
   a token budget as a `Range` constraint on an `llm.chat` capability
   (`tenuo.budget.llm_capability`). `tenuo.budget_http.install()` meters the
   model calls of every `httpx` / `httpx2` client in the process against the
