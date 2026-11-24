@@ -136,8 +136,9 @@ class EnforcementResult:
     authorizer: Optional[Any] = None
     # The chain that was presented, kept on denials as well as allows.
     # check_chain raises for expiry, revocation, an untrusted root or a
-    # constraint miss, so a denial has no chain_result to build a receipt from
-    # — but the chain was still presented, and a refusal over presented
+    # warrant constraint miss, so those denials have no chain_result. Host-policy
+    # denials retain the verified chain and immutable policy commitment.
+    # The chain was still presented, and a refusal over presented
     # authority is the decision most worth recording.
     presented_chain: Optional[Any] = None
     # The holder's PoP, kept only when possession was established before the
@@ -569,6 +570,7 @@ def _enforcement_result_from_chain_error_with_logging(
     # every refusal silently missing.
     result.presented_chain = presented_chain
     result.authorizer = authorizer
+    result.chain_result = getattr(exc, "_chain_result", None)
     result.verified_pop = verified_pop
     result.pop_auth_args = pop_auth_args
     _log_chain_enforcement_denial(tool_name, exc, result.error_type)
@@ -1515,6 +1517,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.check_chain(
@@ -1533,6 +1536,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.authorize_one(
@@ -1622,6 +1626,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=precomputed_signature,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = authorizer.check_chain(
@@ -1639,6 +1644,7 @@ def _enforce_tool_call_impl(
                         _constraint_auth_args,
                         signature=precomputed_signature,
                         approvals=_gate_approvals or [],
+                        host_policy_args=_raw_constraint_args,
                     )
                 else:
                     _chain_result = authorizer.authorize_one(
@@ -2072,6 +2078,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.check_chain(
@@ -2090,6 +2097,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.authorize_one(
@@ -2159,6 +2167,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=precomputed_signature,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = authorizer.check_chain(
@@ -2176,6 +2185,7 @@ async def _enforce_tool_call_async_impl(
                         _constraint_auth_args,
                         signature=precomputed_signature,
                         approvals=_gate_approvals or [],
+                        host_policy_args=_raw_constraint_args,
                     )
                 else:
                     _chain_result = authorizer.authorize_one(
