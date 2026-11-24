@@ -239,7 +239,8 @@ Model calls are then metered against the current lease. `CloudLeases` reads `TEN
 - Returns are signed with the agent's key: only the holder of a lease can report what it used.
 - When the period's budget is spent, calls are refused with `token_budget_exceeded`, and the message says how much is left and when the budget resets.
 - `uninstall()` returns the lease in hand, and so does a normal interpreter exit. A process killed by a signal it does not handle does not, and that lease stays charged until it expires.
-- A lease is for one process. Another process takes its own lease from the same budget.
+- If a return does not get through, that lease stays closed and the same return is sent again later. Calls are refused until a new lease can be taken.
+- A lease is for one process. Another process takes its own lease from the same budget, and so does a forked child.
 - Leases work with `install()`; `metered_client()` takes a fixed warrant.
 
 ---

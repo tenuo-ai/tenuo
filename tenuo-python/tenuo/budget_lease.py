@@ -215,6 +215,20 @@ def _close_at_exit(ref: Any) -> None:
         budget.close()
 
 
+# Every live LeasedBudget, so a forked child can put each one right before it
+# is used: a lock copied while another thread held it would never open again.
+_BUDGETS: "weakref.WeakSet[LeasedBudget]" = weakref.WeakSet()
+
+
+def _reset_budgets_in_child() -> None:
+    for budget in list(_BUDGETS):
+        budget._reset_in_child()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_budgets_in_child)
+
+
 class _Held:
     """A lease this process has taken, and what was spent under it."""
 
@@ -225,11 +239,16 @@ class _Held:
         self.inflight = 0
         self.usage: Dict[str, List[int]] = {}  # model -> [input, output]
         self.retired = False   # no new calls start on it
-        self.returned = False
+        self.returning = False  # a return is on its way to the issuer
+        self.returned = False   # the issuer has acknowledged the return
+        self.final: Optional[List[Dict[str, Any]]] = None  # what the return says, once it has been sent
 
     def report(self) -> List[Dict[str, Any]]:
-        return [{"model": model[:_MODEL_CHARS], "input_tokens": counts[0], "output_tokens": counts[1]}
-                for model, counts in sorted(self.usage.items())]
+        """What the return says. Fixed the first time it is sent: a retry repeats it."""
+        if self.final is None:
+            self.final = [{"model": model[:_MODEL_CHARS], "input_tokens": counts[0], "output_tokens": counts[1]}
+                          for model, counts in sorted(self.usage.items())]
+        return self.final
 
 
 class LeasedBudget:
@@ -271,6 +290,7 @@ class LeasedBudget:
         self._blocked: Optional[Tuple[str, bool, Optional[float]]] = None
         self._retry_returns_at = 0.0
         self._pid = os.getpid()
+        _BUDGETS.add(self)
         atexit.register(_close_at_exit, weakref.ref(self))
 
     # -- what the meter asks ---------------------------------------------------
@@ -314,8 +334,8 @@ class LeasedBudget:
 
         Returns True when a different lease is now current (plan the call
         again), False when this one is all there is for now. Raises
-        :class:`LeaseUnavailable` when the lease was returned and no other
-        could be taken.
+        :class:`LeaseUnavailable` when the lease has been sent back and no
+        other could be taken.
         """
         with self._lock:
             held = self._current
@@ -375,24 +395,35 @@ class LeasedBudget:
 
     # -- internals -------------------------------------------------------------
 
+    def _reset_in_child(self) -> None:
+        """Called in a forked child before anything else touches this object."""
+        self._lock = threading.RLock()
+        self._renewing = threading.Lock()
+        self._after_fork()
+
     def _after_fork(self) -> None:
         """In a forked child, the parent's leases are the parent's to spend and return."""
         if os.getpid() == self._pid:
             return
         self._pid = os.getpid()
         for held in self._held.values():
-            self._retired[held.lease.warrant_id] = held.lease.expires_at
+            self._retired[held.lease.warrant_id] = self._closed_until(held.lease)
         self._held.clear()
         self._current = None
         self._blocked = None
 
+    @staticmethod
+    def _closed_until(lease: Lease) -> float:
+        """How long a retired lease must stay closed: for as long as its signed
+        warrant, or one delegated from it, could still authorize a call."""
+        from tenuo.budget import _expiry
+
+        signed = _expiry(lease.warrant)
+        return max(lease.expires_at, signed) if signed else float("inf")
+
     def _retire(self, held: _Held) -> None:
         held.retired = True
-        self._retired[held.lease.warrant_id] = held.lease.expires_at
-
-    def _unretire(self, held: _Held) -> None:
-        held.retired = False
-        self._retired.pop(held.lease.warrant_id, None)
+        self._retired[held.lease.warrant_id] = self._closed_until(held.lease)
 
     def _usable(self, held: _Held) -> bool:
         lifetime = max(0.0, held.lease.expires_at - held.taken_at)
@@ -417,9 +448,10 @@ class LeasedBudget:
             # Return the old lease first when nothing is running on it.
             if held is not None and idle and not self._return(held):
                 with self._lock:
-                    self._unretire(held)  # the issuer could not be told; it is still ours
+                    # Whether the issuer has the return is not known: it may
+                    # have taken it and given the unused tokens to someone
+                    # else. The lease stays closed and its return is retried.
                     self._retry_returns_at = self._mono() + self.recheck_after
-                idle = False
             try:
                 lease = self.source.acquire()
             except Exception as e:
@@ -431,8 +463,8 @@ class LeasedBudget:
                         wait = min(wait, max(1.0, failure.retry_at - self._clock()))
                     self._blocked = (str(failure), failure.exhausted, failure.retry_at)
                     self._blocked_until = self._mono() + wait
-                    if held is not None and held.returned:
-                        self._current = None
+                    if held is not None and held.retired:
+                        self._current = None  # sent back, acknowledged or not: nothing more is spent under it
                 if failure is e:
                     raise
                 raise failure from e
@@ -450,7 +482,8 @@ class LeasedBudget:
     def _return_idle(self, force: bool = False) -> None:
         """Return retired leases nothing is running on, including ones a failed attempt left behind."""
         with self._lock:
-            waiting = [h for h in self._held.values() if h.retired and h.inflight == 0 and not h.returned]
+            waiting = [h for h in self._held.values()
+                       if h.retired and h.inflight == 0 and not h.returned and not h.returning]
             if not waiting:
                 return
             # A lease whose return just failed is not retried on every call.
@@ -463,24 +496,30 @@ class LeasedBudget:
             self._retry_returns_at = self._mono() + (self.recheck_after if failed else 0.0)
 
     def _return(self, held: _Held) -> bool:
+        """Send a lease back. True once the issuer has acknowledged it."""
         with self._lock:
             if held.returned:
                 return True
-            held.returned = True  # so that no second thread sends it too
+            if held.returning:
+                return False  # another thread is sending it
+            held.returning = True
             report = held.report()
         try:
             self.source.release(held.lease.warrant_id, report)
-            return True
         except BaseException as e:
             # Including an interrupt in the middle of the request: the issuer
-            # may not have it, so the lease still counts as out.
+            # may or may not have it. The same report is sent again later.
             with self._lock:
-                held.returned = False
+                held.returning = False
             if not isinstance(e, Exception):
                 raise
             logger.warning("Lease %s could not be returned; it stays charged in full until it is",
                            held.lease.warrant_id, exc_info=True)
             return False
+        with self._lock:
+            held.returning = False
+            held.returned = True
+        return True
 
     def _forget(self) -> None:
         now = self._clock()

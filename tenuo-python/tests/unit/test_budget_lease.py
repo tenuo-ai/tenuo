@@ -176,19 +176,87 @@ class TestLeasedBudget:
         response = call(provider)
         assert refused(response) and "unreachable" in response.json()["error"]["message"] and not provider.caps
 
-    def test_a_lease_that_cannot_be_returned_is_kept_and_used(self, keys, leased):
+    def test_a_lease_whose_return_did_not_get_through_stays_closed(self, keys, leased):
         pool = Pool(keys, limit=10_000, slice_=300)
         budget, _ = leased(pool, recheck_after=0)
         provider = Provider()
         call(provider), call(provider)
         held = budget.current.warrant_id
         pool.down = True
-        # 40 tokens are left on the lease and the issuer is away: the call runs on them.
-        assert call(provider).status_code == 200 and provider.caps[-1] == 10
-        assert budget.current.warrant_id == held and held in pool.out
+        # 40 tokens are left on the lease and the issuer is away. Whether the
+        # return got through cannot be known, so nothing more is spent under it.
+        assert refused(call(provider)) and len(provider.caps) == 2
+        assert budget.enter([held]) is False and held in pool.out
         pool.down = False
-        assert call(provider).status_code == 200  # returned at last, with all it used
-        assert pool.returned == [(held, 300)]
+        assert call(provider).status_code == 200  # on a new lease; the old one is returned at last
+        assert budget.current.warrant_id != held and pool.returned == [(held, 260)]
+
+    def test_a_return_the_issuer_took_but_could_not_confirm_is_not_spent_again(self, keys, leased):
+        pool = Pool(keys, limit=600, slice_=300)
+        budget, _ = leased(pool, recheck_after=0)
+        provider = Provider()
+        call(provider), call(provider)
+        first = budget.current.warrant_id
+        real, lost = pool.release, [True]
+
+        def release(warrant_id, usage):
+            if warrant_id in dict(pool.returned):
+                return  # the issuer already has it: a repeat changes nothing
+            real(warrant_id, usage)
+            if lost:
+                lost.pop()
+                pool.down = True  # and it cannot be reached for a new lease either
+                raise OSError("the reply was lost")
+
+        pool.release = release
+        # The issuer took the return and can hand the 40 unused tokens to someone
+        # else. The holder never heard, so it must not go on spending them.
+        assert refused(call(provider)) and len(provider.caps) == 2
+        assert budget.enter([first]) is False
+        pool.down = False
+        for _ in range(6):
+            call(provider)
+        assert provider.billed <= 600 and pool.charged() <= 600
+        assert [w for w, _ in pool.returned].count(first) == 1
+
+    def test_a_return_in_progress_is_not_forgotten_when_it_fails(self, keys):
+        pool = Pool(keys, limit=1000, slice_=400)
+        budget = LeasedBudget(pool)
+        budget.warrant()
+        first = budget.current.warrant_id
+        real, fails = pool.release, [True]
+
+        def release(warrant_id, usage):
+            if fails:
+                fails.pop()
+                with budget._lock:
+                    budget._forget()  # another thread tidies up while this return is on its way
+                raise OSError("503")
+            real(warrant_id, usage)
+
+        pool.release = release
+        budget.close()
+        assert first in pool.out and not pool.returned
+        budget.close()
+        assert pool.returned == [(first, 0)]
+
+    def test_a_retired_lease_stays_closed_for_as_long_as_its_warrant_is_valid(self, keys):
+        now = [time.time()]
+        # The issuer says the lease lasts ten minutes; the warrant it signed lasts an hour.
+        pool = Pool(keys, limit=10**6, slice_=300, clock=lambda: now[0], ttl=600.0)
+        budget = LeasedBudget(pool, clock=lambda: now[0])
+        budget.warrant()
+        first = budget.current.warrant_id
+        budget.close()
+        now[0] += 700  # past what the issuer said, well inside what the warrant says
+        budget.warrant()
+        with budget._lock:
+            budget._forget()
+        assert budget.enter([first]) is False
+        now[0] += 3600
+        with budget._lock:
+            budget._forget()
+        assert budget.knows(first) is False
 
     def test_a_call_in_flight_keeps_its_lease_out_until_it_ends(self, keys):
         pool = Pool(keys, limit=10_000, slice_=300)
@@ -388,6 +456,130 @@ class TestLeasedBudget:
         os.waitpid(pid, 0)
         assert os.read(read, 2) == b"ok"
         assert budget.current.warrant_id == first and budget.enter([first]) is True
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    @pytest.mark.filterwarnings("ignore:This process:DeprecationWarning")
+    def test_a_child_forked_while_the_locks_are_held_is_not_stuck(self, keys):
+        import signal
+
+        pool = Pool(keys, limit=1000, slice_=400)
+        budget = LeasedBudget(pool)
+        budget.warrant()
+        first = budget.current.warrant_id
+        holding, let_go = threading.Event(), threading.Event()
+
+        def hold():
+            with budget._renewing, budget._lock:
+                holding.set()
+                let_go.wait(10)
+
+        thread = threading.Thread(target=hold)
+        thread.start()
+        assert holding.wait(5)
+        read, write = os.pipe()
+        pid = os.fork()
+        if pid == 0:  # the child inherits both locks held by a thread it does not have
+            try:
+                signal.alarm(5)  # were it stuck, this ends it without an answer
+                verdict = budget.current is None and budget.enter([first]) is False
+                try:
+                    budget.warrant()  # takes its own lease: the renewal lock is usable too
+                except Exception:
+                    verdict = False
+                os.write(write, b"ok" if verdict else b"no")
+            finally:
+                os._exit(0)
+        os.close(write)
+        os.waitpid(pid, 0)
+        let_go.set()
+        thread.join(5)
+        assert os.read(read, 2) == b"ok"
+
+    def test_ending_a_call_under_a_lease_does_not_hold_the_event_loop(self, keys, leased):
+        pool = Pool(keys, limit=10_000, slice_=300)
+        budget, _ = leased(pool)
+        provider = Provider()
+        seen = []
+        real = budget.exit
+        budget.exit = lambda *a, **k: (seen.append(threading.get_ident()), real(*a, **k))[1]
+
+        async def main():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
+                response = await http.post(URL, json=BODY)
+            return response.status_code, threading.get_ident()
+
+        status, loop_thread = asyncio.run(main())
+        assert status == 200 and seen and loop_thread not in seen
+
+    def test_a_plan_made_for_a_caller_that_went_away_is_given_back(self, keys, leased):
+        pool = Pool(keys, limit=10_000, slice_=300)
+        started, go = threading.Event(), threading.Event()
+        take = pool.acquire
+        pool.acquire = lambda: (started.set(), go.wait(10), take())[2]
+        budget, meter = leased(pool)
+        provider = Provider()
+
+        async def main():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
+                task = asyncio.ensure_future(http.post(URL, json=BODY))
+                while not started.is_set():
+                    await asyncio.sleep(0.01)
+                task.cancel()  # the caller leaves while its lease is still being taken
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                go.set()
+                for _ in range(200):  # the abandoned plan finishes and is given back
+                    await asyncio.sleep(0.01)
+                    lease = budget.current
+                    if lease is not None and meter.store.used(lease.warrant_id).get(lease.warrant_id, 0) == 0 \
+                            and budget._held[lease.warrant_id].inflight == 0:
+                        return lease.warrant_id
+                return None
+
+        lease_id = asyncio.run(main())
+        assert lease_id is not None and not provider.caps
+        budget.close()
+        assert pool.returned == [(lease_id, 0)]
+
+    def test_usage_above_the_reservation_is_reported_even_when_the_store_fails(self, keys):
+        from tenuo.budget import BudgetStore, InMemoryBudgetBackend
+
+        class Failing(InMemoryBudgetBackend):
+            down = False
+
+            def add(self, deltas, expires_at):
+                if self.down and any(delta > 0 for delta in deltas.values()):
+                    raise OSError("the store is away")
+                return super().add(deltas, expires_at)
+
+        backend = Failing()
+        pool = Pool(keys, limit=10_000, slice_=1000)
+        budget = LeasedBudget(pool)
+        install(lease=budget, signing_key=keys.agent, trusted_roots=[keys.issuer.public_key],
+                budget_store=TokenMeter(BudgetStore(backend=backend), input_estimator=lambda request: INPUT))
+
+        def generous(request):  # generates five times the cap it was given, and bills it
+            backend.down = True
+            return httpx.Response(200, json={"usage": {"prompt_tokens": INPUT, "completion_tokens": 500, "total_tokens": INPUT + 500}})
+
+        try:
+            assert call(generous).status_code == 200
+            lease_id = budget.current.warrant_id
+        finally:
+            uninstall()
+        assert pool.returned == [(lease_id, INPUT + 500)]
+
+    def test_a_refusal_for_want_of_a_lease_reaches_the_control_plane(self, keys, leased, monkeypatch):
+        sent = []
+        fake = SimpleNamespace(emit_for_enforcement=lambda result, chain_result=None: sent.append(result))
+        monkeypatch.setattr(tenuo.budget_http, "_control_plane", lambda: fake)
+        pool = Pool(keys, limit=0, slice_=300)
+        leased(pool)
+        provider = Provider()
+        assert refused(call(provider)) and refused(call(provider))  # the second is answered from memory
+        assert pool.asked == 1 and len(sent) == 2
+        assert all(not r.allowed and r.tool == "llm.chat" and r.arguments == {"model": MODEL}
+                   and r.constraint_violated == "total_tokens" for r in sent)
 
     def test_taking_a_lease_does_not_hold_the_event_loop(self, keys, leased):
         pool = Pool(keys, limit=10_000, slice_=400)

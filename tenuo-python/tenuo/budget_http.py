@@ -96,6 +96,7 @@ from tenuo.budget import (
     MeteredCall,
     ModelCallDenied,
     TokenMeter,
+    usage_counts,
 )
 
 logger = logging.getLogger("tenuo.budget")
@@ -646,6 +647,49 @@ _UPGRADE_MESSAGE = ("tenuo: this request opens a streaming session whose tokens 
                     "under a token budget. List the path in unmetered_paths to let it through uncounted.")
 
 
+def _control_plane() -> Any:
+    """The connected control plane, or None."""
+    try:
+        from tenuo.control_plane import get_or_create
+
+        return get_or_create()
+    except Exception:
+        logger.debug("no control plane for token usage events", exc_info=True)
+        return None
+
+
+def _send_cloud(control_plane: Any, *, tool: str, warrant_id: str, decision: str, model: Optional[str], reason: str,
+                usage: Optional[Dict[str, Any]] = None, max_tokens: Optional[int] = None, authorization: Any = None,
+                failed: Optional[str] = None) -> None:
+    """Send one model-call decision to the control plane as an authorization event. Never raises."""
+    if control_plane is None:
+        return
+    try:
+        import dataclasses
+
+        from tenuo._enforcement import EnforcementResult
+
+        arguments: Dict[str, Any] = {"model": model}
+        if max_tokens is not None:
+            arguments["max_tokens"] = max_tokens
+        if usage is not None:
+            arguments["llm_usage"] = usage  # the key that marks a model-call event
+        allowed = decision == "ALLOW"
+        if isinstance(authorization, EnforcementResult) and authorization.allowed == allowed:
+            # The warrant check's own result: an allow keeps its verified chain.
+            result = dataclasses.replace(authorization, arguments=arguments)
+        else:
+            result = EnforcementResult(
+                allowed=allowed, tool=tool, arguments=arguments, warrant_id=warrant_id,
+                denial_reason=None if allowed else reason,
+                constraint_violated=None if allowed else failed,
+                error_type=None if allowed else "constraint_violation",
+            )
+        control_plane.emit_for_enforcement(result, chain_result=getattr(result, "chain_result", None))
+    except Exception:
+        logger.warning("Control plane emission failed for a model call; the usage event was lost", exc_info=True)
+
+
 def _refusal(http: Any, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
     """A local 403 in the error shape of the provider the request was for."""
     if dialect is not None and dialect.error_shape == "anthropic":
@@ -711,13 +755,7 @@ class _Core:
         self.chat_output_param = chat_output_param
         self.warrant_id = str(self.warrant.id)
         self.lease = lease  # a LeasedBudget, when budgets are handed out in leases
-        self.control_plane: Any = None
-        try:
-            from tenuo.control_plane import get_or_create
-
-            self.control_plane = get_or_create()
-        except Exception:
-            logger.debug("no control plane for token usage events", exc_info=True)
+        self.control_plane: Any = _control_plane()
 
     # -- before the request --------------------------------------------------
 
@@ -994,8 +1032,13 @@ class _Core:
         except Exception:
             # The reservation stays counted, which errs toward the budget.
             logger.warning("Token usage could not be recorded", exc_info=True)
-            self._leave_lease(plan, {"input_tokens": plan.call.input_estimate,
-                                     "output_tokens": plan.call.reserved - plan.call.input_estimate})
+            # The lease is told what the provider reported, which can be more
+            # than was reserved; the reservation only when there is no count.
+            counts = usage_counts(usage)
+            if counts is None:
+                counts = {"input_tokens": plan.call.input_estimate,
+                          "output_tokens": plan.call.reserved - plan.call.input_estimate}
+            self._leave_lease(plan, counts)
             return
         self._leave_lease(plan, record)
         self._emit("ALLOW", plan.call.model, "model call metered", plan.request, record, plan.call.max_output,
@@ -1045,32 +1088,9 @@ class _Core:
         One event per model call: at the end of an allowed call (so it carries
         what the call used) or at the refusal. Never raises.
         """
-        if self.control_plane is None:
-            return
-        try:
-            import dataclasses
-
-            from tenuo._enforcement import EnforcementResult
-
-            arguments: Dict[str, Any] = {"model": model}
-            if max_tokens is not None:
-                arguments["max_tokens"] = max_tokens
-            if usage is not None:
-                arguments["llm_usage"] = usage  # the key that marks a model-call event
-            allowed = decision == "ALLOW"
-            if isinstance(authorization, EnforcementResult) and authorization.allowed == allowed:
-                # The warrant check's own result: an allow keeps its verified chain.
-                result = dataclasses.replace(authorization, arguments=arguments)
-            else:
-                result = EnforcementResult(
-                    allowed=allowed, tool=self.meter.tool, arguments=arguments, warrant_id=self.warrant_id,
-                    denial_reason=None if allowed else reason,
-                    constraint_violated=None if allowed else failed,
-                    error_type=None if allowed else "constraint_violation",
-                )
-            self.control_plane.emit_for_enforcement(result, chain_result=getattr(result, "chain_result", None))
-        except Exception:
-            logger.warning("Control plane emission failed for a model call; the usage event was lost", exc_info=True)
+        _send_cloud(self.control_plane, tool=self.meter.tool, warrant_id=self.warrant_id, decision=decision,
+                    model=model, reason=reason, usage=usage, max_tokens=max_tokens, authorization=authorization,
+                    failed=failed)
 
 
 # ---------------------------------------------------------------------------
@@ -1326,7 +1346,7 @@ def _make(http: Any) -> SimpleNamespace:
             if installed.lease is not None or installed.meter.store.blocking:
                 # Taking or returning a lease is a blocking request to the issuer,
                 # and a store that can wait must not be waited on here.
-                core, plan, refusal = await _call_off_loop(installed.plan_for, http, request)
+                core, plan, refusal = await _plan_for_off_loop(installed, http, request)
             else:
                 core, plan, refusal = installed.plan_for(http, request)
             if refusal is not None:
@@ -1467,6 +1487,7 @@ class _Installation:
                  audit_callback: Optional[Callable[[MeterEvent], None]], hosts: Sequence[str],
                  unmetered_paths: Sequence[str], chat_output_param: str, lease: Any = None) -> None:
         self.lease = lease
+        self.control_plane: Any = None  # looked up when the first refusal without a warrant is reported
         self.unmetered = tuple(p.rstrip("/") for p in unmetered_paths)
         if lease is not None and signing_key is not None and getattr(lease.source, "signing_key", signing_key) is None:
             lease.source.signing_key = signing_key  # returns are signed with the agent's key
@@ -1500,9 +1521,20 @@ class _Installation:
         return _VERTEX_HOST in self.hosts and host.endswith("-" + _VERTEX_HOST)
 
     def _refused(self, http: Any, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
-        """A refusal made before any warrant is in hand, with its DENY event."""
-        _send_event(self.shared["audit_callback"], decision="DENY", tool=self.meter.tool, model=None,
+        """A refusal made before any warrant is in hand, with its DENY events."""
+        model = None
+        if dialect is not None:
+            try:
+                body = json.loads(request.read() or b"{}")
+                model = dialect.model(body, request.url.path) if isinstance(body, dict) else None
+            except Exception:
+                model = None
+        _send_event(self.shared["audit_callback"], decision="DENY", tool=self.meter.tool, model=model,
                     reason=message, warrant_id=None, request=request)
+        if self.control_plane is None:
+            self.control_plane = _control_plane()
+        _send_cloud(self.control_plane, tool=self.meter.tool, warrant_id="", decision="DENY", model=model,
+                    reason=message, failed=self.meter.field if code == BUDGET_CODE else None)
         return _refusal(http, request, dialect, code, message)
 
     def core_for(self, http: Any, request: Any) -> Tuple[Optional[_Core], Any]:
@@ -1595,10 +1627,11 @@ def _warrant_key(warrant: Any) -> str:
 async def _off_loop(core: _Core, fn: Callable[..., Any], *args: Any) -> Any:
     """Run a store operation off the asyncio event loop when the store can wait on something.
 
-    A file-backed store can wait on another writer. Shielded: a caller that is
+    A file-backed store can wait on another writer, and ending a call under a
+    lease can send that lease back to its issuer. Shielded: a caller that is
     cancelled must not leave the accounting half done.
     """
-    if not core.meter.store.blocking:
+    if not core.meter.store.blocking and core.lease is None:
         return fn(*args)
     import asyncio
     import contextvars
@@ -1635,17 +1668,30 @@ async def _plan_off_loop(core: _Core, request: Any) -> _Plan:
         raise
 
 
-async def _call_off_loop(fn: Callable[..., Any], *args: Any) -> Any:
-    """Run a blocking call off the asyncio event loop, keeping the caller's context variables."""
+async def _plan_for_off_loop(installed: "_Installation", http: Any, request: Any) -> Tuple[Optional[_Core], Optional[_Plan], Any]:
+    """Plan a request off the event loop. A plan made for a caller that went away is given back:
+    it holds a reservation and a place on a lease."""
     import asyncio
     import contextvars
 
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        return fn(*args)  # another async library: run it where we are
+        return installed.plan_for(http, request)  # another async library: run it where we are
     context = contextvars.copy_context()
-    return await loop.run_in_executor(None, lambda: context.run(fn, *args))
+    future = loop.run_in_executor(None, lambda: context.run(installed.plan_for, http, request))
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        def give_back(done: Any) -> None:
+            if done.cancelled() or done.exception() is not None:
+                return
+            core, plan, _ = done.result()
+            if core is not None and plan is not None:
+                loop.run_in_executor(None, core.release, plan)
+
+        future.add_done_callback(give_back)
+        raise
 
 
 def install(
