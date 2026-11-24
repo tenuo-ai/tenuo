@@ -52,6 +52,15 @@ own error shape, so each SDK raises its usual error type. The error code is
 warrant refuses for another reason, such as the model). The response carries
 ``x-should-retry: false``. Use :func:`is_budget_error` to recognize it.
 
+Tenuo Cloud
+-----------
+When a control plane is connected (``TENUO_CONNECT_TOKEN``, or
+``TENUO_CONTROL_PLANE_URL`` + ``TENUO_API_KEY`` + ``TENUO_AUTHORIZER_NAME``),
+every refusal and every finished call is also sent there as an authorization
+event for the ``llm.chat`` action. Its arguments carry the model, the output
+cap and ``llm_usage``: the tokens the call used and the running total and limit
+of each warrant it spent from.
+
 What is not metered
 -------------------
 ``GET`` and other non-``POST`` requests pass through. A ``POST`` to a path this
@@ -666,6 +675,10 @@ class _Plan:
     choices: int = 1
     request_id: Optional[str] = None
     done: bool = field(default=False, repr=False)
+    # The lease moved on (or is all there is): plan the request again.
+    retry: bool = False
+    # The lease in hand is all there is for now: plan again without asking for another.
+    settle_for_lease: bool = False
 
 
 class _Core:
@@ -681,6 +694,7 @@ class _Core:
         audit_callback: Optional[Callable[[MeterEvent], None]],
         unmetered_paths: Sequence[str],
         chat_output_param: str,
+        lease: Any = None,
     ) -> None:
         from tenuo._enforcement import split_presented_warrant
 
@@ -696,10 +710,24 @@ class _Core:
         self.unmetered = tuple(p.rstrip("/") for p in unmetered_paths)
         self.chat_output_param = chat_output_param
         self.warrant_id = str(self.warrant.id)
+        self.lease = lease  # a LeasedBudget, when budgets are handed out in leases
+        self.control_plane: Any = None
+        try:
+            from tenuo.control_plane import get_or_create
+
+            self.control_plane = get_or_create()
+        except Exception:
+            logger.debug("no control plane for token usage events", exc_info=True)
 
     # -- before the request --------------------------------------------------
 
-    def plan(self, request: Any) -> _Plan:
+    def plan(self, request: Any, renew: bool = False) -> _Plan:
+        """Decide what to do with ``request``.
+
+        With ``renew``, a call that does not fit in what the current lease has
+        left moves to the next lease instead of being cut short or refused: the
+        plan then says ``retry`` and the caller plans again.
+        """
         path = request.url.path.rstrip("/")
         if request.method.upper() != "POST":
             if _is_upgrade(request) and self.meter.enforce and not path.endswith(self.unmetered):
@@ -749,6 +777,7 @@ class _Core:
         streaming = dialect.wants_stream(body, path)
         view = dict(dialect.view(body))
         view["model"] = model
+        decided: Dict[str, Any] = {}
         # Parents not given to this meter are taken from chain_scope(), as the
         # warrant check does: the chain that is verified is the chain charged.
         chain = self.chain
@@ -756,6 +785,10 @@ class _Core:
             from tenuo.decorators import chain_scope
 
             chain = list(chain_scope() or []) or None
+
+        def authorize(tool: str, args: Dict[str, Any]) -> Any:
+            decided["result"] = self._authorize(tool, args, chain)
+            return decided["result"]
 
         # The meter changes the request before it goes out (the output cap,
         # the usage option of a stream). The warrant checks that final form.
@@ -773,19 +806,44 @@ class _Core:
         try:
             call = self.meter.begin(
                 self.warrant, chain, view,
-                requested_output=requested, choices=choices,
-                authorize=lambda tool, args: self._authorize(tool, args, chain),
+                requested_output=requested, choices=choices, authorize=authorize,
                 as_sent=as_sent,
             )
         except BudgetExceeded as e:
+            if renew and e.own and self._is_lease():
+                moved = self._other_lease(request, dialect, model, used=e.used > 0)
+                if moved is not None:
+                    return moved
             snapshot: Dict[str, Any] = {"warrant_id": e.warrant_id, "used": e.used}
             if e.limit is not None:
                 snapshot["limit"] = e.limit
+            if not e.own:
+                snapshot["delegated_from"] = True
+            reason = self._budget_message(e)
             return _Plan(request, refusal=self._refuse(
-                request, dialect, BUDGET_CODE, str(e), model, {"budget": [snapshot]}))
+                request, dialect, BUDGET_CODE, reason, model, {"budget": [snapshot]},
+                authorization=decided.get("result"), failed=self.meter.field))
         except ModelCallDenied as e:
             reason = f"tenuo: model call refused by the warrant: {e}"
-            return _Plan(request, refusal=self._refuse(request, dialect, DENIED_CODE, reason, model))
+            return _Plan(request, refusal=self._refuse(request, dialect, DENIED_CODE, reason, model,
+                                                       authorization=e.result))
+        call.adapter_state["authorization"] = decided.get("result")
+        if renew and call.lowered and self._is_lease() and self._lease_is_short(call):
+            call.release()  # nothing is running on the lease, so it can be returned whole
+            moved = self._other_lease(request, dialect, model, used=True)
+            return moved if moved is not None else _Plan(request, retry=True, settle_for_lease=True)
+        charged = [lv.warrant_id for lv in call.levels]
+        call.adapter_state["charged"] = charged
+        if self.lease is not None and not self.lease.enter(charged):
+            # The lease was retired between taking its warrant and here: what
+            # it used is being reported, so nothing more may be spent under it.
+            call.release()
+            call.adapter_state["charged"] = []
+            if renew:
+                return _Plan(request, retry=True)
+            reason = "tenuo: token budget reached: the lease this call would spend from has been returned"
+            return _Plan(request, refusal=self._refuse(request, dialect, BUDGET_CODE, reason, model,
+                                                       failed=self.meter.field))
 
         if not call.enforced:
             # Only watching: the request goes out exactly as the caller wrote
@@ -807,8 +865,70 @@ class _Core:
             )
         except BaseException:
             call.release()  # nothing will be sent: the reservation goes back
+            if self.lease is not None:
+                self.lease.exit(charged, None, None)
             raise
         return _Plan(rewritten, call=call, dialect=dialect, hide_usage=hide, choices=choices)
+
+    def _budget_message(self, e: BudgetExceeded) -> str:
+        """Say a refusal in the budget's terms when the warrant is a lease.
+
+        "This warrant allows 24 tokens" is true of a lease and useless to the
+        person reading it: what they need is how much of the period's budget
+        is left and when it resets.
+        """
+        info = self.lease.describe(e.warrant_id) if self.lease is not None else None
+        if not info:
+            return str(e)
+        period = str(info.get("period") or "")
+        whose = {"day": "today's budget", "week": "this week's budget", "month": "this month's budget"}.get(period, "the budget")
+        resets = f" It resets at {info['resets_at']}." if info.get("resets_at") else " It does not reset."
+        left = max(0, (e.limit or 0) - e.used)
+        pool = info.get("pool") if isinstance(info.get("pool"), Mapping) else {}
+        if pool.get("remaining"):
+            # The period has more, but not in one piece large enough for this call.
+            return (f"tenuo: token budget reached: this call needs at least {e.needed:,} tokens and {left:,} are left of the "
+                    f"{e.limit or 0:,} this budget hands out at a time. Raise the lease size, or ask for a smaller answer.{resets}")
+        return (f"tenuo: token budget reached: {left:,} tokens are left in {whose} and this call needs at least "
+                f"{e.needed:,}.{resets}")
+
+    def _is_lease(self) -> bool:
+        """This meter's warrant is a lease, the current one or one the process has moved on from."""
+        return self.lease is not None and self.lease.knows(self.warrant_id)
+
+    def _lease_is_short(self, call: MeteredCall) -> bool:
+        """The lease itself is what cut the call short, and it is not a fresh one."""
+        limited = [lv for lv in call.levels if lv.limit is not None]
+        if not limited:
+            return False
+        tight = min(limited, key=lambda lv: (lv.limit or 0) - lv.used)
+        return tight.warrant_id == self.warrant_id and tight.used - call.reserved > 0
+
+    def _other_lease(self, request: Any, dialect: Optional[_Dialect], model: Optional[str], used: bool) -> Optional[_Plan]:
+        """This lease cannot carry the call: plan it on another one.
+
+        Returns the plan to act on (plan again, or a refusal), or None when
+        this lease is all there is for now and the call should be decided on it.
+        """
+        from tenuo.budget_lease import LeaseUnavailable
+
+        try:
+            # A lease another thread has already moved on from needs no renewal:
+            # renew() sees that it is not the current one and says so.
+            moved = self.lease.renew(self.warrant_id, used=used)
+        except LeaseUnavailable as e:
+            reason = f"tenuo: token budget reached: {e}"
+            return _Plan(request, refusal=self._refuse(request, dialect, BUDGET_CODE, reason, model,
+                                                       failed=self.meter.field))
+        return _Plan(request, retry=True) if moved else None
+
+    def _leave_lease(self, plan: _Plan, usage: Optional[Mapping[str, Any]]) -> None:
+        if self.lease is None or plan.call is None:
+            return
+        try:
+            self.lease.exit(plan.call.adapter_state.get("charged") or (), plan.call.model, usage)
+        except Exception:
+            logger.warning("Lease bookkeeping failed", exc_info=True)
 
     def _default_param(self, dialect: _Dialect) -> str:
         if isinstance(dialect, _OpenAIChat) and self.chat_output_param in dialect.output_params:
@@ -828,9 +948,10 @@ class _Core:
         )
 
     def _refuse(self, request: Any, dialect: Optional[_Dialect], code: str, message: str,
-                model: Optional[str] = None, usage: Optional[Dict[str, Any]] = None) -> Any:
+                model: Optional[str] = None, usage: Optional[Dict[str, Any]] = None, *,
+                authorization: Any = None, failed: Optional[str] = None) -> Any:
         """The local 403 for a request, with its one DENY event."""
-        self._emit("DENY", model, message, request, usage)
+        self._emit("DENY", model, message, request, usage, authorization=authorization, failed=failed)
         return _refusal(self.http, request, dialect, code, message)
 
     # -- after the request ---------------------------------------------------
@@ -862,6 +983,7 @@ class _Core:
             plan.call.release()
         except Exception:
             logger.warning("Token reservation could not be released", exc_info=True)
+        self._leave_lease(plan, None)
 
     def settle(self, plan: _Plan, usage: Any) -> None:
         if plan.call is None or plan.done:
@@ -872,9 +994,12 @@ class _Core:
         except Exception:
             # The reservation stays counted, which errs toward the budget.
             logger.warning("Token usage could not be recorded", exc_info=True)
+            self._leave_lease(plan, {"input_tokens": plan.call.input_estimate,
+                                     "output_tokens": plan.call.reserved - plan.call.input_estimate})
             return
+        self._leave_lease(plan, record)
         self._emit("ALLOW", plan.call.model, "model call metered", plan.request, record, plan.call.max_output,
-                   request_id=plan.request_id)
+                   authorization=plan.call.adapter_state.get("authorization"), request_id=plan.request_id)
 
     @staticmethod
     def note_response(plan: _Plan, response: Any) -> None:
@@ -906,10 +1031,46 @@ class _Core:
 
     def _emit(self, decision: str, model: Optional[str], reason: str, request: Any,
               usage: Optional[Dict[str, Any]], max_tokens: Optional[int] = None, *,
+              authorization: Any = None, failed: Optional[str] = None,
               request_id: Optional[str] = None) -> None:
+        self._emit_cloud(decision, model, reason, usage, max_tokens, authorization, failed)
         _send_event(self.audit_callback, decision=decision, tool=self.meter.tool, model=model, reason=reason,
                     warrant_id=self.warrant_id, request=request, usage=usage, max_tokens=max_tokens,
                     request_id=request_id)
+
+    def _emit_cloud(self, decision: str, model: Optional[str], reason: str, usage: Optional[Dict[str, Any]],
+                    max_tokens: Optional[int], authorization: Any, failed: Optional[str]) -> None:
+        """Send the decision, with its usage, to the control plane when one is connected.
+
+        One event per model call: at the end of an allowed call (so it carries
+        what the call used) or at the refusal. Never raises.
+        """
+        if self.control_plane is None:
+            return
+        try:
+            import dataclasses
+
+            from tenuo._enforcement import EnforcementResult
+
+            arguments: Dict[str, Any] = {"model": model}
+            if max_tokens is not None:
+                arguments["max_tokens"] = max_tokens
+            if usage is not None:
+                arguments["llm_usage"] = usage  # the key that marks a model-call event
+            allowed = decision == "ALLOW"
+            if isinstance(authorization, EnforcementResult) and authorization.allowed == allowed:
+                # The warrant check's own result: an allow keeps its verified chain.
+                result = dataclasses.replace(authorization, arguments=arguments)
+            else:
+                result = EnforcementResult(
+                    allowed=allowed, tool=self.meter.tool, arguments=arguments, warrant_id=self.warrant_id,
+                    denial_reason=None if allowed else reason,
+                    constraint_violated=None if allowed else failed,
+                    error_type=None if allowed else "constraint_violation",
+                )
+            self.control_plane.emit_for_enforcement(result, chain_result=getattr(result, "chain_result", None))
+        except Exception:
+            logger.warning("Control plane emission failed for a model call; the usage event was lost", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1046,9 +1207,10 @@ def _make(http: Any) -> SimpleNamespace:
         def close(self) -> None:
             self._inner.close()
 
-    def send_sync(core: _Core, send: Callable[[Any], Any], request: Any) -> Any:
+    def send_sync(core: _Core, send: Callable[[Any], Any], request: Any, plan: Optional[_Plan] = None) -> Any:
         """Meter one request sent with ``send``."""
-        plan = core.plan(request)
+        if plan is None:
+            plan = core.plan(request)
         if plan.refusal is not None:
             return plan.refusal
         if plan.call is None:
@@ -1094,10 +1256,11 @@ def _make(http: Any) -> SimpleNamespace:
         async def aclose(self) -> None:
             await self._inner.aclose()
 
-    async def send_async(core: _Core, send: Callable[[Any], Any], request: Any) -> Any:
-        if request.method.upper() == "POST":
-            await request.aread()  # the planner reads the body synchronously
-        plan = await _plan_off_loop(core, request)
+    async def send_async(core: _Core, send: Callable[[Any], Any], request: Any, plan: Optional[_Plan] = None) -> Any:
+        if plan is None:
+            if request.method.upper() == "POST":
+                await request.aread()  # the planner reads the body synchronously
+            plan = await _plan_off_loop(core, request)
         if plan.refusal is not None:
             return plan.refusal
         if plan.call is None:
@@ -1140,12 +1303,12 @@ def _make(http: Any) -> SimpleNamespace:
             installed = _INSTALLED
             if installed is None or not installed.covers(request):
                 return self._inner.handle_request(request)
-            core, refusal = installed.core_for(http, request)
+            core, plan, refusal = installed.plan_for(http, request)
             if refusal is not None:
                 return refusal
             if core is None:
                 return self._inner.handle_request(request)
-            return send_sync(core, self._inner.handle_request, request)
+            return send_sync(core, self._inner.handle_request, request, plan)
 
         def close(self) -> None:
             self._inner.close()
@@ -1158,12 +1321,19 @@ def _make(http: Any) -> SimpleNamespace:
             installed = _INSTALLED
             if installed is None or not installed.covers(request):
                 return await self._inner.handle_async_request(request)
-            core, refusal = installed.core_for(http, request)
+            if request.method.upper() == "POST":
+                await request.aread()  # the planner reads the body synchronously
+            if installed.lease is not None or installed.meter.store.blocking:
+                # Taking or returning a lease is a blocking request to the issuer,
+                # and a store that can wait must not be waited on here.
+                core, plan, refusal = await _call_off_loop(installed.plan_for, http, request)
+            else:
+                core, plan, refusal = installed.plan_for(http, request)
             if refusal is not None:
                 return refusal
             if core is None:
                 return await self._inner.handle_async_request(request)
-            return await send_async(core, self._inner.handle_async_request, request)
+            return await send_async(core, self._inner.handle_async_request, request, plan)
 
         async def aclose(self) -> None:
             await self._inner.aclose()
@@ -1295,14 +1465,17 @@ class _Installation:
     def __init__(self, *, warrant: Any, signing_key: Any, warrant_chain: Optional[Sequence[Any]],
                  trusted_roots: Optional[list], budget_store: Any,
                  audit_callback: Optional[Callable[[MeterEvent], None]], hosts: Sequence[str],
-                 unmetered_paths: Sequence[str], chat_output_param: str) -> None:
+                 unmetered_paths: Sequence[str], chat_output_param: str, lease: Any = None) -> None:
+        self.lease = lease
+        self.unmetered = tuple(p.rstrip("/") for p in unmetered_paths)
+        if lease is not None and signing_key is not None and getattr(lease.source, "signing_key", signing_key) is None:
+            lease.source.signing_key = signing_key  # returns are signed with the agent's key
         self.warrant, self.signing_key = warrant, signing_key
         self.chain = list(warrant_chain) if warrant_chain else None
         self.meter = TokenMeter.coerce(budget_store) or _shared_meter()
         self.shared: Dict[str, Any] = dict(trusted_roots=trusted_roots, budget_store=self.meter, audit_callback=audit_callback,
-                           unmetered_paths=unmetered_paths, chat_output_param=chat_output_param)
+                           unmetered_paths=unmetered_paths, chat_output_param=chat_output_param, lease=lease)
         self.hosts = tuple(h.lower() for h in (*DEFAULT_HOSTS, *hosts))
-        self.unmetered = tuple(p.rstrip("/") for p in unmetered_paths)
         self.cores: Dict[Any, _Core] = {}
         self.patched: List[Tuple[Any, Any]] = []
         self.restore_genai = False
@@ -1342,7 +1515,24 @@ class _Installation:
             if _is_upgrade(request) and self.meter.enforce and not path.endswith(self.unmetered):
                 return None, self._refused(http, request, None, UNMETERED_CODE, _UPGRADE_MESSAGE)
             return None, None
-        warrant = get_warrant_context() or self.warrant
+        warrant = get_warrant_context()
+        if warrant is None and self.lease is not None:
+            path = request.url.path.rstrip("/")
+            if path.endswith(_FREE_SUFFIXES) or path.endswith(self.unmetered):
+                return None, None  # counted nowhere, by design: no lease is needed for it
+            if _dialect_for(path) is None:
+                # As under a plain warrant: a POST the meter cannot count is refused, not let through.
+                message = (f"tenuo: {path} is not a model endpoint this meter understands, so it is refused under a "
+                           "token budget. List the path in unmetered_paths to let it through uncounted.")
+                return None, self._refused(http, request, None, UNMETERED_CODE, message)
+            from tenuo.budget_lease import LeaseUnavailable
+
+            try:
+                warrant = self.lease.warrant()
+            except LeaseUnavailable as e:
+                return None, self._refused(http, request, _dialect_for(path), BUDGET_CODE,
+                                           f"tenuo: token budget reached: {e}")
+        warrant = warrant or self.warrant
         key = get_signing_key_context() or self.signing_key
         if warrant is None or key is None:
             path = request.url.path.rstrip("/")
@@ -1371,6 +1561,20 @@ class _Installation:
                 core = _Core(http=http, warrant=leaf, signing_key=key, warrant_chain=parents, **self.shared)
                 self.cores[cache_key] = core
         return core, None
+
+    def plan_for(self, http: Any, request: Any) -> Tuple[Optional[_Core], Optional[_Plan], Any]:
+        """The meter and its plan for one request, moving to the next lease once if this one is short."""
+        attempts = 4 if self.lease is not None else 1  # a busy process can see its lease change more than once
+        renew = self.lease is not None
+        for attempt in range(attempts):
+            core, refusal = self.core_for(http, request)
+            if core is None:
+                return None, None, refusal
+            plan = core.plan(request, renew=renew and attempt < attempts - 1)
+            if not plan.retry:
+                break
+            renew = renew and not plan.settle_for_lease
+        return core, plan, None
 
 
 _INSTALLED: Optional[_Installation] = None
@@ -1431,6 +1635,19 @@ async def _plan_off_loop(core: _Core, request: Any) -> _Plan:
         raise
 
 
+async def _call_off_loop(fn: Callable[..., Any], *args: Any) -> Any:
+    """Run a blocking call off the asyncio event loop, keeping the caller's context variables."""
+    import asyncio
+    import contextvars
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return fn(*args)  # another async library: run it where we are
+    context = contextvars.copy_context()
+    return await loop.run_in_executor(None, lambda: context.run(fn, *args))
+
+
 def install(
     *,
     warrant: Any = None,
@@ -1442,6 +1659,7 @@ def install(
     hosts: Sequence[str] = (),
     unmetered_paths: Sequence[str] = (),
     chat_output_param: str = "max_completion_tokens",
+    lease: Any = None,
 ) -> TokenMeter:
     """Meter the model calls of every ``httpx`` / ``httpx2`` client in this process.
 
@@ -1456,6 +1674,9 @@ def install(
             model call is refused.
         trusted_roots, budget_store, audit_callback, unmetered_paths,
             chat_output_param: As for :class:`MeteredTransport`.
+        lease: A :class:`tenuo.budget_lease.LeasedBudget`. The default warrant
+            is then its current lease, renewed and returned as calls are made;
+            ``warrant`` is not needed. ``uninstall()`` returns what it holds.
         hosts: Extra hosts to meter, besides the known providers in
             ``DEFAULT_HOSTS``: a gateway, a self-hosted server
             (``"localhost:1234"``), or ``"*"`` for every host. Requests to any
@@ -1474,7 +1695,7 @@ def install(
     installed = _Installation(
         warrant=warrant, signing_key=signing_key, warrant_chain=warrant_chain, trusted_roots=trusted_roots,
         budget_store=budget_store, audit_callback=audit_callback, hosts=hosts, unmetered_paths=unmetered_paths,
-        chat_output_param=chat_output_param,
+        chat_output_param=chat_output_param, lease=lease,
     )
     for name in ("httpx", "httpx2"):
         try:
@@ -1525,6 +1746,11 @@ def uninstall() -> None:
         return
     for client_class, original in installed.patched:
         client_class._transport_for_url = original
+    if installed.lease is not None:
+        try:
+            installed.lease.close()
+        except Exception:
+            logger.warning("Leases could not be returned on uninstall", exc_info=True)
     if installed.restore_genai:
         try:
             from google.genai import _api_client as genai_client  # type: ignore[import-not-found]

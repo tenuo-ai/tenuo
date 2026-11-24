@@ -586,6 +586,9 @@ class MeteredCall:
     usage: Optional[Dict[str, Any]] = None
     # Scratch space for the adapter that runs the call (never read here).
     adapter_state: Dict[str, Any] = dc_field(repr=False, default_factory=dict)
+    # True when the output cap is below what the call would otherwise have had,
+    # because a budget in the chain is running out.
+    lowered: bool = False
 
     @property
     def done(self) -> bool:
@@ -823,6 +826,7 @@ class TokenMeter:
         checked = as_sent(cap) if as_sent is not None else request
 
         call = MeteredCall(self.tool, model, cap, reserved, input_estimate, clamped, True, levels, self.store)
+        call.lowered = cap < want
         totals = self.store.add(
             {lv.warrant_id: reserved for lv in levels}, {lv.warrant_id: lv.expires_at for lv in levels}
         )

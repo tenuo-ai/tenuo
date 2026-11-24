@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are authorized before they are sent, output caps are lowered to what is
   left, and reported usage is counted per warrant and per presented parent.
   See [Token Budgets](docs/token-budgets.md).
+- **Token budgets with Tenuo Cloud (Python).** With a control plane connected,
+  the token meter reports each model call's usage as an authorization event.
+  `tenuo.budget_lease` (experimental) spends a budget kept by the issuer for a
+  day, week or month: `install(lease=LeasedBudget(CloudLeases(trigger_id)))`
+  takes short-lived warrants for a slice of the budget and returns each with
+  what it used.
 
 ### Changed
 

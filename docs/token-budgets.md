@@ -213,6 +213,37 @@ With a store that can wait on another writer (anything but the in-memory one), a
 
 ---
 
+## With Tenuo Cloud
+
+### Usage events
+
+When a control plane is connected (`TENUO_CONNECT_TOKEN`, or `TENUO_CONTROL_PLANE_URL`, `TENUO_API_KEY` and `TENUO_AUTHORIZER_NAME`), every finished call and every refusal is also sent to it as an authorization event for `llm.chat`. The event's arguments carry the model, the output cap, and `llm_usage`: the tokens the call used and the running total and limit of each warrant it spent from. Nothing has to be configured in the meter.
+
+### Budgets for a period
+
+> **Experimental.** Needs a Tenuo Cloud that offers period budgets on triggers.
+
+A warrant's budget is fixed when the warrant is issued. A budget for a day, a week or a month is kept by the issuer and handed out in *leases*: short-lived warrants for a slice of what the period has left. The meter takes a lease, spends from it, and returns it with what it used before taking the next one.
+
+```python
+import tenuo.budget_http
+from tenuo.budget_lease import CloudLeases, LeasedBudget
+
+lease = LeasedBudget(CloudLeases("trg_research_budget"))
+tenuo.budget_http.install(lease=lease, signing_key=agent_key, trusted_roots=[issuer_key])
+```
+
+Model calls are then metered against the current lease. `CloudLeases` reads `TENUO_CONTROL_PLANE_URL` and `TENUO_API_KEY`; anything with `acquire()` and `release()` can stand in for it (`tenuo.budget_lease.LeaseSource`).
+
+- A lease is charged in full until it is returned, so two hosts are never given the same tokens. What a lease did not use goes back to the budget.
+- Returns are signed with the agent's key: only the holder of a lease can report what it used.
+- When the period's budget is spent, calls are refused with `token_budget_exceeded`, and the message says how much is left and when the budget resets.
+- `uninstall()` returns the lease in hand, and so does a normal interpreter exit. A process killed by a signal it does not handle does not, and that lease stays charged until it expires.
+- A lease is for one process. Another process takes its own lease from the same budget.
+- Leases work with `install()`; `metered_client()` takes a fixed warrant.
+
+---
+
 ## Behavior to know
 
 - **Input is estimated before the call.** The reservation uses a rough count of the prompt; the store is corrected to the provider's figure afterwards. A call can therefore pass a total by its estimate error, and the next call is refused. Pass `TokenMeter(input_estimator=...)` for a tokenizer-based estimate.
