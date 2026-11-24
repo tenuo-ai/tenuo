@@ -175,6 +175,17 @@ updates:
       day: "monday"
       time: "09:00"
     open-pull-requests-limit: 5
+    groups:
+      # CodeQL init/analyze must run at the same version.
+      codeql:
+        patterns:
+          - "github/codeql-action"
+          - "github/codeql-action/*"
+      codeql-security:
+        applies-to: security-updates
+        patterns:
+          - "github/codeql-action"
+          - "github/codeql-action/*"
     commit-message:
       prefix: "deps(actions)"
     assignees:
