@@ -394,6 +394,10 @@ export type ApprovalInfo = {
  */
 export type WarrantInfo = {
   readonly id: string;
+  /** Signed extension bytes, hex encoded. Includes the full approval policy at
+   * `extensions["tenuo.approval_gates"]` when conditional/tool gates are set.
+   */
+  readonly extensions: Readonly<Record<string, string>>;
   readonly kind: "execution" | "issuer";
   /** Issuer tool scope; absent on execution warrants. */
   readonly issuableTools?: readonly string[];

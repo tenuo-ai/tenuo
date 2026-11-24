@@ -622,7 +622,9 @@ rejects integers outside JavaScript's safe-integer range instead of rounding
 signed policy values, including issuer constraint bounds. Issuer entries expose
 `kind: "issuer"`, `issuableTools`, `maxIssueDepth`, and the full
 `constraintBounds` set; execution entries have `kind: "execution"`.
-This is an inspection limitation, not a protocol limit;
+`extensions` retains signed extension bytes as hex strings, including the full
+conditional/tool approval policy at `extensions["tenuo.approval_gates"]`.
+The integer restriction is an inspection limitation, not a protocol limit;
 use the original warrant with a precision-preserving native decoder in that case.
 
 This reports chain validity (trusted root, signatures, narrowing, expiry and

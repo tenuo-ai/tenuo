@@ -579,6 +579,25 @@ describe("diagnostic chain input budget", () => {
 
 
 describe("legacy approval helper input budget", () => {
+  it("rejects oversized generators without consuming any envelope", () => {
+    const { tokens, request, sign, reviewerKey } = setup();
+    const good = sign(reviewerKey, "r");
+    const visited = vi.fn();
+    function* oversized() {
+      for (let i = 0; i <= protocolLimits().max_approvals; i++) {
+        visited();
+        yield good;
+      }
+    }
+    const wasm = loadWasm() as unknown as {
+      verify_approval_set(warrant: string, hash: string, approvals: unknown): unknown;
+    };
+    expect(wasm.verify_approval_set(tokens[0]!, request.requestHash, oversized())).toMatchObject({
+      satisfied: false, valid_count: 0, error: "approvals must be array of base64 strings",
+    });
+    expect(visited).not.toHaveBeenCalled();
+  });
+
   it("rejects oversized duplicate approvals before reading any envelope", () => {
     const { tokens, request, sign, reviewerKey } = setup();
     const good = sign(reviewerKey, "r");
@@ -741,5 +760,33 @@ describe("raw timestamp inspection", () => {
       expect(T.inspectWarrant(warrant)[0]).toMatchObject({ issuedAt: Number(issuedAt), expiresAt: Number(expiresAt) });
       expect(loadWasm().sdkDecodeChain([warrant])[0]).toMatchObject({ issued_at: Number(issuedAt), expires_at: Number(expiresAt) });
     }
+  });
+});
+
+describe("signed approval policy inspection", () => {
+  it("distinguishes tool, when, and exempt gates with identical capabilities and approvers", () => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const approver = T.publicKeyFromHolderKey(T.generateHolderKey());
+    const policies = [
+      { tools: ["read"] },
+      { tools: ["write"] },
+      { gates: { read: { args: { path: { when: exact("private") } } } } },
+      { gates: { read: { args: { path: { exempt: exact("private") } } } } },
+    ];
+    const warrants = policies.map(policy => cp.session({
+      allow: { read: { path: pattern("*") }, write: { path: pattern("*") } },
+      requireApproval: { approvers: [approver], min: 1, ...policy },
+    }).toWire());
+    const views = warrants.map(warrant => T.inspectWarrant(warrant)[0]!);
+    for (const [index, view] of views.entries()) {
+      expect(view.capabilities).toEqual(views[0]!.capabilities);
+      expect(view.requiredApprovers).toEqual(views[0]!.requiredApprovers);
+      expect(view.minApprovals).toBe(1);
+      expect(view.extensions).toEqual(loadWasm().sdkDecodeChain(warrants[index]!)[0]!.extensions);
+      expect(view.extensions["tenuo.approval_gates"]).toMatch(/^[0-9a-f]+$/);
+    }
+    expect(new Set(views.map(view => view.extensions["tenuo.approval_gates"])).size).toBe(4);
+    const ungated = cp.session({ allow: { read: {} } });
+    expect(T.inspectWarrant(ungated.toWire())[0]!.extensions["tenuo.approval_gates"]).toBeUndefined();
   });
 });

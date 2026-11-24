@@ -1459,6 +1459,7 @@ export function inspectWarrant(warrant: string | readonly string[]): WarrantInfo
     const out: { -readonly [K in keyof WarrantInfo]: WarrantInfo[K] } = {
       id: w.id,
       kind: w.warrant_type === 1 ? "issuer" : "execution",
+      extensions: w.extensions,
       issuerPublicKey: w.issuer,
       holderPublicKey: w.authorized_holder,
       depth: w.depth,

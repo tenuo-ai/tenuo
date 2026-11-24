@@ -330,6 +330,7 @@ export type WasmWarrantExplanation = {
 
 export type WasmDecodedWarrant = {
   id: string;
+  extensions: Record<string, string>;
   warrant_type: 0 | 1;
   constraint_bounds?: Record<string, unknown> | null;
   issuable_tools?: string[] | null;

@@ -1196,9 +1196,14 @@ pub fn verify_approval_set(
     let threshold = warrant.approval_threshold();
 
     // Bound input before serde allocation, decoding, or signature verification.
-    if js_sys::Array::is_array(&approvals_b64)
-        && approvals_b64.unchecked_ref::<js_sys::Array>().length() as usize
-            > tenuo::meta_envelope::MAX_APPROVALS
+    if !js_sys::Array::is_array(&approvals_b64) {
+        return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+            satisfied: false, valid_count: 0, required: threshold,
+            error: Some("approvals must be array of base64 strings".into()),
+        }).unwrap();
+    }
+    if approvals_b64.unchecked_ref::<js_sys::Array>().length() as usize
+        > tenuo::meta_envelope::MAX_APPROVALS
     {
         return serde_wasm_bindgen::to_value(&ApprovalSetResult {
             satisfied: false, valid_count: 0, required: threshold,
