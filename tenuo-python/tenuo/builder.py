@@ -67,6 +67,7 @@ class MintBuilder:
         self._constraints: Dict[str, Any] = {}
 
         self._ttl_seconds: int = 3600  # Default 1 hour
+        self._max_depth: Optional[int] = None
         self._holder: Optional[PublicKey] = None
         self._session_id: Optional[str] = None
         self._clearance: Optional[Clearance] = None
@@ -159,6 +160,17 @@ class MintBuilder:
             seconds: TTL in seconds (default: 3600)
         """
         self._ttl_seconds = seconds
+        return self
+
+    def max_depth(self, depth: int) -> "MintBuilder":
+        """Set the root warrant's delegation ceiling (0 makes it terminal).
+
+        This is distinct from an issuer warrant's maximum issuance depth.
+        The native builder validates the protocol limit when minting.
+        """
+        if isinstance(depth, bool) or not isinstance(depth, int) or depth < 0:
+            raise ValueError("max_depth must be a non-negative integer")
+        self._max_depth = depth
         return self
 
     def holder(self, public_key: PublicKey) -> "MintBuilder":
@@ -315,6 +327,7 @@ class MintBuilder:
             keypair=key,
             capabilities=capabilities,
             ttl_seconds=self._ttl_seconds,
+            max_depth=self._max_depth,
             holder=self._holder,
             session_id=self._session_id,
             clearance=self._clearance,
@@ -336,6 +349,7 @@ class MintBuilder:
             constraint_bounds=self._constraint_bounds if self._constraint_bounds else None,
             max_issue_depth=self._max_issue_depth,
             ttl_seconds=self._ttl_seconds,
+            max_depth=self._max_depth,
             holder=self._holder,
             session_id=self._session_id,
             clearance=self._clearance,
@@ -358,6 +372,7 @@ class MintBuilder:
                 "constraint_bounds": self._constraint_bounds,
                 "max_issue_depth": self._max_issue_depth,
                 "ttl_seconds": self._ttl_seconds,
+                "max_depth": self._max_depth,
                 "holder": self._holder,
                 "session_id": self._session_id,
             }
@@ -367,6 +382,7 @@ class MintBuilder:
                 "tools": self._tools,
                 "constraints": self._constraints,
                 "ttl_seconds": self._ttl_seconds,
+                "max_depth": self._max_depth,
                 "holder": self._holder,
                 "session_id": self._session_id,
                 "clearance": self._clearance,

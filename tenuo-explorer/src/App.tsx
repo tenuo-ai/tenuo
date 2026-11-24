@@ -43,6 +43,7 @@ interface DecodedWarrant {
   expires_at: number;
   authorized_holder: string;
   depth: number;
+  max_depth?: number | null;
   approval_gates?: Record<string, any> | null;
 }
 
@@ -907,7 +908,8 @@ holder_key = SigningKey.generate()
 warrant = (Warrant.mint_builder()
 ${capabilityBlocks}
     .holder(holder_key.public_key)
-    .ttl(${actualTtl})  # ${formatTtlComment(actualTtl)}
+    .ttl(${actualTtl})  # ${formatTtlComment(actualTtl)}${decoded.max_depth != null ? `
+    .max_depth(${decoded.max_depth})` : ''}
     .mint(issuer_key))
 
 # Test authorization with Proof-of-Possession
@@ -977,7 +979,8 @@ ${constraintDefs}
     let warrant = Warrant::builder()
 ${capabilityLines}
         .holder(holder_key.public_key())
-        .ttl(Duration::from_secs(${actualTtl}))  // ${formatTtlComment(actualTtl)}
+        .ttl(Duration::from_secs(${actualTtl}))  // ${formatTtlComment(actualTtl)}${decoded.max_depth != null ? `
+        .max_depth(${decoded.max_depth})` : ''}
         .build(&issuer_key)?;
 
     // Build args for authorization
@@ -2389,11 +2392,11 @@ function ReceiptMode() {
         {failed.map((f) => (
           <div key={`failed-${f.line}`} className="panel" style={{ borderColor: '#dc2626' }} data-testid="receipt-failed">
             <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '8px', color: '#dc2626' }}>
-              ❌ Line {f.line}: signature does not verify
+              ❌ Line {f.line}: verification failed
             </h2>
             <p style={{ fontSize: '12px', lineHeight: 1.6 }}>
-              This receipt was altered after signing, or it is not a Tenuo receipt. Nothing in it
-              can be relied on, including its outcome.
+              This line could not be verified. Check the receipt and verification settings;
+              the error below explains which check failed.
             </p>
             <p style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'monospace', marginTop: '6px', wordBreak: 'break-word' }}>{f.error}</p>
           </div>
@@ -2991,7 +2994,8 @@ function App() {
                             issued_at: Math.floor(Date.now() / 1000),
                             expires_at: Math.floor(Date.now() / 1000) + ((builderPreview as { config?: { ttl?: number } }).config?.ttl || 3600),
                             authorized_holder: (builderPreview as { holder_public_key_hex: string }).holder_public_key_hex,
-                            depth: 0
+                            depth: 0,
+                            max_depth: (builderPreview as { config?: { max_depth?: number } }).config?.max_depth,
                           }}
                           tool={(builderPreview as { tools: string[] }).tools?.[0] || ''}
                           args="{}"

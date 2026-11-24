@@ -338,6 +338,29 @@ test.describe('Feedback regressions', () => {
         }
     });
 
+    test('invalid trust settings report a verification error without claiming tampering', async ({ page }) => {
+        await page.getByRole('tab', { name: 'Verify' }).click();
+        await page.getByRole('button', { name: 'Load sample receipts' }).click();
+        await expect(page.getByText(/2 of 3 receipts verify/)).toBeVisible();
+        await page.getByPlaceholder('verifies each embedded chain at its decision instant').fill('invalid-root');
+        await page.getByRole('button', { name: 'Verify', exact: true }).click();
+        await expect(page.getByTestId('receipt-failed')).toHaveCount(3);
+        await expect(page.getByText('Line 1: verification failed')).toBeVisible();
+        await expect(page.getByText(/This receipt was altered/)).toHaveCount(0);
+    });
+
+    for (const depth of [0, 3]) {
+        test(`generated code preserves depth ${depth} in both languages`, async ({ page }) => {
+            await page.getByRole('tab', { name: 'Build' }).click();
+            await page.locator('input[type="number"]').nth(1).fill(String(depth));
+            await page.getByRole('button', { name: 'Generate Preview' }).click();
+            const code = page.locator('.panel').filter({ has: page.getByText('Code Generation', { exact: true }) }).locator('pre');
+            await expect(code).toContainText(`.max_depth(${depth})`);
+            await page.getByRole('button', { name: 'rust', exact: true }).click();
+            await expect(code).toContainText(`.max_depth(${depth})`);
+        });
+    }
+
     test('sample receipts: allow and deny verify, the tampered line fails', async ({ page }) => {
         await page.getByRole('tab', { name: 'Verify' }).click();
         await page.getByRole('button', { name: 'Load sample receipts' }).click();
@@ -345,7 +368,7 @@ test.describe('Feedback regressions', () => {
         await expect(page.getByText(/ALLOW · read_file/)).toBeVisible();
         await expect(page.getByText(/DENY · read_file/)).toBeVisible();
         await expect(page.getByTestId('receipt-failed')).toHaveCount(1);
-        await expect(page.getByText('Line 3: signature does not verify')).toBeVisible();
+        await expect(page.getByText('Line 3: verification failed')).toBeVisible();
         await expect(page.getByTestId('sample-receipts-note')).toContainText('does not show the signing key speaks for anyone you trust');
     });
 });

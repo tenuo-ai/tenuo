@@ -3995,7 +3995,7 @@ impl PyWarrant {
 
     /// Issue a new warrant.
     #[staticmethod]
-    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None))]
+    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None, max_depth=None))]
     #[allow(clippy::too_many_arguments)]
     fn issue(
         keypair: &PySigningKey,
@@ -4007,8 +4007,13 @@ impl PyWarrant {
         required_approvers: Option<Vec<PyPublicKey>>,
         min_approvals: Option<u32>,
         approval_gates: Option<&Bound<'_, PyDict>>,
+        max_depth: Option<u32>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder().ttl(Duration::from_secs(ttl_seconds));
+
+        if let Some(depth) = max_depth {
+            builder = builder.max_depth(depth);
+        }
 
         // Capabilities: dict[tool_name, dict[field, constraint]]
         // Supports _allow_unknown key for zero-trust mode opt-out
@@ -4073,7 +4078,7 @@ impl PyWarrant {
     /// Issuer warrants can issue execution warrants but cannot execute tools themselves.
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None))]
+    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None, max_depth=None))]
     fn issue_issuer(
         issuable_tools: Vec<String>,
         keypair: &PySigningKey,
@@ -4086,11 +4091,16 @@ impl PyWarrant {
         required_approvers: Option<Vec<PyPublicKey>>,
         min_approvals: Option<u32>,
         approval_gates: Option<&Bound<'_, PyDict>>,
+        max_depth: Option<u32>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(issuable_tools)
             .ttl(Duration::from_secs(ttl_seconds));
+
+        if let Some(depth) = max_depth {
+            builder = builder.max_depth(depth);
+        }
 
         if let Some(depth) = max_issue_depth {
             builder = builder.max_issue_depth(depth);

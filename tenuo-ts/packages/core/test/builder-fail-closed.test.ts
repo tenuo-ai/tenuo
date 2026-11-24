@@ -27,6 +27,9 @@ const constraintsOf = (b64: string) => {
 describe("legacy WASM builder fails closed", () => {
   it.each([
     ["min above max", { range: "1000-0" }],
+    ["typed min above max", { type: "Range", min: 1000, max: 0 }],
+    ["invalid domain wildcard", { url_safe: { allow_domains: ["api.*.example.com"] } }],
+    ["typed invalid domain wildcard", { type: "UrlSafe", deniedHosts: ["api.*.example.com"] }],
     ["non-numeric range", { range: "lots" }],
     ["typed range with a string bound", { type: "Range", max: "100" }],
     ["typed range with no bounds", { type: "Range" }],
@@ -76,7 +79,7 @@ describe("legacy WASM builder fails closed", () => {
     const config = { tools: { transfer: {} }, ttl: 60, max_depth: 0 };
     const result = wasm.create_warrant_from_config(config);
     expect(result.error).toBeFalsy();
-    expect(wasm.decode_warrant(result.warrant_b64)).toMatchObject({ is_terminal: true });
+    expect(wasm.decode_warrant(result.warrant_b64)).toMatchObject({ is_terminal: true, max_depth: 0 });
     expect(wasm.create_warrant_from_config({ ...config, maxDepth: 2 }).error).toMatch(/unknown field/);
     expect(wasm.create_warrant_from_config({ ...config, max_depth: 65 }).error).toBeTruthy();
   });
@@ -87,7 +90,7 @@ describe("legacy WASM builder fails closed", () => {
       parent_warrant_b64: parent.warrant_b64, signing_key_hex: parent.holder_private_key_hex };
     const child = wasm.create_warrant_from_config(config);
     expect(child.error).toBeFalsy();
-    expect(wasm.decode_warrant(child.warrant_b64)).toMatchObject({ depth: 1, is_terminal: true });
+    expect(wasm.decode_warrant(child.warrant_b64)).toMatchObject({ depth: 1, is_terminal: true, max_depth: 1 });
     expect(wasm.check_chain_access([parent.warrant_b64, child.warrant_b64], "transfer", {}, parent.issuer_public_key_hex, true).authorized).toBe(true);
     expect(wasm.create_warrant_from_config({ ...config, max_depth: 4 }).error).toBeTruthy();
   });

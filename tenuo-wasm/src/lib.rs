@@ -181,6 +181,7 @@ pub struct DecodedWarrant {
     pub expires_at: u64,
     pub authorized_holder: String, // hex
     pub depth: u32,
+    pub max_depth: Option<u32>,
     /// Raw extensions as hex-encoded values keyed by extension name.
     pub extensions: HashMap<String, String>,
     /// Parsed approval gates from the `tenuo.approval_gates` extension (if present).
@@ -496,6 +497,7 @@ pub(crate) fn extract_decoded_warrant(warrant: &Warrant) -> DecodedWarrant {
         expires_at: warrant.expires_at().timestamp() as u64,
         authorized_holder: hex::encode(warrant.authorized_holder().to_bytes()),
         depth: warrant.depth(),
+        max_depth: warrant.max_depth(),
         extensions,
         approval_gates,
         required_approvers,
@@ -1945,6 +1947,7 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                 }
             }
         }
+        us.validate().map_err(|e| format!("UrlSafe for '{field}': {e}"))?;
         Ok(Constraint::UrlSafe(us))
     }
 
@@ -2175,6 +2178,11 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                     }
                                 };
                                 let (min, max) = (bound("min")?, bound("max")?);
+                                if let (Some(min), Some(max)) = (min, max) {
+                                    if min > max {
+                                        return Err(format!("range for field '{field}': min {min} is greater than max {max}"));
+                                    }
+                                }
                                 if min.is_none() && max.is_none() {
                                     return Err(format!("range for field '{field}' needs min or max"));
                                 }
