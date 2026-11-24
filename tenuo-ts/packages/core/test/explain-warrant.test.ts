@@ -696,3 +696,50 @@ describe("issuer warrant inspection", () => {
     expect(chain[1]?.constraintBounds).toBeUndefined();
   });
 });
+
+describe("conditional diagnostic approval gates", () => {
+  it.each([
+    ["when", "trigger", "required"],
+    ["when", "safe", "not_required"],
+    ["exempt", "trigger", "not_required"],
+    ["exempt", "safe", "required"],
+    ["when", null, "not_required"],
+    ["exempt", null, "required"],
+  ] as const)("%s gate with %s reports %s", (mode, value, status) => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const session = cp.session({
+      // Null is removed from the constraint view, but must still reach gates.
+      allow: { act: value === null ? {} : { flag: pattern("*") } },
+      ttlSeconds: 600,
+      requireApproval: {
+        approvers: [T.publicKeyFromHolderKey(T.generateHolderKey())], min: 1,
+        gates: { act: { args: { flag: mode === "when" ? { when: exact("trigger") } : { exempt: exact("trigger") } } } },
+      },
+    });
+    const checker = createTenuo({ trustedRoots: [cp.issuerPublicKey()] });
+    expect(checker.explainWarrant(session.toWire(), "act", { flag: value })).toMatchObject({
+      chain: { status: "valid" }, constraints: { status: "satisfied" },
+      approvals: { status }, possession: { status: "not_checked" },
+    });
+    if (mode === "when" && value === null) {
+      // Missing is fail-closed, whereas the original explicit null does not match.
+      expect(checker.explainWarrant(session.toWire(), "act", {}).approvals.status).toBe("required");
+    }
+  });
+});
+
+describe("raw timestamp inspection", () => {
+  // Native-core signed payloads with raw u64 timestamps beyond Chrono's range.
+  const fixtures = JSON.parse(readFileSync(
+    new URL("./fixtures/inspection-timestamps.json", import.meta.url), "utf8",
+  )) as { issuedAt: string; expiresAt: string; warrant: string }[];
+  it.each(fixtures)("preserves or rejects signed timestamp $issuedAt", ({ issuedAt, expiresAt, warrant }) => {
+    if (BigInt(expiresAt) > BigInt(Number.MAX_SAFE_INTEGER)) {
+      expect(() => T.inspectWarrant(warrant)).toThrow(/inspection cannot represent integer/);
+      expect(() => loadWasm().sdkDecodeChain([warrant])).toThrow(/inspection cannot represent integer/);
+    } else {
+      expect(T.inspectWarrant(warrant)[0]).toMatchObject({ issuedAt: Number(issuedAt), expiresAt: Number(expiresAt) });
+      expect(loadWasm().sdkDecodeChain([warrant])[0]).toMatchObject({ issued_at: Number(issuedAt), expires_at: Number(expiresAt) });
+    }
+  });
+});

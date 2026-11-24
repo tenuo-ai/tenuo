@@ -1183,6 +1183,10 @@ fn inspect_chain_warrant(warrant: &Warrant) -> Result<serde_json::Value, serde_j
         None => serde_json::json!({}),
     };
     decoded["constraint_bounds"] = serde_json::to_value(warrant.constraint_bounds())?;
+    // Chrono accessors fall back to the epoch outside their date range.
+    // Inspection must retain the signed integers before checking JS precision.
+    decoded["issued_at"] = serde_json::json!(warrant.payload.issued_at);
+    decoded["expires_at"] = serde_json::json!(warrant.payload.expires_at);
     Ok(decoded)
 }
 
