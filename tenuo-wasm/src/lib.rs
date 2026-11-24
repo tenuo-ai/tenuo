@@ -15,6 +15,7 @@ use tenuo::{
     wire, Authorizer, PublicKey, SignedRevocationList, SigningKey, Warrant,
 };
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 mod sdk;
 mod sdk_ext;
@@ -457,7 +458,7 @@ fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap>
 }
 
 /// Extract decoded warrant fields including extensions and approval gates.
-fn extract_decoded_warrant(warrant: &Warrant) -> DecodedWarrant {
+pub(crate) fn extract_decoded_warrant(warrant: &Warrant) -> DecodedWarrant {
     let capabilities: HashMap<String, HashMap<String, JsonValue>> = warrant
         .capabilities()
         .map(|caps| {
@@ -732,7 +733,17 @@ pub fn check_chain_access(
     let leaf = chain.last().unwrap();
 
     if dry_run {
-        // Dry run: check policy only, skip PoP
+        // Dry run skips PoP only: signatures, expiry and narrowing still apply.
+        if let Err(e) = Authorizer::new().with_trusted_root(root_key).verify_chain(&chain) {
+            return serde_wasm_bindgen::to_value(&AuthResult {
+                authorized: false,
+                reason: Some(format!("Chain verification failed: {}", e)),
+                deny_code: Some("CHAIN_INVALID".to_string()),
+                field: None,
+            })
+            .unwrap();
+        }
+        // Then the policy check, skipping PoP
         if let Some(caps) = leaf.capabilities() {
             if let Some(constraints) = caps.get(tool) {
                 match constraints.matches(&args) {
@@ -1184,13 +1195,35 @@ pub fn verify_approval_set(
     };
     let threshold = warrant.approval_threshold();
 
-    let approval_b64_list: Vec<String> = match serde_wasm_bindgen::from_value(approvals_b64) {
-        Ok(v) => v,
-        Err(_) => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+    // Bound input before serde allocation, decoding, or signature verification.
+    if !js_sys::Array::is_array(&approvals_b64) {
+        return serde_wasm_bindgen::to_value(&ApprovalSetResult {
             satisfied: false, valid_count: 0, required: threshold,
-            error: Some("approvals must be array of base64 strings".to_string()),
-        }).unwrap(),
-    };
+            error: Some("approvals must be array of base64 strings".into()),
+        }).unwrap();
+    }
+    if approvals_b64.unchecked_ref::<js_sys::Array>().length() as usize
+        > tenuo::meta_envelope::MAX_APPROVALS
+    {
+        return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+            satisfied: false, valid_count: 0, required: threshold,
+            error: Some("too many approval envelopes".into()),
+        }).unwrap();
+    }
+
+    let array = approvals_b64.unchecked_ref::<js_sys::Array>();
+    let mut approval_b64_list = Vec::with_capacity(array.length() as usize);
+    for index in 0..array.length() {
+        // Read each element once: getters cannot swap in an unchecked value
+        // between the size check and the copy into Rust.
+        match sdk::bounded_approval_text(&array.get(index)) {
+            Ok(text) => approval_b64_list.push(text),
+            Err(error) => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+                satisfied: false, valid_count: 0, required: threshold,
+                error: Some(error),
+            }).unwrap(),
+        }
+    }
 
     let mut valid_count = 0u32;
     let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
@@ -1207,14 +1240,14 @@ pub fn verify_approval_set(
         if !required_approvers.contains(&approval.approver_key) {
             continue;
         }
-        // No duplicates — deduplicate by approver public key, not by list index
-        if !seen.insert(approval.approver_key.to_bytes()) {
-            continue;
-        }
-        // Verify signature and check hash
+        // Verify signature and check hash before counting
         match approval.verify() {
-            Ok(payload) if payload.request_hash == request_hash => valid_count += 1,
+            Ok(payload) if payload.request_hash == request_hash && !payload.is_expired() => {}
             _ => continue,
+        }
+        // No duplicates: one count per approver key, among verified approvals
+        if seen.insert(approval.approver_key.to_bytes()) {
+            valid_count += 1;
         }
     }
 

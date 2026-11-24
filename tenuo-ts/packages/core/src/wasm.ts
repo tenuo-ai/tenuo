@@ -122,6 +122,7 @@ export type WasmSessionInfo = {
 export type WasmProtocolLimits = {
   max_delegation_depth: number;
   max_warrant_ttl_seconds: number;
+  max_approvals: number;
 };
 
 /** Mirrors `NarrowOptions` in tenuo-wasm. Unknown keys are rejected there. */
@@ -312,7 +313,45 @@ export type WasmContext = {
     toolAllow?: unknown,
     requestId?: string,
   ): WasmDecision;
+  explainWarrant(warrants: unknown, tool: string, args: unknown, approvals: unknown): WasmWarrantExplanation;
 };
+
+export type WasmWarrantExplanation = {
+  kind: "diagnostic";
+  chain: { status: "valid" | "invalid" | "not_evaluated" };
+  constraints: { status: "satisfied" | "unsatisfied" | "not_evaluated" };
+  possession: { status: "not_checked" };
+  approvals: { status: "satisfied" | "required" | "not_required" | "not_evaluated"; valid?: number; required?: number; rejected?: number };
+  code?: string;
+  message?: string;
+  root_public_key?: string;
+  holder_public_key?: string;
+};
+
+export type WasmDecodedWarrant = {
+  id: string;
+  extensions: Record<string, string>;
+  warrant_type: 0 | 1;
+  constraint_bounds?: Record<string, unknown> | null;
+  issuable_tools?: string[] | null;
+  max_issue_depth?: number | null;
+  issuer: string;
+  tools: string[];
+  capabilities: Record<string, unknown>;
+  issued_at: number;
+  expires_at: number;
+  authorized_holder: string;
+  depth: number;
+  required_approvers?: string[] | null;
+  min_approvals?: number | null;
+  is_expired: boolean;
+  is_terminal: boolean;
+};
+
+/** Decode a chain without verifying it. Not authorization. */
+export function decodeChain(warrants: unknown): WasmDecodedWarrant[] {
+  return loadWasm().sdkDecodeChain(warrants);
+}
 
 type Generated = {
   SdkContext: {
@@ -326,6 +365,7 @@ type Generated = {
     fromChain(parts: unknown, holder: Uint8Array): WasmSession;
   };
   sdkInspectWarrant(wire: string): WasmInspect;
+  sdkDecodeChain(warrants: unknown): WasmDecodedWarrant[];
   sdkDiagnoseConstraints(wire: string, tool: string, args: unknown): WasmConstraintDiagnostics;
   sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
   sdkCanonicalMetaSignature(signature: string): string;

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { createRequire } from 'node:module';
 
 test.describe('Tenuo Explorer - Critical User Flows', () => {
     test.beforeEach(async ({ page }) => {
@@ -33,17 +34,69 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
         await expect(page.getByText('read_file').first()).toBeVisible();
     });
 
-    test('authorization flow works with dry run', async ({ page }) => {
+    test('diagnostics report policy evidence without authorizing execution', async ({ page }) => {
         // Load sample
         await page.click('button:has-text("Samples")');
         await page.getByText('Valid Read').click();
         await page.click('button:has-text("Decode Warrant")');
 
-        // The explorer intentionally performs policy-only checks in dry-run mode.
-        await page.click('button:has-text("Check Authorization")');
+        // Use the shared diagnostic path, which never establishes possession.
+        await page.click('button:has-text("Explain Call")');
 
         // Verify result appears
-        await expect(page.locator('text=/Authorized|Denied/').first()).toBeVisible();
+        await expect(page.getByText('Policy checks passed', { exact: true })).toBeVisible();
+        await expect(page.getByText(/Chain: valid; constraints: satisfied; approvals: not_required; possession: not_checked/)).toBeVisible();
+        await expect(page.getByText('Authorized', { exact: true })).toHaveCount(0);
+    });
+
+    test('PEM chain diagnostics use the root issuer after decoding the leaf', async ({ page }) => {
+        await page.keyboard.press('Meta+4');
+        await page.getByRole('button', { name: 'Load Sample Chain' }).click();
+        const tokens = await page.locator('textarea[placeholder*="warrant"]').evaluateAll(
+            elements => elements.map(element => (element as HTMLTextAreaElement).value));
+        expect(tokens).toHaveLength(3);
+        const pem = tokens.map(token => `-----BEGIN TENUO WARRANT-----\n${token}\n-----END TENUO WARRANT-----`).join('\n');
+        await page.keyboard.press('Meta+1');
+        await page.getByPlaceholder('Paste your warrant here...').fill(pem);
+        await page.getByPlaceholder('e.g., read_file').fill('read_file');
+        await page.locator('textarea').nth(1).fill('{"path":"docs/api/v1/readme.md","priority":2}');
+        await page.getByRole('button', { name: 'Decode Warrant', exact: true }).click();
+        await page.getByRole('button', { name: 'Explain Call', exact: true }).click();
+        await expect(page.getByText('Policy checks passed', { exact: true })).toBeVisible();
+        await expect(page.getByText(/Chain: valid; constraints: satisfied/)).toBeVisible();
+    });
+
+    for (const delegated of [false, true]) {
+        test(`exported ${delegated ? 'delegated' : 'single'} stack diagnostics pass`, async ({ page }) => {
+            // The same native export used by Session.toWireString()/PresentedCall.warrant.
+            const { SdkContext } = createRequire(import.meta.url)('../../tenuo-ts/packages/core/src/generated/tenuo_wasm.js');
+            const context = new SdkContext();
+            const allow = { read_file: { path: { kind: 'pattern', pattern: 'docs/*' } } };
+            const root = context.mint(allow, 600, undefined, undefined, undefined);
+            const session = delegated ? context.narrow(root, allow, undefined) : root;
+            let wire: string;
+            try { wire = session.toStackWire(); }
+            finally {
+                if (session !== root) session.free();
+                root.free();
+                context.free();
+            }
+            await page.getByPlaceholder('Paste your warrant here...').fill(wire);
+            await page.getByPlaceholder('e.g., read_file').fill('read_file');
+            await page.locator('textarea').nth(1).fill('{"path":"docs/readme.md"}');
+            await page.getByRole('button', { name: 'Explain Call', exact: true }).click();
+            await expect(page.getByText('Policy checks passed', { exact: true })).toBeVisible();
+            await expect(page.getByText(/Chain: valid; constraints: satisfied/)).toBeVisible();
+        });
+    }
+
+    test('chain diagnostics use the same evidence statuses', async ({ page }) => {
+        await page.keyboard.press('Meta+4');
+        await page.getByRole('button', { name: 'Load Sample Chain' }).click();
+        await page.getByRole('button', { name: 'Explain Chain', exact: true }).click();
+        await expect(page.getByText('✓ Policy checks passed', { exact: true })).toBeVisible();
+        await expect(page.getByText(/Chain: valid; constraints: satisfied; approvals: not_required; possession: not_checked/)).toBeVisible();
+        await expect(page.getByText('✓ Chain Authorized', { exact: true })).toHaveCount(0);
     });
 
     test('decode shortcut and clear action work', async ({ page }) => {

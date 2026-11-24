@@ -4,6 +4,7 @@ export const memory: WebAssembly.Memory;
 export const __wbg_sdkcontext_free: (a: number, b: number) => void;
 export const __wbg_sdksession_free: (a: number, b: number) => void;
 export const parse_strict_json: (a: number, b: number) => [number, number];
+export const sdkDecodeChain: (a: any) => [number, number, number];
 export const sdkDiagnoseConstraints: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
 export const sdkInspectParts: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const sdkInspectWarrant: (a: number, b: number) => [number, number, number];
@@ -17,6 +18,7 @@ export const sdkVerifyReceiptChain: (a: number, b: number, c: any) => [number, n
 export const sdkcontext_authorize: (a: number, b: number, c: number, d: number, e: any, f: any, g: any, h: number, i: number) => any;
 export const sdkcontext_authorizeAsOf: (a: number, b: number, c: number, d: number, e: any, f: number, g: any, h: any) => any;
 export const sdkcontext_authorizePresented: (a: number, b: any, c: number, d: number, e: any, f: number, g: number, h: any, i: any, j: number, k: number) => any;
+export const sdkcontext_explainWarrant: (a: number, b: any, c: number, d: number, e: any, f: any) => any;
 export const sdkcontext_fromTrustedRoots: (a: any) => [number, number, number];
 export const sdkcontext_issuerPublicKey: (a: number) => [number, number, number, number];
 export const sdkcontext_loadRevocationList: (a: number, b: number, c: number) => [number, number];

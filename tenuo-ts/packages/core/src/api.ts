@@ -387,6 +387,79 @@ export type ApprovalInfo = {
   readonly error?: string;
 };
 
+/**
+ * Decoded view of one warrant. Not authorization: decoding checks no trusted
+ * root, chain linkage, expiry, or revocation. Use `explainWarrant()` for diagnostics and
+ * `verify()` for authorization.
+ */
+export type WarrantInfo = {
+  readonly id: string;
+  /** Signed extension bytes, hex encoded. Includes the full approval policy at
+   * `extensions["tenuo.approval_gates"]` when conditional/tool gates are set.
+   */
+  readonly extensions: Readonly<Record<string, string>>;
+  readonly kind: "execution" | "issuer";
+  /** Issuer tool scope; absent on execution warrants. */
+  readonly issuableTools?: readonly string[];
+  readonly maxIssueDepth?: number;
+  /** Full core ConstraintSet for an issuer's signed issuance ceiling.
+   * Absent when no bounds were set. Uses the same lossless form as capabilities.
+   */
+  readonly constraintBounds?: Readonly<Record<string, unknown>>;
+  /** Hex public key that signed this warrant (the root issuer at depth 0). */
+  readonly issuerPublicKey: string;
+  /** Hex public key the warrant is bound to. */
+  readonly holderPublicKey: string;
+  readonly depth: number;
+  readonly tools: readonly string[];
+  /** Lossless core ConstraintSet representation per tool: constraints plus
+   * optional_fields / allow_unknown when set. Constraints use [type_id, body]
+   * encoding, retaining details such as exclusive range bounds. Inspection rejects
+   * integers outside JavaScript's safe range rather than returning rounded values.
+   */
+  readonly capabilities: Readonly<Record<string, unknown>>;
+  readonly issuedAt: number;
+  readonly expiresAt: number;
+  readonly expired: boolean;
+  readonly terminal: boolean;
+  /** Hex keys whose signed approvals the gated tools need. Empty when ungated. */
+  readonly requiredApprovers: readonly string[];
+  readonly minApprovals?: number;
+};
+
+export type ExplainWarrantOptions = {
+  /** Signed approval envelopes (hex, standard or URL-safe base64, or CBOR bytes). */
+  readonly approvals?: readonly (string | Uint8Array)[];
+};
+
+/** Diagnostic evidence only. Never authorizes execution; use verify() for that.
+ * Uses current time and loaded revocation state, not historical execution evidence.
+ * Does not evaluate boundary-specific policy callbacks or tool ceilings.
+ *
+ * Invariants: every result retains kind="diagnostic" and possession="not_checked".
+ * No aggregate authorization verdict, Session, PresentedCall, or receipt is issued.
+ * A report is never accepted in place of a Session or presented proof at execution.
+ * Execution rechecks current validity and the exact invocation independently;
+ * successful diagnostics must never be used to bypass verify() or a protected tool.
+ */
+export type WarrantExplanation = {
+  readonly kind: "diagnostic";
+  readonly chain: { readonly status: "valid" | "invalid" | "not_evaluated" };
+  readonly constraints: { readonly status: "satisfied" | "unsatisfied" | "not_evaluated" };
+  readonly approvals: {
+    readonly status: "satisfied" | "required" | "not_required" | "not_evaluated";
+    readonly valid?: number;
+    readonly required?: number;
+    /** Invalid, expired, unrelated or duplicate envelopes excluded from the count. */
+    readonly rejected?: number;
+  };
+  readonly possession: { readonly status: "not_checked" };
+  readonly code?: TenuoErrorCode;
+  readonly message?: string;
+  readonly rootPublicKey?: string;
+  readonly holderPublicKey?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
@@ -736,6 +809,16 @@ export interface Tenuo {
   issuerPublicKey(): PublicKeyHandle;
   /** What the session would decide for `tool(args)`, field by field. Never runs the tool. */
   explain(session: Session, tool: string, args: Readonly<Record<string, unknown>>): Explanation;
+  /** Diagnose chain, constraints and approvals without a holder key.
+   * Never authorizes execution: possession remains not_checked.
+   * Accepts a token, stack string, or token array from toWire().
+   */
+  explainWarrant(
+    warrant: string | readonly string[],
+    tool: string,
+    args: Readonly<Record<string, unknown>>,
+    options?: ExplainWarrantOptions,
+  ): WarrantExplanation;
   /** Everything an approval service needs to present `tool(args)` to a human. */
   approvalRequest(session: Session, tool: string, args: Readonly<Record<string, unknown>>): ApprovalRequest;
   /** Holder-signed proof that this session is the one asking for `tool(args)`. */

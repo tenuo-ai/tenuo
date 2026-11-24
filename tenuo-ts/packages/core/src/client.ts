@@ -5,6 +5,8 @@ import type {
   ApprovalContextAttestation,
   ApprovalInfo,
   ApprovalRequest,
+  ExplainWarrantOptions,
+  WarrantExplanation,
   Clearance,
   ControlPlaneApprovalRequestV1,
   ControlPlaneApprovalResponseV1,
@@ -33,6 +35,7 @@ import type {
   TenuoErrorCode,
   TenuoMcp,
   ToolPolicy,
+  WarrantInfo,
 } from "./api.ts";
 import { parseConnectToken } from "./connect.ts";
 import { generateIdentity, identityFromKey } from "./identity.ts";
@@ -46,6 +49,7 @@ import {
   createDevContext,
   createIssuerContext,
   createVerifierContext,
+  decodeChain,
   importSessionFromChain,
   importSessionFromWire,
   loadWasm,
@@ -58,6 +62,7 @@ import {
   type WasmIssueOptions,
   type WasmMintOptions,
   type WasmNarrowOptions,
+  type WasmWarrantExplanation,
   type WasmRequireApproval,
 } from "./wasm.ts";
 
@@ -630,6 +635,67 @@ class TenuoClient implements Tenuo {
     } catch (error) {
       throw chainError(error);
     }
+  }
+
+  explainWarrant(
+    warrant: string | readonly string[],
+    tool: string,
+    args: Readonly<Record<string, unknown>>,
+    options?: ExplainWarrantOptions,
+  ): WarrantExplanation {
+    const input = requireWarrantInput(warrant, "explainWarrant");
+    requireLabel(tool, "tool");
+    if (args === null || typeof args !== "object" || Array.isArray(args)) {
+      throw new TenuoConfigurationError("explainWarrant() requires an arguments object");
+    }
+    const presented = options?.approvals ?? [];
+    if (!Array.isArray(presented)) {
+      throw new TenuoConfigurationError("explainWarrant() options.approvals must be an array");
+    }
+    // Bound untrusted input before any signature inspection or byte copying.
+    const maxApprovals = protocolLimits().max_approvals;
+    const approvalCount = presented.length;
+    if (approvalCount > maxApprovals) {
+      throw new TenuoConfigurationError(`explainWarrant() accepts at most ${maxApprovals} approval envelopes`);
+    }
+    // An envelope that does not parse is dropped and counted, so one bad
+    // entry cannot turn the whole check into a canonicalization failure.
+    let unreadable = 0;
+    const approvals: (string | Uint8Array)[] = [];
+    for (let index = 0; index < approvalCount; index++) {
+      const envelope = presented[index];
+      if (typeof envelope !== "string" && !(envelope instanceof Uint8Array)) {
+        unreadable += 1;
+        continue;
+      }
+      try {
+        loadWasm().sdkInspectApproval(envelope);
+        approvals.push(envelope instanceof Uint8Array ? new Uint8Array(envelope) : envelope);
+      } catch {
+        unreadable += 1;
+      }
+    }
+    let raw: WasmWarrantExplanation;
+    try {
+      raw = this.context.explainWarrant(input, tool, args, approvals);
+    } catch (error) {
+      throw new TenuoConfigurationError(errorMessage(error));
+    }
+    const out: { -readonly [K in keyof WarrantExplanation]: WarrantExplanation[K] } = {
+      kind: "diagnostic",
+      chain: raw.chain,
+      constraints: raw.constraints,
+      possession: { status: "not_checked" },
+      approvals: { ...raw.approvals },
+    };
+    if (raw.code !== undefined) out.code = raw.code as TenuoErrorCode;
+    if (raw.message !== undefined) out.message = raw.message;
+    if (raw.root_public_key !== undefined) out.rootPublicKey = raw.root_public_key;
+    if (raw.holder_public_key !== undefined) out.holderPublicKey = raw.holder_public_key;
+    if (raw.approvals.rejected !== undefined) {
+      out.approvals = { ...raw.approvals, rejected: raw.approvals.rejected + unreadable };
+    }
+    return out;
   }
 
   explain(session: Session, tool: string, args: Readonly<Record<string, unknown>>): Explanation {
@@ -1360,6 +1426,72 @@ export function verifyReceiptChain(wire: string | Uint8Array, roots: readonly Pu
   return out;
 }
 
+function requireWarrantInput(warrant: unknown, name: string): string | string[] {
+  if (typeof warrant === "string") {
+    if (warrant.trim().length === 0) {
+      throw new TenuoConfigurationError(`${name}() requires a warrant`);
+    }
+    return warrant;
+  }
+  if (Array.isArray(warrant)) {
+    const tokenCount = warrant.length;
+    if (tokenCount > protocolLimits().max_delegation_depth) {
+      throw new TenuoConfigurationError(`${name}() chain exceeds the protocol token limit`);
+    }
+    if (tokenCount > 0) {
+      const tokens: string[] = [];
+      for (let index = 0; index < tokenCount; index++) {
+        const token: unknown = warrant[index];
+        if (typeof token !== "string" || token.trim().length === 0) {
+          throw new TenuoConfigurationError(`${name}() requires non-empty string tokens`);
+        }
+        tokens.push(token);
+      }
+      return tokens;
+    }
+  }
+  throw new TenuoConfigurationError(
+    `${name}() requires a warrant: a string, or the non-empty token array from session.toWire()`,
+  );
+}
+
+/**
+ * Decode a warrant chain, root first, without the holder key. Accepts a single
+ * token, `toWireString()`, or the `toWire()` array. Not authorization: nothing
+ * here checks the trusted root, chain linkage, expiry, or revocation.
+ */
+export function inspectWarrant(warrant: string | readonly string[]): WarrantInfo[] {
+  const input = requireWarrantInput(warrant, "inspectWarrant");
+  let raw;
+  try {
+    raw = decodeChain(input);
+  } catch (error) {
+    throw new TenuoConfigurationError(errorMessage(error));
+  }
+  return raw.map((w) => {
+    const out: { -readonly [K in keyof WarrantInfo]: WarrantInfo[K] } = {
+      id: w.id,
+      kind: w.warrant_type === 1 ? "issuer" : "execution",
+      extensions: w.extensions,
+      issuerPublicKey: w.issuer,
+      holderPublicKey: w.authorized_holder,
+      depth: w.depth,
+      tools: [...w.tools],
+      capabilities: w.capabilities,
+      issuedAt: w.issued_at,
+      expiresAt: w.expires_at,
+      expired: w.is_expired,
+      terminal: w.is_terminal,
+      requiredApprovers: [...(w.required_approvers ?? [])],
+    };
+    if (w.constraint_bounds != null) out.constraintBounds = w.constraint_bounds;
+    if (w.issuable_tools != null) out.issuableTools = [...w.issuable_tools];
+    if (w.max_issue_depth != null) out.maxIssueDepth = w.max_issue_depth;
+    if (w.min_approvals !== undefined && w.min_approvals !== null) out.minApprovals = w.min_approvals;
+    return out;
+  });
+}
+
 /**
  * The v1 JSON body a control plane's approval API accepts. Same shape the
  * Python SDK produces, so one approval service serves both.
@@ -1459,6 +1591,7 @@ export const createTenuo: ((options?: CreateTenuoOptions) => Tenuo) & {
   issuerKeyFromBytes: typeof issuerKeyFromBytes;
   signApproval: typeof signApproval;
   inspectApproval: typeof inspectApproval;
+  inspectWarrant: typeof inspectWarrant;
   signRevocationList: typeof signRevocationList;
   inspectRevocationList: typeof inspectRevocationList;
   verifyReceipt: typeof verifyReceipt;
@@ -1484,6 +1617,7 @@ export const createTenuo: ((options?: CreateTenuoOptions) => Tenuo) & {
   issuerKeyFromBytes,
   signApproval,
   inspectApproval,
+  inspectWarrant,
   signRevocationList,
   inspectRevocationList,
   verifyReceipt,

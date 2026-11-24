@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TypeScript: holder-independent warrant diagnostics.**
+  `createTenuo.inspectWarrant()` decodes unverified contents and
+  `tenuo.explainWarrant()` reports chain, constraint and approval evidence.
+  Possession is always `not_checked`; no authorization verdict or receipt is
+  produced. Execution still requires `present()` / `verify()` and PoP.
+- **Explorer:** use the same WASM diagnostic operation for single warrants and
+  chains, and display requirement statuses instead of claiming authorization.
 - Python `Authorizer.set_host_policy(tool, allow)`: a per-tool argument
   ceiling an enforcement point applies on top of any warrant, matching the
   TypeScript SDK's `verify(..., { allow })`. Receipts from a `ReceiptIssuer` or
@@ -53,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arguments may leave out one the parent marks optional, and then refuses it.
   Chains valid before remain valid. Upgrade verifiers before issuing chains
   that use either form; older verifiers reject them.
+
+### Fixed
+
+- **WASM:** the dry-run mode of `check_chain_access` now runs full chain
+  verification (expiry and narrowing between links) before the policy check.
+- **WASM:** `verify_approval_set` counts an approver only after its envelope
+  verifies, so an invalid envelope cannot displace a valid one from the same
+  key.
 
 ## [0.3.7] - 2026-11-11
 
