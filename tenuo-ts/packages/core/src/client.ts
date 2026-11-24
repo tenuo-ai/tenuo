@@ -654,14 +654,16 @@ class TenuoClient implements Tenuo {
     }
     // Bound untrusted input before any signature inspection or byte copying.
     const maxApprovals = protocolLimits().max_approvals;
-    if (presented.length > maxApprovals) {
+    const approvalCount = presented.length;
+    if (approvalCount > maxApprovals) {
       throw new TenuoConfigurationError(`explainWarrant() accepts at most ${maxApprovals} approval envelopes`);
     }
     // An envelope that does not parse is dropped and counted, so one bad
     // entry cannot turn the whole check into a canonicalization failure.
     let unreadable = 0;
     const approvals: (string | Uint8Array)[] = [];
-    for (const envelope of presented) {
+    for (let index = 0; index < approvalCount; index++) {
+      const envelope = presented[index];
       if (typeof envelope !== "string" && !(envelope instanceof Uint8Array)) {
         unreadable += 1;
         continue;
@@ -1431,11 +1433,22 @@ function requireWarrantInput(warrant: unknown, name: string): string | string[] 
     }
     return warrant;
   }
-  if (Array.isArray(warrant) && warrant.length > protocolLimits().max_delegation_depth) {
-    throw new TenuoConfigurationError(`${name}() chain exceeds the protocol token limit`);
-  }
-  if (Array.isArray(warrant) && warrant.length > 0 && warrant.every((t) => typeof t === "string" && t.trim().length > 0)) {
-    return [...warrant];
+  if (Array.isArray(warrant)) {
+    const tokenCount = warrant.length;
+    if (tokenCount > protocolLimits().max_delegation_depth) {
+      throw new TenuoConfigurationError(`${name}() chain exceeds the protocol token limit`);
+    }
+    if (tokenCount > 0) {
+      const tokens: string[] = [];
+      for (let index = 0; index < tokenCount; index++) {
+        const token: unknown = warrant[index];
+        if (typeof token !== "string" || token.trim().length === 0) {
+          throw new TenuoConfigurationError(`${name}() requires non-empty string tokens`);
+        }
+        tokens.push(token);
+      }
+      return tokens;
+    }
   }
   throw new TenuoConfigurationError(
     `${name}() requires a warrant: a string, or the non-empty token array from session.toWire()`,

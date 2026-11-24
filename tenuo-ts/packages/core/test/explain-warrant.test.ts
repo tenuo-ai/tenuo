@@ -476,6 +476,29 @@ describe("diagnostics cannot become execution credentials", () => {
 
 
 describe("diagnostic approval input budget", () => {
+  it.each(["iterator", "growing getter"])("bounds approval inspection despite a custom %s", (mode) => {
+    const { checker, tokens, sign, reviewerKey } = setup();
+    const good = sign(reviewerKey, "reviewer");
+    const approvals = [good];
+    const iterator = vi.fn(function* () {
+      for (let i = 0; i <= protocolLimits().max_approvals; i++) yield good;
+    });
+    if (mode === "iterator") Object.defineProperty(approvals, Symbol.iterator, { value: iterator });
+    const read = vi.fn(() => {
+      approvals.length = protocolLimits().max_approvals + 1;
+      return good;
+    });
+    if (mode === "growing getter") Object.defineProperty(approvals, 0, { get: read });
+    const inspect = vi.spyOn(loadWasm(), "sdkInspectApproval");
+    try {
+      expect(checker.explainWarrant(tokens, "merge_pr", args, { approvals }).approvals)
+        .toMatchObject({ status: "satisfied", valid: 1, rejected: 0 });
+      expect(inspect).toHaveBeenCalledTimes(1);
+      expect(iterator).not.toHaveBeenCalled();
+      if (mode === "growing getter") expect(read).toHaveBeenCalledTimes(1);
+    } finally { inspect.mockRestore(); }
+  });
+
   it("rejects an oversized byte envelope before copying its buffer", () => {
     const { checker, tokens } = setup();
     const NativeUint8Array = globalThis.Uint8Array;
@@ -551,6 +574,29 @@ describe("diagnostic approval input budget", () => {
 
 
 describe("diagnostic chain input budget", () => {
+  it.each([
+    ["inspect", "iterator"], ["explain", "iterator"],
+    ["inspect", "growing getter"], ["explain", "growing getter"],
+  ])("%s bounds chain copying despite a custom %s", (entry, mode) => {
+    const { tokens, checker } = setup();
+    const token = tokens[0]!;
+    const chain = [token];
+    const iterator = vi.fn(function* () {
+      for (let i = 0; i <= protocolLimits().max_delegation_depth; i++) yield token;
+    });
+    Object.defineProperty(chain, "every", { value: () => { throw new Error("must validate indexed tokens"); } });
+    if (mode === "iterator") Object.defineProperty(chain, Symbol.iterator, { value: iterator });
+    const read = vi.fn(() => {
+      chain.length = protocolLimits().max_delegation_depth + 1;
+      return token;
+    });
+    if (mode === "growing getter") Object.defineProperty(chain, 0, { get: read });
+    if (entry === "inspect") expect(T.inspectWarrant(chain)).toHaveLength(1);
+    else expect(checker.explainWarrant(chain, "merge_pr", args).chain.status).toBe("valid");
+    expect(iterator).not.toHaveBeenCalled();
+    if (mode === "growing getter") expect(read).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["inspect", "explain", "wasm"] as const)(
     "%s rejects oversized token arrays before reading or copying elements",
     (entry) => {
