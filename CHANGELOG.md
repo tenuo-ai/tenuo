@@ -63,6 +63,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python `MintBuilder.max_depth()` and the native issuance APIs accept a
+  delegation ceiling, allowing Explorer-generated code to preserve the preview.
+- Explorer/WASM builder rejects malformed, ambiguous, or unsupported constraints
+  instead of silently dropping restrictions, honors maximum delegation depth,
+  and rejects invalid supplied keys. Dry-run checks still verify expiry.
+- Explorer clears stale previews and verification results after edits and
+  provides signed allow/deny/tampered receipt samples.
+
 - **WASM:** the dry-run mode of `check_chain_access` now runs full chain
   verification (expiry and narrowing between links) before the policy check.
 - **WASM:** `verify_approval_set` counts an approver only after its envelope
