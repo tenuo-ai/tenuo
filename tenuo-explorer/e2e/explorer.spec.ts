@@ -48,6 +48,23 @@ test.describe('Tenuo Explorer - Critical User Flows', () => {
         await expect(page.getByText('Authorized', { exact: true })).toHaveCount(0);
     });
 
+    test('PEM chain diagnostics use the root issuer after decoding the leaf', async ({ page }) => {
+        await page.keyboard.press('Meta+4');
+        await page.getByRole('button', { name: 'Load Sample Chain' }).click();
+        const tokens = await page.locator('textarea[placeholder*="warrant"]').evaluateAll(
+            elements => elements.map(element => (element as HTMLTextAreaElement).value));
+        expect(tokens).toHaveLength(3);
+        const pem = tokens.map(token => `-----BEGIN TENUO WARRANT-----\n${token}\n-----END TENUO WARRANT-----`).join('\n');
+        await page.keyboard.press('Meta+1');
+        await page.getByPlaceholder('Paste your warrant here...').fill(pem);
+        await page.getByPlaceholder('e.g., read_file').fill('read_file');
+        await page.locator('textarea').nth(1).fill('{"path":"docs/api/v1/readme.md","priority":2}');
+        await page.getByRole('button', { name: 'Decode Warrant', exact: true }).click();
+        await page.getByRole('button', { name: 'Explain Call', exact: true }).click();
+        await expect(page.getByText('Policy checks passed', { exact: true })).toBeVisible();
+        await expect(page.getByText(/Chain: valid; constraints: satisfied/)).toBeVisible();
+    });
+
     test('chain diagnostics use the same evidence statuses', async ({ page }) => {
         await page.keyboard.press('Meta+4');
         await page.getByRole('button', { name: 'Load Sample Chain' }).click();

@@ -1458,6 +1458,7 @@ export function inspectWarrant(warrant: string | readonly string[]): WarrantInfo
   return raw.map((w) => {
     const out: { -readonly [K in keyof WarrantInfo]: WarrantInfo[K] } = {
       id: w.id,
+      kind: w.warrant_type === 1 ? "issuer" : "execution",
       issuerPublicKey: w.issuer,
       holderPublicKey: w.authorized_holder,
       depth: w.depth,
@@ -1469,6 +1470,9 @@ export function inspectWarrant(warrant: string | readonly string[]): WarrantInfo
       terminal: w.is_terminal,
       requiredApprovers: [...(w.required_approvers ?? [])],
     };
+    if (w.constraint_bounds != null) out.constraintBounds = w.constraint_bounds;
+    if (w.issuable_tools != null) out.issuableTools = [...w.issuable_tools];
+    if (w.max_issue_depth != null) out.maxIssueDepth = w.max_issue_depth;
     if (w.min_approvals !== undefined && w.min_approvals !== null) out.minApprovals = w.min_approvals;
     return out;
   });

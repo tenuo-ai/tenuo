@@ -1182,6 +1182,7 @@ fn inspect_chain_warrant(warrant: &Warrant) -> Result<serde_json::Value, serde_j
         Some(capabilities) => serde_json::to_value(capabilities)?,
         None => serde_json::json!({}),
     };
+    decoded["constraint_bounds"] = serde_json::to_value(warrant.constraint_bounds())?;
     Ok(decoded)
 }
 
@@ -2018,7 +2019,7 @@ pub(crate) fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, Stri
         return signed_approval_from_text(&text);
     }
     if js_sys::Uint8Array::instanceof(value) {
-        let bytes = js_sys::Uint8Array::new(value);
+        let bytes = value.unchecked_ref::<js_sys::Uint8Array>();
         if bytes.length() as usize > tenuo::meta_envelope::APPROVAL_STRING_MAX {
             return Err("approval exceeds size limit".into());
         }
@@ -3315,6 +3316,36 @@ mod inspection_tests {
         for value in [-9_007_199_254_740_991_i64, 0, 9_007_199_254_740_991_i64] {
             assert!(check_inspection_integer_precision(&serde_json::json!(value)).is_ok());
         }
+    }
+
+    #[test]
+    fn inspection_preserves_issuer_bounds_and_checks_their_precision() {
+        let key = SigningKey::generate();
+        let mut views = Vec::new();
+        for amount in [5_i64, 10, 9_007_199_254_740_993] {
+            let warrant = Warrant::builder()
+                .r#type(tenuo::WarrantType::Issuer)
+                .issuable_tools(vec!["pay".into()])
+                .constraint_bound("amount", Exact::new(amount))
+                .max_issue_depth(2)
+                .holder(key.public_key())
+                .ttl(std::time::Duration::from_secs(60))
+                .build(&key)
+                .unwrap();
+            let view = inspect_chain_warrant(&warrant).unwrap();
+            assert_eq!(view["warrant_type"], 1);
+            assert_eq!(view["issuable_tools"], serde_json::json!(["pay"]));
+            assert_eq!(view["max_issue_depth"], 2);
+            let bounds: ConstraintSet =
+                serde_json::from_value(view["constraint_bounds"].clone()).unwrap();
+            assert_eq!(Some(&bounds), warrant.constraint_bounds());
+            assert_eq!(
+                check_inspection_integer_precision(&view).is_ok(),
+                amount <= 10
+            );
+            views.push(view["constraint_bounds"].clone());
+        }
+        assert_ne!(views[0], views[1]);
     }
 
     #[test]

@@ -476,6 +476,26 @@ describe("diagnostics cannot become execution credentials", () => {
 
 
 describe("diagnostic approval input budget", () => {
+  it("rejects an oversized byte envelope before copying its buffer", () => {
+    const { checker, tokens } = setup();
+    const NativeUint8Array = globalThis.Uint8Array;
+    const oversized = new NativeUint8Array(8193); // APPROVAL_STRING_MAX + 1
+    const copy = vi.fn(() => { throw new Error("must not copy oversized envelope"); });
+    const guarded = new Proxy(NativeUint8Array, {
+      construct(target, parameters, newTarget) {
+        if (parameters[0] === oversized) copy();
+        return Reflect.construct(target, parameters, newTarget);
+      },
+    });
+    vi.stubGlobal("Uint8Array", guarded);
+    try {
+      expect(() => loadWasm().sdkInspectApproval(oversized)).toThrow(/approval exceeds size limit/);
+      expect(checker.explainWarrant(tokens, "merge_pr", args, { approvals: [oversized] }).approvals)
+        .toMatchObject({ status: "required", rejected: 1 });
+      expect(copy).not.toHaveBeenCalled();
+    } finally { vi.stubGlobal("Uint8Array", NativeUint8Array); }
+  });
+
   it.each(["signed", "bytes", "unreadable"] as const)(
     "rejects too many %s envelopes before signature inspection",
     (encoding) => {
@@ -641,5 +661,38 @@ describe("precision-safe imported warrant inspection", () => {
     const info = T.inspectWarrant(issued.toWire())[0]!;
     expect(JSON.stringify(info.capabilities)).toContain(String(value));
     expect(cp.explainWarrant(issued.toWire(), "pay", { amount: value }).constraints.status).toBe("satisfied");
+  });
+});
+
+describe("issuer warrant inspection", () => {
+  const fixtures = JSON.parse(readFileSync(
+    new URL("./fixtures/inspection-issuer-integers.json", import.meta.url), "utf8",
+  )) as { exactInteger: string; warrant: string }[];
+  // Signed by the native core: JS builders cannot express these exact integers.
+  it.each(fixtures)("rejects unsafe issuer bound $exactInteger", ({ exactInteger, warrant }) => {
+    expect(() => T.inspectWarrant(warrant)).toThrow(`inspection cannot represent integer ${exactInteger} exactly in JavaScript`);
+    expect(() => loadWasm().sdkDecodeChain([warrant])).toThrow(/cannot represent integer/);
+  });
+
+  it("preserves issuer bounds and tool scope in an issuance chain", () => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const holderKey = T.generateHolderKey();
+    const makeIssuer = (max: number) => cp.session({
+      kind: "issuer", issuableTools: ["pay"], constraintBounds: { amount: range({ max }) },
+      maxIssueDepth: 2, holder: T.publicKeyFromHolderKey(holderKey), ttlSeconds: 600,
+    });
+    const handed = makeIssuer(10);
+    const issuer = cp.sessionFromWire({ warrant: handed.toWire(), holderKey });
+    const child = cp.issue(issuer, {
+      allow: { pay: { amount: range({ max: 5 }) } },
+      holder: T.publicKeyFromHolderKey(T.generateHolderKey()), ttlSeconds: 60,
+    });
+    const chain = T.inspectWarrant(child.toWire());
+    expect(chain).toHaveLength(2);
+    expect(chain[0]).toMatchObject({ kind: "issuer", issuableTools: ["pay"], maxIssueDepth: 2 });
+    expect(chain[0]?.constraintBounds).toEqual(loadWasm().sdkDecodeChain(handed.toWire())[0]?.constraint_bounds);
+    expect(chain[0]?.constraintBounds).not.toEqual(T.inspectWarrant(makeIssuer(5).toWire())[0]?.constraintBounds);
+    expect(chain[1]?.kind).toBe("execution");
+    expect(chain[1]?.constraintBounds).toBeUndefined();
   });
 });

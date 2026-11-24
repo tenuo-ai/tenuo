@@ -14,7 +14,7 @@ interface DiagnosticResult {
 }
 
 /** Diagnostic projection for the explorer UI; never an execution decision. */
-function explainCall(warrants: string[], tool: string, args: unknown, root: string): DiagnosticResult {
+function explainCall(warrants: string | string[], tool: string, args: unknown, root: string): DiagnosticResult {
   const context = SdkContext.fromTrustedRoots([root]);
   try {
     const report = context.explainWarrant(warrants, tool, args, []);
@@ -2655,10 +2655,15 @@ function App() {
     try {
       const args = JSON.parse(argsJson || '{}');
 
-      // For single-warrant auth, the trusted root is the warrant's own issuer
-      // Decode inline if not already decoded
-      const issuer = decodedWarrant?.issuer || decode_warrant(warrantB64.trim()).issuer;
-      const result = explainCall([warrantB64.trim()], tool.trim(), args, issuer);
+      // Re-decode the current input: Inspect displays the leaf of a PEM chain,
+      // but the preview trust anchor is always its first warrant's issuer.
+      const { b64, isPem } = cleanInput(warrantB64);
+      const input = isPem ? warrantB64.trim() : b64;
+      const preview = decode_pem_chain_wasm(input) as ChainDecodeResult;
+      if (preview.error || !preview.warrants.length) {
+        throw new Error(preview.error || 'Warrant chain is empty');
+      }
+      const result = explainCall(input, tool.trim(), args, preview.warrants[0].issuer);
       setDiagnosticResult(result);
       setValidationErrors({});
     } catch (e) {

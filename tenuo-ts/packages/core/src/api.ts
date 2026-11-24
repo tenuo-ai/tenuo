@@ -394,6 +394,14 @@ export type ApprovalInfo = {
  */
 export type WarrantInfo = {
   readonly id: string;
+  readonly kind: "execution" | "issuer";
+  /** Issuer tool scope; absent on execution warrants. */
+  readonly issuableTools?: readonly string[];
+  readonly maxIssueDepth?: number;
+  /** Full core ConstraintSet for an issuer's signed issuance ceiling.
+   * Absent when no bounds were set. Uses the same lossless form as capabilities.
+   */
+  readonly constraintBounds?: Readonly<Record<string, unknown>>;
   /** Hex public key that signed this warrant (the root issuer at depth 0). */
   readonly issuerPublicKey: string;
   /** Hex public key the warrant is bound to. */
