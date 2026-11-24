@@ -1166,3 +1166,64 @@ class TestMoreEdges:
                                                  "generationConfig": {"maxOutputTokens": 200}}) as streamed:
             streamed.read()
         assert used(meter, warrant) == INPUT + 200
+
+
+class TestRefusalEventsAndClientSettings:
+    def test_every_refusal_reaches_the_audit_callback_once(self, keys):
+        warrant = mint(keys, total_tokens=INPUT + 100)
+        events = []
+        http, _ = client_for(keys, warrant, Provider(), events=events)
+        assert http.post("https://provider.test/v1/embeddings", json={"model": MODEL, "input": "x"}).status_code == 403
+        assert http.post(CHAT, content=b"not json", headers={"content-type": "application/json"}).status_code == 403
+        assert chat(http).status_code == 200 and chat(http).status_code == 403  # the second is over budget
+        assert chat(http, model="another-model").status_code == 403
+        assert [e.decision for e in events] == ["DENY", "DENY", "ALLOW", "DENY", "DENY"]
+        assert "/v1/embeddings" in events[0].reason and "not JSON" in events[1].reason
+        assert events[3].usage["budget"][0]["warrant_id"] == warrant.id
+        assert all(e.warrant_id == warrant.id for e in events)
+
+    def test_refusals_without_a_warrant_in_scope_are_reported_too(self, keys, installed):
+        events = []
+        installed(audit_callback=events.append)
+        http = httpx.Client(transport=httpx.MockTransport(Provider()))
+        assert http.post("https://api.openai.com/v1/embeddings", json={"model": MODEL, "input": "x"}).status_code == 403
+        assert http.post("https://api.openai.com/v1/chat/completions", json={"model": MODEL, "messages": MESSAGES}).status_code == 403
+        assert [(e.decision, e.warrant_id) for e in events] == [("DENY", None), ("DENY", None)]
+        assert events[0].url == "https://api.openai.com/v1/embeddings" and "no warrant" in events[1].reason
+
+    def test_connection_settings_reach_the_transport_that_sends(self, keys):
+        import ssl
+
+        context = ssl.create_default_context()
+        common = dict(warrant=mint(keys, total_tokens=1000), signing_key=keys.lead, trusted_roots=[keys.issuer.public_key])
+        http = metered_client(verify=context, limits=httpx.Limits(max_connections=3), **common)
+        pool = http._transport._inner._pool
+        assert pool._max_connections == 3 and pool._ssl_context is context
+        ahttp = metered_async_client(limits=httpx.Limits(max_connections=4), **common)
+        assert ahttp._transport._inner._pool._max_connections == 4
+        # With a transport of the caller's own, the settings belong on that transport.
+        with pytest.raises(TypeError, match="limits"):
+            metered_client(transport=httpx.MockTransport(Provider()), limits=httpx.Limits(max_connections=3), **common)
+
+    @pytest.mark.parametrize("name", ["openai", "anthropic"])
+    def test_the_sdks_connection_limits_are_kept(self, keys, name):
+        sdk = pytest.importorskip(name)
+        common = dict(sdk=sdk, warrant=mint(keys, total_tokens=1000), signing_key=keys.lead,
+                      trusted_roots=[keys.issuer.public_key])
+        wanted = sdk.DEFAULT_CONNECTION_LIMITS.max_connections
+        assert metered_client(**common)._transport._inner._pool._max_connections == wanted
+        assert metered_async_client(**common)._transport._inner._pool._max_connections == wanted
+
+    async def test_one_transport_shared_by_a_sync_and_an_async_client(self, keys, installed):
+        warrant = mint(keys, total_tokens=1000)
+        meter = installed(warrant, keys.lead)
+        shared = httpx.MockTransport(Provider())
+        body = {"model": MODEL, "messages": MESSAGES}
+        url = "https://api.openai.com/v1/chat/completions"
+        with httpx.Client(transport=shared) as http:
+            assert http.post(url, json=body).status_code == 200
+        async with httpx.AsyncClient(transport=shared) as ahttp:
+            assert (await ahttp.post(url, json=body)).status_code == 200
+        with httpx.Client(transport=shared) as http:
+            assert http.post(url, json=body).status_code == 200
+        assert used(meter, warrant) == 3 * (INPUT + 100)

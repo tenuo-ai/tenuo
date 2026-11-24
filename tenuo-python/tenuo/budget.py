@@ -346,6 +346,7 @@ class BudgetStore:
         self._owed: Dict[str, int] = {}
         self._owed_expiries: Dict[str, float] = {}
         self._owed_lock = threading.Lock()
+        self._flush_lock = threading.Lock()  # one writer at a time carries the owed usage
 
     @property
     def blocking(self) -> bool:
@@ -356,22 +357,29 @@ class BudgetStore:
         """Add tokens to each warrant id and return the new totals."""
         expiries = {k: (v + self._margin if v else 0.0) for k, v in (expires_at or {}).items()}
         with self._owed_lock:
-            owed, owed_expiries = dict(self._owed), dict(self._owed_expiries)
-        if not owed:
+            pending = bool(self._owed)
+        if not pending:
             return self._backend.add(deltas, expiries)
-        merged = dict(owed)
-        for key, delta in deltas.items():
-            merged[key] = merged.get(key, 0) + delta
-        totals = self._backend.add(merged, {**owed_expiries, **expiries})
-        with self._owed_lock:
-            for key, amount in owed.items():
-                left = self._owed.get(key, 0) - amount
-                if left > 0:
-                    self._owed[key] = left
-                else:
-                    self._owed.pop(key, None)
-                    self._owed_expiries.pop(key, None)
-        return totals
+        # Reading what is owed, writing it and clearing it happen as one step,
+        # so two writers cannot both carry the same owed usage.
+        with self._flush_lock:
+            with self._owed_lock:
+                owed, owed_expiries = dict(self._owed), dict(self._owed_expiries)
+            if not owed:
+                return self._backend.add(deltas, expiries)
+            merged = dict(owed)
+            for key, delta in deltas.items():
+                merged[key] = merged.get(key, 0) + delta
+            totals = self._backend.add(merged, {**owed_expiries, **expiries})
+            with self._owed_lock:
+                for key, amount in owed.items():
+                    left = self._owed.get(key, 0) - amount
+                    if left > 0:
+                        self._owed[key] = left
+                    else:
+                        self._owed.pop(key, None)
+                        self._owed_expiries.pop(key, None)
+            return totals
 
     def owe(self, deltas: Mapping[str, int], expires_at: Optional[Mapping[str, float]] = None) -> None:
         """Remember usage a failed write left out, to be written with the next one."""

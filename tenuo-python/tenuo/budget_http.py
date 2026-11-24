@@ -133,7 +133,8 @@ class MeterEvent:
         tool_name: Capability the call was checked against (``llm.chat``).
         model: Model named in the request.
         reason: Why it was refused, or ``"model call metered"``.
-        warrant_id: The caller's warrant.
+        warrant_id: The caller's warrant. ``None`` when a call was refused
+            because no warrant was in scope.
         usage: Tokens used and each warrant's running total (see
             :meth:`tenuo.budget.MeteredCall.settle`).
         url: The endpoint called, without query string.
@@ -498,6 +499,22 @@ class _StreamTap:
 # ---------------------------------------------------------------------------
 
 
+def _send_event(callback: Optional[Callable[[MeterEvent], None]], *, decision: str, tool: str, model: Optional[str],
+                reason: str, warrant_id: Optional[str], request: Any, usage: Optional[Dict[str, Any]] = None,
+                max_tokens: Optional[int] = None) -> None:
+    """Hand one event to the audit callback; a callback that raises does not change the outcome."""
+    if callback is None:
+        return
+    event = MeterEvent(
+        timestamp=time.time(), decision=decision, tool_name=tool, model=model, reason=reason,
+        warrant_id=warrant_id, usage=usage, url=str(request.url.copy_with(query=None)), max_tokens=max_tokens,
+    )
+    try:
+        callback(event)
+    except Exception:
+        logger.warning("Audit callback failed", exc_info=True)
+
+
 def _refusal(http: Any, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
     """A local 403 in the error shape of the provider the request was for."""
     if dialect is not None and dialect.error_shape == "anthropic":
@@ -608,12 +625,11 @@ class _Core:
             snapshot: Dict[str, Any] = {"warrant_id": e.warrant_id, "used": e.used}
             if e.limit is not None:
                 snapshot["limit"] = e.limit
-            self._emit("DENY", model, str(e), request, {"budget": [snapshot]})
-            return _Plan(request, refusal=self._refuse(request, dialect, BUDGET_CODE, str(e)))
+            return _Plan(request, refusal=self._refuse(
+                request, dialect, BUDGET_CODE, str(e), model, {"budget": [snapshot]}))
         except ModelCallDenied as e:
             reason = f"tenuo: model call refused by the warrant: {e}"
-            self._emit("DENY", model, reason, request, None)
-            return _Plan(request, refusal=self._refuse(request, dialect, DENIED_CODE, reason))
+            return _Plan(request, refusal=self._refuse(request, dialect, DENIED_CODE, reason, model))
 
         if not call.enforced:
             # Only watching: the request goes out exactly as the caller wrote
@@ -656,7 +672,10 @@ class _Core:
             warrant_chain=list(chain) if chain else None,
         )
 
-    def _refuse(self, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
+    def _refuse(self, request: Any, dialect: Optional[_Dialect], code: str, message: str,
+                model: Optional[str] = None, usage: Optional[Dict[str, Any]] = None) -> Any:
+        """The local 403 for a request, with its one DENY event."""
+        self._emit("DENY", model, message, request, usage)
         return _refusal(self.http, request, dialect, code, message)
 
     # -- after the request ---------------------------------------------------
@@ -720,17 +739,8 @@ class _Core:
 
     def _emit(self, decision: str, model: Optional[str], reason: str, request: Any,
               usage: Optional[Dict[str, Any]], max_tokens: Optional[int] = None) -> None:
-        if self.audit_callback is None:
-            return
-        event = MeterEvent(
-            timestamp=time.time(), decision=decision, tool_name=self.meter.tool, model=model, reason=reason,
-            warrant_id=self.warrant_id, usage=usage, url=str(request.url.copy_with(query=None)),
-            max_tokens=max_tokens,
-        )
-        try:
-            self.audit_callback(event)
-        except Exception:
-            logger.warning("Audit callback failed", exc_info=True)
+        _send_event(self.audit_callback, decision=decision, tool=self.meter.tool, model=model, reason=reason,
+                    warrant_id=self.warrant_id, request=request, usage=usage, max_tokens=max_tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -1039,6 +1049,9 @@ def _library_of(client_class: Any) -> Any:
     raise TypeError(f"{client_class!r} is not an httpx or httpx2 client")
 
 
+_CONNECTION_SETTINGS = ("verify", "cert", "http1", "http2", "limits")
+
+
 def _client(is_async: bool, sdk: Any, library: Any, transport: Any, kwargs: Dict[str, Any]) -> Any:
     for option in ("mounts", "proxy", "proxies"):
         if kwargs.get(option) is not None:
@@ -1047,7 +1060,7 @@ def _client(is_async: bool, sdk: Any, library: Any, transport: Any, kwargs: Dict
                             "passed as transport=, which the meter wraps")
     meter = {k: kwargs.pop(k) for k in _METER_KEYS if k in kwargs}
     if sdk is not None:
-        # The SDK's own client class keeps its timeouts and connection limits.
+        # The SDK's own client class keeps its timeouts and redirects.
         client_class = sdk.DefaultAsyncHttpxClient if is_async else sdk.DefaultHttpxClient
         http = library or _library_of(client_class)
     else:
@@ -1055,6 +1068,20 @@ def _client(is_async: bool, sdk: Any, library: Any, transport: Any, kwargs: Dict
         client_class = http.AsyncClient if is_async else http.Client
         kwargs.setdefault("timeout", http.Timeout(600.0, connect=5.0))
         kwargs.setdefault("follow_redirects", True)
+    # A client does not apply its connection settings to a transport it is
+    # handed, so they go to the transport that sends.
+    connection = {k: kwargs[k] for k in _CONNECTION_SETTINGS if kwargs.get(k) is not None}
+    if transport is not None:
+        if connection:
+            raise TypeError(f"{', '.join(sorted(connection))}= cannot be combined with transport=: configure the "
+                            "transport you pass")
+    else:
+        if "trust_env" in kwargs:
+            connection["trust_env"] = kwargs["trust_env"]
+        sdk_limits = getattr(sdk, "DEFAULT_CONNECTION_LIMITS", None)
+        if sdk_limits is not None:
+            connection.setdefault("limits", sdk_limits)
+        transport = (http.AsyncHTTPTransport if is_async else http.HTTPTransport)(**connection)
     bound = for_library(http)
     metered = (bound.AsyncMeteredTransport if is_async else bound.MeteredTransport)(transport, **meter)
     return client_class(transport=metered, **kwargs)
@@ -1067,7 +1094,10 @@ def metered_client(*, sdk: Any = None, library: Any = None, transport: Any = Non
         sdk: The SDK module the client is for (``openai``, ``anthropic``). The
             client is then that SDK's own default client on the right library.
         library: The ``httpx`` or ``httpx2`` module, to choose it yourself.
-        transport: Inner transport that really sends requests.
+        transport: Inner transport that really sends requests. Without one,
+            the client's connection settings (``verify``, ``cert``, ``http2``,
+            ``limits``, ``trust_env``) configure the transport that is built;
+            with one, set them on that transport.
         **kwargs: The arguments of :class:`MeteredTransport`; anything else
             goes to the client class.
 
@@ -1133,16 +1163,16 @@ class _Installation:
             dialect = _dialect_for(path)
             if dialect is None:
                 # The same answer as with credentials: a POST the meter cannot count does not go out.
-                return None, _refusal(
-                    http, request, None, UNMETERED_CODE,
-                    f"tenuo: {path} is not a model endpoint this meter understands, so it is refused under a token "
-                    "budget. List the path in unmetered_paths to let it through uncounted.",
-                )
-            return None, _refusal(
-                http, request, dialect, DENIED_CODE,
-                "tenuo: model call refused: no warrant and signing key are in scope. Pass them to install() "
-                "or make the call inside warrant_scope() and key_scope().",
-            )
+                code = UNMETERED_CODE
+                message = (f"tenuo: {path} is not a model endpoint this meter understands, so it is refused under a "
+                           "token budget. List the path in unmetered_paths to let it through uncounted.")
+            else:
+                code = DENIED_CODE
+                message = ("tenuo: model call refused: no warrant and signing key are in scope. Pass them to "
+                           "install() or make the call inside warrant_scope() and key_scope().")
+            _send_event(self.shared["audit_callback"], decision="DENY", tool=self.meter.tool, model=None,
+                        reason=message, warrant_id=None, request=request)
+            return None, _refusal(http, request, dialect, code, message)
         # A warrant may be presented as a list or an encoded chain: take it
         # apart before anything asks for its id.
         leaf, parents = split_presented_warrant(warrant, list(chain_scope() or self.chain or []) or None)
@@ -1264,15 +1294,19 @@ def install(
         for client_class, wrapper in ((http.Client, bound.AmbientTransport), (http.AsyncClient, bound.AsyncAmbientTransport)):
             original = client_class._transport_for_url
 
-            def choose(self: Any, url: Any, _original: Any = original, _wrapper: Any = wrapper, _own: Any = own) -> Any:
+            # A transport that serves both interfaces gets a wrapper for each.
+            slot = "_tenuo_ambient_async" if client_class is http.AsyncClient else "_tenuo_ambient"
+
+            def choose(self: Any, url: Any, _original: Any = original, _wrapper: Any = wrapper, _own: Any = own,
+                       _slot: str = slot) -> Any:
                 transport = _original(self, url)
                 if _INSTALLED is None or isinstance(transport, _own):
                     return transport  # not installed, or already metered explicitly
-                ambient = getattr(transport, "_tenuo_ambient", None)
+                ambient = getattr(transport, _slot, None)
                 if ambient is None:
                     ambient = _wrapper(transport)
                     try:
-                        transport._tenuo_ambient = ambient
+                        setattr(transport, _slot, ambient)
                     except AttributeError:
                         pass
                 return ambient

@@ -218,6 +218,29 @@ class TestBudgetStore:
         with pytest.raises(Exception):
             BudgetStore(str(tmp_path / "missing-dir" / "budgets.db"))
 
+    def test_owed_usage_is_written_once_by_concurrent_writers(self):
+        entered, go = threading.Event(), threading.Event()
+
+        class Slow(InMemoryBudgetBackend):
+            def add(self, deltas, expires_at):
+                if not entered.is_set():
+                    entered.set()
+                    go.wait(5)  # the first writer is held inside its write
+                return super().add(deltas, expires_at)
+
+        store = BudgetStore(backend=Slow())
+        store.owe({"w": 100})
+        first = threading.Thread(target=store.add, args=({"w": 1},))
+        second = threading.Thread(target=store.add, args=({"w": 1},))
+        first.start()
+        assert entered.wait(5)
+        second.start()
+        time.sleep(0.05)  # the second writer arrives while the first is still writing
+        go.set()
+        first.join(5)
+        second.join(5)
+        assert store.used("w") == {"w": 102}
+
 
 # ---------------------------------------------------------------------------
 # Usage shapes and the estimate

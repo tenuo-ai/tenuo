@@ -117,6 +117,8 @@ client = openai.OpenAI(http_client=http)
 
 `sdk=` selects the HTTP library that SDK is built on and keeps its default timeouts. `metered_async_client()` is the async counterpart; give both the same `budget_store`.
 
+Connection settings such as `verify=`, `http2=` and `limits=` configure the transport the client builds. When you pass your own `transport=`, set them on it instead.
+
 `mounts=` and `proxy=` are not accepted on a metered client, since they give some requests a transport of their own. Configure a proxy on the transport passed as `transport=`, which the meter wraps.
 
 ---
@@ -147,7 +149,7 @@ except openai.PermissionDeniedError as e:
 
 ## Usage records
 
-`audit_callback` receives a `MeterEvent` for every refusal and every finished call:
+`audit_callback` receives a `MeterEvent` for every refusal and every finished call. A refusal made because no warrant was in scope has no `warrant_id`.
 
 ```python
 def on_event(event):
