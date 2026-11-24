@@ -272,36 +272,41 @@ fn an_unknown_trust_anchor_or_an_empty_anchor_set_denies() {
     assert_eq!(denied.step, "3k");
 }
 
-/// A PoP JWT for `vector`'s leaf with `edit` applied to the suite's claims,
-/// signed by the suite key that holds the leaf.
-fn signed_pop(suite: &Suite, vector: &Value, edit: impl FnOnce(&mut Value)) -> String {
+/// A compact JWS over `claims`, signed by the suite key whose public `x` is
+/// given.
+fn sign(suite: &Suite, x: &Value, header_b64: &Value, claims: &Value) -> String {
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let leaf = vector["chain"]
-        .as_array()
-        .and_then(|chain| chain.last())
-        .expect("leaf");
-    let holder = &leaf["payload"]["cnf"]["jwk"]["x"];
     let seed = suite.doc["keys"]
         .as_object()
         .expect("keys")
         .values()
-        .find(|key| &key["jwk"]["x"] == holder)
+        .find(|key| &key["jwk"]["x"] == x)
         .and_then(|key| key["seed_hex"].as_str())
-        .expect("the suite holds the leaf holder's seed");
+        .expect("the suite holds this key's seed");
     let seed: [u8; 32] = hex::decode(seed)
         .expect("hex")
         .try_into()
         .expect("32 bytes");
-
-    let mut claims = vector["pop"]["payload"].clone();
-    edit(&mut claims);
-    let input = format!(
-        "{}.{}",
-        text(&vector["pop"]["header_b64"]),
-        b64.encode(claims.to_string())
-    );
+    let input = format!("{}.{}", text(header_b64), b64.encode(claims.to_string()));
     let signature = SigningKey::from_bytes(&seed).sign_raw(input.as_bytes());
     format!("{input}.{}", b64.encode(signature.to_bytes()))
+}
+
+/// A PoP JWT for `vector`'s leaf with `edit` applied to the suite's claims,
+/// signed by the suite key that holds the leaf.
+fn signed_pop(suite: &Suite, vector: &Value, edit: impl FnOnce(&mut Value)) -> String {
+    let leaf = vector["chain"]
+        .as_array()
+        .and_then(|chain| chain.last())
+        .expect("leaf");
+    let mut claims = vector["pop"]["payload"].clone();
+    edit(&mut claims);
+    sign(
+        suite,
+        &leaf["payload"]["cnf"]["jwk"]["x"],
+        &vector["pop"]["header_b64"],
+        &claims,
+    )
 }
 
 /// The first PERMIT vector with no policy and a one-token chain.
@@ -410,4 +415,46 @@ fn anchors_that_share_a_key_each_vouch_for_their_own_issuer() {
     )
     .unwrap_err();
     assert_eq!(denied.step, "3k");
+}
+
+/// Step 3k asks for a URI. A root whose `iss` is not one is denied even when
+/// a trust anchor is configured under that same string.
+#[test]
+fn a_root_issuer_that_is_not_a_uri_is_denied_even_when_an_anchor_matches() {
+    let suite = Suite::load();
+    let vector = plain_permit(&suite);
+    let root = &vector["chain"][0];
+    let anchor = suite.doc["trust_anchors"]
+        .as_array()
+        .expect("trust_anchors")
+        .iter()
+        .zip(&suite.anchors)
+        .find(|(doc, _)| doc["iss"] == root["payload"]["iss"])
+        .expect("the root's anchor");
+    let step = |issuer: &str| {
+        let mut claims = root["payload"].clone();
+        claims["iss"] = Value::String(issuer.to_owned());
+        let token = sign(&suite, &anchor.0["jwk"]["x"], &root["header_b64"], &claims);
+        let anchors = [TrustAnchor {
+            issuer: issuer.to_owned(),
+            key: anchor.1.key.clone(),
+        }];
+        let pop = text(&vector["presentation"]["aat_pop"]);
+        let (tool, args) = (text(&vector["tool"]), text(&vector["args_json"]));
+        let audience = text(&suite.doc["params"]["audience"]);
+        let mut opts = VerifyOptions::new(&audience, vector["now"].as_i64().expect("now"));
+        verify_chain(&[token.as_str()], &pop, &anchors, &tool, &args, &mut opts)
+            .unwrap_err()
+            .step
+    };
+
+    // A well-formed issuer passes 3k; the suite's PoP names another token.
+    assert_eq!(step("https://auth.example.com/tenant%20a"), "7c");
+    for issuer in [
+        "https://auth.example.com/%GG",
+        "https://auth.example.com/a b",
+        "auth.example.com",
+    ] {
+        assert_eq!(step(issuer), "3k", "{issuer}");
+    }
 }

@@ -458,12 +458,147 @@ fn non_empty_str<'a>(claims: &'a Obj, name: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-/// A string that starts with a URI scheme (RFC 3986 Section 3.1).
+/// A URI by the grammar of RFC 3986 Section 3: `scheme ":" hier-part
+/// [ "?" query ] [ "#" fragment ]`. The text is judged as written; nothing is
+/// normalized or decoded.
 fn is_uri(text: &str) -> bool {
-    let Some((scheme, _)) = text.split_once(':') else {
+    let Some((scheme, rest)) = text.split_once(':') else {
         return false;
     };
     let mut chars = scheme.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        || !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    {
+        return false;
+    }
+    let (rest, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    let (hier, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let path = match hier.strip_prefix("//") {
+        Some(after) => {
+            let (authority, path) = after.split_at(after.find('/').unwrap_or(after.len()));
+            if !is_authority(authority) {
+                return false;
+            }
+            path
+        }
+        None => hier,
+    };
+    uri_chars(path, b":@/") && uri_chars(query, b":@/?") && uri_chars(fragment, b":@/?")
+}
+
+/// `[ userinfo "@" ] host [ ":" port ]` (RFC 3986 Section 3.2).
+fn is_authority(text: &str) -> bool {
+    let host_port = match text.split_once('@') {
+        Some((userinfo, rest)) if uri_chars(userinfo, b":") => rest,
+        Some(_) => return false,
+        None => text,
+    };
+    let port = if let Some(literal) = host_port.strip_prefix('[') {
+        let Some((address, after)) = literal.split_once(']') else {
+            return false;
+        };
+        if !is_ip_literal(address) {
+            return false;
+        }
+        match after.strip_prefix(':') {
+            Some(port) => port,
+            None if after.is_empty() => "",
+            None => return false,
+        }
+    } else {
+        // A registered name or an IPv4 address; neither holds a colon.
+        let (host, port) = host_port.rsplit_once(':').unwrap_or((host_port, ""));
+        if !uri_chars(host, b"") {
+            return false;
+        }
+        port
+    };
+    port.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The inside of `"[" ( IPv6address / IPvFuture ) "]"`.
+fn is_ip_literal(text: &str) -> bool {
+    match text.strip_prefix(['v', 'V']) {
+        Some(future) => future.split_once('.').is_some_and(|(version, address)| {
+            !version.is_empty()
+                && version.bytes().all(|b| b.is_ascii_hexdigit())
+                && !address.is_empty()
+                && !address.contains('%')
+                && uri_chars(address, b":")
+        }),
+        None => text.parse::<std::net::Ipv6Addr>().is_ok(),
+    }
+}
+
+/// Every character is unreserved, a sub-delimiter, one of `also`, or part of
+/// a percent-encoded octet (RFC 3986 Section 2).
+fn uri_chars(text: &str, also: &[u8]) -> bool {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'%' {
+            let escaped = bytes.get(i + 1..i + 3);
+            if !escaped.is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit)) {
+                return false;
+            }
+            i += 3;
+            continue;
+        }
+        let allowed =
+            b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=".contains(&b) || also.contains(&b);
+        if !allowed {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_uri;
+
+    #[test]
+    fn uris_by_the_rfc_3986_grammar() {
+        for text in [
+            "https://auth.example.com",
+            "https://auth.example.com/",
+            "https://auth.example.com:8443/tenant/a%20b?x=1&y=/?#frag/?",
+            "https://user:pw@auth.example.com/",
+            "https://192.0.2.1/",
+            "https://[2001:db8::1]:8443/",
+            "https://[v1.fe:d]/",
+            "urn:ietf:params:oauth:jwk-thumbprint:sha-256:abc_-",
+            "mailto:issuer@example.com",
+            "file:///etc/issuer",
+            "a:",
+        ] {
+            assert!(is_uri(text), "{text}");
+        }
+        for text in [
+            "",
+            "auth.example.com",
+            "//auth.example.com",
+            "1https://auth.example.com",
+            ":https://auth.example.com",
+            "https://auth.example.com/%GG",
+            "https://auth.example.com/%2",
+            "https://auth.example.com/a b",
+            " https://auth.example.com",
+            "https://auth.example.com\n",
+            "https://auth.exa mple.com/",
+            "https://auth.example.com/\u{e9}",
+            "https://auth.example.com/a#b#c",
+            "https://auth.example.com:port/",
+            "https://a@b@auth.example.com/",
+            "https://[2001:db8::1/",
+            "https://[not-an-address]/",
+            "https://[::1]x/",
+            "https://auth.example.com/<a>",
+            "https://auth.example.com/\"a\"",
+        ] {
+            assert!(!is_uri(text), "{text:?}");
+        }
+    }
 }
