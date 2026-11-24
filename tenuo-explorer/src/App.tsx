@@ -909,7 +909,7 @@ warrant = (Warrant.mint_builder()
 ${capabilityBlocks}
     .holder(holder_key.public_key)
     .ttl(${actualTtl})  # ${formatTtlComment(actualTtl)}${decoded.max_depth != null ? `
-    .max_depth(${decoded.max_depth})` : ''}
+    .max_depth(${Math.max(0, decoded.max_depth - decoded.depth)})` : ''}
     .mint(issuer_key))
 
 # Test authorization with Proof-of-Possession
@@ -980,7 +980,7 @@ ${constraintDefs}
 ${capabilityLines}
         .holder(holder_key.public_key())
         .ttl(Duration::from_secs(${actualTtl}))  // ${formatTtlComment(actualTtl)}${decoded.max_depth != null ? `
-        .max_depth(${decoded.max_depth})` : ''}
+        .max_depth(${Math.max(0, decoded.max_depth - decoded.depth)})` : ''}
         .build(&issuer_key)?;
 
     // Build args for authorization

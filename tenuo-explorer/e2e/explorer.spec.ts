@@ -373,6 +373,23 @@ test.describe('Feedback regressions', () => {
         await expect(page.getByText(/This receipt was altered/)).toHaveCount(0);
     });
 
+    for (const ceiling of [1, 3]) {
+        test(`delegated code uses the remaining depth budget for ceiling ${ceiling}`, async ({ page }) => {
+            const { create_warrant_from_config: mint } = createRequire(import.meta.url)('../../tenuo-ts/packages/core/src/generated/tenuo_wasm.js');
+            const parent = mint({ tools: { read_file: {} }, ttl: 600, max_depth: ceiling });
+            const child = mint({ tools: { read_file: {} }, ttl: 60, max_depth: ceiling,
+                parent_warrant_b64: parent.warrant_b64, signing_key_hex: parent.holder_private_key_hex });
+            expect(child.error).toBeFalsy();
+            await page.locator('textarea').first().fill(child.warrant_b64);
+            await page.getByRole('button', { name: 'Decode Warrant', exact: true }).click();
+            await page.getByRole('button', { name: 'Code', exact: true }).click();
+            const code = page.locator('.panel').filter({ has: page.getByText('Code Generation', { exact: true }) }).locator('pre');
+            await expect(code).toContainText(`.max_depth(${ceiling - 1})`);
+            await page.getByRole('button', { name: 'rust', exact: true }).click();
+            await expect(code).toContainText(`.max_depth(${ceiling - 1})`);
+        });
+    }
+
     for (const depth of [0, 3]) {
         test(`generated code preserves depth ${depth} in both languages`, async ({ page }) => {
             await page.getByRole('tab', { name: 'Build' }).click();
