@@ -582,7 +582,7 @@ class TestLeasedBudget:
         from concurrent.futures import ThreadPoolExecutor
 
         class Recording(ThreadPoolExecutor):
-            """The loop's executor, keeping what it was handed so the test can wait for it."""
+            """The loop's executor, keeping each job with the function it runs."""
 
             def __init__(self):
                 super().__init__(max_workers=2)
@@ -590,15 +590,19 @@ class TestLeasedBudget:
 
             def submit(self, fn, *args, **kwargs):
                 future = super().submit(fn, *args, **kwargs)
-                self.handed.append(future)
+                self.handed.append((fn, future))
                 return future
 
         pool = Pool(keys, limit=10_000, slice_=300)
+        started, go = threading.Event(), threading.Event()
+        take = pool.acquire
+        pool.acquire = lambda: (started.set(), go.wait(10), take())[2]
         budget, meter = leased(pool)
-        provider = Provider()
-        exits = []
+        installed = tenuo.budget_http._INSTALLED
+        exits, threads = [], []
         leave = budget.exit
-        budget.exit = lambda ids, model, usage: (exits.append(usage), leave(ids, model, usage))[1]
+        budget.exit = lambda ids, model, usage: (exits.append(usage), threads.append(threading.current_thread().name),
+                                                 leave(ids, model, usage))[2]
 
         def gone(*args, **kwargs):
             raise RuntimeError("cannot schedule new futures after shutdown")
@@ -607,30 +611,32 @@ class TestLeasedBudget:
             loop = asyncio.get_running_loop()
             executor = Recording()
             loop.set_default_executor(executor)
-            async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
-                task = asyncio.ensure_future(http.post(URL, json=BODY))
-                while not executor.handed:
-                    await asyncio.sleep(0)
-                # The loop is held here until the worker has finished the plan: the plan is
-                # ready, and the task that asked for it has not been told yet.
-                executor.handed[0].result(5)
-                task.cancel()
-                loop.run_in_executor = gone  # nothing more can be handed to the loop's executor
-                with pytest.raises(asyncio.CancelledError):
-                    await task
-                lease_id = None
-                for _ in range(300):  # the plan is given back on a thread of its own
-                    await asyncio.sleep(0.01)
-                    lease = budget.current
-                    if exits and lease is not None and budget._held[lease.warrant_id].inflight == 0:
-                        lease_id = lease.warrant_id
-                        break
-                await asyncio.sleep(0.1)  # and only once
-                return lease_id
+            request = httpx.Request("POST", URL, json=BODY)
+            task = asyncio.ensure_future(tenuo.budget_http._plan_for_off_loop(installed, httpx, request))
+            for _ in range(500):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            jobs = [f for fn, f in executor.handed if fn.__qualname__.endswith("_plan_in_worker.<locals>.work")]
+            assert len(jobs) == 1, "the plan was not made on a worker thread"
+            # From here to cancel() nothing awaits, so the loop cannot tell the task its
+            # plan is ready: the worker finishes it, and then the task is cancelled.
+            go.set()
+            jobs[0].result(5)
+            task.cancel()
+            loop.run_in_executor = gone  # nothing more can be handed to the loop's executor
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            for _ in range(300):  # the plan is given back on a thread of its own
+                if exits:
+                    break
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)  # and only once
+            return budget.current.warrant_id
 
         lease_id = asyncio.run(main())
-        assert lease_id is not None and not provider.caps
-        assert exits == [None] and meter.store.used(lease_id).get(lease_id, 0) == 0
+        assert exits == [None] and threads == ["tenuo-plan-release"]
+        assert meter.store.used(lease_id).get(lease_id, 0) == 0 and budget._held[lease_id].inflight == 0
         budget.close()
         assert pool.returned == [(lease_id, 0)]
 
