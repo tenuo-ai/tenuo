@@ -1,0 +1,93 @@
+theory AAT_Chain_Linkage
+begin
+
+/*
+  Chain linkage (invariant I5, Section 4.6) in
+  draft-niyikiza-oauth-attenuating-agent-tokens-02.
+
+  Section 8, step 4q, has a verifier check, for each adjacent pair in a
+  presented chain, that the child's par_hash is the hash of its parent.
+  This model shows what "each adjacent pair" contributes. It has a
+  three-token chain, root -> mid -> leaf, and two verifiers:
+
+    - Verify_Every_Link checks leaf.par_hash == hash(mid) and
+      mid.par_hash == hash(presented_root).
+    - Verify_Last_Link checks leaf.par_hash == hash(mid) only.
+
+  Modeling choices:
+    - Tokens are fresh names. There are no signatures and no adversary;
+      the model isolates the linkage rule.
+    - hash is a free function, so distinct tokens have distinct hashes.
+    - Any number of roots and chains may exist.
+
+  Run:
+    tamarin-prover --prove aat_chain_linkage.spthy
+*/
+
+functions:
+  hash/1
+
+rule Make_Token:
+  [ Fr(~token) ]
+  --[ Made(~token) ]->
+  [ !Tok(~token) ]
+
+rule Derive_Mid:
+  [ !Tok(root)
+  , Fr(~mid)
+  ]
+  --[ DerivedMid(root, ~mid) ]->
+  [ !Tok(~mid)
+  , !ParHash(~mid, hash(root))
+  ]
+
+rule Derive_Leaf:
+  [ !Tok(mid)
+  , Fr(~leaf)
+  ]
+  --[ DerivedLeaf(mid, ~leaf) ]->
+  [ !Tok(~leaf)
+  , !ParHash(~leaf, hash(mid))
+  ]
+
+rule Verify_Every_Link:
+  [ !Tok(presented_root)
+  , !Tok(mid)
+  , !Tok(leaf)
+  , !ParHash(mid, hash(presented_root))
+  , !ParHash(leaf, hash(mid))
+  ]
+  --[ AcceptEveryLink(presented_root, mid, leaf) ]->
+  []
+
+rule Verify_Last_Link:
+  [ !Tok(presented_root)
+  , !Tok(mid)
+  , !Tok(leaf)
+  , !ParHash(leaf, hash(mid))
+  ]
+  --[ AcceptLastLink(presented_root, mid, leaf) ]->
+  []
+
+/*
+  A chain accepted with every link checked is presented under the root
+  that mid was derived from.
+*/
+lemma every_link_binds_the_root:
+  "All real_root presented_root mid leaf #i #j.
+     DerivedMid(real_root, mid) @ i
+   & AcceptEveryLink(presented_root, mid, leaf) @ j
+   ==> real_root = presented_root"
+
+/*
+  Checking the last link alone does not give that: a trace exists in
+  which the accepted chain names a different root.
+*/
+lemma last_link_alone_does_not_bind_the_root:
+  exists-trace
+  "Ex real_root presented_root mid leaf #i #j.
+     DerivedMid(real_root, mid) @ i
+   & AcceptLastLink(presented_root, mid, leaf) @ j
+   & not(real_root = presented_root)"
+
+end

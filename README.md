@@ -441,7 +441,7 @@ Signed authorization receipts are opt-in when you need to show why a call was al
 
 Tenuo builds on capability token ideas described in [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025). Inspired by [Macaroons](https://research.google/pubs/pub41892/), [Biscuit](https://www.biscuitsec.org/), and [UCAN](https://ucan.xyz/).
 
-The token format and delegation protocol are specified in [Attenuating Authorization Tokens for Agentic Delegation Chains](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/), an active individual Internet-Draft in the IETF OAuth Working Group. The core attenuation rules are formally verified with [Alloy](docs/formal_verification/aat_constraints.als) (capability and argument-key monotonicity) and [Z3](docs/formal_verification/z3_bounds.py) (constraint-type subsumption bounds).
+The token format and delegation protocol are specified in [Attenuating Authorization Tokens for Agentic Delegation Chains](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/), an active individual Internet-Draft in the IETF OAuth Working Group. The attenuation rules are checked with a bounded Alloy model, a Tamarin model of chain linkage, Z3 lemmas and property tests, and independent implementations agree with all 229 test vectors. See [formal checks](docs/formal_verification/README.md).
 
 See [Related Work](https://tenuo.ai/related-work) for detailed comparison.
 
