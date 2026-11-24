@@ -91,6 +91,9 @@
 //! # }
 //! ```
 
+#[cfg(feature = "aat-jws")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aat-jws")))]
+pub mod aat;
 pub mod approval;
 pub mod approval_gate;
 pub mod audit;
@@ -137,8 +140,7 @@ pub use gateway_config::{
 // Re-export MCP config types
 pub use mcp::{CompiledMcpConfig, CompiledTool, McpConfig, McpSettings};
 
-#[cfg(feature = "python")]
-pub(crate) mod host_policy;
+pub mod host_policy;
 
 #[cfg(feature = "python")]
 pub mod python;

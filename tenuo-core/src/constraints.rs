@@ -4947,56 +4947,62 @@ impl ConstraintSet {
         })
     }
 
-    /// Validate that `child` is a valid attenuation of this constraint set.
+    /// True when arguments this set does not declare are admitted: it is
+    /// empty, or `allow_unknown` is set.
+    fn admits_undeclared(&self) -> bool {
+        self.constraints.is_empty() || self.allow_unknown
+    }
+
+    /// Validate that `child` is a valid attenuation of this constraint set:
+    /// every invocation `child` admits is one this set admits.
     ///
     /// # Monotonicity Rules
     ///
-    /// - Child must have all constraints that parent has (can be narrower)
-    /// - Optional arguments may become required; required arguments cannot become optional
-    /// - When the parent map is non-empty, the child must have exactly
-    ///   the same argument keys (keyset identity, I4). Adding a key
-    ///   produces invocations the parent's closed-world check rejects;
-    ///   dropping a key reopens that argument. Both break monotonicity.
-    /// - When the parent map is empty (open-world), the child may
-    ///   introduce any keys (open-world to closed-world transition).
-    /// - Child cannot enable `allow_unknown` if parent has it disabled
-    ///   (that would expand capabilities)
-    /// - Child can disable `allow_unknown` even if parent enabled it
-    ///   (that's more restrictive)
+    /// - A child admits undeclared arguments only if the parent does.
+    /// - Each argument the child declares is one the parent declares, with a
+    ///   constraint at least as narrow, or one the parent leaves undeclared
+    ///   and admits.
+    /// - Optional arguments may become required; required arguments cannot
+    ///   become optional.
+    /// - The child declares every argument the parent requires. It may leave
+    ///   out one the parent marks optional, provided the child admits no
+    ///   undeclared arguments: the child then refuses that argument, which
+    ///   the parent allowed to be absent.
     pub fn validate_attenuation(&self, child: &ConstraintSet) -> Result<()> {
-        if !self.allow_unknown && child.allow_unknown {
+        if child.admits_undeclared() && !self.admits_undeclared() {
             return Err(Error::MonotonicityViolation(
-                "child cannot enable allow_unknown when parent has it disabled".to_string(),
+                "child cannot admit undeclared arguments when the parent does not".to_string(),
             ));
         }
 
-        // Check each parent constraint has a valid child constraint
         for (field, parent_constraint) in &self.constraints {
-            let child_constraint = child.constraints.get(field).ok_or_else(|| {
-                Error::MonotonicityViolation(format!(
+            if self.is_optional(field) {
+                // Neither requiring the argument nor leaving it out may revive
+                // a parent policy that refuses every invocation because its
+                // predicate is unsupported.
+                parent_constraint.validate_optional_support()?;
+            }
+            let Some(child_constraint) = child.constraints.get(field) else {
+                if self.is_optional(field) && !child.admits_undeclared() {
+                    continue;
+                }
+                return Err(Error::MonotonicityViolation(format!(
                     "child is missing constraint for field '{}' that parent has",
                     field
-                ))
-            })?;
+                )));
+            };
 
             if !self.is_optional(field) && child.is_optional(field) {
                 return Err(Error::MonotonicityViolation(format!(
                     "child cannot make required argument '{field}' optional"
                 )));
             }
-            if self.is_optional(field) {
-                // Requiring the argument must not revive a parent policy that
-                // refuses every invocation because its predicate is unsupported.
-                parent_constraint.validate_optional_support()?;
-            }
             parent_constraint.validate_attenuation(child_constraint)?;
         }
 
-        // Keyset identity (I4): when the parent map is non-empty, the
-        // child must not introduce argument keys absent from the parent.
-        // When the parent map is empty, any child keys are permitted
-        // (open-world to closed-world transition).
-        if !self.constraints.is_empty() {
+        // A parent that admits no undeclared arguments refuses any the child
+        // adds, so the child would admit invocations the parent does not.
+        if !self.admits_undeclared() {
             for key in child.constraints.keys() {
                 if !self.constraints.contains_key(key) {
                     return Err(Error::MonotonicityViolation(format!(

@@ -141,7 +141,6 @@ impl PyReceiptIssuer {
         let context = TrustContext {
             trusted_roots_hash: authorizer.trusted_roots_hash_bytes(),
             srl_commitment: authorizer.srl_commitment_value(),
-            host_policies: authorizer.host_policy_digests(),
         };
         let mut guard = self.trust.lock().map_err(|_| {
             pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned")
@@ -260,8 +259,6 @@ impl PyControlPlaneClient {
 struct TrustContext {
     trusted_roots_hash: [u8; 32],
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
-    /// Receipt key 11 per tool, from the authorizer's host ceilings.
-    host_policies: std::collections::BTreeMap<String, [u8; 32]>,
 }
 
 #[cfg(feature = "python-server")]
@@ -290,6 +287,11 @@ fn issue_allow_receipt(
         None => return Ok(None),
     };
 
+    if allowed && chain_result.host_policy_denied {
+        return Err(PyValueError::new_err(
+            "a host-policy denial cannot produce an allow receipt",
+        ));
+    }
     let outcome = if allowed {
         crate::receipt::Outcome::Allow
     } else {
@@ -312,7 +314,7 @@ fn issue_allow_receipt(
         payload.srl_version = version;
         payload.srl_hash = Some(digest);
     }
-    payload.policy_definition_hash = trust.host_policies.get(tool).copied();
+    payload.policy_definition_hash = chain_result.host_policy_hash;
 
     encode_signed_receipt(signer, last_receipt_hash, payload)
 }
@@ -389,7 +391,7 @@ fn issue_deny_receipt(
         payload.srl_version = version;
         payload.srl_hash = Some(digest);
     }
-    payload.policy_definition_hash = trust.host_policies.get(tool).copied();
+    // No evaluated decision accompanies this raw denial: do not claim a ceiling.
 
     encode_signed_receipt(signer, last_receipt_hash, payload)
 }
@@ -650,7 +652,6 @@ impl PyControlPlaneClient {
         let context = TrustContext {
             trusted_roots_hash: authorizer.trusted_roots_hash_bytes(),
             srl_commitment: authorizer.srl_commitment_value(),
-            host_policies: authorizer.host_policy_digests(),
         };
         let mut guard = self.trust.lock().map_err(|_| {
             pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned")

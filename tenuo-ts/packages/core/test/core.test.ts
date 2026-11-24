@@ -976,6 +976,31 @@ describe("toWire", () => {
 });
 
 describe("revocation and receipts", () => {
+  it.each(["/data/reports", "/data/reports/", "/data/./reports/"])(
+    "normalizes host-policy receipts consistently with Python for %s", async (root) => {
+      const tenuo = createTenuo({ root: createTenuo.devRoot() });
+      const allow = {
+        path: under(root, { caseSensitive: true, allowEqual: true }),
+        name: pattern("*.pdf"),
+        id: regex("^[a-z]+$"),
+      };
+      const session = tenuo.session({ allow: { read_file: {} } });
+      const tool = tenuo.tool({ execute: async (args: { path: string; name: string; id: string }) => args.path }, {
+        capability: "read_file", allow,
+      });
+      for (const path of ["/data/reports/q3.pdf", "/etc/passwd"]) {
+        let wire = "";
+        const call = tenuo.withSession(session, () => tool.execute({ path, name: "q3.pdf", id: "report" }, {
+          onReceipt: (receipt: string) => { wire = receipt; },
+        }));
+        if (path === "/etc/passwd") await expect(call).rejects.toThrow();
+        else await call;
+        const receipt = verifyReceipt(wire);
+        expect(receipt.policy_definition_hash).toBe("3a9650ba739a196f3c89002df971134793368dc4406f9264cb85d7b27d6b1386");
+      }
+    },
+  );
+
   it("commits to the revocation list in force at decision time", async () => {
     const ctx = devContext();
     const victim = wrapSession(ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300));

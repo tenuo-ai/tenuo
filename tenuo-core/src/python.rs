@@ -35,7 +35,9 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PySequence, PyTuple};
+use pyo3::types::{
+    PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PySequence, PyString, PyTuple,
+};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -573,8 +575,11 @@ impl PyPattern {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Pattern('{}')", self.inner.pattern)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.pattern)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("Pattern({})", value))
     }
 
     #[getter]
@@ -1009,8 +1014,19 @@ impl PyAll {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        "All(...)".to_string()
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let children = self
+            .inner
+            .constraints
+            .iter()
+            .map(|constraint| {
+                constraint_to_py(py, constraint)?
+                    .bind(py)
+                    .repr()?
+                    .extract::<String>()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(format!("All([{}])", children.join(", ")))
     }
 }
 
@@ -1063,8 +1079,19 @@ impl PyAnyOf {
         validate_child_attenuation(Constraint::Any(self.inner.clone()), child)
     }
 
-    fn __repr__(&self) -> String {
-        "AnyOf(...)".to_string()
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let children = self
+            .inner
+            .constraints
+            .iter()
+            .map(|constraint| {
+                constraint_to_py(py, constraint)?
+                    .bind(py)
+                    .repr()?
+                    .extract::<String>()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(format!("AnyOf([{}])", children.join(", ")))
     }
 }
 
@@ -1113,8 +1140,12 @@ impl PyNot {
         validate_child_attenuation(Constraint::Not(self.inner.clone()), child)
     }
 
-    fn __repr__(&self) -> String {
-        "Not(...)".to_string()
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let child = constraint_to_py(py, &self.inner.constraint)?;
+        Ok(format!(
+            "Not({})",
+            child.bind(py).repr()?.extract::<String>()?
+        ))
     }
 }
 
@@ -1183,7 +1214,10 @@ impl PyRange {
     }
 
     fn __repr__(&self) -> String {
-        format!("Range(min={:?}, max={:?})", self.inner.min, self.inner.max)
+        format!(
+            "Range(min={:?}, max={:?}, min_inclusive={}, max_inclusive={})",
+            self.inner.min, self.inner.max, self.inner.min_inclusive, self.inner.max_inclusive
+        )
     }
 
     #[getter]
@@ -1254,8 +1288,11 @@ impl PyCidr {
         validate_child_attenuation(Constraint::Cidr(self.inner.clone()), child)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Cidr('{}')", self.inner.cidr_string)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.cidr_string)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("Cidr({})", value))
     }
 
     fn __str__(&self) -> String {
@@ -1338,8 +1375,11 @@ impl PyUrlPattern {
         validate_child_attenuation(Constraint::UrlPattern(self.inner.clone()), child)
     }
 
-    fn __repr__(&self) -> String {
-        format!("UrlPattern('{}')", self.inner.pattern)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.pattern)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("UrlPattern({})", value))
     }
 
     fn __str__(&self) -> String {
@@ -1425,8 +1465,11 @@ impl PyCel {
         self.matches(value)
     }
 
-    fn __repr__(&self) -> String {
-        format!("CEL('{}')", self.inner.expression)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.expression)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("CEL({})", value))
     }
 
     #[getter]
@@ -1485,8 +1528,11 @@ impl PyRegex {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Regex('{}')", self.inner.pattern)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.pattern)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("Regex({})", value))
     }
 
     #[getter]
@@ -1676,14 +1722,16 @@ impl PySubpath {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        // Python-style repr with quoted string
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let root = PyString::new(py, &self.inner.root)
+            .repr()?
+            .extract::<String>()?;
         if self.inner.case_sensitive && self.inner.allow_equal {
-            format!("Subpath('{}')", self.inner.root)
+            Ok(format!("Subpath({})", root))
         } else {
-            format!(
-                "Subpath('{}', case_sensitive={}, allow_equal={})",
-                self.inner.root,
+            Ok(format!(
+                "Subpath({}, case_sensitive={}, allow_equal={})",
+                root,
                 if self.inner.case_sensitive {
                     "True"
                 } else {
@@ -1694,7 +1742,7 @@ impl PySubpath {
                 } else {
                     "False"
                 }
-            )
+            ))
         }
     }
 
@@ -4266,6 +4314,16 @@ impl PyWarrant {
         }
     }
 
+    /// Whether the execution policy allows undeclared arguments for this tool.
+    /// Exact entries take precedence over wildcard fallback. Returns None if
+    /// there is no execution policy for the tool; this is not authorization.
+    fn allows_unknown_arguments(&self, tool: &str) -> Option<bool> {
+        self.inner
+            .capabilities()
+            .and_then(|caps| caps.get(tool).or_else(|| caps.get("*")))
+            .map(|constraints| constraints.is_empty() || constraints.allow_unknown())
+    }
+
     /// Optional fields in the signed execution policy or issuable tool's bounds.
     /// Exact execution entries take precedence over the wildcard entry.
     fn optional_fields(&self, tool: &str) -> Vec<String> {
@@ -5089,6 +5147,9 @@ impl PyVerifiedApproval {
 #[derive(Clone)]
 pub struct PyChainVerificationResult {
     pub(crate) inner: RustChainVerificationResult,
+    // Immutable decision-time evidence, never read from a rebound issuer.
+    pub(crate) host_policy_hash: Option<[u8; 32]>,
+    pub(crate) host_policy_denied: bool,
 }
 
 #[pymethods]
@@ -6422,25 +6483,31 @@ impl PyAuthorizer {
         self.srl_commitment
     }
 
-    /// Receipt key 11 per tool, for callers inside the crate.
-    pub(crate) fn host_policy_digests(&self) -> BTreeMap<String, [u8; 32]> {
-        self.host_policies
-            .iter()
-            .map(|(tool, policy)| (tool.clone(), policy.digest()))
-            .collect()
-    }
-
-    /// Apply the tool's host ceiling after the warrant chain has authorized
-    /// the call. No ceiling configured for the tool means no extra gate.
-    fn enforce_host_policy(
+    /// Preserve the evaluated ceiling on both successful and denied decisions.
+    fn finish_authorization(
         &self,
+        py: Python<'_>,
+        inner: RustChainVerificationResult,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
-    ) -> PyResult<()> {
-        match self.host_policies.get(tool) {
-            Some(policy) => policy.check(args).map_err(to_py_err),
-            None => Ok(()),
+    ) -> PyResult<PyChainVerificationResult> {
+        let policy = self.host_policies.get(tool);
+        let mut result = PyChainVerificationResult {
+            inner,
+            host_policy_hash: policy.map(|p| p.digest()),
+            host_policy_denied: false,
+        };
+        if let Some(policy) = policy {
+            if let Err(error) = policy.check(args) {
+                result.host_policy_denied = true;
+                let error = to_py_err(error);
+                error
+                    .value(py)
+                    .setattr("_chain_result", Py::new(py, result)?)?;
+                return Err(error);
+            }
         }
+        Ok(result)
     }
 }
 
@@ -6758,7 +6825,8 @@ impl PyAuthorizer {
             .map(|a| a.inner.clone())
             .collect();
 
-        self.inner
+        let result = self
+            .inner
             .authorize_one(
                 &warrant.inner,
                 tool,
@@ -6767,7 +6835,8 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        self.enforce_host_policy(tool, &rust_args)
+        self.finish_authorization(args.py(), result, tool, &rust_args)
+            .map(|_| ())
     }
 
     /// Alias for `authorize()`. Verifies and authorizes in one call.
@@ -6851,8 +6920,7 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        self.enforce_host_policy(tool, &rust_args)?;
-        Ok(PyChainVerificationResult { inner: result })
+        self.finish_authorization(args.py(), result, tool, &rust_args)
     }
 
     /// Verify a complete delegation chain.
@@ -6901,7 +6969,11 @@ impl PyAuthorizer {
             None => self.inner.verify_chain(&warrants),
         }
         .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        Ok(PyChainVerificationResult {
+            inner: result,
+            host_policy_hash: None,
+            host_policy_denied: false,
+        })
     }
 
     /// Verify chain and authorize an action.
@@ -6981,8 +7053,7 @@ impl PyAuthorizer {
             }
         }
         .map_err(to_py_err)?;
-        self.enforce_host_policy(tool, &rust_args)?;
-        Ok(PyChainVerificationResult { inner: result })
+        self.finish_authorization(args.py(), result, tool, &rust_args)
     }
 
     /// Split-view single-warrant authorization.
@@ -7056,8 +7127,7 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        self.enforce_host_policy(tool, &rust_constraint_args)?;
-        Ok(PyChainVerificationResult { inner: result })
+        self.finish_authorization(constraint_args.py(), result, tool, &rust_constraint_args)
     }
 
     /// Split-view delegation-chain authorization.
@@ -7128,8 +7198,7 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        self.enforce_host_policy(tool, &rust_constraint_args)?;
-        Ok(PyChainVerificationResult { inner: result })
+        self.finish_authorization(constraint_args.py(), result, tool, &rust_constraint_args)
     }
 }
 

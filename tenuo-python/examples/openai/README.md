@@ -18,6 +18,7 @@ python warrant.py       # Tier 2: Cryptographic authorization
 python async_patterns.py  # Async/streaming patterns
 python agents_sdk.py    # Agents SDK integration
 python handoff.py       # Offline handoff check, no API key needed
+python token_budget.py  # Token budgets against a local stand-in, no API key needed
 ```
 
 ## Examples

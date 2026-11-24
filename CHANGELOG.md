@@ -14,7 +14,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TypeScript SDK's `verify(..., { allow })`. Receipts from a `ReceiptIssuer` or
   `ControlPlaneClient` bound to the authorizer carry the policy digest as
   `policy_definition_hash` (key 11), computed the same way as in TypeScript.
-  Tools without a policy behave as before.
+  Tools without a policy behave as before. Policy commitments are captured at
+  decision time, including ceiling denials, rather than looked up when signed.
+- TypeScript host-policy receipt commitments now use the same normalized
+  constraint expressions as Python: normalized path roots, omitted defaults,
+  and compiled aliases. Newly issued hashes can differ from earlier SDKs for
+  noncanonical expressions; existing signed receipts remain verifiable.
+- **`tenuo::aat`: verify Attenuating Agent Tokens in their JWT/JWS encoding**
+  (Rust, behind the `aat-jws` feature). `verify_chain` runs the chain
+  verification algorithm of `draft-niyikiza-oauth-attenuating-agent-tokens-02`
+  Section 8 over a presentation and passes the draft's 229 test vectors on
+  verdict and failing step. Issuing and deriving JWS tokens is not included.
+- **Token budgets for model calls (Python).** A warrant can carry
+  a token budget as a `Range` constraint on an `llm.chat` capability
+  (`tenuo.budget.llm_capability`). `tenuo.budget_http.install()` meters the
+  model calls of every `httpx` / `httpx2` client in the process against the
+  warrant in scope, and `metered_client()` does the same for one client. Calls
+  are authorized before they are sent, output caps are lowered to what is
+  left, and reported usage is counted per warrant and per presented parent.
+  See [Token Budgets](docs/token-budgets.md).
+
+### Changed
+
+- **Delegation accepts two more ways to narrow a tool's arguments.** A child
+  may constrain an argument its parent admits without declaring it (the parent
+  is empty or sets `allow_unknown`). A child that admits no undeclared
+  arguments may leave out one the parent marks optional, and then refuses it.
+  Chains valid before remain valid. Upgrade verifiers before issuing chains
+  that use either form; older verifiers reject them.
 
 ## [0.3.7] - 2026-11-11
 

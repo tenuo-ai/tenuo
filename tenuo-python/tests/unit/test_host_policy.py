@@ -170,9 +170,12 @@ def test_receipts_carry_the_policy_digest_for_allow_and_deny():
     assert allow.policy_definition_hash == auth.host_policy_hash(TOOL).hex()
 
     bad = {**GOOD, "queue": "billing"}
-    deny_wire = issuer.issue_denial_receipt(
-        [warrant], TOOL, bad, int(time.time()), "req-deny", "constraint-violation", _sign(warrant, holder, bad)
-    )
+    with pytest.raises(ConstraintViolation) as caught:
+        auth.check_chain([warrant], TOOL, bad, _sign(warrant, holder, bad))
+    decision = caught.value._chain_result
+    deny_wire = issuer.issue_receipt(decision, TOOL, False, int(time.time()), "req-deny", "constraint-violation")
+    with pytest.raises(ValueError, match="denial cannot produce an allow"):
+        issuer.issue_receipt(decision, TOOL, True, int(time.time()), "forged-allow")
     deny = verify_receipt(deny_wire)
     assert deny.outcome == "deny"
     assert deny.policy_definition_hash == auth.host_policy_hash(TOOL).hex()
@@ -259,3 +262,112 @@ def test_digest_matches_typescript(name):
     auth = Authorizer(trusted_roots=[SigningKey.generate().public_key])
     auth.set_host_policy(name, PYTHON_CEILINGS[name]())
     assert auth.host_policy_hash(name).hex() == PARITY[name]
+
+
+@pytest.mark.parametrize("native_client", [False, True])
+@pytest.mark.parametrize("supplied_tool", [TOOL, "other", "unconfigured"])
+def test_decision_digest_survives_rebinding_and_tool_override(native_client, supplied_tool):
+    root, holder, warrant = _setup()
+    auth = Authorizer(trusted_roots=[root.public_key])
+    auth.set_host_policy(TOOL, _ceiling())
+    decision = auth.authorize_one(warrant, TOOL, GOOD, _sign(warrant, holder, GOOD))
+    other = Authorizer(trusted_roots=[root.public_key])
+    other.set_host_policy(TOOL, {})
+    other.set_host_policy("other", {"x": Exact("different")})
+    issuer = (
+        tenuo_core.ControlPlaneClient(url="http://127.0.0.1:1", api_key="k", authorizer_name="test")
+        if native_client
+        else ReceiptIssuer(SigningKey.generate())
+    )
+    try:
+        issuer.bind_authorizer(other)
+        receipt = verify_receipt(issuer.issue_receipt(decision, supplied_tool, True, int(time.time()), "rebound"))
+        assert receipt.action == TOOL
+        assert receipt.policy_definition_hash == auth.host_policy_hash(TOOL).hex()
+    finally:
+        if native_client:
+            issuer.shutdown(0.1)
+
+
+def test_late_policy_installation_does_not_rewrite_earlier_decision():
+    root, holder, warrant = _setup()
+    auth = Authorizer(trusted_roots=[root.public_key])
+    decision = auth.authorize_one(warrant, TOOL, GOOD, _sign(warrant, holder, GOOD))
+    auth.set_host_policy(TOOL, _ceiling())
+    issuer = ReceiptIssuer(SigningKey.generate())
+    issuer.bind_authorizer(auth)
+    receipt = verify_receipt(issuer.issue_receipt(decision, TOOL, True, int(time.time()), "earlier"))
+    assert receipt.policy_definition_hash is None
+    # A raw denial supplies no evidence that the host ceiling was evaluated.
+    raw = verify_receipt(issuer.issue_denial_receipt([warrant], TOOL, GOOD, int(time.time()), "raw", "denied"))
+    assert raw.policy_definition_hash is None
+
+
+@pytest.mark.parametrize("allowed", [True, False])
+def test_deferred_receipt_keeps_decision_policy_after_client_rebind(allowed):
+    import threading
+    from tenuo.control_plane import ControlPlaneClient
+    from tenuo.receipts import InMemoryReceiptSink
+
+    root, holder, warrant = _setup()
+    auth = Authorizer(trusted_roots=[root.public_key])
+    auth.set_host_policy(TOOL, _ceiling())
+    args = GOOD if allowed else {**GOOD, "queue": "billing"}
+    result = verify_inbound_call(
+        tool_name=TOOL,
+        tool_args=args,
+        warrant=warrant,
+        pop_signature=_sign(warrant, holder, args),
+        authorizer=auth,
+        apply_observe=False,
+    )
+    assert result.allowed is allowed
+    sink = InMemoryReceiptSink()
+    client = ControlPlaneClient(url="http://127.0.0.1:1", api_key="k", authorizer_name="test", receipt_sink=sink)
+    started, release = threading.Event(), threading.Event()
+    inner = client._inner
+
+    class PausedSigner:
+        def issue_receipt(self, *args):
+            started.set()
+            assert release.wait(5), "test did not release deferred signer"
+            return inner.issue_receipt(*args)
+
+    client._receipt_emitter._inner = PausedSigner()
+    try:
+        client.emit_for_enforcement(result, result.chain_result)
+        assert started.wait(5), "decision was not queued"
+        other = Authorizer(trusted_roots=[root.public_key])
+        other.set_host_policy(TOOL, {})
+        client.bind_authorizer(other)
+        release.set()
+        assert client.flush_receipts()
+        assert len(sink.receipts) == 1
+        receipt = verify_receipt(sink.receipts[0])
+        assert receipt.outcome == ("allow" if allowed else "deny")
+        assert receipt.policy_definition_hash == auth.host_policy_hash(TOOL).hex()
+    finally:
+        release.set()
+        client.shutdown(0.1)
+
+
+@pytest.mark.parametrize("root_path", ["/data/reports", "/data/reports/", "/data/./reports/"])
+def test_normalized_path_and_explicit_defaults_match_typescript(root_path):
+    auth = Authorizer(trusted_roots=[SigningKey.generate().public_key])
+    auth.set_host_policy(
+        "paths",
+        {
+            "path": Subpath(root_path, case_sensitive=True, allow_equal=True),
+            "name": Pattern("*.pdf"),
+            "id": Regex("^[a-z]+$"),
+        },
+    )
+    assert auth.host_policy_hash("paths").hex() == PARITY["paths"]
+    auth.set_host_policy(
+        "network",
+        {
+            **PYTHON_CEILINGS["network"](),
+            "url": UrlSafe(allow_schemes=["http", "https"], allow_domains=["api.example.com"]),
+        },
+    )
+    assert auth.host_policy_hash("network").hex() == PARITY["network"]

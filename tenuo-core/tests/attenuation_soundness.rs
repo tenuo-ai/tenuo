@@ -1610,3 +1610,188 @@ fn invalid_empty_all_cannot_grant_an_exact_child() {
     let child = Constraint::All(All::new([Exact::new("safe").into()]));
     assert!(parent.validate_attenuation(&child).is_err());
 }
+
+// ============================================================================
+// Argument maps: which arguments a derived constraint set may add or leave out
+// ============================================================================
+
+fn one_of(values: &[&str]) -> Constraint {
+    Constraint::OneOf(OneOf::new(values.iter().map(|v| v.to_string())))
+}
+
+fn exact(value: &str) -> Constraint {
+    Constraint::Exact(Exact::new(value))
+}
+
+/// A set over fields `a` and `b`. `None` leaves the field out; the flag marks
+/// it optional.
+fn set_of(
+    a: &Option<(Constraint, bool)>,
+    b: &Option<(Constraint, bool)>,
+    allow_unknown: bool,
+) -> ConstraintSet {
+    let mut set = ConstraintSet::new();
+    for (field, entry) in [("a", a), ("b", b)] {
+        match entry {
+            Some((constraint, true)) => set.insert_optional(field, constraint.clone()),
+            Some((constraint, false)) => set.insert(field, constraint.clone()),
+            None => {}
+        }
+    }
+    set.set_allow_unknown(allow_unknown);
+    set
+}
+
+fn args_of(pairs: &[(&str, &str)]) -> HashMap<String, ConstraintValue> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), ConstraintValue::String(v.to_string())))
+        .collect()
+}
+
+/// Every pair of sets from a small pool: whenever the derivation is accepted,
+/// each invocation the child admits is one the parent admits.
+#[test]
+fn exhaustive_constraint_set_attenuation_is_sound() {
+    let mut entries: Vec<Option<(Constraint, bool)>> = vec![None];
+    for constraint in [
+        one_of(&["x", "y"]),
+        exact("x"),
+        Constraint::Wildcard(Wildcard),
+    ] {
+        for optional in [false, true] {
+            entries.push(Some((constraint.clone(), optional)));
+        }
+    }
+    let mut sets = Vec::new();
+    for a in &entries {
+        for b in &entries {
+            for allow_unknown in [false, true] {
+                sets.push(set_of(a, b, allow_unknown));
+            }
+        }
+    }
+    let mut invocations = Vec::new();
+    for a in [None, Some("x"), Some("y"), Some("z")] {
+        for b in [None, Some("x"), Some("y"), Some("z")] {
+            for c in [None, Some("q")] {
+                let pairs: Vec<(&str, &str)> = [("a", a), ("b", b), ("c", c)]
+                    .into_iter()
+                    .filter_map(|(k, v)| v.map(|v| (k, v)))
+                    .collect();
+                invocations.push(args_of(&pairs));
+            }
+        }
+    }
+
+    let mut accepted = 0;
+    for parent in &sets {
+        for child in &sets {
+            if parent.validate_attenuation(child).is_err() {
+                continue;
+            }
+            accepted += 1;
+            for args in &invocations {
+                assert!(
+                    child.matches(args).is_err() || parent.matches(args).is_ok(),
+                    "child admits {args:?} and parent refuses it\nparent {parent:?}\nchild {child:?}"
+                );
+            }
+        }
+    }
+    assert!(accepted > 900, "{accepted} derivations accepted");
+}
+
+/// A parent that admits undeclared arguments lets a child constrain one.
+#[test]
+fn a_child_may_name_an_argument_the_parent_leaves_undeclared() {
+    let named = Some((one_of(&["x", "y"]), false));
+    let added = Some((exact("x"), false));
+    let parent = set_of(&named, &None, true);
+    for child_allows_unknown in [false, true] {
+        parent
+            .validate_attenuation(&set_of(&named, &added, child_allows_unknown))
+            .unwrap();
+    }
+    // A parent that admits none refuses the new argument outright.
+    assert!(set_of(&named, &None, false)
+        .validate_attenuation(&set_of(&named, &added, false))
+        .is_err());
+}
+
+/// A child that admits no undeclared arguments may leave out one the parent
+/// marks optional: the child then refuses that argument.
+#[test]
+fn a_closed_child_may_leave_out_an_optional_argument() {
+    let kept = Some((one_of(&["x", "y"]), false));
+    let optional = Some((exact("x"), true));
+    let required = Some((exact("x"), false));
+
+    let parent = set_of(&kept, &optional, false);
+    let child = set_of(&kept, &None, false);
+    parent.validate_attenuation(&child).unwrap();
+    assert!(child.matches(&args_of(&[("a", "x")])).is_ok());
+    assert!(child.matches(&args_of(&[("a", "x"), ("b", "x")])).is_err());
+
+    // Not when the parent requires it.
+    assert!(set_of(&kept, &required, false)
+        .validate_attenuation(&child)
+        .is_err());
+    // Not when the child admits undeclared arguments, by its flag or by being
+    // empty: the argument would come back with any value.
+    let open_parent = set_of(&kept, &optional, true);
+    assert!(open_parent
+        .validate_attenuation(&set_of(&kept, &None, true))
+        .is_err());
+    assert!(set_of(&None, &optional, false)
+        .validate_attenuation(&ConstraintSet::new())
+        .is_err());
+    open_parent.validate_attenuation(&child).unwrap();
+}
+
+/// An optional argument whose constraint this build cannot evaluate refuses
+/// every invocation. Leaving it out must not turn that into authority.
+#[test]
+fn an_unsupported_optional_argument_cannot_be_left_out() {
+    let kept = Some((one_of(&["x", "y"]), false));
+    let unsupported = Some((
+        Constraint::Unknown {
+            type_id: 200,
+            payload: vec![0xf6],
+        },
+        true,
+    ));
+    let parent = set_of(&kept, &unsupported, false);
+    assert!(parent.matches(&args_of(&[("a", "x")])).is_err());
+    assert!(parent
+        .validate_attenuation(&set_of(&kept, &None, false))
+        .is_err());
+}
+
+/// An empty set admits every argument, so a child of one may keep admitting
+/// undeclared arguments while it constrains others.
+#[test]
+fn a_child_of_an_empty_set_may_still_admit_undeclared_arguments() {
+    let named = Some((exact("x"), false));
+    ConstraintSet::new()
+        .validate_attenuation(&set_of(&named, &None, true))
+        .unwrap();
+    // A non-empty parent without the flag still refuses it.
+    assert!(set_of(&named, &None, false)
+        .validate_attenuation(&set_of(&named, &None, true))
+        .is_err());
+}
+
+/// An optional argument the child keeps is held to the parent's value
+/// constraint like any other.
+#[test]
+fn a_retained_optional_argument_must_still_narrow() {
+    let narrow = Some((exact("x"), true));
+    let wide = Some((Constraint::Wildcard(Wildcard), true));
+    assert!(set_of(&narrow, &None, false)
+        .validate_attenuation(&set_of(&wide, &None, false))
+        .is_err());
+    set_of(&wide, &None, false)
+        .validate_attenuation(&set_of(&narrow, &None, false))
+        .unwrap();
+}

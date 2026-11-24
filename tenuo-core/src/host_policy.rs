@@ -1,4 +1,4 @@
-//! Host policy ceilings for Python enforcement points.
+//! Shared host policy ceilings and normalized receipt commitments.
 //!
 //! A host policy is a per-tool set of argument constraints that an enforcement
 //! point applies on top of any warrant it accepts. A call must satisfy both the
@@ -8,7 +8,8 @@
 //! The policy is committed to in receipt key 11 (`policy_definition_hash`) as
 //! `policy_commitment_digest(canonical_policy_bytes(expr))`, where `expr` is the
 //! per-field constraint-expression object the TypeScript SDK accepts
-//! (`{ field: { kind: ..., ... } }`). Using the same expression shape means the
+//! (`{ field: { kind: ..., ... } }`), reconstructed from compiled constraints.
+//! Both SDKs use this normalization before hashing, so the
 //! same ceiling produces the same digest from either SDK.
 //!
 //! Several expression spellings compile to the same constraint (`max(10)` and
@@ -81,8 +82,8 @@ impl HostPolicy {
 /// `wildcard`, `pattern`, `regex`, `exact`, `oneOf`, `notOneOf`,
 /// `range` (never `min`/`max`), `cidr`, `urlPattern`, `under` (for Subpath),
 /// `urlSafe`, `shlex`, `contains`, `subset`, `anyOf`, `all`, `not`, `cel`.
-/// Options equal to their defaults are omitted, as the TypeScript helpers omit
-/// options that were not passed.
+/// Options equal to their defaults are omitted in both SDKs, whether supplied
+/// explicitly or implicitly. Path roots use the compiled, normalized form.
 pub fn constraint_policy_expr(constraint: &Constraint) -> Result<Value, String> {
     Ok(match constraint {
         Constraint::Wildcard(_) => json!({ "kind": "wildcard" }),

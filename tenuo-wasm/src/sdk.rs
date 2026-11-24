@@ -2286,8 +2286,20 @@ fn policy_digest(tool_allow: &JsValue) -> Option<[u8; 32]> {
     if raw.is_null() {
         return None;
     }
-    let bytes = tenuo::canonical_policy_bytes(&raw)?;
-    Some(tenuo::policy_commitment_digest(&bytes))
+    normalized_policy_digest(&raw)
+}
+
+// Compile first so path normalization, defaults and aliases match Python.
+fn normalized_policy_digest(raw: &serde_json::Value) -> Option<[u8; 32]> {
+    let fields = raw
+        .as_object()?
+        .iter()
+        .map(|(name, expr)| constraint_from_expr(expr).map(|constraint| (name.clone(), constraint)))
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+        .ok()?;
+    tenuo::host_policy::HostPolicy::new(fields)
+        .ok()
+        .map(|p| p.digest())
 }
 
 pub(crate) fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
@@ -2532,9 +2544,9 @@ fn constraint_view(
 ) -> HashMap<String, ConstraintValue> {
     args.iter()
         .filter_map(|(key, value)| match value {
-            _ if chain.iter().any(|warrant| {
-                warrant.optional_fields(tool).any(|field| field == key)
-            }) =>
+            _ if chain
+                .iter()
+                .any(|warrant| warrant.optional_fields(tool).any(|field| field == key)) =>
             {
                 Some((key.clone(), value.clone()))
             }
@@ -2823,6 +2835,43 @@ pub(crate) fn to_js_value<T: Serialize>(dto: &T) -> JsValue {
 mod constraint_expr_tests {
     use super::constraint_from_expr;
     use serde_json::json;
+
+    #[test]
+    fn normalized_host_policy_matches_python_fixtures() {
+        for root in ["/data/reports", "/data/reports/", "/data/./reports/"] {
+            for explicit in [false, true] {
+                let mut path = json!({"kind": "under", "root": root});
+                if explicit {
+                    path["caseSensitive"] = json!(true);
+                    path["allowEqual"] = json!(true);
+                }
+                let digest = super::normalized_policy_digest(&json!({
+                    "path": path, "name": {"kind": "pattern", "pattern": "*.pdf"},
+                    "id": {"kind": "regex", "source": "^[a-z]+$"}
+                }))
+                .unwrap();
+                assert_eq!(
+                    hex::encode(digest),
+                    "3a9650ba739a196f3c89002df971134793368dc4406f9264cb85d7b27d6b1386"
+                );
+            }
+        }
+        for explicit in [false, true] {
+            let mut url = json!({"kind": "urlSafe", "allowDomains": ["api.example.com"]});
+            if explicit {
+                url["schemes"] = json!(["http", "https"]);
+            }
+            let digest = super::normalized_policy_digest(&json!({
+                "url": url, "host": {"kind": "cidr", "network": "10.0.0.0/8"},
+                "endpoint": {"kind": "urlPattern", "pattern": "https://api.example.com/*"}
+            }))
+            .unwrap();
+            assert_eq!(
+                hex::encode(digest),
+                "140b575406ae9d437fa5790210b1dd9de5a1356a45eb1c0b588e191e9b885017"
+            );
+        }
+    }
 
     #[test]
     fn unknown_key_on_a_known_kind_is_rejected() {

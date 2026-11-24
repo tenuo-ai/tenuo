@@ -861,13 +861,20 @@ authorizer.set_host_policy("route_ticket", {
 - A policy cannot be replaced once set. Receipts signed by a `ReceiptIssuer` or
   `ControlPlaneClient` bound to this authorizer carry its digest as
   `policy_definition_hash`, so each receipt names the policy its decision was
-  made under. Construct a new `Authorizer` to change it.
+  made under. The digest is captured at authorization time, including host-policy
+  denials, and survives deferred signing or rebinding. Raw denial receipts without
+  an evaluated decision omit it. Construct a new `Authorizer` to change a ceiling.
 - The digest is computed over the same constraint-expression form the
   TypeScript SDK uses, so the same policy has the same digest in both SDKs.
   Constraints that form cannot fully describe are rejected: `UrlSafe` with
   options beyond `schemes`, `allow_domains` and `deny_domains`, non-string
   `OneOf` / `NotOneOf` values, and CEL constraints derived from a parent.
   Numeric `Range` bounds and `min`/`max` spellings are written as `range`.
+  Both SDKs normalize path roots and omit explicit default options before hashing;
+  aliases such as `email` are encoded as their compiled constraint (`pattern`).
+  This changes newly issued TypeScript policy commitments for noncanonical
+  spellings. Existing signed receipts remain verifiable; reproducing an older
+  commitment requires the original expression and encoding used by that SDK.
 
 | Method | Description |
 |--------|-------------|
