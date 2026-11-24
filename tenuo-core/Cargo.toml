@@ -37,6 +37,9 @@ data-plane = []
 
 # Framework-independent Rust SDK (default-off; no extra dependencies)
 sdk = []
+# Attenuating Agent Tokens in their JWT/JWS encoding: chain verification per
+# draft-niyikiza-oauth-attenuating-agent-tokens-02 Section 8. No extra dependencies.
+aat-jws = []
 # Guarded file open. Subpath stays lexical; this feature pins a local jail
 # and opens the authorized argument through path_jail. Unix only at runtime.
 filesystem = ["sdk", "dep:path_jail"]
@@ -123,7 +126,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Network handling
 ipnetwork = "0.21"
-url = "2.5"
+url = "2.5.9"
 
 # HTTP client (optional - only needed for demo binaries)
 reqwest = { version = "0.13", features = ["blocking", "json"], optional = true }
@@ -197,6 +200,11 @@ ci_group = "0.1"
 name = "holder_lifecycle_vectors"
 path = "tests/holder_lifecycle_vectors.rs"
 required-features = ["server"]
+
+[[test]]
+name = "aat_jws_vectors"
+path = "tests/aat_jws_vectors.rs"
+required-features = ["aat-jws"]
 
 [[test]]
 name = "filesystem_guard"
