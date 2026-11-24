@@ -28,7 +28,7 @@ const NAMED: &[&str] = &[
 
 /// The engine's constraint for the JSON form, with none of the codec's rules
 /// in between: `not_one_of`, `all` and `any` are the engine's own.
-fn raw_engine(constraint: &Json) -> engine::Constraint {
+pub(super) fn raw_engine(constraint: &Json) -> engine::Constraint {
     use engine::Constraint as E;
     let object = constraint.as_obj().expect("constraint object");
     let values = |name: &str| -> Vec<engine::ConstraintValue> {
@@ -400,7 +400,7 @@ fn the_suite_constraints_agree_too() {
 }
 
 /// The `tools` object of a token's `attenuating_agent_token` entry.
-fn tools_of(payload_json: &str) -> Option<Json> {
+pub(super) fn tools_of(payload_json: &str) -> Option<Json> {
     let claims = parse_unique(payload_json)?;
     let entry = claims
         .as_obj()?
