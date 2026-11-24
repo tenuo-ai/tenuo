@@ -41,6 +41,8 @@ describe("legacy WASM builder fails closed", () => {
     ["out-of-range port", { url_safe: { allow_ports: [70000] } }],
     ["two kinds at once", { pattern: "docs/*", exact: "x" }],
     ["a bare string", "0-1000"],
+    ["non-finite upper range bound", { type: "Range", min: 0, max: Infinity }],
+    ["NaN lower range bound", { type: "Range", min: NaN, max: 10 }],
     ["typed kind with a shorthand sibling", { type: "Range", max: 10, pattern: "*" }],
     ["unknown typed option", { type: "Range", max: 10, minExclusive: true }],
     ["non-string type", { type: 3, pattern: "*" }],
@@ -88,6 +90,12 @@ describe("legacy WASM builder fails closed", () => {
     expect(wasm.decode_warrant(child.warrant_b64)).toMatchObject({ depth: 1, is_terminal: true });
     expect(wasm.check_chain_access([parent.warrant_b64, child.warrant_b64], "transfer", {}, parent.issuer_public_key_hex, true).authorized).toBe(true);
     expect(wasm.create_warrant_from_config({ ...config, max_depth: 4 }).error).toBeTruthy();
+  });
+
+  it.each(["max_depth", "signing_key_hex", "holder_key_hex"])("rejects non-finite %s instead of treating it as absent", (field) => {
+    const result = wasm.create_warrant_from_config({ tools: { read: {} }, ttl: 60, [field]: NaN });
+    expect(result.error).toMatch(/non-finite/);
+    expect(result.warrant_b64).toBe("");
   });
 
   it("names the field and the reason for an inverted range", () => {

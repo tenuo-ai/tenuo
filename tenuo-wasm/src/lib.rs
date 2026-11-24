@@ -1799,8 +1799,11 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         min_approvals: Option<u32>,
     }
 
-    let config: BuilderConfig = match serde_wasm_bindgen::from_value::<JsonValue>(config_json)
-        .map_err(|e| e.to_string())
+    // Snapshot through the strict JS value reader before JSON deserialization:
+    // serde_json alone turns non-finite numbers into null, which could erase
+    // an optional depth limit, key, or range bound.
+    let config: BuilderConfig = match sdk::js_to_args(&config_json)
+        .and_then(|value| serde_json::to_value(value).map_err(|e| e.to_string()))
         .and_then(|value| serde_json::from_value(value).map_err(|e| e.to_string())) {
         Ok(c) => c,
         Err(e) => {
