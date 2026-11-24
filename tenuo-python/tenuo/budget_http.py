@@ -139,6 +139,8 @@ class MeterEvent:
             :meth:`tenuo.budget.MeteredCall.settle`).
         url: The endpoint called, without query string.
         max_tokens: The output cap the request was sent with, when one was set.
+        request_id: The provider's id for the request (its ``x-request-id``
+            or ``request-id`` response header), when it sent one.
     """
 
     timestamp: float
@@ -150,6 +152,7 @@ class MeterEvent:
     usage: Optional[Dict[str, Any]] = None
     url: str = ""
     max_tokens: Optional[int] = None
+    request_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +200,10 @@ class _Dialect:
     def prepare_stream(self, body: Dict[str, Any]) -> bool:
         """Make a streamed request report usage. True if an extra chunk must be hidden."""
         return False
+
+    def uncountable(self, body: Mapping[str, Any]) -> Optional[str]:
+        """Why this request's tokens could not be counted, when its response will not report them."""
+        return None
 
     def response_usage(self, payload: Any) -> Any:
         return payload.get("usage") if isinstance(payload, Mapping) else None
@@ -260,6 +267,13 @@ class _OpenAICompletions(_OpenAIChat):
 class _OpenAIResponses(_Dialect):
     name = "openai.responses"
     output_params = ("max_output_tokens",)
+
+    def uncountable(self, body: Mapping[str, Any]) -> Optional[str]:
+        if body.get("background") is True:
+            # The response returns before anything is generated; usage comes
+            # later, on a request this meter does not settle from.
+            return "a background response reports its usage later, where it cannot be counted"
+        return None
 
     def event_usage(self, state: Dict[str, Any], event: Any) -> None:
         # Usage arrives inside the closing event's response object.
@@ -501,13 +515,14 @@ class _StreamTap:
 
 def _send_event(callback: Optional[Callable[[MeterEvent], None]], *, decision: str, tool: str, model: Optional[str],
                 reason: str, warrant_id: Optional[str], request: Any, usage: Optional[Dict[str, Any]] = None,
-                max_tokens: Optional[int] = None) -> None:
+                max_tokens: Optional[int] = None, request_id: Optional[str] = None) -> None:
     """Hand one event to the audit callback; a callback that raises does not change the outcome."""
     if callback is None:
         return
     event = MeterEvent(
         timestamp=time.time(), decision=decision, tool_name=tool, model=model, reason=reason,
         warrant_id=warrant_id, usage=usage, url=str(request.url.copy_with(query=None)), max_tokens=max_tokens,
+        request_id=request_id,
     )
     try:
         callback(event)
@@ -541,6 +556,7 @@ class _Plan:
     call: Optional[MeteredCall] = None
     dialect: Optional[_Dialect] = None
     hide_usage: bool = False
+    request_id: Optional[str] = None
     done: bool = field(default=False, repr=False)
 
 
@@ -603,8 +619,15 @@ class _Core:
                 "tenuo: the request body is not JSON, so its tokens cannot be counted under a token budget.",
             ))
 
-        requested, param = dialect.read_cap(body, self._default_param(dialect))
         model = dialect.model(body, path)
+        if not monitor:
+            uncountable = dialect.uncountable(body)
+            if uncountable is not None:
+                return _Plan(request, refusal=self._refuse(
+                    request, dialect, UNMETERED_CODE,
+                    f"tenuo: this request is refused under a token budget: {uncountable}.", model,
+                ))
+        requested, param = dialect.read_cap(body, self._default_param(dialect))
         streaming = dialect.wants_stream(body, path)
         view = dict(dialect.view(body))
         view["model"] = model
@@ -713,7 +736,13 @@ class _Core:
             # The reservation stays counted, which errs toward the budget.
             logger.warning("Token usage could not be recorded", exc_info=True)
             return
-        self._emit("ALLOW", plan.call.model, "model call metered", plan.request, record, plan.call.max_output)
+        self._emit("ALLOW", plan.call.model, "model call metered", plan.request, record, plan.call.max_output,
+                   request_id=plan.request_id)
+
+    @staticmethod
+    def note_response(plan: _Plan, response: Any) -> None:
+        """Keep the provider's id for the request, for the usage record."""
+        plan.request_id = response.headers.get("x-request-id") or response.headers.get("request-id")
 
     def usage_from_body(self, plan: _Plan, body: bytes) -> Any:
         try:
@@ -738,9 +767,11 @@ class _Core:
         return headers
 
     def _emit(self, decision: str, model: Optional[str], reason: str, request: Any,
-              usage: Optional[Dict[str, Any]], max_tokens: Optional[int] = None) -> None:
+              usage: Optional[Dict[str, Any]], max_tokens: Optional[int] = None, *,
+              request_id: Optional[str] = None) -> None:
         _send_event(self.audit_callback, decision=decision, tool=self.meter.tool, model=model, reason=reason,
-                    warrant_id=self.warrant_id, request=request, usage=usage, max_tokens=max_tokens)
+                    warrant_id=self.warrant_id, request=request, usage=usage, max_tokens=max_tokens,
+                    request_id=request_id)
 
 
 # ---------------------------------------------------------------------------
@@ -889,6 +920,7 @@ def _make(http: Any) -> SimpleNamespace:
         except BaseException as e:
             core.failed(plan, e)
             raise
+        core.note_response(plan, response)
         if response.status_code >= 300:
             core.release(plan)  # an error or a redirect: nothing was generated by this request
             return response
@@ -937,6 +969,7 @@ def _make(http: Any) -> SimpleNamespace:
         except BaseException as e:
             await _off_loop(core, core.failed, plan, e)
             raise
+        core.note_response(plan, response)
         if response.status_code >= 300:
             await _off_loop(core, core.release, plan)
             return response

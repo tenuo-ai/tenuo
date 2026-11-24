@@ -1227,3 +1227,63 @@ class TestRefusalEventsAndClientSettings:
         with httpx.Client(transport=shared) as http:
             assert http.post(url, json=body).status_code == 200
         assert used(meter, warrant) == 3 * (INPUT + 100)
+
+
+class TestBackgroundAndRequestIds:
+    RESPONSES = "https://provider.test/v1/responses"
+
+    def test_a_background_response_is_refused_under_a_budget(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        events, seen = [], []
+        http, meter = client_for(keys, warrant, lambda r: (seen.append(r), httpx.Response(200, json={"status": "queued"}))[1],
+                                 events=events)
+        refused = http.post(self.RESPONSES, json={"model": MODEL, "input": "hello", "background": True})
+        assert refused.status_code == 403 and refused.json()["error"]["code"] == "unmetered_endpoint"
+        assert "background" in refused.json()["error"]["message"] and refused.headers["x-tenuo-denial"] == "unmetered_endpoint"
+        assert not seen and used(meter, warrant) == 0
+        assert [(e.decision, e.model) for e in events] == [("DENY", MODEL)]
+        # background=False is an ordinary request.
+        assert http.post(self.RESPONSES, json={"model": MODEL, "input": "hello", "background": False}).status_code == 200
+
+    def test_only_watching_lets_a_background_response_through(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        meter = TokenMeter(enforce=False)
+        http = metered_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"status": "queued"})),
+                              warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key],
+                              budget_store=meter)
+        assert http.post(self.RESPONSES, json={"model": MODEL, "input": "hello", "background": True}).status_code == 200
+
+    @pytest.mark.parametrize("header", ["x-request-id", "request-id"])
+    def test_the_providers_request_id_is_in_the_usage_event(self, keys, header):
+        warrant = mint(keys, total_tokens=5000)
+        events = []
+        usage = {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}
+        http, _ = client_for(keys, warrant, lambda r: httpx.Response(200, headers={header: "req_abc123"}, json={"usage": usage}),
+                             events=events)
+        assert chat(http).status_code == 200
+        assert events[0].decision == "ALLOW" and events[0].request_id == "req_abc123"
+
+    def test_a_stream_and_a_call_without_an_id(self, keys):
+        warrant = mint(keys, total_tokens=5000)
+        events = []
+        chunks = sse([{"choices": [{"delta": {"content": "hi"}}]},
+                      {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}}])
+        answers = iter([
+            httpx.Response(200, headers={"content-type": "text/event-stream", "x-request-id": "req_stream"}, content=chunks),
+            httpx.Response(200, json={"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}),
+        ])
+        http, _ = client_for(keys, warrant, lambda r: next(answers), events=events)
+        with http.stream("POST", CHAT, json={"model": MODEL, "messages": MESSAGES, "stream": True}) as streamed:
+            streamed.read()
+        assert chat(http).status_code == 200
+        assert [e.request_id for e in events] == ["req_stream", None]
+
+    async def test_async_calls_carry_the_request_id_too(self, keys):
+        warrant = mint(keys, total_tokens=5000)
+        events = []
+        usage = {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}
+        http = metered_async_client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, headers={"x-request-id": "req_async"}, json={"usage": usage})),
+            warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key], audit_callback=events.append)
+        assert (await http.post(CHAT, json={"model": MODEL, "messages": MESSAGES})).status_code == 200
+        assert events[0].request_id == "req_async"

@@ -53,7 +53,7 @@ import threading
 import time
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Union, runtime_checkable
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
 
 logger = logging.getLogger("tenuo.budget")
 
@@ -408,19 +408,83 @@ class BudgetStore:
 _INPUT_KEYS = ("messages", "input", "instructions", "tools", "functions", "response_format", "text")
 
 
+# What one image is reserved at, whatever its size in bytes: providers bill an
+# image by its dimensions, typically a few hundred to a couple of thousand tokens.
+IMAGE_TOKEN_ESTIMATE = 1600
+# Inline audio is reserved by its length: one token per this many base64 characters.
+AUDIO_CHARS_PER_TOKEN = 1000
+
+_IMAGE_PARTS = {"image_url": ("image_url",), "input_image": ("image_url", "file_id"), "image": ("source",)}
+_BLOB_KEYS = ("inlineData", "inline_data", "fileData", "file_data")
+
+
+def _audio_tokens(data: Any) -> int:
+    return max(1, math.ceil(len(data) / AUDIO_CHARS_PER_TOKEN)) if isinstance(data, str) else 1
+
+
+def _data_url_tokens(text: str) -> Optional[int]:
+    head = text[:11].lower()
+    if head.startswith("data:image/"):
+        return IMAGE_TOKEN_ESTIMATE
+    if head.startswith("data:audio/"):
+        return _audio_tokens(text)
+    return None
+
+
+def _split_media(node: Any) -> Tuple[Any, int]:
+    """A prompt without its image and audio parts, and the tokens to reserve for them.
+
+    Their bytes say little about what they cost: a picture sent inline is
+    megabytes of base64 and is billed as about a thousand tokens.
+    """
+    if isinstance(node, str):
+        tokens = _data_url_tokens(node)
+        return ("", tokens) if tokens is not None else (node, 0)
+    if isinstance(node, Mapping):
+        kind = node.get("type")
+        if isinstance(kind, str):
+            if any(key in node for key in _IMAGE_PARTS.get(kind, ())):
+                return {"type": kind}, IMAGE_TOKEN_ESTIMATE
+            if kind == "input_audio":
+                audio = node.get("input_audio")
+                data = audio.get("data") if isinstance(audio, Mapping) else node.get("data")
+                return {"type": kind}, _audio_tokens(data)
+        kept: Dict[str, Any] = {}
+        total = 0
+        for key, value in node.items():
+            if key in _BLOB_KEYS and isinstance(value, Mapping):
+                mime = str(value.get("mimeType") or value.get("mime_type") or "").lower()
+                if mime.startswith("image/"):
+                    total += IMAGE_TOKEN_ESTIMATE
+                    continue
+                if mime.startswith("audio/") and isinstance(value.get("data"), str):
+                    total += _audio_tokens(value["data"])
+                    continue
+            kept[key], tokens = _split_media(value)
+            total += tokens
+        return kept, total
+    if isinstance(node, (list, tuple)):
+        items = [_split_media(item) for item in node]
+        return [item for item, _ in items], sum(tokens for _, tokens in items)
+    return node, 0
+
+
 def estimate_input_tokens(request: Mapping[str, Any]) -> int:
     """Rough upper estimate of a request's input tokens, without a tokenizer.
 
     One token per three bytes of the JSON form of the prompt fields, which is
-    on the high side for prose. It is only used to reserve before the call; the
-    store is corrected to the provider's own count afterwards. Pass a tokenizer
-    based function as ``TokenMeter(input_estimator=...)`` for a closer figure.
+    on the high side for prose. An image counts as ``IMAGE_TOKEN_ESTIMATE``
+    whether it is inline or linked, and inline audio by its length. It is only
+    used to reserve before the call; the store is corrected to the provider's
+    own count afterwards. Pass a tokenizer based function as
+    ``TokenMeter(input_estimator=...)`` for a closer figure.
     """
     parts = {k: request[k] for k in _INPUT_KEYS if request.get(k) is not None}
     if not parts:
         return 0
-    data = json.dumps(parts, default=str, ensure_ascii=False)
-    return math.ceil(len(data.encode("utf-8")) / 3) + 16
+    text, media = _split_media(parts)
+    data = json.dumps(text, default=str, ensure_ascii=False)
+    return math.ceil(len(data.encode("utf-8")) / 3) + 16 + media
 
 
 def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
@@ -626,6 +690,33 @@ class TokenMeter:
                 )
             )
         return out
+
+    def status(self, warrant: Any, chain: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
+        """Where each warrant a call would spend from stands, root first.
+
+        One entry per warrant: ``warrant_id``, ``used``, and for a warrant
+        with a total, ``limit`` and ``remaining``. ``used`` includes the
+        reservations of calls still running.
+        """
+        levels = self.levels(warrant, chain)
+        used = self.store.used(*[lv.warrant_id for lv in levels])
+        out = []
+        for lv in levels:
+            lv.used = used.get(lv.warrant_id, 0)
+            entry = lv.snapshot()
+            if lv.limit is not None:
+                entry["remaining"] = max(0, lv.limit - lv.used)
+            out.append(entry)
+        return out
+
+    def remaining(self, warrant: Any, chain: Optional[Sequence[Any]] = None) -> Optional[int]:
+        """Tokens left before a call under this warrant is refused.
+
+        The least room of any warrant in the chain, or None when none of them
+        has a total.
+        """
+        rooms = [entry["remaining"] for entry in self.status(warrant, chain) if "remaining" in entry]
+        return min(rooms) if rooms else None
 
     def _constraints(self, warrant: Any) -> Dict[str, Any]:
         # As the warrant check does: the tool's own capability, else the wildcard.

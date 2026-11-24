@@ -535,3 +535,68 @@ class TestMeter:
         assert isinstance(TokenMeter.coerce(str(tmp_path / "b.db")), TokenMeter)
         with pytest.raises(TypeError):
             TokenMeter.coerce(42)
+
+
+class TestMediaEstimate:
+    BLOB = "A" * 300_000  # a picture or a clip, as base64
+    TEXT = {"type": "text", "text": "what is this?"}
+
+    def plain(self):
+        return estimate_input_tokens({"messages": [{"role": "user", "content": [self.TEXT]}]})
+
+    @pytest.mark.parametrize("part", [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + BLOB}},
+        {"type": "image_url", "image_url": {"url": "https://example.test/cat.png"}},
+        {"type": "input_image", "image_url": "data:image/jpeg;base64," + BLOB},
+        {"type": "input_image", "file_id": "file_123"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": BLOB}},
+        {"inlineData": {"mimeType": "image/png", "data": BLOB}},
+        {"inline_data": {"mime_type": "image/png", "data": BLOB}},
+        {"fileData": {"mimeType": "image/png", "fileUri": "gs://bucket/cat.png"}},
+    ])
+    def test_an_image_is_reserved_at_one_figure_whatever_its_bytes(self, part):
+        from tenuo.budget import IMAGE_TOKEN_ESTIMATE
+
+        estimate = estimate_input_tokens({"messages": [{"role": "user", "content": [self.TEXT, part]}]})
+        assert IMAGE_TOKEN_ESTIMATE <= estimate <= IMAGE_TOKEN_ESTIMATE + self.plain() + 40
+
+    @pytest.mark.parametrize("part", [
+        {"type": "input_audio", "input_audio": {"data": BLOB, "format": "wav"}},
+        {"inlineData": {"mimeType": "audio/mp3", "data": BLOB}},
+    ])
+    def test_inline_audio_is_reserved_by_its_length(self, part):
+        estimate = estimate_input_tokens({"messages": [{"role": "user", "content": [self.TEXT, part]}]})
+        assert 300 <= estimate - self.plain() <= 340
+
+    def test_text_and_documents_are_still_estimated_from_their_bytes(self):
+        text = {"messages": [{"role": "user", "content": "x" * 3000}]}
+        assert 1000 <= estimate_input_tokens(text) <= 1040
+        # A word that only looks like a part type does not make its neighbours free.
+        tool_call = {"messages": [{"role": "assistant", "content": [{"type": "tool_use", "input": {"type": "image", "note": "y" * 3000}}]}]}
+        assert estimate_input_tokens(tool_call) > 1000
+        document = {"messages": [{"role": "user", "content": [
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": self.BLOB}}]}]}
+        assert estimate_input_tokens(document) > 100_000
+
+
+class TestStatus:
+    def test_status_and_remaining_follow_the_chain(self, keys):
+        root = mint_root(keys, total_tokens=5000)
+        worker = grant(root, keys, total_tokens=2000)
+        meter = TokenMeter()
+        assert meter.remaining(root) == 5000 and meter.remaining(worker, [root]) == 2000
+        meter.store.add({root.id: 1200, worker.id: 1200})
+        assert meter.status(worker, [root]) == [
+            {"warrant_id": root.id, "used": 1200, "limit": 5000, "remaining": 3800, "delegated_from": True},
+            {"warrant_id": worker.id, "used": 1200, "limit": 2000, "remaining": 800},
+        ]
+        meter.store.add({root.id: 3500})  # another delegate spends from the parent
+        assert meter.remaining(worker, [root]) == 300
+        meter.store.add({root.id: 900})
+        assert meter.remaining(worker, [root]) == 0
+
+    def test_a_warrant_without_a_total_has_no_remaining_figure(self, keys):
+        warrant = (Warrant.mint_builder().capability("llm.chat", {})
+                   .holder(keys.lead.public_key).ttl(600).mint(keys.issuer))
+        meter = TokenMeter()
+        assert meter.remaining(warrant) is None and "remaining" not in meter.status(warrant)[0]

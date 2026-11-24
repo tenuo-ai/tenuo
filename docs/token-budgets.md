@@ -131,7 +131,7 @@ A refused call is answered locally with HTTP 403 in the provider's own error sha
 |------|---------|
 | `token_budget_exceeded` | A budget in the chain is spent |
 | `model_call_denied` | The warrant refuses for another reason (model, per-call cap, expiry, no warrant in scope) |
-| `unmetered_endpoint` | A `POST` to a path the meter does not recognize |
+| `unmetered_endpoint` | A `POST` the meter cannot count: an unrecognized path, a body that is not JSON, or a Responses request with `background=true` |
 
 ```python
 from tenuo.budget_http import is_budget_error
@@ -158,7 +158,18 @@ def on_event(event):
 tenuo.budget_http.install(..., audit_callback=on_event)
 ```
 
-`event.usage` holds `input_tokens`, `output_tokens`, `total_tokens`, and `budget`: the running total and limit of each warrant the call spent from.
+`event.usage` holds `input_tokens`, `output_tokens`, `total_tokens`, and `budget`: the running total and limit of each warrant the call spent from. `event.request_id` is the provider's id for the request, when it sent one, so a charge can be matched to the provider's own records.
+
+To ask where a budget stands at any time:
+
+```python
+meter = tenuo.budget_http.install(...)
+
+meter.remaining(warrant)   # tokens left before a call is refused, or None without a total
+meter.status(worker, [warrant])
+# [{"warrant_id": ..., "used": 1200, "limit": 5000, "remaining": 3800, "delegated_from": True},
+#  {"warrant_id": ..., "used": 1200, "limit": 2000, "remaining": 800}]
+```
 
 To record usage without refusing or capping anything, pass a meter with `enforce=False`:
 
@@ -196,6 +207,8 @@ On a metered host, `GET` requests and token-counting endpoints pass through. Any
 
 A total holds only where every call passes a meter on the same store.
 
+The default store counts in memory: the count is gone when the process exits, so a warrant that outlives the process starts again from zero. Use a file or a shared backend for any budget that has to hold across restarts.
+
 With a store that can wait on another writer (anything but the in-memory one), async clients run their store operations off the event loop.
 
 ---
@@ -203,11 +216,13 @@ With a store that can wait on another writer (anything but the in-memory one), a
 ## Behavior to know
 
 - **Input is estimated before the call.** The reservation uses a rough count of the prompt; the store is corrected to the provider's figure afterwards. A call can therefore pass a total by its estimate error, and the next call is refused. Pass `TokenMeter(input_estimator=...)` for a tokenizer-based estimate.
+- **Images and audio.** An image is reserved at a fixed 1,600 tokens, inline or linked, and inline audio by its length; neither is reserved by its size in bytes. Documents and video are still estimated from their bytes, which is far on the high side.
 - **Output caps depend on the provider.** The meter sets the cap; a model that generates past it is still counted in full.
 - **In-flight calls hold their reservation.** Concurrent calls near the end of a budget can be refused while tokens are reserved but not yet spent.
 - **Failed requests.** An error response from the provider releases the reservation. A timeout or dropped connection keeps it as the charge.
 - **Streams.** Chat Completions streams are asked for usage (`stream_options.include_usage`); the extra chunk is hidden unless the caller asked for it too. A stream that is closed, or dropped, before its final usage arrives keeps its reservation as the charge.
 - **What the request does not show.** The input estimate comes from the request body. Context the provider holds on its side, such as a Responses call that continues from `previous_response_id`, is not in it: such a call is admitted on its visible input and counted in full afterwards.
+- **Background responses.** A Responses request with `background=true` returns before anything is generated and reports its usage later. Under a budget it is refused.
 - **Scope.** The meter covers `httpx` and `httpx2` clients in the process. `install()` switches the Google GenAI SDK's async calls to its `httpx` path while installed.
 
 ---
