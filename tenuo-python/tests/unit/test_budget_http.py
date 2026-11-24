@@ -439,6 +439,27 @@ class TestFailures:
             chat(http)
         assert used(meter, warrant) == 0
 
+    def test_a_request_the_client_would_not_send_gives_the_tokens_back(self, keys):
+        h11 = pytest.importorskip("h11")
+        # What a header with a line break in it raises: nothing was written to the provider.
+        try:
+            try:
+                raise h11.LocalProtocolError("Illegal header value b'Bearer sk\\n'")
+            except h11.LocalProtocolError as inner:
+                raise httpx.LocalProtocolError("Illegal header value b'Bearer sk\\n'") from inner
+        except httpx.LocalProtocolError as e:
+            unsendable = e
+        warrant = mint(keys, total_tokens=1000)
+        http, meter = client_for(keys, warrant, Provider(fail=unsendable))
+        with pytest.raises(httpx.LocalProtocolError):
+            chat(http, max_tokens=200)
+        assert used(meter, warrant) == 0
+        # A protocol error from anywhere else may have come after the request went out.
+        http, meter = client_for(keys, warrant, Provider(fail=httpx.LocalProtocolError("stream reset")))
+        with pytest.raises(httpx.LocalProtocolError):
+            chat(http, max_tokens=200)
+        assert used(meter, warrant) == INPUT + 200
+
     def test_read_timeout_keeps_the_reservation(self, keys):
         warrant = mint(keys, total_tokens=1000)
         events = []

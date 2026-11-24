@@ -220,7 +220,7 @@ With a store that can wait on another writer (anything but the in-memory one), a
 - **Output caps depend on the provider.** The meter sets the cap; a model that generates past it is still counted in full.
 - **Constraints on other fields.** A warrant can constrain any field of the request body. Fields the meter changes before sending (the output cap, a stream's usage option) are checked as they are sent: a cap the warrant fixes is never lowered to fit the budget, the call is refused instead.
 - **In-flight calls hold their reservation.** Concurrent calls near the end of a budget can be refused while tokens are reserved but not yet spent.
-- **Failed requests.** An error response from the provider releases the reservation. A timeout or dropped connection keeps it as the charge.
+- **Failed requests.** An error response from the provider releases the reservation, and so does a request that was never sent (no connection, or a header the client refuses to send). A timeout or dropped connection keeps it as the charge.
 - **Streams.** Chat Completions streams are asked for usage (`stream_options.include_usage`); the extra chunk is hidden unless the caller asked for it too. A stream that is closed, or dropped, before its final usage arrives keeps its reservation as the charge.
 - **What the request does not show.** The input estimate comes from the request body. Context the provider holds on its side, such as a Responses call that continues from `previous_response_id`, is not in it: such a call is admitted on its visible input and counted in full afterwards.
 - **Background responses.** A Responses request with `background=true` returns before anything is generated and reports its usage later. Under a budget it is refused.

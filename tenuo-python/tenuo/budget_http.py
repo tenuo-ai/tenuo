@@ -530,6 +530,18 @@ def _send_event(callback: Optional[Callable[[MeterEvent], None]], *, decision: s
         logger.warning("Audit callback failed", exc_info=True)
 
 
+def _raised_by(error: BaseException, package: str) -> bool:
+    """True when an exception from ``package`` is behind ``error``."""
+    seen = set()
+    current: Optional[BaseException] = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if (type(current).__module__ or "").split(".")[0] == package:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _refusal(http: Any, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
     """A local 403 in the error shape of the provider the request was for."""
     if dialect is not None and dialect.error_shape == "anthropic":
@@ -724,6 +736,11 @@ class _Core:
         h = self.http
         never_sent = isinstance(error, (h.ConnectError, h.ConnectTimeout, h.PoolTimeout,
                                         h.UnsupportedProtocol, h.InvalidURL))
+        if not never_sent and isinstance(error, h.LocalProtocolError):
+            # HTTP/1.1 checks the request line and headers before it writes
+            # anything: a header it will not send (a key with a line break in
+            # it, say) means the provider never saw the request.
+            never_sent = _raised_by(error, "h11")
         if never_sent:
             self.release(plan)
         else:
