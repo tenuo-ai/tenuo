@@ -543,6 +543,58 @@ class TestLeasedBudget:
         budget.close()
         assert pool.returned == [(lease_id, 0)]
 
+    def test_an_abandoned_plan_is_given_back_even_when_the_loops_executor_is_gone(self, keys, leased):
+        pool = Pool(keys, limit=10_000, slice_=300)
+        started, go = threading.Event(), threading.Event()
+        take = pool.acquire
+        pool.acquire = lambda: (started.set(), go.wait(10), take())[2]
+        budget, meter = leased(pool)
+        provider = Provider()
+
+        def gone(*args, **kwargs):
+            raise RuntimeError("cannot schedule new futures after shutdown")
+
+        async def main():
+            loop = asyncio.get_running_loop()
+            async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
+                task = asyncio.ensure_future(http.post(URL, json=BODY))
+                while not started.is_set():
+                    await asyncio.sleep(0.01)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                loop.run_in_executor = gone  # nothing more can be handed to the loop's executor
+                go.set()
+                for _ in range(200):
+                    await asyncio.sleep(0.01)
+                    lease = budget.current
+                    if lease is not None and meter.store.used(lease.warrant_id).get(lease.warrant_id, 0) == 0 \
+                            and budget._held[lease.warrant_id].inflight == 0:
+                        return lease.warrant_id
+                return None
+
+        lease_id = asyncio.run(main())
+        assert lease_id is not None and not provider.caps
+        budget.close()
+        assert pool.returned == [(lease_id, 0)]
+
+    def test_a_call_is_planned_and_settled_even_when_the_loops_executor_is_gone(self, keys, leased):
+        pool = Pool(keys, limit=10_000, slice_=300)
+        budget, meter = leased(pool)
+        provider = Provider()
+
+        def gone(*args, **kwargs):
+            raise RuntimeError("cannot schedule new futures after shutdown")
+
+        async def main():
+            asyncio.get_running_loop().run_in_executor = gone
+            async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
+                return (await http.post(URL, json=BODY)).status_code
+
+        assert asyncio.run(main()) == 200
+        lease_id = budget.current.warrant_id
+        assert meter.store.used(lease_id)[lease_id] == INPUT + 100 and budget._held[lease_id].inflight == 0
+
     def test_usage_above_the_reservation_is_reported_even_when_the_store_fails(self, keys):
         from tenuo.budget import BudgetStore, InMemoryBudgetBackend
 

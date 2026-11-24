@@ -1752,3 +1752,60 @@ class TestHostsAndSessions:
                                   signing_key=keys.lead, trusted_roots=[keys.issuer.public_key],
                                   budget_store=TokenMeter(enforce=False))
         assert watching.get("https://provider.test/v1/realtime", headers=upgrade).status_code == 200
+
+
+class TestUploadsAreNotHeldInMemory:
+    CHUNKS = 20
+
+    def upload(self, state):
+        async def chunks():
+            for _ in range(self.CHUNKS):
+                state["produced"] += 1
+                yield b"x" * 65536
+
+        return chunks()
+
+    def sink(self, state):
+        """A transport that notes how much of the body had been pulled before it was called."""
+        class Sink(httpx.AsyncBaseTransport):
+            async def handle_async_request(self, request):
+                state["at_send"] = state["produced"]
+                await request.aread()
+                return httpx.Response(200, json={})
+
+        return Sink()
+
+    async def send(self, http, url, state):
+        return (await http.post(url, content=self.upload(state))).status_code
+
+    async def test_an_exempt_upload_under_install_is_streamed_through(self, keys, installed):
+        installed(mint(keys, total_tokens=5000), keys.lead, unmetered_paths=["/v1/files"])
+        state = {"produced": 0, "at_send": None}
+        async with httpx.AsyncClient(transport=self.sink(state)) as http:
+            assert await self.send(http, "https://api.openai.com/v1/files", state) == 200
+        assert state["at_send"] == 0 and state["produced"] == self.CHUNKS
+
+    async def test_an_exempt_upload_through_a_metered_client_is_streamed_through(self, keys):
+        state = {"produced": 0, "at_send": None}
+        http = metered_async_client(
+            transport=self.sink(state), warrant=mint(keys, total_tokens=5000), signing_key=keys.lead,
+            trusted_roots=[keys.issuer.public_key], unmetered_paths=["/v1/files"])
+        assert await self.send(http, "https://provider.test/v1/files", state) == 200
+        assert state["at_send"] == 0 and state["produced"] == self.CHUNKS
+        # A request the meter does not count at all is not read either.
+        state.update(produced=0, at_send=None)
+        assert await self.send(http, "https://provider.test/v1/messages/count_tokens", state) == 200
+        assert state["at_send"] == 0
+
+    async def test_a_model_call_sent_as_a_stream_is_still_read_and_counted(self, keys):
+        warrant = mint(keys, total_tokens=5000)
+        meter = TokenMeter(input_estimator=lambda request: INPUT)
+        http = metered_async_client(
+            transport=httpx.MockTransport(Provider()), warrant=warrant, signing_key=keys.lead,
+            trusted_roots=[keys.issuer.public_key], budget_store=meter)
+
+        async def body():
+            yield json.dumps({"model": MODEL, "messages": MESSAGES}).encode()
+
+        response = await http.post(CHAT, content=body(), headers={"content-type": "application/json"})
+        assert response.status_code == 200 and used(meter, warrant) == INPUT + 100
