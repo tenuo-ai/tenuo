@@ -266,6 +266,13 @@ class TestUsage:
             "input_tokens": 7, "output_tokens": 2, "total_tokens": 9,
         }
 
+    def test_a_count_below_zero_is_no_count(self):
+        assert usage_counts({"prompt_tokens": -5, "completion_tokens": 3, "total_tokens": -2}) is None
+        assert usage_counts({"input_tokens": 7, "output_tokens": -2}) is None
+        assert usage_counts({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}) == {
+            "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+        }
+
     def test_thinking_left_out_of_the_completion_count_is_output(self):
         usage = {"prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 58}
         assert usage_counts(usage) == {"input_tokens": 9, "output_tokens": 49, "total_tokens": 58}

@@ -507,18 +507,25 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
     if usage is None:
         return None
 
+    impossible = []
+
     def read(*names: str) -> Optional[int]:
         for name in names:
             value = usage.get(name) if isinstance(usage, Mapping) else getattr(usage, name, None)
             if isinstance(value, bool):
                 continue
-            if isinstance(value, (int, float)) and value >= 0:
+            if isinstance(value, (int, float)):
+                if value < 0:
+                    impossible.append(name)
+                    continue
                 return int(value)
         return None
 
     inp = read("prompt_tokens", "input_tokens")
     out = read("completion_tokens", "output_tokens")
     total = read("total_tokens")
+    if impossible:
+        return None  # a count below zero is not a count: the reservation stands
     if total is None:
         if inp is None and out is None:
             return None

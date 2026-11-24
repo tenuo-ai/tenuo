@@ -131,7 +131,7 @@ A refused call is answered locally with HTTP 403 in the provider's own error sha
 |------|---------|
 | `token_budget_exceeded` | A budget in the chain is spent |
 | `model_call_denied` | The warrant refuses for another reason (model, per-call cap, expiry, no warrant in scope) |
-| `unmetered_endpoint` | A `POST` the meter cannot count: an unrecognized path, a body that is not JSON, or a Responses request with `background=true` |
+| `unmetered_endpoint` | A request the meter cannot count: a `POST` to an unrecognized path, a body that is not JSON, a Responses request with `background=true`, or a websocket session |
 
 ```python
 from tenuo.budget_http import is_budget_error
@@ -193,7 +193,7 @@ Wire formats, recognized by request path:
 
 `install()` only touches requests to known provider hosts (`tenuo.budget_http.DEFAULT_HOSTS`). Add a gateway or a self-hosted server with `hosts=["gateway.internal:8080"]`, or pass `hosts=["*"]`.
 
-On a metered host, `GET` requests and token-counting endpoints pass through. Any other `POST` to an unrecognized path is refused unless its path ending is listed in `unmetered_paths`, whether or not a warrant is in scope.
+On a metered host, `GET` requests and token-counting endpoints pass through; a request that opens a websocket session (a realtime API) is refused, since what it spends cannot be counted. Any other `POST` to an unrecognized path is refused unless its path ending is listed in `unmetered_paths`, whether or not a warrant is in scope.
 
 ---
 
@@ -207,7 +207,7 @@ On a metered host, `GET` requests and token-counting endpoints pass through. Any
 
 A total holds only where every call passes a meter on the same store.
 
-The default store counts in memory: the count is gone when the process exits, so a warrant that outlives the process starts again from zero. Use a file or a shared backend for any budget that has to hold across restarts.
+The default store counts in memory, and everything in the process that was given no store shares it: `install()` and each metered client count a warrant together. The count is gone when the process exits, so a warrant that outlives the process starts again from zero. Use a file or a shared backend for any budget that has to hold across restarts.
 
 With a store that can wait on another writer (anything but the in-memory one), async clients run their store operations off the event loop.
 

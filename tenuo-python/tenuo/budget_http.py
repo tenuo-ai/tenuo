@@ -352,15 +352,15 @@ class _AnthropicMessages(_Dialect):
         def read(name: str) -> int:
             value = usage.get(name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                seen.append(name)
+                seen.append(value)
                 return int(value)
             return 0
 
         # Cached input is reported apart from input_tokens; all of it is input.
         inp = read("input_tokens") + read("cache_creation_input_tokens") + read("cache_read_input_tokens")
         out = read("output_tokens")
-        if not seen:
-            return None  # nothing was reported: the reservation stands, as for missing usage
+        if not seen or min(seen) < 0:
+            return None  # nothing usable was reported: the reservation stands, as for missing usage
         return {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out}
 
     def response_usage(self, payload: Any) -> Any:
@@ -461,15 +461,15 @@ class _GoogleGenerate(_Dialect):
         def read(name: str) -> int:
             value = meta.get(name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                seen.append(name)
+                seen.append(value)
                 return int(value)
             return 0
 
         inp = read("promptTokenCount") + read("toolUsePromptTokenCount")
         out = read("candidatesTokenCount") + read("thoughtsTokenCount")  # thinking is billed as output
-        total = read("totalTokenCount") or inp + out
-        if not seen:
-            return None  # nothing was reported: the reservation stands, as for missing usage
+        total = max(read("totalTokenCount"), inp + out)  # a total below its own parts is not a total
+        if not seen or min(seen) < 0:
+            return None  # nothing usable was reported: the reservation stands, as for missing usage
         return {"input_tokens": inp, "output_tokens": out, "total_tokens": total}
 
     def response_usage(self, payload: Any) -> Any:
@@ -611,6 +611,32 @@ def _raised_by(error: BaseException, package: str) -> bool:
     return False
 
 
+_SHARED_METER: Optional[TokenMeter] = None
+_SHARED_LOCK = threading.Lock()
+
+
+def _shared_meter() -> TokenMeter:
+    """The meter used when none is given: one in-memory count for the whole process.
+
+    A warrant's budget is one figure however many clients spend from it, so
+    clients that were not handed a store still count together.
+    """
+    global _SHARED_METER
+    with _SHARED_LOCK:
+        if _SHARED_METER is None:
+            _SHARED_METER = TokenMeter()
+        return _SHARED_METER
+
+
+def _is_upgrade(request: Any) -> bool:
+    """A request to switch protocols (a websocket session): what follows it is not HTTP."""
+    return bool(request.headers.get("upgrade")) and "upgrade" in request.headers.get("connection", "").lower()
+
+
+_UPGRADE_MESSAGE = ("tenuo: this request opens a streaming session whose tokens cannot be counted, so it is refused "
+                    "under a token budget. List the path in unmetered_paths to let it through uncounted.")
+
+
 def _refusal(http: Any, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
     """A local 403 in the error shape of the provider the request was for."""
     if dialect is not None and dialect.error_shape == "anthropic":
@@ -665,7 +691,7 @@ class _Core:
         self.chain = chain
         self.signing_key = signing_key
         self.trusted_roots = trusted_roots
-        self.meter = TokenMeter.coerce(budget_store) or TokenMeter()
+        self.meter = TokenMeter.coerce(budget_store) or _shared_meter()
         self.audit_callback = audit_callback
         self.unmetered = tuple(p.rstrip("/") for p in unmetered_paths)
         self.chat_output_param = chat_output_param
@@ -674,9 +700,11 @@ class _Core:
     # -- before the request --------------------------------------------------
 
     def plan(self, request: Any) -> _Plan:
-        if request.method.upper() != "POST":
-            return _Plan(request)
         path = request.url.path.rstrip("/")
+        if request.method.upper() != "POST":
+            if _is_upgrade(request) and self.meter.enforce and not path.endswith(self.unmetered):
+                return _Plan(request, refusal=self._refuse(request, None, UNMETERED_CODE, _UPGRADE_MESSAGE))
+            return _Plan(request)
         if path.endswith(_FREE_SUFFIXES) or path.endswith(self.unmetered):
             return _Plan(request)
         dialect = _dialect_for(path)
@@ -1270,7 +1298,7 @@ class _Installation:
                  unmetered_paths: Sequence[str], chat_output_param: str) -> None:
         self.warrant, self.signing_key = warrant, signing_key
         self.chain = list(warrant_chain) if warrant_chain else None
-        self.meter = TokenMeter.coerce(budget_store) or TokenMeter()
+        self.meter = TokenMeter.coerce(budget_store) or _shared_meter()
         self.shared: Dict[str, Any] = dict(trusted_roots=trusted_roots, budget_store=self.meter, audit_callback=audit_callback,
                            unmetered_paths=unmetered_paths, chat_output_param=chat_output_param)
         self.hosts = tuple(h.lower() for h in (*DEFAULT_HOSTS, *hosts))
@@ -1283,12 +1311,26 @@ class _Installation:
     def covers(self, request: Any) -> bool:
         if "*" in self.hosts:
             return True
-        host = (request.url.host or "").lower()
+        host = (request.url.host or "").lower().rstrip(".")  # "host." is the same host
         with_port = f"{host}:{request.url.port}" if request.url.port else host
+        if self._listed(host, with_port):
+            return True
+        # A request addressed to one host and labelled for another (a Host
+        # header over an IP address) is that other host's.
+        named = request.headers.get("host", "").lower()
+        return bool(named) and self._listed(named.rsplit(":", 1)[0].rstrip("."), named)
+
+    def _listed(self, host: str, with_port: str) -> bool:
         if any(host == h or host.endswith("." + h) or with_port == h for h in self.hosts):
             return True
         # Regional Vertex AI endpoints are named <region>-aiplatform.googleapis.com.
         return _VERTEX_HOST in self.hosts and host.endswith("-" + _VERTEX_HOST)
+
+    def _refused(self, http: Any, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
+        """A refusal made before any warrant is in hand, with its DENY event."""
+        _send_event(self.shared["audit_callback"], decision="DENY", tool=self.meter.tool, model=None,
+                    reason=message, warrant_id=None, request=request)
+        return _refusal(http, request, dialect, code, message)
 
     def core_for(self, http: Any, request: Any) -> Tuple[Optional[_Core], Any]:
         """The meter for the warrant in scope, or a refusal when a model call has none."""
@@ -1296,6 +1338,9 @@ class _Installation:
         from tenuo.decorators import chain_scope, get_signing_key_context, get_warrant_context
 
         if request.method.upper() != "POST":
+            path = request.url.path.rstrip("/")
+            if _is_upgrade(request) and self.meter.enforce and not path.endswith(self.unmetered):
+                return None, self._refused(http, request, None, UNMETERED_CODE, _UPGRADE_MESSAGE)
             return None, None
         warrant = get_warrant_context() or self.warrant
         key = get_signing_key_context() or self.signing_key
@@ -1313,9 +1358,7 @@ class _Installation:
                 code = DENIED_CODE
                 message = ("tenuo: model call refused: no warrant and signing key are in scope. Pass them to "
                            "install() or make the call inside warrant_scope() and key_scope().")
-            _send_event(self.shared["audit_callback"], decision="DENY", tool=self.meter.tool, model=None,
-                        reason=message, warrant_id=None, request=request)
-            return None, _refusal(http, request, dialect, code, message)
+            return None, self._refused(http, request, dialect, code, message)
         # A warrant may be presented as a list or an encoded chain: take it
         # apart before anything asks for its id.
         leaf, parents = split_presented_warrant(warrant, list(chain_scope() or self.chain or []) or None)

@@ -1591,3 +1591,104 @@ class TestStreamsWithSeveralChoices:
     def test_both_candidates_finished_settles_on_the_last_count(self, keys):
         total, usage = self.stream(keys, self.GEMINI, self.GEMINI_BODY, self.gemini_events(second_finishes=True), done=False)
         assert total == 95 and "estimated" not in usage
+
+
+class TestCountsThatCannotBeRight:
+    def settle(self, keys, url, body, answer):
+        warrant = mint(keys, total_tokens=5000)
+        events = []
+        http, meter = client_for(keys, warrant, lambda r: httpx.Response(200, json=answer), events=events)
+        assert http.post(url, json=body).status_code == 200
+        return used(meter, warrant), events[-1].usage
+
+    def test_a_count_below_zero_keeps_the_reservation(self, keys):
+        chat_body = {"model": MODEL, "messages": MESSAGES, "max_tokens": 100}
+        total, usage = self.settle(keys, CHAT, chat_body,
+                                   {"usage": {"prompt_tokens": -5000, "completion_tokens": 0, "total_tokens": -5000}})
+        assert total == INPUT + 100 and usage["estimated"] is True
+        total, usage = self.settle(keys, "https://provider.test/v1/messages", chat_body,
+                                   {"type": "message", "content": [], "usage": {"input_tokens": -5000, "output_tokens": 3}})
+        assert total == INPUT + 100 and usage["estimated"] is True
+        gemini = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent"
+        gemini_body = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "generationConfig": {"maxOutputTokens": 100}}
+        total, usage = self.settle(keys, gemini, gemini_body,
+                                   {"usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": -9000, "totalTokenCount": -8990}})
+        assert total == INPUT + 100 and usage["estimated"] is True
+        # A total below its own parts is not believed either.
+        total, _ = self.settle(keys, gemini, gemini_body,
+                               {"usageMetadata": {"promptTokenCount": 40, "candidatesTokenCount": 60, "totalTokenCount": 5}})
+        assert total == 100
+
+
+class TestOneCountPerProcessByDefault:
+    def test_clients_given_no_store_spend_from_the_same_count(self, keys):
+        warrant = mint(keys, total_tokens=200)
+        answer = {"usage": {"prompt_tokens": 50, "completion_tokens": 100, "total_tokens": 150}}
+        common = dict(warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key])
+        sent = []
+        first = metered_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=answer)), **common)
+        second = metered_client(
+            transport=httpx.MockTransport(lambda r: (sent.append(json.loads(r.content)), httpx.Response(200, json=answer))[1]),
+            **common)
+        body = {"model": MODEL, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 100}
+        assert first.post(CHAT, json=body).status_code == 200
+        # The second client sees what the first one spent: 50 are left, so its cap is lowered.
+        assert second._transport.meter.remaining(warrant) == 50
+        assert second.post(CHAT, json=body).status_code == 200 and sent[0]["max_tokens"] < 50
+        assert second.post(CHAT, json=body).status_code == 403
+
+    def test_install_and_a_metered_client_share_it_too(self, keys):
+        from tenuo.budget_http import install, uninstall
+
+        warrant = mint(keys, total_tokens=5000)
+        try:
+            meter = install(warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key])
+            http = metered_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+                                  warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key])
+            assert http._transport.meter is meter
+        finally:
+            uninstall()
+
+
+class TestHostsAndSessions:
+    OPENAI = "/v1/chat/completions"
+    BODY = {"model": MODEL, "messages": MESSAGES}
+
+    def plain(self, seen):
+        return httpx.Client(transport=httpx.MockTransport(lambda r: (seen.append(str(r.url)), httpx.Response(200, json={}))[1]))
+
+    def test_the_same_host_written_another_way_is_still_metered(self, keys, installed):
+        installed(mint(keys, total_tokens=1), keys.lead)  # a budget nothing fits in
+        seen = []
+        http = self.plain(seen)
+        assert http.post("https://api.openai.com." + self.OPENAI, json=self.BODY).status_code == 403
+        assert http.post("https://API.OpenAI.com" + self.OPENAI, json=self.BODY).status_code == 403
+        assert http.post("https://203.0.113.9" + self.OPENAI, json=self.BODY, headers={"host": "api.openai.com"}).status_code == 403
+        assert http.post("https://203.0.113.9" + self.OPENAI, json=self.BODY, headers={"host": "api.openai.com:443"}).status_code == 403
+        assert not seen
+        # Another site is left alone.
+        assert http.post("https://example.test" + self.OPENAI, json=self.BODY).status_code == 200
+
+    def test_a_websocket_session_is_refused_under_a_budget(self, keys, installed):
+        upgrade = {"connection": "Upgrade", "upgrade": "websocket"}
+        events = []
+        installed(mint(keys, total_tokens=5000), keys.lead, audit_callback=events.append, unmetered_paths=["/v1/other"])
+        seen = []
+        http = self.plain(seen)
+        refused = http.get("https://api.openai.com/v1/realtime?model=m", headers=upgrade)
+        assert refused.status_code == 403 and refused.json()["error"]["code"] == "unmetered_endpoint"
+        assert [e.decision for e in events] == ["DENY"] and not seen
+        # An ordinary GET, a path let through on purpose, and another site are untouched.
+        assert http.get("https://api.openai.com/v1/models").status_code == 200
+        assert http.get("https://api.openai.com/v1/other", headers=upgrade).status_code == 200
+        assert http.get("https://example.test/socket", headers=upgrade).status_code == 200
+
+    def test_a_metered_client_refuses_it_too_and_watching_does_not(self, keys):
+        upgrade = {"connection": "keep-alive, Upgrade", "upgrade": "websocket"}
+        warrant = mint(keys, total_tokens=5000)
+        http, _ = client_for(keys, warrant, lambda r: httpx.Response(200, json={}))
+        assert http.get("https://provider.test/v1/realtime", headers=upgrade).status_code == 403
+        watching = metered_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})), warrant=warrant,
+                                  signing_key=keys.lead, trusted_roots=[keys.issuer.public_key],
+                                  budget_store=TokenMeter(enforce=False))
+        assert watching.get("https://provider.test/v1/realtime", headers=upgrade).status_code == 200
