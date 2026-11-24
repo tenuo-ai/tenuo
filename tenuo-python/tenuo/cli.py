@@ -532,6 +532,8 @@ def inspect_warrant(warrant_str: str) -> None:
 
     Auto-detects whether the input is a single warrant or a stack.
     """
+    from .warrant_ext import _escape_diagnostic_line
+
     try:
         from tenuo_core import Warrant, decode_warrant_stack_base64
 
@@ -562,7 +564,7 @@ def inspect_warrant(warrant_str: str) -> None:
         print(f"ID: {warrant.id}")
         print(f"Type: {warrant.warrant_type}")
         tools_list = _warrant_tools_list(warrant)
-        print(f"Tools: {', '.join(tools_list) if tools_list else '(none)'}")
+        print(_escape_diagnostic_line(f"Tools: {', '.join(tools_list) if tools_list else '(none)'}"))
         print(f"Expired: {warrant.is_expired()}")
         print(f"Terminal: {warrant.is_terminal()}")
 

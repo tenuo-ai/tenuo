@@ -16,8 +16,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   produced. Execution still requires `present()` / `verify()` and PoP.
 - **Explorer:** use the same WASM diagnostic operation for single warrants and
   chains, and display requirement statuses instead of claiming authorization.
+- Python `Authorizer.set_host_policy(tool, allow)`: a per-tool argument
+  ceiling an enforcement point applies on top of any warrant, matching the
+  TypeScript SDK's `verify(..., { allow })`. Receipts from a `ReceiptIssuer` or
+  `ControlPlaneClient` bound to the authorizer carry the policy digest as
+  `policy_definition_hash` (key 11), computed the same way as in TypeScript.
+  Tools without a policy behave as before. Policy commitments are captured at
+  decision time, including ceiling denials, rather than looked up when signed.
+- TypeScript host-policy receipt commitments now use the same normalized
+  constraint expressions as Python: normalized path roots, omitted defaults,
+  and compiled aliases. Newly issued hashes can differ from earlier SDKs for
+  noncanonical expressions; existing signed receipts remain verifiable.
+- **`tenuo::aat`: verify Attenuating Agent Tokens in their JWT/JWS encoding**
+  (Rust, behind the `aat-jws` feature). `verify_chain` runs the chain
+  verification algorithm of `draft-niyikiza-oauth-attenuating-agent-tokens-02`
+  Section 8 over a presentation and passes the draft's 229 test vectors on
+  verdict and failing step. Issuing and deriving JWS tokens is not included.
+- **Token budgets for model calls (Python).** A warrant can carry
+  a token budget as a `Range` constraint on an `llm.chat` capability
+  (`tenuo.budget.llm_capability`). `tenuo.budget_http.install()` meters the
+  model calls of every `httpx` / `httpx2` client in the process against the
+  warrant in scope, and `metered_client()` does the same for one client. Calls
+  are authorized before they are sent, output caps are lowered to what is
+  left, and reported usage is counted per warrant and per presented parent.
+  See [Token Budgets](docs/token-budgets.md).
+- **Token budgets with Tenuo Cloud (Python).** With a control plane connected,
+  the token meter reports each model call's usage as an authorization event.
+  `tenuo.budget_lease` (experimental) spends a budget kept by the issuer for a
+  day, week or month: `install(lease=LeasedBudget(CloudLeases(trigger_id)))`
+  takes short-lived warrants for a slice of the budget and returns each with
+  what it used.
+
+### Changed
+
+- **Token budgets: setup problems are no longer reported as a spent budget.**
+  Under a period budget, a call refused because no lease could be taken (a
+  wrong trigger id or API key, a paused trigger, Tenuo Cloud unreachable) now
+  carries `lease_unavailable` and says which; `token_budget_exceeded` is kept
+  for a budget that is spent.
+- **Delegation accepts two more ways to narrow a tool's arguments.** A child
+  may constrain an argument its parent admits without declaring it (the parent
+  is empty or sets `allow_unknown`). A child that admits no undeclared
+  arguments may leave out one the parent marks optional, and then refuses it.
+  Chains valid before remain valid. Upgrade verifiers before issuing chains
+  that use either form; older verifiers reject them.
 
 ### Fixed
+
+- Explorer/WASM builder rejects malformed, ambiguous, or unsupported constraints
+  instead of silently dropping restrictions, honors maximum delegation depth,
+  and rejects invalid supplied keys. Dry-run checks still verify expiry.
+- Explorer clears stale previews and verification results after edits and
+  provides signed allow/deny/tampered receipt samples.
 
 - **WASM:** the dry-run mode of `check_chain_access` now runs full chain
   verification (expiry and narrowing between links) before the policy check.

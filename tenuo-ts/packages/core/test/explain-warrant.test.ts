@@ -377,6 +377,18 @@ describe("diagnostics cannot become execution credentials", () => {
     },
   );
 
+  it("satisfied diagnostics do not bypass a host-policy ceiling", async () => {
+    const { checker, presented, report, body, authorSession, approvals } = boundary();
+    const allow = { repo: exact("other/repo"), pr: pattern("*"), head_sha: pattern("*") };
+    expect(report.constraints.status).toBe("satisfied");
+    await expect(checker.verify(presented, "merge_pr", args, { allow }))
+      .rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
+    const restricted = checker.tool({ execute: body }, { capability: "merge_pr", allow });
+    await expect(restricted.execute(args, { session: authorSession, approvals }))
+      .rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
+    expect(body).not.toHaveBeenCalled();
+  });
+
   it("does not let a satisfied report authorize changed invocation arguments", async () => {
     const { handler, body, presented, report } = boundary();
     const changed = { ...args, head_sha: "b".repeat(40) };
@@ -464,6 +476,49 @@ describe("diagnostics cannot become execution credentials", () => {
 
 
 describe("diagnostic approval input budget", () => {
+  it.each(["iterator", "growing getter"])("bounds approval inspection despite a custom %s", (mode) => {
+    const { checker, tokens, sign, reviewerKey } = setup();
+    const good = sign(reviewerKey, "reviewer");
+    const approvals = [good];
+    const iterator = vi.fn(function* () {
+      for (let i = 0; i <= protocolLimits().max_approvals; i++) yield good;
+    });
+    if (mode === "iterator") Object.defineProperty(approvals, Symbol.iterator, { value: iterator });
+    const read = vi.fn(() => {
+      approvals.length = protocolLimits().max_approvals + 1;
+      return good;
+    });
+    if (mode === "growing getter") Object.defineProperty(approvals, 0, { get: read });
+    const inspect = vi.spyOn(loadWasm(), "sdkInspectApproval");
+    try {
+      expect(checker.explainWarrant(tokens, "merge_pr", args, { approvals }).approvals)
+        .toMatchObject({ status: "satisfied", valid: 1, rejected: 0 });
+      expect(inspect).toHaveBeenCalledTimes(1);
+      expect(iterator).not.toHaveBeenCalled();
+      if (mode === "growing getter") expect(read).toHaveBeenCalledTimes(1);
+    } finally { inspect.mockRestore(); }
+  });
+
+  it("rejects an oversized byte envelope before copying its buffer", () => {
+    const { checker, tokens } = setup();
+    const NativeUint8Array = globalThis.Uint8Array;
+    const oversized = new NativeUint8Array(8193); // APPROVAL_STRING_MAX + 1
+    const copy = vi.fn(() => { throw new Error("must not copy oversized envelope"); });
+    const guarded = new Proxy(NativeUint8Array, {
+      construct(target, parameters, newTarget) {
+        if (parameters[0] === oversized) copy();
+        return Reflect.construct(target, parameters, newTarget);
+      },
+    });
+    vi.stubGlobal("Uint8Array", guarded);
+    try {
+      expect(() => loadWasm().sdkInspectApproval(oversized)).toThrow(/approval exceeds size limit/);
+      expect(checker.explainWarrant(tokens, "merge_pr", args, { approvals: [oversized] }).approvals)
+        .toMatchObject({ status: "required", rejected: 1 });
+      expect(copy).not.toHaveBeenCalled();
+    } finally { vi.stubGlobal("Uint8Array", NativeUint8Array); }
+  });
+
   it.each(["signed", "bytes", "unreadable"] as const)(
     "rejects too many %s envelopes before signature inspection",
     (encoding) => {
@@ -519,6 +574,29 @@ describe("diagnostic approval input budget", () => {
 
 
 describe("diagnostic chain input budget", () => {
+  it.each([
+    ["inspect", "iterator"], ["explain", "iterator"],
+    ["inspect", "growing getter"], ["explain", "growing getter"],
+  ])("%s bounds chain copying despite a custom %s", (entry, mode) => {
+    const { tokens, checker } = setup();
+    const token = tokens[0]!;
+    const chain = [token];
+    const iterator = vi.fn(function* () {
+      for (let i = 0; i <= protocolLimits().max_delegation_depth; i++) yield token;
+    });
+    Object.defineProperty(chain, "every", { value: () => { throw new Error("must validate indexed tokens"); } });
+    if (mode === "iterator") Object.defineProperty(chain, Symbol.iterator, { value: iterator });
+    const read = vi.fn(() => {
+      chain.length = protocolLimits().max_delegation_depth + 1;
+      return token;
+    });
+    if (mode === "growing getter") Object.defineProperty(chain, 0, { get: read });
+    if (entry === "inspect") expect(T.inspectWarrant(chain)).toHaveLength(1);
+    else expect(checker.explainWarrant(chain, "merge_pr", args).chain.status).toBe("valid");
+    expect(iterator).not.toHaveBeenCalled();
+    if (mode === "growing getter") expect(read).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["inspect", "explain", "wasm"] as const)(
     "%s rejects oversized token arrays before reading or copying elements",
     (entry) => {
@@ -547,6 +625,53 @@ describe("diagnostic chain input budget", () => {
 
 
 describe("legacy approval helper input budget", () => {
+  it.each(["A".repeat(8193), "é".repeat(4097)])("rejects a single oversized string envelope", (envelope) => {
+    const { tokens, request, checker } = setup();
+    const wasm = loadWasm() as unknown as {
+      verify_approval_set(warrant: string, hash: string, approvals: unknown): unknown;
+    };
+    expect(wasm.verify_approval_set(tokens[0]!, request.requestHash, [envelope])).toMatchObject({
+      satisfied: false, valid_count: 0, error: "approval exceeds size limit",
+    });
+    expect(() => loadWasm().sdkInspectApproval(envelope)).toThrow(/approval exceeds size limit/);
+    expect(checker.explainWarrant(tokens, "merge_pr", args, { approvals: [envelope] }).approvals)
+      .toMatchObject({ status: "required", rejected: 1 });
+  });
+
+  it("reads each approval string only once before copying", () => {
+    const { tokens, request, sign, reviewerKey } = setup();
+    const good = sign(reviewerKey, "r");
+    const read = vi.fn().mockReturnValueOnce(good).mockReturnValue("A".repeat(8193));
+    const approvals = [good];
+    Object.defineProperty(approvals, 0, { get: read });
+    const wasm = loadWasm() as unknown as {
+      verify_approval_set(warrant: string, hash: string, approvals: unknown): unknown;
+    };
+    expect(wasm.verify_approval_set(tokens[0]!, request.requestHash, approvals)).toMatchObject({
+      satisfied: true, valid_count: 1,
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects oversized generators without consuming any envelope", () => {
+    const { tokens, request, sign, reviewerKey } = setup();
+    const good = sign(reviewerKey, "r");
+    const visited = vi.fn();
+    function* oversized() {
+      for (let i = 0; i <= protocolLimits().max_approvals; i++) {
+        visited();
+        yield good;
+      }
+    }
+    const wasm = loadWasm() as unknown as {
+      verify_approval_set(warrant: string, hash: string, approvals: unknown): unknown;
+    };
+    expect(wasm.verify_approval_set(tokens[0]!, request.requestHash, oversized())).toMatchObject({
+      satisfied: false, valid_count: 0, error: "approvals must be array of base64 strings",
+    });
+    expect(visited).not.toHaveBeenCalled();
+  });
+
   it("rejects oversized duplicate approvals before reading any envelope", () => {
     const { tokens, request, sign, reviewerKey } = setup();
     const good = sign(reviewerKey, "r");
@@ -629,5 +754,113 @@ describe("precision-safe imported warrant inspection", () => {
     const info = T.inspectWarrant(issued.toWire())[0]!;
     expect(JSON.stringify(info.capabilities)).toContain(String(value));
     expect(cp.explainWarrant(issued.toWire(), "pay", { amount: value }).constraints.status).toBe("satisfied");
+  });
+});
+
+describe("issuer warrant inspection", () => {
+  const fixtures = JSON.parse(readFileSync(
+    new URL("./fixtures/inspection-issuer-integers.json", import.meta.url), "utf8",
+  )) as { exactInteger: string; warrant: string }[];
+  // Signed by the native core: JS builders cannot express these exact integers.
+  it.each(fixtures)("rejects unsafe issuer bound $exactInteger", ({ exactInteger, warrant }) => {
+    expect(() => T.inspectWarrant(warrant)).toThrow(`inspection cannot represent integer ${exactInteger} exactly in JavaScript`);
+    expect(() => loadWasm().sdkDecodeChain([warrant])).toThrow(/cannot represent integer/);
+  });
+
+  it("preserves issuer bounds and tool scope in an issuance chain", () => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const holderKey = T.generateHolderKey();
+    const makeIssuer = (max: number) => cp.session({
+      kind: "issuer", issuableTools: ["pay"], constraintBounds: { amount: range({ max }) },
+      maxIssueDepth: 2, holder: T.publicKeyFromHolderKey(holderKey), ttlSeconds: 600,
+    });
+    const handed = makeIssuer(10);
+    const issuer = cp.sessionFromWire({ warrant: handed.toWire(), holderKey });
+    const child = cp.issue(issuer, {
+      allow: { pay: { amount: range({ max: 5 }) } },
+      holder: T.publicKeyFromHolderKey(T.generateHolderKey()), ttlSeconds: 60,
+    });
+    const chain = T.inspectWarrant(child.toWire());
+    expect(chain).toHaveLength(2);
+    expect(chain[0]).toMatchObject({ kind: "issuer", issuableTools: ["pay"], maxIssueDepth: 2 });
+    expect(chain[0]?.constraintBounds).toEqual(loadWasm().sdkDecodeChain(handed.toWire())[0]?.constraint_bounds);
+    expect(chain[0]?.constraintBounds).not.toEqual(T.inspectWarrant(makeIssuer(5).toWire())[0]?.constraintBounds);
+    expect(chain[1]?.kind).toBe("execution");
+    expect(chain[1]?.constraintBounds).toBeUndefined();
+  });
+});
+
+describe("conditional diagnostic approval gates", () => {
+  it.each([
+    ["when", "trigger", "required"],
+    ["when", "safe", "not_required"],
+    ["exempt", "trigger", "not_required"],
+    ["exempt", "safe", "required"],
+    ["when", null, "not_required"],
+    ["exempt", null, "required"],
+  ] as const)("%s gate with %s reports %s", (mode, value, status) => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const session = cp.session({
+      // Null is removed from the constraint view, but must still reach gates.
+      allow: { act: value === null ? {} : { flag: pattern("*") } },
+      ttlSeconds: 600,
+      requireApproval: {
+        approvers: [T.publicKeyFromHolderKey(T.generateHolderKey())], min: 1,
+        gates: { act: { args: { flag: mode === "when" ? { when: exact("trigger") } : { exempt: exact("trigger") } } } },
+      },
+    });
+    const checker = createTenuo({ trustedRoots: [cp.issuerPublicKey()] });
+    expect(checker.explainWarrant(session.toWire(), "act", { flag: value })).toMatchObject({
+      chain: { status: "valid" }, constraints: { status: "satisfied" },
+      approvals: { status }, possession: { status: "not_checked" },
+    });
+    if (mode === "when" && value === null) {
+      // Missing is fail-closed, whereas the original explicit null does not match.
+      expect(checker.explainWarrant(session.toWire(), "act", {}).approvals.status).toBe("required");
+    }
+  });
+});
+
+describe("raw timestamp inspection", () => {
+  // Native-core signed payloads with raw u64 timestamps beyond Chrono's range.
+  const fixtures = JSON.parse(readFileSync(
+    new URL("./fixtures/inspection-timestamps.json", import.meta.url), "utf8",
+  )) as { issuedAt: string; expiresAt: string; warrant: string }[];
+  it.each(fixtures)("preserves or rejects signed timestamp $issuedAt", ({ issuedAt, expiresAt, warrant }) => {
+    if (BigInt(expiresAt) > BigInt(Number.MAX_SAFE_INTEGER)) {
+      expect(() => T.inspectWarrant(warrant)).toThrow(/inspection cannot represent integer/);
+      expect(() => loadWasm().sdkDecodeChain([warrant])).toThrow(/inspection cannot represent integer/);
+    } else {
+      expect(T.inspectWarrant(warrant)[0]).toMatchObject({ issuedAt: Number(issuedAt), expiresAt: Number(expiresAt) });
+      expect(loadWasm().sdkDecodeChain([warrant])[0]).toMatchObject({ issued_at: Number(issuedAt), expires_at: Number(expiresAt) });
+    }
+  });
+});
+
+describe("signed approval policy inspection", () => {
+  it("distinguishes tool, when, and exempt gates with identical capabilities and approvers", () => {
+    const cp = createTenuo({ root: T.issuerKeyFromBytes(T.generateIssuerKey()) });
+    const approver = T.publicKeyFromHolderKey(T.generateHolderKey());
+    const policies = [
+      { tools: ["read"] },
+      { tools: ["write"] },
+      { gates: { read: { args: { path: { when: exact("private") } } } } },
+      { gates: { read: { args: { path: { exempt: exact("private") } } } } },
+    ];
+    const warrants = policies.map(policy => cp.session({
+      allow: { read: { path: pattern("*") }, write: { path: pattern("*") } },
+      requireApproval: { approvers: [approver], min: 1, ...policy },
+    }).toWire());
+    const views = warrants.map(warrant => T.inspectWarrant(warrant)[0]!);
+    for (const [index, view] of views.entries()) {
+      expect(view.capabilities).toEqual(views[0]!.capabilities);
+      expect(view.requiredApprovers).toEqual(views[0]!.requiredApprovers);
+      expect(view.minApprovals).toBe(1);
+      expect(view.extensions).toEqual(loadWasm().sdkDecodeChain(warrants[index]!)[0]!.extensions);
+      expect(view.extensions["tenuo.approval_gates"]).toMatch(/^[0-9a-f]+$/);
+    }
+    expect(new Set(views.map(view => view.extensions["tenuo.approval_gates"])).size).toBe(4);
+    const ungated = cp.session({ allow: { read: {} } });
+    expect(T.inspectWarrant(ungated.toWire())[0]!.extensions["tenuo.approval_gates"]).toBeUndefined();
   });
 });

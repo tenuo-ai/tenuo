@@ -5,6 +5,11 @@ type Row = { key: string; type: 'range' | 'pattern' | 'url_safe' | 'oneof'; valu
 const tool = (name: string, constraints: Row[]) => ({ name, constraints });
 
 describe('builderIssues', () => {
+  it('rejects invalid depth and empty list members', () => {
+    expect(builderIssues([tool('read', [])], 60, 65).form).not.toEqual([]);
+    expect(builderIssues([tool('read', [{ key: 'x', type: 'oneof', value: 'a,,b' }])], 60).rows['0-0']).toBe('List entries must not be empty');
+  });
+
   it('blocks an inverted range instead of letting it be dropped', () => {
     const { rows } = builderIssues([tool('transfer', [{ key: 'amount', type: 'range', value: '1000-0' }])], 600);
     expect(rows['0-0']).toBe('Min cannot be greater than max');

@@ -1182,6 +1182,11 @@ fn inspect_chain_warrant(warrant: &Warrant) -> Result<serde_json::Value, serde_j
         Some(capabilities) => serde_json::to_value(capabilities)?,
         None => serde_json::json!({}),
     };
+    decoded["constraint_bounds"] = serde_json::to_value(warrant.constraint_bounds())?;
+    // Chrono accessors fall back to the epoch outside their date range.
+    // Inspection must retain the signed integers before checking JS precision.
+    decoded["issued_at"] = serde_json::json!(warrant.payload.issued_at);
+    decoded["expires_at"] = serde_json::json!(warrant.payload.expires_at);
     Ok(decoded)
 }
 
@@ -2010,15 +2015,30 @@ pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, St
     Ok(out)
 }
 
+pub(crate) fn bounded_approval_text(value: &JsValue) -> Result<String, String> {
+    if !value.is_string() {
+        return Err("approvals must be array of base64 strings".into());
+    }
+    // Check UTF-16 length on the borrowed JS value before copying into Rust.
+    if value.unchecked_ref::<js_sys::JsString>().length() as usize
+        > tenuo::meta_envelope::APPROVAL_STRING_MAX
+    {
+        return Err("approval exceeds size limit".into());
+    }
+    let text = value.as_string().ok_or("approval must be a string")?;
+    // Non-ASCII input can take more UTF-8 bytes than UTF-16 code units.
+    if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
+        return Err("approval exceeds size limit".into());
+    }
+    Ok(text)
+}
+
 pub(crate) fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
-    if let Some(text) = value.as_string() {
-        if text.len() > tenuo::meta_envelope::APPROVAL_STRING_MAX {
-            return Err("approval exceeds size limit".into());
-        }
-        return signed_approval_from_text(&text);
+    if value.is_string() {
+        return signed_approval_from_text(&bounded_approval_text(value)?);
     }
     if js_sys::Uint8Array::instanceof(value) {
-        let bytes = js_sys::Uint8Array::new(value);
+        let bytes = value.unchecked_ref::<js_sys::Uint8Array>();
         if bytes.length() as usize > tenuo::meta_envelope::APPROVAL_STRING_MAX {
             return Err("approval exceeds size limit".into());
         }
@@ -2593,8 +2613,20 @@ fn policy_digest(tool_allow: &JsValue) -> Option<[u8; 32]> {
     if raw.is_null() {
         return None;
     }
-    let bytes = tenuo::canonical_policy_bytes(&raw)?;
-    Some(tenuo::policy_commitment_digest(&bytes))
+    normalized_policy_digest(&raw)
+}
+
+// Compile first so path normalization, defaults and aliases match Python.
+fn normalized_policy_digest(raw: &serde_json::Value) -> Option<[u8; 32]> {
+    let fields = raw
+        .as_object()?
+        .iter()
+        .map(|(name, expr)| constraint_from_expr(expr).map(|constraint| (name.clone(), constraint)))
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+        .ok()?;
+    tenuo::host_policy::HostPolicy::new(fields)
+        .ok()
+        .map(|p| p.digest())
 }
 
 pub(crate) fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
@@ -3140,6 +3172,43 @@ mod constraint_expr_tests {
     use serde_json::json;
 
     #[test]
+    fn normalized_host_policy_matches_python_fixtures() {
+        for root in ["/data/reports", "/data/reports/", "/data/./reports/"] {
+            for explicit in [false, true] {
+                let mut path = json!({"kind": "under", "root": root});
+                if explicit {
+                    path["caseSensitive"] = json!(true);
+                    path["allowEqual"] = json!(true);
+                }
+                let digest = super::normalized_policy_digest(&json!({
+                    "path": path, "name": {"kind": "pattern", "pattern": "*.pdf"},
+                    "id": {"kind": "regex", "source": "^[a-z]+$"}
+                }))
+                .unwrap();
+                assert_eq!(
+                    hex::encode(digest),
+                    "3a9650ba739a196f3c89002df971134793368dc4406f9264cb85d7b27d6b1386"
+                );
+            }
+        }
+        for explicit in [false, true] {
+            let mut url = json!({"kind": "urlSafe", "allowDomains": ["api.example.com"]});
+            if explicit {
+                url["schemes"] = json!(["http", "https"]);
+            }
+            let digest = super::normalized_policy_digest(&json!({
+                "url": url, "host": {"kind": "cidr", "network": "10.0.0.0/8"},
+                "endpoint": {"kind": "urlPattern", "pattern": "https://api.example.com/*"}
+            }))
+            .unwrap();
+            assert_eq!(
+                hex::encode(digest),
+                "140b575406ae9d437fa5790210b1dd9de5a1356a45eb1c0b588e191e9b885017"
+            );
+        }
+    }
+
+    #[test]
     fn unknown_key_on_a_known_kind_is_rejected() {
         let err = constraint_from_expr(&json!({ "kind": "urlSafe", "domains": ["example.com"] }))
             .unwrap_err();
@@ -3266,6 +3335,36 @@ mod inspection_tests {
         for value in [-9_007_199_254_740_991_i64, 0, 9_007_199_254_740_991_i64] {
             assert!(check_inspection_integer_precision(&serde_json::json!(value)).is_ok());
         }
+    }
+
+    #[test]
+    fn inspection_preserves_issuer_bounds_and_checks_their_precision() {
+        let key = SigningKey::generate();
+        let mut views = Vec::new();
+        for amount in [5_i64, 10, 9_007_199_254_740_993] {
+            let warrant = Warrant::builder()
+                .r#type(tenuo::WarrantType::Issuer)
+                .issuable_tools(vec!["pay".into()])
+                .constraint_bound("amount", Exact::new(amount))
+                .max_issue_depth(2)
+                .holder(key.public_key())
+                .ttl(std::time::Duration::from_secs(60))
+                .build(&key)
+                .unwrap();
+            let view = inspect_chain_warrant(&warrant).unwrap();
+            assert_eq!(view["warrant_type"], 1);
+            assert_eq!(view["issuable_tools"], serde_json::json!(["pay"]));
+            assert_eq!(view["max_issue_depth"], 2);
+            let bounds: ConstraintSet =
+                serde_json::from_value(view["constraint_bounds"].clone()).unwrap();
+            assert_eq!(Some(&bounds), warrant.constraint_bounds());
+            assert_eq!(
+                check_inspection_integer_precision(&view).is_ok(),
+                amount <= 10
+            );
+            views.push(view["constraint_bounds"].clone());
+        }
+        assert_ne!(views[0], views[1]);
     }
 
     #[test]

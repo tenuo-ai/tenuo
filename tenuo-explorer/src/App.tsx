@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import init, { decode_warrant, SdkContext, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import init, { decode_warrant, SdkContext, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkDecodeChain, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
 import wasmUrl from './wasm/tenuo_wasm_bg.wasm?url'
 import { cleanInput, truncate, generateId } from './utils';
 import { SAMPLE_RECEIPTS } from './sampleReceipts';
@@ -15,7 +15,7 @@ interface DiagnosticResult {
 }
 
 /** Diagnostic projection for the explorer UI; never an execution decision. */
-function explainCall(warrants: string[], tool: string, args: unknown, root: string): DiagnosticResult {
+function explainCall(warrants: string | string[], tool: string, args: unknown, root: string): DiagnosticResult {
   const context = SdkContext.fromTrustedRoots([root]);
   try {
     const report = context.explainWarrant(warrants, tool, args, []);
@@ -89,7 +89,7 @@ interface ValidationWarning {
 type ExplorerMode = 'decoder' | 'builder' | 'chain' | 'diff' | 'receipt';
 
 const MODE_META: Record<ExplorerMode, { label: string; description: string }> = {
-  decoder: { label: 'Inspect', description: 'Decode a warrant and simulate an authorization decision.' },
+  decoder: { label: 'Inspect', description: 'Decode a warrant and examine a proposed call.' },
   builder: { label: 'Build', description: 'Create a scoped warrant from real constraints and export working code.' },
   diff: { label: 'Compare', description: 'See exactly how authority changes between two warrants.' },
   chain: { label: 'Delegate', description: 'Validate multi-hop delegation and monotonic attenuation.' },
@@ -131,7 +131,7 @@ const SAMPLE_TEMPLATES: Record<string, {
 }> = {
   valid_read: {
     name: "Valid Read",
-    description: "Authorized: path matches docs/* constraint",
+    description: "Policy match: path matches docs/* constraint",
     wasmTool: "read_file",
     wasmField: "path",
     wasmPattern: "docs/*",
@@ -141,7 +141,7 @@ const SAMPLE_TEMPLATES: Record<string, {
   },
   valid_nested: {
     name: "Nested Path",
-    description: "Authorized: nested paths like docs/api/guide.md",
+    description: "Policy match: nested paths like docs/api/guide.md",
     wasmTool: "read_file",
     wasmField: "path",
     wasmPattern: "docs/*",
@@ -1155,6 +1155,10 @@ interface ToolConstraint {
 const validateConstraintValue = (type: string, value: string): { valid: boolean; error?: string; hint?: string } => {
   if (!value.trim()) return { valid: true }; // Empty is ok while typing
 
+  if (['oneof', 'notoneof', 'anyof', 'contains', 'url_safe'].includes(type) && value.split(',').some(v => !v.trim())) {
+    return { valid: false, error: 'List entries must not be empty' };
+  }
+
   switch (type) {
     case 'pattern':
       // Pattern should be a glob string
@@ -1251,9 +1255,10 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
  * stale verdict behind. A row that cannot be sent as written blocks generation
  * rather than being dropped, since dropping a constraint broadens the warrant.
  */
-export function builderIssues(tools: ToolConstraint[], ttl: number): { rows: Record<string, string>; form: string[] } {
+export function builderIssues(tools: ToolConstraint[], ttl: number, maxDepth = 3): { rows: Record<string, string>; form: string[] } {
   const rows: Record<string, string> = {};
   const form: string[] = [];
+  if (!Number.isInteger(maxDepth) || maxDepth < 0 || maxDepth > 64) form.push('Depth must be a whole number from 0 to 64');
   if (!Number.isInteger(ttl) || ttl <= 0) form.push('TTL must be a positive whole number of seconds');
   if (!tools.some(t => t.name.trim())) form.push('Add at least one tool');
   const names = new Set<string>();
@@ -1283,11 +1288,12 @@ export function builderIssues(tools: ToolConstraint[], ttl: number): { rows: Rec
 const WarrantBuilder = ({ onGenerate, onEdit }: { onGenerate: (config: unknown) => void; onEdit?: () => void }) => {
   const [tools, setToolsState] = useState<ToolConstraint[]>([{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'docs/*' }] }]);
   const [ttl, setTtlState] = useState(3600);
-  const [maxDepth, setMaxDepth] = useState(3);
+  const [maxDepth, setMaxDepthState] = useState(3);
+  const setMaxDepth = (next: number) => { setMaxDepthState(next); onEdit?.(); };
   // Any edit makes an earlier preview describe a different configuration.
   const setTools = (next: ToolConstraint[]) => { setToolsState(next); onEdit?.(); };
   const setTtl = (next: number) => { setTtlState(next); onEdit?.(); };
-  const issues = useMemo(() => builderIssues(tools, ttl), [tools, ttl]);
+  const issues = useMemo(() => builderIssues(tools, ttl, maxDepth), [tools, ttl, maxDepth]);
   const errors = issues.rows;
   const issueCount = Object.keys(issues.rows).length + issues.form.length;
 
@@ -1356,10 +1362,10 @@ const WarrantBuilder = ({ onGenerate, onEdit }: { onGenerate: (config: unknown) 
               }
             }
             return c;
-          }, {} as Record<string, unknown>);
+          }, Object.create(null) as Record<string, unknown>);
         }
         return acc;
-      }, {} as Record<string, unknown>),
+      }, Object.create(null) as Record<string, unknown>),
       ttl,
       max_depth: maxDepth
     };
@@ -1390,7 +1396,7 @@ const WarrantBuilder = ({ onGenerate, onEdit }: { onGenerate: (config: unknown) 
         </div>
         <div>
           <label className="label">Max Delegation Depth</label>
-          <input className="input" type="number" value={maxDepth} onChange={e => setMaxDepth(Number(e.target.value))} min={0} max={10} />
+          <input className="input" type="number" value={maxDepth} onChange={e => setMaxDepth(Number(e.target.value))} min={0} max={64} />
         </div>
       </div>
 
@@ -2244,8 +2250,15 @@ function ReceiptMode() {
   const [failed, setFailed] = useState<{ line: number; error: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [usingSample, setUsingSample] = useState(false);
+  const verificationGeneration = useRef(0);
+  const invalidateResults = () => {
+    verificationGeneration.current += 1;
+    setRows([]); setFailed([]); setError(null); setUsingSample(false);
+  };
+  useEffect(() => () => { verificationGeneration.current += 1; }, []);
 
   const verify = async (inputText = input, rootsInput = rootsText, authInput = authText) => {
+    const generation = ++verificationGeneration.current;
     setError(null);
     setRows([]);
     setFailed([]);
@@ -2288,6 +2301,7 @@ function ReceiptMode() {
         rejected.push({ line: i + 1, error: e instanceof Error ? e.message : String(e) });
       }
     }
+    if (verificationGeneration.current !== generation) return;
     setRows(verified);
     setFailed(rejected);
   };
@@ -2315,7 +2329,7 @@ function ReceiptMode() {
         <textarea
           className="input"
           value={input}
-          onChange={(e) => { setInput(e.target.value); setUsingSample(false); }}
+          onChange={(e) => { invalidateResults(); setInput(e.target.value); }}
           placeholder="a46f7265636569707476657273696f6e01…"
           rows={12}
           style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
@@ -2325,7 +2339,7 @@ function ReceiptMode() {
           <textarea
             className="input"
             value={rootsText}
-            onChange={(e) => setRootsText(e.target.value)}
+            onChange={(e) => { invalidateResults(); setRootsText(e.target.value); }}
             placeholder="verifies each embedded chain at its decision instant"
             rows={2}
             style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
@@ -2336,7 +2350,7 @@ function ReceiptMode() {
           <textarea
             className="input"
             value={authText}
-            onChange={(e) => setAuthText(e.target.value)}
+            onChange={(e) => { invalidateResults(); setAuthText(e.target.value); }}
             placeholder="each receipt's signer must be in this set"
             rows={2}
             style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
@@ -2761,15 +2775,13 @@ function App() {
     try {
       const args = JSON.parse(argsJson || '{}');
 
-      // For single-warrant auth, the trusted root is the warrant's own issuer.
-      // Always read it from the current input, never from an earlier decode.
-      const current = decode_warrant(warrantB64.trim()) as DecodedWarrant | string;
-      if (typeof current === 'string') {
-        setValidationErrors({ warrant: current });
-        return;
-      }
-      const issuer = current.issuer;
-      const result = explainCall([warrantB64.trim()], tool.trim(), args, issuer);
+      // Re-decode the current input: Inspect displays the leaf of a PEM chain,
+      // but the preview trust anchor is always its first warrant's issuer.
+      const { b64, isPem } = cleanInput(warrantB64);
+      const input = isPem ? warrantB64.trim() : b64;
+      const preview = sdkDecodeChain(input) as { issuer: string }[];
+      if (!preview.length) throw new Error('Warrant chain is empty');
+      const result = explainCall(input, tool.trim(), args, preview[0].issuer);
       setDiagnosticResult(result);
       setValidationErrors({});
     } catch (e) {

@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/images/tenuo-logo.svg" alt="tenuo" width="200">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/tenuo-logo-dark.svg">
+    <img src="docs/images/tenuo-logo.svg" alt="Tenuo" width="220">
+  </picture>
 </p>
 
 <p align="center">
