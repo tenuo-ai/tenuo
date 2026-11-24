@@ -78,7 +78,7 @@ impl Json {
     /// Value equality per Section 3.4: identical JCS serializations. Members
     /// compare without regard to order and numbers compare as the doubles JCS
     /// writes. Both sides must come from text with no repeated member name.
-    pub(crate) fn jcs_eq(&self, other: &Json) -> bool {
+    pub(crate) fn jcs_eq<'a>(&'a self, other: &'a Json) -> bool {
         match (self, other) {
             (Json::Null, Json::Null) => true,
             (Json::Bool(a), Json::Bool(b)) => a == b,
@@ -88,7 +88,17 @@ impl Json {
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.jcs_eq(y))
             }
             (Json::Obj(a), Json::Obj(b)) => {
-                a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| v.jcs_eq(w)))
+                // Sorted once, so a wide object costs n log n and not n^2.
+                let sorted = |object: &'a Obj| {
+                    let mut members: Vec<(&'a str, &'a Json)> = object.iter().collect();
+                    members.sort_unstable_by_key(|(name, _)| *name);
+                    members
+                };
+                a.len() == b.len()
+                    && sorted(a)
+                        .into_iter()
+                        .zip(sorted(b))
+                        .all(|((k, v), (l, w))| k == l && v.jcs_eq(w))
             }
             _ => false,
         }
@@ -168,8 +178,7 @@ impl Num {
     /// double is not the test: 2^60 has one, but JCS writes it as
     /// 1152921504606847000.
     pub(crate) fn admissible(&self) -> bool {
-        self.value.is_finite()
-            && decimal_digits(&self.text) == decimal_digits(&format!("{:e}", self.value))
+        self.value.is_finite() && decimal_digits(&self.text) == jcs_digits(self.value)
     }
 }
 
@@ -177,10 +186,6 @@ impl Num {
 /// `0.DIGITS x 10^exponent`, with zero as `("", 0)`. Two literals denote the
 /// same magnitude exactly when these are equal. The sign is not part of it: a
 /// literal and its double always agree on the sign of a non-zero value.
-///
-/// `{:e}` prints the shortest digit string that reads back as the same double,
-/// which is the digit string of ECMAScript's `Number::toString` and so of JCS
-/// (RFC 8785 Section 3.2.2.3); only the layout differs, and layout is dropped.
 fn decimal_digits(text: &str) -> (String, i64) {
     let unsigned = text.strip_prefix('-').unwrap_or(text);
     let (mantissa, exponent) = match unsigned.split_once(['e', 'E']) {
@@ -200,6 +205,73 @@ fn decimal_digits(text: &str) -> (String, i64) {
 
 /// An exponent too long for `i64` saturates far outside the double range, so
 /// it never equals the exponent of a finite double.
+/// The digits ECMAScript's `Number::toString` writes for a finite double, and
+/// so the digits JCS writes (RFC 8785 Section 3.2.2.3), in the form
+/// [`decimal_digits`] returns. Layout is not part of it.
+///
+/// `{:e}` prints the shortest digit string that reads back as the same double,
+/// as ECMAScript does. The two part ways in one case: the double lies exactly
+/// halfway between two strings of that length and both read back as it. `{:e}`
+/// then takes the upper string and ECMAScript the one whose last digit is
+/// even.
+fn jcs_digits(value: f64) -> (String, i64) {
+    let magnitude = value.abs();
+    let (digits, exponent) = decimal_digits(&format!("{magnitude:e}"));
+    // The lower string differs from the upper in its last digit alone, and is
+    // the even one only when the upper ends in an odd digit. One ending in 0
+    // would be a shorter string, and `{:e}` would have printed that.
+    let Some(last @ (b'3' | b'5' | b'7' | b'9')) = digits.bytes().last() else {
+        return (digits, exponent);
+    };
+    let lower = format!("{}{}", &digits[..digits.len() - 1], char::from(last - 1));
+    let halfway = format!("{lower}5");
+    let scale = exponent.saturating_sub(halfway.len() as i64);
+    if is_exactly(magnitude, &halfway, scale)
+        && format!("0.{lower}e{exponent}").parse::<f64>() == Ok(magnitude)
+    {
+        return (lower, exponent);
+    }
+    (digits, exponent)
+}
+
+/// True if the positive finite double `value` is exactly `digits x 10^scale`,
+/// for a digit string that ends in 5. Integer arithmetic only.
+fn is_exactly(value: f64, digits: &str, scale: i64) -> bool {
+    let Ok(n) = digits.parse::<u128>() else {
+        return false;
+    };
+    // value = odd x 2^binary, which a double has exactly one way to be.
+    let bits = value.to_bits();
+    let fraction = bits & ((1 << 52) - 1);
+    let biased = ((bits >> 52) & 0x7ff) as i64;
+    let (mantissa, binary) = if biased == 0 {
+        (fraction, -1074)
+    } else {
+        (fraction | (1 << 52), biased - 1075)
+    };
+    if mantissa == 0 {
+        return false;
+    }
+    let shift = mantissa.trailing_zeros();
+    let (odd, binary) = (u128::from(mantissa >> shift), binary + i64::from(shift));
+    // digits x 10^scale = (digits x 5^scale) x 2^scale, and `digits` is odd, so
+    // the two forms are equal only part for part.
+    let Some(five) = u32::try_from(scale.unsigned_abs())
+        .ok()
+        .and_then(|power| 5u128.checked_pow(power))
+    else {
+        return false;
+    };
+    if binary != scale {
+        return false;
+    }
+    if scale >= 0 {
+        n.checked_mul(five) == Some(odd)
+    } else {
+        n % five == 0 && n / five == odd
+    }
+}
+
 fn parse_exponent(e: &str) -> i64 {
     e.parse::<i64>().unwrap_or({
         if e.starts_with('-') {
@@ -473,6 +545,67 @@ mod tests {
         ] {
             assert!(!num(text).admissible(), "{text}");
         }
+    }
+
+    /// RFC 8785 Appendix B: each double and the text JCS writes for it.
+    #[test]
+    fn rfc_8785_sample_numbers_are_admissible() {
+        for (bits, text) in [
+            (0x0000000000000001u64, "5e-324"),
+            (0x7fefffffffffffff, "1.7976931348623157e+308"),
+            (0x4340000000000000, "9007199254740992"),
+            (0x4430000000000000, "295147905179352830000"),
+            (0x44b52d02c7e14af5, "9.999999999999997e+22"),
+            (0x44b52d02c7e14af6, "1e+23"),
+            (0x44b52d02c7e14af7, "1.0000000000000001e+23"),
+            (0x444b1ae4d6e2ef4e, "999999999999999700000"),
+            (0x444b1ae4d6e2ef4f, "999999999999999900000"),
+            (0x444b1ae4d6e2ef50, "1e+21"),
+            (0x3eb0c6f7a0b5ed8c, "9.999999999999997e-7"),
+            (0x3eb0c6f7a0b5ed8d, "0.000001"),
+            (0x41b3de4355555553, "333333333.3333332"),
+            (0x41b3de4355555554, "333333333.33333325"),
+            (0x41b3de4355555555, "333333333.3333333"),
+            (0x41b3de4355555556, "333333333.3333334"),
+            (0x41b3de4355555557, "333333333.33333343"),
+            (0xbecbf647612f3696, "-0.0000033333333333333333"),
+            (0x43143ff3c1cb0959, "1424953923781206.2"),
+        ] {
+            let n = num(text);
+            assert_eq!(n.value().to_bits(), bits, "{text}");
+            assert!(n.admissible(), "{text}");
+        }
+    }
+
+    /// A double exactly halfway between two shortest spellings is written
+    /// with the even last digit. The other spelling reads back as the same
+    /// double and is not admissible.
+    #[test]
+    fn a_tie_between_two_spellings_goes_to_the_even_digit() {
+        for (written, other) in [
+            // 2^-25 = 2.98023223876953125e-8
+            ("2.9802322387695312e-8", "2.9802322387695313e-8"),
+            // 1424953923781206.25
+            ("1424953923781206.2", "1424953923781206.3"),
+            // 2^50 + 0.25 = 1125899906842624.25
+            ("1125899906842624.2", "1125899906842624.3"),
+        ] {
+            assert_eq!(num(written).value(), num(other).value(), "{written}");
+            assert!(num(written).admissible(), "{written}");
+            assert!(!num(other).admissible(), "{other}");
+        }
+        // A value that ends in 5 and is its own shortest spelling is no tie.
+        for text in ["0.5", "2.5", "1.5", "35"] {
+            assert!(num(text).admissible(), "{text}");
+        }
+    }
+
+    #[test]
+    fn equal_length_objects_with_different_names_are_not_equal() {
+        let json = |text: &str| parse_unique(text).expect(text);
+        assert!(!json(r#"{"a":1,"b":2}"#).jcs_eq(&json(r#"{"a":1,"c":2}"#)));
+        assert!(!json(r#"{"a":1,"b":2}"#).jcs_eq(&json(r#"{"b":1,"a":2}"#)));
+        assert!(json(r#"{"b":2,"a":1}"#).jcs_eq(&json(r#"{"a":1.0,"b":2e0}"#)));
     }
 
     #[test]

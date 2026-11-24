@@ -54,9 +54,8 @@ pub(super) fn verify_chain(
     }
 
     // 3: root
-    let (root_claims, anchor) = verify_root_signature(root_compact, anchors)?;
-    let root = verify_root(root_claims, anchor, now, opts)?;
-    let issuer = anchor.issuer.clone();
+    let (root_claims, verifying) = verify_root_signature(root_compact, anchors)?;
+    let (root, issuer) = verify_root(root_claims, anchors, verifying, now, opts)?;
 
     // 4: adjacent pairs
     let mut tokens = vec![root];
@@ -127,6 +126,11 @@ pub(super) fn verify_chain(
 
     // 7: proof of possession
     let leaf_compact = chain[chain.len() - 1];
+    // The PoP is read before its signature is checked, so it is held to the
+    // size limit of a token.
+    if pop.len() > limits.max_token_size {
+        return Err(deny("7a", "the PoP JWT exceeds MAX_TOKEN_SIZE"));
+    }
     let pop = jose::verify(pop, Some(&leaf.holder), POP_TYP, "7a", "7b")?;
     let pop_jti = non_empty_str(&pop, "jti")
         .ok_or_else(|| deny("7c", "PoP jti is missing or not a non-empty string"))?;
@@ -154,8 +158,9 @@ pub(super) fn verify_chain(
     if aat_hash != jose::sha256_b64u(jose::signing_input(leaf_compact)) {
         return Err(deny("7c", "aat_hash does not match the presented leaf"));
     }
+    // Only an omitted claim is absent: a null is present and names nothing.
     match pop.get("aat_aud") {
-        None | Some(Json::Null) => {
+        None => {
             if opts.require_pop_aud {
                 return Err(deny("7d", "aat_aud is required but absent"));
             }
@@ -214,7 +219,8 @@ pub(super) fn verify_chain(
     })
 }
 
-/// Steps 3a and 3b: the root verifies under some trust anchor's key.
+/// Steps 3a and 3b: the root verifies under some trust anchor's key. Returns
+/// the first anchor whose key verifies it; others may share that key.
 fn verify_root_signature<'a>(
     root: &str,
     anchors: &'a [TrustAnchor],
@@ -232,10 +238,11 @@ fn verify_root_signature<'a>(
 /// Steps 3b (after the signature) to 3n.
 fn verify_root(
     claims: Obj,
-    anchor: &TrustAnchor,
+    anchors: &[TrustAnchor],
+    verifying: &TrustAnchor,
     now: i128,
     opts: &VerifyOptions<'_>,
-) -> Result<Token, Denied> {
+) -> Result<(Token, String), Denied> {
     let limits = opts.limits;
     let (Some(iat), Some(exp)) = (int(&claims, "iat"), int(&claims, "exp")) else {
         return Err(deny(
@@ -272,17 +279,28 @@ fn verify_root(
     let jti = non_empty_str(&claims, "jti")
         .ok_or_else(|| deny("3j", "root jti is missing or not a non-empty string"))?
         .to_owned();
-    let iss = claims.get("iss").and_then(Json::as_str);
-    if !iss.is_some_and(is_uri) || iss != Some(anchor.issuer.as_str()) {
-        return Err(deny(
-            "3k",
-            "root iss is not a URI or does not match the verifying trust anchor",
-        ));
-    }
+    // The issuer of a trust anchor whose key verified the signature. Several
+    // anchors may hold that key, each under its own issuer.
+    let issuer = claims
+        .get("iss")
+        .and_then(Json::as_str)
+        .filter(|iss| is_uri(iss))
+        .filter(|iss| {
+            anchors
+                .iter()
+                .any(|anchor| anchor.key == verifying.key && anchor.issuer == *iss)
+        })
+        .ok_or_else(|| {
+            deny(
+                "3k",
+                "root iss is not a URI or does not match the verifying trust anchor",
+            )
+        })?
+        .to_owned();
     let holder = holder_key(&claims, "3l")?;
     let entry = aat_entry(&claims, true, "3m")?;
     let tools = constraint::decode_tools(entry, limits.max_constraint_depth, "3n")?;
-    Ok(Token {
+    let root = Token {
         claims,
         tools,
         jti,
@@ -291,7 +309,8 @@ fn verify_root(
         del_depth: 0,
         del_max_depth,
         holder,
-    })
+    };
+    Ok((root, issuer))
 }
 
 /// Step 4 for one adjacent pair.

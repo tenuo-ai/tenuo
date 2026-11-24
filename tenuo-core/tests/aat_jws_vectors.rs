@@ -9,7 +9,7 @@ use base64::Engine;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use tenuo::aat::{verify_chain, Limits, ReplayStore, TrustAnchor, VerifyOptions};
-use tenuo::PublicKey;
+use tenuo::{PublicKey, SigningKey};
 
 const VECTORS: &str = include_str!("../../tests/vectors/aat-jws-vectors.json");
 const SPEC: &str = "draft-niyikiza-oauth-attenuating-agent-tokens-02";
@@ -269,5 +269,145 @@ fn an_unknown_trust_anchor_or_an_empty_anchor_set_denies() {
     }];
     let mut opts = VerifyOptions::new(&audience, now);
     let denied = verify_chain(&chain, &pop, &renamed, &tool, &args, &mut opts).unwrap_err();
+    assert_eq!(denied.step, "3k");
+}
+
+/// A PoP JWT for `vector`'s leaf with `edit` applied to the suite's claims,
+/// signed by the suite key that holds the leaf.
+fn signed_pop(suite: &Suite, vector: &Value, edit: impl FnOnce(&mut Value)) -> String {
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let leaf = vector["chain"]
+        .as_array()
+        .and_then(|chain| chain.last())
+        .expect("leaf");
+    let holder = &leaf["payload"]["cnf"]["jwk"]["x"];
+    let seed = suite.doc["keys"]
+        .as_object()
+        .expect("keys")
+        .values()
+        .find(|key| &key["jwk"]["x"] == holder)
+        .and_then(|key| key["seed_hex"].as_str())
+        .expect("the suite holds the leaf holder's seed");
+    let seed: [u8; 32] = hex::decode(seed)
+        .expect("hex")
+        .try_into()
+        .expect("32 bytes");
+
+    let mut claims = vector["pop"]["payload"].clone();
+    edit(&mut claims);
+    let input = format!(
+        "{}.{}",
+        text(&vector["pop"]["header_b64"]),
+        b64.encode(claims.to_string())
+    );
+    let signature = SigningKey::from_bytes(&seed).sign_raw(input.as_bytes());
+    format!("{input}.{}", b64.encode(signature.to_bytes()))
+}
+
+/// The first PERMIT vector with no policy and a one-token chain.
+fn plain_permit(suite: &Suite) -> &Value {
+    permits(suite)
+        .find(|v| {
+            v["chain"].as_array().map(Vec::len) == Some(1)
+                && v["policy"].as_object().is_some_and(|p| p.is_empty())
+                && v["params"].as_object().is_some_and(|p| p.is_empty())
+        })
+        .expect("a plain PERMIT vector")
+}
+
+#[test]
+fn a_null_pop_audience_is_present_and_names_nothing() {
+    let suite = Suite::load();
+    let vector = plain_permit(&suite);
+    let verdict = |edit: fn(&mut Value)| {
+        let pop = signed_pop(&suite, vector, edit);
+        suite.run(vector, |_, presented, _| *presented = pop).0
+    };
+    let permit = ("PERMIT".to_owned(), None);
+
+    // The helper signs what the verifier accepts.
+    assert_eq!(verdict(|_| {}), permit);
+    // The claim is optional: without it, and with no audience policy, PERMIT.
+    assert_eq!(
+        verdict(|claims| {
+            claims.as_object_mut().expect("claims").remove("aat_aud");
+        }),
+        permit
+    );
+    assert_eq!(
+        verdict(|claims| claims["aat_aud"] = Value::Null),
+        ("DENY".to_owned(), Some("7d".to_owned()))
+    );
+}
+
+#[test]
+fn a_pop_larger_than_a_token_may_be_is_denied() {
+    let suite = Suite::load();
+    let vector = plain_permit(&suite);
+    let limit = suite.limits(vector).max_token_size;
+    let verdict = |padding: usize| {
+        let pop = signed_pop(&suite, vector, |claims| {
+            claims["padding"] = Value::String("x".repeat(padding));
+        });
+        (
+            pop.len(),
+            suite.run(vector, |_, presented, _| *presented = pop).0,
+        )
+    };
+
+    // An unknown claim is ignored, so a padded PoP within the limit passes.
+    let (size, small) = verdict(1_000);
+    assert!(size <= limit);
+    assert_eq!(small, ("PERMIT".to_owned(), None));
+    let (size, large) = verdict(limit);
+    assert!(size > limit);
+    assert_eq!(large, ("DENY".to_owned(), Some("7a".to_owned())));
+}
+
+#[test]
+fn anchors_that_share_a_key_each_vouch_for_their_own_issuer() {
+    let suite = Suite::load();
+    let vector = plain_permit(&suite);
+    let chain = strings(&vector["presentation"]["aat_chain"]);
+    let chain: Vec<&str> = chain.iter().map(String::as_str).collect();
+    let pop = text(&vector["presentation"]["aat_pop"]);
+    let (tool, args) = (text(&vector["tool"]), text(&vector["args_json"]));
+    let audience = text(&suite.doc["params"]["audience"]);
+    let now = vector["now"].as_i64().expect("now");
+    let issuer = text(&vector["chain"][0]["payload"]["iss"]);
+    let key = suite
+        .anchors
+        .iter()
+        .find(|anchor| anchor.issuer == issuer)
+        .expect("the root's anchor")
+        .key
+        .clone();
+    let anchor = |issuer: &str| TrustAnchor {
+        issuer: issuer.to_owned(),
+        key: key.clone(),
+    };
+    let other = "https://other.example.com";
+
+    // The root's issuer is found whichever anchor with its key comes first.
+    for anchors in [
+        [anchor(other), anchor(&issuer)],
+        [anchor(&issuer), anchor(other)],
+    ] {
+        let mut opts = VerifyOptions::new(&audience, now);
+        let verified = verify_chain(&chain, &pop, &anchors, &tool, &args, &mut opts)
+            .expect("the root's issuer and key are an anchor");
+        assert_eq!(verified.issuer, issuer);
+    }
+    // The key alone is not enough.
+    let mut opts = VerifyOptions::new(&audience, now);
+    let denied = verify_chain(
+        &chain,
+        &pop,
+        &[anchor(other), anchor("https://third.example.com")],
+        &tool,
+        &args,
+        &mut opts,
+    )
+    .unwrap_err();
     assert_eq!(denied.step, "3k");
 }

@@ -292,14 +292,21 @@ fn table_lists(child: &engine::Constraint, parent: &engine::Constraint) -> bool 
     )
 }
 
-/// Step 4p: capability monotonicity (Section 4.5).
+/// Step 4p: capability monotonicity (Section 4.5). Each of 4p1 to 4p4 runs
+/// over every tool before the next begins, so the step reported is the
+/// earliest that fails anywhere in the token.
 pub(crate) fn check_attenuation(parent: &Tools, child: &Tools) -> Result<(), Denied> {
+    // 4p1: every tool the child names is in the parent.
+    let mut pairs = Vec::with_capacity(child.len());
     for (tool, child_map) in child {
         let parent_map = parent
             .get(tool)
             .ok_or_else(|| deny("4p1", format!("tool {tool:?} is not in the parent")))?;
+        pairs.push((tool, parent_map, child_map));
+    }
 
-        // 4p2: the key rules. "*" names no argument.
+    // 4p2: the key rules. "*" names no argument.
+    for (tool, parent_map, child_map) in &pairs {
         for key in child_map.named.keys() {
             if !parent_map.named.contains_key(key) && !parent_map.star {
                 return Err(deny(
@@ -330,8 +337,10 @@ pub(crate) fn check_attenuation(parent: &Tools, child: &Tools) -> Result<(), Den
                 format!("{tool}: child contains * but the parent does not"),
             ));
         }
+    }
 
-        // 4p3: a required argument stays required.
+    // 4p3: a required argument stays required.
+    for (tool, parent_map, child_map) in &pairs {
         for (key, entry) in &child_map.named {
             if let Some(parent_entry) = parent_map.named.get(key) {
                 if !parent_entry.optional && entry.optional {
@@ -342,10 +351,12 @@ pub(crate) fn check_attenuation(parent: &Tools, child: &Tools) -> Result<(), Den
                 }
             }
         }
+    }
 
-        // 4p4: each child constraint attenuates the parent's. A key the parent
-        // admits only through "*" is held to the "*" constraint, a wildcard,
-        // which subsumes everything; so is the child's own "*".
+    // 4p4: each child constraint attenuates the parent's. A key the parent
+    // admits only through "*" is held to the "*" constraint, a wildcard,
+    // which subsumes everything; so is the child's own "*".
+    for (tool, parent_map, child_map) in &pairs {
         for (key, entry) in &child_map.named {
             if let Some(parent_entry) = parent_map.named.get(key) {
                 if !entry.constraint.subsumed_by(&parent_entry.constraint) {
@@ -384,8 +395,9 @@ pub(crate) fn check_arguments(map: &ConstraintMap, args: &Obj) -> Result<(), Den
             }
         }
     }
+    let present: std::collections::HashSet<&str> = args.iter().map(|(name, _)| name).collect();
     for (name, entry) in &map.named {
-        if !entry.optional && !args.contains(name) {
+        if !entry.optional && !present.contains(name.as_str()) {
             return Err(deny("6b", format!("required argument {name:?} is absent")));
         }
     }
@@ -521,6 +533,47 @@ mod tests {
         };
         assert!(!ill_formed(&nest(32)));
         assert!(ill_formed(&nest(33)));
+    }
+
+    /// With faults in several tools, the step reported is the earliest in
+    /// the algorithm's order, whichever tool sorts first.
+    #[test]
+    fn the_earliest_failing_step_is_reported_across_tools() {
+        let tools = |text: &str| -> Tools {
+            decode_tools(parse_unique(text).unwrap().as_obj().unwrap(), 32, "4o").unwrap()
+        };
+        let step = |parent: &str, child: &str| {
+            check_attenuation(&tools(parent), &tools(child))
+                .unwrap_err()
+                .step
+        };
+        let one = r#"{"x":{"constraint_type":"exact","value":1}}"#;
+        let two = r#"{"x":{"constraint_type":"exact","value":2}}"#;
+        let optional = r#"{"x":{"constraint_type":"exact","value":1,"optional":true}}"#;
+        let extra =
+            r#"{"x":{"constraint_type":"exact","value":1},"y":{"constraint_type":"wildcard"}}"#;
+
+        // Tool a widens a constraint (4p4); tool z is not in the parent (4p1).
+        assert_eq!(
+            step(
+                &format!(r#"{{"a":{one}}}"#),
+                &format!(r#"{{"a":{two},"z":{{}}}}"#)
+            ),
+            "4p1"
+        );
+        let parent = format!(r#"{{"a":{one},"z":{one}}}"#);
+        // Tool a fails 4p4; tool z names a key the parent does not (4p2).
+        assert_eq!(
+            step(&parent, &format!(r#"{{"a":{two},"z":{extra}}}"#)),
+            "4p2"
+        );
+        // Tool a fails 4p4; tool z makes a required argument optional (4p3).
+        assert_eq!(
+            step(&parent, &format!(r#"{{"a":{two},"z":{optional}}}"#)),
+            "4p3"
+        );
+        assert_eq!(step(&parent, &format!(r#"{{"a":{two},"z":{one}}}"#)), "4p4");
+        assert!(check_attenuation(&tools(&parent), &tools(&format!(r#"{{"a":{one}}}"#))).is_ok());
     }
 
     #[test]
