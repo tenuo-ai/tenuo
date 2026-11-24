@@ -123,7 +123,7 @@ npm run score      # your score and why
 npm run trace      # every decision, with its reason
 npm run audit      # what every agent can currently do
 npm run next       # move on to the next stage
-npm run share      # send Tenuo a redacted scorecard to improve the challenge
+npm run share      # show a redacted scorecard, then send it to Tenuo if you confirm
 npm run reset      # restore stage 1 and every starter exercise</code></pre>
 
 <aside class="lab-callout notice"><div class="lab-callout-title">One ground rule</div><p><strong>The injected instruction is in the flight service. Do not delete or filter it.</strong> Assume an agent will sometimes be fooled; this game is about what still holds when it is.</p></aside>
