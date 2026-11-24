@@ -1009,8 +1009,19 @@ impl PyAll {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        "All(...)".to_string()
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let children = self
+            .inner
+            .constraints
+            .iter()
+            .map(|constraint| {
+                constraint_to_py(py, constraint)?
+                    .bind(py)
+                    .repr()?
+                    .extract::<String>()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(format!("All([{}])", children.join(", ")))
     }
 }
 
@@ -1063,8 +1074,19 @@ impl PyAnyOf {
         validate_child_attenuation(Constraint::Any(self.inner.clone()), child)
     }
 
-    fn __repr__(&self) -> String {
-        "AnyOf(...)".to_string()
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let children = self
+            .inner
+            .constraints
+            .iter()
+            .map(|constraint| {
+                constraint_to_py(py, constraint)?
+                    .bind(py)
+                    .repr()?
+                    .extract::<String>()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(format!("AnyOf([{}])", children.join(", ")))
     }
 }
 
@@ -1113,8 +1135,12 @@ impl PyNot {
         validate_child_attenuation(Constraint::Not(self.inner.clone()), child)
     }
 
-    fn __repr__(&self) -> String {
-        "Not(...)".to_string()
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let child = constraint_to_py(py, &self.inner.constraint)?;
+        Ok(format!(
+            "Not({})",
+            child.bind(py).repr()?.extract::<String>()?
+        ))
     }
 }
 

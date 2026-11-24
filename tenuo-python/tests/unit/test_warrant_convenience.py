@@ -17,6 +17,10 @@ from datetime import timedelta
 import pytest
 
 from tenuo import (
+    All,
+    AnyOf,
+    Not,
+    Pattern,
     BoundWarrant,
     Exact,
     OneOf,
@@ -129,6 +133,61 @@ class TestDebuggingMethods:
             assert "queue: OneOf(['a', 'b'])" in text
             assert "auto_close: Exact(False)" in text
             assert "ping: (no argument constraints)" in text
+
+    def test_explain_shows_nested_constraints(self):
+        key = SigningKey.generate()
+        constraint = All(
+            [Pattern("/workspace/*"), AnyOf([Exact("/workspace/a.json"), Not(Exact("/workspace/secret"))])]
+        )
+        warrant = Warrant.mint_builder().capability("read", path=constraint).holder(key.public_key).ttl(3600).mint(key)
+        for text in (warrant.explain(), warrant.inspect()):
+            assert "All([" in text
+            assert "AnyOf([" in text
+            assert "Not(Exact(" in text
+            for value in ("/workspace/*", "/workspace/a.json", "/workspace/secret"):
+                assert value in text
+            assert "(...)" not in text
+
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_explain_preserves_metadata_for_unknown_constraint(self, nested, monkeypatch, capsys):
+        from tenuo.exceptions import ValidationError
+
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read", path=All([Exact("future-value")]) if nested else Exact("future-value"))
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        # Replace the CBOR Exact tag (1) with an unknown tag (23), retaining
+        # the payload length, then sign the altered payload as a newer issuer
+        # would. The fixture uses a one-byte CBOR byte-string length.
+        raw = bytes(warrant.to_bytes())
+        exact = b"\x82\x01\xa1\x65value\x6cfuture-value"
+        assert raw.count(exact) == 1
+        assert raw[:3] == b"\x83\x01\x58"
+        payload_end = 4 + raw[3]
+        payload = raw[4:payload_end].replace(exact, b"\x82\x17" + exact[2:])
+        assert raw[payload_end : payload_end + 4] == b"\x82\x01\x58\x40"
+        signature = bytes(key.sign_raw(b"tenuo-warrant-v1\x01" + payload))
+        decoded = Warrant.from_bytes(raw[:4] + payload + raw[payload_end : payload_end + 4] + signature)
+        with pytest.raises(ValidationError, match="Unknown constraint type"):
+            repr(decoded.capabilities)
+        for text in (decoded.explain(), decoded.inspect()):
+            assert "Tools: read" in text
+            assert "Expires:" in text
+            assert "Depth:" in text
+            assert "Constraints: unavailable" in text
+            assert "no argument constraints" not in text
+
+        from tenuo import cli
+
+        monkeypatch.setattr(cli, "print_rich_warrant", lambda warrant: False)
+        cli.inspect_warrant(decoded.to_base64())
+        output = capsys.readouterr().out
+        assert "Constraints: unavailable" in output
+        assert "Error inspecting warrant" not in output
 
     def test_explain_with_chain(self):
         """Test explain with include_chain=True."""

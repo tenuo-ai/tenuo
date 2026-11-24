@@ -58,6 +58,7 @@ from tenuo_core import (
 
 from ._native_patch import native_original, patch_native
 from .decorators import key_scope
+from .exceptions import ValidationError
 from .validation import ValidationResult
 
 if TYPE_CHECKING:
@@ -666,17 +667,24 @@ def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
         f"  Expires: {self.expires_at()}",  # Rust method returns RFC3339 string
     ]
 
-    caps = self.capabilities or {}
-    if caps:
-        lines.append("  Constraints:")
-        for tool in sorted(caps):
-            args = caps[tool] or {}
-            if not args:
-                lines.append(f"    {tool}: (no argument constraints)")
-                continue
-            lines.append(f"    {tool}:")
-            for arg in sorted(args):
-                lines.append(f"      {arg}: {args[arg]!r}")
+    constraint_lines = []
+    try:
+        caps = self.capabilities or {}
+        if caps:
+            constraint_lines.append("  Constraints:")
+            for tool in sorted(caps):
+                args = caps[tool] or {}
+                if not args:
+                    constraint_lines.append(f"    {tool}: (no argument constraints)")
+                    continue
+                constraint_lines.append(f"    {tool}:")
+                for arg in sorted(args):
+                    constraint_lines.append(f"      {arg}: {args[arg]!r}")
+    except ValidationError:
+        # Newer runtimes may issue constraint types these bindings cannot
+        # convert, including composite children. Do not imply unrestricted access.
+        constraint_lines = ["  Constraints: unavailable (unsupported constraint conversion)"]
+    lines.extend(constraint_lines)
 
     if self.clearance is not None:
         lines.append(f"  Clearance: {self.clearance}")
