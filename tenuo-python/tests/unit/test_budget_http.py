@@ -899,12 +899,72 @@ class TestInstall:
         assert used(meter, warrant) == INPUT + 100
 
 
+# ---------------------------------------------------------------------------
+# Usage events for a connected control plane
+# ---------------------------------------------------------------------------
+
+
+class TestControlPlaneEvents:
+    @pytest.fixture
+    def cloud(self, monkeypatch):
+        class Recorder:
+            def __init__(self):
+                self.events, self.fail = [], False
+
+            def emit_for_enforcement(self, result, chain_result=None, **kwargs):
+                if self.fail:
+                    raise RuntimeError("control plane down")
+                self.events.append((result, chain_result))
+
+        recorder = Recorder()
+        monkeypatch.setattr("tenuo.control_plane.get_or_create", lambda: recorder)
+        return recorder
+
+    def test_finished_call_sends_one_event_with_its_usage(self, keys, cloud):
+        warrant = mint(keys, total_tokens=1000, max_tokens=400)
+        http, _ = client_for(keys, warrant, Provider())
+        chat(http)
+        ((result, chain_result),) = cloud.events
+        assert result.allowed and result.tool == "llm.chat" and chain_result is not None
+        assert result.arguments["model"] == MODEL and result.arguments["max_tokens"] == 400
+        usage = result.arguments["llm_usage"]
+        assert (usage["input_tokens"], usage["output_tokens"], usage["total_tokens"]) == (INPUT, 100, INPUT + 100)
+        assert usage["budget"] == [{"warrant_id": warrant.id, "used": INPUT + 100, "limit": 1000}]
+
+    def test_stream_sends_its_event_when_the_stream_ends(self, keys, cloud):
+        warrant = mint(keys, total_tokens=1000)
+        http, _ = client_for(keys, warrant, Provider())
+        with http.stream("POST", CHAT, json={"model": MODEL, "messages": MESSAGES, "stream": True}) as response:
+            assert cloud.events == []
+            response.read()
+        assert cloud.events[0][0].arguments["llm_usage"]["total_tokens"] == INPUT + 100
+
+    def test_refusals_are_sent_as_denials(self, keys, cloud):
+        warrant = mint(keys, total_tokens=150)
+        http, _ = client_for(keys, warrant, Provider())
+        chat(http)
+        chat(http)  # over budget
+        http.post(CHAT, json={"model": "another-model", "messages": MESSAGES})
+        allowed, over_budget, wrong_model = (result for result, _ in cloud.events)
+        assert allowed.allowed and not over_budget.allowed and not wrong_model.allowed
+        assert over_budget.constraint_violated == "total_tokens"
+        assert over_budget.arguments["llm_usage"] == {"budget": [{"warrant_id": warrant.id, "used": 130, "limit": 150}]}
+        assert wrong_model.constraint_violated == "model" and "usage" not in wrong_model.arguments
+
+    def test_an_unreachable_control_plane_does_not_affect_the_call(self, keys, cloud):
+        cloud.fail = True
+        warrant = mint(keys, total_tokens=1000)
+        http, meter = client_for(keys, warrant, Provider())
+        assert chat(http).status_code == 200 and used(meter, warrant) == INPUT + 100
+
+
 class TestWhatTheBodyDoesNotShowAtFirstGlance:
     def test_a_list_of_prompts_and_best_of_multiply_the_output(self, keys):
         warrant = mint(keys, total_tokens=100_000)
         provider = Provider()
         http, meter = client_for(keys, warrant, provider)
         url = "https://provider.test/v1/completions"
+        http.post(url, json={"model": MODEL, "prompt": ["a", "b", "c"], "max_tokens": 50, "n": 2})
         reserved = []
         original = meter.store.add
         meter.store.add = lambda deltas, expires: (reserved.append(max(deltas.values())), original(deltas, expires))[1]

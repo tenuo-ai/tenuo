@@ -48,9 +48,11 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import sqlite3
 import threading
 import time
+import weakref
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
@@ -194,12 +196,30 @@ class BudgetBackend(Protocol):
         ...
 
 
+# Stores whose locks a forked child must not inherit as they were: one held by
+# another thread at the fork would never open in the child.
+_LOCKED: "weakref.WeakSet[Any]" = weakref.WeakSet()
+
+
+def _reset_locks_in_child() -> None:
+    for owner in list(_LOCKED):
+        owner._reset_locks()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_locks_in_child)
+
+
 class InMemoryBudgetBackend:
     """Thread-safe totals for one process."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
         self._rows: Dict[str, List[float]] = {}  # key -> [used, expires_at]
+        self._reset_locks()
+        _LOCKED.add(self)
+
+    def _reset_locks(self) -> None:
+        self._lock = threading.Lock()
 
     def add(self, deltas: Mapping[str, int], expires_at: Mapping[str, float]) -> Dict[str, int]:
         with self._lock:
@@ -345,6 +365,10 @@ class BudgetStore:
         # is spent against these warrants until the total is right again.
         self._owed: Dict[str, int] = {}
         self._owed_expiries: Dict[str, float] = {}
+        self._reset_locks()
+        _LOCKED.add(self)
+
+    def _reset_locks(self) -> None:
         self._owed_lock = threading.Lock()
         self._flush_lock = threading.Lock()  # one writer at a time carries the owed usage
 
@@ -515,7 +539,7 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
             if isinstance(value, bool):
                 continue
             if isinstance(value, (int, float)):
-                if value < 0:
+                if not math.isfinite(value) or value < 0:
                     impossible.append(name)
                     continue
                 return int(value)
@@ -525,7 +549,7 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
     out = read("completion_tokens", "output_tokens")
     total = read("total_tokens")
     if impossible:
-        return None  # a count below zero is not a count: the reservation stands
+        return None  # a count below zero, or not a finite number, is not a count: the reservation stands
     if total is None:
         if inp is None and out is None:
             return None
@@ -586,6 +610,9 @@ class MeteredCall:
     usage: Optional[Dict[str, Any]] = None
     # Scratch space for the adapter that runs the call (never read here).
     adapter_state: Dict[str, Any] = dc_field(repr=False, default_factory=dict)
+    # True when the output cap is below what the call would otherwise have had,
+    # because a budget in the chain is running out.
+    lowered: bool = False
 
     @property
     def done(self) -> bool:
@@ -823,6 +850,7 @@ class TokenMeter:
         checked = as_sent(cap) if as_sent is not None else request
 
         call = MeteredCall(self.tool, model, cap, reserved, input_estimate, clamped, True, levels, self.store)
+        call.lowered = cap < want
         totals = self.store.add(
             {lv.warrant_id: reserved for lv in levels}, {lv.warrant_id: lv.expires_at for lv in levels}
         )
