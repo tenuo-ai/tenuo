@@ -179,9 +179,28 @@ class _Dialect:
         estimate looks for."""
         return body
 
+    _DEPLOYMENT = re.compile(r"/deployments/([^/]+)/")
+
     def model(self, body: Mapping[str, Any], path: str) -> Optional[str]:
+        """The model the request runs on: the deployment in the URL when there is one, else the body's."""
+        match = self._DEPLOYMENT.search(path)
+        if match:
+            return match.group(1)
         value = body.get("model")
         return value if isinstance(value, str) else None
+
+    def also_selected(self, body: Mapping[str, Any], model: Optional[str]) -> List[str]:
+        """Every other model the request names: one in the body beside a
+        deployment in the URL, and a list of fallbacks. All must be allowed."""
+        named = [body.get("model")]
+        fallbacks = body.get("models")
+        if isinstance(fallbacks, list):
+            named.extend(fallbacks)
+        out: List[str] = []
+        for name in named:
+            if isinstance(name, str) and name != model and name not in out:
+                out.append(name)
+        return out
 
     def read_cap(self, body: Mapping[str, Any], default: str) -> Tuple[Optional[int], str]:
         """The output cap the caller set, and the field to write the cap to.
@@ -252,6 +271,21 @@ class _OpenAIChat(_Dialect):
         body["stream_options"] = options
         return True
 
+    def event_usage(self, state: Dict[str, Any], event: Any) -> None:
+        if not isinstance(event, Mapping):
+            return
+        choices = event.get("choices")
+        if isinstance(choices, list) and any(isinstance(c, Mapping) and c.get("finish_reason") for c in choices):
+            state["finished"] = True
+        usage = event.get("usage")
+        if usage:
+            state["usage"] = usage
+            # Some providers send a running count with every chunk. It is the
+            # final one in a chunk that carries nothing else, or once
+            # generation has finished.
+            if not choices or state.get("finished"):
+                state["complete"] = True
+
     def is_hidden_event(self, event: Any) -> bool:
         # The usage-only chunk that include_usage adds: no choices, just usage.
         return isinstance(event, Mapping) and event.get("usage") is not None and not event.get("choices")
@@ -260,9 +294,6 @@ class _OpenAIChat(_Dialect):
 class _OpenAICompletions(_OpenAIChat):
     name = "openai.completions"
     output_params = ("max_tokens",)
-
-    def view(self, body: Mapping[str, Any]) -> Mapping[str, Any]:
-        return {**body, "input": body.get("prompt")}
 
     def choices(self, body: Mapping[str, Any]) -> int:
         # One completion per prompt in a list, times n; best_of generates (and
@@ -354,6 +385,12 @@ class _GoogleGenerate(_Dialect):
         # The model is named in the URL, not the body.
         match = self._MODEL.search(path)
         return match.group(1) if match else super().model(body, path)
+
+    def also_selected(self, body: Mapping[str, Any], model: Optional[str]) -> List[str]:
+        named = body.get("model")
+        if isinstance(named, str) and named.split("/")[-1] != model:
+            return [named.split("/")[-1]]
+        return []
 
     # The settings object and its fields are accepted in either spelling.
     _CONFIG_KEYS = ("generationConfig", "generation_config")
@@ -652,6 +689,13 @@ class _Core:
 
         model = dialect.model(body, path)
         if not monitor:
+            for other in dialect.also_selected(body, model):
+                if not self.meter.model_allowed(self.warrant, other):
+                    return _Plan(request, refusal=self._refuse(
+                        request, dialect, DENIED_CODE,
+                        f"tenuo: model call refused by the warrant: the request also names model {other!r}, "
+                        "which the warrant does not allow", model,
+                    ))
             uncountable = dialect.uncountable(body)
             if uncountable is not None:
                 return _Plan(request, refusal=self._refuse(

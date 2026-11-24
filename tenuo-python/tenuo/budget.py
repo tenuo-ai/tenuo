@@ -412,7 +412,9 @@ class BudgetStore:
 # Usage and estimates
 # ---------------------------------------------------------------------------
 
-_INPUT_KEYS = ("messages", "input", "instructions", "tools", "functions", "response_format", "text")
+# Request fields that carry prompt text, across the wire formats.
+_INPUT_KEYS = ("messages", "input", "prompt", "suffix", "instructions", "tools", "functions", "response_format",
+               "text", "prediction")
 
 
 # What one image is reserved at, whatever its size in bytes: providers bill an
@@ -724,6 +726,15 @@ class TokenMeter:
         """
         rooms = [entry["remaining"] for entry in self.status(warrant, chain) if "remaining" in entry]
         return min(rooms) if rooms else None
+
+    def model_allowed(self, warrant: Any, model: str) -> bool:
+        """Whether the warrant's model constraint, if it has one, admits ``model``."""
+        constraint = self._constraints(warrant).get(MODEL_FIELD)
+        if constraint is None:
+            return True
+        from tenuo.core import check_constraint
+
+        return bool(check_constraint(constraint, model))
 
     def _constraints(self, warrant: Any) -> Dict[str, Any]:
         # As the warrant check does: the tool's own capability, else the wildcard.

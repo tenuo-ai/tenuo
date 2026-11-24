@@ -526,7 +526,7 @@ class TestRouting:
         warrant = mint(keys, total_tokens=1000)
         provider = Provider()
         http, meter = client_for(keys, warrant, provider)
-        http.post("https://x.test/openai/deployments/d/chat/completions?api-version=2024", json={"model": MODEL, "messages": MESSAGES})
+        http.post(f"https://x.test/openai/deployments/{MODEL}/chat/completions?api-version=2024", json={"model": MODEL, "messages": MESSAGES})
         assert used(meter, warrant) == INPUT + 100
 
     def test_needs_a_warrant_and_key(self, keys):
@@ -829,7 +829,7 @@ class TestInstall:
         provider = Provider()
         http = self.plain_client(provider)
         http.post("http://gateway.internal:8080/v1/chat/completions", json={"model": MODEL, "messages": MESSAGES})
-        http.post("https://myresource.openai.azure.com/openai/deployments/d/chat/completions",
+        http.post(f"https://myresource.openai.azure.com/openai/deployments/{MODEL}/chat/completions",
                   json={"model": MODEL, "messages": MESSAGES})
         assert used(meter, warrant) == 2 * (INPUT + 100)
 
@@ -1446,3 +1446,82 @@ class TestACapNamedMoreThanOneWay:
         http, _ = client_for(keys, warrant, lambda r: httpx.Response(200, json={}))
         body = {"contents": self.CONTENTS, "temperature": 0.5, "generationConfig": {"temperature": 1.8}}
         assert http.post(self.GEMINI, json=body).status_code == 403
+
+
+class TestWhichModelRuns:
+    AZURE = "https://res.openai.azure.com/openai/deployments/{}/chat/completions?api-version=2024-10-21"
+
+    def client(self, keys, events=None, **caps):
+        warrant = mint(keys, total_tokens=5000, **caps)
+        sent = []
+        http, _ = client_for(keys, warrant, lambda r: (sent.append(r), httpx.Response(200, json={}))[1], events=events)
+        return http, sent
+
+    def test_a_deployment_in_the_url_is_the_model_that_is_checked(self, keys):
+        events = []
+        http, sent = self.client(keys, events)
+        # The body names an allowed model; the URL runs another deployment.
+        refused = http.post(self.AZURE.format("gpt-4o-big"), json={"model": MODEL, "messages": MESSAGES})
+        assert refused.status_code == 403 and not sent and events[-1].model == "gpt-4o-big"
+        # An allowed deployment runs, with or without a model in the body.
+        assert http.post(self.AZURE.format(MODEL), json={"messages": MESSAGES}).status_code == 200
+        assert http.post(self.AZURE.format(MODEL), json={"model": MODEL, "messages": MESSAGES}).status_code == 200
+        assert events[-1].model == MODEL and len(sent) == 2
+        # A body that names a model the warrant does not allow is refused beside an allowed deployment too.
+        refused = http.post(self.AZURE.format(MODEL), json={"model": "gpt-4o-big", "messages": MESSAGES})
+        assert refused.status_code == 403 and "gpt-4o-big" in refused.text and len(sent) == 2
+
+    def test_every_fallback_model_must_be_allowed(self, keys):
+        events = []
+        http, sent = self.client(keys, events)
+        body = {"model": MODEL, "messages": MESSAGES, "models": ["vendor/large-model"]}
+        refused = http.post("https://openrouter.ai/api/v1/chat/completions", json=body)
+        assert refused.status_code == 403 and "vendor/large-model" in refused.text and not sent
+        assert [e.decision for e in events] == ["DENY"]
+        body["models"] = [MODEL]
+        assert http.post("https://openrouter.ai/api/v1/chat/completions", json=body).status_code == 200
+
+    def test_gemini_runs_the_model_in_the_url(self, keys):
+        http, sent = self.client(keys)
+        url = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent"
+        contents = [{"role": "user", "parts": [{"text": "hello"}]}]
+        assert http.post(url.format(MODEL), json={"contents": contents, "model": "models/" + MODEL}).status_code == 200
+        assert http.post(url.format(MODEL), json={"contents": contents, "model": "models/gemini-large"}).status_code == 403
+        assert http.post(url.format("gemini-large"), json={"contents": contents}).status_code == 403 and len(sent) == 1
+
+    def test_a_warrant_without_a_model_list_allows_any_of_them(self, keys):
+        warrant = (Warrant.mint_builder().capability("llm.chat", llm_capability(total_tokens=5000))
+                   .holder(keys.lead.public_key).ttl(600).mint(keys.issuer))
+        http, _ = client_for(keys, warrant, lambda r: httpx.Response(200, json={}))
+        body = {"model": "anything", "messages": MESSAGES, "models": ["something-else"]}
+        assert http.post(self.AZURE.format("my-deployment"), json=body).status_code == 200
+
+
+class TestRunningUsageInAStream:
+    def chunks(self, finished):
+        events = [{"choices": [{"index": 0, "delta": {"content": "one"}}],
+                   "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}},
+                  {"choices": [{"index": 0, "delta": {"content": " two"}}],
+                   "usage": {"prompt_tokens": 12, "completion_tokens": 2, "total_tokens": 14}}]
+        if finished:
+            events.append({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                           "usage": {"prompt_tokens": 12, "completion_tokens": 40, "total_tokens": 52}})
+        return sse(events, done=finished)
+
+    def run(self, keys, finished):
+        warrant = mint(keys, total_tokens=5000)
+        events = []
+        stream = httpx.Response(200, headers={"content-type": "text/event-stream"}, content=self.chunks(finished))
+        http, meter = client_for(keys, warrant, lambda r: stream, events=events)
+        with http.stream("POST", CHAT, json={"model": MODEL, "messages": MESSAGES, "stream": True, "max_tokens": 200}) as streamed:
+            streamed.read()
+        return used(meter, warrant), events[-1].usage
+
+    def test_a_running_count_is_not_taken_for_the_final_one(self, keys):
+        # The stream ends before generation finished: the last running count is less than what was generated.
+        total, usage = self.run(keys, finished=False)
+        assert total == INPUT + 200 and usage["estimated"] is True
+
+    def test_the_count_that_comes_with_the_finish_is_final(self, keys):
+        total, usage = self.run(keys, finished=True)
+        assert total == 52 and "estimated" not in usage

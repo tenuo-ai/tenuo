@@ -588,6 +588,18 @@ class TestMediaEstimate:
         assert estimate_input_tokens(document) > 100_000
 
 
+class TestEveryPromptField:
+    def test_fields_that_carry_prompt_text_are_all_counted(self):
+        base = estimate_input_tokens({"prompt": "x" * 30})
+        assert 20 <= base <= 40
+        assert estimate_input_tokens({"prompt": "x" * 30, "suffix": "y" * 3000}) >= base + 1000
+        chat = {"messages": [{"role": "user", "content": "hi"}]}
+        predicted = dict(chat, prediction={"type": "content", "content": "z" * 3000})
+        assert estimate_input_tokens(predicted) >= estimate_input_tokens(chat) + 1000
+        template = {"prompt": {"id": "pmpt_1", "variables": {"essay": "w" * 3000}}}
+        assert estimate_input_tokens(template) >= 1000
+
+
 class TestStatus:
     def test_status_and_remaining_follow_the_chain(self, keys):
         root = mint_root(keys, total_tokens=5000)
