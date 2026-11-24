@@ -1240,14 +1240,6 @@ impl DataPlane {
         // while walking child links.
         let as_of = chrono::Utc::now().timestamp();
         for warrant in chain {
-            if warrant.lifetime_secs() > crate::MAX_WARRANT_TTL_SECS {
-                return Err(Error::InvalidTtl(format!(
-                    "warrant '{}' lifetime {}s exceeds the protocol maximum of {}s",
-                    warrant.id(),
-                    warrant.lifetime_secs(),
-                    crate::MAX_WARRANT_TTL_SECS
-                )));
-            }
             if warrant.is_expired_as_of(as_of) {
                 return Err(Error::WarrantExpired {
                     warrant_id: warrant.id().to_string(),
@@ -2036,8 +2028,7 @@ impl Authorizer {
     /// Set a ceiling on warrant lifetime (`expires_at - issued_at`) for every
     /// warrant in a verified chain (chainable).
     ///
-    /// Default: the protocol limit, [`MAX_WARRANT_TTL_SECS`](crate::MAX_WARRANT_TTL_SECS).
-    /// A larger value has no effect.
+    /// Default: no ceiling.
     pub fn with_max_token_lifetime(mut self, max_lifetime: std::time::Duration) -> Self {
         self.max_token_lifetime = Some(max_lifetime);
         self
@@ -2614,20 +2605,15 @@ impl Authorizer {
         // every warrant, including a singleton root — they used to run only
         // while walking child links. `as_of` is the TypeScript/vector replay clock.
         for warrant in chain {
-            // The protocol limit always holds; a configured ceiling can only
-            // lower it.
-            let max = self
-                .max_token_lifetime
-                .map_or(crate::MAX_WARRANT_TTL_SECS, |max| {
-                    max.as_secs().min(crate::MAX_WARRANT_TTL_SECS)
-                });
-            if warrant.lifetime_secs() > max {
-                return Err(Error::InvalidTtl(format!(
-                    "warrant '{}' lifetime {}s exceeds max_token_lifetime {}s",
-                    warrant.id(),
-                    warrant.lifetime_secs(),
-                    max
-                )));
+            if let Some(max) = self.max_token_lifetime {
+                if warrant.lifetime_secs() > max.as_secs() {
+                    return Err(Error::InvalidTtl(format!(
+                        "warrant '{}' lifetime {}s exceeds max_token_lifetime {}s",
+                        warrant.id(),
+                        warrant.lifetime_secs(),
+                        max.as_secs()
+                    )));
+                }
             }
             if warrant.is_expired_as_of(as_of) {
                 return Err(Error::WarrantExpired {

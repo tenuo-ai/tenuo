@@ -17,8 +17,7 @@
 - **Rev 6** (2026-11-24): Stated the delegation rules for a constraint set's
   arguments in §7: a child may declare an argument its parent admits without
   declaring, and may leave out an optional one when it admits no undeclared
-  arguments. Verifiers enforce `MAX_WARRANT_TTL_SECS` (I3). No wire bytes or
-  type IDs changed.
+  arguments. No wire bytes or type IDs changed.
 - **Rev 5** (2026-10-20): Security erratum for `UrlSafe` host policy. Clarified
   that `allow_domains` constrains every host, including IP literals; domain
   patterns are canonicalized with the URL host parser; and malformed patterns
@@ -239,8 +238,7 @@ child.ttl <= MAX_WARRANT_TTL_SECS (90 days)
 
 **Enforcement points:**
 1. **Builder**: Cap child TTL at parent's remaining time
-2. **Verifier**: Check expiration doesn't exceed parent, and that no warrant's
-   lifetime (`expires_at - issued_at`) exceeds `MAX_WARRANT_TTL_SECS`
+2. **Verifier**: Check expiration doesn't exceed parent
 
 #### I4: Capability Monotonicity
 ```

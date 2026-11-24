@@ -23,10 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arguments may leave out one the parent marks optional, and then refuses it.
   Chains valid before remain valid. Upgrade verifiers before issuing chains
   that use either form; older verifiers reject them.
-- **Verifiers apply the 90-day lifetime limit.** `Authorizer` and `DataPlane`
-  reject a chain holding a warrant whose lifetime exceeds
-  `MAX_WARRANT_TTL_SECS`. `with_max_token_lifetime` can lower the limit, not
-  raise it.
 
 ## [0.3.7] - 2026-11-11
 
