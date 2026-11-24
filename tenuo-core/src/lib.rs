@@ -91,6 +91,9 @@
 //! # }
 //! ```
 
+#[cfg(feature = "aat-jws")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aat-jws")))]
+pub mod aat;
 pub mod approval;
 pub mod approval_gate;
 pub mod audit;

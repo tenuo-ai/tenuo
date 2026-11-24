@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tenuo::aat`: verify Attenuating Agent Tokens in their JWT/JWS encoding**
+  (Rust, behind the `aat-jws` feature). `verify_chain` runs the chain
+  verification algorithm of `draft-niyikiza-oauth-attenuating-agent-tokens-02`
+  Section 8 over a presentation and passes the draft's 229 test vectors on
+  verdict and failing step. Issuing and deriving JWS tokens is not included.
 - **Token budgets for model calls (Python, experimental).** A warrant can carry
   a token budget as a `Range` constraint on an `llm.chat` capability
   (`tenuo.budget.llm_capability`). `tenuo.budget_http.install()` meters the
