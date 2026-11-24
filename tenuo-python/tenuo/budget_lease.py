@@ -183,7 +183,19 @@ class CloudLeases:
             raise LeaseUnavailable(str(error.get("message") or "the token budget for this period is spent"),
                                    exhausted=True, retry_at=_unix(error.get("retry_at")))
         if status != 200 or not body.get("warrant"):
-            raise LeaseUnavailable(f"no lease: HTTP {status} {error.get('code') or ''} {error.get('message') or ''}".strip())
+            code = str(error.get("code") or "")
+            if status == 404:
+                why = f"trigger {self.trigger_id} was not found; check the trigger id"
+            elif status == 401:
+                why = "the control plane did not accept the API key (TENUO_API_KEY)"
+            elif status == 403:
+                why = f"this API key may not fire trigger {self.trigger_id}; allow its service account on the trigger"
+            elif code == "trigger_inactive":
+                why = f"trigger {self.trigger_id} is paused"
+            else:
+                why = "the control plane did not grant a lease"
+            detail = " ".join(part for part in (f"HTTP {status}", code, str(error.get("message") or "")) if part)
+            raise LeaseUnavailable(f"{why} ({detail})")
         info = body.get("lease")
         if not isinstance(info, dict):
             raise LeaseUnavailable(f"trigger {self.trigger_id} has no token_budget, so its warrants are not leases")

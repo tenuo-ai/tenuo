@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Token budgets: setup problems are no longer reported as a spent budget.**
+  Under a period budget, a call refused because no lease could be taken (a
+  wrong trigger id or API key, a paused trigger, Tenuo Cloud unreachable) now
+  carries `lease_unavailable` and says which; `token_budget_exceeded` is kept
+  for a budget that is spent.
 - **Delegation accepts two more ways to narrow a tool's arguments.** A child
   may constrain an argument its parent admits without declaring it (the parent
   is empty or sets `allow_unknown`). A child that admits no undeclared

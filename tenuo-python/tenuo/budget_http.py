@@ -48,9 +48,12 @@ Refusals
 --------
 A call the warrant refuses is answered locally with HTTP 403 in the provider's
 own error shape, so each SDK raises its usual error type. The error code is
-``token_budget_exceeded`` (the budget is spent) or ``model_call_denied`` (the
-warrant refuses for another reason, such as the model). The response carries
-``x-should-retry: false``. Use :func:`is_budget_error` to recognize it.
+``token_budget_exceeded`` (the budget is spent), ``model_call_denied`` (the
+warrant refuses for another reason, such as the model), or, under a lease,
+``lease_unavailable`` (no lease could be taken: the issuer is unreachable, or
+the trigger or API key is wrong). The response carries
+``x-should-retry: false``. Use :func:`is_budget_error` to recognize a spent
+budget.
 
 Tenuo Cloud
 -----------
@@ -118,6 +121,19 @@ __all__ = [
 BUDGET_CODE = "token_budget_exceeded"
 DENIED_CODE = "model_call_denied"
 UNMETERED_CODE = "unmetered_endpoint"
+LEASE_CODE = "lease_unavailable"
+
+
+def _lease_refusal(error: Exception) -> Tuple[str, str]:
+    """The code and message for a call refused because no lease could be had.
+
+    Only an issuer that says the budget is spent makes it a spent budget. A
+    trigger that does not exist, a key it refuses or an issuer it cannot reach
+    is a setup or connection problem, and is reported as one.
+    """
+    if getattr(error, "exhausted", False):
+        return BUDGET_CODE, f"tenuo: token budget reached: {error}"
+    return LEASE_CODE, f"tenuo: model call refused: no lease could be taken: {error}"
 
 # POST endpoints that never generate: counting tokens costs nothing.
 _FREE_SUFFIXES = ("/count_tokens", "/input_tokens", ":countTokens", "/moderations")
@@ -971,9 +987,9 @@ class _Core:
             # renew() sees that it is not the current one and says so.
             moved = self.lease.renew(self.warrant_id, used=used)
         except LeaseUnavailable as e:
-            reason = f"tenuo: token budget reached: {e}"
-            return _Plan(request, refusal=self._refuse(request, dialect, BUDGET_CODE, reason, model,
-                                                       failed=self.meter.field))
+            code, reason = _lease_refusal(e)
+            return _Plan(request, refusal=self._refuse(request, dialect, code, reason, model,
+                                                       failed=self.meter.field if code == BUDGET_CODE else None))
         return _Plan(request, retry=True) if moved else None
 
     def _leave_lease(self, plan: _Plan, usage: Optional[Mapping[str, Any]]) -> None:
@@ -1592,8 +1608,8 @@ class _Installation:
                     raise LeaseUnavailable("metering was uninstalled while this call was waiting")
                 warrant = self.lease.warrant()
             except LeaseUnavailable as e:
-                return None, self._refused(http, request, _dialect_for(path), BUDGET_CODE,
-                                           f"tenuo: token budget reached: {e}")
+                code, reason = _lease_refusal(e)
+                return None, self._refused(http, request, _dialect_for(path), code, reason)
         warrant = warrant or self.warrant
         key = get_signing_key_context() or self.signing_key
         if warrant is None or key is None:
