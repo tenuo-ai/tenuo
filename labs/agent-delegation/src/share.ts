@@ -103,13 +103,18 @@ export function buildShareReport(
   };
 }
 
+/** Where `npm run share` would send the report, or undefined when sending is switched off. */
+export function shareEndpoint(configured = process.env["TENUO_LAB_EVENTS_URL"]?.trim() ?? DEFAULT_SHARE_ENDPOINT): URL | undefined {
+  if (configured === "off") return undefined;
+  return new URL(configured);
+}
+
 export async function submitShareReport(
   report: ShareReport,
   options: { endpoint?: string; fetch?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<ShareReceipt | undefined> {
-  const configured = options.endpoint ?? process.env["TENUO_LAB_EVENTS_URL"]?.trim() ?? DEFAULT_SHARE_ENDPOINT;
-  if (configured === "off") return undefined;
-  const endpoint = new URL(configured);
+  const endpoint = shareEndpoint(options.endpoint);
+  if (endpoint === undefined) return undefined;
   if (endpoint.protocol !== "https:" && endpoint.hostname !== "localhost" && endpoint.hostname !== "127.0.0.1") {
     throw new Error("share endpoint must use HTTPS");
   }

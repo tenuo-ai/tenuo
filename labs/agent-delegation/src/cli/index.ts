@@ -7,7 +7,7 @@
  *   npm run score      see your score and why
  *   npm run audit      what every agent can currently do
  *   npm run next       move to the next stage
- *   npm run share      submit a redacted scorecard (optionally add --username)
+ *   npm run share      show a redacted scorecard and send it if you confirm (--yes skips the question)
  *   npm run star       optionally star Tenuo without leaving the terminal
  *   npm run reset      back to stage 1
  */
@@ -28,7 +28,7 @@ import { LAB_HOME, loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
 import { recordAttempt, snapshot } from "../telemetry.ts";
 import { starRepository } from "../star.ts";
-import { buildShareReport, submitShareReport } from "../share.ts";
+import { buildShareReport, shareEndpoint, submitShareReport } from "../share.ts";
 
 const SITE = "https://tenuo.ai";
 
@@ -476,7 +476,35 @@ async function cmdScore(def: StageDef): Promise<void> {
   }
 }
 
+function printShareHelp(): void {
+  console.log("npm run share [-- --yes] [-- --username NAME]");
+  console.log("");
+  console.log("  Builds a redacted scorecard (stars, check counts, tool names, lifetime buckets),");
+  console.log("  saves it locally, prints it, and asks before sending it to Tenuo.");
+  console.log("  Nothing leaves this machine unless you answer yes or pass --yes.");
+  console.log("");
+  console.log("  --yes, -y          send without asking (for scripts and non-interactive terminals)");
+  console.log("  --username NAME    optional GitHub-style display name (not identity-verified)");
+  console.log("  --help, -h         show this help; sends nothing");
+  console.log("");
+  console.log("  TENUO_LAB_EVENTS_URL=off switches sending off entirely.");
+}
+
+async function confirmShare(endpoint: URL): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`  Send this scorecard to ${endpoint.host}? [y/N] `);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
 async function cmdShare(def: StageDef): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    printShareHelp();
+    return;
+  }
   const state = loadState();
   // Stage 5 contains the SDK interaction we most need to learn from: the
   // participant's first narrowing attempt and their first complete chain.
@@ -510,8 +538,27 @@ async function cmdShare(def: StageDef): Promise<void> {
   }
   printHud(walletLine(e.runs[0]!.built), e.probes, e.score, e.runs.length);
   console.log(dim(`  Redacted scorecard saved locally: ${file}`));
+  console.log("");
+  console.log(bold("WHAT WOULD BE SENT"));
+  for (const line of JSON.stringify(report, null, 2).split("\n")) console.log(dim(`  ${line}`));
+  console.log("");
+  const endpoint = shareEndpoint();
+  const yes = args.includes("--yes") || args.includes("-y");
+  if (endpoint !== undefined && !yes) {
+    if (!process.stdin.isTTY) {
+      console.log(yellow("  Not sent: this terminal can't answer a confirmation question."));
+      console.log(dim("  To send it, run npm run share -- --yes"));
+      console.log("");
+      return;
+    }
+    if (!(await confirmShare(endpoint))) {
+      console.log(dim("  Not sent. No data left this machine."));
+      console.log("");
+      return;
+    }
+  }
   try {
-    const receipt = await submitShareReport(report);
+    const receipt = endpoint === undefined ? undefined : await submitShareReport(report);
     if (receipt === undefined) {
       console.log(dim("  Submission disabled; no data left this machine."));
     } else {
