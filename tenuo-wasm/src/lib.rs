@@ -1801,10 +1801,67 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         min_approvals: Option<u32>,
     }
 
+    // Copy only data properties from plain dictionaries/arrays. Reading arbitrary
+    // objects with Object.keys can erase Map entries or invoke stateful getters.
+    fn snapshot(value: &JsValue, depth: usize, budget: &mut usize) -> Result<JsValue, String> {
+        use js_sys::{Array, Object, Reflect};
+        if depth > 64 || *budget == 0 {
+            return Err("configuration is too deeply nested or too large".into());
+        }
+        *budget -= 1;
+        if !value.is_object() || value.is_null() {
+            return Ok(value.clone());
+        }
+        let array = Array::is_array(value);
+        let proto = Reflect::get_prototype_of(value)
+            .map_err(|_| "cannot inspect configuration prototype")?;
+        let expected = if array {
+            Object::get_prototype_of(&Array::new())
+        } else {
+            Object::get_prototype_of(&Object::new())
+        };
+        if !proto.is_null() && proto != expected {
+            return Err("configuration requires plain objects and arrays".into());
+        }
+        let out: JsValue = if array { Array::new().into() } else {
+            Object::create(JsValue::NULL.unchecked_ref::<Object>()).into()
+        };
+        let keys = Reflect::own_keys(value).map_err(|_| "cannot inspect configuration keys")?;
+        if array {
+            let length = Reflect::get(value, &JsValue::from_str("length"))
+                .map_err(|_| "cannot inspect array length")?.as_f64()
+                .ok_or("invalid array length")?;
+            if length + 1.0 != f64::from(keys.length()) {
+                return Err("sparse configuration arrays are unsupported".into());
+            }
+        }
+        for key in keys.iter() {
+            let name = key.as_string().ok_or("symbol configuration keys are unsupported")?;
+            if array && name == "length" { continue; }
+            if array && name.parse::<u32>().map_or(true, |i| i.to_string() != name || i == u32::MAX) {
+                return Err("arrays cannot have named configuration properties".into());
+            }
+            let descriptor = Reflect::get_own_property_descriptor(value.unchecked_ref::<Object>(), &key)
+                .map_err(|_| "cannot inspect configuration property")?;
+            if descriptor.is_undefined() {
+                return Err("configuration property disappeared".into());
+            }
+            let get = |field: &str| Reflect::get(&descriptor, &JsValue::from_str(field))
+                .map_err(|_| "cannot inspect configuration descriptor".to_string());
+            if !get("get")?.is_undefined() || !get("set")?.is_undefined() || get("enumerable")?.as_bool() != Some(true) {
+                return Err("configuration requires enumerable data properties".into());
+            }
+            let copied = snapshot(&get("value")?, depth + 1, budget)?;
+            Reflect::set(&out, &key, &copied).map_err(|_| "cannot copy configuration property")?;
+        }
+        Ok(out)
+    }
+
     // Snapshot through the strict JS value reader before JSON deserialization:
     // serde_json alone turns non-finite numbers into null, which could erase
     // an optional depth limit, key, or range bound.
-    let config: BuilderConfig = match sdk::js_to_args(&config_json)
+    let config: BuilderConfig = match snapshot(&config_json, 0, &mut 100_000)
+        .and_then(|value| sdk::js_to_args(&value))
         .and_then(|value| serde_json::to_value(value).map_err(|e| e.to_string()))
         .and_then(|value| serde_json::from_value(value).map_err(|e| e.to_string())) {
         Ok(c) => c,

@@ -63,6 +63,51 @@ describe("legacy WASM builder fails closed", () => {
     expect(result.warrant_b64).toBe("");
   });
 
+  it.each([
+    new Map([["path", { pattern: "docs/*" }]]),
+    new Set(["docs/*"]), new Date(), /docs/, new Uint8Array([1]),
+    Object.create({ path: { pattern: "docs/*" } }),
+    Object.defineProperty({}, "path", { value: { pattern: "docs/*" } }),
+    { get path() { return { pattern: "docs/*" }; } },
+  ])("rejects non-data dictionaries instead of losing restrictions (%#)", (constraints) => {
+    const result = wasm.create_warrant_from_config({ tools: { read_file: constraints }, ttl: 60 });
+    expect(result.error).toBeTruthy();
+    expect(result.warrant_b64).toBe("");
+  });
+
+  it("rejects non-plain objects at every configuration level", () => {
+    for (const config of [new Map(), { tools: new Map(), ttl: 60 },
+      { tools: { read: { path: { url_safe: new Map() } } }, ttl: 60 },
+      { tools: { read: {} }, ttl: 60, approval_gates: new Map() }]) {
+      expect(wasm.create_warrant_from_config(config).error).toBeTruthy();
+    }
+  });
+
+  it("rejects sparse lists and cyclic configurations", () => {
+    const values = ["USD", ,];
+    expect(mint({ type: "OneOf", values }).error).toBeTruthy();
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(wasm.create_warrant_from_config(cyclic).error).toMatch(/deeply nested/);
+  });
+
+  it("rejects getters without invoking them", () => {
+    const getter = vi.fn(() => ({ path: { pattern: "docs/*" } }));
+    const tools = Object.defineProperty({}, "read", { enumerable: true, get: getter });
+    expect(wasm.create_warrant_from_config({ tools, ttl: 60 }).error).toBeTruthy();
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it("preserves null-prototype dictionaries and prototype-named restrictions", () => {
+    const constraints = Object.assign(Object.create(null), { path: { pattern: "docs/*" } });
+    const tools = Object.create(null);
+    tools.__proto__ = constraints;
+    const result = wasm.create_warrant_from_config(Object.assign(Object.create(null), { tools, ttl: 60 }));
+    expect(result.error).toBeFalsy();
+    expect(wasm.check_access(result.warrant_b64, "__proto__", { path: "secrets/key" }, result.issuer_public_key_hex, true).authorized).toBe(false);
+    expect(wasm.check_access(result.warrant_b64, "__proto__", { path: "docs/readme" }, result.issuer_public_key_hex, true).authorized).toBe(true);
+  });
+
   it("honors typed Regex and URL patterns instead of treating them as globs", () => {
     for (const [constraint, allowed, denied] of [
       [{ type: "Regex", pattern: "^abc$" }, "abc", "^abc$"],
