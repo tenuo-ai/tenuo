@@ -225,7 +225,10 @@ class _OpenAIChat(_Dialect):
         return _positive_int(body.get("n")) or 1
 
     def prepare_stream(self, body: Dict[str, Any]) -> bool:
-        options = dict(body.get("stream_options") or {})
+        given = body.get("stream_options")
+        if given is not None and not isinstance(given, Mapping):
+            return False  # not valid: left for the provider to reject
+        options = dict(given or {})
         if "include_usage" in options:
             return False
         options["include_usage"] = True
@@ -543,7 +546,10 @@ class _Core:
         if path.endswith(_FREE_SUFFIXES) or path.endswith(self.unmetered):
             return _Plan(request)
         dialect = _dialect_for(path)
+        monitor = not self.meter.enforce
         if dialect is None:
+            if monitor:
+                return _Plan(request)  # nothing is refused when only watching
             return _Plan(request, refusal=self._refuse(
                 request, None, UNMETERED_CODE,
                 f"tenuo: {path} is not a model endpoint this meter understands, so it is refused under a token "
@@ -554,6 +560,8 @@ class _Core:
             if not isinstance(body, dict):
                 raise ValueError("request body is not a JSON object")
         except ValueError:
+            if monitor:
+                return _Plan(request)
             return _Plan(request, refusal=self._refuse(
                 request, dialect, UNMETERED_CODE,
                 "tenuo: the request body is not JSON, so its tokens cannot be counted under a token budget.",
@@ -564,10 +572,18 @@ class _Core:
         streaming = dialect.wants_stream(body, path)
         view = dict(dialect.view(body))
         view["model"] = model
+        # Parents not given to this meter are taken from chain_scope(), as the
+        # warrant check does: the chain that is verified is the chain charged.
+        chain = self.chain
+        if chain is None:
+            from tenuo.decorators import chain_scope
+
+            chain = list(chain_scope() or []) or None
         try:
             call = self.meter.begin(
-                self.warrant, self.chain, view,
-                requested_output=requested, choices=dialect.choices(body), authorize=self._authorize,
+                self.warrant, chain, view,
+                requested_output=requested, choices=dialect.choices(body),
+                authorize=lambda tool, args: self._authorize(tool, args, chain),
             )
         except BudgetExceeded as e:
             snapshot: Dict[str, Any] = {"warrant_id": e.warrant_id, "used": e.used}
@@ -580,21 +596,28 @@ class _Core:
             self._emit("DENY", model, reason, request, None)
             return _Plan(request, refusal=self._refuse(request, dialect, DENIED_CODE, reason))
 
-        hide = False
-        if call.enforced:
+        if not call.enforced:
+            # Only watching: the request goes out exactly as the caller wrote
+            # it. Usage is recorded when the response carries it.
+            return _Plan(request, call=call, dialect=dialect)
+        try:
+            hide = False
             dialect.write_cap(body, param, call.max_output)  # type: ignore[arg-type]
-        if streaming:
-            hide = dialect.prepare_stream(body)
-        content = json.dumps(body, separators=(",", ":")).encode()
-        headers = self.http.Headers(request.headers)
-        headers["content-length"] = str(len(content))
-        headers.pop("transfer-encoding", None)
-        if streaming:
-            # The event stream has to be readable here to find the usage in it.
-            headers["accept-encoding"] = "identity"
-        rewritten = self.http.Request(
-            request.method, request.url, headers=headers, content=content, extensions=request.extensions
-        )
+            if streaming:
+                hide = dialect.prepare_stream(body)
+            content = json.dumps(body, separators=(",", ":")).encode()
+            headers = self.http.Headers(request.headers)
+            headers["content-length"] = str(len(content))
+            headers.pop("transfer-encoding", None)
+            if streaming:
+                # The event stream has to be readable here to find the usage in it.
+                headers["accept-encoding"] = "identity"
+            rewritten = self.http.Request(
+                request.method, request.url, headers=headers, content=content, extensions=request.extensions
+            )
+        except BaseException:
+            call.release()  # nothing will be sent: the reservation goes back
+            raise
         return _Plan(rewritten, call=call, dialect=dialect, hide_usage=hide)
 
     def _default_param(self, dialect: _Dialect) -> str:
@@ -602,7 +625,7 @@ class _Core:
             return self.chat_output_param
         return dialect.output_params[0]
 
-    def _authorize(self, tool: str, args: Dict[str, Any]) -> Any:
+    def _authorize(self, tool: str, args: Dict[str, Any], chain: Optional[Sequence[Any]] = None) -> Any:
         from tenuo._enforcement import enforce_tool_call
         from tenuo.config import resolve_trusted_roots
 
@@ -611,7 +634,7 @@ class _Core:
             tool_args=args,
             bound_warrant=self.warrant.bind(self.signing_key),
             trusted_roots=resolve_trusted_roots(self.trusted_roots),
-            warrant_chain=self.chain,
+            warrant_chain=list(chain) if chain else None,
         )
 
     def _refuse(self, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
@@ -764,8 +787,10 @@ def _make(http: Any) -> SimpleNamespace:
                 pass
 
     class AsyncTapped(http.AsyncByteStream):  # type: ignore[name-defined,misc]
-        def __init__(self, inner: Any, tap: _StreamTap, finish: Callable[[Any], None]) -> None:
+        def __init__(self, inner: Any, tap: _StreamTap, finish: Callable[[Any], None],
+                     finish_async: Optional[Callable[[Any], Any]] = None) -> None:
             self._inner, self._tap, self._finish = inner, tap, finish
+            self._finish_async = finish_async
             self._finished = False
 
         async def __aiter__(self) -> AsyncIterator[bytes]:
@@ -778,13 +803,21 @@ def _make(http: Any) -> SimpleNamespace:
                 if tail:
                     yield tail
             finally:
-                self._done()
+                await self._adone()
 
         async def aclose(self) -> None:
             try:
                 await self._inner.aclose()
             finally:
-                self._done()
+                await self._adone()
+
+        async def _adone(self) -> None:
+            if self._finished:
+                return
+            if self._finish_async is None:
+                return self._done()
+            self._finished = True
+            await self._finish_async(self._tap.usage)
 
         def _done(self) -> None:
             if self._finished:
@@ -865,7 +898,7 @@ def _make(http: Any) -> SimpleNamespace:
     async def send_async(core: _Core, send: Callable[[Any], Any], request: Any) -> Any:
         if request.method.upper() == "POST":
             await request.aread()  # the planner reads the body synchronously
-        plan = core.plan(request)
+        plan = await _plan_off_loop(core, request)
         if plan.refusal is not None:
             return plan.refusal
         if plan.call is None:
@@ -873,23 +906,26 @@ def _make(http: Any) -> SimpleNamespace:
         try:
             response = await send(plan.request)
         except BaseException as e:
-            core.failed(plan, e)
+            await _off_loop(core, core.failed, plan, e)
             raise
         if response.status_code >= 300:
-            core.release(plan)
+            await _off_loop(core, core.release, plan)
             return response
         if core.is_event_stream(response):
-            tapped = AsyncTapped(response.stream, core.tap(plan, response), lambda usage: core.settle(plan, usage))
+            async def finish(usage: Any) -> None:
+                await _off_loop(core, core.settle, plan, usage)
+
+            tapped = AsyncTapped(response.stream, core.tap(plan, response), lambda usage: core.settle(plan, usage), finish)
             return http.Response(response.status_code, headers=response.headers, stream=tapped,
                                  extensions=response.extensions, request=request)
         try:
             body = await response.aread()
         except BaseException as e:
-            core.failed(plan, e)
+            await _off_loop(core, core.failed, plan, e)
             raise
         finally:
             await response.aclose()
-        core.settle(plan, core.usage_from_body(plan, body))
+        await _off_loop(core, core.settle, plan, core.usage_from_body(plan, body))
         return http.Response(response.status_code, headers=core.plain_headers(response, len(body)), content=body,
                              extensions=response.extensions, request=request)
 
@@ -985,6 +1021,11 @@ def _library_of(client_class: Any) -> Any:
 
 
 def _client(is_async: bool, sdk: Any, library: Any, transport: Any, kwargs: Dict[str, Any]) -> Any:
+    for option in ("mounts", "proxy", "proxies"):
+        if kwargs.get(option) is not None:
+            # These give some requests a transport of their own, past the meter.
+            raise TypeError(f"{option}= is not supported on a metered client: configure it on the transport "
+                            "passed as transport=, which the meter wraps")
     meter = {k: kwargs.pop(k) for k in _METER_KEYS if k in kwargs}
     if sdk is not None:
         # The SDK's own client class keeps its timeouts and connection limits.
@@ -1041,6 +1082,7 @@ class _Installation:
         self.shared: Dict[str, Any] = dict(trusted_roots=trusted_roots, budget_store=self.meter, audit_callback=audit_callback,
                            unmetered_paths=unmetered_paths, chat_output_param=chat_output_param)
         self.hosts = tuple(h.lower() for h in (*DEFAULT_HOSTS, *hosts))
+        self.unmetered = tuple(p.rstrip("/") for p in unmetered_paths)
         self.cores: Dict[Any, _Core] = {}
         self.patched: List[Tuple[Any, Any]] = []
         self.restore_genai = False
@@ -1051,10 +1093,14 @@ class _Installation:
             return True
         host = (request.url.host or "").lower()
         with_port = f"{host}:{request.url.port}" if request.url.port else host
-        return any(host == h or host.endswith("." + h) or with_port == h for h in self.hosts)
+        if any(host == h or host.endswith("." + h) or with_port == h for h in self.hosts):
+            return True
+        # Regional Vertex AI endpoints are named <region>-aiplatform.googleapis.com.
+        return _VERTEX_HOST in self.hosts and host.endswith("-" + _VERTEX_HOST)
 
     def core_for(self, http: Any, request: Any) -> Tuple[Optional[_Core], Any]:
         """The meter for the warrant in scope, or a refusal when a model call has none."""
+        from tenuo._enforcement import split_presented_warrant
         from tenuo.decorators import chain_scope, get_signing_key_context, get_warrant_context
 
         if request.method.upper() != "POST":
@@ -1063,27 +1109,85 @@ class _Installation:
         key = get_signing_key_context() or self.signing_key
         if warrant is None or key is None:
             path = request.url.path.rstrip("/")
-            dialect = _dialect_for(path)
-            if dialect is None or path.endswith(_FREE_SUFFIXES):
+            if path.endswith(_FREE_SUFFIXES) or path.endswith(self.unmetered) or not self.meter.enforce:
                 return None, None
+            dialect = _dialect_for(path)
+            if dialect is None:
+                # The same answer as with credentials: a POST the meter cannot count does not go out.
+                return None, _refusal(
+                    http, request, None, UNMETERED_CODE,
+                    f"tenuo: {path} is not a model endpoint this meter understands, so it is refused under a token "
+                    "budget. List the path in unmetered_paths to let it through uncounted.",
+                )
             return None, _refusal(
                 http, request, dialect, DENIED_CODE,
                 "tenuo: model call refused: no warrant and signing key are in scope. Pass them to install() "
                 "or make the call inside warrant_scope() and key_scope().",
             )
-        chain = chain_scope() or self.chain
-        cache_key = (http.__name__, str(warrant.id), id(key), tuple(str(w.id) for w in chain or ()))
+        # A warrant may be presented as a list or an encoded chain: take it
+        # apart before anything asks for its id.
+        leaf, parents = split_presented_warrant(warrant, list(chain_scope() or self.chain or []) or None)
+        cache_key = (http.__name__, _warrant_key(leaf), id(key), tuple(_warrant_key(w) for w in parents or ()))
         with self.lock:
             core = self.cores.get(cache_key)
             if core is None:
                 if len(self.cores) >= 512:
                     self.cores.clear()
-                core = _Core(http=http, warrant=warrant, signing_key=key, warrant_chain=chain, **self.shared)
+                core = _Core(http=http, warrant=leaf, signing_key=key, warrant_chain=parents, **self.shared)
                 self.cores[cache_key] = core
         return core, None
 
 
 _INSTALLED: Optional[_Installation] = None
+_VERTEX_HOST = "aiplatform.googleapis.com"
+
+
+def _warrant_key(warrant: Any) -> str:
+    """A cache key for a warrant in whatever form it was presented."""
+    return str(getattr(warrant, "id", None) or warrant)
+
+
+async def _off_loop(core: _Core, fn: Callable[..., Any], *args: Any) -> Any:
+    """Run a store operation off the asyncio event loop when the store can wait on something.
+
+    A file-backed store can wait on another writer. Shielded: a caller that is
+    cancelled must not leave the accounting half done.
+    """
+    if not core.meter.store.blocking:
+        return fn(*args)
+    import asyncio
+    import contextvars
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return fn(*args)  # another async library: run it where we are
+    context = contextvars.copy_context()
+    return await asyncio.shield(loop.run_in_executor(None, lambda: context.run(fn, *args)))
+
+
+async def _plan_off_loop(core: _Core, request: Any) -> _Plan:
+    """Plan a request off the event loop; a reservation made for a caller that went away is given back."""
+    if not core.meter.store.blocking:
+        return core.plan(request)
+    import asyncio
+    import contextvars
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return core.plan(request)
+    context = contextvars.copy_context()
+    future = loop.run_in_executor(None, lambda: context.run(core.plan, request))
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        def give_back(done: Any) -> None:
+            if not done.cancelled() and done.exception() is None:
+                loop.run_in_executor(None, core.release, done.result())
+
+        future.add_done_callback(give_back)
+        raise
 
 
 def install(

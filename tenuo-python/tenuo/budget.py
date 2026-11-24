@@ -340,15 +340,57 @@ class BudgetStore:
         else:
             self._backend = InMemoryBudgetBackend()
         self._margin = margin_seconds
+        # Usage that could not be written (the backend failed after a call was
+        # already billed). It rides along with the next write, so nothing more
+        # is spent against these warrants until the total is right again.
+        self._owed: Dict[str, int] = {}
+        self._owed_expiries: Dict[str, float] = {}
+        self._owed_lock = threading.Lock()
+
+    @property
+    def blocking(self) -> bool:
+        """False for the in-memory store, whose operations never wait on anything."""
+        return not isinstance(self._backend, InMemoryBudgetBackend)
 
     def add(self, deltas: Mapping[str, int], expires_at: Optional[Mapping[str, float]] = None) -> Dict[str, int]:
         """Add tokens to each warrant id and return the new totals."""
         expiries = {k: (v + self._margin if v else 0.0) for k, v in (expires_at or {}).items()}
-        return self._backend.add(deltas, expiries)
+        with self._owed_lock:
+            owed, owed_expiries = dict(self._owed), dict(self._owed_expiries)
+        if not owed:
+            return self._backend.add(deltas, expiries)
+        merged = dict(owed)
+        for key, delta in deltas.items():
+            merged[key] = merged.get(key, 0) + delta
+        totals = self._backend.add(merged, {**owed_expiries, **expiries})
+        with self._owed_lock:
+            for key, amount in owed.items():
+                left = self._owed.get(key, 0) - amount
+                if left > 0:
+                    self._owed[key] = left
+                else:
+                    self._owed.pop(key, None)
+                    self._owed_expiries.pop(key, None)
+        return totals
+
+    def owe(self, deltas: Mapping[str, int], expires_at: Optional[Mapping[str, float]] = None) -> None:
+        """Remember usage a failed write left out, to be written with the next one."""
+        with self._owed_lock:
+            for key, delta in deltas.items():
+                if delta > 0:
+                    self._owed[key] = self._owed.get(key, 0) + delta
+            for key, expiry in (expires_at or {}).items():
+                if key in self._owed and expiry:
+                    self._owed_expiries[key] = max(self._owed_expiries.get(key, 0.0), expiry + self._margin)
 
     def used(self, *warrant_ids: str) -> Dict[str, int]:
         """Tokens counted against each warrant id so far."""
-        return self._backend.used(list(warrant_ids))
+        totals = self._backend.used(list(warrant_ids))
+        with self._owed_lock:
+            for key in warrant_ids:
+                if key in self._owed:
+                    totals[key] = totals.get(key, 0) + self._owed[key]
+        return totals
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +521,15 @@ class MeteredCall:
             counts = {"input_tokens": self.input_estimate, "output_tokens": self.reserved - self.input_estimate,
                       "total_tokens": self.reserved}
         delta = counts["total_tokens"] - self.reserved
-        totals = self._apply(delta)
+        try:
+            totals = self._apply(delta)
+        except Exception:
+            if delta > 0:
+                # The call used more than was reserved and the store could not
+                # take the difference: it must not be forgotten.
+                self._store.owe({lv.warrant_id: delta for lv in self.levels},
+                                {lv.warrant_id: lv.expires_at for lv in self.levels})
+            raise
         for level in self.levels:
             level.used = totals.get(level.warrant_id, level.used)
         record: Dict[str, Any] = dict(counts)

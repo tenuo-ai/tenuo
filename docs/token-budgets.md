@@ -117,6 +117,8 @@ client = openai.OpenAI(http_client=http)
 
 `sdk=` selects the HTTP library that SDK is built on and keeps its default timeouts. `metered_async_client()` is the async counterpart; give both the same `budget_store`.
 
+`mounts=` and `proxy=` are not accepted on a metered client, since they give some requests a transport of their own. Configure a proxy on the transport passed as `transport=`, which the meter wraps.
+
 ---
 
 ## Refusals
@@ -164,6 +166,8 @@ from tenuo.budget import TokenMeter
 tenuo.budget_http.install(..., budget_store=TokenMeter("budgets.db", enforce=False))
 ```
 
+In this mode requests go out exactly as written and nothing is refused, including endpoints the meter does not recognize. Usage is recorded when the response carries it, so a Chat Completions stream is counted only if the caller asks for usage itself (`stream_options={"include_usage": True}`).
+
 ---
 
 ## What is metered
@@ -176,7 +180,7 @@ Wire formats, recognized by request path:
 
 `install()` only touches requests to known provider hosts (`tenuo.budget_http.DEFAULT_HOSTS`). Add a gateway or a self-hosted server with `hosts=["gateway.internal:8080"]`, or pass `hosts=["*"]`.
 
-On a metered host, `GET` requests and token-counting endpoints pass through. Any other `POST` to an unrecognized path is refused unless its path ending is listed in `unmetered_paths`.
+On a metered host, `GET` requests and token-counting endpoints pass through. Any other `POST` to an unrecognized path is refused unless its path ending is listed in `unmetered_paths`, whether or not a warrant is in scope.
 
 ---
 
@@ -189,6 +193,8 @@ On a metered host, `GET` requests and token-counting endpoints pass through. Any
 | `BudgetStore(backend=...)` | Anything implementing `BudgetBackend` (an atomic `add`) |
 
 A total holds only where every call passes a meter on the same store.
+
+With a store that can wait on another writer (anything but the in-memory one), async clients run their store operations off the event loop.
 
 ---
 

@@ -910,3 +910,208 @@ class TestWhatTheBodyDoesNotShowAtFirstGlance:
 
         assert usage_counts({"prompt_tokens": 30, "completion_tokens": 100, "total_tokens": 0}) == {
             "input_tokens": 30, "output_tokens": 100, "total_tokens": 130}
+
+
+# ---------------------------------------------------------------------------
+# Edges
+# ---------------------------------------------------------------------------
+
+
+def worker_of(keys, root, total):
+    return (root.grant_builder().capability("llm.chat", llm_capability(models=[MODEL], total_tokens=total))
+            .holder(keys.worker.public_key).ttl(600).grant(keys.lead))
+
+
+class TestEdges:
+    def test_parents_taken_from_chain_scope_are_charged_too(self, keys):
+        from tenuo import chain_scope
+
+        root = mint(keys, total_tokens=200)
+        worker = worker_of(keys, root, 200)
+        provider = Provider()
+        http, meter = client_for(keys, worker, provider, key=keys.worker)  # no warrant_chain given to the client
+        with chain_scope([root]):
+            assert chat(http).status_code == 200
+            assert used(meter, worker) == used(meter, root) == INPUT + 100
+            meter.store.add({root.id: 60})  # someone else spends from the parent
+            refused = chat(http)
+        assert refused.status_code == 403 and "delegated from" in refused.json()["error"]["message"]
+
+    def test_usage_above_a_reservation_is_not_lost_when_the_store_fails(self, keys):
+        from tenuo.budget import InMemoryBudgetBackend
+
+        class FailsOnce(InMemoryBudgetBackend):
+            fail = False
+
+            def add(self, deltas, expires_at):
+                if self.fail:
+                    self.fail = False
+                    raise OSError("disk full")
+                return super().add(deltas, expires_at)
+
+        backend, caps = FailsOnce(), []
+
+        def generous(request):  # a provider that goes far past the cap it was given, the first time
+            cap = json.loads(request.content)["max_completion_tokens"]
+            caps.append(cap)
+            out = 500 if len(caps) == 1 else cap
+            backend.fail = len(caps) == 1  # the write that follows the first response fails
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}],
+                                             "usage": {"prompt_tokens": INPUT, "completion_tokens": out, "total_tokens": INPUT + out}})
+
+        warrant = mint(keys, total_tokens=600)
+        http, meter = client_for(keys, warrant, generous, store=BudgetStore(backend=backend))
+        assert chat(http, max_completion_tokens=100).status_code == 200
+        assert backend.used([warrant.id])[warrant.id] == INPUT + 100   # only the reservation reached the backend
+        assert used(meter, warrant) == INPUT + 500                      # the rest is owed, and counted
+        # The next call is planned against 530 of 600, not 130: it gets what is really left.
+        assert chat(http, max_completion_tokens=100).status_code == 200 and caps == [100, 40]
+        assert backend.used([warrant.id])[warrant.id] == 600            # and the debt went in with that write
+        assert chat(http, max_completion_tokens=100).status_code == 403
+
+    def test_a_failure_after_the_reservation_gives_it_back(self, keys, monkeypatch):
+        from tenuo import budget_http
+
+        warrant = mint(keys, total_tokens=1000)
+        http, meter = client_for(keys, warrant, Provider())
+        monkeypatch.setattr(budget_http._OpenAIChat, "write_cap", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+        with pytest.raises(RuntimeError):
+            chat(http)
+        assert used(meter, warrant) == 0
+
+    def test_stream_options_that_are_not_an_object_are_left_for_the_provider(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        seen = []
+        http, meter = client_for(keys, warrant, lambda r: (seen.append(json.loads(r.content)), httpx.Response(400, json={}))[1])
+        assert chat(http, stream=True, stream_options="bad").status_code == 400
+        assert seen[0]["stream_options"] == "bad" and used(meter, warrant) == 0
+
+    def test_mounts_and_proxies_cannot_route_around_the_meter(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        common = dict(warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key])
+        with pytest.raises(TypeError, match="mounts"):
+            metered_client(mounts={"https://": httpx.HTTPTransport()}, **common)
+        with pytest.raises(TypeError, match="proxy"):
+            metered_client(proxy="http://proxy.internal:3128", **common)
+        with pytest.raises(TypeError, match="proxy"):
+            metered_async_client(proxy="http://proxy.internal:3128", **common)
+
+    def test_monitor_only_forwards_what_it_cannot_count(self, keys):
+        warrant = mint(keys, total_tokens=10)
+        seen = []
+        http = metered_client(
+            transport=httpx.MockTransport(lambda r: (seen.append(r.url.path), httpx.Response(200, json={"data": []}))[1]),
+            warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key], budget_store=TokenMeter(enforce=False))
+        assert http.post("https://provider.test/v1/embeddings", json={"model": MODEL, "input": "x"}).status_code == 200
+        assert http.post(CHAT, content=b"not json").status_code == 200
+        assert seen == ["/v1/embeddings", "/v1/chat/completions"]
+
+    def test_monitor_only_sends_a_stream_request_unchanged(self, keys):
+        warrant = mint(keys, total_tokens=10)
+        requests = []
+        provider = Provider()
+
+        def record(request):
+            requests.append(request)
+            return provider(request)
+
+        meter = TokenMeter(enforce=False)
+        http = metered_client(transport=httpx.MockTransport(record), warrant=warrant, signing_key=keys.lead,
+                              trusted_roots=[keys.issuer.public_key], budget_store=meter)
+        body = {"model": MODEL, "messages": MESSAGES, "stream": True}
+        with http.stream("POST", CHAT, json=body, headers={"accept-encoding": "gzip"}) as response:
+            response.read()
+        assert json.loads(requests[0].content) == body                 # no stream_options added, no cap set
+        assert requests[0].headers["accept-encoding"] == "gzip"        # and no header rewritten
+        # A caller that asks for usage itself is counted.
+        with http.stream("POST", CHAT, json={**body, "stream_options": {"include_usage": True}}) as response:
+            response.read()
+        assert used(meter, warrant) == INPUT + 100
+
+    def test_async_calls_do_not_hold_the_event_loop_on_a_store_that_waits(self, keys):
+        import asyncio
+        import time
+
+        from tenuo.budget import InMemoryBudgetBackend
+
+        class Slow(InMemoryBudgetBackend):
+            def add(self, deltas, expires_at):
+                time.sleep(0.25)  # another writer has the file
+                return super().add(deltas, expires_at)
+
+        class SlowStore(BudgetStore):
+            blocking = True
+
+        warrant = mint(keys, total_tokens=1000)
+        store = SlowStore(backend=Slow())
+        meter = TokenMeter(store, input_estimator=lambda request: INPUT)
+
+        async def main():
+            stalls, last = [], time.monotonic()
+
+            async def ticker():
+                nonlocal last
+                while True:
+                    await asyncio.sleep(0.01)
+                    stalls.append(time.monotonic() - last)
+                    last = time.monotonic()
+
+            task = asyncio.ensure_future(ticker())
+            http = metered_async_client(transport=httpx.MockTransport(Provider()), warrant=warrant, signing_key=keys.lead,
+                                        trusted_roots=[keys.issuer.public_key], budget_store=meter)
+            response = await http.post(CHAT, json={"model": MODEL, "messages": MESSAGES})
+            # A caller that gives up while its reservation is being written gets it back.
+            doomed = asyncio.ensure_future(http.post(CHAT, json={"model": MODEL, "messages": MESSAGES}))
+            await asyncio.sleep(0.05)
+            doomed.cancel()
+            await asyncio.sleep(0.8)
+            task.cancel()
+            await http.aclose()
+            return response.status_code, max(stalls)
+
+        status, longest = asyncio.run(main())
+        assert status == 200 and longest < 0.15, f"the loop stalled for {longest:.2f}s"
+        assert used(meter, warrant) == INPUT + 100  # the cancelled call left nothing behind
+
+
+class TestInstallEdges:
+    OPENAI = "https://api.openai.com/v1"
+
+    def plain(self, handler):
+        return httpx.Client(transport=httpx.MockTransport(handler))
+
+    def test_regional_vertex_hosts_are_metered(self, keys, installed):
+        model = "gemini-2.5-flash"
+        installed(mint(keys, model=model, total_tokens=1), keys.lead)
+        seen = []
+        http = self.plain(lambda r: (seen.append(r.url.host), httpx.Response(200, json={}))[1])
+        url = (f"https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/"
+               f"publishers/google/models/{model}:generateContent")
+        refused = http.post(url, json={"contents": [{"role": "user", "parts": [{"text": "hello"}]}]})
+        assert refused.status_code == 403 and not seen
+        assert http.post("https://not-aiplatform.googleapis.com.example.test/v1/x", json={}).status_code == 200
+
+    def test_without_credentials_a_post_that_cannot_be_counted_is_refused_too(self, keys, installed):
+        installed(unmetered_paths=["/moderations"])  # no default warrant: callers bring one in scope
+        seen = []
+        http = self.plain(lambda r: (seen.append(r.url.path), httpx.Response(200, json={"data": []}))[1])
+        refused = http.post(self.OPENAI + "/embeddings", json={"model": MODEL, "input": "x"})
+        assert refused.status_code == 403 and refused.json()["error"]["code"] == "unmetered_endpoint"
+        assert http.post(self.OPENAI + "/moderations", json={"input": "x"}).status_code == 200
+        assert http.get(self.OPENAI + "/models").status_code == 200
+        assert seen == ["/v1/moderations", "/v1/models"]
+
+    def test_a_warrant_given_as_a_chain_or_encoded_is_taken_apart_first(self, keys, installed):
+        root = mint(keys, total_tokens=1000)
+        worker = worker_of(keys, root, 500)
+        meter = installed([root, worker], keys.worker)
+        http = self.plain(Provider())
+        body = {"model": MODEL, "messages": MESSAGES}
+        assert http.post(self.OPENAI + "/chat/completions", json=body).status_code == 200
+        assert used(meter, worker) == used(meter, root) == INPUT + 100
+        from tenuo.budget_http import install
+
+        meter = install(warrant=root.to_base64(), signing_key=keys.lead, trusted_roots=[keys.issuer.public_key],
+                        budget_store=TokenMeter(input_estimator=lambda request: INPUT))
+        assert http.post(self.OPENAI + "/chat/completions", json=body).status_code == 200
+        assert used(meter, root) == INPUT + 100
