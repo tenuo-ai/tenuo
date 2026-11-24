@@ -152,7 +152,7 @@ export const STAGES: readonly StageSpec[] = [
     ],
     notice: [
       "It works. Everything the rogue agent tried is blocked and Alice still gets to Cancún.",
-      "Keep this file. Stage 4 breaks it.",
+      "Stage 4 starts from a reference version of this policy, not your file, and then a second traveler breaks it.",
     ],
     hint: "Pin `checkin-agent` and `boarding-agent` to `reservations: [\"UA214\"]`. Give `flight-agent` a `destination` and a `maxPrice`. Cut `traveler.read` down with `profileFields`, and give every agent a `maxCharge` that matches its share of the budget.",
     code: [{ file: "exercises/03-scoped/policy.ts", symbols: ["config"], caption: "The file as it ships" }],
@@ -205,13 +205,13 @@ export const STAGES: readonly StageSpec[] = [
         file: "answers/04-two-travelers/per-task.ts",
         symbols: ["config"],
         caption: "One identity per task",
-        note: "Notice that `checkin-agent:trip-alice-cun` still carries `issue_boarding_pass`. That is not part of its job; it is present only because Boarding Agent must inherit the whole credential. Act 2 exploits exactly this over-grant.",
+        note: "Notice that `checkin-agent:trip-alice-cun` still carries `issue_boarding_pass`. Check-in Agent never issues a boarding pass itself; it holds the tool only because Boarding Agent inherits its whole credential. The score doesn't charge for it, since handing that tool on is part of Check-in Agent's job, but nothing stops Check-in Agent from using it directly. Act 2 exploits exactly this.",
       },
       {
         file: "answers/04-two-travelers/policy-service.ts",
         symbols: ["config"],
         caption: "Another way that works: policyService: true, and the per-task fields come from a service asked on every call",
-        note: "The same over-grant remains here: Check-in Agent carries `issue_boarding_pass` only so its whole credential can power Boarding Agent. Act 2 exploits it.",
+        note: "The same thing remains here: Check-in Agent carries `issue_boarding_pass` only so its whole credential can power Boarding Agent, and could use it directly. Act 2 exploits it.",
       },
     ],
     stuck: [

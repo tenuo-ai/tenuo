@@ -202,7 +202,8 @@ function printBattery(results: readonly ProbeResult[]): void {
     const mark = r.ok ? green("✓") : red("✗");
     console.log(`  ${pad(r.label, 56)} ${verdict}  ${mark}`);
     if (!r.ok || r.actual === "DENIED") {
-      console.log(dim(`      ${r.ok ? "reason" : `expected ${r.expected}`}: ${r.reason}${r.code !== undefined ? `  [${r.code}]` : ""}`));
+      const why = `${r.reason}${r.code !== undefined ? `  [${r.code}]` : ""}`;
+      console.log(dim(r.ok ? `      reason: ${why}` : `      expected ${r.expected}, got ${r.actual} — ${why}`));
     }
     if (r.keyBinding !== undefined) {
       console.log(dim(`      warrant.bound_key             ${r.keyBinding.warrantBoundKey}`));

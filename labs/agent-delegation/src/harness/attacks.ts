@@ -176,7 +176,7 @@ async function escalationProbe(rt: Runtime, alice: Trip): Promise<ProbeResult> {
     }
     // Whichever component stage 4 put in the path is the one asked here.
     const fix = fixOf(rt.config);
-    const component = fix === "identities" ? "identity registry" : "policy service";
+    const component = fix === "identities" ? "identity registry" : fix === "policy-service" ? "policy service" : "shared policy";
     const target = fix === "identities" ? `boarding-agent:${alice.taskId}` : "boarding-agent";
     const verdict = await service.grant(
       {

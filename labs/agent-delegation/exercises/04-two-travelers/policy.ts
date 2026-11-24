@@ -1,12 +1,12 @@
 /**
  * Stage 4: a second traveler shows up.
  *
- * This is the stage 3 solution, unchanged. Bob's trip runs through the same
- * agents at the same time. Something will break. Fix it the way that seems
- * obvious, then read all of `npm run attack`, including CROSS-TASK.
+ * This starts from the reference stage 3 solution, not your own file. Bob's
+ * trip runs through the same agents at the same time. Something will break.
+ * Fix it the way that seems obvious, then read all of `npm run attack`,
+ * including CROSS-TASK.
  *
  * You can fix this. README.md next to this file shows both ways people find.
- * Stage 5 keeps whichever you choose.
  */
 import type { PolicyConfig } from "../../src/auth/policy.ts";
 
