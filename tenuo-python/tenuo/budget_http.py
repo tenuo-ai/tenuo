@@ -694,6 +694,18 @@ def _send_cloud(control_plane: Any, *, tool: str, warrant_id: str, decision: str
         logger.warning("Control plane emission failed for a model call; the usage event was lost", exc_info=True)
 
 
+def _reads_body(request: Any, unmetered: Tuple[str, ...]) -> bool:
+    """Whether planning this request reads its body: only a POST to a model
+    endpoint that is not exempt. Anything else, an upload for one, is passed on
+    as the stream it is and never held in memory here."""
+    if request.method.upper() != "POST":
+        return False
+    path = request.url.path.rstrip("/")
+    if path.endswith(_FREE_SUFFIXES) or path.endswith(unmetered):
+        return False
+    return _dialect_for(path) is not None
+
+
 def _refusal(http: Any, request: Any, dialect: Optional[_Dialect], code: str, message: str) -> Any:
     """A local 403 in the error shape of the provider the request was for."""
     if dialect is not None and dialect.error_shape == "anthropic":
@@ -1293,7 +1305,7 @@ def _make(http: Any) -> SimpleNamespace:
 
     async def send_async(core: _Core, send: Callable[[Any], Any], request: Any, plan: Optional[_Plan] = None) -> Any:
         if plan is None:
-            if request.method.upper() == "POST":
+            if _reads_body(request, core.unmetered):
                 await request.aread()  # the planner reads the body synchronously
             plan = await _plan_off_loop(core, request)
         if plan.refusal is not None:
@@ -1356,7 +1368,7 @@ def _make(http: Any) -> SimpleNamespace:
             installed = _INSTALLED
             if installed is None or not installed.covers(request):
                 return await self._inner.handle_async_request(request)
-            if request.method.upper() == "POST":
+            if _reads_body(request, installed.unmetered):
                 await request.aread()  # the planner reads the body synchronously
             if installed.lease is not None or installed.meter.store.blocking:
                 # Taking or returning a lease is a blocking request to the issuer,
@@ -1672,57 +1684,81 @@ async def _off_loop(core: _Core, fn: Callable[..., Any], *args: Any) -> Any:
     except RuntimeError:
         return fn(*args)  # another async library: run it where we are
     context = contextvars.copy_context()
-    return await asyncio.shield(loop.run_in_executor(None, lambda: context.run(fn, *args)))
+    try:
+        future = loop.run_in_executor(None, lambda: context.run(fn, *args))
+    except RuntimeError:
+        return fn(*args)  # the loop's executor is shut down: the accounting still has to happen
+    return await asyncio.shield(future)
+
+
+def _quietly(fn: Callable[..., Any], *args: Any) -> None:
+    try:
+        fn(*args)
+    except Exception:
+        logger.warning("A plan abandoned by its caller could not be given back", exc_info=True)
+
+
+async def _plan_in_worker(make: Callable[[], Any], give_back: Callable[[Any], None]) -> Any:
+    """Make a plan off the event loop.
+
+    A plan holds a reservation, and under a lease a place on that lease. When
+    its caller is cancelled before it is ready, whichever thread finishes it
+    gives it back. That does not go through the loop or its executor, which
+    may both be gone by then.
+    """
+    import asyncio
+    import contextvars
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return make()  # another async library: run it where we are
+    context = contextvars.copy_context()
+    lock = threading.Lock()
+    state: Dict[str, Any] = {"abandoned": False, "ready": False, "plan": None}
+
+    def work() -> Any:
+        made = context.run(make)
+        with lock:
+            state["ready"], state["plan"] = True, made
+            abandoned = state["abandoned"]
+        if abandoned:
+            _quietly(give_back, made)
+        return made
+
+    try:
+        future = loop.run_in_executor(None, work)
+    except RuntimeError:
+        return make()  # the loop's executor is shut down: plan where we are
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        with lock:
+            state["abandoned"] = True
+            ready, made = state["ready"], state["plan"]
+        if ready:
+            # Finished just before the caller left. Given back on a thread of
+            # its own: it can mean a request to the issuer.
+            threading.Thread(target=_quietly, args=(give_back, made), name="tenuo-plan-release").start()
+        raise
 
 
 async def _plan_off_loop(core: _Core, request: Any) -> _Plan:
     """Plan a request off the event loop; a reservation made for a caller that went away is given back."""
     if not core.meter.store.blocking:
         return core.plan(request)
-    import asyncio
-    import contextvars
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return core.plan(request)
-    context = contextvars.copy_context()
-    future = loop.run_in_executor(None, lambda: context.run(core.plan, request))
-    try:
-        return await asyncio.shield(future)
-    except asyncio.CancelledError:
-        def give_back(done: Any) -> None:
-            if not done.cancelled() and done.exception() is None:
-                loop.run_in_executor(None, core.release, done.result())
-
-        future.add_done_callback(give_back)
-        raise
+    return await _plan_in_worker(lambda: core.plan(request), core.release)
 
 
 async def _plan_for_off_loop(installed: "_Installation", http: Any, request: Any) -> Tuple[Optional[_Core], Optional[_Plan], Any]:
     """Plan a request off the event loop. A plan made for a caller that went away is given back:
     it holds a reservation and a place on a lease."""
-    import asyncio
-    import contextvars
+    def give_back(made: Tuple[Optional[_Core], Optional[_Plan], Any]) -> None:
+        core, plan, _ = made
+        if core is not None and plan is not None:
+            core.release(plan)
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return installed.plan_for(http, request)  # another async library: run it where we are
-    context = contextvars.copy_context()
-    future = loop.run_in_executor(None, lambda: context.run(installed.plan_for, http, request))
-    try:
-        return await asyncio.shield(future)
-    except asyncio.CancelledError:
-        def give_back(done: Any) -> None:
-            if done.cancelled() or done.exception() is not None:
-                return
-            core, plan, _ = done.result()
-            if core is not None and plan is not None:
-                loop.run_in_executor(None, core.release, plan)
-
-        future.add_done_callback(give_back)
-        raise
+    return await _plan_in_worker(lambda: installed.plan_for(http, request), give_back)
 
 
 def install(
