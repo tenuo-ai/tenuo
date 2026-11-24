@@ -103,10 +103,14 @@ def llm_capability(
     out: Dict[str, Any] = {}
     if models is not None:
         out[MODEL_FIELD] = OneOf(list(models))
+    # Both ranges start at 0, not unbounded: a delegated warrant may only narrow
+    # its parent's range, and a parent written as "0..N" (how Tenuo Cloud and
+    # most hand-written policies put it) cannot be narrowed to a range with no
+    # lower bound.
     if max_tokens is not None:
-        out[OUTPUT_FIELD] = Range(max=_positive("max_tokens", max_tokens))
+        out[OUTPUT_FIELD] = Range(min=0, max=_positive("max_tokens", max_tokens))
     if total_tokens is not None:
-        out[DEFAULT_FIELD] = Range(max=_positive("total_tokens", total_tokens))
+        out[DEFAULT_FIELD] = Range(min=0, max=_positive("total_tokens", total_tokens))
     return out
 
 
@@ -600,6 +604,14 @@ class TokenMeter:
         """
         levels = self.levels(warrant, chain)
         model = request.get(MODEL_FIELD)
+        if self.enforce:
+            for lv in levels:
+                problem = _budget_problem(lv.constraint)
+                if problem is not None:
+                    # A budget the meter cannot count against is refused, not
+                    # guessed at: the running total is checked as an upper bound.
+                    raise ModelCallDenied(_Refusal(
+                        f"the token budget of warrant {lv.warrant_id} is not usable: {problem}", self.field))
         if not self.enforce:
             return MeteredCall(self.tool, model, None, 0, 0, False, False, levels, self.store)
 
@@ -684,6 +696,36 @@ class TokenMeter:
                 used=before.get(leaf.warrant_id, 0), needed=needed,
             )
         raise ModelCallDenied(result)
+
+
+class _Refusal:
+    """A refusal the meter makes itself, shaped like an authorization result."""
+
+    allowed = False
+    error_type = "constraint_violation"
+
+    def __init__(self, reason: str, field: str) -> None:
+        self.denial_reason = reason
+        self.constraint_violated = field
+
+
+def _budget_problem(constraint: Any) -> Optional[str]:
+    """Why a budget constraint cannot be metered, or None when it can.
+
+    A budget is "at most N tokens": a range from 0 (or unbounded below) up to
+    N. The meter authorizes each call with the total it could reach, so a range
+    that starts above 0, or anything that is not a range with an upper bound,
+    would be checked against a number that says nothing about it.
+    """
+    if constraint is None:
+        return None
+    upper = getattr(constraint, "max", None)
+    if isinstance(upper, bool) or not isinstance(upper, (int, float)):
+        return "it must be a range with an upper bound"
+    lower = getattr(constraint, "min", None)
+    if isinstance(lower, (int, float)) and not isinstance(lower, bool) and lower > 0:
+        return "its range must start at 0"
+    return None
 
 
 def _upper_bound(constraint: Any) -> Optional[int]:

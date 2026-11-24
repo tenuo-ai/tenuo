@@ -94,6 +94,28 @@ class TestWarrantSide:
         with pytest.raises(Exception, match="(?i)missing|monoton"):
             grant(root, keys, max_tokens=100)
 
+    def test_ranges_start_at_zero_so_a_zero_based_parent_can_be_narrowed(self, keys):
+        from tenuo import Range
+
+        caps = llm_capability(total_tokens=1000, max_tokens=100)
+        assert (caps["total_tokens"].min, caps["total_tokens"].max) == (0, 1000)
+        assert (caps["max_tokens"].min, caps["max_tokens"].max) == (0, 100)
+        # A parent whose budget is written "0..N", as Tenuo Cloud issues it.
+        parent = (
+            Warrant.mint_builder()
+            .capability("llm.chat", {"total_tokens": Range(min=0, max=1000)})
+            .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer)
+        )
+        child = grant(parent, keys, total_tokens=400)
+        assert child.capabilities["llm.chat"]["total_tokens"].max == 400
+        # And one written with no lower bound at all.
+        open_below = (
+            Warrant.mint_builder()
+            .capability("llm.chat", {"total_tokens": Range(max=1000)})
+            .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer)
+        )
+        assert grant(open_below, keys, total_tokens=400).capabilities["llm.chat"]["total_tokens"].max == 400
+
     def test_child_can_narrow_the_total(self, keys):
         root = mint_root(keys, total_tokens=1000)
         child = grant(root, keys, total_tokens=200)
@@ -332,6 +354,58 @@ class TestMeter:
                         authorize=authorizer(root, keys.lead, keys.issuer))
         assert err.value.result.constraint_violated == "model"
         assert meter.store.used(root.id) == {root.id: 0}
+
+    @pytest.mark.parametrize("label", ["starts above zero", "exactly N", "no upper bound", "not a range"])
+    def test_a_budget_that_cannot_be_metered_is_refused_outright(self, keys, label):
+        from tenuo import OneOf, Range
+
+        constraint = {
+            "starts above zero": Range(min=500, max=2000),
+            "exactly N": Range(min=800, max=800),
+            "no upper bound": Range(min=0),
+            "not a range": OneOf([100, 200]),
+        }[label]
+        warrant = (
+            Warrant.mint_builder()
+            .capability("llm.chat", {"total_tokens": constraint})
+            .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer)
+        )
+        meter = TokenMeter(input_estimator=fixed_estimate(10))
+
+        def must_not_run(tool, args):
+            raise AssertionError("an unusable budget must be refused before the warrant check")
+
+        with pytest.raises(ModelCallDenied, match="not usable") as err:
+            meter.begin(warrant, None, REQUEST, requested_output=None, authorize=must_not_run)
+        assert err.value.result.constraint_violated == "total_tokens"
+        assert meter.store.used(warrant.id) == {warrant.id: 0}
+
+    def test_a_parents_unusable_budget_refuses_the_child_too(self, keys):
+        from tenuo import Range
+
+        parent = (
+            Warrant.mint_builder()
+            .capability("llm.chat", {"total_tokens": Range(min=100, max=1000)})
+            .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer)
+        )
+        child = (
+            parent.grant_builder().capability("llm.chat", {"total_tokens": Range(min=100, max=500)})
+            .holder(keys.worker.public_key).ttl(600).grant(keys.lead)
+        )
+        with pytest.raises(ModelCallDenied, match="start at 0"):
+            TokenMeter().begin(child, [parent], REQUEST, requested_output=None, authorize=lambda t, a: None)
+
+    def test_monitor_only_counts_even_an_unusable_budget(self, keys):
+        from tenuo import Range
+
+        warrant = (
+            Warrant.mint_builder()
+            .capability("llm.chat", {"total_tokens": Range(min=500, max=2000)})
+            .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer)
+        )
+        meter = TokenMeter(enforce=False)
+        meter.begin(warrant, None, REQUEST, requested_output=None, authorize=lambda t, a: None).settle({"total_tokens": 40})
+        assert meter.store.used(warrant.id) == {warrant.id: 40}
 
     def test_warrant_without_the_capability_is_refused(self, keys):
         other = Warrant.mint_builder().capability("search").holder(keys.lead.public_key).ttl(600).mint(keys.issuer)
