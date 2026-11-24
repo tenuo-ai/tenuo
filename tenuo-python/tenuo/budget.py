@@ -515,7 +515,7 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
             if isinstance(value, bool):
                 continue
             if isinstance(value, (int, float)):
-                if value < 0:
+                if not math.isfinite(value) or value < 0:
                     impossible.append(name)
                     continue
                 return int(value)
@@ -525,7 +525,7 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
     out = read("completion_tokens", "output_tokens")
     total = read("total_tokens")
     if impossible:
-        return None  # a count below zero is not a count: the reservation stands
+        return None  # a count below zero, or not a finite number, is not a count: the reservation stands
     if total is None:
         if inp is None and out is None:
             return None

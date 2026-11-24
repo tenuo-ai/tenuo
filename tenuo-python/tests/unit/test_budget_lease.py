@@ -16,6 +16,7 @@ import pytest
 from tenuo import SigningKey, Warrant, warrant_scope
 from tenuo.budget import TokenMeter, llm_capability
 from tenuo.budget_http import install, uninstall
+import tenuo.budget
 import tenuo.budget_http
 from tenuo.budget_lease import CloudLeases, Lease, LeasedBudget, LeaseUnavailable, lease_return_message
 
@@ -47,8 +48,9 @@ class Pool:
     """An issuer with one budget, handed out in slices. A lease is charged in
     full until it is returned, then for what it used."""
 
-    def __init__(self, keys, limit, slice_, clock=None, ttl=600.0):
+    def __init__(self, keys, limit, slice_, clock=None, ttl=600.0, warrant_ttl=3600):
         self.keys, self.limit, self.slice, self.ttl = keys, limit, slice_, ttl
+        self.warrant_ttl = warrant_ttl
         self.clock = clock or time.time
         self.out, self.spent = {}, 0   # warrant id -> granted
         self.asked, self.returned = 0, []
@@ -68,7 +70,7 @@ class Pool:
             raise LeaseUnavailable("the budget for this period is spent", exhausted=True, retry_at=self.clock() + self.retry_in)
         warrant = (Warrant.mint_builder()
                    .capability("llm.chat", llm_capability(total_tokens=grant, models=[MODEL]))
-                   .holder(self.keys.agent.public_key).ttl(3600).mint(self.keys.issuer))
+                   .holder(self.keys.agent.public_key).ttl(self.warrant_ttl).mint(self.keys.issuer))
         self.out[str(warrant.id)] = grant
         return Lease(warrant, str(warrant.id), self.clock() + self.ttl, grant, dict(self.info))
 
@@ -580,6 +582,147 @@ class TestLeasedBudget:
         assert pool.asked == 1 and len(sent) == 2
         assert all(not r.allowed and r.tool == "llm.chat" and r.arguments == {"model": MODEL}
                    and r.constraint_violated == "total_tokens" for r in sent)
+
+    def test_a_lease_is_replaced_when_its_warrant_expires_before_the_issuer_said(self, keys):
+        now = [time.time()]
+        # The issuer says ten minutes; the warrant it signed is good for one.
+        pool = Pool(keys, limit=10**6, slice_=300, clock=lambda: now[0], ttl=600.0, warrant_ttl=60)
+        budget = LeasedBudget(pool, clock=lambda: now[0], renew_before=5)
+        first = budget.warrant()
+        now[0] += 30
+        assert budget.warrant() is first and pool.asked == 1
+        now[0] += 40  # the warrant has lapsed; what the issuer said has not
+        assert budget.warrant() is not first and pool.asked == 2
+
+    def test_a_return_that_failed_is_tried_again_before_asking_for_the_last_of_the_budget(self, keys, leased):
+        now = [time.time()]
+        pool = Pool(keys, limit=300, slice_=300, clock=lambda: now[0])
+        budget, _ = leased(pool, recheck_after=30, clock=lambda: now[0])
+        provider = Provider()
+        call(provider), call(provider)
+        first = budget.current.warrant_id
+        real, fails = pool.release, [True]
+
+        def release(warrant_id, usage):
+            if fails:
+                fails.pop()
+                raise OSError("503")
+            real(warrant_id, usage)
+
+        pool.release = release
+        # The return fails once. Until it gets through, the issuer has nothing left to hand out.
+        assert refused(call(provider)) and first in pool.out
+        now[0] += 31
+        # The next call sends the return again first, which frees the 40 the lease did not use.
+        assert call(provider).status_code == 200 and pool.returned[0] == (first, 260)
+        assert provider.billed <= 300
+
+    def test_a_lease_that_arrives_after_close_goes_straight_back(self, keys):
+        pool = Pool(keys, limit=1000, slice_=400)
+        asked, answer = threading.Event(), threading.Event()
+        take = pool.acquire
+        pool.acquire = lambda: (asked.set(), answer.wait(10), take())[2]
+        budget = LeasedBudget(pool)
+        outcome = []
+
+        def waiting():
+            try:
+                outcome.append(budget.warrant())
+            except LeaseUnavailable as e:
+                outcome.append(e)
+
+        thread = threading.Thread(target=waiting)
+        thread.start()
+        assert asked.wait(5)
+        budget.close()  # nothing is held yet: the issuer is still answering
+        answer.set()
+        thread.join(5)
+        assert isinstance(outcome[0], LeaseUnavailable) and budget.current is None
+        assert not pool.out and [used for _, used in pool.returned] == [0]
+
+    def test_a_planner_still_running_after_uninstall_takes_no_lease(self, keys, leased):
+        pool = Pool(keys, limit=1000, slice_=400)
+        leased(pool)
+        installed = tenuo.budget_http._INSTALLED
+        uninstall()
+        request = httpx.Request("POST", URL, json=BODY)
+        core, plan, refusal = installed.plan_for(httpx, request)
+        assert core is None and refusal.status_code == 403 and pool.asked == 0
+
+    def test_a_count_that_cannot_be_read_does_not_break_a_call_that_ran(self, keys, leased, monkeypatch):
+        from tenuo.budget import usage_counts
+
+        assert usage_counts({"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": float("inf")}) is None
+        pool = Pool(keys, limit=10_000, slice_=1000)
+        budget, meter = leased(pool)
+        # The provider's total is not a number a count can hold.
+        answer = b'{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":30,"completion_tokens":5,"total_tokens":1e400}}'
+        response = call(lambda r: httpx.Response(200, content=answer, headers={"content-type": "application/json"}))
+        lease_id = budget.current.warrant_id
+        assert response.status_code == 200 and meter.store.used(lease_id)[lease_id] == INPUT + 100
+        assert budget._held[lease_id].inflight == 0
+
+        # And when reading it fails outright while the store is failing too, the call still ends cleanly.
+        def broken(usage):
+            raise OverflowError("cannot convert float infinity to integer")
+
+        monkeypatch.setattr(tenuo.budget_http, "usage_counts", broken)
+        monkeypatch.setattr(tenuo.budget.MeteredCall, "settle", lambda self, usage=None: (_ for _ in ()).throw(OSError("store")))
+        assert call(Provider()).status_code == 200 and budget._held[lease_id].inflight == 0
+
+    def test_a_call_whose_usage_could_not_be_stored_is_still_reported(self, keys, monkeypatch):
+        from tenuo.budget import BudgetStore, InMemoryBudgetBackend
+
+        class Failing(InMemoryBudgetBackend):
+            down = False
+
+            def add(self, deltas, expires_at):
+                if self.down and any(delta > 0 for delta in deltas.values()):
+                    raise OSError("the store is away")
+                return super().add(deltas, expires_at)
+
+        sent, events = [], []
+        fake = SimpleNamespace(emit_for_enforcement=lambda result, chain_result=None: sent.append(result))
+        monkeypatch.setattr(tenuo.budget_http, "_control_plane", lambda: fake)
+        backend = Failing()
+        pool = Pool(keys, limit=10_000, slice_=1000)
+        install(lease=LeasedBudget(pool), signing_key=keys.agent, trusted_roots=[keys.issuer.public_key],
+                audit_callback=events.append,
+                budget_store=TokenMeter(BudgetStore(backend=backend), input_estimator=lambda request: INPUT))
+
+        def generous(request):
+            backend.down = True
+            return httpx.Response(200, json={"usage": {"prompt_tokens": INPUT, "completion_tokens": 500, "total_tokens": INPUT + 500}})
+
+        try:
+            assert call(generous).status_code == 200
+        finally:
+            uninstall()
+        assert [e.decision for e in events] == ["ALLOW"]
+        usage = sent[0].arguments["llm_usage"]
+        assert sent[0].allowed and usage["total_tokens"] == INPUT + 500 and usage["unrecorded"] is True
+        assert "budget" not in usage and "estimated" not in usage
+
+    def test_a_decision_sent_on_keeps_the_mark_that_its_receipt_was_collected(self, keys):
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo.budget_http import _send_cloud
+
+        warrant = (Warrant.mint_builder().capability("llm.chat", {})
+                   .holder(keys.agent.public_key).ttl(600).mint(keys.issuer))
+        sent = []
+        fake = SimpleNamespace(emit_for_enforcement=lambda result, chain_result=None: sent.append(result))
+        for collected in (True, False):
+            decision = enforce_tool_call(tool_name="llm.chat", tool_args={}, bound_warrant=warrant.bind(keys.agent),
+                                         trusted_roots=[keys.issuer.public_key])
+            if collected:
+                decision._tenuo_runtime_receipt = True
+            elif hasattr(decision, "_tenuo_runtime_receipt"):
+                del decision._tenuo_runtime_receipt
+            _send_cloud(fake, tool="llm.chat", warrant_id=str(warrant.id), decision="ALLOW", model=MODEL,
+                        reason="model call metered", usage={"total_tokens": 5}, authorization=decision)
+        assert sent[0] is not None and getattr(sent[0], "_tenuo_runtime_receipt", False) is True
+        assert getattr(sent[1], "_tenuo_runtime_receipt", False) is False
+        assert sent[0].arguments["llm_usage"] == {"total_tokens": 5}
 
     def test_taking_a_lease_does_not_hold_the_event_loop(self, keys, leased):
         pool = Pool(keys, limit=10_000, slice_=400)

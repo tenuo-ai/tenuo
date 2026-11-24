@@ -233,7 +233,13 @@ class _Held:
     """A lease this process has taken, and what was spent under it."""
 
     def __init__(self, lease: Lease, taken_at: float, taken_mono: float) -> None:
+        from tenuo.budget import _expiry
+
         self.lease = lease
+        # Calls can start on it until the earlier of what the issuer said and
+        # what the signed warrant says: past either, the call would be refused.
+        signed = _expiry(lease.warrant)
+        self.usable_until = min(lease.expires_at, signed) if signed else lease.expires_at
         self.taken_at = taken_at      # wall clock, for the lease's lifetime
         self.taken_mono = taken_mono  # monotonic, for "how long have we had it"
         self.inflight = 0
@@ -289,6 +295,7 @@ class LeasedBudget:
         self._blocked_until = 0.0
         self._blocked: Optional[Tuple[str, bool, Optional[float]]] = None
         self._retry_returns_at = 0.0
+        self._closes = 0  # how many times close() has run: a rotation that spans one must not leave a lease behind
         self._pid = os.getpid()
         _BUDGETS.add(self)
         atexit.register(_close_at_exit, weakref.ref(self))
@@ -388,6 +395,7 @@ class LeasedBudget:
         """Return every lease that has no call running on it. Safe to call twice."""
         with self._lock:
             self._after_fork()
+            self._closes += 1
             for held in self._held.values():
                 self._retire(held)
             self._current = None
@@ -426,13 +434,14 @@ class LeasedBudget:
         self._retired[held.lease.warrant_id] = self._closed_until(held.lease)
 
     def _usable(self, held: _Held) -> bool:
-        lifetime = max(0.0, held.lease.expires_at - held.taken_at)
+        lifetime = max(0.0, held.usable_until - held.taken_at)
         margin = min(self.renew_before, lifetime / 2)
-        return not held.retired and held.lease.expires_at - margin > self._clock()
+        return not held.retired and held.usable_until - margin > self._clock()
 
     def _rotate(self, expected: Optional[_Held]) -> Lease:
         with self._renewing:
             with self._lock:
+                closes = self._closes
                 held = self._current
                 if held is not expected and held is not None and self._usable(held):
                     return held.lease  # renewed while this thread waited
@@ -452,6 +461,9 @@ class LeasedBudget:
                     # have taken it and given the unused tokens to someone
                     # else. The lease stays closed and its return is retried.
                     self._retry_returns_at = self._mono() + self.recheck_after
+            # Returns that failed earlier are tried again before asking for a
+            # lease: what they free may be all the budget has left to give.
+            self._return_idle()
             try:
                 lease = self.source.acquire()
             except Exception as e:
@@ -474,9 +486,17 @@ class LeasedBudget:
                 if held is not None:
                     self._retire(held)  # returned when its last call ends
                 self._held[lease.warrant_id] = fresh
-                self._current = fresh
+                closed = self._closes != closes
+                if closed:
+                    # close() ran while the issuer was answering: this lease
+                    # goes straight back, and nothing is left held after it.
+                    self._retire(fresh)
+                else:
+                    self._current = fresh
                 self._forget()
-        self._return_idle()
+        self._return_idle(force=closed)
+        if closed:
+            raise LeaseUnavailable("the leases were closed while this call was waiting for one")
         return lease
 
     def _return_idle(self, force: bool = False) -> None:

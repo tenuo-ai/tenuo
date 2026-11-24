@@ -676,8 +676,11 @@ def _send_cloud(control_plane: Any, *, tool: str, warrant_id: str, decision: str
             arguments["llm_usage"] = usage  # the key that marks a model-call event
         allowed = decision == "ALLOW"
         if isinstance(authorization, EnforcementResult) and authorization.allowed == allowed:
-            # The warrant check's own result: an allow keeps its verified chain.
+            # The warrant check's own result: an allow keeps its verified chain,
+            # and the mark that its runtime receipt has been collected already.
             result = dataclasses.replace(authorization, arguments=arguments)
+            if getattr(authorization, "_tenuo_runtime_receipt", False):
+                setattr(result, "_tenuo_runtime_receipt", True)
         else:
             result = EnforcementResult(
                 allowed=allowed, tool=tool, arguments=arguments, warrant_id=warrant_id,
@@ -1032,13 +1035,24 @@ class _Core:
         except Exception:
             # The reservation stays counted, which errs toward the budget.
             logger.warning("Token usage could not be recorded", exc_info=True)
-            # The lease is told what the provider reported, which can be more
-            # than was reserved; the reservation only when there is no count.
-            counts = usage_counts(usage)
-            if counts is None:
-                counts = {"input_tokens": plan.call.input_estimate,
-                          "output_tokens": plan.call.reserved - plan.call.input_estimate}
-            self._leave_lease(plan, counts)
+            # The call ran and was billed. The lease and the control plane are
+            # told what the provider reported, which can be more than was
+            # reserved; the reservation only when there is no usable count.
+            try:
+                counts = usage_counts(usage)
+            except Exception:
+                counts = None
+            partial: Dict[str, Any] = dict(counts) if counts is not None else {
+                "input_tokens": plan.call.input_estimate,
+                "output_tokens": plan.call.reserved - plan.call.input_estimate,
+                "total_tokens": plan.call.reserved,
+                "estimated": True,
+            }
+            # The running totals could not be confirmed, so none are given.
+            partial["unrecorded"] = True
+            self._leave_lease(plan, partial)
+            self._emit("ALLOW", plan.call.model, "model call metered", plan.request, partial, plan.call.max_output,
+                       authorization=plan.call.adapter_state.get("authorization"), request_id=plan.request_id)
             return
         self._leave_lease(plan, record)
         self._emit("ALLOW", plan.call.model, "model call metered", plan.request, record, plan.call.max_output,
@@ -1487,6 +1501,7 @@ class _Installation:
                  audit_callback: Optional[Callable[[MeterEvent], None]], hosts: Sequence[str],
                  unmetered_paths: Sequence[str], chat_output_param: str, lease: Any = None) -> None:
         self.lease = lease
+        self.closed = False  # set by uninstall(): a planner still running takes no new lease
         self.control_plane: Any = None  # looked up when the first refusal without a warrant is reported
         self.unmetered = tuple(p.rstrip("/") for p in unmetered_paths)
         if lease is not None and signing_key is not None and getattr(lease.source, "signing_key", signing_key) is None:
@@ -1560,6 +1575,8 @@ class _Installation:
             from tenuo.budget_lease import LeaseUnavailable
 
             try:
+                if self.closed:
+                    raise LeaseUnavailable("metering was uninstalled while this call was waiting")
                 warrant = self.lease.warrant()
             except LeaseUnavailable as e:
                 return None, self._refused(http, request, _dialect_for(path), BUDGET_CODE,
@@ -1793,6 +1810,7 @@ def uninstall() -> None:
     for client_class, original in installed.patched:
         client_class._transport_for_url = original
     if installed.lease is not None:
+        installed.closed = True
         try:
             installed.lease.close()
         except Exception:

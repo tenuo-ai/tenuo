@@ -160,6 +160,8 @@ tenuo.budget_http.install(..., audit_callback=on_event)
 
 `event.usage` holds `input_tokens`, `output_tokens`, `total_tokens`, and `budget`: the running total and limit of each warrant the call spent from. `event.request_id` is the provider's id for the request, when it sent one, so a charge can be matched to the provider's own records.
 
+When a call ran but the store could not record it, the event still reports what the call used, with `unrecorded: true` and no `budget` totals.
+
 To ask where a budget stands at any time:
 
 ```python
