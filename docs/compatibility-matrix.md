@@ -1,25 +1,32 @@
 # Integration Compatibility Matrix
 
-**Artifact versions updated**: 2026-11-11
+**Artifact versions updated**: 2026-11-24
 
 Tracks compatibility between Tenuo artifacts and upstream integration libraries.
 
-## Tenuo artifacts (0.3.7)
+## Tenuo artifacts (0.3.8)
 
 These artifacts share the same protocol line. TypeScript stays on the
-`beta` npm dist-tag (`0.3.7-beta.0`).
+`beta` npm dist-tag (`0.3.8-beta.0`).
 
 Warrants using [optional arguments](constraints.md#optional-arguments-rust-core)
 require compatible verifiers. Upgrade receivers before issuing these warrants.
 Required-only warrant encodings remain unchanged.
 
+In 0.3.8, delegation also permits narrowing previously undeclared arguments
+and omitting optional arguments when the child rejects unknown arguments.
+Upgrade verifiers before issuing chains using these forms; older verifiers
+reject them. Host-policy receipt hashes now use normalized constraint
+expressions across Python and TypeScript; existing signed receipts remain
+verifiable.
+
 | Artifact | Package | Version |
 |----------|---------|---------|
-| Rust core | `tenuo` | 0.3.7 |
-| WASM | `tenuo-wasm` | 0.3.7 |
-| Python | `tenuo` / `tenuo_core` | 0.3.7 |
-| TypeScript | `@tenuo/core` | 0.3.7-beta.0 |
-| TypeScript MCP | `@tenuo/mcp` | 0.3.7-beta.0 |
+| Rust core | `tenuo` | 0.3.8 |
+| WASM | `tenuo-wasm` | 0.3.8 |
+| Python | `tenuo` / `tenuo_core` | 0.3.8 |
+| TypeScript | `@tenuo/core` | 0.3.8-beta.0 |
+| TypeScript MCP | `@tenuo/mcp` | 0.3.8-beta.0 |
 
 `make version-check` (and the CI job of the same name) fails if the Rust,
 Python, and WASM crate versions or `tenuo.__version__` diverge, or if either

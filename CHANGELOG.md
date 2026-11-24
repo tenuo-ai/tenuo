@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-11-24
+
 ### Added
 
 - **TypeScript: holder-independent warrant diagnostics.**
@@ -63,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python `Warrant.explain()` and `inspect()` show argument constraints.
+- Add MCP tool-boundary conformance coverage for dash-prefixed positional
+  arguments and structured argument validation.
+- Python token metering streams exempt uploads and releases abandoned plans
+  without relying on a running event loop.
+- Release automation verifies digest-named Helm archives.
 - Python `MintBuilder.max_depth()` and the native issuance APIs accept a
   delegation ceiling, allowing Explorer-generated code to preserve the preview.
 - Explorer/WASM builder rejects malformed, ambiguous, or unsupported constraints

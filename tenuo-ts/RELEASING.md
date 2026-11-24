@@ -82,3 +82,14 @@ Before changing the package versions to stable `X.Y.Z`:
 
 Product adoption targets and private launch criteria are intentionally outside
 this package-release gate.
+
+## 0.3.8-beta.0 release scope
+
+For the coordinated 0.3.8 release, the release owner explicitly deferred
+[#580](https://github.com/tenuo-ai/tenuo/issues/580),
+[#585](https://github.com/tenuo-ai/tenuo/issues/585), and
+[#640](https://github.com/tenuo-ai/tenuo/issues/640) on 2026-11-24.
+This satisfies the explicit-waiver option in the checklist for this release
+only. The issues remain open for later work. Both npm packages remain on the
+`beta` channel at `0.3.8-beta.0`; this does not qualify a stable npm release
+or waive the CI, security, packaging, or provenance checks above.
