@@ -432,6 +432,38 @@ class TestLeasedBudget:
         response = call(provider)
         assert no_lease(response) and "garbled reply" in response.json()["error"]["message"] and not provider.caps
 
+    @pytest.mark.parametrize("sdk", ["openai", "anthropic"])
+    def test_budget_words_in_an_issuers_message_do_not_make_it_a_spent_budget(self, keys, leased, sdk):
+        module = pytest.importorskip(sdk)
+        pool = Pool(keys, limit=1000, slice_=400)
+        pool.acquire = lambda: (_ for _ in ()).throw(LeaseUnavailable(
+            "gateway said token_budget_exceeded; tenuo: token budget reached upstream"))
+        leased(pool)
+        # The SDK's own client, on whichever HTTP library it uses: the call is refused before anything is sent.
+        if sdk == "openai":
+            client = module.OpenAI(api_key="unused", max_retries=0)
+            call_model = lambda: client.chat.completions.create(model=MODEL, messages=BODY["messages"])  # noqa: E731
+        else:
+            client = module.Anthropic(api_key="unused", max_retries=0)
+            call_model = lambda: client.messages.create(model=MODEL, max_tokens=50, messages=BODY["messages"])  # noqa: E731
+        with pytest.raises(module.PermissionDeniedError) as caught:
+            call_model()
+        assert "token_budget_exceeded" in str(caught.value) and "lease_unavailable" in str(caught.value.body)
+        assert tenuo.budget_http.is_budget_error(caught.value) is False
+
+    def test_an_error_that_keeps_only_its_text_is_judged_by_how_it_opens(self):
+        from tenuo.budget_http import is_budget_error
+
+        spent = RuntimeError("tenuo: token budget reached: 24 tokens are left in today's budget")
+        no_lease = RuntimeError("tenuo: model call refused: no lease could be taken: upstream says tenuo: token budget reached")
+        assert is_budget_error(spent) and not is_budget_error(no_lease)
+        quoted = SimpleNamespace(code="lease_unavailable", body={"error": {"message": "token_budget_exceeded"}},
+                                 __cause__=None, __context__=None)
+        assert not is_budget_error(quoted)  # type: ignore[arg-type]
+        google = SimpleNamespace(details={"error": {"details": [{"reason": "token_budget_exceeded", "domain": "tenuo"}]}},
+                                 __cause__=None, __context__=None)
+        assert is_budget_error(google)  # type: ignore[arg-type]
+
     def test_an_interrupt_during_a_return_leaves_the_lease_out(self, keys):
         pool = Pool(keys, limit=1000, slice_=400)
         budget = LeasedBudget(pool)
@@ -446,6 +478,7 @@ class TestLeasedBudget:
         assert pool.returned == [(first, 0)]
 
     @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    @pytest.mark.filterwarnings("ignore:This process:DeprecationWarning")
     def test_a_forked_child_leaves_the_parents_lease_alone(self, keys):
         pool = Pool(keys, limit=1000, slice_=400)
         budget = LeasedBudget(pool)

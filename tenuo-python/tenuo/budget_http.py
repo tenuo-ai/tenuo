@@ -1890,11 +1890,54 @@ def uninstall() -> None:
             pass
 
 
+_TENUO_CODES = (BUDGET_CODE, DENIED_CODE, UNMETERED_CODE, LEASE_CODE)
+
+
+def _tenuo_code(value: Any, depth: int = 0) -> Optional[str]:
+    """The first refusal code of this module found under a ``code`` or ``reason`` key, at any depth."""
+    if depth > 6:
+        return None
+    if isinstance(value, Mapping):
+        for key in ("code", "reason"):
+            found = value.get(key)
+            if isinstance(found, str) and found in _TENUO_CODES:
+                return found
+        items = list(value.values())
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        return None
+    for item in items:
+        found = _tenuo_code(item, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+def _explicit_code(error: Any) -> Optional[str]:
+    """The refusal code an error states outright: its header, its ``code``, or its parsed body."""
+    headers = getattr(getattr(error, "response", None), "headers", None)
+    if headers is not None:
+        found = headers.get("x-tenuo-denial")
+        if found in _TENUO_CODES:
+            return str(found)
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code in _TENUO_CODES:
+        return code
+    for attr in ("body", "details"):
+        found = _tenuo_code(getattr(error, attr, None))
+        if found is not None:
+            return found
+    return None
+
+
 def is_budget_error(error: BaseException) -> bool:
     """True when ``error``, or anything it was raised from, is a spent token budget.
 
     Works on the error types SDKs raise for the local 403 as well as on
-    :class:`tenuo.budget.BudgetExceeded` itself.
+    :class:`tenuo.budget.BudgetExceeded` itself. A refusal that states another
+    code (``lease_unavailable``, ``model_call_denied``) is not a spent budget,
+    whatever words its message quotes.
     """
     seen = set()
     current: Optional[BaseException] = error
@@ -1902,15 +1945,17 @@ def is_budget_error(error: BaseException) -> bool:
         seen.add(id(current))
         if isinstance(current, BudgetExceeded):
             return True
-        if getattr(current, "code", None) == BUDGET_CODE:
+        code = _explicit_code(current)
+        if code is not None:
+            return code == BUDGET_CODE
+        # SDKs that keep only the error text: the refusal is what the message
+        # opens with, not something it quotes further on.
+        text = str(current)
+        opening = text.find("tenuo: ")
+        if opening >= 0:
+            if text.startswith("tenuo: token budget reached", opening):
+                return True
+        elif BUDGET_CODE in str(getattr(current, "details", "")):
             return True
-        body = getattr(current, "body", None)
-        if body is not None and BUDGET_CODE in json.dumps(body, default=str):
-            return True
-        headers = getattr(getattr(current, "response", None), "headers", None)
-        if headers is not None and headers.get("x-tenuo-denial") == BUDGET_CODE:
-            return True
-        if BUDGET_CODE in str(getattr(current, "details", "")) or "tenuo: token budget reached" in str(current):
-            return True  # SDKs that keep only the error body or its message
         current = current.__cause__ or current.__context__
     return False
