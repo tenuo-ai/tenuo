@@ -122,3 +122,59 @@ pub(super) fn subsumes(child: &Json, parent: &Json) -> bool {
         _ => false,
     }
 }
+
+/// True if `map` admits arguments it does not name (Section 3.3): it holds
+/// `"*"`, or it is empty, which normalizes to the map holding only `"*"`.
+fn has_star(map: &Json) -> bool {
+    map.as_obj()
+        .is_some_and(|m| m.is_empty() || m.contains("*"))
+}
+
+/// The entries of `map` other than `"*"`.
+fn named(map: &Json) -> impl Iterator<Item = (&str, &Json)> {
+    map.as_obj()
+        .into_iter()
+        .flat_map(|m| m.iter())
+        .filter(|(key, _)| *key != "*")
+}
+
+fn entry<'a>(map: &'a Json, key: &str) -> Option<&'a Json> {
+    named(map).find(|(k, _)| *k == key).map(|(_, c)| c)
+}
+
+/// An argument is required unless its entry carries `"optional": true`.
+fn required(constraint: &Json) -> bool {
+    field(constraint, "optional").and_then(Json::as_bool) != Some(true)
+}
+
+/// Step 6b for one tool: `args` satisfy the constraint map.
+pub(super) fn map_admits(map: &Json, args: &Json) -> bool {
+    let Some(args) = args.as_obj() else {
+        return false;
+    };
+    args.iter().all(|(name, value)| match entry(map, name) {
+        Some(constraint) => check(constraint, value),
+        None => has_star(map),
+    }) && named(map).all(|(key, constraint)| !required(constraint) || args.contains(key))
+}
+
+/// Steps 4p2 to 4p4 for one tool: the key rules of Section 4.5, then
+/// subsumption of each argument named in both maps.
+pub(super) fn map_subsumes(child: &Json, parent: &Json) -> bool {
+    // 4p2: a key the child names is named by the parent, or the parent has "*".
+    let names_only_known =
+        named(child).all(|(key, _)| entry(parent, key).is_some() || has_star(parent));
+    // 4p2: a key the parent names and the child omits is optional in the
+    // parent, and the child then has no "*".
+    let omits_only_optional = named(parent).all(|(key, constraint)| {
+        entry(child, key).is_some() || (!required(constraint) && !has_star(child))
+    });
+    // 4p2: the child has "*" only if the parent does.
+    let star_kept_narrow = !has_star(child) || has_star(parent);
+    // 4p3 and 4p4, for each key named in both.
+    let each_narrows = named(child).all(|(key, c)| match entry(parent, key) {
+        Some(p) => (required(c) || !required(p)) && subsumes(c, p),
+        None => true,
+    });
+    names_only_known && omits_only_optional && star_kept_narrow && each_narrows
+}

@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Section 8 over a presentation and passes the draft's 229 test vectors on
   verdict and failing step. Issuing and deriving JWS tokens is not included.
 
+### Changed
+
+- **Delegation accepts two more ways to narrow a tool's arguments.** A child
+  may constrain an argument its parent admits without declaring it (the parent
+  is empty or sets `allow_unknown`). A child that admits no undeclared
+  arguments may leave out one the parent marks optional, and then refuses it.
+  Chains valid before remain valid. Upgrade verifiers before issuing chains
+  that use either form; older verifiers reject them.
+
 ## [0.3.7] - 2026-11-11
 
 ### Security

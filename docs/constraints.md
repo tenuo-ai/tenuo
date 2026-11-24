@@ -2131,8 +2131,11 @@ into a new set creates required arguments.
 
 Optionality does not permit undeclared arguments. During delegation, an optional
 argument may become required, but a required argument cannot become optional.
-The value constraint must still narrow, and the existing keyset rules still apply:
-an optional key cannot be dropped from a nonempty parent constraint set.
+The value constraint must still narrow. A child may leave an optional argument
+out only when it admits no undeclared arguments (it is not empty and does not
+set `allow_unknown`); the child then refuses that argument. A child may declare
+an argument its parent does not only when the parent admits undeclared
+arguments.
 Unsupported optional parent predicates cannot confer authority through
 delegation, including when a child makes the argument required.
 
