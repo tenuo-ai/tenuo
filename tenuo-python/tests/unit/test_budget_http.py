@@ -396,6 +396,28 @@ class TestAnthropicMessages:
             text = response.read().decode()
         assert "message_stop" in text and used(meter, warrant) == 30 + 100
 
+    def test_a_stream_closed_midway_is_charged_its_reservation(self, keys):
+        # The opening event reports one output token. Whatever was generated
+        # before the client hung up, it was more than that.
+        warrant = mint(keys, model=self.MODEL, total_tokens=1000)
+        provider = Provider(chunk_size=40)
+        http, meter = client_for(keys, warrant, provider)
+        with http.stream("POST", self.URL, json=self.body(stream=True, max_tokens=300)) as response:
+            next(response.iter_raw())
+        assert used(meter, warrant) == INPUT + 300
+
+    def test_a_stream_dropped_unread_is_settled_when_it_is_collected(self, keys):
+        import gc
+
+        warrant = mint(keys, model=self.MODEL, total_tokens=1000)
+        events = []
+        http, meter = client_for(keys, warrant, Provider(chunk_size=40), events=events)
+        response = http.send(http.build_request("POST", self.URL, json=self.body(stream=True, max_tokens=300)), stream=True)
+        assert not events
+        del response
+        gc.collect()
+        assert [e.decision for e in events] == ["ALLOW"] and events[0].usage["estimated"] and used(meter, warrant) == INPUT + 300
+
 
 # ---------------------------------------------------------------------------
 # Failures
@@ -648,10 +670,11 @@ class GoogleProvider:
         meta = {"promptTokenCount": INPUT, "candidatesTokenCount": out, "totalTokenCount": INPUT + out + self.thoughts}
         if self.thoughts:
             meta["thoughtsTokenCount"] = self.thoughts
-        chunk = {"candidates": [{"content": {"role": "model", "parts": [{"text": "ok"}]}}], "usageMetadata": meta}
+        content = {"role": "model", "parts": [{"text": "ok"}]}
+        chunk = {"candidates": [{"content": content, "finishReason": "STOP"}], "usageMetadata": meta}
         if ":streamGenerateContent" not in request.url.path:
             return httpx.Response(200, json=chunk)
-        early = {"candidates": chunk["candidates"],
+        early = {"candidates": [{"content": content}],
                  "usageMetadata": {"promptTokenCount": INPUT, "candidatesTokenCount": 1, "totalTokenCount": INPUT + 1}}
         if request.url.params.get("alt") == "sse":
             payload = sse([early, chunk], done=False)
@@ -853,3 +876,37 @@ class TestInstall:
         async with httpx.AsyncClient(transport=httpx.MockTransport(Provider())) as http:
             await http.post(self.OPENAI, json={"model": MODEL, "messages": MESSAGES})
         assert used(meter, warrant) == INPUT + 100
+
+
+class TestWhatTheBodyDoesNotShowAtFirstGlance:
+    def test_a_list_of_prompts_and_best_of_multiply_the_output(self, keys):
+        warrant = mint(keys, total_tokens=100_000)
+        provider = Provider()
+        http, meter = client_for(keys, warrant, provider)
+        url = "https://provider.test/v1/completions"
+        reserved = []
+        original = meter.store.add
+        meter.store.add = lambda deltas, expires: (reserved.append(max(deltas.values())), original(deltas, expires))[1]
+        http.post(url, json={"model": MODEL, "prompt": ["a", "b", "c"], "max_tokens": 50, "n": 2})
+        http.post(url, json={"model": MODEL, "prompt": "one", "max_tokens": 50, "best_of": 4})
+        http.post(url, json={"model": MODEL, "prompt": [1, 2, 3], "max_tokens": 50})  # one prompt, as token ids
+        assert [r for r in reserved if r > 0] == [INPUT + 50 * 6, INPUT + 50 * 4, INPUT + 50]
+
+    def test_a_redirect_is_not_charged_as_a_call(self, keys):
+        warrant = mint(keys, total_tokens=1000)
+        provider, hops = Provider(), []
+
+        def redirect_once(request):
+            hops.append(request.url.path)
+            return httpx.Response(307, headers={"location": CHAT}) if len(hops) == 1 else provider(request)
+
+        http, meter = client_for(keys, warrant, redirect_once)
+        response = http.post(CHAT, json={"model": MODEL, "messages": MESSAGES}, follow_redirects=True)
+        assert response.status_code == 200 and len(hops) == 2
+        assert used(meter, warrant) == INPUT + 100  # one call, not two
+
+    def test_a_total_below_its_parts_is_not_believed(self):
+        from tenuo.budget import usage_counts
+
+        assert usage_counts({"prompt_tokens": 30, "completion_tokens": 100, "total_tokens": 0}) == {
+            "input_tokens": 30, "output_tokens": 100, "total_tokens": 130}

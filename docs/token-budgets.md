@@ -198,7 +198,8 @@ A total holds only where every call passes a meter on the same store.
 - **Output caps depend on the provider.** The meter sets the cap; a model that generates past it is still counted in full.
 - **In-flight calls hold their reservation.** Concurrent calls near the end of a budget can be refused while tokens are reserved but not yet spent.
 - **Failed requests.** An error response from the provider releases the reservation. A timeout or dropped connection keeps it as the charge.
-- **Streams.** Chat Completions streams are asked for usage (`stream_options.include_usage`); the extra chunk is hidden unless the caller asked for it too.
+- **Streams.** Chat Completions streams are asked for usage (`stream_options.include_usage`); the extra chunk is hidden unless the caller asked for it too. A stream that is closed, or dropped, before its final usage arrives keeps its reservation as the charge.
+- **What the request does not show.** The input estimate comes from the request body. Context the provider holds on its side, such as a Responses call that continues from `previous_response_id`, is not in it: such a call is admitted on its visible input and counted in full afterwards.
 - **Scope.** The meter covers `httpx` and `httpx2` clients in the process. `install()` switches the Google GenAI SDK's async calls to its `httpx` path while installed.
 
 ---

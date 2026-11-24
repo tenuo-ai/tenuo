@@ -401,6 +401,7 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
             return None
         total = (inp or 0) + (out or 0)
     inp, out = inp or 0, out or 0
+    total = max(total, inp + out)  # a total below its own parts is not a total
     if total > inp + out:
         # Some providers leave thinking tokens out of the completion count but
         # bill them in the total. They are output.
