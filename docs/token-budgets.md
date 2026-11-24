@@ -264,7 +264,7 @@ A budget for a period is kept by Cloud and handed out in *leases*: short-lived w
 - A lease is charged in full until it is returned, so two hosts are never given the same tokens. What a lease did not use goes back to the budget.
 - Returns are signed with the agent's key: only the holder of a lease can report what it used.
 - When the period's budget is spent, calls are refused with `token_budget_exceeded`, and the message says how much is left and when the budget resets. When no lease can be taken for another reason (a wrong trigger id or API key, a paused trigger, Cloud unreachable), calls are refused with `lease_unavailable`, and the message says which.
-- `uninstall()` returns the lease in hand, and so does a normal interpreter exit. A process killed by a signal it does not handle does not, and that lease stays charged until it expires.
+- `uninstall()` returns the lease in hand, and so does a normal interpreter exit. A process killed by a signal it does not handle does not. Only the agent's key can report what a lease used, so that lease stays charged in full until the period resets, and a budget for one total never resets. Keep the lease size small for workers that may be stopped abruptly.
 - If a return does not get through, that lease stays closed and the same return is sent again later. Calls are refused until a new lease can be taken.
 - A lease is for one process. Another process takes its own lease from the same budget, and so does a forked child.
 - Leases work with `install()`; `metered_client()` takes a fixed warrant.
