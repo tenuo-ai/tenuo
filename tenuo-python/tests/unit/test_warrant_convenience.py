@@ -264,6 +264,37 @@ class TestDebuggingMethods:
         assert "\nFORGED" not in output
         assert "\x1b" not in output
 
+    @pytest.mark.parametrize(
+        "value", ["/data/\n*", r"/data/\n*", "/data/a'b*", '/data/a"b*', "/data/\x1b*", "/data/\u202e*"]
+    )
+    def test_pattern_repr_quotes_values_without_ambiguity(self, value):
+        import ast
+
+        constraint = Pattern(value)
+        assert ast.literal_eval(repr(constraint)[len("Pattern(") : -1]) == value
+        nested = All([constraint])
+        assert repr(nested) == f"All([Pattern({value!r})])"
+        key = SigningKey.generate()
+        warrant = Warrant.mint_builder().capability("read", path=nested).holder(key.public_key).ttl(3600).mint(key)
+        assert repr(nested) in warrant.explain()
+
+    @pytest.mark.parametrize(
+        "name,value",
+        [
+            ("Regex", "a'b\n"),
+            ("Subpath", "/data/a'b"),
+            ("UrlPattern", "https://example.com/a'b"),
+            ("CEL", "value == 'a'"),
+            ("Cidr", "10.0.0.0/8"),
+        ],
+    )
+    def test_native_string_constraint_repr_quotes_values(self, name, value):
+        import ast
+        import tenuo_core
+
+        constraint = getattr(tenuo_core, name)(value)
+        assert ast.literal_eval(repr(constraint)[len(name) + 1 : -1]) == value
+
     def test_explain_with_chain(self):
         """Test explain with include_chain=True."""
         warrant, key = Warrant.quick_mint(["search"], ttl=3600)
