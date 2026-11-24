@@ -55,11 +55,13 @@ A refused call is not sent.
 
 | Field | Constraint | Meaning |
 |-------|------------|---------|
-| `total_tokens` | `Range(max=N)` | Tokens the warrant, and everything delegated from it, may spend |
-| `max_tokens` | `Range(max=N)` | Most output tokens one call may request |
+| `total_tokens` | `Range(min=0, max=N)` | Tokens the warrant, and everything delegated from it, may spend |
+| `max_tokens` | `Range(min=0, max=N)` | Most output tokens one call may request |
 | `model` | `OneOf([...])` | Models the warrant may call |
 
 The caller does not supply `total_tokens`. The meter keeps a running total per warrant and passes that as the argument, so the warrant check decides and the store only counts.
+
+A budget written by hand must have the same shape: a range that starts at 0 and has an upper bound. Model calls on a warrant whose `total_tokens` is anything else (an exact value, a list, a range starting above 0) are refused.
 
 Because it is a constraint, delegation follows the usual rules: a child warrant cannot widen or drop the budget.
 
