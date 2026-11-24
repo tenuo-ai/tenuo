@@ -314,6 +314,61 @@ pub(crate) fn parse_unique(text: &str) -> Option<Json> {
     parse(text).filter(|p| !p.duplicate).map(|p| p.value)
 }
 
+/// The string value of the top-level member `name` of a JSON object, read
+/// without building the document: the text of a token whose signature has
+/// not been checked (Section 8, step 2c).
+///
+/// Only top-level member names are decoded. Every other value is stepped
+/// over by its quotes and brackets, so text this reads is not thereby JSON;
+/// [`parse`] decides that once the signature has verified. Where the name
+/// repeats, the last member counts, as in [`Obj::get`]. `None` if the text
+/// is not an object in outline, or that member is absent or not a string.
+pub(crate) fn top_level_string(text: &str, name: &str) -> Option<String> {
+    let mut reader = Reader {
+        bytes: text.as_bytes(),
+        text,
+        pos: 0,
+        duplicate: false,
+    };
+    reader.skip_ws();
+    reader.eat(b'{')?;
+    reader.skip_ws();
+    let mut found = None;
+    if reader.eat(b'}').is_none() {
+        loop {
+            reader.skip_ws();
+            let member = reader.string()?;
+            reader.skip_ws();
+            reader.eat(b':')?;
+            reader.skip_ws();
+            if member == name {
+                found = match reader.peek()? {
+                    b'"' => Some(reader.string()?),
+                    _ => {
+                        reader.skip_value()?;
+                        None
+                    }
+                };
+            } else {
+                reader.skip_value()?;
+            }
+            reader.skip_ws();
+            match reader.peek()? {
+                b',' => reader.pos += 1,
+                b'}' => {
+                    reader.pos += 1;
+                    break;
+                }
+                _ => return None,
+            }
+        }
+    }
+    reader.skip_ws();
+    (reader.pos == reader.bytes.len())
+        .then_some(found)
+        .flatten()
+}
+
 struct Reader<'a> {
     bytes: &'a [u8],
     text: &'a str,
@@ -343,6 +398,63 @@ impl Reader<'_> {
                 self.pos += word.len();
                 value
             })
+    }
+
+    /// Step over one value without reading it: a string to its closing
+    /// quote, an array or object to its matching bracket, anything else to
+    /// the next delimiter. No recursion, so depth costs nothing here.
+    fn skip_value(&mut self) -> Option<()> {
+        match self.peek()? {
+            b'"' => self.skip_string(),
+            b'{' | b'[' => {
+                let mut open = 0usize;
+                loop {
+                    match self.peek()? {
+                        b'"' => self.skip_string()?,
+                        b'{' | b'[' => {
+                            open += 1;
+                            self.pos += 1;
+                        }
+                        b'}' | b']' => {
+                            open -= 1;
+                            self.pos += 1;
+                            if open == 0 {
+                                return Some(());
+                            }
+                        }
+                        _ => self.pos += 1,
+                    }
+                }
+            }
+            _ => {
+                let start = self.pos;
+                while !matches!(
+                    self.peek(),
+                    None | Some(b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
+                ) {
+                    self.pos += 1;
+                }
+                (self.pos > start).then_some(())
+            }
+        }
+    }
+
+    /// Step over a string. `"` and `\` never occur inside a multi-byte
+    /// character of valid UTF-8, so bytes are enough.
+    fn skip_string(&mut self) -> Option<()> {
+        self.eat(b'"')?;
+        loop {
+            let byte = self.peek()?;
+            self.pos += 1;
+            match byte {
+                b'"' => return Some(()),
+                b'\\' => {
+                    self.peek()?;
+                    self.pos += 1;
+                }
+                _ => {}
+            }
+        }
     }
 
     fn value(&mut self, depth: usize) -> Option<Json> {
@@ -698,6 +810,103 @@ mod tests {
             }
             _ => false,
         }
+    }
+
+    /// What step 2c read before it had a scanner: the whole document.
+    fn by_full_parse(text: &str, name: &str) -> Option<String> {
+        let parsed = parse(text)?;
+        parsed
+            .value
+            .as_obj()?
+            .get(name)?
+            .as_str()
+            .map(str::to_owned)
+    }
+
+    #[test]
+    fn the_scanner_reads_what_a_full_parse_reads_from_json() {
+        for text in [
+            r#"{}"#,
+            r#"{"jti":"a"}"#,
+            r#" { "x" : 1 , "jti" : "a" , "y" : [ ] } "#,
+            r#"{"jti":""}"#,
+            r#"{"jti":"a\"b\\\u00e9"}"#,
+            r#"{"\u006ati":"escaped name"}"#,
+            r#"{"jti":"first","jti":"last"}"#,
+            r#"{"jti":"first","jti":7}"#,
+            r#"{"jti":7,"jti":"last"}"#,
+            r#"{"jti":7}"#,
+            r#"{"jti":null}"#,
+            r#"{"jti":["a"]}"#,
+            r#"{"jti":{"jti":"inner"}}"#,
+            r#"{"a":{"jti":"nested"},"b":[{"jti":"nested"}]}"#,
+            r#"{"a":"}\",\"jti\":\"in a string\"","jti":"real"}"#,
+            r#"{"a":"[{","jti":"real"}"#,
+            r#"{"a":[[1,{"b":"]}"}],2],"jti":"real","c":-1.5e3,"d":true,"e":null}"#,
+            r#"{"a":"\\","jti":"after a backslash"}"#,
+            r#"["jti","a"]"#,
+            r#""jti""#,
+            "null",
+        ] {
+            assert_eq!(
+                top_level_string(text, "jti"),
+                by_full_parse(text, "jti"),
+                "{text}"
+            );
+        }
+    }
+
+    /// Every token payload in the vector suite, valid or not.
+    #[test]
+    fn the_scanner_agrees_with_a_full_parse_on_the_suite_payloads() {
+        let suite: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/vectors/aat-jws-vectors.json"))
+                .expect("vector file");
+        let mut payloads = 0;
+        for vector in suite["vectors"].as_array().expect("vectors") {
+            for token in vector["chain"].as_array().expect("chain") {
+                let text = token["payload_json"].as_str().expect("payload_json");
+                if parse(text).is_some() {
+                    payloads += 1;
+                    assert_eq!(
+                        top_level_string(text, "jti"),
+                        by_full_parse(text, "jti"),
+                        "{}",
+                        vector["id"]
+                    );
+                }
+            }
+        }
+        assert!(payloads > 400, "{payloads}");
+    }
+
+    #[test]
+    fn the_scanner_refuses_text_that_is_not_an_object_in_outline() {
+        for text in [
+            "",
+            "{",
+            r#"{"jti":"a""#,
+            r#"{"jti":"a"} x"#,
+            r#"{"jti":"a"}{"jti":"b"}"#,
+            r#"{"jti":"unterminated}"#,
+            r#"{"jti" "a"}"#,
+            r#"{"jti":}"#,
+            r#"{"jti":"a",}"#,
+            r#"{jti:"a"}"#,
+            r#"{"a":[1,2,"jti":"a"}"#,
+            r#"{"a":"x\"#,
+        ] {
+            assert_eq!(top_level_string(text, "jti"), None, "{text}");
+        }
+    }
+
+    /// Skipped values are not read, so the scanner can find `jti` in text a
+    /// full parse refuses. Steps 3b and 4b refuse it after the signature.
+    #[test]
+    fn the_scanner_does_not_judge_values_it_skips() {
+        let text = r#"{"a":01,"b":tru,"c":[1,,2],"jti":"a"}"#;
+        assert!(parse(text).is_none());
+        assert_eq!(top_level_string(text, "jti").as_deref(), Some("a"));
     }
 
     #[test]

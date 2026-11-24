@@ -173,16 +173,11 @@ fn decode_signature(segment: &str) -> Option<Signature> {
     Signature::from_bytes(&bytes).ok()
 }
 
-/// Step 2c: the `jti` of a payload whose signature has not been checked.
+/// Step 2c: the `jti` of a payload whose signature has not been checked. The
+/// claims are scanned for that one member and not parsed.
 pub(crate) fn unverified_jti(compact: &str) -> Option<String> {
     let payload = compact.split('.').nth(1)?;
-    let parsed = json::parse(&b64u_text(payload)?)?;
-    parsed
-        .value
-        .as_obj()?
-        .get("jti")?
-        .as_str()
-        .map(str::to_owned)
+    json::top_level_string(&b64u_text(payload)?, "jti")
 }
 
 #[cfg(test)]
