@@ -578,6 +578,62 @@ class TestLeasedBudget:
         budget.close()
         assert pool.returned == [(lease_id, 0)]
 
+    def test_a_plan_that_was_ready_when_its_caller_left_is_given_back_once(self, keys, leased):
+        from concurrent.futures import ThreadPoolExecutor
+
+        class Recording(ThreadPoolExecutor):
+            """The loop's executor, keeping what it was handed so the test can wait for it."""
+
+            def __init__(self):
+                super().__init__(max_workers=2)
+                self.handed = []
+
+            def submit(self, fn, *args, **kwargs):
+                future = super().submit(fn, *args, **kwargs)
+                self.handed.append(future)
+                return future
+
+        pool = Pool(keys, limit=10_000, slice_=300)
+        budget, meter = leased(pool)
+        provider = Provider()
+        exits = []
+        leave = budget.exit
+        budget.exit = lambda ids, model, usage: (exits.append(usage), leave(ids, model, usage))[1]
+
+        def gone(*args, **kwargs):
+            raise RuntimeError("cannot schedule new futures after shutdown")
+
+        async def main():
+            loop = asyncio.get_running_loop()
+            executor = Recording()
+            loop.set_default_executor(executor)
+            async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
+                task = asyncio.ensure_future(http.post(URL, json=BODY))
+                while not executor.handed:
+                    await asyncio.sleep(0)
+                # The loop is held here until the worker has finished the plan: the plan is
+                # ready, and the task that asked for it has not been told yet.
+                executor.handed[0].result(5)
+                task.cancel()
+                loop.run_in_executor = gone  # nothing more can be handed to the loop's executor
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                lease_id = None
+                for _ in range(300):  # the plan is given back on a thread of its own
+                    await asyncio.sleep(0.01)
+                    lease = budget.current
+                    if exits and lease is not None and budget._held[lease.warrant_id].inflight == 0:
+                        lease_id = lease.warrant_id
+                        break
+                await asyncio.sleep(0.1)  # and only once
+                return lease_id
+
+        lease_id = asyncio.run(main())
+        assert lease_id is not None and not provider.caps
+        assert exits == [None] and meter.store.used(lease_id).get(lease_id, 0) == 0
+        budget.close()
+        assert pool.returned == [(lease_id, 0)]
+
     def test_a_call_is_planned_and_settled_even_when_the_loops_executor_is_gone(self, keys, leased):
         pool = Pool(keys, limit=10_000, slice_=300)
         budget, meter = leased(pool)
