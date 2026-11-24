@@ -221,7 +221,16 @@ fn number_json(n: f64) -> Result<Value, String> {
 fn value_json(value: &ConstraintValue) -> Result<Value, String> {
     Ok(match value {
         ConstraintValue::String(s) => Value::String(s.clone()),
-        ConstraintValue::Integer(i) => Value::Number(Number::from(*i)),
+        ConstraintValue::Integer(i) => {
+            // JavaScript transports numbers as f64. Normalize only lossless
+            // conversions; using i128 avoids i64's saturating float cast at MAX.
+            let float = *i as f64;
+            if float as i128 == i128::from(*i) {
+                number_json(float)?
+            } else {
+                Value::Number(Number::from(*i))
+            }
+        }
         ConstraintValue::Float(f) => number_json(*f)?,
         ConstraintValue::Boolean(b) => Value::Bool(*b),
         ConstraintValue::Null => Value::Null,

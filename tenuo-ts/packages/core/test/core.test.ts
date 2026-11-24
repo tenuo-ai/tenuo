@@ -976,6 +976,24 @@ describe("toWire", () => {
 });
 
 describe("revocation and receipts", () => {
+  it("matches Python's large integer host-policy commitment", () => {
+    // The native expression API also accepts nested exact values, which the
+    // public TypeScript exact() helper does not expose yet.
+    const ctx = devContext();
+    const session = ctx.mint({ large: {} }, 300);
+    const value = 2 ** 53;
+    const allow = {
+      exact: exact(value), nested: { kind: "exact", value: { nested: [value] } },
+      contains: contains([value]), subset: subset([value]),
+    };
+    const decision = ctx.authorize(session, "large", {
+      exact: 0, nested: { nested: [0] }, contains: [0], subset: [0],
+    }, undefined, allow);
+    expect(decision.outcome).toBe("deny");
+    if (!decision.receipt) throw new Error("expected signed denial receipt");
+    expect(verifyReceipt(decision.receipt).policy_definition_hash).toBe("a5b8f98978bbbec65c5f05d6015a6bb5425c101f2caeefccda7c8c842208682f");
+  });
+
   it.each(["/data/reports", "/data/reports/", "/data/./reports/"])(
     "normalizes host-policy receipts consistently with Python for %s", async (root) => {
       const tenuo = createTenuo({ root: createTenuo.devRoot() });

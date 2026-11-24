@@ -1517,6 +1517,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.check_chain(
@@ -1535,6 +1536,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.authorize_one(
@@ -1624,6 +1626,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=precomputed_signature,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = authorizer.check_chain(
@@ -1641,6 +1644,7 @@ def _enforce_tool_call_impl(
                         _constraint_auth_args,
                         signature=precomputed_signature,
                         approvals=_gate_approvals or [],
+                        host_policy_args=_raw_constraint_args,
                     )
                 else:
                     _chain_result = authorizer.authorize_one(
@@ -2074,6 +2078,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.check_chain(
@@ -2092,6 +2097,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.authorize_one(
@@ -2161,6 +2167,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=precomputed_signature,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = authorizer.check_chain(
@@ -2178,6 +2185,7 @@ async def _enforce_tool_call_async_impl(
                         _constraint_auth_args,
                         signature=precomputed_signature,
                         approvals=_gate_approvals or [],
+                        host_policy_args=_raw_constraint_args,
                     )
                 else:
                     _chain_result = authorizer.authorize_one(

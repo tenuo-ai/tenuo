@@ -7073,10 +7073,14 @@ impl PyAuthorizer {
     ///         ``CompiledMcpConfig.extract_constraints``.
     ///     signature: Optional PoP signature bytes (64 bytes)
     ///     approvals: Optional list of SignedApproval objects
+    ///     host_policy_args: Unstripped extracted arguments for the host ceiling.
+    ///         Defaults to constraint_args. Supply this separately when warrant
+    ///         matching uses legacy null normalization.
     ///
     /// Returns:
     ///     ChainVerificationResult on success, raises exception on failure
-    #[pyo3(signature = (warrant, tool, pop_args, constraint_args, signature=None, approvals=None))]
+    #[pyo3(signature = (warrant, tool, pop_args, constraint_args, signature=None, approvals=None, *, host_policy_args=None))]
+    #[allow(clippy::too_many_arguments)]
     fn authorize_one_with_pop_args(
         &self,
         warrant: &PyWarrant,
@@ -7085,6 +7089,7 @@ impl PyAuthorizer {
         constraint_args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
+        host_policy_args: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyChainVerificationResult> {
         let mut rust_pop_args = HashMap::new();
         for (key, value) in pop_args.iter() {
@@ -7127,14 +7132,24 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        self.finish_authorization(constraint_args.py(), result, tool, &rust_constraint_args)
+        // Warrant compatibility normalization must never erase values from
+        // the host ceiling's extracted/renamed argument view.
+        let rust_host_args = match host_policy_args {
+            Some(args) if self.host_policies.contains_key(tool) => args
+                .iter()
+                .map(|(key, value)| Ok((key.extract::<String>()?, py_to_constraint_value(&value)?)))
+                .collect::<PyResult<HashMap<_, _>>>()?,
+            _ => rust_constraint_args,
+        };
+        self.finish_authorization(constraint_args.py(), result, tool, &rust_host_args)
     }
 
     /// Split-view delegation-chain authorization.
     ///
     /// See :meth:`authorize_one_with_pop_args` for semantics — this is the
     /// multi-warrant form for delegation chains.
-    #[pyo3(signature = (chain, tool, pop_args, constraint_args, signature=None, approvals=None))]
+    #[pyo3(signature = (chain, tool, pop_args, constraint_args, signature=None, approvals=None, *, host_policy_args=None))]
+    #[allow(clippy::too_many_arguments)]
     fn check_chain_with_pop_args(
         &self,
         chain: &Bound<'_, PySequence>,
@@ -7143,6 +7158,7 @@ impl PyAuthorizer {
         constraint_args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
+        host_policy_args: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
@@ -7198,7 +7214,16 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        self.finish_authorization(constraint_args.py(), result, tool, &rust_constraint_args)
+        // Warrant compatibility normalization must never erase values from
+        // the host ceiling's extracted/renamed argument view.
+        let rust_host_args = match host_policy_args {
+            Some(args) if self.host_policies.contains_key(tool) => args
+                .iter()
+                .map(|(key, value)| Ok((key.extract::<String>()?, py_to_constraint_value(&value)?)))
+                .collect::<PyResult<HashMap<_, _>>>()?,
+            _ => rust_constraint_args,
+        };
+        self.finish_authorization(constraint_args.py(), result, tool, &rust_host_args)
     }
 }
 

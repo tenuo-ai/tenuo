@@ -371,3 +371,93 @@ def test_normalized_path_and_explicit_defaults_match_typescript(root_path):
         },
     )
     assert auth.host_policy_hash("network").hex() == PARITY["network"]
+
+
+def _null_list_call(renamed=False):
+    root, holder = SigningKey.generate(), SigningKey.generate()
+    warrant = Warrant.mint_builder().capability("tag", {}).holder(holder.public_key).ttl(600).mint(root)
+    auth = Authorizer(trusted_roots=[root.public_key])
+    auth.set_host_policy("tag", {"tags": Subset(["approved"])})
+    raw = {"tagList" if renamed else "tags": ["approved", None]}
+    extracted = {"tags": ["approved", None]}
+    sig = warrant.sign(holder, "tag", raw, int(time.time()))
+    return auth, holder, warrant, raw, extracted, sig
+
+
+@pytest.mark.parametrize("renamed", [False, True])
+def test_inbound_ceiling_checks_unstripped_extracted_list(renamed):
+    auth, holder, warrant, raw, extracted, sig = _null_list_call(renamed)
+    result = verify_inbound_call(
+        tool_name="tag",
+        tool_args=raw,
+        warrant=warrant,
+        pop_signature=sig,
+        authorizer=auth,
+        constraint_args=extracted,
+        apply_observe=False,
+    )
+    assert not result.allowed
+    assert result.error_type == "constraint_violation"
+    assert result.chain_result is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("renamed", [False, True])
+async def test_async_ceiling_checks_unstripped_extracted_list(renamed):
+    from tenuo._enforcement import enforce_tool_call_async
+
+    auth, holder, warrant, raw, extracted, sig = _null_list_call(renamed)
+    result = await enforce_tool_call_async(
+        "tag",
+        raw,
+        warrant.bind(holder),
+        verify_mode="verify",
+        precomputed_signature=sig,
+        authorizer=auth,
+        constraint_args=extracted,
+    )
+    assert not result.allowed
+    assert result.error_type == "constraint_violation"
+    assert result.chain_result is not None
+
+
+@pytest.mark.parametrize("chain", [False, True])
+def test_native_split_view_keeps_host_values_separate_from_legacy_warrant_view(chain):
+    auth, holder, warrant, raw, extracted, sig = _null_list_call(True)
+    method = auth.check_chain_with_pop_args if chain else auth.authorize_one_with_pop_args
+    with pytest.raises(ConstraintViolation):
+        method([warrant] if chain else warrant, "tag", raw, {"tags": ["approved"]}, sig, host_policy_args=extracted)
+
+
+@pytest.mark.parametrize("value", [2**53, 2**53 + 2, 2**60, -(2**53), -(2**63)])
+@pytest.mark.parametrize(
+    "constraint", [Exact, lambda v: Contains([v]), lambda v: Subset([v]), lambda v: Exact({"nested": [v]})]
+)
+def test_lossless_large_integers_match_javascript_number_encoding(value, constraint):
+    auth = Authorizer(trusted_roots=[SigningKey.generate().public_key])
+    auth.set_host_policy("int", {"value": constraint(value)})
+    auth.set_host_policy("float", {"value": constraint(float(value))})
+    assert auth.host_policy_hash("int") == auth.host_policy_hash("float")
+
+
+@pytest.mark.parametrize("value", [2**53 + 1, -(2**53 + 1), 2**63 - 1])
+def test_lossy_integer_conversion_does_not_collapse_distinct_policies(value):
+    auth = Authorizer(trusted_roots=[SigningKey.generate().public_key])
+    auth.set_host_policy("int", {"value": Exact(value)})
+    auth.set_host_policy("float", {"value": Exact(float(value))})
+    assert auth.host_policy_hash("int") != auth.host_policy_hash("float")
+
+
+def test_large_integer_policy_matches_typescript_receipt_fixture():
+    value = 2**53
+    auth = Authorizer(trusted_roots=[SigningKey.generate().public_key])
+    auth.set_host_policy(
+        "large",
+        {
+            "exact": Exact(value),
+            "nested": Exact({"nested": [value]}),
+            "contains": Contains([value]),
+            "subset": Subset([value]),
+        },
+    )
+    assert auth.host_policy_hash("large").hex() == "a5b8f98978bbbec65c5f05d6015a6bb5425c101f2caeefccda7c8c842208682f"

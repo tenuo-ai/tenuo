@@ -857,6 +857,10 @@ authorizer.set_host_policy("route_ticket", {
   call. A failure raises the same constraint error a warrant constraint does.
 - A non-empty policy is closed-world, like a warrant: name every argument the
   tool accepts. `{}` is an open policy that receipts still commit to.
+- Host ceilings check the unstripped extracted/renamed arguments. Legacy null
+  normalization applies only to warrant matching. Low-level split-view callers
+  that normalize `constraint_args` must pass the unstripped map separately as
+  `host_policy_args`; otherwise it defaults to `constraint_args`.
 - Tools without a policy are unaffected.
 - A policy cannot be replaced once set. Receipts signed by a `ReceiptIssuer` or
   `ControlPlaneClient` bound to this authorizer carry its digest as
