@@ -29,7 +29,8 @@ key, so only the holder of a lease can say what it used.
 and ``release()`` can stand in for it (see :class:`LeaseSource`).
 
 Not covered: a process killed by a signal it does not handle (SIGTERM, SIGKILL)
-does not return its lease, which then stays charged in full.
+does not return its lease, which then stays charged in full until the period
+resets (a budget for one total never does).
 """
 
 from __future__ import annotations
