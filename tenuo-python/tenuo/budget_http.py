@@ -166,6 +166,20 @@ def _positive_int(value: Any) -> Optional[int]:
     return value
 
 
+def _all_finished(state: Dict[str, Any], items: Any, reason_key: str) -> bool:
+    """Note which choices of a stream have finished; True once every requested one has.
+
+    ``state['choices']`` is how many the request asked for.
+    """
+    finished = state.setdefault("finished", set())
+    if isinstance(items, list):
+        for position, item in enumerate(items):
+            if isinstance(item, Mapping) and item.get(reason_key):
+                index = item.get("index")
+                finished.add(index if isinstance(index, int) and not isinstance(index, bool) else position)
+    return len(finished) >= max(1, int(state.get("choices") or 1))
+
+
 class _Dialect:
     """How one wire format names the output cap and reports usage."""
 
@@ -275,15 +289,14 @@ class _OpenAIChat(_Dialect):
         if not isinstance(event, Mapping):
             return
         choices = event.get("choices")
-        if isinstance(choices, list) and any(isinstance(c, Mapping) and c.get("finish_reason") for c in choices):
-            state["finished"] = True
+        done = _all_finished(state, choices, "finish_reason")
         usage = event.get("usage")
         if usage:
             state["usage"] = usage
             # Some providers send a running count with every chunk. It is the
-            # final one in a chunk that carries nothing else, or once
-            # generation has finished.
-            if not choices or state.get("finished"):
+            # final one in a chunk that carries nothing else, or once every
+            # choice the request asked for has finished.
+            if not choices or done:
                 state["complete"] = True
 
     def is_hidden_event(self, event: Any) -> bool:
@@ -474,8 +487,8 @@ class _GoogleGenerate(_Dialect):
         if total is not None:
             state["usage"] = total  # cumulative: the last chunk has the totals
         candidates = event.get("candidates") if isinstance(event, Mapping) else None
-        if isinstance(candidates, list) and any(isinstance(c, Mapping) and c.get("finishReason") for c in candidates):
-            state["complete"] = True
+        if _all_finished(state, candidates, "finishReason"):
+            state["complete"] = True  # every candidate asked for has finished
 
 
 _GOOGLE = _GoogleGenerate()
@@ -513,12 +526,12 @@ class _StreamTap:
     chunk this module asked for can be left out.
     """
 
-    def __init__(self, dialect: _Dialect, hide: bool, readable: bool) -> None:
+    def __init__(self, dialect: _Dialect, hide: bool, readable: bool, choices: int = 1) -> None:
         self._dialect = dialect
         self._hide = hide
         self._readable = readable
         self._buffer = b""
-        self._state: Dict[str, Any] = {}
+        self._state: Dict[str, Any] = {"choices": choices}
 
     @property
     def usage(self) -> Any:
@@ -624,6 +637,7 @@ class _Plan:
     call: Optional[MeteredCall] = None
     dialect: Optional[_Dialect] = None
     hide_usage: bool = False
+    choices: int = 1
     request_id: Optional[str] = None
     done: bool = field(default=False, repr=False)
 
@@ -703,6 +717,7 @@ class _Core:
                     f"tenuo: this request is refused under a token budget: {uncountable}.", model,
                 ))
         requested, param = dialect.read_cap(body, self._default_param(dialect))
+        choices = dialect.choices(body)
         streaming = dialect.wants_stream(body, path)
         view = dict(dialect.view(body))
         view["model"] = model
@@ -730,7 +745,7 @@ class _Core:
         try:
             call = self.meter.begin(
                 self.warrant, chain, view,
-                requested_output=requested, choices=dialect.choices(body),
+                requested_output=requested, choices=choices,
                 authorize=lambda tool, args: self._authorize(tool, args, chain),
                 as_sent=as_sent,
             )
@@ -747,7 +762,7 @@ class _Core:
         if not call.enforced:
             # Only watching: the request goes out exactly as the caller wrote
             # it. Usage is recorded when the response carries it.
-            return _Plan(request, call=call, dialect=dialect)
+            return _Plan(request, call=call, dialect=dialect, choices=choices)
         try:
             if "body" not in final:
                 as_sent(call.max_output)  # type: ignore[arg-type]
@@ -765,7 +780,7 @@ class _Core:
         except BaseException:
             call.release()  # nothing will be sent: the reservation goes back
             raise
-        return _Plan(rewritten, call=call, dialect=dialect, hide_usage=hide)
+        return _Plan(rewritten, call=call, dialect=dialect, hide_usage=hide, choices=choices)
 
     def _default_param(self, dialect: _Dialect) -> str:
         if isinstance(dialect, _OpenAIChat) and self.chat_output_param in dialect.output_params:
@@ -846,7 +861,8 @@ class _Core:
 
     def tap(self, plan: _Plan, response: Any) -> _StreamTap:
         encoding = response.headers.get("content-encoding", "identity").lower()
-        return _StreamTap(plan.dialect, plan.hide_usage, readable=encoding in ("", "identity"))  # type: ignore[arg-type]
+        return _StreamTap(plan.dialect, plan.hide_usage,  # type: ignore[arg-type]
+                          readable=encoding in ("", "identity"), choices=plan.choices)
 
     @staticmethod
     def is_event_stream(response: Any) -> bool:

@@ -1525,3 +1525,69 @@ class TestRunningUsageInAStream:
     def test_the_count_that_comes_with_the_finish_is_final(self, keys):
         total, usage = self.run(keys, finished=True)
         assert total == 52 and "estimated" not in usage
+
+
+class TestStreamsWithSeveralChoices:
+    GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":streamGenerateContent?alt=sse"
+
+    def stream(self, keys, url, body, events, done=True):
+        warrant = mint(keys, total_tokens=5000)
+        seen = []
+        answer = httpx.Response(200, headers={"content-type": "text/event-stream"}, content=sse(events, done=done))
+        http, meter = client_for(keys, warrant, lambda r: answer, events=seen)
+        with http.stream("POST", url, json=body) as streamed:
+            streamed.read()
+        return used(meter, warrant), seen[-1].usage
+
+    def chat_events(self, second_finishes, usage_only=False):
+        def chunk(index, text, finish=None, total=None):
+            out = {"choices": [{"index": index, "delta": {"content": text}, "finish_reason": finish}]}
+            if total is not None:
+                out["usage"] = {"prompt_tokens": 12, "completion_tokens": total - 12, "total_tokens": total}
+            return out
+
+        running = None if usage_only else 20
+        events = [chunk(0, "a", total=running), chunk(1, "b", total=running), chunk(0, "", "stop", total=None if usage_only else 30)]
+        if second_finishes:
+            events.append(chunk(1, "", "stop", total=None if usage_only else 95))
+        if usage_only:
+            events.append({"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 83, "total_tokens": 95}})
+        return events
+
+    BODY = {"model": MODEL, "messages": MESSAGES, "stream": True, "n": 2, "max_tokens": 100}
+
+    def test_one_finished_choice_of_two_does_not_settle_the_stream(self, keys):
+        total, usage = self.stream(keys, CHAT, self.BODY, self.chat_events(second_finishes=False), done=False)
+        assert total == INPUT + 2 * 100 and usage["estimated"] is True
+
+    def test_both_choices_finished_settles_on_the_last_count(self, keys):
+        total, usage = self.stream(keys, CHAT, self.BODY, self.chat_events(second_finishes=True))
+        assert total == 95 and "estimated" not in usage
+
+    def test_a_usage_only_event_is_final_however_many_choices(self, keys):
+        total, usage = self.stream(keys, CHAT, self.BODY, self.chat_events(second_finishes=True, usage_only=True))
+        assert total == 95 and "estimated" not in usage
+
+    def gemini_events(self, second_finishes):
+        def chunk(index, finish, total):
+            candidate = {"index": index, "content": {"role": "model", "parts": [{"text": "x"}]}}
+            if finish:
+                candidate["finishReason"] = "STOP"
+            return {"candidates": [candidate],
+                    "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": total - 12, "totalTokenCount": total}}
+
+        events = [chunk(0, False, 20), chunk(1, False, 25), chunk(0, True, 30)]
+        if second_finishes:
+            events.append(chunk(1, True, 95))
+        return events
+
+    GEMINI_BODY = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                   "generationConfig": {"candidateCount": 2, "maxOutputTokens": 100}}
+
+    def test_one_finished_candidate_of_two_does_not_settle_the_stream(self, keys):
+        total, usage = self.stream(keys, self.GEMINI, self.GEMINI_BODY, self.gemini_events(second_finishes=False), done=False)
+        assert total == INPUT + 2 * 100 and usage["estimated"] is True
+
+    def test_both_candidates_finished_settles_on_the_last_count(self, keys):
+        total, usage = self.stream(keys, self.GEMINI, self.GEMINI_BODY, self.gemini_events(second_finishes=True), done=False)
+        assert total == 95 and "estimated" not in usage
