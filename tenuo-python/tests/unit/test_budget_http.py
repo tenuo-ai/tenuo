@@ -1287,3 +1287,42 @@ class TestBackgroundAndRequestIds:
             warrant=warrant, signing_key=keys.lead, trusted_roots=[keys.issuer.public_key], audit_callback=events.append)
         assert (await http.post(CHAT, json={"model": MODEL, "messages": MESSAGES})).status_code == 200
         assert events[0].request_id == "req_async"
+
+
+class TestOtherRequestFields:
+    GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent"
+    REQUESTS = {
+        "chat": (CHAT, lambda t: {"model": MODEL, "messages": MESSAGES, "temperature": t}),
+        "responses": ("https://provider.test/v1/responses", lambda t: {"model": MODEL, "input": "hello", "temperature": t}),
+        "completions": ("https://provider.test/v1/completions", lambda t: {"model": MODEL, "prompt": "hello", "temperature": t}),
+        "anthropic": ("https://provider.test/v1/messages",
+                      lambda t: {"model": MODEL, "max_tokens": 50, "messages": MESSAGES, "temperature": t}),
+        "gemini": (GEMINI, lambda t: {"contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                                      "generationConfig": {"temperature": t}}),
+    }
+
+    @pytest.mark.parametrize("wire", sorted(REQUESTS))
+    def test_a_constraint_on_another_field_is_checked_on_every_format(self, keys, wire):
+        from tenuo import Range
+
+        capability = llm_capability(total_tokens=100_000, models=[MODEL])
+        capability["temperature"] = Range(min=0, max=1)
+        warrant = (Warrant.mint_builder().capability("llm.chat", capability)
+                   .holder(keys.lead.public_key).ttl(600).mint(keys.issuer))
+        seen = []
+        http, _ = client_for(keys, warrant, lambda r: (seen.append(r), httpx.Response(200, json={}))[1])
+        url, body = self.REQUESTS[wire]
+        assert http.post(url, json=body(0.5)).status_code == 200 and len(seen) == 1
+        refused = http.post(url, json=body(1.8))
+        assert refused.status_code == 403 and "temperature" in refused.text and len(seen) == 1
+
+    def test_warrants_are_told_apart_by_their_content(self, keys):
+        from tenuo.budget_http import _warrant_key
+
+        one, other = mint(keys, total_tokens=1000), mint(keys, total_tokens=2000)
+        assert _warrant_key(one) != _warrant_key(other)
+        assert _warrant_key(Warrant.from_base64(one.to_base64())) == _warrant_key(one)
+        # The same id over different signed content is a different warrant.
+        first = SimpleNamespace(id="tnu_wrt_same", to_base64=lambda: "first")
+        second = SimpleNamespace(id="tnu_wrt_same", to_base64=lambda: "second")
+        assert _warrant_key(first) != _warrant_key(second)

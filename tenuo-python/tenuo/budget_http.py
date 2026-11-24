@@ -174,7 +174,9 @@ class _Dialect:
     error_shape = "openai"
 
     def view(self, body: Mapping[str, Any]) -> Mapping[str, Any]:
-        """The request as the meter reads it (model, prompt fields)."""
+        """The request as the meter reads it: every field of the body, so a
+        warrant can constrain any of them, with the prompt under the names the
+        estimate looks for."""
         return body
 
     def model(self, body: Mapping[str, Any], path: str) -> Optional[str]:
@@ -253,7 +255,7 @@ class _OpenAICompletions(_OpenAIChat):
     output_params = ("max_tokens",)
 
     def view(self, body: Mapping[str, Any]) -> Mapping[str, Any]:
-        return {"model": body.get("model"), "input": body.get("prompt")}
+        return {**body, "input": body.get("prompt")}
 
     def choices(self, body: Mapping[str, Any]) -> int:
         # One completion per prompt in a list, times n; best_of generates (and
@@ -289,12 +291,7 @@ class _AnthropicMessages(_Dialect):
     error_shape = "anthropic"
 
     def view(self, body: Mapping[str, Any]) -> Mapping[str, Any]:
-        return {
-            "model": body.get("model"),
-            "messages": body.get("messages"),
-            "instructions": body.get("system"),
-            "tools": body.get("tools"),
-        }
+        return {**body, "instructions": body.get("system")}
 
     @staticmethod
     def _total(usage: Mapping[str, Any]) -> Optional[Dict[str, int]]:
@@ -378,10 +375,13 @@ class _GoogleGenerate(_Dialect):
         return ":streamGenerateContent" in path
 
     def view(self, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        # Sampling settings live in generationConfig: they are offered by
+        # their own names too, so one constraint reads the same on every format.
         return {
+            **self._config(body),
+            **body,
             "messages": body.get("contents"),
             "instructions": body.get("systemInstruction") or body.get("system_instruction"),
-            "tools": body.get("tools"),
         }
 
     @staticmethod
@@ -1225,7 +1225,13 @@ _VERTEX_HOST = "aiplatform.googleapis.com"
 
 
 def _warrant_key(warrant: Any) -> str:
-    """A cache key for a warrant in whatever form it was presented."""
+    """A cache key for a warrant: its whole signed content, not only its id."""
+    encode = getattr(warrant, "to_base64", None)
+    if callable(encode):
+        try:
+            return str(encode())
+        except Exception:
+            pass
     return str(getattr(warrant, "id", None) or warrant)
 
 
