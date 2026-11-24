@@ -1399,3 +1399,50 @@ class TestTheRequestAsSent:
         http, _ = client_for(keys, warrant, lambda r: (sent.append(json.loads(r.content)), httpx.Response(200, json={}))[1])
         assert chat(http, max_tokens=100, stream_options={"x": 1}).status_code == 200
         assert sent[0]["max_tokens"] == 40 and sent[0]["stream_options"] == {"x": 1}
+
+
+class TestACapNamedMoreThanOneWay:
+    GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent"
+    CONTENTS = [{"role": "user", "parts": [{"text": "hello"}]}]
+
+    def send(self, keys, url, body, total=1000, **caps):
+        warrant = mint(keys, total_tokens=total, **caps)
+        sent = []
+        http, meter = client_for(keys, warrant, lambda r: (sent.append(json.loads(r.content)), httpx.Response(200, json={}))[1])
+        assert http.post(url, json=body).status_code == 200
+        return sent[0], used(meter, warrant)
+
+    @pytest.mark.parametrize("first, second", [("max_completion_tokens", "max_tokens"), ("max_tokens", "max_completion_tokens")])
+    def test_chat_with_both_cap_fields_is_held_to_the_smaller(self, keys, first, second):
+        body = {"model": MODEL, "messages": MESSAGES, first: 50, second: 100_000}
+        sent, reserved = self.send(keys, CHAT, body)
+        assert sent["max_completion_tokens"] == sent["max_tokens"] == 50 and reserved == INPUT + 50
+        # Lowered to what is left, on both.
+        sent, reserved = self.send(keys, CHAT, body, total=INPUT + 20)
+        assert sent["max_completion_tokens"] == sent["max_tokens"] == 20
+        # Under a warrant with its own cap per call, the larger field does not ride along either.
+        sent, _ = self.send(keys, CHAT, body, max_tokens=60)
+        assert sent["max_completion_tokens"] == sent["max_tokens"] == 50
+
+    def test_gemini_with_both_spellings_is_held_to_the_smaller(self, keys):
+        body = {"contents": self.CONTENTS, "generationConfig": {"max_output_tokens": 50, "maxOutputTokens": 100_000}}
+        sent, reserved = self.send(keys, self.GEMINI, body)
+        assert sent["generationConfig"] == {"max_output_tokens": 50, "maxOutputTokens": 50} and reserved == INPUT + 50
+
+    def test_gemini_with_both_settings_objects_is_held_to_the_smaller(self, keys):
+        body = {"contents": self.CONTENTS, "generation_config": {"maxOutputTokens": 50, "candidateCount": 2},
+                "generationConfig": {"maxOutputTokens": 100_000}}
+        sent, reserved = self.send(keys, self.GEMINI, body)
+        assert sent["generation_config"]["maxOutputTokens"] == sent["generationConfig"]["maxOutputTokens"] == 50
+        assert reserved == INPUT + 2 * 50  # two candidates, wherever the count was written
+
+    def test_gemini_settings_win_over_a_stray_field_of_the_same_name(self, keys):
+        from tenuo import Range
+
+        capability = llm_capability(total_tokens=1000, models=[MODEL])
+        capability["temperature"] = Range(min=0, max=1)
+        warrant = (Warrant.mint_builder().capability("llm.chat", capability)
+                   .holder(keys.lead.public_key).ttl(600).mint(keys.issuer))
+        http, _ = client_for(keys, warrant, lambda r: httpx.Response(200, json={}))
+        body = {"contents": self.CONTENTS, "temperature": 0.5, "generationConfig": {"temperature": 1.8}}
+        assert http.post(self.GEMINI, json=body).status_code == 403

@@ -359,14 +359,14 @@ class BudgetStore:
         with self._owed_lock:
             pending = bool(self._owed)
         if not pending:
-            return self._backend.add(deltas, expiries)
+            return self._with_owed(self._backend.add(deltas, expiries))
         # Reading what is owed, writing it and clearing it happen as one step,
         # so two writers cannot both carry the same owed usage.
         with self._flush_lock:
             with self._owed_lock:
                 owed, owed_expiries = dict(self._owed), dict(self._owed_expiries)
             if not owed:
-                return self._backend.add(deltas, expiries)
+                return self._with_owed(self._backend.add(deltas, expiries))
             merged = dict(owed)
             for key, delta in deltas.items():
                 merged[key] = merged.get(key, 0) + delta
@@ -379,7 +379,14 @@ class BudgetStore:
                     else:
                         self._owed.pop(key, None)
                         self._owed_expiries.pop(key, None)
-            return totals
+            return self._with_owed(totals)
+
+    def _with_owed(self, totals: Dict[str, int]) -> Dict[str, int]:
+        """Totals as ``used`` reports them: with usage that is owed and not yet written."""
+        with self._owed_lock:
+            if not self._owed:
+                return totals
+            return {key: total + self._owed.get(key, 0) for key, total in totals.items()}
 
     def owe(self, deltas: Mapping[str, int], expires_at: Optional[Mapping[str, float]] = None) -> None:
         """Remember usage a failed write left out, to be written with the next one."""

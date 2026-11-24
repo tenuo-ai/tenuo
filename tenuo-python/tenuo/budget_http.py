@@ -184,14 +184,21 @@ class _Dialect:
         return value if isinstance(value, str) else None
 
     def read_cap(self, body: Mapping[str, Any], default: str) -> Tuple[Optional[int], str]:
-        """The output cap the caller set, and the field to write the cap to."""
-        for name in self.output_params:
-            if _positive_int(body.get(name)) is not None:
-                return body[name], name
-        return None, default
+        """The output cap the caller set, and the field to write the cap to.
+
+        A request that names the cap more than one way asks for the smallest.
+        """
+        given = [(name, body[name]) for name in self.output_params if _positive_int(body.get(name)) is not None]
+        if not given:
+            return None, default
+        return min(value for _, value in given), given[0][0]
 
     def write_cap(self, body: Dict[str, Any], param: str, value: int) -> None:
+        """Set the cap, on every field of the request that can carry one."""
         body[param] = value
+        for name in self.output_params:
+            if name in body:
+                body[name] = value
 
     def choices(self, body: Mapping[str, Any]) -> int:
         return 1
@@ -348,28 +355,40 @@ class _GoogleGenerate(_Dialect):
         match = self._MODEL.search(path)
         return match.group(1) if match else super().model(body, path)
 
-    @staticmethod
-    def _config_key(body: Mapping[str, Any]) -> str:
-        return "generation_config" if "generation_config" in body else "generationConfig"
+    # The settings object and its fields are accepted in either spelling.
+    _CONFIG_KEYS = ("generationConfig", "generation_config")
+    _CAP_NAMES = ("maxOutputTokens", "max_output_tokens")
+
+    def _configs(self, body: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+        return [body[key] for key in self._CONFIG_KEYS if isinstance(body.get(key), Mapping)]
 
     def _config(self, body: Mapping[str, Any]) -> Mapping[str, Any]:
-        config = body.get(self._config_key(body))
-        return config if isinstance(config, Mapping) else {}
+        """The generation settings, whichever way they were spelled."""
+        merged: Dict[str, Any] = {}
+        for config in self._configs(body):
+            merged.update(config)
+        return merged
 
     def read_cap(self, body: Mapping[str, Any], default: str) -> Tuple[Optional[int], str]:
-        config = self._config(body)
-        name = "max_output_tokens" if "max_output_tokens" in config else "maxOutputTokens"
-        return _positive_int(config.get(name)), name
+        configs = self._configs(body)
+        given = [config[name] for config in configs for name in self._CAP_NAMES
+                 if _positive_int(config.get(name)) is not None]
+        snake = any("max_output_tokens" in config for config in configs)
+        return (min(given) if given else None), ("max_output_tokens" if snake else "maxOutputTokens")
 
     def write_cap(self, body: Dict[str, Any], param: str, value: int) -> None:
-        key = self._config_key(body)
-        config = dict(self._config(body))
-        config[param] = value
-        body[key] = config
+        # Every settings object, and every spelling of the cap in it.
+        keys = [key for key in self._CONFIG_KEYS if key in body] or [self._CONFIG_KEYS[0]]
+        for key in keys:
+            config = dict(body[key]) if isinstance(body.get(key), Mapping) else {}
+            for name in [n for n in self._CAP_NAMES if n in config] or [param]:
+                config[name] = value
+            body[key] = config
 
     def choices(self, body: Mapping[str, Any]) -> int:
-        config = self._config(body)
-        return _positive_int(config.get("candidateCount") or config.get("candidate_count")) or 1
+        counts = [_positive_int(config.get(name)) or 1 for config in self._configs(body)
+                  for name in ("candidateCount", "candidate_count")]
+        return max(counts, default=1)
 
     def wants_stream(self, body: Mapping[str, Any], path: str) -> bool:
         return ":streamGenerateContent" in path
@@ -378,8 +397,8 @@ class _GoogleGenerate(_Dialect):
         # Sampling settings live in generationConfig: they are offered by
         # their own names too, so one constraint reads the same on every format.
         return {
-            **self._config(body),
             **body,
+            **self._config(body),
             "messages": body.get("contents"),
             "instructions": body.get("systemInstruction") or body.get("system_instruction"),
         }

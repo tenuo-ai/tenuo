@@ -217,7 +217,7 @@ With a store that can wait on another writer (anything but the in-memory one), a
 
 - **Input is estimated before the call.** The reservation uses a rough count of the prompt; the store is corrected to the provider's figure afterwards. A call can therefore pass a total by its estimate error, and the next call is refused. Pass `TokenMeter(input_estimator=...)` for a tokenizer-based estimate.
 - **Images and audio.** An image is reserved at a fixed 1,600 tokens, inline or linked, and inline audio by its length; neither is reserved by its size in bytes. Documents and video are still estimated from their bytes, which is far on the high side.
-- **Output caps depend on the provider.** The meter sets the cap; a model that generates past it is still counted in full.
+- **Output caps depend on the provider.** The meter sets the cap; a model that generates past it is still counted in full. A request that names the cap more than one way (`max_tokens` and `max_completion_tokens`, or both spellings of Gemini's) is held to the smallest, on every field.
 - **Constraints on other fields.** A warrant can constrain any field of the request body. Fields the meter changes before sending (the output cap, a stream's usage option) are checked as they are sent: a cap the warrant fixes is never lowered to fit the budget, the call is refused instead.
 - **In-flight calls hold their reservation.** Concurrent calls near the end of a budget can be refused while tokens are reserved but not yet spent.
 - **Failed requests.** An error response from the provider releases the reservation, and so does a request that was never sent (no connection, or a header the client refuses to send). A timeout or dropped connection keeps it as the charge.

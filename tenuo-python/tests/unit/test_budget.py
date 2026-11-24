@@ -218,6 +218,15 @@ class TestBudgetStore:
         with pytest.raises(Exception):
             BudgetStore(str(tmp_path / "missing-dir" / "budgets.db"))
 
+    def test_totals_from_a_write_include_usage_owed_meanwhile(self):
+        class Meanwhile(InMemoryBudgetBackend):
+            def add(self, deltas, expires_at):
+                store.owe({"w": 50})  # another call's usage fails to be written during this write
+                return super().add(deltas, expires_at)
+
+        store = BudgetStore(backend=Meanwhile())
+        assert store.add({"w": 10}) == {"w": 60} and store.used("w") == {"w": 60}
+
     def test_owed_usage_is_written_once_by_concurrent_writers(self):
         entered, go = threading.Event(), threading.Event()
 
