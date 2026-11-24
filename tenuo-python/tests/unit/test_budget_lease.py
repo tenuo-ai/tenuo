@@ -111,6 +111,11 @@ def refused(response):
     return response.status_code == 403 and response.json()["error"]["code"] == "token_budget_exceeded"
 
 
+def no_lease(response):
+    """Refused because no lease could be taken: not a spent budget."""
+    return response.status_code == 403 and response.json()["error"]["code"] == "lease_unavailable"
+
+
 class TestLeasedBudget:
     def test_calls_run_across_leases_and_the_budget_is_spent_exactly(self, keys, leased):
         pool = Pool(keys, limit=1000, slice_=400)
@@ -176,7 +181,7 @@ class TestLeasedBudget:
         leased(pool)
         provider = Provider()
         response = call(provider)
-        assert refused(response) and "unreachable" in response.json()["error"]["message"] and not provider.caps
+        assert no_lease(response) and "unreachable" in response.json()["error"]["message"] and not provider.caps
 
     def test_a_lease_whose_return_did_not_get_through_stays_closed(self, keys, leased):
         pool = Pool(keys, limit=10_000, slice_=300)
@@ -187,7 +192,7 @@ class TestLeasedBudget:
         pool.down = True
         # 40 tokens are left on the lease and the issuer is away. Whether the
         # return got through cannot be known, so nothing more is spent under it.
-        assert refused(call(provider)) and len(provider.caps) == 2
+        assert no_lease(call(provider)) and len(provider.caps) == 2
         assert budget.enter([held]) is False and held in pool.out
         pool.down = False
         assert call(provider).status_code == 200  # on a new lease; the old one is returned at last
@@ -213,7 +218,7 @@ class TestLeasedBudget:
         pool.release = release
         # The issuer took the return and can hand the 40 unused tokens to someone
         # else. The holder never heard, so it must not go on spending them.
-        assert refused(call(provider)) and len(provider.caps) == 2
+        assert no_lease(call(provider)) and len(provider.caps) == 2
         assert budget.enter([first]) is False
         pool.down = False
         for _ in range(6):
@@ -425,7 +430,39 @@ class TestLeasedBudget:
         leased(pool)
         provider = Provider()
         response = call(provider)
-        assert refused(response) and "garbled reply" in response.json()["error"]["message"] and not provider.caps
+        assert no_lease(response) and "garbled reply" in response.json()["error"]["message"] and not provider.caps
+
+    @pytest.mark.parametrize("sdk", ["openai", "anthropic"])
+    def test_budget_words_in_an_issuers_message_do_not_make_it_a_spent_budget(self, keys, leased, sdk):
+        module = pytest.importorskip(sdk)
+        pool = Pool(keys, limit=1000, slice_=400)
+        pool.acquire = lambda: (_ for _ in ()).throw(LeaseUnavailable(
+            "gateway said token_budget_exceeded; tenuo: token budget reached upstream"))
+        leased(pool)
+        # The SDK's own client, on whichever HTTP library it uses: the call is refused before anything is sent.
+        if sdk == "openai":
+            client = module.OpenAI(api_key="unused", max_retries=0)
+            call_model = lambda: client.chat.completions.create(model=MODEL, messages=BODY["messages"])  # noqa: E731
+        else:
+            client = module.Anthropic(api_key="unused", max_retries=0)
+            call_model = lambda: client.messages.create(model=MODEL, max_tokens=50, messages=BODY["messages"])  # noqa: E731
+        with pytest.raises(module.PermissionDeniedError) as caught:
+            call_model()
+        assert "token_budget_exceeded" in str(caught.value) and "lease_unavailable" in str(caught.value.body)
+        assert tenuo.budget_http.is_budget_error(caught.value) is False
+
+    def test_an_error_that_keeps_only_its_text_is_judged_by_how_it_opens(self):
+        from tenuo.budget_http import is_budget_error
+
+        spent = RuntimeError("tenuo: token budget reached: 24 tokens are left in today's budget")
+        no_lease = RuntimeError("tenuo: model call refused: no lease could be taken: upstream says tenuo: token budget reached")
+        assert is_budget_error(spent) and not is_budget_error(no_lease)
+        quoted = SimpleNamespace(code="lease_unavailable", body={"error": {"message": "token_budget_exceeded"}},
+                                 __cause__=None, __context__=None)
+        assert not is_budget_error(quoted)  # type: ignore[arg-type]
+        google = SimpleNamespace(details={"error": {"details": [{"reason": "token_budget_exceeded", "domain": "tenuo"}]}},
+                                 __cause__=None, __context__=None)
+        assert is_budget_error(google)  # type: ignore[arg-type]
 
     def test_an_interrupt_during_a_return_leaves_the_lease_out(self, keys):
         pool = Pool(keys, limit=1000, slice_=400)
@@ -441,6 +478,7 @@ class TestLeasedBudget:
         assert pool.returned == [(first, 0)]
 
     @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    @pytest.mark.filterwarnings("ignore:This process:DeprecationWarning")
     def test_a_forked_child_leaves_the_parents_lease_alone(self, keys):
         pool = Pool(keys, limit=1000, slice_=400)
         budget = LeasedBudget(pool)
@@ -977,7 +1015,7 @@ def _locked(lock, fn, *args):
 class TestCloudLeases:
     @pytest.fixture
     def cloud(self, keys):
-        state = SimpleNamespace(requests=[], exhausted=False, raw=None, granted=2500, redirect=False)
+        state = SimpleNamespace(requests=[], exhausted=False, raw=None, granted=2500, redirect=False, reply=None)
         warrant = (Warrant.mint_builder().capability("llm.chat", llm_capability(total_tokens=2500, models=[MODEL]))
                    .holder(keys.agent.public_key).ttl(600).mint(keys.issuer))
 
@@ -1001,7 +1039,9 @@ class TestCloudLeases:
                     self.end_headers()
                     self.wfile.write(data)
                     return
-                if self.path.endswith("/fire") and state.exhausted:
+                if self.path.endswith("/fire") and state.reply is not None:
+                    status, payload = state.reply
+                elif self.path.endswith("/fire") and state.exhausted:
                     status, payload = 409, {"error": {"code": "token_budget_exhausted", "message": "all leased out",
                                                       "retry_at": "2030-01-01T00:00:00Z"}}
                 elif self.path.endswith("/fire") and "plain" in self.path:
@@ -1075,6 +1115,18 @@ class TestCloudLeases:
         with pytest.raises(LeaseUnavailable) as e:
             CloudLeases("trg_budget", url=cloud.url, api_key="tc_test").acquire()
         assert e.value.exhausted and e.value.retry_at == 1893456000.0 and "leased out" in str(e.value)
+
+    @pytest.mark.parametrize("status, body, says", [
+        (404, {"error": {"code": "trigger_not_found", "message": "Trigger not found"}}, "was not found; check the trigger id"),
+        (401, {"error": {"code": "invalid_api_key", "message": "API key format is invalid"}}, "did not accept the API key"),
+        (403, {"error": {"code": "forbidden", "message": "not allowed"}}, "may not fire trigger"),
+        (400, {"error": {"code": "trigger_inactive", "message": "Trigger is not active"}}, "is paused"),
+    ])
+    def test_a_setup_mistake_says_what_to_fix(self, cloud, status, body, says):
+        cloud.reply = (status, body)
+        with pytest.raises(LeaseUnavailable) as caught:
+            CloudLeases("trg_budget", url=cloud.url, api_key="tc_test").acquire()
+        assert says in str(caught.value) and f"HTTP {status}" in str(caught.value) and not caught.value.exhausted
 
     def test_a_trigger_without_a_budget_is_not_a_lease_source(self, cloud):
         with pytest.raises(LeaseUnavailable, match="no token_budget"):

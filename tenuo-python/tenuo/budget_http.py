@@ -48,9 +48,12 @@ Refusals
 --------
 A call the warrant refuses is answered locally with HTTP 403 in the provider's
 own error shape, so each SDK raises its usual error type. The error code is
-``token_budget_exceeded`` (the budget is spent) or ``model_call_denied`` (the
-warrant refuses for another reason, such as the model). The response carries
-``x-should-retry: false``. Use :func:`is_budget_error` to recognize it.
+``token_budget_exceeded`` (the budget is spent), ``model_call_denied`` (the
+warrant refuses for another reason, such as the model), or, under a lease,
+``lease_unavailable`` (no lease could be taken: the issuer is unreachable, or
+the trigger or API key is wrong). The response carries
+``x-should-retry: false``. Use :func:`is_budget_error` to recognize a spent
+budget.
 
 Tenuo Cloud
 -----------
@@ -118,6 +121,19 @@ __all__ = [
 BUDGET_CODE = "token_budget_exceeded"
 DENIED_CODE = "model_call_denied"
 UNMETERED_CODE = "unmetered_endpoint"
+LEASE_CODE = "lease_unavailable"
+
+
+def _lease_refusal(error: Exception) -> Tuple[str, str]:
+    """The code and message for a call refused because no lease could be had.
+
+    Only an issuer that says the budget is spent makes it a spent budget. A
+    trigger that does not exist, a key it refuses or an issuer it cannot reach
+    is a setup or connection problem, and is reported as one.
+    """
+    if getattr(error, "exhausted", False):
+        return BUDGET_CODE, f"tenuo: token budget reached: {error}"
+    return LEASE_CODE, f"tenuo: model call refused: no lease could be taken: {error}"
 
 # POST endpoints that never generate: counting tokens costs nothing.
 _FREE_SUFFIXES = ("/count_tokens", "/input_tokens", ":countTokens", "/moderations")
@@ -971,9 +987,9 @@ class _Core:
             # renew() sees that it is not the current one and says so.
             moved = self.lease.renew(self.warrant_id, used=used)
         except LeaseUnavailable as e:
-            reason = f"tenuo: token budget reached: {e}"
-            return _Plan(request, refusal=self._refuse(request, dialect, BUDGET_CODE, reason, model,
-                                                       failed=self.meter.field))
+            code, reason = _lease_refusal(e)
+            return _Plan(request, refusal=self._refuse(request, dialect, code, reason, model,
+                                                       failed=self.meter.field if code == BUDGET_CODE else None))
         return _Plan(request, retry=True) if moved else None
 
     def _leave_lease(self, plan: _Plan, usage: Optional[Mapping[str, Any]]) -> None:
@@ -1592,8 +1608,8 @@ class _Installation:
                     raise LeaseUnavailable("metering was uninstalled while this call was waiting")
                 warrant = self.lease.warrant()
             except LeaseUnavailable as e:
-                return None, self._refused(http, request, _dialect_for(path), BUDGET_CODE,
-                                           f"tenuo: token budget reached: {e}")
+                code, reason = _lease_refusal(e)
+                return None, self._refused(http, request, _dialect_for(path), code, reason)
         warrant = warrant or self.warrant
         key = get_signing_key_context() or self.signing_key
         if warrant is None or key is None:
@@ -1874,11 +1890,54 @@ def uninstall() -> None:
             pass
 
 
+_TENUO_CODES = (BUDGET_CODE, DENIED_CODE, UNMETERED_CODE, LEASE_CODE)
+
+
+def _tenuo_code(value: Any, depth: int = 0) -> Optional[str]:
+    """The first refusal code of this module found under a ``code`` or ``reason`` key, at any depth."""
+    if depth > 6:
+        return None
+    if isinstance(value, Mapping):
+        for key in ("code", "reason"):
+            found = value.get(key)
+            if isinstance(found, str) and found in _TENUO_CODES:
+                return found
+        items = list(value.values())
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        return None
+    for item in items:
+        found = _tenuo_code(item, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+def _explicit_code(error: Any) -> Optional[str]:
+    """The refusal code an error states outright: its header, its ``code``, or its parsed body."""
+    headers = getattr(getattr(error, "response", None), "headers", None)
+    if headers is not None:
+        found = headers.get("x-tenuo-denial")
+        if found in _TENUO_CODES:
+            return str(found)
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code in _TENUO_CODES:
+        return code
+    for attr in ("body", "details"):
+        found = _tenuo_code(getattr(error, attr, None))
+        if found is not None:
+            return found
+    return None
+
+
 def is_budget_error(error: BaseException) -> bool:
     """True when ``error``, or anything it was raised from, is a spent token budget.
 
     Works on the error types SDKs raise for the local 403 as well as on
-    :class:`tenuo.budget.BudgetExceeded` itself.
+    :class:`tenuo.budget.BudgetExceeded` itself. A refusal that states another
+    code (``lease_unavailable``, ``model_call_denied``) is not a spent budget,
+    whatever words its message quotes.
     """
     seen = set()
     current: Optional[BaseException] = error
@@ -1886,15 +1945,17 @@ def is_budget_error(error: BaseException) -> bool:
         seen.add(id(current))
         if isinstance(current, BudgetExceeded):
             return True
-        if getattr(current, "code", None) == BUDGET_CODE:
+        code = _explicit_code(current)
+        if code is not None:
+            return code == BUDGET_CODE
+        # SDKs that keep only the error text: the refusal is what the message
+        # opens with, not something it quotes further on.
+        text = str(current)
+        opening = text.find("tenuo: ")
+        if opening >= 0:
+            if text.startswith("tenuo: token budget reached", opening):
+                return True
+        elif BUDGET_CODE in str(getattr(current, "details", "")):
             return True
-        body = getattr(current, "body", None)
-        if body is not None and BUDGET_CODE in json.dumps(body, default=str):
-            return True
-        headers = getattr(getattr(current, "response", None), "headers", None)
-        if headers is not None and headers.get("x-tenuo-denial") == BUDGET_CODE:
-            return True
-        if BUDGET_CODE in str(getattr(current, "details", "")) or "tenuo: token budget reached" in str(current):
-            return True  # SDKs that keep only the error body or its message
         current = current.__cause__ or current.__context__
     return False

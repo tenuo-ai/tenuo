@@ -132,6 +132,7 @@ A refused call is answered locally with HTTP 403 in the provider's own error sha
 | `token_budget_exceeded` | A budget in the chain is spent |
 | `model_call_denied` | The warrant refuses for another reason (model, per-call cap, expiry, no warrant in scope) |
 | `unmetered_endpoint` | A request the meter cannot count: a `POST` to an unrecognized path, a body that is not JSON, a Responses request with `background=true`, or a websocket session |
+| `lease_unavailable` | Under a period budget, no lease could be taken: the control plane is unreachable, the trigger id or API key is wrong, or the trigger is paused. The message says which |
 
 ```python
 from tenuo.budget_http import is_budget_error
@@ -217,29 +218,52 @@ With a store that can wait on another writer (anything but the in-memory one), a
 
 ## With Tenuo Cloud
 
-### Usage events
+Tenuo Cloud keeps a budget for a day, a week or a month, shows what each agent spent, and alerts when a budget runs low. For the setup in the dashboard, step by step, see [Token budgets](https://docs.tenuo.ai/guides/token-budgets) in the Tenuo Cloud docs.
 
-When a control plane is connected (`TENUO_CONNECT_TOKEN`, or `TENUO_CONTROL_PLANE_URL`, `TENUO_API_KEY` and `TENUO_AUTHORIZER_NAME`), every finished call and every refusal is also sent to it as an authorization event for `llm.chat`. The event's arguments carry the model, the output cap, and `llm_usage`: the tokens the call used and the running total and limit of each warrant it spent from. Nothing has to be configured in the meter.
+### Before the code
 
-### Budgets for a period
+1. **A root key.** Create one under **Keys**. Its public key is what the agent trusts: copy it with **Copy Base64**.
+2. **An active agent.** Register it under **Agents** and claim it with a key the agent holds. A trigger can only issue warrants to an agent that has been claimed.
+3. **A trigger with a token budget.** Under **Triggers**, create one for that agent and turn on **Token budget**: choose the period (per day, week or month, or one total), the amount in tokens or dollars, and optionally a lease size, an output cap per call and the models it allows. A budget in dollars needs a price for each of its models, set under **Token Usage → Model prices**.
+4. **An API key that may fire the trigger.** Allow its service account on the trigger.
 
-> **Experimental.** Needs a Tenuo Cloud that offers period budgets on triggers.
-
-A warrant's budget is fixed when the warrant is issued. A budget for a day, a week or a month is kept by the issuer and handed out in *leases*: short-lived warrants for a slice of what the period has left. The meter takes a lease, spends from it, and returns it with what it used before taking the next one.
+### The agent
 
 ```python
 import tenuo.budget_http
+from tenuo import PublicKey, SigningKey
 from tenuo.budget_lease import CloudLeases, LeasedBudget
 
+agent_key = SigningKey.from_env("AGENT_SIGNING_KEY")    # the key the agent was claimed with
+root_key = PublicKey.from_env("TENUO_ROOT_PUBLIC_KEY")  # the root key's Base64 from the Keys page
+
 lease = LeasedBudget(CloudLeases("trg_research_budget"))
-tenuo.budget_http.install(lease=lease, signing_key=agent_key, trusted_roots=[issuer_key])
+tenuo.budget_http.install(lease=lease, signing_key=agent_key, trusted_roots=[root_key])
 ```
 
-Model calls are then metered against the current lease. `CloudLeases` reads `TENUO_CONTROL_PLANE_URL` and `TENUO_API_KEY`; anything with `acquire()` and `release()` can stand in for it (`tenuo.budget_lease.LeaseSource`).
+With these set in the environment:
+
+| Variable | What it is |
+|----------|------------|
+| `TENUO_CONTROL_PLANE_URL` | Your Tenuo Cloud API URL |
+| `TENUO_API_KEY` | The API key that may fire the trigger |
+| `TENUO_AUTHORIZER_NAME` | A name for this process. Needed for each call's usage to show under **Token Usage**; without it the period budget still counts every call, but the usage charts stay empty |
+
+Model calls are then metered against the current lease. Anything with `acquire()` and `release()` can stand in for `CloudLeases` (`tenuo.budget_lease.LeaseSource`).
+
+### Usage events
+
+With a control plane connected, every finished call and every refusal is also sent to it as an authorization event for `llm.chat`. The event's arguments carry the model, the output cap, and `llm_usage`: the tokens the call used and the running total and limit of each warrant it spent from. Nothing has to be configured in the meter.
+
+### How a period budget is handed out
+
+> **Experimental.** The interface may change.
+
+A budget for a period is kept by Cloud and handed out in *leases*: short-lived warrants for a slice of what the period has left. The meter takes a lease, spends from it, and returns it with what it used before taking the next one.
 
 - A lease is charged in full until it is returned, so two hosts are never given the same tokens. What a lease did not use goes back to the budget.
 - Returns are signed with the agent's key: only the holder of a lease can report what it used.
-- When the period's budget is spent, calls are refused with `token_budget_exceeded`, and the message says how much is left and when the budget resets.
+- When the period's budget is spent, calls are refused with `token_budget_exceeded`, and the message says how much is left and when the budget resets. When no lease can be taken for another reason (a wrong trigger id or API key, a paused trigger, Cloud unreachable), calls are refused with `lease_unavailable`, and the message says which.
 - `uninstall()` returns the lease in hand, and so does a normal interpreter exit. A process killed by a signal it does not handle does not, and that lease stays charged until it expires.
 - If a return does not get through, that lease stays closed and the same return is sent again later. Calls are refused until a new lease can be taken.
 - A lease is for one process. Another process takes its own lease from the same budget, and so does a forked child.
