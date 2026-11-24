@@ -4,11 +4,11 @@
  *   Hotel Agent has been compromised. The travel system has to stay
  *   online. Legitimate bookings have to keep working.
  *
- * The compromised Hotel Agent will try eight things. One must work and seven
- * must fail. Configure this chain so that all eight land correctly, and
- * keep an eye on your least-privilege score while you do it. Number 3
- * catches more people than any other: blocking it is different from
- * blocking number 2.
+ * The compromised Hotel Agent will try eight things. The first must work and
+ * the other seven must fail. Configure this chain so that all eight land
+ * correctly, and keep an eye on your least-privilege score while you do it.
+ * Number 3 (the $320 booking) already fails, because of the nightly rate
+ * cap below: keep that cap while you tighten everything else.
  */
 import { exact, max, oneOf, pattern, type Session, type Tenuo } from "@tenuo/core";
 import type { Fleet } from "../../src/keys.ts";

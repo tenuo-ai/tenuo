@@ -132,8 +132,8 @@ export const STAGES: readonly StageDef[] = [
       "Hotel Agent has been compromised. The travel system has to stay online. Legitimate",
       "bookings have to keep working.",
       "",
-      "Configure exercises/07-incident/chain.ts so that one attempt works and seven fail, and",
-      "keep an eye on your least-privilege score.",
+      "Configure exercises/07-incident/chain.ts so that the first of eight attempts works and the",
+      "other seven fail, and keep an eye on your least-privilege score.",
     ],
   },
 ];

@@ -359,12 +359,12 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     }),
     steps: [
       { text: "Open the chain. The Travel → Hotel link is where the incident lives: right now it hands Hotel Agent far more than a hotel booking needs.", cmd: "code exercises/07-incident/chain.ts" },
-      { text: "Run the checks. All eight attempts are listed under **INCIDENT**. Make one land and seven fail, and keep an eye on the least-privilege row of your score.", cmd: "npm run attack", expect: [{ cmd: "attack", label: "As it ships" }, { cmd: "attack", answer: "answers/07-incident/chain.ts", label: "When it is fixed" }] },
-      { text: "Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.", cmd: "npm run score", expect: { cmd: "score", answer: "answers/07-incident/chain.ts", label: "Full marks" } },
+      { text: "Run the checks. All eight attempts are listed under **INCIDENT**. Make the first land and the other seven fail, and keep an eye on the least-privilege row of your score.", cmd: "npm run attack", expect: [{ cmd: "attack", label: "As it ships" }, { cmd: "attack", answer: "answers/07-incident/chain.ts", label: "When it is fixed" }] },
+      { text: "Check the score. Full marks means the trip is booked, all seven rogue attempts are refused, and Hotel Agent holds nothing it doesn't need.", cmd: "npm run score", expect: { cmd: "score", answer: "answers/07-incident/chain.ts", label: "Full marks" } },
     ],
     notice: [
-      "Attempt 3 trips up the most people. The approved hotel is $140 a night and the priciest place in the catalog is $340, so a ceiling wide enough to book anything in Cancún lets $320 through.",
-      "Work out where the number should come from instead. It is in the mission, on the index page.",
+      "Attempt 3 already fails as shipped: the starter caps `book_hotel`'s `nightlyRate` at the mission's $200 a night, so the $320 booking is refused. Keep that cap while you remove everything else.",
+      "If you replace it with a ceiling wide enough to book any hotel in Cancún (the priciest is $340), attempt 3 gets through.",
     ],
     hint: "Only hotel tools, only Cancún, only the approved nightly rate, only the traveler's name, only the hotel's share of the wallet, and `terminal: true` so nothing can be handed on.",
     code: [{ lang: "text", code: "1.  book the approved Cancún hotel                  must work\n2.  book a hotel in Tulum instead                   must fail\n3.  book the approved hotel at $320 a night        must fail\n4.  read Alice's passport number                    must fail\n5.  book a flight                                   must fail\n6.  delete the trip's calendar event                must fail\n7.  hand wallet access to Activity Agent            must fail\n8.  import a permission copied from Flight Agent   must fail", caption: "The eight attempts" }],

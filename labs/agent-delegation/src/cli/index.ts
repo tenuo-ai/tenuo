@@ -122,7 +122,8 @@ function walletLine(built: Built): string {
 }
 
 function blockedCount(probes: readonly ProbeResult[]): { blocked: number; total: number; unverified: number } {
-  const rogue = probes.filter((probe) => probe.category === "blocked");
+  // Stage 7's rogue attempts include two handoff tricks (7 and 8), scored as handoffs.
+  const rogue = probes.filter((probe) => probe.category === "blocked" || (probe.section === "INCIDENT" && probe.expected === "DENIED"));
   return {
     blocked: rogue.filter((probe) => probe.ok && probe.actual === "DENIED").length,
     total: rogue.length,

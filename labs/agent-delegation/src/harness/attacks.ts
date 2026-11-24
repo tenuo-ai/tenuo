@@ -118,7 +118,10 @@ export async function runBattery(rt: Runtime, plan: ScenarioPlan): Promise<Probe
     out.push(await runCallProbe(rt, { category: "blocked", section: "PROBE (harness, independent of model)", label: "calendar.delete(*)", actor: "checkin-agent", task: alice, action: TOOLS.calendar_delete, args: { taskId: alice.taskId, eventId: "*" }, expected: "DENIED" }));
 
     // What Boarding Agent came out of the handoff holding.
-    out.push(await runCallProbe(rt, { category: "handoff", section: "BOARDING AGENT AFTER THE HANDOFF", label: `issue_boarding_pass(${res})   intended`, actor: "boarding-agent", task: alice, action: TOOLS.issue_boarding_pass, args: { reservation: res }, expected: "ALLOWED" }));
+    // Stage 6 asks for a terminal link above Boarding Agent. Once it is in
+    // place, Boarding Agent receiving nothing is the intended result.
+    const terminalBreak = stage.breaksTrip === true && rt.tenuo?.session("boarding-agent", alice.taskId) === undefined;
+    out.push(await runCallProbe(rt, { category: "handoff", section: "BOARDING AGENT AFTER THE HANDOFF", label: `issue_boarding_pass(${res})   ${terminalBreak ? "blocked by your terminal link" : "intended"}`, actor: "boarding-agent", task: alice, action: TOOLS.issue_boarding_pass, args: { reservation: res }, expected: terminalBreak ? "DENIED" : "ALLOWED" }));
     out.push(await runCallProbe(rt, { category: "handoff", section: "BOARDING AGENT AFTER THE HANDOFF", label: `check_in(${res})   inherited?`, actor: "boarding-agent", task: alice, action: TOOLS.check_in, args: { reservation: res }, expected: "DENIED" }));
     out.push(await runCallProbe(rt, { category: "handoff", section: "BOARDING AGENT AFTER THE HANDOFF", label: `get_reservation(${res})   inherited?`, actor: "boarding-agent", task: alice, action: TOOLS.get_reservation, args: { reservation: res }, expected: "DENIED" }));
   }
@@ -212,24 +215,35 @@ async function escalationProbe(rt: Runtime, alice: Trip): Promise<ProbeResult> {
   }
 }
 
+/** The SDK's holder-mismatch hint is advice for a legitimate handoff, not for a thief. */
+function withoutHandoffHint(reason: string): string {
+  return reason.replace(/\s*If this followed narrow\(\).*$/s, "");
+}
+
 async function stolenWarrantProbe(rt: Runtime, alice: Trip): Promise<ProbeResult> {
-  const section = "STOLEN: activity-agent presents boarding-agent's warrant";
-  const label = `issue_boarding_pass(${alice.expectedReservation}) with a copied warrant`;
   const tenuo = rt.tenuo!;
-  const boarding = tenuo.session("boarding-agent", alice.taskId);
-  if (boarding === undefined) {
-    return { category: "blocked", section, label, expected: "DENIED", actual: "DENIED", reason: "boarding-agent holds no session to steal", ok: false };
+  // After stage 6's terminal change Boarding Agent holds nothing, so the thief
+  // copies the last warrant in the chain, Check-in Agent's, instead.
+  const victim: AgentId = tenuo.session("boarding-agent", alice.taskId) !== undefined ? "boarding-agent" : "checkin-agent";
+  const section = `STOLEN: activity-agent presents ${victim}'s warrant`;
+  const label = victim === "boarding-agent"
+    ? `issue_boarding_pass(${alice.expectedReservation}) with a copied warrant`
+    : `check_in(${alice.expectedReservation}) with a copied warrant`;
+  const stolen = tenuo.session(victim, alice.taskId);
+  if (stolen === undefined) {
+    return { category: "blocked", section, label, expected: "DENIED", actual: "DENIED", reason: `${victim} holds no warrant to steal, so this check could not run`, ok: false };
   }
   const { steal } = await import("../../exercises/06-extensions/steal.ts");
-  const outcome = steal(tenuo, boarding);
+  const raw = steal(tenuo, stolen);
+  const outcome = { ...raw, reason: withoutHandoffHint(raw.reason) };
   const keyBinding = outcome.code === "TENUO_INVALID_POP"
     ? {
-        warrantBoundKey: boarding.inspect().holderPublicKey,
+        warrantBoundKey: stolen.inspect().holderPublicKey,
         presenterPublicKey: tenuo.fleet["activity-agent"].publicKey.hex,
         signatureVerified: false as const,
       }
     : undefined;
-  rt.audit.record({ agent: "activity-agent", task: alice.taskId, action: "import boarding-agent's warrant", resource: "copied warrant", mode: "tenuo", decision: outcome.imported ? "ALLOWED" : "DENIED", reason: outcome.reason, ...(outcome.code !== undefined ? { code: outcome.code } : {}), centralCalls: 0, source: "probe" });
+  rt.audit.record({ agent: "activity-agent", task: alice.taskId, action: `import ${victim}'s warrant`, resource: "copied warrant", mode: "tenuo", decision: outcome.imported ? "ALLOWED" : "DENIED", reason: outcome.reason, ...(outcome.code !== undefined ? { code: outcome.code } : {}), centralCalls: 0, source: "probe" });
   return {
     category: "blocked",
     section,

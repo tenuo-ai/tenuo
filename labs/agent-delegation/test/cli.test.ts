@@ -164,9 +164,19 @@ describe("participant CLI", () => {
     expect(state.completed).toEqual([1, 2]);
   });
 
-  it("does not claim an unreachable stolen-warrant probe was verified", () => {
+  it("still checks a stolen warrant after the Stage 6 terminal change", () => {
     const output = cli(home(), "lab", 6, "answers/06-extensions/chain.ts");
-    expect(output).toMatch(/ROGUE ATTEMPTS BLOCKED\s+7 \/ 8\s+1 not reached/);
+    expect(output).toMatch(/ROGUE ATTEMPTS BLOCKED\s+8 \/ 8/);
+    expect(output).not.toContain("not reached");
+    const attack = cli(home(), "attack", 6, "answers/06-extensions/chain.ts");
+    expect(attack).toContain("STOLEN: activity-agent presents checkin-agent's warrant");
+    expect(attack).toContain("blocked by your terminal link");
+    expect(attack).toMatch(/clean: all \d+ checks landed as expected/);
+    expect(attack).not.toContain("If this followed narrow()");
+  });
+
+  it("counts all seven Stage 7 rogue attempts", () => {
+    expect(cli(home(), "lab", 7, "answers/07-incident/chain.ts")).toMatch(/ROGUE ATTEMPTS BLOCKED\s+7 \/ 7/);
   });
 
   it("marks boundary stars provisional while the trip is incomplete", () => {
