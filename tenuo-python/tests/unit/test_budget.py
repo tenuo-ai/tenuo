@@ -129,16 +129,57 @@ class TestBackends:
         assert backend.used(["old", "live"]) == {"old": 0, "live": 1}
 
     def test_concurrent_adds_are_all_counted(self, backend):
+        errors = []
+
         def spend():
-            for _ in range(25):
-                backend.add({"a": 1, "b": 2}, {})
+            try:
+                for _ in range(25):
+                    backend.add({"a": 1, "b": 2}, {})
+            except Exception as e:  # a thread's exception would otherwise be lost
+                errors.append(e)
 
         threads = [threading.Thread(target=spend) for _ in range(8)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
+        assert errors == []
         assert backend.used(["a", "b"]) == {"a": 200, "b": 400}
+
+    def test_busy_file_is_retried_until_it_frees_up(self, tmp_path):
+        import sqlite3
+
+        path = str(tmp_path / "budgets.db")
+        backend = SqliteBudgetBackend(path, timeout_seconds=10)
+        holder = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+        holder.execute("BEGIN IMMEDIATE")  # another writer holds the file
+
+        def let_go():
+            time.sleep(0.3)
+            holder.execute("COMMIT")
+            holder.close()
+
+        releaser = threading.Thread(target=let_go)
+        releaser.start()
+        try:
+            assert backend.add({"a": 7}, {}) == {"a": 7}
+        finally:
+            releaser.join()
+
+    def test_file_that_stays_busy_raises(self, tmp_path):
+        import sqlite3
+
+        path = str(tmp_path / "budgets.db")
+        backend = SqliteBudgetBackend(path, timeout_seconds=0.2)
+        holder = sqlite3.connect(path, isolation_level=None)
+        holder.execute("BEGIN IMMEDIATE")
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                backend.add({"a": 1}, {})
+        finally:
+            holder.execute("ROLLBACK")
+            holder.close()
+        assert backend.used(["a"]) == {"a": 0}
 
 
 class TestBudgetStore:

@@ -183,7 +183,7 @@ On a metered host, `GET` requests and token-counting endpoints pass through. Any
 | Store | Scope |
 |-------|-------|
 | `BudgetStore()` | One process |
-| `BudgetStore("budgets.db")` | Every process on the host that opens the file |
+| `BudgetStore("budgets.db")` | Every process on the host that opens the file (SQLite in WAL mode, so keep it on a local disk) |
 | `BudgetStore(backend=...)` | Anything implementing `BudgetBackend` (an atomic `add`) |
 
 A total holds only where every call passes a meter on the same store.

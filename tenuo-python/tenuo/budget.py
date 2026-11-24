@@ -220,28 +220,57 @@ class InMemoryBudgetBackend:
 class SqliteBudgetBackend:
     """Totals in a SQLite file, shared by every process on the host that opens it.
 
-    Each ``add`` is one ``BEGIN IMMEDIATE`` transaction. A file that cannot be
-    read or written raises, and the adapter then blocks the call.
+    Each ``add`` is one ``BEGIN IMMEDIATE`` transaction. The file is put in WAL
+    mode, so it must be on a local disk. A writer that finds the file busy
+    waits and retries for up to ``timeout_seconds``; a file that still cannot
+    be read or written raises, and the adapter then blocks the call.
     """
 
-    def __init__(self, path: str, *, timeout_seconds: float = 5.0) -> None:
+    def __init__(self, path: str, *, timeout_seconds: float = 30.0) -> None:
         self._path = str(path)
         self._timeout = timeout_seconds
-        with self._connect() as conn:
+
+        def create(conn: sqlite3.Connection) -> None:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS token_totals ("
                 "key TEXT PRIMARY KEY, used INTEGER NOT NULL, expires_at REAL NOT NULL)"
             )
 
+        self._run(create)
+
     def _connect(self) -> sqlite3.Connection:
         # A connection per operation: sqlite3 connections must not cross
         # threads, and the adapters call from worker threads and event loops.
         conn = sqlite3.connect(self._path, timeout=self._timeout, isolation_level=None)
+        conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
+    def _run(self, work: Callable[[sqlite3.Connection], Any]) -> Any:
+        """Run ``work`` on a fresh connection, retrying while the file is busy.
+
+        SQLite's own wait is not fair between writers, so under contention one
+        of them can be told the file is locked while others keep getting in.
+        """
+        deadline = time.monotonic() + self._timeout
+        delay = 0.005
+        while True:
+            conn = None
+            try:
+                conn = self._connect()
+                return work(conn)
+            except sqlite3.OperationalError as e:
+                busy = "locked" in str(e).lower() or "busy" in str(e).lower()
+                if not busy or time.monotonic() >= deadline:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.2)
+            finally:
+                if conn is not None:
+                    conn.close()
+
     def add(self, deltas: Mapping[str, int], expires_at: Mapping[str, float]) -> Dict[str, int]:
-        conn = self._connect()
-        try:
+        def work(conn: sqlite3.Connection) -> Dict[str, int]:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 conn.execute("DELETE FROM token_totals WHERE expires_at > 0 AND expires_at <= ?", (time.time(),))
@@ -257,22 +286,25 @@ class SqliteBudgetBackend:
                 conn.execute("COMMIT")
                 return out
             except BaseException:
-                conn.execute("ROLLBACK")
+                # Nothing of a failed attempt stays: a retry starts from the stored totals.
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
                 raise
-        finally:
-            conn.close()
+
+        return self._run(work)
 
     def used(self, keys: Sequence[str]) -> Dict[str, int]:
-        conn = self._connect()
-        try:
+        def work(conn: sqlite3.Connection) -> Dict[str, int]:
             out = {k: 0 for k in keys}
             for key in keys:
                 row = conn.execute("SELECT used FROM token_totals WHERE key = ?", (key,)).fetchone()
                 if row is not None:
                     out[key] = int(row[0])
             return out
-        finally:
-            conn.close()
+
+        return self._run(work)
 
 
 class BudgetStore:

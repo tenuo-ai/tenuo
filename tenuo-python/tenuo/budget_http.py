@@ -79,7 +79,7 @@ from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Mapping, 
 try:  # either library will do; ``sdk=`` or ``library=`` picks per client
     import httpx as _default_http
 except ImportError:  # pragma: no cover - exercised only where httpx is absent
-    import httpx2 as _default_http  # type: ignore[no-redef]
+    import httpx2 as _default_http  # type: ignore[no-redef,import-not-found]
 
 from tenuo.budget import (
     BudgetExceeded,
