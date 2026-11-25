@@ -80,7 +80,7 @@ _HOLDER_CONTEXT = b"tenuo.spiffe.holder-binding.v1\x00"
 # statement bound to the exact token instead of an issuer challenge.
 _JWT_HOLDER_CONTEXT = b"tenuo.spiffe.jwt-holder-binding.v1\x00"
 _JWT_PROOF_SECONDS = 60  # Accepted distance between the proof timestamp and the issuer clock.
-_JWT_PROOF_MEMORY = 4096  # Recent proofs remembered to refuse an exact replay.
+_JWT_PROOF_MEMORY = 16384  # Default number of live proofs remembered to refuse an exact replay.
 _JWT_NONCE_BYTES = 16
 _CHALLENGE_FIELDS = frozenset({"nonce", "issuer", "spiffe_id", "certificate", "holder", "task_id"})
 _CHALLENGE_SECONDS = 30
@@ -120,6 +120,10 @@ ANY_ARGUMENTS: Mapping[str, Any] = MappingProxyType({})
 
 class SpiffeError(ValueError):
     """Authentication, holder proof, or issuance was rejected."""
+
+
+class _IssuerBusy(SpiffeError):
+    """The issuer cannot take the request right now; the caller should retry."""
 
 
 def _jwt_proof_bytes(
@@ -371,18 +375,21 @@ def _workload_api_target(address: Optional[str]) -> str:
         return "unix://" + address
     match = re.fullmatch(r"tcp://(\[[0-9A-Fa-f:.]+\]|[0-9.]+):([0-9]{1,5})", address)
     if match:
+        host = match[1]
         try:
-            host = match[1]
-            if host.startswith("["):
-                ipaddress.IPv6Address(host[1:-1])
-            else:
-                ipaddress.IPv4Address(host)
-            if 0 < int(match[2]) < 65536:
-                return f"{host}:{match[2]}"
+            ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+            ip = ipaddress.IPv6Address(host[1:-1]) if host.startswith("[") else ipaddress.IPv4Address(host)
+            valid = 0 < int(match[2]) < 65536
         except ValueError:
-            pass
-        raise ValueError("A tcp:// Workload API address must be tcp://IP:PORT")
-    raise ValueError("Workload API address must be an absolute socket path, unix:///path, or tcp://IP:PORT")
+            valid = False
+        if not valid:
+            raise ValueError("A tcp:// Workload API address must be tcp://IP:PORT")
+        # The Workload API is unencrypted and unauthenticated by design: it hands
+        # out private keys to whoever connects, and relies on being local.
+        if not ip.is_loopback:
+            raise ValueError("A tcp:// Workload API address must be a loopback address; use the Unix socket otherwise")
+        return f"{host}:{match[2]}"
+    raise ValueError("Workload API address must be an absolute socket path, unix:///path, or tcp://IP:PORT on loopback")
 
 
 def _next_delay(delay: float, usable: bool) -> float:
@@ -571,7 +578,8 @@ class SpiffeTLS:
         """Take the SVID, key and bundle from the SPIRE agent's Workload API.
 
         Needs ``pip install 'tenuo[spiffe-workload-api]'``. ``socket_path`` is an
-        absolute socket path, ``unix:///path`` or ``tcp://IP:PORT``; without it
+        absolute socket path, ``unix:///path`` or, for a loopback address only,
+        ``tcp://IP:PORT`` (the Workload API is unencrypted); without it
         ``SPIFFE_ENDPOINT_SOCKET`` is used. If SPIRE offers this process several
         SVIDs, name the one to use with ``spiffe_id``; otherwise the first is
         used. Waits up to ``timeout`` seconds for a usable SVID, then follows
@@ -913,6 +921,11 @@ class SpiffeWarrantIssuer:
     exchange steps to the same instance. ``max_pending_per_identity`` stops one
     workload from exhausting ``max_pending``. ``audit`` receives every issuance
     before the warrant is released; if it raises, the warrant is not released.
+
+    With ``jwt=`` (a :class:`tenuo.spiffe_jwt.SpiffeJWT`) the issuer also, or
+    instead, accepts JWT-SVIDs through :meth:`issue_jwt`. It remembers up to
+    ``max_jwt_proofs`` recent holder proofs (each for about a minute) to refuse
+    exact replays, and asks callers to retry when that memory is full.
     """
 
     def __init__(
@@ -925,14 +938,20 @@ class SpiffeWarrantIssuer:
         max_pending_per_identity: int = 16,
         audit: Optional[Callable[[SpiffeIssuance], None]] = None,
         jwt: Optional[Any] = None,
+        max_jwt_proofs: int = _JWT_PROOF_MEMORY,
     ):
         if tls is None and jwt is None:
             raise ValueError("Pass tls (X.509-SVIDs over mTLS), jwt (JWT-SVIDs), or both")
         if tls is not None and not tls.server_side:
             raise ValueError("Issuance requires a server-side SPIFFE TLS context")
-        for name, value in (("max_pending", max_pending), ("max_pending_per_identity", max_pending_per_identity)):
+        for name, value in (
+            ("max_pending", max_pending),
+            ("max_pending_per_identity", max_pending_per_identity),
+            ("max_jwt_proofs", max_jwt_proofs),
+        ):
             if not _positive_int(value) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        self._max_jwt_proofs = max_jwt_proofs
         self.tls = tls
         self.jwt = jwt  # A tenuo.spiffe_jwt.SpiffeJWT, or None.
         self._proofs: Dict[bytes, float] = {}
@@ -1003,14 +1022,18 @@ class SpiffeWarrantIssuer:
         # Refuse an exact replay seen by this process. The proof is reserved
         # while the request runs and kept only if a warrant is issued, so a
         # denied or failed request leaves nothing behind and can be retried.
+        # It is remembered for as long as its timestamp stays acceptable. A
+        # live entry is never dropped to make room: when the memory is full,
+        # new requests wait their turn instead.
         now = time.monotonic()
+        acceptable_for = max(0.0, timestamp + _JWT_PROOF_SECONDS - time.time()) + 1
         with self._lock:
             self._proofs = {seen: until for seen, until in self._proofs.items() if until > now}
             if signature in self._proofs:
                 raise SpiffeError("This holder proof was already used; sign a new one")
-            while len(self._proofs) >= _JWT_PROOF_MEMORY:
-                self._proofs.pop(next(iter(self._proofs)))  # Oldest first.
-            self._proofs[signature] = now + 2 * _JWT_PROOF_SECONDS + 1
+            if len(self._proofs) >= self._max_jwt_proofs:
+                raise _IssuerBusy("Issuer is at its limit for recent JWT-SVID requests; retry shortly")
+            self._proofs[signature] = now + acceptable_for
         try:
             grant = self._policy(identity, task_id)
             if grant is None:

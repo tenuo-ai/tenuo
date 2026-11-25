@@ -170,7 +170,9 @@ transport = SpiffeTLS.from_workload_api(
 ```
 
 - Leave out `socket_path` to use the `SPIFFE_ENDPOINT_SOCKET` environment
-  variable, the SPIFFE convention.
+  variable, the SPIFFE convention. A `tcp://IP:PORT` address is accepted for
+  loopback only: the Workload API is unencrypted and hands out private keys, so
+  it must stay on the machine.
 - SPIRE decides which SVID to hand out from the process that connects, so the
   issuer or agent process itself must match its registration entry's selectors.
 - If SPIRE offers the process more than one SVID, the adapter uses the first.
@@ -497,7 +499,8 @@ The adapter narrows that gap as far as a bearer token allows:
 - The agent's holder key signs a statement bound to that exact token, this
   audience, the task, and the current time. A captured request can only produce
   a warrant for the same holder key, which the thief does not have. An issuer
-  process also refuses an exact repeat of a request it has already served.
+  process also refuses an exact repeat of a request it has already served, for
+  as long as that request's timestamp would still be accepted.
 - The bundled client sends the token only over verified HTTPS and does not
   follow redirects.
 
@@ -723,6 +726,7 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 | JWT clock leeway for token times | 5 seconds | `SpiffeJWT(leeway_seconds=)` |
 | JWT requests in progress | 256, then HTTP 503 | `SpiffeJWTIssuerApp(max_concurrent=)` |
 | JWT request body deadline | 10 seconds, then HTTP 408 | `SpiffeJWTIssuerApp(body_timeout=)` |
+| JWT warrants per issuer process | 16384 in any minute, then HTTP 503 | `SpiffeWarrantIssuer(max_jwt_proofs=)` |
 | JWT request body and token size | 64 KiB and 16 KiB | fixed |
 | JWT bundle file check | every 5 seconds, while requests arrive | fixed |
 | JWT keys kept while the SPIRE agent is unreachable | 300 seconds | `SpiffeJWT.from_workload_api(max_stale_seconds=)` |
@@ -809,6 +813,7 @@ With JWT-SVIDs the agent's message starts `Issuer refused (HTTP <status>):`.
 | `...(HTTP 403): Holder proof is too old or from the future; check the clocks on both sides` | Agent and issuer clocks differ by more than 60 seconds. | Synchronize clocks. |
 | `...(HTTP 403): SVID expires too soon to issue a warrant` | The token had about a second left. | Fetch a fresh token. |
 | `...(HTTP 503): Issuer is busy; retry shortly` | 256 requests were already in progress. | Retry; check policy latency; raise `max_concurrent`. |
+| `...(HTTP 503): Issuer is at its limit for recent JWT-SVID requests; retry shortly` | The process issued 16384 JWT warrants within a minute. | Retry; add replicas or raise `max_jwt_proofs`. |
 | `The TLS certificate presented by HOST:PORT was not accepted: ...` | The load balancer's certificate does not chain to the agent's roots. | Pass `ca_file=` for a private CA. |
 | `Could not fetch a JWT-SVID from the Workload API at ...: PERMISSION_DENIED: no identity issued` | No registration entry matches the agent process. | Check the entry's selectors. |
 

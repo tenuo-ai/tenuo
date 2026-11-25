@@ -52,6 +52,7 @@ from tenuo.spiffe import (
     SpiffeJWTProof,
     SpiffeWarrantIssuer,
     _checked_warrant,
+    _IssuerBusy,
     _consume_result,
     _file_signature,
     _jwt_proof_bytes,
@@ -750,6 +751,8 @@ class SpiffeJWTIssuerApp:
                 raise _Refusal(401, "unauthorized", str(exc)) from exc
             try:
                 return issuer._issue_jwt(identity, holder, request["task"], proof)
+            except _IssuerBusy as exc:
+                raise _Refusal(503, "unavailable", str(exc)) from exc
             except SpiffeError as exc:
                 raise _Refusal(403, "refused", str(exc)) from exc
 

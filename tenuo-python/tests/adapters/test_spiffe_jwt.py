@@ -652,14 +652,50 @@ def test_failed_requests_can_be_retried_and_leave_no_proof_behind(jwt_issuer, au
     assert issuer._proofs == kept and len(kept) == 1
 
 
-def test_proof_memory_is_bounded(jwt_issuer, authority, monkeypatch):
-    monkeypatch.setattr("tenuo.spiffe._JWT_PROOF_MEMORY", 8)
-    issuer, *_ = jwt_issuer
+def test_full_proof_memory_refuses_new_requests_and_never_forgets_a_live_proof(validator, authority, monkeypatch):
+    root = SigningKey.generate()
+    issuer = SpiffeWarrantIssuer(
+        signing_key=root,
+        policy=lambda identity, task: SpiffeGrant(REFUND) if task == "task-123" else None,
+        jwt=validator,
+        max_jwt_proofs=4,
+    )
     holder, token = SigningKey.generate(), authority.token()
-    now = int(time.time())
-    for offset in range(20):
-        issue(issuer, token, holder, timestamp=now - offset)
-    assert len(issuer._proofs) <= 8
+    first = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
+    issuer.issue_jwt(token, holder.public_key, "task-123", first)
+    for _ in range(3):
+        issue(issuer, token, holder)
+    # Full: new requests are asked to retry, whether or not policy would approve them.
+    for task in ("task-123", "unknown"):
+        with pytest.raises(SpiffeError, match="retry shortly"):
+            issue(issuer, token, holder, task=task)
+    # Nothing was dropped to make room, so the earliest request still cannot be replayed.
+    with pytest.raises(SpiffeError, match="already used"):
+        issuer.issue_jwt(token, holder.public_key, "task-123", first)
+    assert len(issuer._proofs) == 4
+    # Entries expire once their timestamps are no longer acceptable, and admissions resume.
+    later = time.monotonic() + 62
+    monkeypatch.setattr("tenuo.spiffe.time.monotonic", lambda: later)
+    assert issue(issuer, token, holder).id
+    assert len(issuer._proofs) == 1
+    with pytest.raises(ValueError):
+        SpiffeWarrantIssuer(signing_key=root, policy=lambda *_: None, jwt=validator, max_jwt_proofs=0)
+
+
+def test_full_proof_memory_answers_503(validator, authority):
+    issuer = SpiffeWarrantIssuer(
+        signing_key=SigningKey.generate(), policy=lambda *_: SpiffeGrant(REFUND), jwt=validator, max_jwt_proofs=1
+    )
+    application = SpiffeJWTIssuerApp(issuer)
+    holder, token = SigningKey.generate(), authority.token()
+    try:
+        statuses = [
+            call_app(application, headers=[("Authorization", f"Bearer {token}")], body=request_body(token, holder))[0]
+            for _ in range(2)
+        ]
+    finally:
+        application.close()
+    assert statuses == [200, 503]
 
 
 def test_jwt_policy_denials_and_invalid_grants(jwt_issuer, authority):
