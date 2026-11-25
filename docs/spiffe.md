@@ -571,7 +571,11 @@ uvicorn jwt_issuer:app --host 0.0.0.0 --port 8080
 
 Put your TLS-terminating load balancer or mesh in front of that port. The
 issuer takes the trust domain's JWT signing keys from the SPIRE agent and
-follows key rotation. `audience` is the name agents request tokens for. Make it
+follows key rotation. Signing keys carry no expiry date, so the issuer does not
+keep trusting them on old information: if SPIRE withdraws the keys or stops
+issuing the issuer its own identity, tokens are refused at once, and if the
+SPIRE agent is unreachable for five minutes (`max_stale_seconds`), tokens are
+refused until it returns. `audience` is the name agents request tokens for. Make it
 specific to this issuer; its SPIFFE ID is the usual choice.
 
 One issuer can serve both kinds of SVID. Pass `tls=` and `jwt=` together, run
@@ -721,6 +725,7 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 | JWT request body deadline | 10 seconds, then HTTP 408 | `SpiffeJWTIssuerApp(body_timeout=)` |
 | JWT request body and token size | 64 KiB and 16 KiB | fixed |
 | JWT bundle file check | every 5 seconds, while requests arrive | fixed |
+| JWT keys kept while the SPIRE agent is unreachable | 300 seconds | `SpiffeJWT.from_workload_api(max_stale_seconds=)` |
 | Warrant lifetime | 300 seconds, capped by the SVID | `SpiffeGrant(ttl_seconds=)` |
 | Delegation depth | 0 | `SpiffeGrant(max_depth=)` |
 
@@ -799,7 +804,7 @@ With JWT-SVIDs the agent's message starts `Issuer refused (HTTP <status>):`.
 | Message | Likely cause | Fix |
 |---|---|---|
 | `...(HTTP 401): JWT-SVID is not for this issuer's audience (...)` | The agent requested a token for a different audience. | Use the issuer's `audience` in `fetch_jwt_svid` and `request_warrant_jwt`. |
-| `...(HTTP 401): JWT-SVID was signed by a key that is not in the trust bundle` | Another trust domain, or the issuer has not received a rotated key yet. | Check the trust domain; check the issuer's Workload API warnings. |
+| `...(HTTP 401): JWT-SVID was signed by a key that is not in the trust bundle` | Another trust domain, a rotated key the issuer has not received, or the issuer has withdrawn its keys (it logs `JWT-SVIDs for ... are refused until keys return`). | Check the trust domain; check the issuer's log and its connection to the SPIRE agent. |
 | `...(HTTP 401): JWT-SVID has expired` | The token sat too long, or the clocks disagree. | Fetch the token just before the request, as the example does. |
 | `...(HTTP 403): Holder proof is too old or from the future; check the clocks on both sides` | Agent and issuer clocks differ by more than 60 seconds. | Synchronize clocks. |
 | `...(HTTP 403): SVID expires too soon to issue a warrant` | The token had about a second left. | Fetch a fresh token. |

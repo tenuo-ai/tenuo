@@ -394,12 +394,20 @@ def _next_delay(delay: float, usable: bool) -> float:
 class _WorkloadAPIWatcher:
     """Background thread that follows the X.509-SVID stream and reconnects."""
 
-    def __init__(self, target: str, method: str, parse: Callable[[bytes], Any], deliver: Callable[[Any], None]):
+    def __init__(
+        self,
+        target: str,
+        method: str,
+        parse: Callable[[bytes], Any],
+        deliver: Callable[[Any], None],
+        on_lost: Optional[Callable[[str], None]] = None,
+    ):
         self.target = target
         self.last_error: Optional[str] = None
         self._method = method
         self._parse = parse
         self._deliver = deliver
+        self._on_lost = on_lost  # Called with a gRPC status name each time the stream ends.
         self._deliver_lock = threading.Lock()
         self._pending: Optional[Any] = None  # Newest update that could not be used yet.
         self._first = threading.Event()  # A usable SVID arrived, or retrying is pointless.
@@ -443,6 +451,15 @@ class _WorkloadAPIWatcher:
         self._first.set()
         return True
 
+    def _lost(self, status: str) -> None:
+        if self._on_lost is not None and not self._stop.is_set():
+            try:
+                self._on_lost(status)
+            except _OwnerGone:
+                self._stop.set()
+            except Exception:
+                logger.exception("Workload API stream-loss handler failed")
+
     def retry_pending(self) -> bool:
         """Try again an update that was refused earlier. Returns True if it is now in use."""
         with self._deliver_lock:
@@ -476,11 +493,13 @@ class _WorkloadAPIWatcher:
                         if self._offer(snapshot):
                             delay = _WORKLOAD_API_BACKOFF[0]
                 self.last_error = "the Workload API closed the stream"
+                self._lost("CLOSED")
             except grpc.RpcError as exc:
                 if self._stop.is_set():
                     break
                 code = exc.code()
                 self.last_error = f"{code.name}: {exc.details()}"
+                self._lost(code.name)
                 unsupported = code in (grpc.StatusCode.INVALID_ARGUMENT, grpc.StatusCode.UNIMPLEMENTED)
                 if unsupported and not self._usable:
                     # Not a Workload API endpoint: report at once instead of waiting out the timeout.
@@ -489,6 +508,7 @@ class _WorkloadAPIWatcher:
                     break
             except Exception as exc:
                 self.last_error = str(exc)
+                self._lost("ERROR")
             finally:
                 channel.close()
             if self._stop.is_set():

@@ -384,6 +384,99 @@ def test_workload_api_bundle_source(authority, workload_api):  # noqa: F811
         SpiffeJWT.from_workload_api(trust_domain=DOMAIN, audience=AUDIENCE, socket_path=lonely.address, timeout=0.5)
 
 
+def test_withdrawn_file_keys_are_no_longer_trusted(authority, tmp_path, monkeypatch):
+    monkeypatch.setattr("tenuo.spiffe_jwt._FILE_CHECK_SECONDS", 0.0)
+    path = tmp_path / "bundle.json"
+    path.write_bytes(jwks(authority))
+    validator = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+    token = authority.token()
+    unsupported = {"kty": "AKP", "alg": "ML-DSA-44", "pub": "AAAA", "kid": "pq", "use": "jwt-svid"}
+    for withdrawal in (jwks(), jwks(extra=[unsupported])):
+        time.sleep(0.01)
+        path.write_bytes(withdrawal)  # A well-formed bundle that no longer lists the key.
+        with pytest.raises(SpiffeError, match="not in the trust bundle"):
+            validator.authenticate(token)
+        time.sleep(0.01)
+        path.write_bytes(jwks(authority))
+        assert validator.authenticate(token).spiffe_id == AGENT
+    empty = tmp_path / "empty.json"
+    empty.write_bytes(jwks())
+    with pytest.raises(SpiffeError, match="no usable JWT-SVID signing keys"):
+        SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(empty))  # Never usable to start with.
+
+
+def test_workload_api_withdrawals_stop_trust_at_once(authority, workload_api):  # noqa: F811
+    grpc = pytest.importorskip("grpc")
+    own, token = f"spiffe://{DOMAIN}", authority.token()
+    good = bundles_response(**{own: jwks(authority)})
+    api = workload_api()
+    api.publish_jwt_bundles(good)
+    validator = SpiffeJWT.from_workload_api(trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5)
+
+    def refused():
+        try:
+            validator.authenticate(token)
+        except SpiffeError:
+            return True
+        return False
+
+    try:
+        assert not refused()
+        for withdrawal in (
+            bundles_response(**{own: jwks()}),  # The domain now has no JWT keys.
+            bundles_response(**{"spiffe://foreign.test": jwks(JWTAuthority())}),  # The domain is gone.
+            b"",
+        ):
+            api.publish_jwt_bundles(withdrawal)
+            assert eventually(refused)
+            api.publish_jwt_bundles(good)
+            assert eventually(lambda: not refused())
+        # A malformed update is not a withdrawal: the keys in use are kept.
+        api.publish_jwt_bundles(bundles_response(**{own: b"garbage"}))
+        api.publish_jwt_bundles(b"\xff\xff not protobuf")
+        time.sleep(0.3)
+        assert not refused()
+        # SPIRE stops issuing this workload an identity.
+        api.refuse = grpc.StatusCode.PERMISSION_DENIED
+        api.drop_streams()
+        assert eventually(refused)
+        api.publish_jwt_bundles(good)  # What a reconnecting stream is sent first.
+        api.refuse = None
+        assert eventually(lambda: not refused())
+    finally:
+        validator.close()
+
+
+def test_workload_api_outage_is_tolerated_for_a_bounded_time(authority, workload_api):  # noqa: F811
+    grpc = pytest.importorskip("grpc")
+    token = authority.token()
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{f"spiffe://{DOMAIN}": jwks(authority)}))
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, max_stale_seconds=1.0
+    )
+    try:
+        api.refuse = grpc.StatusCode.UNAVAILABLE  # The SPIRE agent is restarting.
+        api.drop_streams()
+        assert eventually(lambda: validator._lost_since is not None)
+        assert validator.authenticate(token).spiffe_id == AGENT  # Still served during a short outage.
+        time.sleep(1.2)
+        with pytest.raises(SpiffeError, match="not in the trust bundle"):
+            validator.authenticate(token)
+        api.refuse = None
+        assert eventually(lambda: bool(validator._keys))
+        assert validator.authenticate(token).spiffe_id == AGENT
+    finally:
+        validator.close()
+
+
+def test_workload_api_startup_needs_usable_keys(workload_api):  # noqa: F811
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{f"spiffe://{DOMAIN}": jwks()}))
+    with pytest.raises(SpiffeError, match="no usable JWT-SVID signing keys"):
+        SpiffeJWT.from_workload_api(trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=0.5)
+
+
 def svids_response(*pairs):
     return b"".join(_field(1, _field(1, identity.encode()) + _field(2, token.encode())) for identity, token in pairs)
 

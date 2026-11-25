@@ -115,6 +115,8 @@ def _jwks_keys(document: bytes, trust_domain: str) -> Dict[str, _Key]:
     domain names to base64-encoded JWKS documents. Keys this adapter cannot use
     (another key type, too small, malformed) are skipped with a warning rather
     than failing the bundle, so an update that adds one still removes retired keys.
+    A well-formed bundle with no usable key yields an empty result: the caller
+    decides whether that is a startup error or a withdrawal.
     """
     try:
         data = json.loads(document)
@@ -157,20 +159,25 @@ def _jwks_keys(document: bytes, trust_domain: str) -> Dict[str, _Key]:
             logger.warning("Skipping JWT bundle key %r: it %s", kid[:64], problem)
             continue
         keys[kid] = key
-    if not keys:
-        raise SpiffeError(f"JWT bundle for {trust_domain} contains no usable JWT-SVID signing keys")
     return keys
 
 
-def _jwt_bundle_from_response(message: bytes, trust_domain: str) -> Dict[str, _Key]:
-    """Pick this trust domain's JWKS from a JWTBundlesResponse. Other domains are ignored."""
+def _no_keys(trust_domain: str) -> SpiffeError:
+    return SpiffeError(f"JWT bundle for {trust_domain} contains no usable JWT-SVID signing keys")
+
+
+def _jwt_bundle_from_response(message: bytes, trust_domain: str) -> Optional[Dict[str, _Key]]:
+    """Pick this trust domain's JWKS from a JWTBundlesResponse. Other domains are ignored.
+
+    Returns None when the response is well formed but has no bundle for the domain.
+    """
     for field, value in _proto_fields(message):
         if field != 1 or not isinstance(value, bytes):  # bundles: map<string, bytes>
             continue
         entry = {number: item for number, item in _proto_fields(value) if isinstance(item, bytes)}
         if entry.get(1, b"") == f"spiffe://{trust_domain}".encode():
             return _jwks_keys(entry.get(2, b""), trust_domain)
-    raise SpiffeError(f"The Workload API returned no JWT bundle for {trust_domain}")
+    return None
 
 
 class SpiffeJWT:
@@ -193,6 +200,8 @@ class SpiffeJWT:
         self._paths = (bundle_file,)
         self._signature = _file_signature(self._paths)
         self._keys = self._read_file()
+        if not self._keys:
+            raise _no_keys(trust_domain)
 
     @classmethod
     def from_workload_api(
@@ -203,12 +212,19 @@ class SpiffeJWT:
         socket_path: Optional[str] = None,
         timeout: float = 30.0,
         leeway_seconds: float = 5.0,
+        max_stale_seconds: float = 300.0,
     ) -> "SpiffeJWT":
         """Take the trust domain's JWT signing keys from the SPIRE agent.
 
         Needs ``tenuo[spiffe-workload-api]`` as well. ``socket_path`` works as in
         :meth:`tenuo.spiffe.SpiffeTLS.from_workload_api`. Waits up to ``timeout``
         seconds for the first bundle, then follows updates until :meth:`close`.
+
+        Signing keys carry no expiry, so the validator never trusts them on old
+        information: when SPIRE withdraws the domain's keys or refuses this
+        workload its identity, tokens are refused at once; when the SPIRE agent
+        has been unreachable for ``max_stale_seconds``, tokens are refused
+        until the stream returns.
         """
         try:
             import grpc  # noqa: F401
@@ -216,22 +232,46 @@ class SpiffeJWT:
             raise ImportError("The Workload API source requires pip install 'tenuo[spiffe-workload-api]'") from exc
         self = cls.__new__(cls)
         self._init_common(trust_domain, audience, leeway_seconds)
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        if timeout <= 0 or max_stale_seconds <= 0:
+            raise ValueError("timeout and max_stale_seconds must be positive")
+        self._max_stale = max_stale_seconds
         owner = weakref.ref(self)
 
-        def deliver(keys: Dict[str, _Key]) -> None:
+        def deliver(keys: Optional[Dict[str, _Key]]) -> None:
             validator = owner()
             if validator is None:
                 raise _OwnerGone
+            validator._lost_since = None
+            if not keys:
+                # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
+                reason = (
+                    f"The Workload API returned no JWT bundle for {trust_domain}"
+                    if keys is None
+                    else str(_no_keys(trust_domain))
+                )
+                if not validator._loaded:
+                    raise SpiffeError(reason)  # Not usable to start with.
+                validator._withdraw(reason)
+                return
             validator._keys = keys
+            validator._loaded = True
             logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(keys), trust_domain)
+
+        def lost(status: str) -> None:
+            validator = owner()
+            if validator is None:
+                raise _OwnerGone
+            if validator._lost_since is None:
+                validator._lost_since = time.monotonic()
+            if status == "PERMISSION_DENIED" and validator._loaded:
+                validator._withdraw("SPIRE no longer issues this workload an identity")
 
         watcher = _WorkloadAPIWatcher(
             _workload_api_target(socket_path),
             _FETCH_JWT_BUNDLES,
             lambda raw: _jwt_bundle_from_response(raw, trust_domain),
             deliver,
+            lost,
         )
         self._watcher = watcher
         weakref.finalize(self, watcher.stop, False)
@@ -256,19 +296,35 @@ class SpiffeJWT:
         self._reload_lock = threading.Lock()
         self._checked = time.monotonic()
         self._keys = {}
+        self._loaded = False  # A usable bundle has been installed at least once.
+        self._lost_since: Optional[float] = None  # When the Workload API stream was last lost.
+        self._max_stale = 0.0
 
     def _read_file(self) -> Dict[str, _Key]:
         assert self._paths is not None
         return _jwks_keys(_read_snapshot(self._paths[0]), self.trust_domain)
 
+    def _withdraw(self, reason: str) -> None:
+        if self._keys:
+            logger.warning("JWT-SVIDs for %s are refused until keys return: %s", self.trust_domain, reason)
+        self._keys = {}
+
     def reload(self) -> None:
-        """Read the bundle file again. On failure, keep the current keys."""
+        """Read the bundle file again.
+
+        An unreadable or malformed file keeps the current keys. A well-formed
+        bundle replaces them, including one with no usable key, which withdraws them.
+        """
         if self._paths is None:
             return
         with self._reload_lock:
             signature = _file_signature(self._paths)
-            self._keys = self._read_file()
+            keys = self._read_file()
             self._signature = signature
+            if not keys:
+                self._withdraw(str(_no_keys(self.trust_domain)))
+                return
+            self._keys = keys
         logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(self._keys), self.trust_domain)
 
     def reload_if_changed(self) -> bool:
@@ -295,6 +351,9 @@ class SpiffeJWT:
     def authenticate(self, token: str) -> SpiffeIdentity:
         """Validate a JWT-SVID and return the workload identity it names."""
         self._refresh()
+        lost = self._lost_since
+        if lost is not None and time.monotonic() - lost > self._max_stale:
+            self._withdraw("the SPIRE agent has been unreachable for too long")
         # Exactly three unpadded base64url segments, so one token has one spelling
         # (and one SHA-256) whatever the installed PyJWT tolerates.
         if not isinstance(token, str) or len(token) > _MAX_TOKEN_BYTES or not _COMPACT_JWS.fullmatch(token):
