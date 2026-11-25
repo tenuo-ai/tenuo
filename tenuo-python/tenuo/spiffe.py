@@ -75,6 +75,7 @@ _MAX_TOOL_NAME = 256
 _FRAME_LIMIT = 64 * 1024
 _CONNECTION_BYTE_LIMIT = 4 * _FRAME_LIMIT  # Handshake plus two frames, with room to spare.
 _PROTOCOL_VERSION = 1
+_VALIDATION_KEY = SigningKey.generate()
 
 #: Grant constraint value that explicitly allows any arguments for a tool.
 #: An empty dict is rejected so that "no constraints" is never accidental.
@@ -230,6 +231,19 @@ class SpiffeTLS:
                 is_ca = False
             if not is_ca:
                 raise SpiffeError("Trust bundle may contain only CA certificates")
+            try:
+                uris = authority.extensions.get_extension_for_class(
+                    x509.SubjectAlternativeName
+                ).value.get_values_for_type(x509.UniformResourceIdentifier)
+            except x509.ExtensionNotFound:
+                uris = []
+            except ValueError as exc:
+                raise SpiffeError("Malformed X.509 certificate in trust bundle") from exc
+            for uri in uris:
+                if uri != f"spiffe://{self.trust_domain}" and (
+                    not uri.startswith(f"spiffe://{self.trust_domain}/") or _trust_domain(uri) != self.trust_domain
+                ):
+                    raise SpiffeError("Trust bundle contains an authority for a different trust domain")
         identity, not_before = _svid_identity(chain[0], self.trust_domain)
         if not not_before <= time.time() < identity.expires_at:
             raise SpiffeError("Local SVID is not currently valid")
@@ -408,14 +422,13 @@ def _validate_grant(grant: Any) -> SpiffeGrant:
         raise SpiffeError(f"max_depth must be an integer from 0 to {_MAX_DELEGATION_DEPTH}")
     # Copy, so later changes to a policy's cached objects cannot alter the grant.
     # The core checks constraint values when it mints, so do a trial mint with a
-    # throwaway key now rather than discovering a bad grant after the proof.
+    # validation key now rather than discovering a bad grant after the proof.
     capabilities = {tool: dict(constraints) for tool, constraints in grant.capabilities.items()}
     try:
-        throwaway = SigningKey.generate()
-        builder = Warrant.mint_builder().holder(throwaway.public_key).ttl(1).max_depth(grant.max_depth)
+        builder = Warrant.mint_builder().holder(_VALIDATION_KEY.public_key).ttl(1).max_depth(grant.max_depth)
         for tool, constraints in capabilities.items():
             builder.capability(tool, dict(constraints))
-        builder.mint(throwaway)
+        builder.mint(_VALIDATION_KEY)
     except Exception as exc:
         raise SpiffeError(f"Policy grant has invalid constraints: {exc}") from exc
     return SpiffeGrant(MappingProxyType(capabilities), grant.ttl_seconds, grant.max_depth)
@@ -474,7 +487,11 @@ class SpiffeWarrantIssuer:
         grant = self._policy(identity, task_id)
         if grant is None:
             raise SpiffeError("Workload is not authorized for this task")
-        grant = _validate_grant(grant)
+        try:
+            grant = _validate_grant(grant)
+        except SpiffeError as exc:
+            logger.warning("Invalid policy grant for %s task %r: %s", identity.spiffe_id, task_id, exc)
+            raise
         key = bytes(holder.to_bytes())
         payload = json.dumps(
             {
@@ -535,6 +552,11 @@ class SpiffeWarrantIssuer:
             self._audit(record)
         logger.info("Issued warrant %s to %s for task %r", warrant.id, identity.spiffe_id, pending.task_id)
         return warrant
+
+    def _discard(self, challenge: Optional[bytes]) -> None:
+        if challenge is not None:
+            with self._lock:
+                self._pending.pop(challenge, None)
 
 
 # -- holder side ------------------------------------------------------------
@@ -912,6 +934,7 @@ class SpiffeIssuerServer:
     async def _exchange(self, connection: _ServerConnection) -> None:
         await connection.handshake()
         tls = self.issuer.tls
+        challenge: Optional[bytes] = None
         try:
             identity = tls.authenticate(connection.tls)
             request = _parse_frame(await connection.readline(), frozenset({"v", "holder", "task"}))
@@ -934,4 +957,6 @@ class SpiffeIssuerServer:
             logger.info("Issuance refused: %s", exc)
             await connection.send({"error": "refused", "message": str(exc)})
             return
+        finally:
+            self.issuer._discard(challenge)
         await connection.send({"warrant": warrant.to_base64()})
