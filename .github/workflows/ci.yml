@@ -669,7 +669,7 @@ jobs:
           maturin build --release
           uv pip install --system target/wheels/*.whl
           uv pip install --system langchain langchain-core langgraph fastapi httpx pydantic PyYAML
-          uv pip install --system nbmake pytest ipykernel
+          uv pip install --system nbmake pytest ipykernel "cryptography>=42"
 
       - name: Test Notebooks
         run: |
