@@ -455,6 +455,10 @@ class _WorkloadAPIWatcher:
                     try:
                         snapshot = self._parse(message)
                     except SpiffeError as exc:
+                        with self._deliver_lock:
+                            # The newest response supersedes an older update that was
+                            # waiting to become usable, even when it offers nothing.
+                            self._pending = None
                         self.last_error = str(exc)
                         logger.warning("Ignoring an unusable Workload API update: %s", exc)
                         continue

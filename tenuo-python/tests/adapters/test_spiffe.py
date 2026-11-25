@@ -1704,6 +1704,20 @@ def test_workload_api_uses_update_once_it_becomes_valid(ca, workload_api, from_a
     assert server.identity != before and server.reload_if_changed() is False
 
 
+def test_workload_api_newer_response_supersedes_a_waiting_update(ca, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    server = from_api(api, spiffe_id=SERVER)
+    before = server.identity
+    for newer in (x509_response(), x509_response(svid_entry(ca, AGENT)), b"\xff\xff not protobuf"):
+        api.publish(x509_response(svid_entry(ca, SERVER, starts=2)))  # Valid two seconds from now.
+        assert eventually(lambda: server._watcher._pending is not None)
+        api.publish(newer)  # SPIRE no longer offers that SVID.
+        assert eventually(lambda: server._watcher._pending is None)
+    time.sleep(2.3)
+    assert server.reload_if_changed() is False and server.identity == before
+
+
 def test_workload_api_startup_retries_stay_frequent():
     from tenuo.spiffe import _next_delay
 
