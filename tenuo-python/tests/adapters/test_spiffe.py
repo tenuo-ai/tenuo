@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import re
 import socket
 import ssl
@@ -872,6 +873,7 @@ def _raw_session(client_tls, address, payload, read=True):
         b'{"v": 1, "holder": "AAAA", "task": "task-123", "extra": 1}\n',
         b"[]\n",
     ],
+    ids=["oversized", "not-json", "wrong-version", "short-holder", "extra-key", "not-an-object"],
 )
 def test_server_rejects_malformed_requests(served, payload):
     issuer, client_tls, *_ = served
@@ -1153,7 +1155,8 @@ def test_guide_code_runs(tmp_path, monkeypatch, caplog):
 
     monkeypatch.chdir(tmp_path)
     exec(blocks["make_issuer_key.py"], {})
-    assert (tmp_path / "tenuo-issuer.pem").stat().st_mode & 0o077 == 0
+    if os.name != "nt":
+        assert (tmp_path / "tenuo-issuer.pem").stat().st_mode & 0o077 == 0
 
     issuer_code = localize(blocks["issuer.py"], "issuer").rstrip()
     assert issuer_code.endswith("asyncio.run(main())")
