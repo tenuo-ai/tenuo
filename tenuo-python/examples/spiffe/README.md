@@ -1,10 +1,18 @@
 # SPIFFE → Tenuo → protected refund tool
 
-This demo runs the adapter's mTLS issuance endpoint, requests a warrant as an
-agent with a separate Tenuo holder key, applies a server-owned task policy, and
-checks each refund request at the tool boundary. It also delegates a narrower
-warrant to a worker. No model API, cloud account, or real refund service is
-needed.
+New to SPIFFE or Tenuo? Read [the guide](../../../docs/spiffe.md) first; it
+explains the terms and walks through a real deployment. This directory is the
+runnable version.
+
+`demo.py` plays three roles in one process so the whole flow fits on a screen:
+
+- **Issuer:** `policy()` and `SpiffeIssuerServer`. Approves one refund task and
+  issues a warrant for customer `123`, up to 5000 cents, for 120 seconds.
+- **Agent:** `arequest_warrant(...)`. Presents its SVID, proves its own Tenuo
+  key, and receives the warrant. It then delegates 1000 cents to a worker.
+- **Tool:** `refund_tool()`. Verifies every call before the simulated refund.
+
+No model API, cloud account, or real refund service is needed.
 
 ## Quickstart: disposable development certificates
 
@@ -32,10 +40,9 @@ ALLOWED: delegated worker, $8
 Verified: only the two authorized refunds reached the tool body.
 ```
 
-The policy grants customer `123`, amounts of 1–5000 cents, 120 seconds, and one
-delegation level. The worker receives only 1–1000 cents for 30 seconds. The tool
-checks the full warrant chain and proof of possession before its simulated
-side effect. These limits apply per call; they are not an aggregate spending cap.
+The two denials come from the warrant, not from identity: the agent's SVID is
+valid for all four calls. The worker's warrant allows 1–1000 cents for 30
+seconds. These limits apply per call; they are not a total spending cap.
 
 ## Real SPIRE interoperability demo
 
@@ -78,7 +85,10 @@ The harness uses container-local port 18081 for SPIRE; it must be available.
 
 ## Use credentials from an existing SPIRE deployment
 
-Export the two workloads' SVIDs and their domain bundle into a protected directory:
+Copy the two workloads' SVIDs and their domain bundle into a protected
+directory, for example from `spire-agent api fetch x509 -write DIR` run as each
+workload, or from the files `spiffe-helper` maintains. The demo expects these
+names (they differ from the helper's defaults used in the guide):
 
 ```text
 credentials/

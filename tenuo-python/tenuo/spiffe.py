@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Callable, Dict, FrozenSet, Mapping, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 try:
     from cryptography import x509
@@ -61,6 +61,7 @@ __all__ = [
 logger = logging.getLogger("tenuo.spiffe")
 
 TLSConnection = Union[ssl.SSLSocket, ssl.SSLObject]
+IssuerKeys = Union[PublicKey, Sequence[PublicKey]]
 
 # Prepended by the signer and the verifier, never sent by the issuer. The issuer
 # therefore cannot choose the first bytes of what the holder key signs, and the
@@ -544,7 +545,7 @@ def sign_holder_challenge(
     holder_key: SigningKey,
     *,
     task_id: str,
-    issuer_key: Optional[PublicKey] = None,
+    issuer_key: Optional[IssuerKeys] = None,
     spiffe_id: Optional[str] = None,
 ) -> bytes:
     """Check an issuer challenge and sign it with the holder key.
@@ -571,11 +572,18 @@ def sign_holder_challenge(
         raise SpiffeError("Challenge is for a different holder key")
     if fields["task_id"] != task_id:
         raise SpiffeError("Challenge is for a different task")
-    if issuer_key is not None and fields["issuer"] != bytes(issuer_key.to_bytes()).hex():
+    if issuer_key is not None and fields["issuer"] not in {bytes(k.to_bytes()).hex() for k in _key_list(issuer_key)}:
         raise SpiffeError("Challenge is from a different issuer key")
     if spiffe_id is not None and fields["spiffe_id"] != spiffe_id:
         raise SpiffeError("Challenge is for a different SPIFFE ID")
     return bytes(holder_key.sign_raw(_HOLDER_CONTEXT + challenge))
+
+
+def _key_list(keys: IssuerKeys) -> List[PublicKey]:
+    found = [keys] if isinstance(keys, PublicKey) else list(keys)
+    if not found or not all(isinstance(key, PublicKey) for key in found):
+        raise ValueError("issuer_key must be a PublicKey or a non-empty sequence of them")
+    return found
 
 
 def _encode(data: bytes) -> str:
@@ -596,6 +604,8 @@ def _frame(value: Dict[str, Any]) -> bytes:
 
 
 def _parse_frame(line: bytes, keys: FrozenSet[str]) -> Dict[str, Any]:
+    if not line:
+        raise SpiffeError("Connection closed before a reply")
     if not line.endswith(b"\n") or len(line) > _FRAME_LIMIT:
         raise SpiffeError("Invalid or oversized frame")
     try:
@@ -605,6 +615,8 @@ def _parse_frame(line: bytes, keys: FrozenSet[str]) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise SpiffeError("Invalid frame")
     if "error" in value:
+        if value["error"] == "unavailable":
+            raise SpiffeError("Issuer error; see the issuer's log")
         message = value.get("message")
         raise SpiffeError(f"Issuer refused: {str(message)[:200] if message else value['error']}")
     if set(value) != keys:
@@ -612,12 +624,37 @@ def _parse_frame(line: bytes, keys: FrozenSet[str]) -> Dict[str, Any]:
     return value
 
 
+def _exchange_with_issuer(
+    tls: SpiffeTLS,
+    address: Tuple[str, int],
+    issuer_id: str,
+    issuer_key: IssuerKeys,
+    holder_key: SigningKey,
+    task_id: str,
+    timeout: float,
+) -> Any:
+    with socket.create_connection(address, timeout=timeout) as raw:
+        raw.settimeout(timeout)
+        with tls.context.wrap_socket(raw) as connection, connection.makefile("rwb") as stream:
+            tls.authenticate(connection, expected_id=issuer_id)
+            holder = _encode(bytes(holder_key.public_key.to_bytes()))
+            stream.write(_frame({"v": _PROTOCOL_VERSION, "holder": holder, "task": task_id}))
+            stream.flush()
+            challenge = _decode(_parse_frame(stream.readline(_FRAME_LIMIT + 1), frozenset({"challenge"}))["challenge"])
+            signature = sign_holder_challenge(
+                challenge, holder_key, task_id=task_id, issuer_key=issuer_key, spiffe_id=tls.identity.spiffe_id
+            )
+            stream.write(_frame({"signature": _encode(signature)}))
+            stream.flush()
+            return _parse_frame(stream.readline(_FRAME_LIMIT + 1), frozenset({"warrant"}))["warrant"]
+
+
 def request_warrant(
     tls: SpiffeTLS,
     address: Tuple[str, int],
     *,
     issuer_id: str,
-    issuer_key: PublicKey,
+    issuer_key: IssuerKeys,
     holder_key: SigningKey,
     task_id: str,
     timeout: float = 10.0,
@@ -626,38 +663,31 @@ def request_warrant(
 
     Pins the issuer's SPIFFE ID before sending anything, signs only a valid
     challenge for this holder and task, and checks that the warrant is signed
-    by ``issuer_key``, bound to ``holder_key``, and unexpired.
+    by ``issuer_key``, bound to ``holder_key``, and unexpired. ``issuer_key``
+    may be a list, to accept the old and new key during rotation. Every failure,
+    including connection and TLS errors, is raised as :class:`SpiffeError`.
     """
     if tls.server_side:
         raise ValueError("request_warrant requires a client-side SpiffeTLS")
+    trusted = _key_list(issuer_key)
     _trust_domain(issuer_id)
     tls._refresh()
-    with socket.create_connection(address, timeout=timeout) as raw:
-        raw.settimeout(timeout)
-        with tls.context.wrap_socket(raw) as connection, connection.makefile("rwb") as stream:
-            tls.authenticate(connection, expected_id=issuer_id)
-            stream.write(
-                _frame(
-                    {
-                        "v": _PROTOCOL_VERSION,
-                        "holder": _encode(bytes(holder_key.public_key.to_bytes())),
-                        "task": task_id,
-                    }
-                )
-            )
-            stream.flush()
-            challenge = _decode(_parse_frame(stream.readline(_FRAME_LIMIT + 1), frozenset({"challenge"}))["challenge"])
-            signature = sign_holder_challenge(
-                challenge, holder_key, task_id=task_id, issuer_key=issuer_key, spiffe_id=tls.identity.spiffe_id
-            )
-            stream.write(_frame({"signature": _encode(signature)}))
-            stream.flush()
-            encoded = _parse_frame(stream.readline(_FRAME_LIMIT + 1), frozenset({"warrant"}))["warrant"]
+    where = f"{address[0]}:{address[1]}"
+    try:
+        encoded = _exchange_with_issuer(tls, address, issuer_id, issuer_key, holder_key, task_id, timeout)
+    except SpiffeError:
+        raise
+    except ssl.SSLCertVerificationError as exc:
+        raise SpiffeError(f"The SVID presented by {where} was not accepted: {exc.verify_message}") from exc
+    except ssl.SSLError as exc:
+        raise SpiffeError(f"TLS with the issuer at {where} failed: {exc.reason or exc}") from exc
+    except OSError as exc:  # Refused, reset, or timed out.
+        raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
     if not isinstance(encoded, str):
         raise SpiffeError("Invalid warrant response")
     try:
         warrant = Warrant.from_base64(encoded)
-        Authorizer(trusted_roots=[issuer_key]).verify(warrant)
+        Authorizer(trusted_roots=trusted).verify(warrant)
     except Exception as exc:
         raise SpiffeError("Issued warrant failed verification") from exc
     if warrant.authorized_holder != holder_key.public_key:
@@ -805,6 +835,8 @@ class SpiffeIssuerServer:
         self._reload_worker = ThreadPoolExecutor(1, thread_name_prefix="tenuo-spiffe-reload")
         self._server = await asyncio.start_server(self._handle, self.host, self.port)
         self._reloader = asyncio.ensure_future(self._reload_loop())
+        host, port = self.address
+        logger.info("Issuing warrants on %s:%s as %s", host, port, self.issuer.tls.identity.spiffe_id)
 
     async def serve_forever(self) -> None:
         if self._server is None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import re
 import socket
 import ssl
 import time
@@ -801,6 +802,52 @@ def test_client_refusals(served, change, message):
     assert issuer._pending == {} or "issuer_key" in change
 
 
+def test_client_accepts_any_listed_issuer_key(served):
+    """During issuer key rotation, agents list the old and the new key."""
+    issuer, client_tls, root, holder = served
+    retired = SigningKey.generate().public_key
+    options = dict(issuer_id=SERVER, holder_key=holder, task_id="task-123")
+
+    async def body(address):
+        warrant = await asyncio.to_thread(
+            request_warrant, client_tls, address, issuer_key=[retired, root.public_key], **options
+        )
+        with pytest.raises(SpiffeError, match="different issuer key"):
+            await asyncio.to_thread(request_warrant, client_tls, address, issuer_key=[retired], **options)
+        with pytest.raises(ValueError):
+            await asyncio.to_thread(request_warrant, client_tls, address, issuer_key=[], **options)
+        return warrant
+
+    assert run_server(issuer, body).issuer == root.public_key
+
+
+def test_client_reports_every_failure_as_spiffe_error(served, pki, tmp_path):
+    issuer, client_tls, root, holder = served
+    options = dict(issuer_id=SERVER, issuer_key=root.public_key, holder_key=holder, task_id="task-123")
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        closed_port = unused.getsockname()
+    with pytest.raises(SpiffeError, match="Could not complete the exchange with the issuer at 127.0.0.1"):
+        request_warrant(client_tls, closed_port, timeout=2, **options)
+
+    other = CA(tmp_path, "another root")
+    stranger_paths = other.files("stranger", AGENT)
+    stranger = _tls(stranger_paths, False)
+
+    def failing_policy(*_):
+        raise RuntimeError("database down")
+
+    async def body(address):
+        # An agent from another CA: it rejects the issuer's SVID.
+        with pytest.raises(SpiffeError, match="was not accepted"):
+            await asyncio.to_thread(request_warrant, stranger, address, **options)
+        issuer._policy = failing_policy
+        with pytest.raises(SpiffeError, match="Issuer error; see the issuer's log"):
+            await asyncio.to_thread(request_warrant, client_tls, address, **options)
+
+    run_server(issuer, body)
+
+
 def _raw_session(client_tls, address, payload, read=True):
     with socket.create_connection(address, timeout=5) as raw:
         with client_tls.context.wrap_socket(raw) as tls:
@@ -859,7 +906,7 @@ def test_server_connection_limit(served):
         with socket.create_connection(address, timeout=5) as raw:
             with client_tls.context.wrap_socket(raw):
                 time.sleep(0.2)
-                with pytest.raises(Exception):
+                with pytest.raises(SpiffeError):
                     request_warrant(
                         client_tls,
                         address,
@@ -1002,7 +1049,7 @@ def test_connection_limit_counts_sockets_before_handshake(served):
         idle = [socket.create_connection(address, timeout=5) for _ in range(2)]  # No TLS, no bytes.
         try:
             time.sleep(0.2)
-            with pytest.raises(Exception):
+            with pytest.raises(SpiffeError):
                 request_warrant(client_tls, address, **options)
             # The deadline closes idle sockets that never start a handshake.
             start = time.monotonic()
@@ -1068,3 +1115,92 @@ def test_demo_over_localhost(tmp_path):
     spec.loader.exec_module(module)
     module.development_credentials(tmp_path)
     assert module.run(tmp_path) == ["ALLOWED", "DENIED", "DENIED", "ALLOWED"]
+
+
+# -- the guide's code ---------------------------------------------------------------
+
+GUIDE = Path(__file__).parents[3] / "docs" / "spiffe.md"
+
+
+def test_guide_code_runs(tmp_path, monkeypatch, caplog):
+    """Execute the named code blocks in docs/spiffe.md against a test trust domain."""
+    if not GUIDE.exists():
+        pytest.skip("guide not present in this distribution")
+    blocks = dict(re.findall(r"```python\n# (\S+\.py)[^\n]*\n(.*?)```", GUIDE.read_text(), re.S))
+    assert set(blocks) == {"make_issuer_key.py", "issuer.py", "agent.py", "call_tool.py", "tool.py", "delegate.py"}
+
+    acme = CA(tmp_path, "acme.test root")
+    directories = {}
+    for role, identity in (("issuer", "spiffe://acme.test/issuer"), ("agent", "spiffe://acme.test/agents/refund")):
+        directory = tmp_path / role
+        directory.mkdir()
+        cert, key = acme.leaf(identity)
+        (directory / "svid.pem").write_bytes(cert)
+        (directory / "svid_key.pem").write_bytes(key)
+        (directory / "svid_bundle.pem").write_bytes(acme.pem)
+        directories[role] = directory
+
+    def localize(code, role, address=None):
+        code = (
+            code.replace("/run/spiffe/", f"{directories[role]}/")
+            .replace("/run/secrets/tenuo-issuer.pem", str(tmp_path / "tenuo-issuer.pem"))
+            .replace("/etc/tenuo/tenuo-issuer.pub", str(tmp_path / "tenuo-issuer.pub"))
+        )
+        if address is not None:
+            assert '("issuer.acme.internal", 8443)' in code
+            code = code.replace('("issuer.acme.internal", 8443)', repr(tuple(address)))
+        return code
+
+    monkeypatch.chdir(tmp_path)
+    exec(blocks["make_issuer_key.py"], {})
+    assert (tmp_path / "tenuo-issuer.pem").stat().st_mode & 0o077 == 0
+
+    issuer_code = localize(blocks["issuer.py"], "issuer").rstrip()
+    assert issuer_code.endswith("asyncio.run(main())")
+    issuer_scope: dict = {}
+    exec(issuer_code[: -len("asyncio.run(main())")], issuer_scope)
+
+    agent_scope: dict = {}
+
+    def agent_side(address):
+        exec(localize(blocks["agent.py"], "agent", address), agent_scope)
+        exec(blocks["call_tool.py"], agent_scope)
+        exec(blocks["delegate.py"], agent_scope)
+
+    async def body(address):
+        await asyncio.to_thread(agent_side, address)
+
+    with caplog.at_level("INFO", logger="tenuo.spiffe"):
+        run_server(issuer_scope["issuer"], body)
+    logged = caplog.text
+    assert "Issuing warrants on" in logged and "as spiffe://acme.test/issuer" in logged
+    assert "to spiffe://acme.test/agents/refund for task 'refund-task-123'" in logged
+    assert "/run/" not in localize(blocks["agent.py"], "agent") and "/etc/" not in localize(blocks["tool.py"], "agent")
+
+    tool_scope: dict = {}
+    exec(localize(blocks["tool.py"], "agent"), tool_scope)
+    refund = tool_scope["refund"]
+    assert refund(agent_scope["call"]) == "refunded 4000 cents to customer 123"
+    assert refund(agent_scope["worker_call"]) == "refunded 800 cents to customer 123"
+
+    import base64
+
+    def call(warrant_chain, signer, key, args):
+        proof = signer.sign(key, "refund", args, int(time.time()))
+        return {
+            "chain": [w.to_base64() for w in warrant_chain],
+            "args": args,
+            "proof": base64.b64encode(proof).decode(),
+        }
+
+    warrant, child = agent_scope["warrant"], agent_scope["child"]
+    holder, worker = agent_scope["holder_key"], agent_scope["worker_key"]
+    for attempt in (
+        call([warrant], warrant, holder, {"customer": "999", "cents": 4000}),
+        call([warrant], warrant, holder, {"customer": "123", "cents": 6000}),
+        call([warrant, child], child, worker, {"customer": "123", "cents": 4000}),
+        call([warrant], warrant, worker, {"customer": "123", "cents": 100}),
+        {},
+        {"chain": ["AAAA"], "args": {}, "proof": "!!"},
+    ):
+        assert refund(attempt).startswith("denied: ")
