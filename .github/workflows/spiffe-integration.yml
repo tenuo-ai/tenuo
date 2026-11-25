@@ -1,0 +1,25 @@
+name: SPIFFE Integration
+
+on:
+  pull_request:
+    paths:
+      - 'tenuo-python/tenuo/spiffe.py'
+      - 'tenuo-python/examples/spiffe/**'
+      - 'tenuo-python/tests/adapters/test_spiffe.py'
+      - '.github/workflows/spiffe-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-spire:
+    name: Real SPIRE mTLS and warrant exchange
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build checksum-verified SPIRE demo environment
+        run: docker build -t tenuo-spiffe-demo:ci -f tenuo-python/examples/spiffe/Dockerfile .
+      - name: Exercise Workload API credentials, issuance, delegation, and enforcement
+        run: docker run --rm --mount "type=bind,source=$PWD,target=/work,readonly" tenuo-spiffe-demo:ci

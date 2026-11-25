@@ -46,6 +46,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+spiffe = [
+    "cryptography>=42",  # X.509-SVID parsing and Ed25519 holder proof validation
+]
 # Feature flags for users - we use permissive constraints and warn at runtime
 # See docs/compatibility-matrix.md for recommended versions
 openai = [
@@ -123,7 +126,7 @@ dev = [
     "uvicorn",
     "langchain-openai",
     # Include ALL optional groups for complete dev environment
-    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,fastmcp,temporal]",
+    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,fastmcp,temporal,spiffe]",
 ]
 
 [project.scripts]
