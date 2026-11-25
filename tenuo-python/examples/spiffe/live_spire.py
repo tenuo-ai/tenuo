@@ -4,7 +4,8 @@
 Requires Linux, spire-server and spire-agent on PATH. The accompanying Dockerfile
 provides these. All sockets, credentials, data, and logs live in a temp directory.
 After the demo, the harness waits for SPIRE to renew the short-lived SVIDs and
-checks that a running issuer serves the renewed SVID without a restart.
+checks that a running issuer picks up the renewal without a restart, once with
+credential files and once straight from the Workload API socket.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from cryptography.hazmat.primitives import hashes
 
 from demo import AGENT_ID, ISSUER_ID, policy, run, tls_config
 from tenuo import SigningKey
-from tenuo.spiffe import SpiffeIssuerServer, SpiffeWarrantIssuer, arequest_warrant
+from tenuo.spiffe import SpiffeIssuerServer, SpiffeTLS, SpiffeWarrantIssuer, arequest_warrant
 
 SVID_TTL_SECONDS = 120  # SPIRE renews at about half of this.
 
@@ -94,6 +95,44 @@ async def rotation_check(directory: Path, refetch) -> None:
         if client_tls.identity.certificate_sha256 != current["agent"]:
             raise RuntimeError("Agent did not reload its renewed SVID")
     print("Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.")
+
+
+async def workload_api_check(agent_socket: str) -> None:
+    """Issuer and agent take their SVIDs from the Workload API and follow a renewal."""
+    # Both demo identities belong to one Unix user, so each side names the SVID it wants.
+    server_tls = SpiffeTLS.from_workload_api(
+        trust_domain="demo.test", server_side=True, socket_path=agent_socket, spiffe_id=ISSUER_ID
+    )
+    client_tls = SpiffeTLS.from_workload_api(
+        trust_domain="demo.test", server_side=False, socket_path=agent_socket, spiffe_id=AGENT_ID
+    )
+    try:
+        root, holder = SigningKey.generate(), SigningKey.generate()
+        issuer = SpiffeWarrantIssuer(tls=server_tls, signing_key=root, policy=policy)
+        options = dict(
+            issuer_id=ISSUER_ID, issuer_key=root.public_key, holder_key=holder, task_id="approved-refund-123"
+        )
+        async with SpiffeIssuerServer(issuer, host="127.0.0.1", port=0) as server:
+            await arequest_warrant(client_tls, server.address, **options)
+            before = (server_tls.identity.certificate_sha256, client_tls.identity.certificate_sha256)
+            deadline = time.monotonic() + SVID_TTL_SECONDS
+            while (
+                server_tls.identity.certificate_sha256 == before[0]
+                or client_tls.identity.certificate_sha256 == before[1]
+            ):
+                if time.monotonic() > deadline:
+                    raise RuntimeError("The Workload API did not deliver renewed SVIDs")
+                await asyncio.sleep(1)
+            await arequest_warrant(client_tls, server.address, **options)
+    finally:
+        server_tls.close()
+        client_tls.close()
+    print("Verified: issuer and agent followed a renewal straight from the Workload API.")
+
+
+async def renewal_checks(directory: Path, agent_socket: str, refetch) -> None:
+    # Both checks wait for the same renewal, so run them together.
+    await asyncio.gather(rotation_check(directory, refetch), workload_api_check(agent_socket))
 
 
 def main():
@@ -200,7 +239,9 @@ plugins {{
                 raise RuntimeError("SPIRE Workload API did not become ready")
             print("Using X.509-SVIDs issued by a real SPIRE server through its Workload API.")
             run(directory)
-            asyncio.run(rotation_check(directory, lambda: export_svids(agent_socket, exported, directory)))
+            asyncio.run(
+                renewal_checks(directory, agent_socket, lambda: export_svids(agent_socket, exported, directory))
+            )
         except Exception:
             for log in logs:
                 print(f"{log.name}:\n{log.read_text()}")

@@ -9,6 +9,7 @@ import os
 import re
 import socket
 import ssl
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -1013,18 +1014,21 @@ def test_resumed_sessions_are_never_accepted(pki):
         assert server.authenticate(resumed).spiffe_id == AGENT
 
 
-def test_non_ascii_bundle_does_not_stop_reloading(ca, pki):
-    paths = ca.files("non-ascii", SERVER)
+def test_unreadable_bundle_does_not_stop_reloading(ca, pki):
+    paths = ca.files("unreadable", SERVER)
     server = _tls(paths, True)
     before = server.identity
-    paths["bundle"].write_bytes("# Bündel\n".encode() + ca.pem)
-    with pytest.raises(SpiffeError, match="ASCII PEM"):
+    paths["bundle"].write_bytes(b"\xff\xfe not a bundle")
+    with pytest.raises(SpiffeError, match="must contain PEM certificates"):
         server.reload()
     server._refresh()
     assert server.identity == before
-    _rewrite(ca, paths, SERVER, bundle=ca.pem)
+    # Text around the PEM blocks is ignored: only the parsed certificates are trusted.
+    _rewrite(ca, paths, SERVER, bundle="# Bündel\n".encode() + ca.pem)
     server._refresh()
     assert server.identity != before
+    connection, _ = connect(server, pki())
+    assert server.authenticate(connection).spiffe_id == AGENT
 
 
 def test_server_reload_loop_survives_bad_files(ca):
@@ -1034,7 +1038,7 @@ def test_server_reload_loop_survives_bad_files(ca):
     before = server_tls.identity
 
     async def body(address):
-        paths["bundle"].write_bytes("# Bündel\n".encode() + ca.pem)
+        paths["bundle"].write_bytes(b"\xff\xfe not a bundle")
         await asyncio.sleep(0.4)
         _rewrite(ca, paths, SERVER, bundle=ca.pem)
         await asyncio.sleep(0.4)
@@ -1119,38 +1123,533 @@ def test_demo_over_localhost(tmp_path):
     assert module.run(tmp_path) == ["ALLOWED", "DENIED", "DENIED", "ALLOWED"]
 
 
+# -- SPIRE Workload API source -------------------------------------------------------
+
+
+def _varint(value):
+    out = bytearray()
+    while True:
+        out.append((value & 0x7F) | (0x80 if value > 0x7F else 0))
+        value >>= 7
+        if not value:
+            return bytes(out)
+
+
+def _field(number, data):
+    return _varint(number << 3 | 2) + _varint(len(data)) + data
+
+
+def _der(pem):
+    return b"".join(c.public_bytes(serialization.Encoding.DER) for c in x509.load_pem_x509_certificates(pem))
+
+
+def svid_entry(authority, identity, *, bundle=None, key_from=None, label=None, **options):
+    """One X509SVID message, as a SPIRE agent would send it."""
+    cert, key = authority.leaf(identity, **options)
+    if key_from is not None:
+        _, key = key_from.leaf(identity)
+    key_der = serialization.load_pem_private_key(key, None).private_bytes(
+        serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    return (
+        _field(1, (label or identity).encode())
+        + _field(2, _der(cert))
+        + _field(3, key_der)
+        + _field(4, _der(bundle if bundle is not None else authority.pem))
+    )
+
+
+def x509_response(*entries, federated=()):
+    message = b"".join(_field(1, entry) for entry in entries)
+    for domain, pem in federated:
+        message += _field(3, _field(1, domain.encode()) + _field(2, _der(pem)))
+    return message
+
+
+class FakeWorkloadAPI:
+    """A stand-in for the SPIRE agent's Workload API endpoint."""
+
+    def __init__(self, grpc, bind="127.0.0.1:0"):
+        import queue
+
+        self._grpc, self._queue = grpc, queue
+        self._lock = threading.Lock()
+        self._streams = []
+        self._current = None
+        self.refuse = None  # A grpc.StatusCode to answer with instead of streaming.
+        self.calls = 0
+        self.saw_header = []
+        api = self
+
+        class Handler(grpc.GenericRpcHandler):
+            def service(self, details):
+                if details.method != "/SpiffeWorkloadAPI/FetchX509SVID" or api.refuse == "unimplemented":
+                    return None
+                return grpc.unary_stream_rpc_method_handler(
+                    api._fetch, request_deserializer=lambda raw: raw, response_serializer=lambda raw: raw
+                )
+
+        self._server = grpc.server(ThreadPoolExecutor(max_workers=8))
+        self._server.add_generic_rpc_handlers((Handler(),))
+        port = self._server.add_insecure_port(bind)
+        self.address = bind if bind.startswith("unix:") else f"tcp://127.0.0.1:{port}"
+        self._server.start()
+
+    def _fetch(self, request, context):
+        self.calls += 1
+        self.saw_header.append(dict(context.invocation_metadata()).get("workload.spiffe.io"))
+        if self.refuse is not None:
+            context.abort(self.refuse, "no identity issued")
+        stream = self._queue.Queue()
+        with self._lock:
+            self._streams.append(stream)
+            if self._current is not None:
+                stream.put(self._current)
+        while True:
+            message = stream.get()
+            if message is None or not context.is_active():
+                return
+            yield message
+
+    def publish(self, message):
+        with self._lock:
+            self._current = message
+            for stream in self._streams:
+                stream.put(message)
+
+    def drop_streams(self):
+        with self._lock:
+            streams, self._streams = self._streams, []
+        for stream in streams:
+            stream.put(None)
+
+    def stop(self):
+        self.drop_streams()
+        self._server.stop(0)
+
+
+@pytest.fixture
+def workload_api(monkeypatch):
+    grpc = pytest.importorskip("grpc")
+    monkeypatch.setattr("tenuo.spiffe._WORKLOAD_API_BACKOFF", (0.05, 0.2))
+    started = []
+
+    def start(bind="127.0.0.1:0"):
+        api = FakeWorkloadAPI(grpc, bind)
+        started.append(api)
+        return api
+
+    yield start
+    for api in started:
+        api.stop()
+
+
+@pytest.fixture
+def from_api():
+    opened = []
+
+    def build(api, *, server=True, **options):
+        options.setdefault("timeout", 5)
+        tls = SpiffeTLS.from_workload_api(trust_domain=DOMAIN, server_side=server, socket_path=api.address, **options)
+        opened.append(tls)
+        return tls
+
+    yield build
+    for tls in opened:
+        tls.close()
+
+
+def eventually(condition, seconds=5.0):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_workload_api_supplies_and_renews_credentials(ca, pki, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    server = from_api(api)
+    assert server.identity.spiffe_id == SERVER and api.saw_header == ["true"]
+    listener = server.context
+    old_connection, old_peer = connect(server, pki())
+    assert server.authenticate(old_connection).spiffe_id == AGENT
+    first = server.identity.certificate_sha256
+    assert _served(old_peer) == first
+
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    assert eventually(lambda: server.identity.certificate_sha256 != first)
+    assert server.context is listener
+    _, peer = connect(server, pki())
+    assert _served(peer) == server.identity.certificate_sha256
+    assert server.authenticate(old_connection).spiffe_id == AGENT
+    assert server.reload_if_changed() is False
+    server.reload()  # A no-op for this source.
+
+
+def test_workload_api_end_to_end_issuance(ca, workload_api, from_api):
+    issuer_api, agent_api = workload_api(), workload_api()
+    issuer_api.publish(x509_response(svid_entry(ca, SERVER)))
+    agent_api.publish(x509_response(svid_entry(ca, AGENT)))
+    server_tls, client_tls = from_api(issuer_api), from_api(agent_api, server=False)
+    root, holder = SigningKey.generate(), SigningKey.generate()
+    issuer = SpiffeWarrantIssuer(tls=server_tls, signing_key=root, policy=lambda *_: SpiffeGrant(REFUND))
+    options = dict(issuer_id=SERVER, issuer_key=root.public_key, holder_key=holder, task_id="task-123")
+
+    async def body(address):
+        first = await asyncio.to_thread(request_warrant, client_tls, address, **options)
+        before = (server_tls.identity.certificate_sha256, client_tls.identity.certificate_sha256)
+        issuer_api.publish(x509_response(svid_entry(ca, SERVER)))
+        agent_api.publish(x509_response(svid_entry(ca, AGENT)))
+        assert await asyncio.to_thread(
+            eventually,
+            lambda: (
+                server_tls.identity.certificate_sha256 != before[0]
+                and client_tls.identity.certificate_sha256 != before[1]
+            ),
+        )
+        second = await asyncio.to_thread(request_warrant, client_tls, address, **options)
+        return first, second
+
+    first, second = run_server(issuer, body)
+    assert first.id != second.id
+
+
+def test_workload_api_selects_svid_by_spiffe_id(ca, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, AGENT), svid_entry(ca, SERVER)))
+    assert from_api(api).identity.spiffe_id == AGENT  # The first SVID is the default.
+    assert from_api(api, spiffe_id=SERVER).identity.spiffe_id == SERVER
+    with pytest.raises(SpiffeError, match=f"did not offer spiffe://{DOMAIN}/absent"):
+        from_api(api, spiffe_id=f"spiffe://{DOMAIN}/absent", timeout=0.5)
+    with pytest.raises(ValueError):
+        from_api(api, spiffe_id="spiffe://other.test/issuer")
+
+
+def test_workload_api_ignores_unusable_updates(ca, pki, workload_api, from_api, tmp_path):
+    other = CA(tmp_path, "other root")
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    server = from_api(api)
+    before = server.identity
+    for bad in (
+        b"\xff\xff\xff not protobuf",
+        x509_response(),
+        x509_response(svid_entry(ca, "spiffe://other.test/issuer")),
+        x509_response(svid_entry(ca, SERVER, expires=-5)),
+        x509_response(svid_entry(ca, SERVER, key_from=other)),
+        x509_response(_field(1, b"spiffe://example.test/issuer") + _field(2, b"\x30\x82\xff\xff")),
+    ):
+        calls = api.calls
+        api.publish(bad)
+        time.sleep(0.15)
+        assert server.identity == before
+        assert api.calls == calls  # Still on the same stream: a bad update does not disconnect.
+    connection, _ = connect(server, pki())
+    assert server.authenticate(connection).spiffe_id == AGENT
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    assert eventually(lambda: server.identity != before)
+
+
+def test_workload_api_reconnects_after_stream_loss(ca, pki, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    server = from_api(api)
+    before = server.identity
+    api.drop_streams()
+    assert eventually(lambda: api.calls >= 2)
+    connect(server, pki())  # Current credentials keep working while disconnected.
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    assert eventually(lambda: server.identity != before)
+
+
+def test_workload_api_waits_for_identity(ca, workload_api, from_api):
+    grpc = pytest.importorskip("grpc")
+    api = workload_api()
+    api.refuse = grpc.StatusCode.PERMISSION_DENIED
+
+    def provision():
+        time.sleep(0.3)
+        api.refuse = None
+        api.publish(x509_response(svid_entry(ca, SERVER)))
+
+    worker = threading.Thread(target=provision)
+    worker.start()
+    try:
+        assert from_api(api).identity.spiffe_id == SERVER
+    finally:
+        worker.join()
+    assert api.calls >= 2
+
+    never = workload_api()
+    never.refuse = grpc.StatusCode.PERMISSION_DENIED
+    with pytest.raises(SpiffeError, match="PERMISSION_DENIED: no identity issued"):
+        from_api(never, timeout=0.4)
+
+
+def test_workload_api_stops_on_unsupported_endpoint(workload_api, from_api):
+    api = workload_api()
+    api.refuse = "unimplemented"
+    start = time.monotonic()
+    with pytest.raises(SpiffeError, match="UNIMPLEMENTED"):
+        from_api(api, timeout=10)
+    assert time.monotonic() - start < 5  # Reported at once, not after the timeout.
+
+
+def test_workload_api_authority_removal_and_federated_bundles(ca, pki, workload_api, from_api, tmp_path):
+    successor, foreign = CA(tmp_path, "successor root"), CA(tmp_path, "foreign root")
+    api = workload_api()
+    api.publish(
+        x509_response(
+            svid_entry(ca, SERVER, bundle=ca.pem + successor.pem), federated=[("spiffe://foreign.test", foreign.pem)]
+        )
+    )
+    server = from_api(api)
+    old_connection, _ = connect(server, pki())
+    # Authorities of other trust domains in the response are not trusted.
+    foreign_agent = foreign.files("foreign-agent", AGENT, bundle=ca.pem + successor.pem)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.load_verify_locations(cafile=str(foreign_agent["bundle"]))
+    context.load_cert_chain(str(foreign_agent["cert"]), str(foreign_agent["key"]))
+    with pytest.raises(ssl.SSLError):
+        connect(server, SimpleNamespace(context=context))
+
+    before = server.identity
+    api.publish(x509_response(svid_entry(successor, SERVER)))  # The original authority is gone.
+    assert eventually(lambda: server.identity != before)
+    with pytest.raises(SpiffeError, match="not verified by this SPIFFE TLS context"):
+        server.authenticate(old_connection)
+    with pytest.raises(ssl.SSLError):
+        connect(server, pki(peer_only=True))
+
+
+def test_workload_api_close_stops_following(ca, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    server = from_api(api)
+    before = server.identity
+    watcher = server._watcher
+    server.close()
+    assert not watcher._thread.is_alive()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    time.sleep(0.2)
+    assert server.identity == before
+    server.close()  # Idempotent.
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Unix domain sockets")
+def test_workload_api_over_unix_socket_and_environment(ca, workload_api, monkeypatch):
+    import shutil
+    import tempfile
+
+    directory = tempfile.mkdtemp(prefix="wl", dir="/tmp")  # Socket paths must be short.
+    try:
+        path = os.path.join(directory, "agent.sock")
+        api = workload_api(f"unix:{path}")
+        api.publish(x509_response(svid_entry(ca, SERVER)))
+        for address in (path, f"unix://{path}"):
+            tls = SpiffeTLS.from_workload_api(trust_domain=DOMAIN, server_side=True, socket_path=address, timeout=5)
+            tls.close()
+        monkeypatch.setenv("SPIFFE_ENDPOINT_SOCKET", f"unix://{path}")
+        tls = SpiffeTLS.from_workload_api(trust_domain=DOMAIN, server_side=True, timeout=5)
+        assert tls.identity.spiffe_id == SERVER
+        tls.close()
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_workload_api_address_forms(monkeypatch):
+    from tenuo.spiffe import _workload_api_target
+
+    monkeypatch.delenv("SPIFFE_ENDPOINT_SOCKET", raising=False)
+    assert _workload_api_target("/run/spire/agent.sock") == "unix:///run/spire/agent.sock"
+    assert _workload_api_target("unix:///run/spire/agent.sock") == "unix:///run/spire/agent.sock"
+    assert _workload_api_target("tcp://127.0.0.1:8081") == "127.0.0.1:8081"
+    assert _workload_api_target("tcp://[::1]:8081") == "[::1]:8081"
+    for bad in (
+        None,
+        "",
+        "agent.sock",
+        "unix://relative.sock",
+        "tcp://localhost:8081",
+        "tcp://127.0.0.1",
+        "http://x",
+        "/tmp/a%41.sock",
+        "/tmp/a?b.sock",
+        "unix:///tmp/a#b.sock",
+        "tcp://::1:8081",
+        "tcp://[127.0.0.1]:80",
+        "tcp://127.0.0.1: 80",
+        "tcp://127.0.0.1:8_0",
+        "tcp://127.0.0.1:0",
+        "tcp://127.0.0.1:99999",
+    ):
+        with pytest.raises(ValueError):
+            _workload_api_target(bad)
+
+
+def test_workload_api_ignores_http_proxy_settings(ca, workload_api, from_api, monkeypatch):
+    for name in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "grpc_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("no_proxy", "NO_PROXY", "no_grpc_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    assert from_api(api).identity.spiffe_id == SERVER and api.calls == 1
+
+
+def test_workload_api_uses_update_once_it_becomes_valid(ca, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER, starts=2)))  # Valid two seconds from now.
+    server = from_api(api, timeout=8)
+    assert server.identity.spiffe_id == SERVER and api.calls == 1  # No new push was needed.
+
+    before = server.identity
+    api.publish(x509_response(svid_entry(ca, SERVER, starts=2)))
+    time.sleep(0.3)
+    assert server.identity == before and server.reload_if_changed() is False
+    assert eventually(lambda: server.reload_if_changed() or server.identity != before, seconds=6)
+    assert server.identity != before and server.reload_if_changed() is False
+
+
+def test_workload_api_startup_retries_stay_frequent():
+    from tenuo.spiffe import _next_delay
+
+    delay, waited = 1.0, []
+    for _ in range(12):
+        waited.append(delay)
+        delay = _next_delay(delay, usable=False)
+    assert max(waited) <= 2.0 and sum(waited) < 30
+    delay = 1.0
+    for _ in range(12):
+        delay = _next_delay(delay, usable=True)
+    assert delay == 30.0
+
+
+def test_workload_api_keeps_following_after_unsupported_reply(ca, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    server = from_api(api)
+    before = server.identity
+    api.refuse = "unimplemented"
+    api.drop_streams()
+    time.sleep(0.4)
+    assert server._watcher._thread.is_alive() and server.identity == before
+    api.refuse = None
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    assert eventually(lambda: server.identity != before)
+
+
+def test_workload_api_checks_the_certificate_not_the_label(ca, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, AGENT, label=SERVER)))
+    with pytest.raises(SpiffeError, match="different SPIFFE ID"):
+        from_api(api, spiffe_id=SERVER, timeout=0.6)
+
+
+def test_workload_api_error_lists_a_bounded_number_of_offers(ca, workload_api, from_api):
+    api = workload_api()
+    entries = [_field(1, f"spiffe://{DOMAIN}/w{i}\n".encode() * 100) for i in range(12)]
+    api.publish(x509_response(*entries))
+    with pytest.raises(SpiffeError) as refused:
+        from_api(api, spiffe_id=f"spiffe://{DOMAIN}/absent", timeout=0.4)
+    message = str(refused.value)
+    assert "and 4 more" in message and len(message) < 3000 and "\n" not in message
+
+
+def test_workload_api_thread_stops_when_instance_is_dropped(ca, workload_api):
+    import gc
+
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    tls = SpiffeTLS.from_workload_api(trust_domain=DOMAIN, server_side=True, socket_path=api.address, timeout=5)
+    thread = tls._watcher._thread
+    assert thread.is_alive()
+    del tls
+    gc.collect()
+    assert eventually(lambda: not thread.is_alive())
+
+
+@pytest.mark.skipif(not hasattr(os, "memfd_create") or not os.path.isdir("/proc/self/fd"), reason="needs Linux memfd")
+def test_private_key_is_loaded_without_touching_disk(pki, monkeypatch):
+    def no_disk(*_, **__):
+        raise AssertionError("credentials were written to a temporary directory")
+
+    monkeypatch.setattr("tenuo.spiffe.tempfile.TemporaryDirectory", no_disk)
+    server = pki(server=True)
+    connection, _ = connect(server, pki())
+    assert server.authenticate(connection).spiffe_id == AGENT
+
+
+@pytest.mark.parametrize(
+    "message",
+    [b"\x0a", b"\x0a\x05ab", b"\xff" * 12, b"\x0b", b"\x0a\x02\x12\x7f"],
+    ids=["truncated-length", "short-body", "endless-varint", "unknown-wire-type", "nested-truncated"],
+)
+def test_workload_api_message_decoder_rejects_malformed_input(message):
+    from tenuo.spiffe import _x509_snapshot
+
+    with pytest.raises(SpiffeError):
+        _x509_snapshot(message, None)
+
+
 # -- the guide's code ---------------------------------------------------------------
 
 GUIDE = Path(__file__).parents[3] / "docs" / "spiffe.md"
 
 
-def test_guide_code_runs(tmp_path, monkeypatch, caplog):
-    """Execute the named code blocks in docs/spiffe.md against a test trust domain."""
+def _guide_blocks():
     if not GUIDE.exists():
         pytest.skip("guide not present in this distribution")
     blocks = dict(re.findall(r"```python\n# (\S+\.py)[^\n]*\n(.*?)```", GUIDE.read_text(), re.S))
-    assert set(blocks) == {"make_issuer_key.py", "issuer.py", "agent.py", "call_tool.py", "tool.py", "delegate.py"}
+    assert set(blocks) == {
+        "transport_from_files.py",
+        "make_issuer_key.py",
+        "issuer.py",
+        "agent.py",
+        "call_tool.py",
+        "tool.py",
+        "delegate.py",
+    }
+    return blocks
 
+
+def test_guide_file_option_runs(tmp_path):
+    """The guide's credential-file alternative builds a working transport."""
     acme = CA(tmp_path, "acme.test root")
-    directories = {}
+    cert, key = acme.leaf("spiffe://acme.test/issuer")
+    for name, data in (("svid.pem", cert), ("svid_key.pem", key), ("svid_bundle.pem", acme.pem)):
+        (tmp_path / name).write_bytes(data)
+    code = _guide_blocks()["transport_from_files.py"]
+    assert code.count("/run/spiffe/") == 3
+    scope: dict = {}
+    exec(code.replace("/run/spiffe/", f"{tmp_path}/"), scope)
+    assert scope["transport"].identity.spiffe_id == "spiffe://acme.test/issuer"
+
+
+def test_guide_code_runs(tmp_path, monkeypatch, caplog, workload_api):
+    """Execute the named code blocks in docs/spiffe.md against a test trust domain."""
+    blocks = _guide_blocks()
+    acme = CA(tmp_path, "acme.test root")
+    apis = {}
     for role, identity in (("issuer", "spiffe://acme.test/issuer"), ("agent", "spiffe://acme.test/agents/refund")):
-        directory = tmp_path / role
-        directory.mkdir()
-        cert, key = acme.leaf(identity)
-        (directory / "svid.pem").write_bytes(cert)
-        (directory / "svid_key.pem").write_bytes(key)
-        (directory / "svid_bundle.pem").write_bytes(acme.pem)
-        directories[role] = directory
+        apis[role] = workload_api()
+        apis[role].publish(x509_response(svid_entry(acme, identity)))
 
     def localize(code, role, address=None):
-        code = (
-            code.replace("/run/spiffe/", f"{directories[role]}/")
-            .replace("/run/secrets/tenuo-issuer.pem", str(tmp_path / "tenuo-issuer.pem"))
-            .replace("/etc/tenuo/tenuo-issuer.pub", str(tmp_path / "tenuo-issuer.pub"))
+        if role is not None:
+            assert code.count('"/run/spire/sockets/agent.sock"') == 1
+            code = code.replace('"/run/spire/sockets/agent.sock"', repr(apis[role].address))
+        code = code.replace("/run/secrets/tenuo-issuer.pem", str(tmp_path / "tenuo-issuer.pem")).replace(
+            "/etc/tenuo/tenuo-issuer.pub", str(tmp_path / "tenuo-issuer.pub")
         )
         if address is not None:
             assert '("issuer.acme.internal", 8443)' in code
             code = code.replace('("issuer.acme.internal", 8443)', repr(tuple(address)))
+        assert "/run/" not in code and "/etc/" not in code
         return code
 
     monkeypatch.chdir(tmp_path)
@@ -1161,27 +1660,31 @@ def test_guide_code_runs(tmp_path, monkeypatch, caplog):
     issuer_code = localize(blocks["issuer.py"], "issuer").rstrip()
     assert issuer_code.endswith("asyncio.run(main())")
     issuer_scope: dict = {}
-    exec(issuer_code[: -len("asyncio.run(main())")], issuer_scope)
-
     agent_scope: dict = {}
+    try:
+        with caplog.at_level("INFO", logger="tenuo.spiffe"):
+            exec(issuer_code[: -len("asyncio.run(main())")], issuer_scope)
 
-    def agent_side(address):
-        exec(localize(blocks["agent.py"], "agent", address), agent_scope)
-        exec(blocks["call_tool.py"], agent_scope)
-        exec(blocks["delegate.py"], agent_scope)
+            def agent_side(address):
+                exec(localize(blocks["agent.py"], "agent", address), agent_scope)
+                exec(blocks["call_tool.py"], agent_scope)
+                exec(blocks["delegate.py"], agent_scope)
 
-    async def body(address):
-        await asyncio.to_thread(agent_side, address)
+            async def body(address):
+                await asyncio.to_thread(agent_side, address)
 
-    with caplog.at_level("INFO", logger="tenuo.spiffe"):
-        run_server(issuer_scope["issuer"], body)
+            run_server(issuer_scope["issuer"], body)
+    finally:
+        for scope in (issuer_scope, agent_scope):
+            if "transport" in scope:
+                scope["transport"].close()
     logged = caplog.text
+    assert "Loaded SVID spiffe://acme.test/issuer" in logged
     assert "Issuing warrants on" in logged and "as spiffe://acme.test/issuer" in logged
     assert "to spiffe://acme.test/agents/refund for task 'refund-task-123'" in logged
-    assert "/run/" not in localize(blocks["agent.py"], "agent") and "/etc/" not in localize(blocks["tool.py"], "agent")
 
     tool_scope: dict = {}
-    exec(localize(blocks["tool.py"], "agent"), tool_scope)
+    exec(localize(blocks["tool.py"], None), tool_scope)
     refund = tool_scope["refund"]
     assert refund(agent_scope["call"]) == "refunded 4000 cents to customer 123"
     assert refund(agent_scope["worker_call"]) == "refunded 800 cents to customer 123"

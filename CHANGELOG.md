@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mTLS, verify a separate Tenuo holder key, and issue task-scoped warrants under
   explicit application policy. Includes an asyncio issuance endpoint
   (`SpiffeIssuerServer`) and agent client (`request_warrant`), domain-separated
-  holder proofs, per-workload challenge limits, an audit callback, reloading of
-  rotated SVIDs and bundles without rebuilding listeners, SVID-bounded expiry,
+  holder proofs, per-workload challenge limits, an audit callback, credentials
+  taken directly from the SPIRE Workload API (`tenuo[spiffe-workload-api]`) or
+  from files, renewal without rebuilding listeners, SVID-bounded expiry,
   and development-PKI and real-SPIRE demos. See [the SPIFFE guide](docs/spiffe.md).
 
 ## [0.3.8] - 2026-11-24

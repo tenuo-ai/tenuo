@@ -62,8 +62,13 @@ workloads with 120-second SVIDs, keeps an issuer running while SPIRE renews
 them, and checks that both sides switch to the renewed SVIDs without a restart:
 
 ```text
+Verified: issuer and agent followed a renewal straight from the Workload API.
 Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
 ```
+
+The first line is an issuer and agent built with `SpiffeTLS.from_workload_api`,
+reading the SPIRE agent's socket. The second is the same pair reading
+credential files that the harness rewrites.
 
 Processes, SQLite
 state, private keys, and sockets are temporary and cleaned up on exit. No ports
@@ -104,10 +109,10 @@ PYTHONPATH=tenuo-python python tenuo-python/examples/spiffe/demo.py --credential
 ```
 
 For another trust domain or workload naming scheme, update `DOMAIN`, `AGENT_ID`,
-and `ISSUER_ID` in `demo.py` and the corresponding policy. Long-lived services reload
-changed credential files automatically (see the guide); keep them current with
-a SPIRE helper such as `spiffe-helper`. The adapter does not call the Workload
-API itself.
+and `ISSUER_ID` in `demo.py` and the corresponding policy. Long-lived services should
+normally skip the files and use `SpiffeTLS.from_workload_api`, which follows
+renewals by itself. With files, the adapter reloads them when they change; keep
+them current with a helper such as `spiffe-helper`. The guide covers both.
 
 See [the adapter guide](../../../docs/spiffe.md) for APIs, trust boundaries,
 rotation, revocation, policy integration, and production deployment constraints.

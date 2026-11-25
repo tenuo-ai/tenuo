@@ -17,7 +17,8 @@ lets you give an agent a write tool without giving it the whole API.
 Your SPIRE deployment and existing workloads stay as they are. The issuer is
 one more registered workload.
 
-The adapter is Python. Agents in other languages can use the
+The adapter is Python. It takes SVIDs straight from the SPIRE agent, or from
+files. Agents in other languages can use the
 [wire protocol](#wire-protocol), and tools can verify warrants with any Tenuo
 SDK. We run the exchange on this page against SPIRE 1.16.0 in CI, including a
 renewal of both SVIDs while the issuer is serving. The Python blocks that start
@@ -125,9 +126,11 @@ step says which machine it runs on.
   issuer or an agent. The
   [SPIRE quickstarts](https://spiffe.io/docs/latest/try/) cover that part.
 - Python 3.9 or newer for the issuer and the agents.
-- The adapter: `pip install 'tenuo[spiffe]'` once it is released. Until then,
-  install from a checkout with `python -m pip install './tenuo-python[spiffe]'`
-  (needs Rust build tools).
+- The adapter: `pip install 'tenuo[spiffe-workload-api]'` once it is released.
+  Until then, install from a checkout with
+  `python -m pip install './tenuo-python[spiffe-workload-api]'` (needs Rust
+  build tools). The plain `tenuo[spiffe]` extra leaves out `grpcio` and
+  supports credential files only.
 - A registration entry for the issuer and one for each agent. Run on the SPIRE
   server:
 
@@ -144,12 +147,47 @@ step says which machine it runs on.
   Give the issuer and each agent different selectors, so one workload cannot
   obtain another's SVID.
 
-### Step 1: Put SVIDs on disk
+### Step 1: Give each workload its SVID
 
 *On the issuer's machine and on each agent's machine.*
 
-The adapter reads three PEM files: the SVID certificate, its private key, and
-the trust bundle. It does not call the Workload API itself. Run
+The adapter needs the workload's SVID, its private key, and the trust bundle.
+There are two ways to supply them. The steps below use the first.
+
+**Option A: the Workload API (recommended).** The adapter connects to the SPIRE
+agent's socket, takes the SVID from it, and follows renewals. There is nothing
+extra to run and no key file to manage: on Linux the private key stays in
+memory. The workload only needs to reach the socket:
+
+```python
+transport = SpiffeTLS.from_workload_api(
+    trust_domain="acme.test",
+    socket_path="/run/spire/sockets/agent.sock",
+    server_side=True,  # False in agents.
+)
+```
+
+- Leave out `socket_path` to use the `SPIFFE_ENDPOINT_SOCKET` environment
+  variable, the SPIFFE convention.
+- SPIRE decides which SVID to hand out from the process that connects, so the
+  issuer or agent process itself must match its registration entry's selectors.
+- If SPIRE offers the process more than one SVID, the adapter uses the first.
+  Pass `spiffe_id="spiffe://acme.test/issuer"` to choose.
+- The call waits up to 30 seconds for an SVID, asking again every 2 seconds,
+  so a workload that starts before its registration entry reaches the SPIRE
+  agent still comes up.
+
+Check what SPIRE will hand out, as the workload's user:
+
+```bash
+spire-agent api fetch x509 -socketPath /run/spire/sockets/agent.sock
+```
+
+It prints `SPIFFE ID:` and `SVID Valid Until:` for each SVID. An error
+containing `no identity issued` means no registration entry matches.
+
+**Option B: credential files.** Use this when you would rather not add `grpcio`,
+or when other software on the host needs the same files. Run
 [`spiffe-helper`](https://github.com/spiffe/spiffe-helper) beside each
 workload:
 
@@ -167,28 +205,30 @@ key_file_mode = 0600
 spiffe-helper -config helper.conf
 ```
 
-SPIRE decides which SVID to hand out from who is asking. Run the helper as the
-same Unix user (or in the same pod) as the workload it serves, so that it
-matches the workload's selectors and the workload can read the key file.
+Run the helper as the same Unix user (or in the same pod) as the workload it
+serves, so that it matches the workload's selectors and the workload can read
+the key file. The helper keeps running and replaces the files atomically when
+SPIRE renews the SVID. Leave `include_federated_domains` off: the bundle file
+must hold only your own trust domain's authorities, and the adapter cannot tell
+a foreign CA from one of yours.
 
-The helper keeps running and replaces the files atomically when SPIRE renews
-the SVID. Leave `include_federated_domains` off: the bundle file must hold only
-your own trust domain's authorities, and the adapter cannot tell a foreign CA
-from one of yours.
+Check the result with
+`openssl x509 -in /run/spiffe/svid.pem -noout -text | grep URI:`, which prints
+`URI:spiffe://acme.test/issuer`. Then build the transport from the files, in
+place of `from_workload_api` in steps 3 and 4:
 
-Check the result:
+```python
+# transport_from_files.py
+from tenuo.spiffe import SpiffeTLS
 
-```bash
-openssl x509 -in /run/spiffe/svid.pem -noout -text | grep URI:
+transport = SpiffeTLS(
+    trust_domain="acme.test",
+    bundle_file="/run/spiffe/svid_bundle.pem",
+    cert_file="/run/spiffe/svid.pem",
+    key_file="/run/spiffe/svid_key.pem",
+    server_side=True,  # False in agents.
+)
 ```
-
-```text
-                URI:spiffe://acme.test/issuer
-```
-
-To try things once without the helper, `spire-agent api fetch x509 -write DIR`
-writes `svid.0.pem`, `svid.0.key`, and `bundle.0.pem`. Those files are not
-renewed.
 
 ### Step 2: Create the issuer key
 
@@ -233,11 +273,9 @@ from tenuo.spiffe import SpiffeGrant, SpiffeIssuerServer, SpiffeTLS, SpiffeWarra
 logging.basicConfig(level=logging.INFO)
 audit_log = logging.getLogger("acme.warrant-audit")
 
-transport = SpiffeTLS(
+transport = SpiffeTLS.from_workload_api(
     trust_domain="acme.test",
-    bundle_file="/run/spiffe/svid_bundle.pem",
-    cert_file="/run/spiffe/svid.pem",
-    key_file="/run/spiffe/svid_key.pem",
+    socket_path="/run/spire/sockets/agent.sock",
     server_side=True,
 )
 
@@ -287,14 +325,15 @@ async def main():
 asyncio.run(main())
 ```
 
-Run `python issuer.py`. It prints one line and waits:
+Run `python issuer.py`. It logs its SVID, then its address, and waits:
 
 ```text
+INFO:tenuo.spiffe:Loaded SVID spiffe://acme.test/issuer (expires 2026-11-25T22:34:29+00:00)
 INFO:tenuo.spiffe:Issuing warrants on 0.0.0.0:8443 as spiffe://acme.test/issuer
 ```
 
-The server needs no web framework, and it reloads the SVID files as SPIRE
-renews them. [Writing the policy](#writing-the-policy) covers the part you will
+The server needs no web framework, and it follows SVID renewals for as long as
+it runs. [Writing the policy](#writing-the-policy) covers the part you will
 replace: `approved_tasks`.
 
 ### Step 4: Request a warrant in the agent
@@ -308,11 +347,9 @@ from pathlib import Path
 from tenuo import PublicKey, SigningKey
 from tenuo.spiffe import SpiffeTLS, request_warrant
 
-transport = SpiffeTLS(
+transport = SpiffeTLS.from_workload_api(
     trust_domain="acme.test",
-    bundle_file="/run/spiffe/svid_bundle.pem",
-    cert_file="/run/spiffe/svid.pem",
-    key_file="/run/spiffe/svid_key.pem",
+    socket_path="/run/spire/sockets/agent.sock",
     server_side=False,
 )
 holder_key = SigningKey.generate()  # Never leaves this process.
@@ -474,24 +511,32 @@ totals in the refund service.
 
 SPIRE's default X.509-SVID lifetime is one hour (`default_x509_svid_ttl`), and
 SPIRE renews an SVID at about half its lifetime. A long-running issuer
-therefore has to pick up new files many times a day. The adapter handles this:
+therefore has to pick up new credentials many times a day. The adapter handles
+this:
 
-- `SpiffeIssuerServer` checks the three files every `reload_interval` seconds
-  (default 30). `request_warrant` checks them before each request.
+- **With the Workload API**, the SPIRE agent pushes each renewed SVID and
+  bundle over the open stream. If the stream breaks (a SPIRE agent restart,
+  say), the adapter reconnects, waiting 1 second and doubling up to 30, and
+  keeps using the credentials it has.
+- **With files**, `SpiffeIssuerServer` checks the three files every
+  `reload_interval` seconds (default 30), and `request_warrant` checks them
+  before each request. In your own server, call
+  `transport.reload_if_changed()` on a timer.
 - New handshakes use the newest SVID and bundle. Listeners are not rebuilt and
   open connections are not dropped.
-- If a reload fails (a half-written file, a key that does not match, an SVID
-  for another trust domain, an expired SVID), the adapter keeps the credentials
-  it has, logs a warning, and tries again at the next check.
+- An unusable update (a half-written file, a key that does not match, an SVID
+  for another trust domain, an expired SVID) is ignored with a warning. The
+  adapter keeps the credentials it has and takes the next good update. An SVID
+  that is not valid yet, as can happen with clock skew, is tried again at each
+  check.
 - It also warns when the local SVID is in the last fifth of its lifetime and
-  has not been renewed. That warning usually means the helper has stopped.
-- When a reload removes an authority from the bundle, connections verified
+  has not been renewed. That warning means SPIRE or the helper has stopped
+  delivering.
+- When an update removes an authority from the bundle, connections verified
   under the old bundle are refused and must reconnect. TLS session resumption
   is disabled, so a removed authority cannot be carried forward that way.
 
-If you embed `SpiffeTLS` in your own server, call
-`transport.reload_if_changed()` on a timer, or `transport.reload()` when your
-helper signals a renewal.
+Call `transport.close()` at shutdown to stop following the Workload API.
 
 ### Issuer key rotation
 
@@ -516,6 +561,8 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 | Agent socket timeout | 10 seconds | `request_warrant(timeout=)` |
 | Policy and audit threads | 32 | `SpiffeIssuerServer(max_workers=)` |
 | Credential file check | every 30 seconds | `SpiffeIssuerServer(reload_interval=)` |
+| Wait for the first SVID from the Workload API | 30 seconds | `SpiffeTLS.from_workload_api(timeout=)` |
+| Workload API reconnect wait | 1 second, doubling to 30 (to 2 before the first SVID) | fixed |
 | Frame size | 64 KiB | fixed |
 | Bytes accepted per connection | 256 KiB | fixed |
 | Warrant lifetime | 300 seconds, capped by the SVID | `SpiffeGrant(ttl_seconds=)` |
@@ -539,6 +586,10 @@ The issuer key is yours to rotate; SPIRE does not manage it.
   the live TLS connection. Put only TCP (layer 4) load balancers in front of
   it. A proxy that terminates TLS and forwards an identity header will not
   work, by design.
+- **Key material.** `ssl` can only load a certificate and key from paths. On
+  Linux the adapter uses anonymous in-memory files, so it also works with a
+  read-only root filesystem. On other systems the key passes through a private
+  temporary directory that is removed straight after loading.
 - **Service meshes.** A sidecar that intercepts the issuer port would end the
   mTLS session itself. Exclude that port from capture. With Istio, the pod
   annotations are `traffic.sidecar.istio.io/excludeInboundPorts` on the issuer
@@ -547,16 +598,18 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 - **Replicas.** Run as many issuer replicas as you like with the same issuer
   key. An exchange uses one connection from start to finish, so no session
   affinity is needed.
-- **Kubernetes.** Run `spiffe-helper` as a sidecar container in the same pod,
-  sharing an in-memory `emptyDir` volume mounted at `/run/spiffe`, with the
-  SPIRE agent socket mounted into the helper. We do not ship a manifest for
-  this yet. [Kubernetes Integration](kubernetes.md) covers the Tenuo side.
+- **Kubernetes.** Mount the SPIRE agent socket into the issuer and agent pods
+  (the SPIFFE CSI driver or a `hostPath` volume) and use the Workload API. No
+  sidecar is needed. With credential files, run `spiffe-helper` as a sidecar
+  sharing an in-memory `emptyDir` volume. We do not ship manifests for either
+  yet. [Kubernetes Integration](kubernetes.md) covers the Tenuo side.
 - **Web frameworks.** Uvicorn, Hypercorn, and gRPC do not give application
   code the TLS connection object, so the issuer cannot be a route in those
   servers. Run `SpiffeIssuerServer` on its own port beside them.
 - **What to watch.** On the `tenuo.spiffe` logger: the warnings
-  `Could not reload SPIFFE credentials` and `has not been renewed` (the helper
-  is failing), the error `Issuance exchange failed` (your policy or audit
+  `Workload API stream ... ended`, `Ignoring an unusable Workload API update`,
+  `Could not reload SPIFFE credentials`, and `has not been renewed` (SPIRE or
+  the helper is not delivering), the error `Issuance exchange failed` (your policy or audit
   raised), and the rate of `Issuance refused` lines.
 
 ## Troubleshooting
@@ -566,17 +619,20 @@ matching reason on the `tenuo.spiffe` logger.
 
 | Message | Likely cause | Fix |
 |---|---|---|
-| `The SVID presented by HOST:PORT was not accepted: ...` | The issuer's SVID does not chain to the agent's bundle, or has expired. | Check both sides use the same trust domain's bundle and that the issuer's helper is running. |
+| `The SVID presented by HOST:PORT was not accepted: ...` | The issuer's SVID does not chain to the agent's bundle, or has expired. | Check both sides use the same trust domain's bundle and that the issuer is receiving renewals. |
 | `TLS with the issuer at HOST:PORT failed: TLSV1_ALERT_UNKNOWN_CA` | The issuer does not trust the agent's SVID. | The same check, from the issuer's side. |
 | `Could not complete the exchange with the issuer at HOST:PORT: ...` | Connection refused, reset, or timed out. A reset can mean the issuer is at `max_connections`. | Check the address, the network path, and issuer load. |
 | `Connection closed before a reply` | The issuer's 10-second deadline passed, usually a slow policy or audit call. | Check policy latency in the issuer log. |
 | `Unexpected peer SPIFFE ID` | `issuer_id` is not the ID on the issuer's SVID. | Compare with the issuer's registration entry. |
 | `SVID belongs to a different trust domain` | `trust_domain` does not match the SVID. | Fix the `SpiffeTLS` argument or the files. |
-| `Local SVID is not currently valid` (at startup) | The SVID file is stale. | The helper is not running or cannot reach the SPIRE agent. |
+| `No usable SVID from the Workload API at ...: PERMISSION_DENIED: no identity issued` (at startup) | No registration entry matches this process. | Compare the entry's selectors with the user or pod the workload runs as. A new entry can take a few seconds to reach the SPIRE agent. |
+| `No usable SVID from the Workload API at ...: UNAVAILABLE: ...` (at startup) | The socket path is wrong, or the SPIRE agent is not running. | Check `socket_path` or `SPIFFE_ENDPOINT_SOCKET`, and that the workload can open the socket. |
+| `The Workload API did not offer spiffe://...` | `spiffe_id` names an SVID this process is not entitled to. | The message lists the SVIDs that were offered. |
+| `Local SVID is not currently valid` (at startup, with files) | The SVID file is stale. | The helper is not running or cannot reach the SPIRE agent. |
 | `Trust bundle may contain only CA certificates` | `bundle_file` points at the SVID or another non-CA file. | Point it at the bundle file. |
 | `Issuer refused: Workload is not authorized for this task` | The policy returned `None`. | Check the task record and the caller's SPIFFE ID in the issuer log. |
 | `Issuer refused: Too many pending holder challenges for this workload` | 16 requests from one SPIFFE ID are unfinished. An abandoned request holds its slot for 30 seconds. | Raise `max_pending_per_identity`, or find the agents that open requests and stop. |
-| `Issuer refused: SVID expires too soon to issue a warrant` | The agent's SVID has about a second left. | The agent's helper is not renewing. |
+| `Issuer refused: SVID expires too soon to issue a warrant` | The agent's SVID has about a second left. | The agent is not receiving renewals. |
 | `Issuer error; see the issuer's log` | The policy or audit callback raised. | Read the traceback in the issuer log. |
 | `Challenge is from a different issuer key` | The agent's `issuer_key` is not this issuer's key. | Redistribute `tenuo-issuer.pub`. |
 | Tool returns `denied: Root warrant issuer is not trusted` | The tool has a different issuer public key. | Redistribute it. |
@@ -655,7 +711,9 @@ then the challenge bytes exactly as received.
 
 | Name | Purpose |
 |---|---|
-| `SpiffeTLS(trust_domain=, bundle_file=, cert_file=, key_file=, server_side=)` | Loads and reloads credentials. `authenticate(connection, expected_id=)` returns a `SpiffeIdentity`. |
+| `SpiffeTLS.from_workload_api(trust_domain=, server_side=, socket_path=, spiffe_id=, timeout=)` | Takes credentials from the SPIRE agent and follows renewals. `close()` stops following. |
+| `SpiffeTLS(trust_domain=, bundle_file=, cert_file=, key_file=, server_side=)` | Loads credentials from files. `reload()` and `reload_if_changed()` pick up new ones. |
+| `transport.authenticate(connection, expected_id=)` | Returns the peer's `SpiffeIdentity`. `transport.identity` is the local one. |
 | `SpiffeWarrantIssuer(tls=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=)` | Runs policy, challenges the holder key, mints warrants. |
 | `SpiffeIssuerServer(issuer, host=, port=, max_connections=, timeout=, reload_interval=, max_workers=)` | The mTLS endpoint. `async with` it, then `serve_forever()`. |
 | `request_warrant(tls, address, issuer_id=, issuer_key=, holder_key=, task_id=, timeout=)` | Agent-side call. `arequest_warrant` for asyncio. `issuer_key` may be a list. |
