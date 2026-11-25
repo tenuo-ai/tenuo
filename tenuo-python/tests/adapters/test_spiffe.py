@@ -30,6 +30,7 @@ from tenuo.spiffe import (
     ANY_ARGUMENTS,
     SpiffeError,
     SpiffeGrant,
+    SpiffeIdentity,
     SpiffeIssuerServer,
     SpiffeTLS,
     SpiffeWarrantIssuer,
@@ -414,6 +415,40 @@ def test_holder_checks_challenge_fields(exchange):
         challenge, holder, task_id="task-123", issuer_key=root.public_key, spiffe_id=AGENT
     )
     issuer.issue(connection, challenge, signature)
+
+
+def test_longest_accepted_fields_still_produce_a_signable_challenge(pki):
+    """The holder must not reject a challenge the issuer legitimately built.
+
+    The worst case is a maximal SPIFFE ID plus a maximal task_id of
+    supplementary characters, which the issuer escapes at 12 bytes each.
+    """
+    root, holder = SigningKey.generate(), SigningKey.generate()
+    issuer = SpiffeWarrantIssuer(
+        tls=pki(server=True), signing_key=root, policy=lambda *_: SpiffeGrant(REFUND, ttl_seconds=60)
+    )
+    identity = SpiffeIdentity(
+        spiffe_id=f"spiffe://{DOMAIN}/" + "a" * (2048 - len(f"spiffe://{DOMAIN}/")),
+        certificate_sha256="b" * 64,
+        expires_at=time.time() + 3600,
+    )
+    task_id = "\U0001f600" * 256
+
+    challenge = issuer._challenge(identity, holder.public_key, task_id)
+
+    assert len(challenge) > 4096, "expected a case the previous 4 KiB bound rejected"
+    sign_holder_challenge(challenge, holder, task_id=task_id, issuer_key=root.public_key, spiffe_id=identity.spiffe_id)
+
+
+@pytest.mark.parametrize("length, within_bound", [(256, True), (257, False)])
+def test_task_id_length_boundary(exchange, length, within_bound):
+    issuer, connection, holder, *_ = exchange
+    task_id = "t" * length
+    # Within the bound the length check passes and this fixture's policy is the
+    # one that refuses; past it, the length check refuses first.
+    expected = "not authorized" if within_bound else "1–256 characters"
+    with pytest.raises(SpiffeError, match=expected):
+        issuer.challenge(connection, holder.public_key, task_id)
 
 
 def test_replay_and_wrong_holder(exchange):
@@ -1114,6 +1149,86 @@ def test_abandoned_server_exchange_releases_pending_slot(served):
 
     assert run_server(issuer, body).id
     assert issuer._pending == {}
+
+
+def _parked_policy_server(pki):
+    """An issuer whose single policy thread parks until the returned gate opens.
+
+    ``entered`` reports that a callback actually reached the pool, so a server
+    too slow to get that far fails loudly instead of vacuously passing. The
+    gate's own timeout is only a backstop against hanging the suite; it is long
+    enough that no runner can reach it while a test is still working.
+    """
+    root, holder = SigningKey.generate(), SigningKey.generate()
+    gate, entered = threading.Event(), threading.Event()
+
+    def policy(identity, task_id):
+        entered.set()
+        gate.wait(60)
+        return SpiffeGrant(REFUND, ttl_seconds=60)
+
+    issuer = SpiffeWarrantIssuer(tls=pki(server=True), signing_key=root, policy=policy)
+    client_tls = pki()
+
+    def fetch(address, task_id="task-123"):
+        return request_warrant(
+            client_tls, address, issuer_id=SERVER, issuer_key=root.public_key, holder_key=holder, task_id=task_id
+        )
+
+    return issuer, fetch, gate, entered
+
+
+def test_timed_out_exchanges_do_not_pile_up_in_the_policy_queue(pki):
+    """Reconnecting clients must not grow the policy pool's queue without limit.
+
+    A timed-out exchange frees its connection slot as it unwinds, so the
+    connection count alone does not bound anything the pool has been handed:
+    with every policy thread parked, replacement connections would keep
+    enqueueing work items that nothing drains. Reads the pool's queue directly
+    because a submission that is never picked up has no other observable.
+    """
+    issuer, fetch, gate, entered = _parked_policy_server(pki)
+
+    async def main():
+        async with SpiffeIssuerServer(
+            issuer, host="127.0.0.1", port=0, max_connections=1, max_workers=1, timeout=1.0
+        ) as server:
+            try:
+                with pytest.raises(SpiffeError):
+                    await asyncio.to_thread(fetch, server.address, "parked")
+                assert entered.wait(10), "the policy callback never reached the pool"
+                for attempt in range(3):
+                    with pytest.raises(SpiffeError):
+                        await asyncio.to_thread(fetch, server.address, f"attempt-{attempt}")
+                return server._workers._work_queue.qsize()
+            finally:
+                gate.set()
+
+    # The first exchange's callback holds the one thread; the reconnects time
+    # out waiting to be submitted, so nothing accumulates behind it.
+    assert asyncio.run(main()) == 0
+
+
+def test_parked_policy_thread_releases_its_submission_slot(pki):
+    """The slot must be freed when the callback runs, not when its caller gives up.
+
+    Releasing on cancellation instead would hand the slot back while the work
+    item still occupied a thread, letting submissions outrun the bound; holding
+    it past completion would wedge the issuer for every later exchange.
+    """
+    issuer, fetch, gate, entered = _parked_policy_server(pki)
+
+    async def main():
+        async with SpiffeIssuerServer(
+            issuer, host="127.0.0.1", port=0, max_connections=1, max_workers=1, timeout=1.0
+        ) as server:
+            with pytest.raises(SpiffeError):
+                await asyncio.to_thread(fetch, server.address, "abandoned")
+            assert entered.wait(10), "the policy callback never reached the pool"
+            gate.set()
+            return await asyncio.to_thread(fetch, server.address)
+
+    assert asyncio.run(main()).id
 
 
 def test_grant_is_snapshotted_at_challenge(exchange):

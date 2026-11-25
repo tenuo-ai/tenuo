@@ -16,7 +16,6 @@ import asyncio
 import base64
 import binascii
 import contextlib
-import functools
 import ipaddress
 import json
 import logging
@@ -77,7 +76,28 @@ IssuerKeys = Union[PublicKey, Sequence[PublicKey]]
 _HOLDER_CONTEXT = b"tenuo.spiffe.holder-binding.v1\x00"
 _CHALLENGE_FIELDS = frozenset({"nonce", "issuer", "spiffe_id", "certificate", "holder", "task_id"})
 _CHALLENGE_SECONDS = 30
-_MAX_CHALLENGE_BYTES = 4096
+_MAX_SPIFFE_ID = 2048
+_MAX_TASK_ID = 256
+# The largest challenge the issuer can serialize from inputs it accepts, so the
+# holder never refuses a challenge the issuer legitimately produced. `nonce`,
+# `issuer`, `certificate`, and `holder` are fixed-width hex and the SPIFFE ID
+# grammar is ASCII; only `task_id` is unrestricted text, and `_challenge()`
+# serializes with the json default `ensure_ascii=True`, where a supplementary
+# character costs 12 bytes as an escaped surrogate pair.
+_MAX_CHALLENGE_BYTES = len(
+    json.dumps(
+        {
+            "nonce": "0" * 64,
+            "issuer": "0" * 64,
+            "spiffe_id": "a" * _MAX_SPIFFE_ID,
+            "certificate": "0" * 64,
+            "holder": "0" * 64,
+            "task_id": "\U0001f600" * _MAX_TASK_ID,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+)
 _MAX_DELEGATION_DEPTH = 64
 _MAX_TOOL_NAME = 256
 _FRAME_LIMIT = 64 * 1024
@@ -98,7 +118,11 @@ def _trust_domain(spiffe_id: str) -> str:
     # Parse without URL normalization: encoded separators and relative segments
     # must never turn into an authorized identity.
     match = re.fullmatch(r"spiffe://([a-z0-9._-]{1,255})/([a-zA-Z0-9._/-]+)", spiffe_id)
-    if not match or len(spiffe_id) > 2048 or any(segment in ("", ".", "..") for segment in match[2].split("/")):
+    if (
+        not match
+        or len(spiffe_id) > _MAX_SPIFFE_ID
+        or any(segment in ("", ".", "..") for segment in match[2].split("/"))
+    ):
         raise SpiffeError("Invalid workload SPIFFE ID")
     return match[1]
 
@@ -856,8 +880,8 @@ class SpiffeWarrantIssuer:
         return self._issue(self.tls.authenticate(connection), challenge, signature)
 
     def _challenge(self, identity: SpiffeIdentity, holder: PublicKey, task_id: str) -> bytes:
-        if not isinstance(task_id, str) or not task_id or len(task_id) > 256:
-            raise SpiffeError("task_id must contain 1–256 characters")
+        if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
+            raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
         if not isinstance(holder, PublicKey):
             raise SpiffeError("holder must be a Tenuo PublicKey")
         grant = self._policy(identity, task_id)
@@ -1173,6 +1197,12 @@ class _ServerConnection:
         self._writer.close()
 
 
+def _consume_result(work: "asyncio.Future[Any]") -> None:
+    """Retrieve a shielded result nobody awaited, so it is not logged as unhandled."""
+    if not work.cancelled():
+        work.exception()
+
+
 class SpiffeIssuerServer:
     """Asyncio mTLS endpoint for :class:`SpiffeWarrantIssuer`.
 
@@ -1181,8 +1211,10 @@ class SpiffeIssuerServer:
     exchange. ``max_connections`` counts every accepted socket, including ones
     that have not completed a handshake. Credentials are reloaded from disk
     every ``reload_interval`` seconds. Policy and audit callbacks run in up to
-    ``max_workers`` threads; a callback still running at the deadline finishes
-    in its thread, so ``audit`` can record a warrant the agent never received.
+    ``max_workers`` threads, with at most ``max_connections`` submitted or
+    queued at once; a callback that has been submitted when the deadline
+    passes still runs to completion in its thread, so ``audit`` can record a
+    warrant the agent never received.
 
     Example::
 
@@ -1218,6 +1250,7 @@ class SpiffeIssuerServer:
         self._reloader: Optional["asyncio.Future[None]"] = None
         self._workers: Optional[ThreadPoolExecutor] = None
         self._reload_worker: Optional[ThreadPoolExecutor] = None
+        self._work_slots: Optional[asyncio.Semaphore] = None
 
     @property
     def address(self) -> Tuple[str, int]:
@@ -1231,6 +1264,10 @@ class SpiffeIssuerServer:
         # Separate pools: a policy stuck on a slow database cannot delay rotation.
         self._workers = ThreadPoolExecutor(self._max_workers, thread_name_prefix="tenuo-spiffe-policy")
         self._reload_worker = ThreadPoolExecutor(1, thread_name_prefix="tenuo-spiffe-reload")
+        # An exchange submits at most one callback at a time, so bounding
+        # submissions by `max_connections` caps the pool's queue without
+        # refusing work any accepted connection could legitimately need.
+        self._work_slots = asyncio.Semaphore(self._max_connections)
         self._server = await asyncio.start_server(self._handle, self.host, self.port)
         self._reloader = asyncio.ensure_future(self._reload_loop())
         host, port = self.address
@@ -1258,6 +1295,7 @@ class SpiffeIssuerServer:
             if pool is not None:
                 pool.shutdown(wait=False)
         self._workers = self._reload_worker = None
+        self._work_slots = None
 
     async def __aenter__(self) -> "SpiffeIssuerServer":
         await self.start()
@@ -1278,7 +1316,46 @@ class SpiffeIssuerServer:
                 logger.exception("SPIFFE credential reload check failed")
 
     async def _in_worker(self, function: Callable[..., Any], *args: Any) -> Any:
-        return await asyncio.get_running_loop().run_in_executor(self._workers, functools.partial(function, *args))
+        """Run a blocking issuer callback in the policy pool, under a bound.
+
+        A timed-out exchange frees its connection slot as soon as it unwinds,
+        but a work item it already submitted stays in the pool's unbounded
+        queue until a thread picks it up. With every thread parked on a slow
+        dependency, replacement connections could keep enqueueing items that
+        nothing ever drains, so the queue — not the connection count — was the
+        thing that grew. Submissions are therefore capped, and a slot is held
+        until the work item itself has run rather than until the awaiting
+        coroutine is cancelled: cancelling an asyncio future only marks the
+        queued item dead, it does not remove it.
+        """
+        loop = asyncio.get_running_loop()
+        slots, pool = self._work_slots, self._workers
+        if slots is None or pool is None:
+            raise SpiffeError("Issuer is shutting down")
+        await slots.acquire()
+
+        def run() -> Any:
+            try:
+                return function(*args)
+            finally:
+                try:
+                    loop.call_soon_threadsafe(slots.release)
+                except RuntimeError:
+                    pass  # The loop closed while shutting down; the slot dies with it.
+
+        try:
+            work = asyncio.wrap_future(pool.submit(run))
+        except RuntimeError as exc:  # Pool already shut down.
+            slots.release()
+            raise SpiffeError("Issuer is shutting down") from exc
+        try:
+            # Shielded so a cancelled exchange cannot strand a reserved slot on
+            # a work item that never runs. `_exchange` discards the pending
+            # challenge as it unwinds, so a late `_issue` still mints nothing.
+            return await asyncio.shield(work)
+        except asyncio.CancelledError:
+            work.add_done_callback(_consume_result)
+            raise
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         if self._active >= self._max_connections:
