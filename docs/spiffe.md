@@ -209,8 +209,9 @@ Run the helper as the same Unix user (or in the same pod) as the workload it
 serves, so that it matches the workload's selectors and the workload can read
 the key file. The helper keeps running and replaces the files atomically when
 SPIRE renews the SVID. Leave `include_federated_domains` off: the bundle file
-must hold only your own trust domain's authorities, and the adapter cannot tell
-a foreign CA from one of yours.
+must hold only your own trust domain's authorities. The adapter rejects CA
+certificates tagged with another trust domain, but a CA certificate does not
+have to carry a SPIFFE ID.
 
 Check the result with
 `openssl x509 -in /run/spiffe/svid.pem -noout -text | grep URI:`, which prints
@@ -631,7 +632,7 @@ matching reason on the `tenuo.spiffe` logger.
 | `Local SVID is not currently valid` (at startup, with files) | The SVID file is stale. | The helper is not running or cannot reach the SPIRE agent. |
 | `Trust bundle may contain only CA certificates` | `bundle_file` points at the SVID or another non-CA file. | Point it at the bundle file. |
 | `Issuer refused: Workload is not authorized for this task` | The policy returned `None`. | Check the task record and the caller's SPIFFE ID in the issuer log. |
-| `Issuer refused: Too many pending holder challenges for this workload` | 16 requests from one SPIFFE ID are unfinished. An abandoned request holds its slot for 30 seconds. | Raise `max_pending_per_identity`, or find the agents that open requests and stop. |
+| `Issuer refused: Too many pending holder challenges for this workload` | 16 requests from one SPIFFE ID are unfinished at the same time. | Raise `max_pending_per_identity`, or find the agents that open requests and stall. |
 | `Issuer refused: SVID expires too soon to issue a warrant` | The agent's SVID has about a second left. | The agent is not receiving renewals. |
 | `Issuer error; see the issuer's log` | The policy or audit callback raised. | Read the traceback in the issuer log. |
 | `Challenge is from a different issuer key` | The agent's `issuer_key` is not this issuer's key. | Redistribute `tenuo-issuer.pub`. |

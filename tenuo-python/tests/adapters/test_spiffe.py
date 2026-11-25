@@ -267,6 +267,15 @@ def test_bundle_must_contain_only_authorities(ca, tmp_path):
             key_file=str(paths["key"]),
             server_side=True,
         )
+    same_root, _ = ca.leaf(f"spiffe://{DOMAIN}", is_ca=True)
+    same_intermediate, _ = ca.leaf(f"spiffe://{DOMAIN}/intermediate", is_ca=True)
+    ok_paths = ca.files("domain-bundle", SERVER, bundle=ca.pem + same_root + same_intermediate)
+    assert _tls(ok_paths, True).identity.spiffe_id == SERVER
+    for foreign_id in ("spiffe://foreign.test", "spiffe://foreign.test/ca", "https://example.test"):
+        foreign_ca, _ = ca.leaf(foreign_id, is_ca=True)
+        bad_paths = ca.files("foreign-bundle", SERVER, bundle=ca.pem + foreign_ca)
+        with pytest.raises(SpiffeError, match="different trust domain"):
+            _tls(bad_paths, True)
 
 
 @pytest.mark.parametrize("options", [{"expires": -1}, {"starts": 60}])
@@ -801,7 +810,7 @@ def test_client_refusals(served, change, message):
             await asyncio.to_thread(request_warrant, client_tls, address, **options)
 
     run_server(issuer, body)
-    assert issuer._pending == {} or "issuer_key" in change
+    assert issuer._pending == {}
 
 
 def test_client_accepts_any_listed_issuer_key(served):
@@ -1073,11 +1082,37 @@ def test_connection_limit_counts_sockets_before_handshake(served):
     assert run_server(issuer, body, max_connections=2, timeout=1.0).id
 
 
-def test_constraint_values_checked_before_challenge(exchange):
+def test_constraint_values_checked_before_challenge(exchange, caplog):
     issuer, connection, holder, *_ = exchange
     issuer._policy = lambda *_: SpiffeGrant({"refund": {"cents": 5}})  # Not a constraint object.
-    with pytest.raises(SpiffeError, match="invalid constraints"):
+    with caplog.at_level("WARNING", logger="tenuo.spiffe"), pytest.raises(SpiffeError, match="invalid constraints"):
         issuer.challenge(connection, holder.public_key, "task-123")
+    assert "Invalid policy grant for spiffe://example.test/agent task 'task-123'" in caplog.text
+    assert issuer._pending == {}
+
+
+def test_abandoned_server_exchange_releases_pending_slot(served):
+    issuer, client_tls, root, holder = served
+    options = dict(
+        issuer_id=SERVER, issuer_key=[SigningKey.generate().public_key], holder_key=holder, task_id="task-123"
+    )
+
+    async def body(address):
+        # Each attempt obtains a challenge and disconnects when the client rejects the issuer key.
+        for _ in range(20):
+            with pytest.raises(SpiffeError, match="different issuer key"):
+                await asyncio.to_thread(request_warrant, client_tls, address, **options)
+        return await asyncio.to_thread(
+            request_warrant,
+            client_tls,
+            address,
+            issuer_id=SERVER,
+            issuer_key=root.public_key,
+            holder_key=holder,
+            task_id="task-123",
+        )
+
+    assert run_server(issuer, body).id
     assert issuer._pending == {}
 
 
@@ -1626,7 +1661,7 @@ def test_guide_file_option_runs(tmp_path):
     code = _guide_blocks()["transport_from_files.py"]
     assert code.count("/run/spiffe/") == 3
     scope: dict = {}
-    exec(code.replace("/run/spiffe/", f"{tmp_path}/"), scope)
+    exec(code.replace("/run/spiffe/", f"{tmp_path.as_posix()}/"), scope)
     assert scope["transport"].identity.spiffe_id == "spiffe://acme.test/issuer"
 
 
@@ -1643,8 +1678,8 @@ def test_guide_code_runs(tmp_path, monkeypatch, caplog, workload_api):
         if role is not None:
             assert code.count('"/run/spire/sockets/agent.sock"') == 1
             code = code.replace('"/run/spire/sockets/agent.sock"', repr(apis[role].address))
-        code = code.replace("/run/secrets/tenuo-issuer.pem", str(tmp_path / "tenuo-issuer.pem")).replace(
-            "/etc/tenuo/tenuo-issuer.pub", str(tmp_path / "tenuo-issuer.pub")
+        code = code.replace("/run/secrets/tenuo-issuer.pem", (tmp_path / "tenuo-issuer.pem").as_posix()).replace(
+            "/etc/tenuo/tenuo-issuer.pub", (tmp_path / "tenuo-issuer.pub").as_posix()
         )
         if address is not None:
             assert '("issuer.acme.internal", 8443)' in code
