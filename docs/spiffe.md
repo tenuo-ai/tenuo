@@ -496,7 +496,8 @@ The adapter narrows that gap as far as a bearer token allows:
   five minutes (`default_jwt_svid_ttl`).
 - The agent's holder key signs a statement bound to that exact token, this
   audience, the task, and the current time. A captured request can only produce
-  a warrant for the same holder key, which the thief does not have.
+  a warrant for the same holder key, which the thief does not have. An issuer
+  process also refuses an exact repeat of a request it has already served.
 - The bundled client sends the token only over verified HTTPS and does not
   follow redirects.
 
@@ -505,8 +506,9 @@ enrol a holder key of their own and get a warrant for any task that workload is
 assigned. Keep token lifetimes short and treat every hop that sees the token as
 trusted.
 
-The exchange is a single request with no server-side state, so issuer replicas
-behind a load balancer need no session affinity.
+The exchange is a single request and replicas share no state, so issuer
+replicas behind a load balancer need no session affinity. A request that fails
+(a policy error, a dropped connection) can simply be sent again.
 
 ### Install
 
@@ -716,6 +718,7 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 | JWT holder proof age | 60 seconds either way | fixed |
 | JWT clock leeway for token times | 5 seconds | `SpiffeJWT(leeway_seconds=)` |
 | JWT requests in progress | 256, then HTTP 503 | `SpiffeJWTIssuerApp(max_concurrent=)` |
+| JWT request body deadline | 10 seconds, then HTTP 408 | `SpiffeJWTIssuerApp(body_timeout=)` |
 | JWT request body and token size | 64 KiB and 16 KiB | fixed |
 | JWT bundle file check | every 5 seconds, while requests arrive | fixed |
 | Warrant lifetime | 300 seconds, capped by the SVID | `SpiffeGrant(ttl_seconds=)` |
@@ -871,21 +874,33 @@ Authorization: Bearer <JWT-SVID>
 Content-Type: application/json
 
 {"v": 1, "holder": "<base64 Ed25519 public key>", "task": "<task ID>",
- "timestamp": <unix seconds>, "signature": "<base64 64-byte signature>"}
+ "timestamp": <unix seconds>, "nonce": "<base64, 16 random bytes>",
+ "signature": "<base64 64-byte signature>"}
 ```
 
 The reply is `200 {"warrant": "<base64>"}`, or `{"error": ..., "message": ...}`
-with status 400 (malformed), 401 (token not accepted), 403 (refused), 413, or
-503 (busy, or the policy or audit callback failed).
+with status 400 (malformed), 401 (token not accepted), 403 (refused), 408, 413,
+or 503 (busy, or the policy or audit callback failed).
 
-The signature is Ed25519, by the holder key, over the 34 ASCII bytes
-`tenuo.spiffe.jwt-holder-binding.v1`, then one zero byte, then UTF-8 JSON with
-sorted keys and no whitespace holding `audience` (the issuer's audience),
-`holder` (public key, hex), `task_id`, `timestamp` (the same integer as in the
-request), and `token` (SHA-256 of the JWT-SVID exactly as sent, hex).
+The signature is Ed25519, by the holder key, over these bytes in order. Every
+field has a fixed width, so no JSON or text encoding rules are involved:
 
-The issuer accepts RS256/384/512, PS256/384/512 and ES256/384/512 tokens that
-carry a `kid`, and requires `sub`, `aud` and `exp`.
+| Bytes | Content |
+|---|---|
+| 35 | The ASCII text `tenuo.spiffe.jwt-holder-binding.v1`, then one zero byte |
+| 32 | SHA-256 of the JWT-SVID exactly as sent in the header |
+| 32 | The holder public key |
+| 8 | `timestamp`, unsigned big-endian |
+| 16 | `nonce` |
+| 32 | SHA-256 of the issuer's audience, as UTF-8 |
+| 32 | SHA-256 of the task ID, as UTF-8 |
+
+Use a new nonce for every request. The timestamp must be within 60 seconds of
+the issuer's clock.
+
+The token must be three unpadded base64url segments with nothing before or
+after. The issuer accepts RS256/384/512, PS256/384/512 and ES256/384/512 tokens
+that carry a `kid`, and requires `sub`, `aud` and `exp`.
 
 ### What this adapter does not do
 
@@ -913,10 +928,10 @@ carry a `kid`, and requires `sub`, `aud` and `exp`.
 | `SpiffeIssuerServer(issuer, host=, port=, max_connections=, timeout=, reload_interval=, max_workers=)` | The mTLS endpoint. `async with` it, then `serve_forever()`. |
 | `request_warrant(tls, address, issuer_id=, issuer_key=, holder_key=, task_id=, timeout=)` | Agent-side call. `arequest_warrant` for asyncio. `issuer_key` may be a list. |
 | `SpiffeJWT.from_workload_api(trust_domain=, audience=, socket_path=)` / `SpiffeJWT(trust_domain=, audience=, bundle_file=)` | Validates JWT-SVIDs. `authenticate(token)` returns a `SpiffeIdentity`. In `tenuo.spiffe_jwt`. |
-| `SpiffeJWTIssuerApp(issuer, path="/warrants", max_concurrent=, max_workers=)` | ASGI endpoint for JWT-SVID bearers. |
+| `SpiffeJWTIssuerApp(issuer, path="/warrants", max_concurrent=, max_workers=, body_timeout=)` | ASGI endpoint for JWT-SVID bearers. |
 | `request_warrant_jwt(url, token=, audience=, issuer_key=, holder_key=, task_id=, ca_file=)` | Agent-side call. `arequest_warrant_jwt` for asyncio. |
 | `fetch_jwt_svid(audience, socket_path=, spiffe_id=)` | Gets a JWT-SVID from the SPIRE agent. |
-| `issuer.issue_jwt(token, holder, task_id, timestamp, signature)` and `sign_jwt_holder_proof(...)` | The same exchange without the bundled endpoint, for other frameworks. |
+| `issuer.issue_jwt(token, holder, task_id, proof)` and `sign_jwt_holder_proof(...)` | The same exchange without the bundled endpoint, for other frameworks. The proof is a `SpiffeJWTProof`. |
 | `SpiffeGrant(capabilities, ttl_seconds=300, max_depth=0)` | What a policy returns. |
 | `ANY_ARGUMENTS` | Explicit "no argument constraints" for one tool. |
 | `SpiffeIdentity` | `spiffe_id`, `svid_type` (`"x509"` or `"jwt"`), `certificate_sha256` (of the certificate or token), `expires_at`. |

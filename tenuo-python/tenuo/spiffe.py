@@ -16,6 +16,7 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import hashlib
 import ipaddress
 import json
 import logging
@@ -58,6 +59,7 @@ __all__ = [
     "SpiffeIdentity",
     "SpiffeIssuance",
     "SpiffeIssuerServer",
+    "SpiffeJWTProof",
     "SpiffeTLS",
     "SpiffeWarrantIssuer",
     "arequest_warrant",
@@ -79,6 +81,7 @@ _HOLDER_CONTEXT = b"tenuo.spiffe.holder-binding.v1\x00"
 _JWT_HOLDER_CONTEXT = b"tenuo.spiffe.jwt-holder-binding.v1\x00"
 _JWT_PROOF_SECONDS = 60  # Accepted distance between the proof timestamp and the issuer clock.
 _JWT_PROOF_MEMORY = 4096  # Recent proofs remembered to refuse an exact replay.
+_JWT_NONCE_BYTES = 16
 _CHALLENGE_FIELDS = frozenset({"nonce", "issuer", "spiffe_id", "certificate", "holder", "task_id"})
 _CHALLENGE_SECONDS = 30
 _MAX_SPIFFE_ID = 2048
@@ -119,13 +122,20 @@ class SpiffeError(ValueError):
     """Authentication, holder proof, or issuance was rejected."""
 
 
-def _jwt_proof_bytes(audience: str, holder_hex: str, task_id: str, timestamp: int, token_sha256: str) -> bytes:
-    """What the holder key signs to bind itself to one JWT-SVID, issuer audience, and task."""
-    return _JWT_HOLDER_CONTEXT + json.dumps(
-        {"audience": audience, "holder": holder_hex, "task_id": task_id, "timestamp": timestamp, "token": token_sha256},
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+def _jwt_proof_bytes(
+    audience: str, holder: bytes, task_id: str, timestamp: int, nonce: bytes, token_sha256: bytes
+) -> bytes:
+    """What the holder key signs to bind itself to one JWT-SVID, issuer audience, and task.
+
+    Fixed-width binary fields, so every language produces the same bytes:
+    context, SHA-256 of the token, holder key, 8-byte big-endian timestamp,
+    16-byte nonce, SHA-256 of the audience, SHA-256 of the task ID.
+    """
+    try:
+        texts = hashlib.sha256(audience.encode("utf-8")).digest() + hashlib.sha256(task_id.encode("utf-8")).digest()
+    except UnicodeEncodeError as exc:
+        raise SpiffeError("audience and task_id must be valid Unicode text") from exc
+    return _JWT_HOLDER_CONTEXT + token_sha256 + holder + timestamp.to_bytes(8, "big") + nonce + texts
 
 
 def _trust_domain(spiffe_id: str) -> str:
@@ -454,7 +464,7 @@ class _WorkloadAPIWatcher:
                 for message in fetch(None, metadata=_WORKLOAD_API_METADATA):
                     try:
                         snapshot = self._parse(message)
-                    except SpiffeError as exc:
+                    except Exception as exc:
                         with self._deliver_lock:
                             # The newest response supersedes an older update that was
                             # waiting to become usable, even when it offers nothing.
@@ -807,6 +817,18 @@ class SpiffeGrant:
 
 
 @dataclass(frozen=True)
+class SpiffeJWTProof:
+    """A holder key's signed statement for one JWT-SVID request.
+
+    Build it with :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof`.
+    """
+
+    timestamp: int
+    nonce: bytes
+    signature: bytes
+
+
+@dataclass(frozen=True)
 class SpiffeIssuance:
     """Audit record passed to the issuer's ``audit`` callback before release."""
 
@@ -911,41 +933,56 @@ class SpiffeWarrantIssuer:
         """Consume a challenge, verify holder possession, and mint the approved grant."""
         return self._issue(self._mtls().authenticate(connection), challenge, signature)
 
-    def issue_jwt(self, token: str, holder: PublicKey, task_id: str, timestamp: int, signature: bytes) -> Warrant:
+    def issue_jwt(self, token: str, holder: PublicKey, task_id: str, proof: SpiffeJWTProof) -> Warrant:
         """Authenticate a JWT-SVID, verify the holder proof, run policy, and mint.
 
-        ``timestamp`` and ``signature`` come from
-        :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof`. A JWT-SVID is a bearer
-        token: send it only over TLS, and prefer the mTLS exchange where you can.
+        ``proof`` comes from :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof`. A
+        JWT-SVID is a bearer token: send it only over TLS, and prefer the mTLS
+        exchange where you can.
         """
         if self.jwt is None:
             raise SpiffeError("This issuer does not accept JWT-SVIDs")
-        return self._issue_jwt(self.jwt.authenticate(token), holder, task_id, timestamp, signature)
+        return self._issue_jwt(self.jwt.authenticate(token), holder, task_id, proof)
 
     def _mtls(self) -> SpiffeTLS:
         if self.tls is None:
             raise SpiffeError("This issuer does not accept X.509-SVIDs")
         return self.tls
 
-    def _issue_jwt(
-        self, identity: SpiffeIdentity, holder: PublicKey, task_id: str, timestamp: int, signature: bytes
-    ) -> Warrant:
+    def _issue_jwt(self, identity: SpiffeIdentity, holder: PublicKey, task_id: str, proof: SpiffeJWTProof) -> Warrant:
         if self.jwt is None or identity.svid_type != "jwt":
             raise SpiffeError("This issuer does not accept JWT-SVIDs")
         if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
             raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
         if not isinstance(holder, PublicKey):
             raise SpiffeError("holder must be a Tenuo PublicKey")
-        if not _positive_int(timestamp) or abs(time.time() - timestamp) > _JWT_PROOF_SECONDS:
+        if not isinstance(proof, SpiffeJWTProof):
+            raise SpiffeError("Invalid holder proof")
+        timestamp, nonce, signature = proof.timestamp, proof.nonce, proof.signature
+        if (
+            not _positive_int(timestamp)
+            or not 0 <= timestamp < 2**40
+            or abs(time.time() - timestamp) > _JWT_PROOF_SECONDS
+        ):
             raise SpiffeError("Holder proof is too old or from the future; check the clocks on both sides")
-        if not isinstance(signature, bytes) or len(signature) != 64:
+        if (
+            not isinstance(nonce, bytes)
+            or len(nonce) != _JWT_NONCE_BYTES
+            or not isinstance(signature, bytes)
+            or len(signature) != 64
+        ):
             raise SpiffeError("Invalid holder proof")
         key = bytes(holder.to_bytes())
-        message = _jwt_proof_bytes(self.jwt.audience, key.hex(), task_id, timestamp, identity.certificate_sha256)
+        message = _jwt_proof_bytes(
+            self.jwt.audience, key, task_id, timestamp, nonce, bytes.fromhex(identity.certificate_sha256)
+        )
         try:
             Ed25519PublicKey.from_public_bytes(key).verify(signature, message)
         except (InvalidSignature, ValueError) as exc:
             raise SpiffeError("Invalid holder proof") from exc
+        # Refuse an exact replay seen by this process. The proof is reserved
+        # while the request runs and kept only if a warrant is issued, so a
+        # denied or failed request leaves nothing behind and can be retried.
         now = time.monotonic()
         with self._lock:
             self._proofs = {seen: until for seen, until in self._proofs.items() if until > now}
@@ -954,15 +991,20 @@ class SpiffeWarrantIssuer:
             while len(self._proofs) >= _JWT_PROOF_MEMORY:
                 self._proofs.pop(next(iter(self._proofs)))  # Oldest first.
             self._proofs[signature] = now + 2 * _JWT_PROOF_SECONDS + 1
-        grant = self._policy(identity, task_id)
-        if grant is None:
-            raise SpiffeError("Workload is not authorized for this task")
         try:
-            grant = _validate_grant(grant)
-        except SpiffeError as exc:
-            logger.warning("Invalid policy grant for %s task %r: %s", identity.spiffe_id, task_id, exc)
+            grant = self._policy(identity, task_id)
+            if grant is None:
+                raise SpiffeError("Workload is not authorized for this task")
+            try:
+                grant = _validate_grant(grant)
+            except SpiffeError as exc:
+                logger.warning("Invalid policy grant for %s task %r: %s", identity.spiffe_id, task_id, exc)
+                raise
+            return self._mint(identity, key, task_id, grant)
+        except BaseException:
+            with self._lock:
+                self._proofs.pop(signature, None)
             raise
-        return self._mint(identity, key, task_id, grant)
 
     def _challenge(self, identity: SpiffeIdentity, holder: PublicKey, task_id: str) -> bytes:
         if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:

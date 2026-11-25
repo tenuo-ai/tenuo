@@ -24,7 +24,13 @@ from cryptography.x509.oid import NameOID  # noqa: E402
 
 from tenuo import Authorizer, Exact, Range, SigningKey  # noqa: E402
 from tenuo.exceptions import AuthorizationError  # noqa: E402
-from tenuo.spiffe import SpiffeError, SpiffeGrant, SpiffeIssuerServer, SpiffeWarrantIssuer  # noqa: E402
+from tenuo.spiffe import (  # noqa: E402
+    SpiffeError,
+    SpiffeGrant,
+    SpiffeIssuerServer,
+    SpiffeJWTProof,
+    SpiffeWarrantIssuer,
+)
 from tenuo.spiffe_jwt import (  # noqa: E402
     SpiffeJWT,
     SpiffeJWTIssuerApp,
@@ -161,6 +167,13 @@ def _unsigned(header, payload):
             lambda a: _unsigned(
                 {"alg": "none", "kid": a.kid}, {"sub": AGENT, "aud": AUDIENCE, "exp": time.time() + 60}
             ),
+            "Malformed",  # An empty signature segment is not a JWS this adapter accepts.
+        ),
+        (
+            lambda a: (
+                _unsigned({"alg": "none", "kid": a.kid}, {"sub": AGENT, "aud": AUDIENCE, "exp": time.time() + 60})
+                + "AAAA"
+            ),
             "algorithm its signing key does not support",
         ),
         (
@@ -197,6 +210,7 @@ def _unsigned(header, payload):
         "none",
         "oversized",
         "alg-none",
+        "alg-none-with-signature",
         "hmac-with-public-key",
     ],
 )
@@ -245,6 +259,18 @@ def test_unusable_bundles_are_refused(authority, tmp_path):
     small = JWTAuthority("RSA", bits=1024)
     private = json.loads(pyjwt.algorithms.ECAlgorithm.to_jwk(authority.key))
     private = {**(private if isinstance(private, dict) else json.loads(private)), "kid": "private", "use": "jwt-svid"}
+    unusable = [
+        small.jwk,
+        private,
+        {**authority.jwk, "kid": ""},
+        {"kty": "oct", "k": "AAAA", "kid": "sym", "use": "jwt-svid"},
+        {"kty": "OKP", "crv": "Ed25519", "x": "AAAA", "kid": "okp", "use": "jwt-svid"},
+        {"kty": "AKP", "alg": "ML-DSA-44", "pub": "AAAA", "kid": "pq", "use": "jwt-svid"},
+        {"kty": "EC", "crv": "P-256", "kid": "bad-point", "x": "!", "y": "!"},
+        {"kty": "RSA", "kid": "bad-rsa", "n": 5, "e": "AQAB"},
+        {"kty": "RSA", "kid": "even-exponent", "n": "AQAB" * 86, "e": "Ag"},
+        "not an object",
+    ]
     path = tmp_path / "bundle.json"
     for document, message in (
         (b"not json", "not a JWKS document"),
@@ -252,20 +278,59 @@ def test_unusable_bundles_are_refused(authority, tmp_path):
         (b'{"keys": "x"}', "not a JWKS document"),
         (json.dumps({"other.test": "AAAA"}).encode(), "no entry for trust domain"),
         (json.dumps({DOMAIN: "!!"}).encode(), "not a JWKS document"),
-        (jwks(), "no JWT-SVID signing keys"),
-        (jwks(small), "too small"),
-        (jwks(authority, authority), "unique key ID"),
-        (json.dumps({"keys": [{**authority.jwk, "kid": ""}]}).encode(), "unique key ID"),
-        (json.dumps({"keys": [private]}).encode(), "not a public key"),
-        (
-            json.dumps({"keys": [{"kty": "oct", "k": "AAAA", "kid": "sym", "use": "jwt-svid"}]}).encode(),
-            "unsupported type",
-        ),
-        (json.dumps({"keys": [{"kty": "EC", "crv": "P-256", "kid": "bad", "x": "!"}]}).encode(), "malformed"),
+        (jwks(), "no usable JWT-SVID signing keys"),
+        (jwks(authority, authority), "must be unique"),
+        *[(json.dumps({"keys": [entry]}).encode(), "no usable JWT-SVID signing keys") for entry in unusable],
     ):
         path.write_bytes(document)
         with pytest.raises(SpiffeError, match=message):
             SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+    # Unusable keys beside a good one are skipped, not fatal.
+    path.write_bytes(jwks(authority, extra=unusable))
+    validator = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+    assert list(validator._keys) == [authority.kid]
+    assert validator.authenticate(authority.token()).spiffe_id == AGENT
+
+
+def test_rotation_that_adds_an_unsupported_key_still_retires_the_old_one(authority, tmp_path, monkeypatch):
+    monkeypatch.setattr("tenuo.spiffe_jwt._FILE_CHECK_SECONDS", 0.0)
+    retired = JWTAuthority()
+    path = tmp_path / "bundle.json"
+    path.write_bytes(jwks(authority, retired))
+    validator = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+    assert validator.authenticate(retired.token()).spiffe_id == AGENT
+    time.sleep(0.01)
+    post_quantum = {"kty": "AKP", "alg": "ML-DSA-44", "pub": "AAAA", "kid": "pq", "use": "jwt-svid"}
+    path.write_bytes(jwks(authority, extra=[post_quantum]))
+    assert validator.authenticate(authority.token()).spiffe_id == AGENT
+    with pytest.raises(SpiffeError, match="not in the trust bundle"):
+        validator.authenticate(retired.token())
+
+
+def test_one_token_has_one_spelling(validator, authority):
+    """Padding or junk after a valid token must not validate as a second identity."""
+    token = authority.token()
+    assert validator.authenticate(token).spiffe_id == AGENT
+    nested = base64.urlsafe_b64encode(b"[" * 30000).rstrip(b"=").decode()
+    for variant in (
+        token + "==",
+        token + "=",
+        token + "!!!!",
+        token + " ",
+        " " + token,
+        token + "\n",
+        token + "é",
+        token.replace(".", "..", 1),
+        f"{nested}.{token.split('.')[1]}.{token.split('.')[2]}",
+        f"{token.split('.')[0]}.{nested}.{token.split('.')[2]}",
+        f"{base64.urlsafe_b64encode(b'[1]').rstrip(b'=').decode()}.e30.AAAA",
+    ):
+        with pytest.raises(SpiffeError, match="Malformed JWT-SVID|Invalid JWT-SVID"):
+            validator.authenticate(variant)
+    with pytest.raises(SpiffeError, match="Malformed JWT-SVID"):
+        sign_jwt_holder_proof(token + "==", SigningKey.generate(), audience=AUDIENCE, task_id="t")
+    with pytest.raises(SpiffeError, match="Invalid JWT-SVID"):
+        validator.authenticate(authority.token(exp=10**400))
 
 
 def test_bundle_file_rotation(authority, tmp_path, monkeypatch):
@@ -367,14 +432,14 @@ def jwt_issuer(validator):
 
 
 def issue(issuer, token, holder, task="task-123", **proof):
-    timestamp, signature = sign_jwt_holder_proof(
+    signed = sign_jwt_holder_proof(
         proof.pop("signed_token", token),
         holder,
         audience=proof.pop("audience", AUDIENCE),
         task_id=proof.pop("signed_task", task),
         **proof,
     )
-    return issuer.issue_jwt(token, holder.public_key, task, timestamp, signature)
+    return issuer.issue_jwt(token, holder.public_key, task, signed)
 
 
 def test_jwt_issuance_and_tool_enforcement(jwt_issuer, authority):
@@ -410,14 +475,48 @@ def test_holder_proof_is_bound_to_token_audience_task_and_key(jwt_issuer, author
     ):
         with pytest.raises(SpiffeError, match="Invalid holder proof"):
             issue(issuer, token, holder, **changes)
-    timestamp, signature = sign_jwt_holder_proof(token, SigningKey.generate(), audience=AUDIENCE, task_id="task-123")
-    with pytest.raises(SpiffeError, match="Invalid holder proof"):
-        issuer.issue_jwt(token, holder.public_key, "task-123", timestamp, signature)
-    for bad_signature in (b"short", "text", None):
+    other = sign_jwt_holder_proof(token, SigningKey.generate(), audience=AUDIENCE, task_id="task-123")
+    good = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
+    for bad in (
+        other,
+        SpiffeJWTProof(good.timestamp, good.nonce, b"short"),
+        SpiffeJWTProof(good.timestamp, good.nonce, "text"),
+        SpiffeJWTProof(good.timestamp, b"short", good.signature),
+        SpiffeJWTProof(good.timestamp, bytes(16), good.signature),  # A different nonce than was signed.
+        SpiffeJWTProof(good.timestamp + 1, good.nonce, good.signature),
+        (good.timestamp, good.nonce, good.signature),
+        None,
+    ):
         with pytest.raises(SpiffeError, match="Invalid holder proof"):
-            issuer.issue_jwt(token, holder.public_key, "task-123", timestamp, bad_signature)
+            issuer.issue_jwt(token, holder.public_key, "task-123", bad)
     with pytest.raises(SpiffeError, match="PublicKey"):
-        issuer.issue_jwt(token, bytes(holder.public_key.to_bytes()), "task-123", timestamp, signature)
+        issuer.issue_jwt(token, bytes(holder.public_key.to_bytes()), "task-123", good)
+    assert issuer.issue_jwt(token, holder.public_key, "task-123", good).id
+
+
+def test_holder_proof_layout_matches_the_documented_bytes(jwt_issuer, authority):
+    """Rebuild the signed statement from the wire-protocol description alone."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    issuer, *_ = jwt_issuer
+    issuer._policy = lambda *_: SpiffeGrant(REFUND)
+    holder, token = SigningKey.generate(), authority.token()
+    task = "tâche-é 🎟 refund"  # Not ASCII: nothing may depend on JSON escaping.
+    proof = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id=task)
+    public = bytes(holder.public_key.to_bytes())
+    statement = (
+        b"tenuo.spiffe.jwt-holder-binding.v1\x00"
+        + hashlib.sha256(token.encode()).digest()
+        + public
+        + proof.timestamp.to_bytes(8, "big")
+        + proof.nonce
+        + hashlib.sha256(AUDIENCE.encode()).digest()
+        + hashlib.sha256(task.encode()).digest()
+    )
+    assert len(statement) == 35 + 32 + 32 + 8 + 16 + 32 + 32 and len(proof.nonce) == 16
+    Ed25519PublicKey.from_public_bytes(public).verify(proof.signature, statement)
+    assert issuer.issue_jwt(token, holder.public_key, task, proof).id
+    assert sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id=task).signature != proof.signature
 
 
 def test_holder_proof_freshness_and_replay(jwt_issuer, authority):
@@ -426,15 +525,38 @@ def test_holder_proof_freshness_and_replay(jwt_issuer, authority):
     for offset in (-120, 120):
         with pytest.raises(SpiffeError, match="too old or from the future"):
             issue(issuer, token, holder, timestamp=int(time.time()) + offset)
-    for bad in (True, "now", 1.5, None):
+    for bad in (True, "now", 1.5, None, -5, 10**400):
         with pytest.raises(SpiffeError, match="too old or from the future"):
-            issuer.issue_jwt(token, holder.public_key, "task-123", bad, b"\x00" * 64)
+            issuer.issue_jwt(token, holder.public_key, "task-123", SpiffeJWTProof(bad, bytes(16), bytes(64)))
     assert seen == []  # Policy is not consulted for a request without a valid proof.
-    timestamp, signature = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
-    issuer.issue_jwt(token, holder.public_key, "task-123", timestamp, signature)
+    proof = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
+    issuer.issue_jwt(token, holder.public_key, "task-123", proof)
     with pytest.raises(SpiffeError, match="already used"):
-        issuer.issue_jwt(token, holder.public_key, "task-123", timestamp, signature)
-    issue(issuer, token, holder, timestamp=timestamp + 1)  # A new proof for the same token is fine.
+        issuer.issue_jwt(token, holder.public_key, "task-123", proof)
+    issue(issuer, token, holder)  # A new proof for the same token, even in the same second, is fine.
+
+
+def test_failed_requests_can_be_retried_and_leave_no_proof_behind(jwt_issuer, authority):
+    issuer, *_ = jwt_issuer
+    holder, token = SigningKey.generate(), authority.token()
+    approve = issuer._policy
+
+    def broken(*_):
+        raise RuntimeError("database down")
+
+    proof = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
+    issuer._policy = broken
+    with pytest.raises(RuntimeError):
+        issuer.issue_jwt(token, holder.public_key, "task-123", proof)
+    issuer._policy = approve
+    assert issuer._proofs == {}
+    assert issuer.issue_jwt(token, holder.public_key, "task-123", proof).id  # The very same request, retried.
+    # Denied requests do not occupy the replay memory, so they cannot push real entries out.
+    kept = dict(issuer._proofs)
+    for _ in range(50):
+        with pytest.raises(SpiffeError, match="not authorized"):
+            issue(issuer, token, holder, task="unknown")
+    assert issuer._proofs == kept and len(kept) == 1
 
 
 def test_proof_memory_is_bounded(jwt_issuer, authority, monkeypatch):
@@ -454,7 +576,7 @@ def test_jwt_policy_denials_and_invalid_grants(jwt_issuer, authority):
     with pytest.raises(SpiffeError, match="not authorized"):
         issue(issuer, authority.token(sub=SERVER), SigningKey.generate())
     with pytest.raises(SpiffeError, match="task_id must contain"):
-        issuer.issue_jwt(authority.token(), SigningKey.generate().public_key, "", int(time.time()), b"\x00" * 64)
+        issuer.issue_jwt(authority.token(), SigningKey.generate().public_key, "", None)
     issuer._policy = lambda *_: SpiffeGrant({"refund": {}})
     with pytest.raises(SpiffeError, match="Empty constraints"):
         issue(issuer, authority.token(), SigningKey.generate())
@@ -482,20 +604,21 @@ def test_jwt_endpoint_needs_a_jwt_issuer(tmp_path):
     with pytest.raises(ValueError, match="jwt=SpiffeJWT"):
         SpiffeJWTIssuerApp(mtls_only)
     with pytest.raises(SpiffeError, match="does not accept JWT-SVIDs"):
-        mtls_only.issue_jwt("a.b.c", SigningKey.generate().public_key, "task-123", int(time.time()), b"\x00" * 64)
+        mtls_only.issue_jwt("a.b.c", SigningKey.generate().public_key, "task-123", None)
 
 
 # -- HTTP endpoint ------------------------------------------------------------
 
 
 def request_body(token, holder_key, task="task-123", **overrides):
-    timestamp, signature = sign_jwt_holder_proof(token, holder_key, audience=AUDIENCE, task_id=task)
+    proof = sign_jwt_holder_proof(token, holder_key, audience=AUDIENCE, task_id=task)
     body = {
         "v": 1,
         "holder": base64.b64encode(bytes(holder_key.public_key.to_bytes())).decode(),
         "task": task,
-        "timestamp": timestamp,
-        "signature": base64.b64encode(signature).decode(),
+        "timestamp": proof.timestamp,
+        "nonce": base64.b64encode(proof.nonce).decode(),
+        "signature": base64.b64encode(proof.signature).decode(),
     }
     body.update(overrides)
     return json.dumps(body).encode()
@@ -657,6 +780,54 @@ async def _collect(sent, message):
     sent.append(message)
 
 
+def test_endpoint_bounds_and_times_out_body_reads(jwt_issuer, authority):
+    issuer, *_ = jwt_issuer
+    application = SpiffeJWTIssuerApp(issuer, max_concurrent=2, body_timeout=0.3)
+    token = authority.token()
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/warrants",
+        "headers": [(b"authorization", f"Bearer {token}".encode())],
+    }
+
+    async def scenario():
+        async def never():
+            await asyncio.sleep(30)
+
+        async def one(receive):
+            sent = []
+            await application(scope, receive, lambda message: _collect(sent, message))
+            return sent[0]["status"]
+
+        stalled = [asyncio.ensure_future(one(never)) for _ in range(2)]
+        await asyncio.sleep(0.05)
+        refused = await one(never)  # Both read slots are taken by senders that never finish.
+        return refused, await asyncio.gather(*stalled), application._reading
+
+    try:
+        assert asyncio.run(scenario()) == (503, [408, 408], 0)
+    finally:
+        application.close()
+
+
+def test_endpoint_refuses_absurd_numbers_without_failing(app, authority):
+    application, *_ = app
+    holder, token = SigningKey.generate(), authority.token()
+    for timestamp in (10**400, -1, 1.5, "soon", None, True):
+        status, _, reply = call_app(
+            application,
+            headers=[("Authorization", f"Bearer {token}")],
+            body=request_body(token, holder, timestamp=timestamp),
+        )
+        assert status == 403 and "too old or from the future" in reply["message"]
+    for nonce in ("", "AAAA", 5, None):
+        status, _, _ = call_app(
+            application, headers=[("Authorization", f"Bearer {token}")], body=request_body(token, holder, nonce=nonce)
+        )
+        assert status in (400, 403)
+
+
 def test_endpoint_lifespan(app):
     application, *_ = app
 
@@ -815,6 +986,43 @@ def test_client_never_sends_the_token_in_the_clear():
         request_warrant_jwt(f"http://127.0.0.1:{port}/warrants", timeout=2, **options)
 
 
+def test_client_addresses_ipv6_hosts_correctly(authority, monkeypatch):
+    """A bare IPv6 host must not have its last group read as the port."""
+    import http.client
+
+    seen = []
+
+    class Recorder:
+        def __init__(self, host, port=None, **_):
+            seen.append((host, port))
+
+        def request(self, *_, **__):
+            raise OSError("stop here")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http.client, "HTTPConnection", Recorder)
+    monkeypatch.setattr(http.client, "HTTPSConnection", Recorder)
+    holder = SigningKey.generate()
+    options = dict(
+        token=authority.token(), audience=AUDIENCE, issuer_key=holder.public_key, holder_key=holder, task_id="t"
+    )
+    for url, expected in (
+        ("http://[::1]/warrants", ("::1", 80)),
+        ("http://[::1]:9000/warrants", ("::1", 9000)),
+        ("https://[fd00::1:8443]/warrants", ("fd00::1:8443", 443)),
+        ("https://issuer.acme.internal/warrants", ("issuer.acme.internal", 443)),
+        ("https://issuer.acme.internal:8443/warrants", ("issuer.acme.internal", 8443)),
+    ):
+        with pytest.raises(SpiffeError, match="Could not complete the exchange"):
+            request_warrant_jwt(url, **options)
+        assert seen[-1] == expected
+    for bad in ("https://issuer.acme.internal:port/warrants", "https://[::1/warrants", "http://[::ffff:10.0.0.1]/w"):
+        with pytest.raises(ValueError):
+            request_warrant_jwt(bad, **options)
+
+
 def test_client_does_not_follow_redirects(authority):
     """A redirect must not carry the bearer token to another host."""
     received = []
@@ -879,9 +1087,7 @@ def test_mtls_and_jwt_on_one_issuer(validator, authority, tmp_path):
         authorizer.authorize(over_jwt, "refund", args, over_jwt.sign(holder, "refund", args, int(time.time())))
     # A JWT identity cannot be passed off on the mTLS path, or the reverse.
     with pytest.raises(SpiffeError):
-        issuer._issue_jwt(
-            server.authenticate(connection), holder.public_key, "task-123", int(time.time()), b"\x00" * 64
-        )
+        issuer._issue_jwt(server.authenticate(connection), holder.public_key, "task-123", None)
 
 
 def test_guide_jwt_code_runs(tmp_path, monkeypatch, authority, workload_api, serve):  # noqa: F811
