@@ -18,7 +18,9 @@ Your SPIRE deployment and existing workloads stay as they are. The issuer is
 one more registered workload.
 
 The adapter is Python. It takes SVIDs straight from the SPIRE agent, or from
-files. Agents in other languages can use the
+files. It authenticates agents with X.509-SVIDs over mTLS, or with
+[JWT-SVIDs](#jwt-svids-when-mtls-cannot-reach-the-issuer) where mTLS cannot
+reach the issuer. Agents in other languages can use the
 [wire protocol](#wire-protocol), and tools can verify warrants with any Tenuo
 SDK. We run the exchange on this page against SPIRE 1.16.0 in CI, including a
 renewal of both SVIDs while the issuer is serving. The Python blocks that start
@@ -473,6 +475,151 @@ of the task.
 
 ---
 
+## JWT-SVIDs, when mTLS cannot reach the issuer
+
+The steps above need the agent's TLS connection to end inside the issuer. Some
+deployments cannot give you that: a load balancer that terminates TLS, a
+service mesh sidecar you cannot bypass, a serverless platform. For those, the
+agent can present a JWT-SVID instead, as a bearer token over HTTPS.
+
+Use mTLS where you can. The JWT-SVID standard says why: "Being a bearer token,
+JWT-SVIDs are susceptible to replay attacks"
+([JWT-SVID, section 7.1](https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md)).
+Anyone who obtains the token can use it until it expires. With mTLS there is
+nothing to steal from the wire.
+
+The adapter narrows that gap as far as a bearer token allows:
+
+- The token must name this issuer as its audience. A token an agent requested
+  for any other service is refused.
+- The warrant never outlives the token. SPIRE's default JWT-SVID lifetime is
+  five minutes (`default_jwt_svid_ttl`).
+- The agent's holder key signs a statement bound to that exact token, this
+  audience, the task, and the current time. A captured request can only produce
+  a warrant for the same holder key, which the thief does not have.
+- The bundled client sends the token only over verified HTTPS and does not
+  follow redirects.
+
+What it cannot do: someone who steals the token itself, before it expires, can
+enrol a holder key of their own and get a warrant for any task that workload is
+assigned. Keep token lifetimes short and treat every hop that sees the token as
+trusted.
+
+The exchange is a single request with no server-side state, so issuer replicas
+behind a load balancer need no session affinity.
+
+### Install
+
+```bash
+pip install 'tenuo[spiffe-jwt,spiffe-workload-api]' uvicorn
+```
+
+`spiffe-jwt` adds PyJWT. Any ASGI server works in place of Uvicorn.
+
+### Run the JWT issuer
+
+*On the issuer's machine. The issuer key and the policy are the same as in
+steps 2 and 3.*
+
+```python
+# jwt_issuer.py
+import logging
+from pathlib import Path
+
+from tenuo import Exact, Range, SigningKey
+from tenuo.spiffe import SpiffeGrant, SpiffeWarrantIssuer
+from tenuo.spiffe_jwt import SpiffeJWT, SpiffeJWTIssuerApp
+
+logging.basicConfig(level=logging.INFO)
+
+tokens = SpiffeJWT.from_workload_api(
+    trust_domain="acme.test",
+    audience="spiffe://acme.test/issuer",  # Agents must request tokens for exactly this.
+    socket_path="/run/spire/sockets/agent.sock",
+)
+
+approved_tasks = {
+    "refund-task-123": {"agent": "spiffe://acme.test/agents/refund", "customer": "123", "max_cents": 5000},
+}
+
+
+def policy(identity, task_id):
+    task = approved_tasks.get(task_id)
+    if task is None or task["agent"] != identity.spiffe_id:
+        return None
+    # Optional: grant less to a bearer token than to an mTLS peer.
+    limit = task["max_cents"] if identity.svid_type == "x509" else min(task["max_cents"], 2000)
+    return SpiffeGrant(
+        capabilities={"refund": {"customer": Exact(task["customer"]), "cents": Range(1, limit)}},
+        ttl_seconds=120,
+    )
+
+
+issuer = SpiffeWarrantIssuer(
+    signing_key=SigningKey.from_pem(Path("/run/secrets/tenuo-issuer.pem").read_text()),
+    policy=policy,
+    jwt=tokens,
+)
+app = SpiffeJWTIssuerApp(issuer)
+```
+
+```bash
+uvicorn jwt_issuer:app --host 0.0.0.0 --port 8080
+```
+
+Put your TLS-terminating load balancer or mesh in front of that port. The
+issuer takes the trust domain's JWT signing keys from the SPIRE agent and
+follows key rotation. `audience` is the name agents request tokens for. Make it
+specific to this issuer; its SPIFFE ID is the usual choice.
+
+One issuer can serve both kinds of SVID. Pass `tls=` and `jwt=` together, run
+`SpiffeIssuerServer` and the ASGI app from the same `SpiffeWarrantIssuer`, and
+they share one policy and one audit log. `identity.svid_type` is `"x509"` or
+`"jwt"` in both.
+
+### Request a warrant with a JWT-SVID
+
+*On the agent's machine.*
+
+```python
+# jwt_agent.py
+from pathlib import Path
+
+from tenuo import PublicKey, SigningKey
+from tenuo.spiffe_jwt import fetch_jwt_svid, request_warrant_jwt
+
+AUDIENCE = "spiffe://acme.test/issuer"
+holder_key = SigningKey.generate()  # Never leaves this process.
+
+warrant = request_warrant_jwt(
+    "https://issuer.acme.internal/warrants",
+    token=lambda: fetch_jwt_svid(AUDIENCE, socket_path="/run/spire/sockets/agent.sock"),
+    audience=AUDIENCE,
+    issuer_key=PublicKey.from_pem(Path("/etc/tenuo/tenuo-issuer.pub").read_text()),
+    holder_key=holder_key,
+    task_id="refund-task-123",
+)
+print(warrant.id, warrant.tools, warrant.expires_at())
+```
+
+`fetch_jwt_svid` asks the SPIRE agent for a token for that audience. The
+server's TLS certificate is checked against the system roots; pass
+`ca_file="/path/to/ca.pem"` for a private CA. Plain `http://` is accepted for
+loopback addresses only. From here on nothing differs: steps 5 and 6 work with
+this warrant unchanged.
+
+If the warrant comes back shorter than the policy's `ttl_seconds`, the token
+was close to expiry. Raise the entry's JWT-SVID lifetime with
+`spire-server entry create ... -jwtSVIDTTL <seconds>` if tasks need longer.
+
+**With files.** `spiffe-helper` can write both sides' inputs (`jwt_svids` and
+`jwt_bundle_file_name` in its config). On the issuer, use
+`SpiffeJWT(trust_domain=..., audience=..., bundle_file="/run/spiffe/jwt_bundle.json")`;
+a changed file is picked up within a few seconds. On the agent, pass
+`token=lambda: Path("/run/spiffe/jwt_svid.token").read_text()`.
+
+---
+
 ## Writing the policy
 
 The policy is the one piece only you can write. It receives the authenticated
@@ -566,6 +713,11 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 | Workload API reconnect wait | 1 second, doubling to 30 (to 2 before the first SVID) | fixed |
 | Frame size | 64 KiB | fixed |
 | Bytes accepted per connection | 256 KiB | fixed |
+| JWT holder proof age | 60 seconds either way | fixed |
+| JWT clock leeway for token times | 5 seconds | `SpiffeJWT(leeway_seconds=)` |
+| JWT requests in progress | 256, then HTTP 503 | `SpiffeJWTIssuerApp(max_concurrent=)` |
+| JWT request body and token size | 64 KiB and 16 KiB | fixed |
+| JWT bundle file check | every 5 seconds, while requests arrive | fixed |
 | Warrant lifetime | 300 seconds, capped by the SVID | `SpiffeGrant(ttl_seconds=)` |
 | Delegation depth | 0 | `SpiffeGrant(max_depth=)` |
 
@@ -592,7 +744,8 @@ The issuer key is yours to rotate; SPIRE does not manage it.
   read-only root filesystem. On other systems the key passes through a private
   temporary directory that is removed straight after loading.
 - **Service meshes.** A sidecar that intercepts the issuer port would end the
-  mTLS session itself. Exclude that port from capture. With Istio, the pod
+  mTLS session itself. Exclude that port from capture, or use
+  [JWT-SVIDs](#jwt-svids-when-mtls-cannot-reach-the-issuer) through the mesh. With Istio, the pod
   annotations are `traffic.sidecar.istio.io/excludeInboundPorts` on the issuer
   and `traffic.sidecar.istio.io/excludeOutboundPorts` on agents
   ([Istio annotation reference](https://istio.io/latest/docs/reference/config/annotations/)).
@@ -637,6 +790,19 @@ matching reason on the `tenuo.spiffe` logger.
 | `Issuer error; see the issuer's log` | The policy or audit callback raised. | Read the traceback in the issuer log. |
 | `Challenge is from a different issuer key` | The agent's `issuer_key` is not this issuer's key. | Redistribute `tenuo-issuer.pub`. |
 | Tool returns `denied: Root warrant issuer is not trusted` | The tool has a different issuer public key. | Redistribute it. |
+
+With JWT-SVIDs the agent's message starts `Issuer refused (HTTP <status>):`.
+
+| Message | Likely cause | Fix |
+|---|---|---|
+| `...(HTTP 401): JWT-SVID is not for this issuer's audience (...)` | The agent requested a token for a different audience. | Use the issuer's `audience` in `fetch_jwt_svid` and `request_warrant_jwt`. |
+| `...(HTTP 401): JWT-SVID was signed by a key that is not in the trust bundle` | Another trust domain, or the issuer has not received a rotated key yet. | Check the trust domain; check the issuer's Workload API warnings. |
+| `...(HTTP 401): JWT-SVID has expired` | The token sat too long, or the clocks disagree. | Fetch the token just before the request, as the example does. |
+| `...(HTTP 403): Holder proof is too old or from the future; check the clocks on both sides` | Agent and issuer clocks differ by more than 60 seconds. | Synchronize clocks. |
+| `...(HTTP 403): SVID expires too soon to issue a warrant` | The token had about a second left. | Fetch a fresh token. |
+| `...(HTTP 503): Issuer is busy; retry shortly` | 256 requests were already in progress. | Retry; check policy latency; raise `max_concurrent`. |
+| `The TLS certificate presented by HOST:PORT was not accepted: ...` | The load balancer's certificate does not chain to the agent's roots. | Pass `ca_file=` for a private CA. |
+| `Could not fetch a JWT-SVID from the Workload API at ...: PERMISSION_DENIED: no identity issued` | No registration entry matches the agent process. | Check the entry's selectors. |
 
 A grant the issuer will not sign is reported to the agent as `Issuer refused:`
 followed by the reason, for example `Empty constraints for 'search'; use
@@ -695,10 +861,38 @@ are its own and that `issuer` is a key it trusts. The signature is Ed25519
 over the 30 ASCII bytes `tenuo.spiffe.holder-binding.v1`, then one zero byte,
 then the challenge bytes exactly as received.
 
+### JWT wire protocol
+
+One request per warrant, over HTTPS:
+
+```text
+POST /warrants
+Authorization: Bearer <JWT-SVID>
+Content-Type: application/json
+
+{"v": 1, "holder": "<base64 Ed25519 public key>", "task": "<task ID>",
+ "timestamp": <unix seconds>, "signature": "<base64 64-byte signature>"}
+```
+
+The reply is `200 {"warrant": "<base64>"}`, or `{"error": ..., "message": ...}`
+with status 400 (malformed), 401 (token not accepted), 403 (refused), 413, or
+503 (busy, or the policy or audit callback failed).
+
+The signature is Ed25519, by the holder key, over the 34 ASCII bytes
+`tenuo.spiffe.jwt-holder-binding.v1`, then one zero byte, then UTF-8 JSON with
+sorted keys and no whitespace holding `audience` (the issuer's audience),
+`holder` (public key, hex), `task_id`, `timestamp` (the same integer as in the
+request), and `token` (SHA-256 of the JWT-SVID exactly as sent, hex).
+
+The issuer accepts RS256/384/512, PS256/384/512 and ES256/384/512 tokens that
+carry a `kid`, and requires `sub`, `aud` and `exp`.
+
 ### What this adapter does not do
 
-- **JWT-SVIDs, federation, and forwarded identity headers** are not supported.
-  One `SpiffeTLS` trusts one trust domain's bundle.
+- **Federation and forwarded identity headers** are not supported. One
+  `SpiffeTLS` or `SpiffeJWT` trusts one trust domain's bundle.
+- **JWT-SVIDs signed with ML-DSA**, which the standard also allows, are not
+  accepted yet.
 - **It does not revoke.** Removing a workload's registration entry stops new
   warrants once its SVID expires. Warrants already issued stay valid until
   their own expiry, so keep lifetimes short, or distribute a revocation list
@@ -715,12 +909,17 @@ then the challenge bytes exactly as received.
 | `SpiffeTLS.from_workload_api(trust_domain=, server_side=, socket_path=, spiffe_id=, timeout=)` | Takes credentials from the SPIRE agent and follows renewals. `close()` stops following. |
 | `SpiffeTLS(trust_domain=, bundle_file=, cert_file=, key_file=, server_side=)` | Loads credentials from files. `reload()` and `reload_if_changed()` pick up new ones. |
 | `transport.authenticate(connection, expected_id=)` | Returns the peer's `SpiffeIdentity`. `transport.identity` is the local one. |
-| `SpiffeWarrantIssuer(tls=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=)` | Runs policy, challenges the holder key, mints warrants. |
+| `SpiffeWarrantIssuer(tls=, jwt=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=)` | Runs policy, challenges the holder key, mints warrants. |
 | `SpiffeIssuerServer(issuer, host=, port=, max_connections=, timeout=, reload_interval=, max_workers=)` | The mTLS endpoint. `async with` it, then `serve_forever()`. |
 | `request_warrant(tls, address, issuer_id=, issuer_key=, holder_key=, task_id=, timeout=)` | Agent-side call. `arequest_warrant` for asyncio. `issuer_key` may be a list. |
+| `SpiffeJWT.from_workload_api(trust_domain=, audience=, socket_path=)` / `SpiffeJWT(trust_domain=, audience=, bundle_file=)` | Validates JWT-SVIDs. `authenticate(token)` returns a `SpiffeIdentity`. In `tenuo.spiffe_jwt`. |
+| `SpiffeJWTIssuerApp(issuer, path="/warrants", max_concurrent=, max_workers=)` | ASGI endpoint for JWT-SVID bearers. |
+| `request_warrant_jwt(url, token=, audience=, issuer_key=, holder_key=, task_id=, ca_file=)` | Agent-side call. `arequest_warrant_jwt` for asyncio. |
+| `fetch_jwt_svid(audience, socket_path=, spiffe_id=)` | Gets a JWT-SVID from the SPIRE agent. |
+| `issuer.issue_jwt(token, holder, task_id, timestamp, signature)` and `sign_jwt_holder_proof(...)` | The same exchange without the bundled endpoint, for other frameworks. |
 | `SpiffeGrant(capabilities, ttl_seconds=300, max_depth=0)` | What a policy returns. |
 | `ANY_ARGUMENTS` | Explicit "no argument constraints" for one tool. |
-| `SpiffeIdentity` | `spiffe_id`, `certificate_sha256`, `expires_at`. |
+| `SpiffeIdentity` | `spiffe_id`, `svid_type` (`"x509"` or `"jwt"`), `certificate_sha256` (of the certificate or token), `expires_at`. |
 | `SpiffeIssuance` | The record passed to `audit`. |
 | `sign_holder_challenge(...)` | Agent-side signing for the lower-level API. |
 | `SpiffeError` | Raised for every refusal and client failure. A subclass of `ValueError`. |
@@ -728,7 +927,7 @@ then the challenge bytes exactly as received.
 ### Further reading
 
 - [SPIFFE ID specification](https://spiffe.io/docs/latest/spiffe-specs/spiffe-id/)
-- [X.509-SVID specification](https://spiffe.io/docs/latest/spiffe-specs/x509-svid/)
+- [X.509-SVID specification](https://spiffe.io/docs/latest/spiffe-specs/x509-svid/) and [JWT-SVID specification](https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md)
 - [SPIRE server configuration](https://spiffe.io/docs/latest/deploying/spire_server/) and [SPIRE agent configuration](https://spiffe.io/docs/latest/deploying/spire_agent/)
 - [spiffe-helper](https://github.com/spiffe/spiffe-helper)
 - [Runnable demo and real SPIRE harness](../tenuo-python/examples/spiffe/README.md)

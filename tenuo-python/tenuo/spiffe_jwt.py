@@ -1,0 +1,670 @@
+"""JWT-SVID authentication for warrant issuance, for places mTLS cannot reach.
+
+Install ``tenuo[spiffe-jwt]``. Use this when a TLS-terminating load balancer,
+a service mesh, or a serverless platform sits between agents and the issuer, so
+the issuer never sees the agent's X.509-SVID. The agent presents a JWT-SVID as
+a bearer token over HTTPS instead.
+
+A JWT-SVID is a bearer token: whoever holds it can use it until it expires. The
+mTLS exchange in :mod:`tenuo.spiffe` has no such gap, so prefer it where it is
+available. This module narrows the gap as far as a bearer token allows: the
+token must name this issuer as its audience, the warrant never outlives the
+token, and the agent's holder key signs a statement bound to that exact token.
+
+The exchange is one request (no challenge round trip, no server-side state), so
+it works behind load balancers without session affinity. See
+:class:`SpiffeJWTIssuerApp` for the wire format.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import binascii
+import hashlib
+import http.client
+import ipaddress
+import json
+import logging
+import ssl
+import threading
+import time
+import urllib.parse
+import weakref
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple, Union
+
+try:
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa
+except ImportError as exc:
+    raise ImportError("JWT-SVID support requires pip install 'tenuo[spiffe-jwt]'") from exc
+
+from tenuo import PublicKey, SigningKey, Warrant
+from tenuo.spiffe import (
+    _MAX_TASK_ID,
+    _WORKLOAD_API_METADATA,
+    IssuerKeys,
+    SpiffeError,
+    SpiffeIdentity,
+    SpiffeWarrantIssuer,
+    _checked_warrant,
+    _consume_result,
+    _file_signature,
+    _jwt_proof_bytes,
+    _key_list,
+    _OwnerGone,
+    _positive_int,
+    _proto_fields,
+    _read_snapshot,
+    _trust_domain,
+    _workload_api_target,
+    _WorkloadAPIWatcher,
+)
+
+__all__ = [
+    "SpiffeJWT",
+    "SpiffeJWTIssuerApp",
+    "arequest_warrant_jwt",
+    "fetch_jwt_svid",
+    "request_warrant_jwt",
+    "sign_jwt_holder_proof",
+]
+
+logger = logging.getLogger("tenuo.spiffe")
+
+_FETCH_JWT_BUNDLES = "/SpiffeWorkloadAPI/FetchJWTBundles"
+_FETCH_JWT_SVID = "/SpiffeWorkloadAPI/FetchJWTSVID"
+_MAX_TOKEN_BYTES = 16 * 1024
+_MAX_BODY_BYTES = 64 * 1024
+_MIN_RSA_BITS = 2048
+_FILE_CHECK_SECONDS = 5.0
+_PROTOCOL_VERSION = 1
+# RFC 7518 signature algorithms the JWT-SVID standard allows, by key family.
+_RSA_ALGORITHMS = frozenset({"RS256", "RS384", "RS512", "PS256", "PS384", "PS512"})
+_EC_CURVES = {"ES256": "secp256r1", "ES384": "secp384r1", "ES512": "secp521r1"}
+
+_Key = Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]
+
+
+def _jwks_keys(document: bytes, trust_domain: str) -> Dict[str, _Key]:
+    """Read one trust domain's JWT-SVID signing keys from a JWKS document.
+
+    Also accepts the file ``spiffe-helper`` writes: a JSON object mapping trust
+    domain names to base64-encoded JWKS documents.
+    """
+    try:
+        data = json.loads(document)
+        if isinstance(data, dict) and "keys" not in data:
+            encoded = data.get(trust_domain, data.get(f"spiffe://{trust_domain}"))
+            if not isinstance(encoded, str):
+                raise SpiffeError(f"JWT bundle has no entry for trust domain {trust_domain}")
+            data = json.loads(base64.b64decode(encoded, validate=True))
+    except SpiffeError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise SpiffeError("JWT bundle is not a JWKS document") from exc
+    entries = data.get("keys") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        raise SpiffeError("JWT bundle is not a JWKS document")
+    keys: Dict[str, _Key] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("use", "jwt-svid") != "jwt-svid":
+            continue  # X.509 authorities in a combined SPIFFE bundle.
+        kid, kty = entry.get("kid"), entry.get("kty")
+        if not isinstance(kid, str) or not kid or kid in keys:
+            raise SpiffeError("Every JWT bundle key needs a unique key ID")
+        try:
+            if kty == "RSA":
+                key: Any = pyjwt.algorithms.RSAAlgorithm.from_jwk(entry)
+            elif kty == "EC":
+                key = pyjwt.algorithms.ECAlgorithm.from_jwk(entry)
+            else:
+                raise SpiffeError(f"JWT bundle key {kid!r} has an unsupported type")
+        except pyjwt.PyJWTError as exc:
+            raise SpiffeError(f"JWT bundle key {kid!r} is malformed") from exc
+        if isinstance(key, rsa.RSAPublicKey):
+            if key.key_size < _MIN_RSA_BITS:
+                raise SpiffeError(f"JWT bundle key {kid!r} is too small")
+        elif not isinstance(key, ec.EllipticCurvePublicKey):
+            raise SpiffeError(f"JWT bundle key {kid!r} is not a public key")
+        keys[kid] = key
+    if not keys:
+        raise SpiffeError(f"JWT bundle for {trust_domain} contains no JWT-SVID signing keys")
+    return keys
+
+
+def _jwt_bundle_from_response(message: bytes, trust_domain: str) -> Dict[str, _Key]:
+    """Pick this trust domain's JWKS from a JWTBundlesResponse. Other domains are ignored."""
+    for field, value in _proto_fields(message):
+        if field != 1 or not isinstance(value, bytes):  # bundles: map<string, bytes>
+            continue
+        entry = {number: item for number, item in _proto_fields(value) if isinstance(item, bytes)}
+        if entry.get(1, b"") == f"spiffe://{trust_domain}".encode():
+            return _jwks_keys(entry.get(2, b""), trust_domain)
+    raise SpiffeError(f"The Workload API returned no JWT bundle for {trust_domain}")
+
+
+class SpiffeJWT:
+    """Validate JWT-SVIDs for one trust domain and one audience.
+
+    ``audience`` is the name agents request tokens for. Make it specific to this
+    issuer (its SPIFFE ID is the usual choice): a token for any other audience
+    is refused. Signing keys come from a JWKS file (this constructor; the file
+    ``spiffe-helper`` writes also works) or from the SPIRE agent with
+    :meth:`from_workload_api`, which follows key rotation. A changed file is
+    picked up within a few seconds.
+    """
+
+    _paths: Optional[Tuple[str, ...]]
+    _signature: Tuple[Tuple[int, int, int, int], ...]
+    _keys: Dict[str, _Key]
+
+    def __init__(self, *, trust_domain: str, audience: str, bundle_file: str, leeway_seconds: float = 5.0):
+        self._init_common(trust_domain, audience, leeway_seconds)
+        self._paths = (bundle_file,)
+        self._signature = _file_signature(self._paths)
+        self._keys = self._read_file()
+
+    @classmethod
+    def from_workload_api(
+        cls,
+        *,
+        trust_domain: str,
+        audience: str,
+        socket_path: Optional[str] = None,
+        timeout: float = 30.0,
+        leeway_seconds: float = 5.0,
+    ) -> "SpiffeJWT":
+        """Take the trust domain's JWT signing keys from the SPIRE agent.
+
+        Needs ``tenuo[spiffe-workload-api]`` as well. ``socket_path`` works as in
+        :meth:`tenuo.spiffe.SpiffeTLS.from_workload_api`. Waits up to ``timeout``
+        seconds for the first bundle, then follows updates until :meth:`close`.
+        """
+        try:
+            import grpc  # noqa: F401
+        except ImportError as exc:
+            raise ImportError("The Workload API source requires pip install 'tenuo[spiffe-workload-api]'") from exc
+        self = cls.__new__(cls)
+        self._init_common(trust_domain, audience, leeway_seconds)
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        owner = weakref.ref(self)
+
+        def deliver(keys: Dict[str, _Key]) -> None:
+            validator = owner()
+            if validator is None:
+                raise _OwnerGone
+            validator._keys = keys
+            logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(keys), trust_domain)
+
+        watcher = _WorkloadAPIWatcher(
+            _workload_api_target(socket_path),
+            _FETCH_JWT_BUNDLES,
+            lambda raw: _jwt_bundle_from_response(raw, trust_domain),
+            deliver,
+        )
+        self._watcher = watcher
+        weakref.finalize(self, watcher.stop, False)
+        if not watcher.start(timeout):
+            watcher.stop()
+            reason = watcher.last_error or "no response"
+            raise SpiffeError(f"No usable JWT bundle from the Workload API at {watcher.target}: {reason}")
+        return self
+
+    def _init_common(self, trust_domain: str, audience: str, leeway_seconds: float) -> None:
+        _trust_domain(f"spiffe://{trust_domain}/x")  # Validates the name.
+        if not isinstance(audience, str) or not audience or len(audience) > 2048:
+            raise ValueError("audience must be a non-empty string")
+        if not 0 <= leeway_seconds <= 60:
+            raise ValueError("leeway_seconds must be between 0 and 60")
+        self.trust_domain = trust_domain
+        self.audience = audience
+        self._leeway = leeway_seconds
+        self._paths = None
+        self._signature = ()
+        self._watcher: Optional[_WorkloadAPIWatcher] = None
+        self._reload_lock = threading.Lock()
+        self._checked = time.monotonic()
+        self._keys = {}
+
+    def _read_file(self) -> Dict[str, _Key]:
+        assert self._paths is not None
+        return _jwks_keys(_read_snapshot(self._paths[0]), self.trust_domain)
+
+    def reload(self) -> None:
+        """Read the bundle file again. On failure, keep the current keys."""
+        if self._paths is None:
+            return
+        with self._reload_lock:
+            signature = _file_signature(self._paths)
+            self._keys = self._read_file()
+            self._signature = signature
+        logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(self._keys), self.trust_domain)
+
+    def reload_if_changed(self) -> bool:
+        """Reload when the bundle file changed. Called automatically while tokens arrive."""
+        if self._paths is None or _file_signature(self._paths) == self._signature:
+            return False
+        self.reload()
+        return True
+
+    def close(self) -> None:
+        """Stop following the Workload API."""
+        if self._watcher is not None:
+            self._watcher.stop()
+
+    def _refresh(self) -> None:
+        if self._paths is None or time.monotonic() - self._checked < _FILE_CHECK_SECONDS:
+            return
+        self._checked = time.monotonic()
+        try:
+            self.reload_if_changed()
+        except Exception as exc:  # Never let a bad file stop later reloads.
+            logger.warning("Could not reload the JWT bundle; keeping the current keys: %s", exc)
+
+    def authenticate(self, token: str) -> SpiffeIdentity:
+        """Validate a JWT-SVID and return the workload identity it names."""
+        self._refresh()
+        if not isinstance(token, str) or not 0 < len(token) <= _MAX_TOKEN_BYTES or token.count(".") != 2:
+            raise SpiffeError("Malformed JWT-SVID")
+        try:
+            header = pyjwt.get_unverified_header(token)
+        except pyjwt.PyJWTError as exc:
+            raise SpiffeError("Malformed JWT-SVID") from exc
+        algorithm, kid, kind = header.get("alg"), header.get("kid"), header.get("typ")
+        if kind is not None and kind not in ("JWT", "JOSE"):
+            raise SpiffeError("Malformed JWT-SVID")
+        if not isinstance(algorithm, str):
+            raise SpiffeError("Malformed JWT-SVID")
+        if not isinstance(kid, str) or not kid:
+            raise SpiffeError("JWT-SVID names no signing key")
+        key = self._keys.get(kid)
+        if key is None:
+            raise SpiffeError("JWT-SVID was signed by a key that is not in the trust bundle")
+        # Tie the algorithm to the key's own type, so a token cannot pick one the key was not made for.
+        if isinstance(key, rsa.RSAPublicKey):
+            supported = algorithm in _RSA_ALGORITHMS
+        else:
+            supported = _EC_CURVES.get(algorithm) == key.curve.name
+        if not supported:
+            raise SpiffeError("JWT-SVID uses an algorithm its signing key does not support")
+        try:
+            claims = pyjwt.decode(
+                token,
+                key=key,
+                algorithms=[algorithm],
+                audience=self.audience,
+                leeway=self._leeway,
+                options={"require": ["exp", "sub", "aud"]},
+            )
+        except pyjwt.ExpiredSignatureError as exc:
+            raise SpiffeError("JWT-SVID has expired") from exc
+        except pyjwt.InvalidAudienceError as exc:
+            raise SpiffeError(f"JWT-SVID is not for this issuer's audience ({self.audience})") from exc
+        except pyjwt.PyJWTError as exc:
+            raise SpiffeError("Invalid JWT-SVID") from exc
+        subject, expires = claims.get("sub"), claims.get("exp")
+        if not isinstance(subject, str) or not isinstance(expires, (int, float)) or isinstance(expires, bool):
+            raise SpiffeError("Invalid JWT-SVID")
+        if _trust_domain(subject) != self.trust_domain:
+            raise SpiffeError("JWT-SVID belongs to a different trust domain")
+        digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+        return SpiffeIdentity(subject, digest, float(expires), "jwt")
+
+
+# -- agent side -------------------------------------------------------------
+
+
+def fetch_jwt_svid(
+    audience: str, *, socket_path: Optional[str] = None, spiffe_id: Optional[str] = None, timeout: float = 10.0
+) -> str:
+    """Ask the SPIRE agent for a JWT-SVID for ``audience`` (needs ``tenuo[spiffe-workload-api]``).
+
+    If SPIRE offers this process several identities, name one with
+    ``spiffe_id``; otherwise the first is used.
+    """
+    try:
+        import grpc
+    except ImportError as exc:
+        raise ImportError("The Workload API source requires pip install 'tenuo[spiffe-workload-api]'") from exc
+    if not isinstance(audience, str) or not audience:
+        raise ValueError("audience must be a non-empty string")
+    target = _workload_api_target(socket_path)
+
+    def text(number: int, value: str) -> bytes:
+        data = value.encode("utf-8")
+        if len(data) > 2048:
+            raise ValueError("audience and spiffe_id must be at most 2048 bytes")
+        length = bytearray()
+        size = len(data)
+        while True:
+            length.append((size & 0x7F) | (0x80 if size > 0x7F else 0))
+            size >>= 7
+            if not size:
+                break
+        return bytes([number << 3 | 2]) + bytes(length) + data
+
+    request = text(1, audience) + (text(2, spiffe_id) if spiffe_id else b"")
+    channel = grpc.insecure_channel(target, options=[("grpc.enable_http_proxy", 0)])
+    try:
+        call = channel.unary_unary(
+            _FETCH_JWT_SVID, request_serializer=lambda raw: raw, response_deserializer=lambda raw: raw
+        )
+        response = call(request, metadata=_WORKLOAD_API_METADATA, timeout=timeout)
+    except grpc.RpcError as exc:
+        reason = f"{exc.code().name}: {exc.details()}"
+        raise SpiffeError(f"Could not fetch a JWT-SVID from the Workload API at {target}: {reason}") from exc
+    finally:
+        channel.close()
+    for field, value in _proto_fields(response):
+        if field != 1 or not isinstance(value, bytes):  # svids
+            continue
+        svid = {number: item for number, item in _proto_fields(value) if isinstance(item, bytes)}
+        if spiffe_id is None or svid.get(1, b"") == spiffe_id.encode():
+            try:
+                token = svid.get(2, b"").decode("ascii")
+            except UnicodeDecodeError as exc:
+                raise SpiffeError("The Workload API returned a malformed JWT-SVID") from exc
+            if token:
+                return token
+    raise SpiffeError(f"The Workload API at {target} returned no JWT-SVID" + (f" for {spiffe_id}" if spiffe_id else ""))
+
+
+def sign_jwt_holder_proof(
+    token: str, holder_key: SigningKey, *, audience: str, task_id: str, timestamp: Optional[int] = None
+) -> Tuple[int, bytes]:
+    """Bind a holder key to one JWT-SVID, issuer audience, and task.
+
+    Returns ``(timestamp, signature)`` for
+    :meth:`tenuo.spiffe.SpiffeWarrantIssuer.issue_jwt`. The signed statement
+    starts with a fixed context and names the token by its SHA-256, so it is
+    useless for any other token, issuer, task, or Tenuo signature.
+    """
+    if not isinstance(token, str) or not 0 < len(token) <= _MAX_TOKEN_BYTES:
+        raise SpiffeError("Malformed JWT-SVID")
+    if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
+        raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
+    stamp = int(time.time()) if timestamp is None else timestamp
+    try:
+        digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+    except UnicodeEncodeError as exc:
+        raise SpiffeError("Malformed JWT-SVID") from exc
+    holder = bytes(holder_key.public_key.to_bytes()).hex()
+    return stamp, bytes(holder_key.sign_raw(_jwt_proof_bytes(audience, holder, task_id, stamp, digest)))
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def request_warrant_jwt(
+    url: str,
+    *,
+    token: Union[str, Callable[[], str]],
+    audience: str,
+    issuer_key: IssuerKeys,
+    holder_key: SigningKey,
+    task_id: str,
+    ca_file: Optional[str] = None,
+    timeout: float = 10.0,
+) -> Warrant:
+    """Obtain a warrant from a :class:`SpiffeJWTIssuerApp` with a JWT-SVID.
+
+    ``token`` is the JWT-SVID or a function returning one, for example
+    ``lambda: fetch_jwt_svid(audience)``. ``audience`` must be the issuer's
+    configured audience. The token is only ever sent over verified HTTPS
+    (``ca_file`` for a private CA, otherwise the system roots); plain ``http``
+    is accepted for loopback addresses only. Redirects are not followed. The
+    returned warrant is checked against ``issuer_key`` and ``holder_key``.
+    Every failure is raised as :class:`tenuo.spiffe.SpiffeError`.
+    """
+    trusted = _key_list(issuer_key)
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname
+    if parts.scheme not in ("https", "http") or not host or parts.username or parts.password or parts.fragment:
+        raise ValueError("url must look like https://host[:port]/path")
+    if parts.scheme == "http" and not _is_loopback(host):
+        raise ValueError("A JWT-SVID is a bearer token: use https:// (http:// is allowed for loopback only)")
+    path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+    value = token() if callable(token) else token
+    if not isinstance(value, str):
+        raise SpiffeError("Malformed JWT-SVID")
+    value = value.strip()
+    timestamp, signature = sign_jwt_holder_proof(value, holder_key, audience=audience, task_id=task_id)
+    body = json.dumps(
+        {
+            "v": _PROTOCOL_VERSION,
+            "holder": base64.b64encode(bytes(holder_key.public_key.to_bytes())).decode("ascii"),
+            "task": task_id,
+            "timestamp": timestamp,
+            "signature": base64.b64encode(signature).decode("ascii"),
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    where = f"{host}:{parts.port or (443 if parts.scheme == 'https' else 80)}"
+    connection: http.client.HTTPConnection
+    if parts.scheme == "https":
+        connection = http.client.HTTPSConnection(
+            host, parts.port, timeout=timeout, context=ssl.create_default_context(cafile=ca_file)
+        )
+    else:
+        connection = http.client.HTTPConnection(host, parts.port, timeout=timeout)
+    try:
+        connection.request(
+            "POST",
+            path,
+            body=body,
+            headers={
+                "Authorization": f"Bearer {value}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        status = response.status
+        payload = response.read(_MAX_BODY_BYTES + 1)
+    except ssl.SSLCertVerificationError as exc:
+        raise SpiffeError(f"The TLS certificate presented by {where} was not accepted: {exc.verify_message}") from exc
+    except ssl.SSLError as exc:
+        raise SpiffeError(f"TLS with the issuer at {where} failed: {exc.reason or exc}") from exc
+    except (OSError, http.client.HTTPException) as exc:
+        raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
+    finally:
+        connection.close()
+    try:
+        reply = json.loads(payload) if len(payload) <= _MAX_BODY_BYTES else None
+    except (ValueError, RecursionError):
+        reply = None
+    if status != 200 or not isinstance(reply, dict):
+        message = reply.get("message") if isinstance(reply, dict) else None
+        if isinstance(message, str) and message:
+            raise SpiffeError(f"Issuer refused (HTTP {status}): {message[:200]}")
+        raise SpiffeError(f"The issuer at {where} answered HTTP {status} without a warrant")
+    return _checked_warrant(reply.get("warrant"), trusted, holder_key)
+
+
+async def arequest_warrant_jwt(url: str, **kwargs: Any) -> Warrant:
+    """Async wrapper for :func:`request_warrant_jwt` (runs in a worker thread)."""
+    return await asyncio.to_thread(request_warrant_jwt, url, **kwargs)
+
+
+# -- issuer endpoint --------------------------------------------------------
+
+_Scope = Mapping[str, Any]
+_Receive = Callable[[], Awaitable[Mapping[str, Any]]]
+_Send = Callable[[Mapping[str, Any]], Awaitable[None]]
+
+
+class _Refusal(Exception):
+    def __init__(self, status: int, error: str, message: str):
+        super().__init__(message)
+        self.status, self.error, self.message = status, error, message
+
+
+class SpiffeJWTIssuerApp:
+    """ASGI application that issues warrants to JWT-SVID bearers.
+
+    Run it with any ASGI server (``uvicorn module:app``) or mount it in an
+    existing app. TLS is terminated by whatever sits in front: a load balancer,
+    a mesh sidecar, or the ASGI server itself.
+
+    One request per warrant::
+
+        POST <path>
+        Authorization: Bearer <JWT-SVID>
+        Content-Type: application/json
+
+        {"v": 1, "holder": "<base64 Ed25519 public key>", "task": "<task ID>",
+         "timestamp": <unix seconds>, "signature": "<base64 holder proof>"}
+
+    The reply is ``200 {"warrant": "<base64>"}``, or ``{"error": ..., "message":
+    ...}`` with 400 (malformed), 401 (token not accepted), 403 (refused), 413,
+    or 503 (busy, or the policy or audit callback failed). Policy and audit run
+    in up to ``max_workers`` threads; at most ``max_concurrent`` requests are in
+    progress at once and the rest get 503.
+    """
+
+    def __init__(
+        self,
+        issuer: SpiffeWarrantIssuer,
+        *,
+        path: str = "/warrants",
+        max_concurrent: int = 256,
+        max_workers: int = 32,
+    ):
+        if issuer.jwt is None:
+            raise ValueError("SpiffeJWTIssuerApp needs an issuer built with jwt=SpiffeJWT(...)")
+        if not path.startswith("/"):
+            raise ValueError("path must start with /")
+        for name, value in (("max_concurrent", max_concurrent), ("max_workers", max_workers)):
+            if not _positive_int(value) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        self.issuer = issuer
+        self._validator: Any = issuer.jwt
+        self._path = path
+        self._max_concurrent = max_concurrent
+        self._busy = 0
+        self._pool = ThreadPoolExecutor(max_workers, thread_name_prefix="tenuo-spiffe-jwt")
+
+    def close(self) -> None:
+        """Release the worker threads. Called on ASGI lifespan shutdown."""
+        self._pool.shutdown(wait=False)
+
+    async def __call__(self, scope: _Scope, receive: _Receive, send: _Send) -> None:
+        if scope["type"] == "lifespan":
+            while True:
+                message = await receive()
+                if message["type"] == "lifespan.startup":
+                    await send({"type": "lifespan.startup.complete"})
+                elif message["type"] == "lifespan.shutdown":
+                    self.close()
+                    await send({"type": "lifespan.shutdown.complete"})
+                    return
+        if scope["type"] != "http":
+            return
+        try:
+            status, reply = 200, {"warrant": (await self._issue(scope, receive)).to_base64()}
+        except _Refusal as refusal:
+            status, reply = refusal.status, {"error": refusal.error, "message": refusal.message}
+            logger.info("JWT-SVID issuance refused (%d): %s", status, refusal.message)
+        except Exception:
+            logger.exception("JWT-SVID issuance failed")
+            status, reply = 503, {"error": "unavailable", "message": "Issuer error"}
+        body = json.dumps(reply, separators=(",", ":")).encode("utf-8")
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+            (b"cache-control", b"no-store"),
+        ]
+        if status == 401:
+            headers.append((b"www-authenticate", b"Bearer"))
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": body})
+
+    async def _issue(self, scope: _Scope, receive: _Receive) -> Warrant:
+        path, root = scope.get("path", ""), scope.get("root_path", "")
+        if root and path.startswith(root):
+            path = path[len(root) :]  # Mounted under a prefix.
+        if path != self._path:
+            raise _Refusal(404, "not_found", "No such endpoint")
+        if scope.get("method") != "POST":
+            raise _Refusal(405, "method_not_allowed", "Use POST")
+        tokens = [value for name, value in scope.get("headers", ()) if name.lower() == b"authorization"]
+        scheme, _, credential = (tokens[0] if len(tokens) == 1 else b"").partition(b" ")
+        if scheme.lower() != b"bearer" or not credential or len(credential) > _MAX_TOKEN_BYTES:
+            raise _Refusal(401, "unauthorized", "Send the JWT-SVID as one Authorization: Bearer header")
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                raise _Refusal(400, "invalid_request", "Request was not completed")
+            body += message.get("body", b"")
+            if len(body) > _MAX_BODY_BYTES:
+                raise _Refusal(413, "too_large", "Request body is too large")
+            if not message.get("more_body"):
+                break
+        try:
+            request = json.loads(body)
+            if not isinstance(request, dict) or set(request) != {"v", "holder", "task", "timestamp", "signature"}:
+                raise ValueError
+            if request["v"] != _PROTOCOL_VERSION:
+                raise _Refusal(400, "invalid_request", "Unsupported protocol version")
+            holder = PublicKey.from_bytes(base64.b64decode(request["holder"], validate=True))
+            signature = base64.b64decode(request["signature"], validate=True)
+            token = credential.decode("ascii")
+        except _Refusal:
+            raise
+        except (ValueError, TypeError, RecursionError, binascii.Error):
+            raise _Refusal(400, "invalid_request", "Malformed request") from None
+        except Exception:  # A holder key the core rejects.
+            raise _Refusal(400, "invalid_request", "Invalid holder key") from None
+        validator, issuer = self._validator, self.issuer
+
+        def work() -> Warrant:
+            try:
+                identity = validator.authenticate(token)
+            except SpiffeError as exc:
+                raise _Refusal(401, "unauthorized", str(exc)) from exc
+            try:
+                return issuer._issue_jwt(identity, holder, request["task"], request["timestamp"], signature)
+            except SpiffeError as exc:
+                raise _Refusal(403, "refused", str(exc)) from exc
+
+        return await self._in_worker(work)
+
+    async def _in_worker(self, function: Callable[[], Warrant]) -> Warrant:
+        """Run blocking work in the pool. A slot is held until the work itself has finished."""
+        loop = asyncio.get_running_loop()
+        if self._busy >= self._max_concurrent:
+            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
+        self._busy += 1
+
+        def release() -> None:
+            self._busy -= 1
+
+        def run() -> Warrant:
+            try:
+                return function()
+            finally:
+                try:
+                    loop.call_soon_threadsafe(release)
+                except RuntimeError:
+                    pass  # The loop closed during shutdown.
+
+        try:
+            work = asyncio.wrap_future(self._pool.submit(run))
+        except RuntimeError:
+            self._busy -= 1
+            raise _Refusal(503, "unavailable", "Issuer is shutting down") from None
+        try:
+            return await asyncio.shield(work)
+        except asyncio.CancelledError:
+            work.add_done_callback(_consume_result)
+            raise

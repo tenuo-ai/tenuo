@@ -62,13 +62,18 @@ workloads with 120-second SVIDs, keeps an issuer running while SPIRE renews
 them, and checks that both sides switch to the renewed SVIDs without a restart:
 
 ```text
+Verified: a JWT-SVID from SPIRE was exchanged for a warrant; two improper requests were refused.
 Verified: issuer and agent followed a renewal straight from the Workload API.
 Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
 ```
 
-The first line is an issuer and agent built with `SpiffeTLS.from_workload_api`,
-reading the SPIRE agent's socket. The second is the same pair reading
-credential files that the harness rewrites.
+- The first line is the JWT-SVID exchange: the agent fetches a token from the
+  SPIRE agent and posts it to the HTTP endpoint. A token for another audience
+  and a workload the policy does not approve are both refused.
+- The second is an issuer and agent built with `SpiffeTLS.from_workload_api`,
+  reading the SPIRE agent's socket.
+- The third is the same pair reading credential files that the harness
+  rewrites.
 
 Processes, SQLite
 state, private keys, and sockets are temporary and cleaned up on exit. No ports

@@ -5,7 +5,8 @@ Requires Linux, spire-server and spire-agent on PATH. The accompanying Dockerfil
 provides these. All sockets, credentials, data, and logs live in a temp directory.
 After the demo, the harness waits for SPIRE to renew the short-lived SVIDs and
 checks that a running issuer picks up the renewal without a restart, once with
-credential files and once straight from the Workload API socket.
+credential files and once straight from the Workload API socket. It also
+exchanges a real JWT-SVID for a warrant over HTTP.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import socket
 import subprocess
 import tempfile
 import time
@@ -24,7 +26,8 @@ from cryptography.hazmat.primitives import hashes
 
 from demo import AGENT_ID, ISSUER_ID, policy, run, tls_config
 from tenuo import SigningKey
-from tenuo.spiffe import SpiffeIssuerServer, SpiffeTLS, SpiffeWarrantIssuer, arequest_warrant
+from tenuo.spiffe import SpiffeError, SpiffeIssuerServer, SpiffeTLS, SpiffeWarrantIssuer, arequest_warrant
+from tenuo.spiffe_jwt import SpiffeJWT, SpiffeJWTIssuerApp, arequest_warrant_jwt, fetch_jwt_svid
 
 SVID_TTL_SECONDS = 120  # SPIRE renews at about half of this.
 
@@ -130,7 +133,56 @@ async def workload_api_check(agent_socket: str) -> None:
     print("Verified: issuer and agent followed a renewal straight from the Workload API.")
 
 
+async def jwt_check(agent_socket: str) -> None:
+    """Exchange a JWT-SVID minted by SPIRE for a warrant, over HTTP."""
+    import uvicorn
+
+    audience = ISSUER_ID  # Tokens must be requested for this issuer.
+    validator = SpiffeJWT.from_workload_api(trust_domain="demo.test", audience=audience, socket_path=agent_socket)
+    root, holder = SigningKey.generate(), SigningKey.generate()
+    app = SpiffeJWTIssuerApp(SpiffeWarrantIssuer(signing_key=root, policy=policy, jwt=validator))
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    serving = asyncio.ensure_future(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise RuntimeError("The JWT issuer endpoint did not start")
+        url = f"http://127.0.0.1:{port}/warrants"  # Loopback only; production traffic is HTTPS.
+        options = dict(audience=audience, issuer_key=root.public_key, holder_key=holder, task_id="approved-refund-123")
+
+        def token(for_audience=audience, spiffe_id=AGENT_ID):
+            return fetch_jwt_svid(for_audience, socket_path=agent_socket, spiffe_id=spiffe_id)
+
+        warrant = await arequest_warrant_jwt(url, token=token, **options)
+        if warrant.authorized_holder != holder.public_key:
+            raise RuntimeError("The warrant is bound to the wrong holder")
+        refused = []
+        for label, bad_token in (
+            ("a token for another audience", lambda: token("spiffe://demo.test/another-service")),
+            ("a workload the policy does not approve", lambda: token(spiffe_id=ISSUER_ID)),
+        ):
+            try:
+                await arequest_warrant_jwt(url, token=bad_token, **options)
+            except SpiffeError:
+                refused.append(label)
+        if len(refused) != 2:
+            raise RuntimeError(f"Expected two refusals, got {refused}")
+    finally:
+        server.should_exit = True
+        await serving
+        validator.close()
+        app.close()
+    print("Verified: a JWT-SVID from SPIRE was exchanged for a warrant; two improper requests were refused.")
+
+
 async def renewal_checks(directory: Path, agent_socket: str, refetch) -> None:
+    await jwt_check(agent_socket)
     # Both checks wait for the same renewal, so run them together.
     await asyncio.gather(rotation_check(directory, refetch), workload_api_check(agent_socket))
 

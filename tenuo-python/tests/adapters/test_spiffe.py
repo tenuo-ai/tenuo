@@ -1329,15 +1329,24 @@ class FakeWorkloadAPI:
         self.refuse = None  # A grpc.StatusCode to answer with instead of streaming.
         self.calls = 0
         self.saw_header = []
+        self._jwt_streams = []
+        self._jwt_current = None
+        self.jwt_svid_response = None  # Bytes, or a function of the raw request.
+        self.jwt_svid_requests = []
         api = self
 
         class Handler(grpc.GenericRpcHandler):
             def service(self, details):
-                if details.method != "/SpiffeWorkloadAPI/FetchX509SVID" or api.refuse == "unimplemented":
+                raw = dict(request_deserializer=lambda data: data, response_serializer=lambda data: data)
+                if api.refuse == "unimplemented":
                     return None
-                return grpc.unary_stream_rpc_method_handler(
-                    api._fetch, request_deserializer=lambda raw: raw, response_serializer=lambda raw: raw
-                )
+                if details.method == "/SpiffeWorkloadAPI/FetchX509SVID":
+                    return grpc.unary_stream_rpc_method_handler(api._fetch, **raw)
+                if details.method == "/SpiffeWorkloadAPI/FetchJWTBundles":
+                    return grpc.unary_stream_rpc_method_handler(api._fetch_jwt_bundles, **raw)
+                if details.method == "/SpiffeWorkloadAPI/FetchJWTSVID":
+                    return grpc.unary_unary_rpc_method_handler(api._fetch_jwt_svid, **raw)
+                return None
 
         self._server = grpc.server(ThreadPoolExecutor(max_workers=8))
         self._server.add_generic_rpc_handlers((Handler(),))
@@ -1361,15 +1370,45 @@ class FakeWorkloadAPI:
                 return
             yield message
 
+    def _fetch_jwt_bundles(self, request, context):
+        self.calls += 1
+        if self.refuse is not None:
+            context.abort(self.refuse, "no identity issued")
+        stream = self._queue.Queue()
+        with self._lock:
+            self._jwt_streams.append(stream)
+            if self._jwt_current is not None:
+                stream.put(self._jwt_current)
+        while True:
+            message = stream.get()
+            if message is None or not context.is_active():
+                return
+            yield message
+
+    def _fetch_jwt_svid(self, request, context):
+        self.jwt_svid_requests.append(request)
+        self.saw_header.append(dict(context.invocation_metadata()).get("workload.spiffe.io"))
+        if self.refuse is not None:
+            context.abort(self.refuse, "no identity issued")
+        response = self.jwt_svid_response
+        return response(request) if callable(response) else (response or b"")
+
     def publish(self, message):
         with self._lock:
             self._current = message
             for stream in self._streams:
                 stream.put(message)
 
+    def publish_jwt_bundles(self, message):
+        with self._lock:
+            self._jwt_current = message
+            for stream in self._jwt_streams:
+                stream.put(message)
+
     def drop_streams(self):
         with self._lock:
-            streams, self._streams = self._streams, []
+            streams, self._streams = self._streams + self._jwt_streams, []
+            self._jwt_streams = []
         for stream in streams:
             stream.put(None)
 
@@ -1763,6 +1802,8 @@ def _guide_blocks():
         "call_tool.py",
         "tool.py",
         "delegate.py",
+        "jwt_issuer.py",
+        "jwt_agent.py",
     }
     return blocks
 

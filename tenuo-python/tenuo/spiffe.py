@@ -74,6 +74,11 @@ IssuerKeys = Union[PublicKey, Sequence[PublicKey]]
 # therefore cannot choose the first bytes of what the holder key signs, and the
 # signature cannot be reused as any other Tenuo signature (all start "tenuo-").
 _HOLDER_CONTEXT = b"tenuo.spiffe.holder-binding.v1\x00"
+# JWT-SVID exchanges are a single request, so the holder signs a timestamped
+# statement bound to the exact token instead of an issuer challenge.
+_JWT_HOLDER_CONTEXT = b"tenuo.spiffe.jwt-holder-binding.v1\x00"
+_JWT_PROOF_SECONDS = 60  # Accepted distance between the proof timestamp and the issuer clock.
+_JWT_PROOF_MEMORY = 4096  # Recent proofs remembered to refuse an exact replay.
 _CHALLENGE_FIELDS = frozenset({"nonce", "issuer", "spiffe_id", "certificate", "holder", "task_id"})
 _CHALLENGE_SECONDS = 30
 _MAX_SPIFFE_ID = 2048
@@ -114,6 +119,15 @@ class SpiffeError(ValueError):
     """Authentication, holder proof, or issuance was rejected."""
 
 
+def _jwt_proof_bytes(audience: str, holder_hex: str, task_id: str, timestamp: int, token_sha256: str) -> bytes:
+    """What the holder key signs to bind itself to one JWT-SVID, issuer audience, and task."""
+    return _JWT_HOLDER_CONTEXT + json.dumps(
+        {"audience": audience, "holder": holder_hex, "task_id": task_id, "timestamp": timestamp, "token": token_sha256},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def _trust_domain(spiffe_id: str) -> str:
     # Parse without URL normalization: encoded separators and relative segments
     # must never turn into an authorized identity.
@@ -129,11 +143,17 @@ def _trust_domain(spiffe_id: str) -> str:
 
 @dataclass(frozen=True)
 class SpiffeIdentity:
-    """Peer identity authenticated against a domain-specific TLS trust bundle."""
+    """A workload identity authenticated against one trust domain's bundle.
+
+    ``svid_type`` is ``"x509"`` for a peer authenticated over mTLS and ``"jwt"``
+    for a JWT-SVID bearer token. ``certificate_sha256`` is the SHA-256 of the
+    SVID itself: the certificate, or the token.
+    """
 
     spiffe_id: str
     certificate_sha256: str
     expires_at: float
+    svid_type: str = "x509"
 
 
 def _svid_identity(cert: x509.Certificate, trust_domain: str) -> Tuple[SpiffeIdentity, float]:
@@ -364,13 +384,14 @@ def _next_delay(delay: float, usable: bool) -> float:
 class _WorkloadAPIWatcher:
     """Background thread that follows the X.509-SVID stream and reconnects."""
 
-    def __init__(self, target: str, spiffe_id: Optional[str], deliver: Callable[[_Snapshot], None]):
+    def __init__(self, target: str, method: str, parse: Callable[[bytes], Any], deliver: Callable[[Any], None]):
         self.target = target
         self.last_error: Optional[str] = None
-        self._spiffe_id = spiffe_id
+        self._method = method
+        self._parse = parse
         self._deliver = deliver
         self._deliver_lock = threading.Lock()
-        self._pending: Optional[_Snapshot] = None  # Newest update that could not be used yet.
+        self._pending: Optional[Any] = None  # Newest update that could not be used yet.
         self._first = threading.Event()  # A usable SVID arrived, or retrying is pointless.
         self._usable = False
         self._stop = threading.Event()
@@ -394,7 +415,7 @@ class _WorkloadAPIWatcher:
         if join and self._thread.is_alive() and self._thread is not threading.current_thread():
             self._thread.join(timeout=5)
 
-    def _offer(self, snapshot: _Snapshot, retry: bool = False) -> bool:
+    def _offer(self, snapshot: Any, retry: bool = False) -> bool:
         try:
             self._deliver(snapshot)
         except _OwnerGone:
@@ -428,11 +449,11 @@ class _WorkloadAPIWatcher:
                 if self._stop.is_set():
                     break
                 fetch = channel.unary_stream(
-                    _FETCH_X509_SVID, request_serializer=lambda _: b"", response_deserializer=lambda raw: raw
+                    self._method, request_serializer=lambda _: b"", response_deserializer=lambda raw: raw
                 )
                 for message in fetch(None, metadata=_WORKLOAD_API_METADATA):
                     try:
-                        snapshot = _x509_snapshot(message, self._spiffe_id)
+                        snapshot = self._parse(message)
                     except SpiffeError as exc:
                         self.last_error = str(exc)
                         logger.warning("Ignoring an unusable Workload API update: %s", exc)
@@ -544,7 +565,9 @@ class SpiffeTLS:
                 raise SpiffeError(f"The Workload API returned a certificate for a different SPIFFE ID than {spiffe_id}")
             tls._install(generation)
 
-        watcher = _WorkloadAPIWatcher(_workload_api_target(socket_path), spiffe_id, deliver)
+        watcher = _WorkloadAPIWatcher(
+            _workload_api_target(socket_path), _FETCH_X509_SVID, lambda raw: _x509_snapshot(raw, spiffe_id), deliver
+        )
         self._watcher = watcher
         # Stop the thread if the instance is dropped without close().
         weakref.finalize(self, watcher.stop, False)
@@ -849,19 +872,24 @@ class SpiffeWarrantIssuer:
     def __init__(
         self,
         *,
-        tls: SpiffeTLS,
+        tls: Optional[SpiffeTLS] = None,
         signing_key: SigningKey,
         policy: Callable[[SpiffeIdentity, str], Optional[SpiffeGrant]],
         max_pending: int = 1024,
         max_pending_per_identity: int = 16,
         audit: Optional[Callable[[SpiffeIssuance], None]] = None,
+        jwt: Optional[Any] = None,
     ):
-        if not tls.server_side:
+        if tls is None and jwt is None:
+            raise ValueError("Pass tls (X.509-SVIDs over mTLS), jwt (JWT-SVIDs), or both")
+        if tls is not None and not tls.server_side:
             raise ValueError("Issuance requires a server-side SPIFFE TLS context")
         for name, value in (("max_pending", max_pending), ("max_pending_per_identity", max_pending_per_identity)):
             if not _positive_int(value) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
         self.tls = tls
+        self.jwt = jwt  # A tenuo.spiffe_jwt.SpiffeJWT, or None.
+        self._proofs: Dict[bytes, float] = {}
         self._key = signing_key
         self._issuer_hex = bytes(signing_key.public_key.to_bytes()).hex()
         self._policy = policy
@@ -873,11 +901,64 @@ class SpiffeWarrantIssuer:
 
     def challenge(self, connection: TLSConnection, holder: PublicKey, task_id: str) -> bytes:
         """Return a challenge for the holder to sign with :func:`sign_holder_challenge`."""
-        return self._challenge(self.tls.authenticate(connection), holder, task_id)
+        return self._challenge(self._mtls().authenticate(connection), holder, task_id)
 
     def issue(self, connection: TLSConnection, challenge: bytes, signature: bytes) -> Warrant:
         """Consume a challenge, verify holder possession, and mint the approved grant."""
-        return self._issue(self.tls.authenticate(connection), challenge, signature)
+        return self._issue(self._mtls().authenticate(connection), challenge, signature)
+
+    def issue_jwt(self, token: str, holder: PublicKey, task_id: str, timestamp: int, signature: bytes) -> Warrant:
+        """Authenticate a JWT-SVID, verify the holder proof, run policy, and mint.
+
+        ``timestamp`` and ``signature`` come from
+        :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof`. A JWT-SVID is a bearer
+        token: send it only over TLS, and prefer the mTLS exchange where you can.
+        """
+        if self.jwt is None:
+            raise SpiffeError("This issuer does not accept JWT-SVIDs")
+        return self._issue_jwt(self.jwt.authenticate(token), holder, task_id, timestamp, signature)
+
+    def _mtls(self) -> SpiffeTLS:
+        if self.tls is None:
+            raise SpiffeError("This issuer does not accept X.509-SVIDs")
+        return self.tls
+
+    def _issue_jwt(
+        self, identity: SpiffeIdentity, holder: PublicKey, task_id: str, timestamp: int, signature: bytes
+    ) -> Warrant:
+        if self.jwt is None or identity.svid_type != "jwt":
+            raise SpiffeError("This issuer does not accept JWT-SVIDs")
+        if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
+            raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
+        if not isinstance(holder, PublicKey):
+            raise SpiffeError("holder must be a Tenuo PublicKey")
+        if not _positive_int(timestamp) or abs(time.time() - timestamp) > _JWT_PROOF_SECONDS:
+            raise SpiffeError("Holder proof is too old or from the future; check the clocks on both sides")
+        if not isinstance(signature, bytes) or len(signature) != 64:
+            raise SpiffeError("Invalid holder proof")
+        key = bytes(holder.to_bytes())
+        message = _jwt_proof_bytes(self.jwt.audience, key.hex(), task_id, timestamp, identity.certificate_sha256)
+        try:
+            Ed25519PublicKey.from_public_bytes(key).verify(signature, message)
+        except (InvalidSignature, ValueError) as exc:
+            raise SpiffeError("Invalid holder proof") from exc
+        now = time.monotonic()
+        with self._lock:
+            self._proofs = {seen: until for seen, until in self._proofs.items() if until > now}
+            if signature in self._proofs:
+                raise SpiffeError("This holder proof was already used; sign a new one")
+            while len(self._proofs) >= _JWT_PROOF_MEMORY:
+                self._proofs.pop(next(iter(self._proofs)))  # Oldest first.
+            self._proofs[signature] = now + 2 * _JWT_PROOF_SECONDS + 1
+        grant = self._policy(identity, task_id)
+        if grant is None:
+            raise SpiffeError("Workload is not authorized for this task")
+        try:
+            grant = _validate_grant(grant)
+        except SpiffeError as exc:
+            logger.warning("Invalid policy grant for %s task %r: %s", identity.spiffe_id, task_id, exc)
+            raise
+        return self._mint(identity, key, task_id, grant)
 
     def _challenge(self, identity: SpiffeIdentity, holder: PublicKey, task_id: str) -> bytes:
         if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
@@ -933,24 +1014,25 @@ class SpiffeWarrantIssuer:
             Ed25519PublicKey.from_public_bytes(pending.holder).verify(signature, _HOLDER_CONTEXT + challenge)
         except (InvalidSignature, ValueError) as exc:
             raise SpiffeError("Invalid holder proof") from exc
-        grant = pending.grant
+        return self._mint(identity, pending.holder, pending.task_id, pending.grant)
+
+    def _mint(self, identity: SpiffeIdentity, holder: bytes, task_id: str, grant: SpiffeGrant) -> Warrant:
+        """Mint a validated grant for a proven holder key, bounded by the SVID's expiry."""
         ttl = min(grant.ttl_seconds, int(identity.expires_at - time.time()) - 1)
         if ttl < 1:
             raise SpiffeError("SVID expires too soon to issue a warrant")
-        builder = (
-            Warrant.mint_builder().holder(PublicKey.from_bytes(pending.holder)).ttl(ttl).max_depth(grant.max_depth)
-        )
+        builder = Warrant.mint_builder().holder(PublicKey.from_bytes(holder)).ttl(ttl).max_depth(grant.max_depth)
         for tool, constraints in grant.capabilities.items():
             builder.capability(tool, dict(constraints))
         warrant = builder.mint(self._key)
         if datetime.fromisoformat(warrant.expires_at()).timestamp() > identity.expires_at:
             raise SpiffeError("Warrant would outlive the authenticated SVID")
         record = SpiffeIssuance(
-            identity, pending.task_id, pending.holder.hex(), warrant.id, warrant.expires_at(), tuple(grant.capabilities)
+            identity, task_id, holder.hex(), warrant.id, warrant.expires_at(), tuple(grant.capabilities)
         )
         if self._audit is not None:
             self._audit(record)
-        logger.info("Issued warrant %s to %s for task %r", warrant.id, identity.spiffe_id, pending.task_id)
+        logger.info("Issued warrant %s to %s for task %r", warrant.id, identity.spiffe_id, task_id)
         return warrant
 
     def _discard(self, challenge: Optional[bytes]) -> None:
@@ -1105,6 +1187,11 @@ def request_warrant(
         raise SpiffeError(f"TLS with the issuer at {where} failed: {exc.reason or exc}") from exc
     except OSError as exc:  # Refused, reset, or timed out.
         raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
+    return _checked_warrant(encoded, trusted, holder_key)
+
+
+def _checked_warrant(encoded: Any, trusted: List[PublicKey], holder_key: SigningKey) -> Warrant:
+    """Accept an issuer's reply only if it is a current warrant from a trusted key for this holder."""
     if not isinstance(encoded, str):
         raise SpiffeError("Invalid warrant response")
     try:
@@ -1238,6 +1325,9 @@ class SpiffeIssuerServer:
                 raise ValueError(f"{name} must be a positive integer")
         if timeout <= 0 or reload_interval <= 0:
             raise ValueError("timeout and reload_interval must be positive")
+        if issuer.tls is None:
+            raise ValueError("SpiffeIssuerServer needs an issuer built with tls=; for JWT-SVIDs use SpiffeJWTIssuerApp")
+        self._tls: SpiffeTLS = issuer.tls
         self.issuer = issuer
         self.host, self.port = host, port
         self._max_connections = max_connections
@@ -1271,7 +1361,7 @@ class SpiffeIssuerServer:
         self._server = await asyncio.start_server(self._handle, self.host, self.port)
         self._reloader = asyncio.ensure_future(self._reload_loop())
         host, port = self.address
-        logger.info("Issuing warrants on %s:%s as %s", host, port, self.issuer.tls.identity.spiffe_id)
+        logger.info("Issuing warrants on %s:%s as %s", host, port, self._tls.identity.spiffe_id)
 
     async def serve_forever(self) -> None:
         if self._server is None:
@@ -1309,7 +1399,7 @@ class SpiffeIssuerServer:
         while True:
             await asyncio.sleep(self._reload_interval)
             try:
-                await loop.run_in_executor(self._reload_worker, self.issuer.tls._refresh)
+                await loop.run_in_executor(self._reload_worker, self._tls._refresh)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -1365,7 +1455,7 @@ class SpiffeIssuerServer:
         task = asyncio.current_task()
         if task is not None:
             self._tasks.add(task)
-        connection = _ServerConnection(reader, writer, self.issuer.tls.context)
+        connection = _ServerConnection(reader, writer, self._tls.context)
         try:
             await asyncio.wait_for(self._exchange(connection), self._timeout)
         except asyncio.TimeoutError:
@@ -1386,7 +1476,7 @@ class SpiffeIssuerServer:
 
     async def _exchange(self, connection: _ServerConnection) -> None:
         await connection.handshake()
-        tls = self.issuer.tls
+        tls = self._tls
         challenge: Optional[bytes] = None
         try:
             identity = tls.authenticate(connection.tls)
