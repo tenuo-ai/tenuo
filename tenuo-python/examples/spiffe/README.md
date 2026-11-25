@@ -1,9 +1,10 @@
 # SPIFFE → Tenuo → protected refund tool
 
-This demo authenticates an agent's X.509-SVID over real mTLS, verifies its
-separate Tenuo holder key, applies a server-owned task policy, and checks each
-refund request at the tool boundary. It also delegates a narrower warrant to a
-worker. No model API, cloud account, or real refund service is needed.
+This demo runs the adapter's mTLS issuance endpoint, requests a warrant as an
+agent with a separate Tenuo holder key, applies a server-owned task policy, and
+checks each refund request at the tool boundary. It also delegates a narrower
+warrant to a worker. No model API, cloud account, or real refund service is
+needed.
 
 ## Quickstart: disposable development certificates
 
@@ -49,7 +50,15 @@ docker run --rm --mount "type=bind,source=$PWD,target=/work,readonly" tenuo-spif
 The harness starts a SPIRE server and agent, uses a one-time join token for node
 attestation, registers `spiffe://demo.test/agent` and
 `spiffe://demo.test/issuer`, and fetches their X.509-SVIDs through the Workload API.
-It then runs the same mTLS exchange and tool-boundary checks. Processes, SQLite
+It then runs the same exchange and tool-boundary checks. Finally it registers the
+workloads with 120-second SVIDs, keeps an issuer running while SPIRE renews
+them, and checks that both sides switch to the renewed SVIDs without a restart:
+
+```text
+Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
+```
+
+Processes, SQLite
 state, private keys, and sockets are temporary and cleaned up on exit. No ports
 are published to the host.
 
@@ -85,10 +94,10 @@ PYTHONPATH=tenuo-python python tenuo-python/examples/spiffe/demo.py --credential
 ```
 
 For another trust domain or workload naming scheme, update `DOMAIN`, `AGENT_ID`,
-and `ISSUER_ID` in `demo.py` and the corresponding policy. This short-lived demo
-loads credentials once. A long-lived service must refresh its TLS configuration
-as SPIRE rotates credentials; the adapter does not watch files or subscribe to
-the Workload API.
+and `ISSUER_ID` in `demo.py` and the corresponding policy. Long-lived services reload
+changed credential files automatically (see the guide); keep them current with
+a SPIRE helper such as `spiffe-helper`. The adapter does not call the Workload
+API itself.
 
 See [the adapter guide](../../../docs/spiffe.md) for APIs, trust boundaries,
 rotation, revocation, policy integration, and production deployment constraints.

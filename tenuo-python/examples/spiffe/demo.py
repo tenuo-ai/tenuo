@@ -8,12 +8,9 @@ See README.md for the credential layout and SPIRE setup.
 from __future__ import annotations
 
 import argparse
-import base64
-import json
-import socket
+import asyncio
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -24,7 +21,14 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from tenuo import Authorizer, Exact, Range, SigningKey, Warrant
 from tenuo.exceptions import AuthorizationError
-from tenuo.spiffe import SpiffeGrant, SpiffeIdentity, SpiffeTLS, SpiffeWarrantIssuer
+from tenuo.spiffe import (
+    SpiffeGrant,
+    SpiffeIdentity,
+    SpiffeIssuerServer,
+    SpiffeTLS,
+    SpiffeWarrantIssuer,
+    arequest_warrant,
+)
 
 DOMAIN = "demo.test"
 AGENT_ID = f"spiffe://{DOMAIN}/agent"
@@ -105,97 +109,56 @@ def policy(identity: SpiffeIdentity, task_id: str):
     return None
 
 
-def encode(data: bytes) -> str:
-    return base64.b64encode(data).decode("ascii")
-
-
-def decode(data: str) -> bytes:
-    return base64.b64decode(data, validate=True)
-
-
-def receive(stream):
-    line = stream.readline(65537)
-    if not line or len(line) > 65536 or not line.endswith(b"\n"):
-        raise ValueError("Invalid or oversized demo frame")
-    return json.loads(line)
-
-
-def send(stream, value):
-    stream.write(json.dumps(value).encode() + b"\n")
-    stream.flush()
+def refund_tool(authorizer: Authorizer, chain, args, pop: bytes, executed: list) -> str:
+    """The protected tool. Verification happens before any side effect."""
+    try:
+        authorizer.check_chain(chain, "refund", args, pop)
+    except AuthorizationError:
+        return "DENIED"
+    executed.append(args)  # Stand-in for the real refund.
+    return "ALLOWED"
 
 
 def run(directory: Path) -> list[str]:
     server_tls, client_tls = tls_config(directory, "issuer"), tls_config(directory, "agent")
     root, holder, worker = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
-    issuer = SpiffeWarrantIssuer(tls=server_tls, signing_key=root, policy=policy)
+    audit: list = []
+    issuer = SpiffeWarrantIssuer(tls=server_tls, signing_key=root, policy=policy, audit=audit.append)
+
+    async def obtain_warrant() -> Warrant:
+        async with SpiffeIssuerServer(issuer, host="127.0.0.1", port=0) as server:
+            return await arequest_warrant(
+                client_tls,
+                server.address,
+                issuer_id=ISSUER_ID,
+                issuer_key=root.public_key,
+                holder_key=holder,
+                task_id="approved-refund-123",
+            )
+
+    warrant = asyncio.run(obtain_warrant())
+    assert [(record.identity.spiffe_id, record.warrant_id) for record in audit] == [(AGENT_ID, warrant.id)]
+    child = (
+        warrant.grant_builder()
+        .holder(worker.public_key)
+        .ttl(30)
+        .capability("refund", customer=Exact("123"), cents=Range(1, 1000))
+        .grant(holder)
+    )
     authorizer = Authorizer(trusted_roots=[root.public_key])
-    executed = []
-
-    def server(listener):
-        raw, _ = listener.accept()
-        with raw:
-            raw.settimeout(10)
-            with server_tls.context.wrap_socket(raw, server_side=True) as tls, tls.makefile("rwb") as stream:
-                request = receive(stream)
-                from tenuo import PublicKey
-
-                challenge = issuer.challenge(tls, PublicKey.from_bytes(decode(request["holder"])), request["task"])
-                send(stream, {"challenge": encode(challenge)})
-                proof = receive(stream)
-                warrant = issuer.issue(tls, challenge, decode(proof["signature"]))
-                send(stream, {"warrant": warrant.to_base64()})
-                for _ in range(4):
-                    request = receive(stream)
-                    chain = [Warrant.from_base64(w) for w in request["chain"]]
-                    try:
-                        # This is the execution boundary, before any refund side effect.
-                        authorizer.check_chain(chain, "refund", request["args"], decode(request["pop"]))
-                    except AuthorizationError:
-                        send(stream, {"status": "DENIED"})
-                    else:
-                        executed.append(request["args"])
-                        send(stream, {"status": "ALLOWED"})
-
-    with socket.socket() as listener, ThreadPoolExecutor(max_workers=1) as executor:
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(1)
-        listener.settimeout(10)
-        future = executor.submit(server, listener)
-        results = []
-        with socket.create_connection(listener.getsockname(), timeout=10) as raw:
-            with client_tls.context.wrap_socket(raw) as tls, tls.makefile("rwb") as stream:
-                client_tls.authenticate(tls, expected_id=ISSUER_ID)
-                send(stream, {"holder": encode(holder.public_key.to_bytes()), "task": "approved-refund-123"})
-                challenge = decode(receive(stream)["challenge"])
-                send(stream, {"signature": encode(holder.sign_raw(challenge))})
-                warrant = Warrant.from_base64(receive(stream)["warrant"])
-                child = (
-                    warrant.grant_builder()
-                    .holder(worker.public_key)
-                    .ttl(30)
-                    .capability("refund", customer=Exact("123"), cents=Range(1, 1000))
-                    .grant(holder)
-                )
-                cases = [
-                    ("approved customer, $40", [warrant], holder, {"customer": "123", "cents": 4000}),
-                    ("different customer", [warrant], holder, {"customer": "999", "cents": 4000}),
-                    ("over $50 task limit", [warrant], holder, {"customer": "123", "cents": 6000}),
-                    ("delegated worker, $8", [warrant, child], worker, {"customer": "123", "cents": 800}),
-                ]
-                for label, chain, key, args in cases:
-                    send(
-                        stream,
-                        {
-                            "chain": [w.to_base64() for w in chain],
-                            "args": args,
-                            "pop": encode(chain[-1].sign(key, "refund", args, int(time.time()))),
-                        },
-                    )
-                    result = receive(stream)["status"]
-                    results.append(result)
-                    print(f"{result}: {label}")
-        future.result(timeout=15)
+    executed: list = []
+    results = []
+    cases = [
+        ("approved customer, $40", [warrant], holder, {"customer": "123", "cents": 4000}),
+        ("different customer", [warrant], holder, {"customer": "999", "cents": 4000}),
+        ("over $50 task limit", [warrant], holder, {"customer": "123", "cents": 6000}),
+        ("delegated worker, $8", [warrant, child], worker, {"customer": "123", "cents": 800}),
+    ]
+    for label, chain, key, args in cases:
+        pop = chain[-1].sign(key, "refund", args, int(time.time()))
+        result = refund_tool(authorizer, chain, args, pop, executed)
+        results.append(result)
+        print(f"{result}: {label}")
     assert results == ["ALLOWED", "DENIED", "DENIED", "ALLOWED"]
     assert len(executed) == 2
     print("Verified: only the two authorized refunds reached the tool body.")
