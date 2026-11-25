@@ -1149,12 +1149,19 @@ def test_abandoned_server_exchange_releases_pending_slot(served):
 
 
 def _parked_policy_server(pki):
-    """An issuer whose single policy thread parks until the returned gate opens."""
+    """An issuer whose single policy thread parks until the returned gate opens.
+
+    ``entered`` reports that a callback actually reached the pool, so a server
+    too slow to get that far fails loudly instead of vacuously passing. The
+    gate's own timeout is only a backstop against hanging the suite; it is long
+    enough that no runner can reach it while a test is still working.
+    """
     root, holder = SigningKey.generate(), SigningKey.generate()
-    gate = threading.Event()
+    gate, entered = threading.Event(), threading.Event()
 
     def policy(identity, task_id):
-        gate.wait(10)
+        entered.set()
+        gate.wait(60)
         return SpiffeGrant(REFUND, ttl_seconds=60)
 
     issuer = SpiffeWarrantIssuer(tls=pki(server=True), signing_key=root, policy=policy)
@@ -1165,7 +1172,7 @@ def _parked_policy_server(pki):
             client_tls, address, issuer_id=SERVER, issuer_key=root.public_key, holder_key=holder, task_id=task_id
         )
 
-    return issuer, fetch, gate
+    return issuer, fetch, gate, entered
 
 
 def test_timed_out_exchanges_do_not_pile_up_in_the_policy_queue(pki):
@@ -1177,21 +1184,24 @@ def test_timed_out_exchanges_do_not_pile_up_in_the_policy_queue(pki):
     enqueueing work items that nothing drains. Reads the pool's queue directly
     because a submission that is never picked up has no other observable.
     """
-    issuer, fetch, gate = _parked_policy_server(pki)
+    issuer, fetch, gate, entered = _parked_policy_server(pki)
 
     async def main():
         async with SpiffeIssuerServer(
-            issuer, host="127.0.0.1", port=0, max_connections=1, max_workers=1, timeout=0.3
+            issuer, host="127.0.0.1", port=0, max_connections=1, max_workers=1, timeout=1.0
         ) as server:
             try:
-                for attempt in range(5):
+                with pytest.raises(SpiffeError):
+                    await asyncio.to_thread(fetch, server.address, "parked")
+                assert entered.wait(10), "the policy callback never reached the pool"
+                for attempt in range(3):
                     with pytest.raises(SpiffeError):
                         await asyncio.to_thread(fetch, server.address, f"attempt-{attempt}")
                 return server._workers._work_queue.qsize()
             finally:
                 gate.set()
 
-    # The first attempt's callback is parked in the one thread; the rest time
+    # The first exchange's callback holds the one thread; the reconnects time
     # out waiting to be submitted, so nothing accumulates behind it.
     assert asyncio.run(main()) == 0
 
@@ -1203,14 +1213,15 @@ def test_parked_policy_thread_releases_its_submission_slot(pki):
     item still occupied a thread, letting submissions outrun the bound; holding
     it past completion would wedge the issuer for every later exchange.
     """
-    issuer, fetch, gate = _parked_policy_server(pki)
+    issuer, fetch, gate, entered = _parked_policy_server(pki)
 
     async def main():
         async with SpiffeIssuerServer(
-            issuer, host="127.0.0.1", port=0, max_connections=1, max_workers=1, timeout=0.3
+            issuer, host="127.0.0.1", port=0, max_connections=1, max_workers=1, timeout=1.0
         ) as server:
             with pytest.raises(SpiffeError):
                 await asyncio.to_thread(fetch, server.address, "abandoned")
+            assert entered.wait(10), "the policy callback never reached the pool"
             gate.set()
             return await asyncio.to_thread(fetch, server.address)
 
