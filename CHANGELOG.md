@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python SPIFFE adapter (`tenuo[spiffe]`): authenticate X.509-SVID peers over
+  mTLS, verify a separate Tenuo holder key, and issue task-scoped warrants under
+  explicit application policy. Includes replay-resistant issuance challenges,
+  SVID-bounded expiry, and development-PKI and real-SPIRE demos. See
+  [the SPIFFE guide](docs/spiffe.md).
+
 ## [0.3.8] - 2026-11-24
 
 ### Added
