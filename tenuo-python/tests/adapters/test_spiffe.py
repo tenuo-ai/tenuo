@@ -1629,6 +1629,38 @@ def test_workload_api_close_stops_following(ca, workload_api, from_api):
     server.close()  # Idempotent.
 
 
+def test_workload_api_close_waits_for_a_delivery_and_nothing_is_installed_after(ca, workload_api, from_api):
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    server = from_api(api)
+    watcher = server._watcher
+    entered, release, delivered = threading.Event(), threading.Event(), []
+    original = watcher._deliver
+
+    def slow(snapshot):
+        entered.set()
+        release.wait(5)
+        delivered.append(snapshot)
+        original(snapshot)
+
+    watcher._deliver = slow
+    api.publish(x509_response(svid_entry(ca, SERVER)))  # A renewal that is still being installed...
+    assert entered.wait(5)
+    closer = threading.Thread(target=server.close)
+    closer.start()  # ...when the owner closes.
+    time.sleep(0.2)
+    assert closer.is_alive()  # close() waits for it rather than racing it.
+    release.set()
+    closer.join(5)
+    assert not closer.is_alive() and len(delivered) == 1
+    after = server.identity
+    # A retry that was already under way, or scheduled, finds the watcher stopped.
+    watcher._pending = delivered[0]
+    assert watcher.retry_pending() is False and server.reload_if_changed() is False
+    watcher._retry_tick()
+    assert len(delivered) == 1 and server.identity == after
+
+
 @pytest.mark.skipif(os.name == "nt", reason="Unix domain sockets")
 def test_workload_api_over_unix_socket_and_environment(ca, workload_api, monkeypatch):
     import shutil
@@ -2055,6 +2087,61 @@ def test_broken_federated_bundle_does_not_hold_back_home_rotation(ca, tmp_path, 
     assert partner_refused_home_served(server, ca, partner, pki)
 
 
+def damaged_authority(authority, kind):
+    """A CA certificate that still parses as a certificate but cannot be fully read."""
+    der = authority.cert.public_bytes(serialization.Encoding.DER)
+    before, after = {
+        "unsupported key": ("06082a8648ce3d030107", "06082a8648ce3d030177"),  # An unknown curve.
+        "duplicate extension": ("551d0e", "551d13"),  # Two basicConstraints extensions.
+    }[kind]
+    changed = der.replace(bytes.fromhex(before), bytes.fromhex(after), 1)
+    assert changed != der
+    return x509.load_der_x509_certificate(changed).public_bytes(serialization.Encoding.PEM)
+
+
+@pytest.mark.parametrize("kind", ["unsupported key", "duplicate extension"])
+def test_unreadable_federated_certificate_does_not_hold_back_home_rotation(ca, tmp_path, pki, kind, caplog):
+    partner = CA(tmp_path, "partner root")
+    partner_bundle = tmp_path / "partner.pem"
+    partner_bundle.write_bytes(partner.pem)
+    paths = ca.files("fed-unreadable", SERVER)
+    server = tls_in(DOMAIN, paths, True, {PARTNER: partner_bundle})
+    before = server.identity
+    time.sleep(0.01)
+    partner_bundle.write_bytes(damaged_authority(partner, kind))
+    _rewrite(ca, paths, SERVER)
+    with caplog.at_level("WARNING", logger="tenuo.spiffe"):
+        assert server.reload_if_changed() is True
+    assert server.identity != before  # The home SVID rotated regardless.
+    assert f"federated trust domain {PARTNER} is refused" in caplog.text
+    assert partner_refused_home_served(server, ca, partner, pki)
+    # In the home bundle the same certificate is a plain refusal, not an unrelated exception.
+    with pytest.raises(SpiffeError, match="Malformed or unsupported"):
+        _tls(ca.files("home-unreadable", SERVER, bundle=ca.pem + damaged_authority(partner, kind)), True)
+
+
+@pytest.mark.parametrize("kind", ["unsupported key", "duplicate extension", "malformed entry"])
+def test_unreadable_federated_bundle_from_the_workload_api_does_not_hold_back_renewal(
+    ca, tmp_path, pki, workload_api, from_api, kind
+):
+    partner = CA(tmp_path, "partner root")
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER), federated=[(f"spiffe://{PARTNER}", partner.pem)]))
+    server = from_api(api, federates_with=[PARTNER])
+    before = server.identity
+    connection, _ = connect(server, raw_client(partner.files("api-partner", PARTNER_AGENT), ca.pem))
+    assert server.authenticate(connection).spiffe_id == PARTNER_AGENT
+    if kind == "malformed entry":
+        renewal = x509_response(svid_entry(ca, SERVER)) + _field(3, b"\xff\xff\xff\xff")
+    else:
+        renewal = x509_response(
+            svid_entry(ca, SERVER), federated=[(f"spiffe://{PARTNER}", damaged_authority(partner, kind))]
+        )
+    api.publish(renewal)
+    assert eventually(lambda: server.identity != before)
+    assert partner_refused_home_served(server, ca, partner, pki)
+
+
 def test_shared_root_topologies_keep_domains_apart(ca, tmp_path, pki):
     """One domain's authority chains to a root in the other's bundle: the nearest authority decides."""
     # The partner's authority is an intermediate issued by the home root.
@@ -2221,6 +2308,8 @@ def _guide_blocks():
         "jwt_issuer.py",
         "jwt_agent.py",
         "federated_issuer.py",
+        "forwarded_issuer.py",
+        "forwarded_agent.py",
     }
     return blocks
 

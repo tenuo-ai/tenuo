@@ -6,24 +6,34 @@ provides these. All sockets, credentials, data, and logs live in a temp director
 After the demo, the harness waits for SPIRE to renew the short-lived SVIDs and
 checks that a running issuer picks up the renewal without a restart, once with
 credential files and once straight from the Workload API socket. It also
-exchanges a real JWT-SVID for a warrant over HTTP, and starts a second SPIRE
-deployment for another trust domain to exercise federation.
+exchanges a real JWT-SVID for a warrant over HTTP, starts a second SPIRE
+deployment for another trust domain to exercise federation, and, when envoy is
+on PATH, puts a real Envoy in front of an issuer that takes the agent's
+identity from the header Envoy sets.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import http.client
+import json
 import os
 import re
+import shutil
 import socket
+import ssl
 import subprocess
 import tempfile
 import time
 from contextlib import ExitStack
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from demo import AGENT_ID, ISSUER_ID, policy, run, tls_config
 from tenuo import Exact, Range, SigningKey
@@ -34,6 +44,12 @@ from tenuo.spiffe import (
     SpiffeTLS,
     SpiffeWarrantIssuer,
     arequest_warrant,
+)
+from tenuo.spiffe_forwarded import (
+    SpiffeForwardedIdentity,
+    SpiffeForwardedIssuerApp,
+    arequest_warrant_forwarded,
+    sign_forwarded_holder_proof,
 )
 from tenuo.spiffe_jwt import SpiffeJWT, SpiffeJWTIssuerApp, arequest_warrant_jwt, fetch_jwt_svid
 
@@ -257,9 +273,246 @@ async def federation_check(agent_socket: str, partner_socket: str) -> None:
     )
 
 
-async def renewal_checks(directory: Path, agent_socket: str, partner_socket: str, refetch) -> None:
+ENVOY_LISTENER = """
+  - name: {name}
+    address: {{socket_address: {{address: 127.0.0.1, port_value: {port}}}}}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: {name}
+          forward_client_cert_details: {mode}
+          set_current_client_cert_details: {{uri: true}}
+          route_config:
+            virtual_hosts:
+            - name: issuer
+              domains: ["*"]
+              routes: [{{match: {{prefix: "/"}}, route: {{cluster: issuer}}}}]
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config: {{"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}}
+"""
+# The proxy presents the issuer's SVID and accepts only clients whose certificate chains to the trust bundle.
+ENVOY_MUTUAL_TLS = """      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          require_client_certificate: true
+          common_tls_context:
+            tls_certificates:
+            - certificate_chain: {{filename: {directory}/issuer.pem}}
+              private_key: {{filename: {directory}/issuer-key.pem}}
+            validation_context: {{trusted_ca: {{filename: {bundle}}}}}
+"""
+ENVOY_CLUSTER = """
+  clusters:
+  - name: issuer
+    type: STATIC
+    load_assignment:
+      cluster_name: issuer
+      endpoints:
+      - lb_endpoints: [{{endpoint: {{address: {{socket_address: {{address: 127.0.0.1, port_value: {port}}}}}}}}}]
+"""
+
+
+OTHER_DOMAIN = "other.test"
+
+
+def crafted_client(directory: Path) -> ssl.SSLContext:
+    """A client whose certificate, from an authority outside SPIRE, carries a name ending in a quote.
+
+    SPIRE does not issue such names. Another authority a proxy trusts might,
+    and Envoy copies the name into the header as it is.
+    """
+    now = datetime.now(timezone.utc)
+    ca_key, key = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "other.test authority")])
+    builder = x509.CertificateBuilder().issuer_name(ca_name).not_valid_before(now - timedelta(minutes=5))
+    builder = builder.not_valid_after(now + timedelta(hours=1))
+    authority = (
+        builder.subject_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .add_extension(x509.BasicConstraints(True, None), True)
+        .add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    leaf = (
+        builder.subject_name(x509.Name([]))
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .add_extension(x509.BasicConstraints(False, None), True)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.UniformResourceIdentifier(f'spiffe://{OTHER_DOMAIN}/x"')]), True
+        )
+        .add_extension(x509.KeyUsage(True, False, False, False, False, False, False, False, False), True)
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), False)
+        .sign(ca_key, hashes.SHA256())
+    )
+    (directory / "other-bundle.pem").write_bytes(authority.public_bytes(serialization.Encoding.PEM))
+    (directory / "crafted.pem").write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
+    replace_file(
+        directory / "crafted-key.pem",
+        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()),
+        0o600,
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False  # The proxy presents an SVID, which has no host name.
+    context.load_verify_locations(cafile=str(directory / "bundle.pem"))
+    context.load_cert_chain(str(directory / "crafted.pem"), str(directory / "crafted-key.pem"))
+    return context
+
+
+def free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+async def forwarded_check(directory: Path, launch, refetch) -> None:
+    """A real Envoy terminates the agent's mutual TLS and forwards its identity to the issuer."""
+    import uvicorn
+
+    if shutil.which("envoy") is None:
+        print("Skipped: envoy is not on PATH, so the forwarded-identity check did not run.")
+        return
+    await asyncio.to_thread(refetch)  # Envoy reads the SVID files once, so start from fresh ones.
+    audience = "https://issuer.demo.test/warrants"
+    seen = []
+
+    def recording_policy(identity, task_id):
+        seen.append((identity.spiffe_id, identity.svid_type))
+        return policy(identity, task_id)
+
+    forwarded = SpiffeForwardedIdentity(
+        DOMAIN,
+        audience=audience,
+        trusted_proxies=["127.0.0.1"],
+        expected_by=ISSUER_ID,
+        federates_with=[OTHER_DOMAIN],
+    )
+    root, holder = SigningKey.generate(), SigningKey.generate()
+    app = SpiffeForwardedIssuerApp(SpiffeWarrantIssuer(signing_key=root, policy=recording_policy, forwarded=forwarded))
+    ports = {name: free_port() for name in ("issuer", "replace", "append", "plain", "crafted")}
+    crafted_tls = crafted_client(directory)
+    # The issuer must see the real socket peer, so uvicorn's proxy-header rewriting is off.
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=ports["issuer"], log_level="warning", proxy_headers=False)
+    )
+    serving = asyncio.ensure_future(server.serve())
+    mutual_tls = ENVOY_MUTUAL_TLS.format(directory=directory, bundle=directory / "bundle.pem")
+    config = directory / "envoy.yaml"
+    config.write_text(
+        "static_resources:\n  listeners:"
+        + ENVOY_LISTENER.format(name="replace", port=ports["replace"], mode="SANITIZE_SET")
+        + mutual_tls
+        + ENVOY_LISTENER.format(name="append", port=ports["append"], mode="APPEND_FORWARD")
+        + mutual_tls
+        + ENVOY_LISTENER.format(name="plain", port=ports["plain"], mode="APPEND_FORWARD")
+        # An appending listener that also accepts clients of an authority outside SPIRE.
+        + ENVOY_LISTENER.format(name="crafted", port=ports["crafted"], mode="APPEND_FORWARD")
+        + ENVOY_MUTUAL_TLS.format(directory=directory, bundle=directory / "other-bundle.pem")
+        + ENVOY_CLUSTER.format(port=ports["issuer"])
+    )
+    envoy = launch("envoy", "envoy", "-c", str(config), "--log-level", "warn", "--disable-hot-restart")
+    agent_tls = tls_config(directory, "agent")
+    unapproved_tls = SpiffeTLS(
+        trust_domain=DOMAIN,
+        bundle_file=str(directory / "bundle.pem"),
+        cert_file=str(directory / "issuer.pem"),
+        key_file=str(directory / "issuer-key.pem"),
+        server_side=False,
+    )
+    options = dict(audience=audience, issuer_key=root.public_key, holder_key=holder, task_id="approved-refund-123")
+    forged = f"By={ISSUER_ID};Hash={'ab' * 32};URI=spiffe://{DOMAIN}/someone-else"
+
+    def post(listener: str, header=None, context=None):
+        """One request, optionally with an identity header of the client's own. Returns the HTTP status."""
+        proof = sign_forwarded_holder_proof(holder, audience=audience, task_id="approved-refund-123")
+        body = json.dumps(
+            {
+                "v": 1,
+                "holder": base64.b64encode(bytes(holder.public_key.to_bytes())).decode(),
+                "task": "approved-refund-123",
+                "timestamp": proof.timestamp,
+                "nonce": base64.b64encode(proof.nonce).decode(),
+                "signature": base64.b64encode(proof.signature).decode(),
+            }
+        )
+        if listener == "plain":
+            connection = http.client.HTTPConnection("127.0.0.1", ports[listener], timeout=10)
+        else:
+            connection = http.client.HTTPSConnection(
+                "127.0.0.1", ports[listener], timeout=10, context=context or agent_tls.context
+            )
+        try:
+            headers = {"Content-Type": "application/json"}
+            if header is not None:
+                headers["x-forwarded-client-cert"] = header
+            connection.request("POST", "/warrants", body=body, headers=headers)
+            response = connection.getresponse()
+            response.read()
+            return response.status
+        finally:
+            connection.close()
+
+    try:
+        for _ in range(200):
+            if envoy.poll() is not None:
+                raise RuntimeError("Envoy exited")
+            try:
+                if server.started and await asyncio.to_thread(post, "plain") == 403:
+                    break
+            except OSError:
+                pass
+            await asyncio.sleep(0.05)
+        else:
+            raise RuntimeError("Envoy did not start")
+        for listener in ("replace", "append"):
+            url = f"https://127.0.0.1:{ports[listener]}/warrants"
+            warrant = await arequest_warrant_forwarded(url, tls=agent_tls, issuer_id=ISSUER_ID, **options)
+            if warrant.authorized_holder != holder.public_key:
+                raise RuntimeError("The warrant is bound to the wrong holder")
+            try:
+                await arequest_warrant_forwarded(url, tls=unapproved_tls, issuer_id=ISSUER_ID, **options)
+            except SpiffeError:
+                pass
+            else:
+                raise RuntimeError("A workload the policy does not approve received a warrant")
+        if seen != [(AGENT_ID, "forwarded"), (ISSUER_ID, "forwarded")] * 2:
+            raise RuntimeError(f"Unexpected forwarded identities {seen}")
+        # An agent that sends an identity header of its own gains nothing:
+        # a replacing proxy discards it, and behind an appending proxy the issuer refuses the request.
+        seen.clear()
+        statuses = {
+            listener: await asyncio.to_thread(post, listener, forged) for listener in ("replace", "append", "plain")
+        }
+        if statuses != {"replace": 200, "append": 403, "plain": 403} or seen != [(AGENT_ID, "forwarded")]:
+            raise RuntimeError(f"A client-supplied identity header was not handled safely: {statuses} {seen}")
+        # A certificate name ending in a quote, with a header that opens one: the
+        # two must not combine into an entry that names the approved agent.
+        seen.clear()
+        opening = f'By={ISSUER_ID};Hash={"ab" * 32};URI={AGENT_ID};X="'
+        statuses = [await asyncio.to_thread(post, "crafted", header, crafted_tls) for header in (opening, None)]
+        if statuses != [403, 403] or seen:
+            raise RuntimeError(f"A crafted certificate name was not handled safely: {statuses} {seen}")
+    finally:
+        stop(envoy)
+        server.should_exit = True
+        await serving
+        app.close()
+    print(
+        "Verified: Envoy forwarded the agent's SPIRE identity to the issuer; "
+        "an unapproved workload, three requests carrying a made-up identity, "
+        "and a certificate with a crafted name got nothing extra."
+    )
+
+
+async def renewal_checks(directory: Path, agent_socket: str, partner_socket: str, refetch, launch) -> None:
     await jwt_check(agent_socket)
     await federation_check(agent_socket, partner_socket)
+    await forwarded_check(directory, launch, refetch)
     # Both checks wait for the same renewal, so run them together.
     await asyncio.gather(rotation_check(directory, refetch), workload_api_check(agent_socket))
 
@@ -416,7 +669,11 @@ def main():
             run(directory)
             asyncio.run(
                 renewal_checks(
-                    directory, agent_socket, partner_socket, lambda: export_svids(agent_socket, exported, directory)
+                    directory,
+                    agent_socket,
+                    partner_socket,
+                    lambda: export_svids(agent_socket, exported, directory),
+                    launch,
                 )
             )
         except Exception:

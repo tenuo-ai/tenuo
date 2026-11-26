@@ -47,7 +47,8 @@ seconds. These limits apply per call; they are not a total spending cap.
 ## Real SPIRE interoperability demo
 
 Docker provides a disposable Linux environment with SPIRE **1.16.0** binaries
-verified against their release SHA-256 checksums (AMD64 and ARM64 supported):
+verified against their release SHA-256 checksums, and the Envoy **1.40.2**
+binary from its official image, pinned by digest (AMD64 and ARM64 supported):
 
 ```bash
 docker build -t tenuo-spiffe-demo:local -f tenuo-python/examples/spiffe/Dockerfile .
@@ -64,6 +65,7 @@ them, and checks that both sides switch to the renewed SVIDs without a restart:
 ```text
 Verified: a JWT-SVID from SPIRE was exchanged for a warrant; two improper requests were refused.
 Verified: a workload from a federated trust domain was accepted over mTLS and by JWT-SVID, and refused without federation.
+Verified: Envoy forwarded the agent's SPIRE identity to the issuer; an unapproved workload, three requests carrying a made-up identity, and a certificate with a crafted name got nothing extra.
 Verified: issuer and agent followed a renewal straight from the Workload API.
 Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
 ```
@@ -74,9 +76,16 @@ Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
 - The second is federation: the harness starts a second SPIRE deployment for
   `partner.test`, exchanges bundles between the two servers, and has a partner
   workload obtain a warrant from the issuer in `demo.test`.
-- The third is an issuer and agent built with `SpiffeTLS.from_workload_api`,
+- The third is forwarded identity: a real Envoy in front of the issuer ends
+  the agent's mutual TLS with SPIRE-issued certificates and passes the agent's
+  SPIFFE ID on in `x-forwarded-client-cert`. The harness then sends an
+  identity header of its own through a replacing listener, an appending
+  listener, and a listener without TLS; none of them lets it choose who it is.
+  Last, a client with a certificate from an authority outside SPIRE, whose name
+  ends in a quote, tries to pass as the approved agent and is refused.
+- The fourth is an issuer and agent built with `SpiffeTLS.from_workload_api`,
   reading the SPIRE agent's socket.
-- The fourth is the same pair reading credential files that the harness
+- The fifth is the same pair reading credential files that the harness
   rewrites.
 
 Processes, SQLite
@@ -89,7 +98,9 @@ production isolation pattern. Production issuer and agent workloads need
 separate selectors and separate credential access. Likewise, the example
 combines issuer and tool service roles in one process to keep the flow visible.
 
-On Linux with SPIRE binaries and the Python dependencies already installed:
+On Linux with SPIRE binaries and the Python dependencies already installed
+(the forwarded-identity check is skipped, and says so, when `envoy` is not on
+`PATH`):
 
 ```bash
 PYTHONPATH=tenuo-python python tenuo-python/examples/spiffe/live_spire.py

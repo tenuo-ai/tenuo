@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import hashlib
 import http.client
 import ipaddress
@@ -31,10 +30,8 @@ import secrets
 import ssl
 import threading
 import time
-import urllib.parse
 import weakref
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 try:
     import jwt as pyjwt
@@ -44,6 +41,7 @@ except ImportError as exc:
     raise ImportError("JWT-SVID support requires pip install 'tenuo[spiffe-jwt]'") from exc
 
 from tenuo import PublicKey, SigningKey, Warrant
+from tenuo._spiffe_http import _IssuerApp, _post_for_warrant, _Refusal, _request_body, _split_url, _where
 from tenuo.spiffe import (
     _MAX_TASK_ID,
     _WORKLOAD_API_METADATA,
@@ -52,9 +50,6 @@ from tenuo.spiffe import (
     SpiffeIdentity,
     SpiffeJWTProof,
     SpiffeWarrantIssuer,
-    _checked_warrant,
-    _IssuerBusy,
-    _consume_result,
     _file_signature,
     _jwt_proof_bytes,
     _key_list,
@@ -83,10 +78,8 @@ logger = logging.getLogger("tenuo.spiffe")
 _FETCH_JWT_BUNDLES = "/SpiffeWorkloadAPI/FetchJWTBundles"
 _FETCH_JWT_SVID = "/SpiffeWorkloadAPI/FetchJWTSVID"
 _MAX_TOKEN_BYTES = 16 * 1024
-_MAX_BODY_BYTES = 64 * 1024
 _MIN_RSA_BITS = 2048
 _FILE_CHECK_SECONDS = 5.0
-_PROTOCOL_VERSION = 1
 _NONCE_BYTES = 16
 _COMPACT_JWS = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 # RFC 7518 signature algorithms the JWT-SVID standard allows, by key family.
@@ -693,75 +686,31 @@ def request_warrant_jwt(
     Every failure is raised as :class:`tenuo.spiffe.SpiffeError`.
     """
     trusted = _key_list(issuer_key)
-    try:
-        parts = urllib.parse.urlsplit(url)
-        host, explicit_port = parts.hostname, parts.port
-    except ValueError:
-        raise ValueError("url must look like https://host[:port]/path") from None
-    if parts.scheme not in ("https", "http") or not host or parts.username or parts.password or parts.fragment:
-        raise ValueError("url must look like https://host[:port]/path")
-    # Always pass the port: http.client would otherwise read the tail of a bare IPv6 address as one.
-    port = explicit_port or (443 if parts.scheme == "https" else 80)
-    if parts.scheme == "http" and not _is_loopback(host):
+    scheme, host, port, path = _split_url(url)
+    if scheme == "http" and not _is_loopback(host):
         raise ValueError("A JWT-SVID is a bearer token: use https:// (http:// is allowed for loopback only)")
-    path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
     value = token() if callable(token) else token
     if not isinstance(value, str):
         raise SpiffeError("Malformed JWT-SVID")
     value = value.strip()
     proof = sign_jwt_holder_proof(value, holder_key, audience=audience, task_id=task_id)
-    body = json.dumps(
-        {
-            "v": _PROTOCOL_VERSION,
-            "holder": base64.b64encode(bytes(holder_key.public_key.to_bytes())).decode("ascii"),
-            "task": task_id,
-            "timestamp": proof.timestamp,
-            "nonce": base64.b64encode(proof.nonce).decode("ascii"),
-            "signature": base64.b64encode(proof.signature).decode("ascii"),
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
-    where = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
-    connection: Optional[http.client.HTTPConnection] = None
-    try:
-        if parts.scheme == "https":
-            connection = http.client.HTTPSConnection(
+
+    def connect() -> http.client.HTTPConnection:
+        if scheme == "https":
+            return http.client.HTTPSConnection(
                 host, port, timeout=timeout, context=ssl.create_default_context(cafile=ca_file)
             )
-        else:
-            connection = http.client.HTTPConnection(host, port, timeout=timeout)
-        connection.request(
-            "POST",
-            path,
-            body=body,
-            headers={
-                "Authorization": f"Bearer {value}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-        )
-        response = connection.getresponse()
-        status = response.status
-        payload = response.read(_MAX_BODY_BYTES + 1)
-    except ssl.SSLCertVerificationError as exc:
-        raise SpiffeError(f"The TLS certificate presented by {where} was not accepted: {exc.verify_message}") from exc
-    except ssl.SSLError as exc:
-        raise SpiffeError(f"TLS with the issuer at {where} failed: {exc.reason or exc}") from exc
-    except (OSError, http.client.HTTPException) as exc:
-        raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
-    finally:
-        if connection is not None:
-            connection.close()
-    try:
-        reply = json.loads(payload) if len(payload) <= _MAX_BODY_BYTES else None
-    except (ValueError, RecursionError):
-        reply = None
-    if status != 200 or not isinstance(reply, dict):
-        message = reply.get("message") if isinstance(reply, dict) else None
-        if isinstance(message, str) and message:
-            raise SpiffeError(f"Issuer refused (HTTP {status}): {message[:200]}")
-        raise SpiffeError(f"The issuer at {where} answered HTTP {status} without a warrant")
-    return _checked_warrant(reply.get("warrant"), trusted, holder_key)
+        return http.client.HTTPConnection(host, port, timeout=timeout)
+
+    return _post_for_warrant(
+        connect,
+        _where(host, port),
+        path,
+        _request_body(holder_key, task_id, proof),
+        {"Authorization": f"Bearer {value}"},
+        trusted,
+        holder_key,
+    )
 
 
 async def arequest_warrant_jwt(url: str, **kwargs: Any) -> Warrant:
@@ -771,18 +720,8 @@ async def arequest_warrant_jwt(url: str, **kwargs: Any) -> Warrant:
 
 # -- issuer endpoint --------------------------------------------------------
 
-_Scope = Mapping[str, Any]
-_Receive = Callable[[], Awaitable[Mapping[str, Any]]]
-_Send = Callable[[Mapping[str, Any]], Awaitable[None]]
 
-
-class _Refusal(Exception):
-    def __init__(self, status: int, error: str, message: str):
-        super().__init__(message)
-        self.status, self.error, self.message = status, error, message
-
-
-class SpiffeJWTIssuerApp:
+class SpiffeJWTIssuerApp(_IssuerApp):
     """ASGI application that issues warrants to JWT-SVID bearers.
 
     Run it with any ASGI server (``uvicorn module:app``) or mount it in an
@@ -806,6 +745,9 @@ class SpiffeJWTIssuerApp:
     progress at once and the rest get 503.
     """
 
+    _what = "JWT-SVID issuance"
+    _challenge = b"Bearer"
+
     def __init__(
         self,
         issuer: SpiffeWarrantIssuer,
@@ -817,155 +759,23 @@ class SpiffeJWTIssuerApp:
     ):
         if issuer.jwt is None:
             raise ValueError("SpiffeJWTIssuerApp needs an issuer built with jwt=SpiffeJWT(...)")
-        if not path.startswith("/"):
-            raise ValueError("path must start with /")
-        for name, value in (("max_concurrent", max_concurrent), ("max_workers", max_workers)):
-            if not _positive_int(value) or value < 1:
-                raise ValueError(f"{name} must be a positive integer")
-        self.issuer = issuer
+        super().__init__(
+            issuer, path=path, max_concurrent=max_concurrent, max_workers=max_workers, body_timeout=body_timeout
+        )
         self._validator: Any = issuer.jwt
-        self._path = path
-        if body_timeout <= 0:
-            raise ValueError("body_timeout must be positive")
-        self._max_concurrent = max_concurrent
-        self._body_timeout = body_timeout
-        self._busy = 0
-        self._reading = 0
-        self._pool = ThreadPoolExecutor(max_workers, thread_name_prefix="tenuo-spiffe-jwt")
 
-    def close(self) -> None:
-        """Release the worker threads. Called on ASGI lifespan shutdown."""
-        self._pool.shutdown(wait=False)
-
-    async def __call__(self, scope: _Scope, receive: _Receive, send: _Send) -> None:
-        if scope["type"] == "lifespan":
-            while True:
-                message = await receive()
-                if message["type"] == "lifespan.startup":
-                    await send({"type": "lifespan.startup.complete"})
-                elif message["type"] == "lifespan.shutdown":
-                    self.close()
-                    await send({"type": "lifespan.shutdown.complete"})
-                    return
-        if scope["type"] != "http":
-            return
-        try:
-            status, reply = 200, {"warrant": (await self._issue(scope, receive)).to_base64()}
-        except _Refusal as refusal:
-            status, reply = refusal.status, {"error": refusal.error, "message": refusal.message}
-            logger.info("JWT-SVID issuance refused (%d): %s", status, refusal.message)
-        except Exception:
-            logger.exception("JWT-SVID issuance failed")
-            status, reply = 503, {"error": "unavailable", "message": "Issuer error"}
-        body = json.dumps(reply, separators=(",", ":")).encode("utf-8")
-        headers = [
-            (b"content-type", b"application/json"),
-            (b"content-length", str(len(body)).encode("ascii")),
-            (b"cache-control", b"no-store"),
-        ]
-        if status == 401:
-            headers.append((b"www-authenticate", b"Bearer"))
-        await send({"type": "http.response.start", "status": status, "headers": headers})
-        await send({"type": "http.response.body", "body": body})
-
-    async def _issue(self, scope: _Scope, receive: _Receive) -> Warrant:
-        path, root = scope.get("path", ""), scope.get("root_path", "")
-        if root and path.startswith(root):
-            path = path[len(root) :]  # Mounted under a prefix.
-        if path != self._path:
-            raise _Refusal(404, "not_found", "No such endpoint")
-        if scope.get("method") != "POST":
-            raise _Refusal(405, "method_not_allowed", "Use POST")
+    def _credential(self, scope: Mapping[str, Any]) -> bytes:
         tokens = [value for name, value in scope.get("headers", ()) if name.lower() == b"authorization"]
         scheme, _, credential = (tokens[0] if len(tokens) == 1 else b"").partition(b" ")
         if scheme.lower() != b"bearer" or not credential or len(credential) > _MAX_TOKEN_BYTES:
             raise _Refusal(401, "unauthorized", "Send the JWT-SVID as one Authorization: Bearer header")
-        # Bound the requests being read as well as those being worked on, and
-        # give each a deadline, so slow senders cannot pile up before the token is checked.
-        if self._reading >= self._max_concurrent:
-            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
-        self._reading += 1
+        return credential
+
+    def _authorize(self, credential: bytes, holder: PublicKey, task_id: Any, proof: SpiffeJWTProof) -> Warrant:
         try:
-            body = await asyncio.wait_for(self._read_body(receive), self._body_timeout)
-        except asyncio.TimeoutError:
-            raise _Refusal(408, "timeout", "Request body was not received in time") from None
-        finally:
-            self._reading -= 1
-        try:
-            request = json.loads(body)
-            fields = {"v", "holder", "task", "timestamp", "nonce", "signature"}
-            if not isinstance(request, dict) or set(request) != fields:
-                raise ValueError
-            if request["v"] != _PROTOCOL_VERSION:
-                raise _Refusal(400, "invalid_request", "Unsupported protocol version")
-            holder = PublicKey.from_bytes(base64.b64decode(request["holder"], validate=True))
-            proof = SpiffeJWTProof(
-                request["timestamp"],
-                base64.b64decode(request["nonce"], validate=True),
-                base64.b64decode(request["signature"], validate=True),
-            )
-            token = credential.decode("ascii")
-        except _Refusal:
-            raise
-        except (ValueError, TypeError, RecursionError, binascii.Error):
+            identity = self._validator.authenticate(credential.decode("ascii"))
+        except UnicodeDecodeError:
             raise _Refusal(400, "invalid_request", "Malformed request") from None
-        except Exception:  # A holder key the core rejects.
-            raise _Refusal(400, "invalid_request", "Invalid holder key") from None
-        validator, issuer = self._validator, self.issuer
-
-        def work() -> Warrant:
-            try:
-                identity = validator.authenticate(token)
-            except SpiffeError as exc:
-                raise _Refusal(401, "unauthorized", str(exc)) from exc
-            try:
-                return issuer._issue_jwt(identity, holder, request["task"], proof)
-            except _IssuerBusy as exc:
-                raise _Refusal(503, "unavailable", str(exc)) from exc
-            except SpiffeError as exc:
-                raise _Refusal(403, "refused", str(exc)) from exc
-
-        return await self._in_worker(work)
-
-    @staticmethod
-    async def _read_body(receive: _Receive) -> bytes:
-        body = bytearray()
-        while True:
-            message = await receive()
-            if message["type"] != "http.request":
-                raise _Refusal(400, "invalid_request", "Request was not completed")
-            body += message.get("body", b"")
-            if len(body) > _MAX_BODY_BYTES:
-                raise _Refusal(413, "too_large", "Request body is too large")
-            if not message.get("more_body"):
-                return bytes(body)
-
-    async def _in_worker(self, function: Callable[[], Warrant]) -> Warrant:
-        """Run blocking work in the pool. A slot is held until the work itself has finished."""
-        loop = asyncio.get_running_loop()
-        if self._busy >= self._max_concurrent:
-            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
-        self._busy += 1
-
-        def release() -> None:
-            self._busy -= 1
-
-        def run() -> Warrant:
-            try:
-                return function()
-            finally:
-                try:
-                    loop.call_soon_threadsafe(release)
-                except RuntimeError:
-                    pass  # The loop closed during shutdown.
-
-        try:
-            work = asyncio.wrap_future(self._pool.submit(run))
-        except RuntimeError:
-            self._busy -= 1
-            raise _Refusal(503, "unavailable", "Issuer is shutting down") from None
-        try:
-            return await asyncio.shield(work)
-        except asyncio.CancelledError:
-            work.add_done_callback(_consume_result)
-            raise
+        except SpiffeError as exc:
+            raise _Refusal(401, "unauthorized", str(exc)) from exc
+        return self.issuer._issue_jwt(identity, holder, task_id, proof)

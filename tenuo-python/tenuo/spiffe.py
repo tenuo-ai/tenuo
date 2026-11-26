@@ -75,6 +75,7 @@ __all__ = [
     "SpiffeGrant",
     "SpiffeIdentity",
     "SpiffeIssuance",
+    "SpiffeHolderProof",
     "SpiffeIssuerServer",
     "SpiffeJWTProof",
     "SpiffeTLS",
@@ -96,6 +97,9 @@ _HOLDER_CONTEXT = b"tenuo.spiffe.holder-binding.v1\x00"
 # JWT-SVID exchanges are a single request, so the holder signs a timestamped
 # statement bound to the exact token instead of an issuer challenge.
 _JWT_HOLDER_CONTEXT = b"tenuo.spiffe.jwt-holder-binding.v1\x00"
+# A proxy-forwarded identity has no token to bind to: the proof covers the
+# issuer's audience, the task, and the time.
+_FORWARDED_HOLDER_CONTEXT = b"tenuo.spiffe.forwarded-holder-binding.v1\x00"
 _JWT_PROOF_SECONDS = 60  # Accepted distance between the proof timestamp and the issuer clock.
 _JWT_PROOF_MEMORY = 16384  # Default number of live proofs remembered to refuse an exact replay.
 _JWT_NONCE_BYTES = 16
@@ -159,6 +163,19 @@ def _jwt_proof_bytes(
     return _JWT_HOLDER_CONTEXT + token_sha256 + holder + timestamp.to_bytes(8, "big") + nonce + texts
 
 
+def _forwarded_proof_bytes(audience: str, holder: bytes, task_id: str, timestamp: int, nonce: bytes) -> bytes:
+    """What the holder key signs when its identity is forwarded by a proxy.
+
+    Fixed-width binary fields: context, holder key, 8-byte big-endian
+    timestamp, 16-byte nonce, SHA-256 of the audience, SHA-256 of the task ID.
+    """
+    try:
+        texts = hashlib.sha256(audience.encode("utf-8")).digest() + hashlib.sha256(task_id.encode("utf-8")).digest()
+    except UnicodeEncodeError as exc:
+        raise SpiffeError("audience and task_id must be valid Unicode text") from exc
+    return _FORWARDED_HOLDER_CONTEXT + holder + timestamp.to_bytes(8, "big") + nonce + texts
+
+
 def _trust_domain(spiffe_id: str) -> str:
     # Parse without URL normalization: encoded separators and relative segments
     # must never turn into an authorized identity.
@@ -174,11 +191,14 @@ def _trust_domain(spiffe_id: str) -> str:
 
 @dataclass(frozen=True)
 class SpiffeIdentity:
-    """A workload identity authenticated against one trust domain's bundle.
+    """A workload identity, and how the issuer learned it.
 
-    ``svid_type`` is ``"x509"`` for a peer authenticated over mTLS and ``"jwt"``
-    for a JWT-SVID bearer token. ``certificate_sha256`` is the SHA-256 of the
-    SVID itself: the certificate, or the token.
+    ``svid_type`` is ``"x509"`` for a peer authenticated over mTLS, ``"jwt"``
+    for a JWT-SVID bearer token, both checked against one trust domain's
+    bundle, and ``"forwarded"`` for an identity a trusted proxy reported, which
+    the issuer could not check itself. ``certificate_sha256`` is the SHA-256 of
+    the SVID: the certificate (as the proxy reported it, when forwarded), or
+    the token.
     """
 
     spiffe_id: str
@@ -245,6 +265,15 @@ def _trust_domain_names(own: str, federated: Sequence[str]) -> Tuple[str, ...]:
 def _check_authorities(authorities: Sequence[x509.Certificate], trust_domain: str) -> None:
     """A bundle may hold only CA certificates, and none that names another trust domain."""
     for authority in authorities:
+        # Certificates are parsed lazily, and the library reports unreadable
+        # content with several unrelated exception types. Read everything used
+        # later now, so a bad certificate is refused here and nowhere else.
+        try:
+            authority.extensions
+            authority.subject
+            authority.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+        except Exception as exc:
+            raise SpiffeError("Malformed or unsupported X.509 certificate in trust bundle") from exc
         try:
             is_ca = authority.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
         except (x509.ExtensionNotFound, ValueError):
@@ -467,7 +496,11 @@ def _x509_snapshot(message: bytes, wanted: Optional[str], federates_with: Sequen
     foreign: Dict[str, bytes] = {}
     for number, value in _proto_fields(message):
         if number == 3 and isinstance(value, bytes):  # federated_bundles: map<string, bytes>
-            entry = {key: item for key, item in _proto_fields(value) if isinstance(item, bytes)}
+            try:
+                entry = {key: item for key, item in _proto_fields(value) if isinstance(item, bytes)}
+            except SpiffeError:
+                logger.warning("Ignoring a malformed federated bundle entry in the Workload API response")
+                continue
             name = entry.get(1, b"").decode("utf-8", "replace")
             if name.startswith("spiffe://") and name[len("spiffe://") :] in federates_with:
                 foreign[name[len("spiffe://") :]] = entry.get(2, b"")
@@ -562,7 +595,8 @@ class _WorkloadAPIWatcher:
         self._deliver = deliver
         self._on_lost = on_lost  # Called with a gRPC status name each time the stream ends.
         self._on_received = on_received  # Called for each message that actually arrives, never for a retry.
-        self._deliver_lock = threading.Lock()
+        # Re-entrant: the owner may be closed from inside its own delivery.
+        self._deliver_lock = threading.RLock()
         self._pending: Optional[Any] = None  # Newest update that could not be used yet.
         self._first = threading.Event()  # A usable SVID arrived, or retrying is pointless.
         self._usable = False
@@ -582,7 +616,9 @@ class _WorkloadAPIWatcher:
         return self._usable
 
     def stop(self, join: bool = True) -> None:
-        self._stop.set()
+        # Wait out a delivery in progress, so nothing is installed once this returns.
+        with self._deliver_lock:
+            self._stop.set()
         timer = self._retry_timer
         if timer is not None:
             timer.cancel()
@@ -608,6 +644,9 @@ class _WorkloadAPIWatcher:
             self.retry_pending()
 
     def _offer(self, snapshot: Any, retry: bool = False) -> bool:
+        """Hand one update to the owner. Callers hold ``_deliver_lock``."""
+        if self._stop.is_set():
+            return False
         try:
             self._deliver(snapshot)
         except _OwnerGone:
@@ -629,7 +668,7 @@ class _WorkloadAPIWatcher:
         return True
 
     def _received(self) -> None:
-        if self._on_received is not None:
+        if self._on_received is not None and not self._stop.is_set():
             try:
                 self._on_received()
             except _OwnerGone:
@@ -910,9 +949,12 @@ class SpiffeTLS:
             bundle = snapshot.federated.get(domain)
             if not bundle:
                 continue
+            # Whatever is wrong with a federated bundle costs that domain only.
             try:
                 _check_authorities(bundle, domain)
-            except SpiffeError as exc:
+                # The TLS library must accept it too, or it would fail the whole trust store below.
+                ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=_pem(bundle).decode("ascii"))
+            except Exception as exc:
                 logger.warning("Trust bundle for federated trust domain %s is refused: %s", domain, exc)
                 continue
             domains[domain] = tuple(bundle)
@@ -1108,15 +1150,19 @@ class SpiffeGrant:
 
 
 @dataclass(frozen=True)
-class SpiffeJWTProof:
-    """A holder key's signed statement for one JWT-SVID request.
+class SpiffeHolderProof:
+    """A holder key's signed statement for one single-request exchange.
 
-    Build it with :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof`.
+    Build it with :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof` or
+    :func:`tenuo.spiffe_forwarded.sign_forwarded_holder_proof`.
     """
 
     timestamp: int
     nonce: bytes
     signature: bytes
+
+
+SpiffeJWTProof = SpiffeHolderProof
 
 
 @dataclass(frozen=True)
@@ -1202,9 +1248,12 @@ class SpiffeWarrantIssuer:
         audit: Optional[Callable[[SpiffeIssuance], None]] = None,
         jwt: Optional[Any] = None,
         max_jwt_proofs: int = _JWT_PROOF_MEMORY,
+        forwarded: Optional[Any] = None,
     ):
-        if tls is None and jwt is None:
-            raise ValueError("Pass tls (X.509-SVIDs over mTLS), jwt (JWT-SVIDs), or both")
+        if tls is None and jwt is None and forwarded is None:
+            raise ValueError(
+                "Pass tls (X.509-SVIDs over mTLS), jwt (JWT-SVIDs), forwarded (identity from a trusted proxy), or several"
+            )
         if tls is not None and not tls.server_side:
             raise ValueError("Issuance requires a server-side SPIFFE TLS context")
         for name, value in (
@@ -1217,6 +1266,7 @@ class SpiffeWarrantIssuer:
         self._max_jwt_proofs = max_jwt_proofs
         self.tls = tls
         self.jwt = jwt  # A tenuo.spiffe_jwt.SpiffeJWT, or None.
+        self.forwarded = forwarded  # A tenuo.spiffe_forwarded.SpiffeForwardedIdentity, or None.
         self._proofs: Dict[bytes, float] = {}
         self._key = signing_key
         self._issuer_hex = bytes(signing_key.public_key.to_bytes()).hex()
@@ -1235,7 +1285,7 @@ class SpiffeWarrantIssuer:
         """Consume a challenge, verify holder possession, and mint the approved grant."""
         return self._issue(self._mtls().authenticate(connection), challenge, signature)
 
-    def issue_jwt(self, token: str, holder: PublicKey, task_id: str, proof: SpiffeJWTProof) -> Warrant:
+    def issue_jwt(self, token: str, holder: PublicKey, task_id: str, proof: SpiffeHolderProof) -> Warrant:
         """Authenticate a JWT-SVID, verify the holder proof, run policy, and mint.
 
         ``proof`` comes from :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof`. A
@@ -1251,14 +1301,63 @@ class SpiffeWarrantIssuer:
             raise SpiffeError("This issuer does not accept X.509-SVIDs")
         return self.tls
 
-    def _issue_jwt(self, identity: SpiffeIdentity, holder: PublicKey, task_id: str, proof: SpiffeJWTProof) -> Warrant:
+    def _issue_jwt(
+        self, identity: SpiffeIdentity, holder: PublicKey, task_id: str, proof: SpiffeHolderProof
+    ) -> Warrant:
         if self.jwt is None or identity.svid_type != "jwt":
             raise SpiffeError("This issuer does not accept JWT-SVIDs")
+        audience, token = self.jwt.audience, bytes.fromhex(identity.certificate_sha256)
+        return self._issue_with_proof(
+            identity,
+            holder,
+            task_id,
+            proof,
+            lambda key, timestamp, nonce: _jwt_proof_bytes(audience, key, task_id, timestamp, nonce, token),
+        )
+
+    def issue_forwarded(
+        self, header: str, peer: Optional[str], holder: PublicKey, task_id: str, proof: SpiffeHolderProof
+    ) -> Warrant:
+        """Accept the identity a trusted proxy forwarded, verify the holder proof, run policy, and mint.
+
+        ``header`` is the ``x-forwarded-client-cert`` value and ``peer`` the
+        address the request arrived from, as the socket reports it. The issuer
+        cannot verify this identity itself: it is exactly as trustworthy as the
+        proxy and the path from the proxy to this process. See
+        :class:`tenuo.spiffe_forwarded.SpiffeForwardedIdentity`.
+        """
+        if self.forwarded is None:
+            raise SpiffeError("This issuer does not accept proxy-forwarded identities")
+        return self._issue_forwarded(self.forwarded.authenticate(header, peer=peer), holder, task_id, proof)
+
+    def _issue_forwarded(
+        self, identity: SpiffeIdentity, holder: PublicKey, task_id: str, proof: SpiffeHolderProof
+    ) -> Warrant:
+        if self.forwarded is None or identity.svid_type != "forwarded":
+            raise SpiffeError("This issuer does not accept proxy-forwarded identities")
+        audience = self.forwarded.audience
+        return self._issue_with_proof(
+            identity,
+            holder,
+            task_id,
+            proof,
+            lambda key, timestamp, nonce: _forwarded_proof_bytes(audience, key, task_id, timestamp, nonce),
+        )
+
+    def _issue_with_proof(
+        self,
+        identity: SpiffeIdentity,
+        holder: PublicKey,
+        task_id: str,
+        proof: SpiffeHolderProof,
+        statement: Callable[[bytes, int, bytes], bytes],
+    ) -> Warrant:
+        """The single-request exchange: check the holder's signed statement, then policy, then mint."""
         if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
             raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
         if not isinstance(holder, PublicKey):
             raise SpiffeError("holder must be a Tenuo PublicKey")
-        if not isinstance(proof, SpiffeJWTProof):
+        if not isinstance(proof, SpiffeHolderProof):
             raise SpiffeError("Invalid holder proof")
         timestamp, nonce, signature = proof.timestamp, proof.nonce, proof.signature
         if (
@@ -1275,9 +1374,7 @@ class SpiffeWarrantIssuer:
         ):
             raise SpiffeError("Invalid holder proof")
         key = bytes(holder.to_bytes())
-        message = _jwt_proof_bytes(
-            self.jwt.audience, key, task_id, timestamp, nonce, bytes.fromhex(identity.certificate_sha256)
-        )
+        message = statement(key, timestamp, nonce)
         try:
             Ed25519PublicKey.from_public_bytes(key).verify(signature, message)
         except (InvalidSignature, ValueError) as exc:
@@ -1295,7 +1392,7 @@ class SpiffeWarrantIssuer:
             if signature in self._proofs:
                 raise SpiffeError("This holder proof was already used; sign a new one")
             if len(self._proofs) >= self._max_jwt_proofs:
-                raise _IssuerBusy("Issuer is at its limit for recent JWT-SVID requests; retry shortly")
+                raise _IssuerBusy("Issuer is at its limit for recent single-request exchanges; retry shortly")
             self._proofs[signature] = now + acceptable_for
         try:
             grant = self._policy(identity, task_id)

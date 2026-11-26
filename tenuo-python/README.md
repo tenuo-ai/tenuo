@@ -300,7 +300,8 @@ Use SPIFFE/SPIRE workload identity to authenticate warrant issuance, then use
 Tenuo to enforce task scope and delegation at tools. The X.509-SVID adapter
 includes an mTLS issuance endpoint and agent client, takes SVIDs from the
 SPIRE Workload API or from files, following renewals, and accepts JWT-SVIDs
-over HTTPS where mTLS cannot reach the issuer. It requires an explicit
+over HTTPS where mTLS cannot reach the issuer, or the identity a mesh proxy
+forwards where agents have only a sidecar. It requires an explicit
 task policy and proof of possession of a separate holder key. See the [adapter guide](../docs/spiffe.md) and
 [runnable SPIRE demo](examples/spiffe/README.md).
 

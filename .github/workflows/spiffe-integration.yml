@@ -5,9 +5,12 @@ on:
     paths:
       - 'tenuo-python/tenuo/spiffe.py'
       - 'tenuo-python/tenuo/spiffe_jwt.py'
+      - 'tenuo-python/tenuo/spiffe_forwarded.py'
+      - 'tenuo-python/tenuo/_spiffe_http.py'
       - 'tenuo-python/examples/spiffe/**'
       - 'tenuo-python/tests/adapters/test_spiffe.py'
       - 'tenuo-python/tests/adapters/test_spiffe_jwt.py'
+      - 'tenuo-python/tests/adapters/test_spiffe_forwarded.py'
       - '.github/workflows/spiffe-integration.yml'
   workflow_dispatch:
 
