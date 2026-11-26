@@ -687,25 +687,27 @@ What the adapter does with the trust you give it:
 - The header must describe exactly one client certificate with exactly one
   URI. A header with more entries is refused: the client sent one of its own,
   or the request crossed a second proxy.
-- Envoy 1.40.2 copies URI and DNS names from the certificate into the header
-  unescaped, so a certificate with a separator or a quote in a name can add
-  text of its own. The adapter therefore requires the URI to be the last
-  thing in the header. It reads the name to its end and never stops at a
-  separator inside it, with or without a header sent by the client. A header
-  that carries DNS names after the URI is refused for the same reason, unless
-  you opt in with `allow_dns_names` ([With Istio](#with-istio) says when you
-  would). Spaces and tabs at the end of a name are the exception: they are
-  gone before the adapter sees the header
-  ([Limits of this mode](#limits-of-this-mode)).
-- A request is counted against its SPIFFE ID from before its body is read, and
-  at most 16 from one ID are in progress at once (`max_per_identity`).
-- When the proxy forwards the certificate itself, the issuer checks the
+- The proxy must forward the certificate itself, and the issuer checks the
   SPIFFE ID against it rather than taking the header's word: it must be the
   certificate the header's hash names, be valid now, and carry exactly one URI
-  name, equal to the forwarded one. Warrants then never outlive the
-  certificate. Envoy can do this; Istio's generated configuration does not.
-- Without the certificate its expiry is unknown, so warrants last at most
-  `max_warrant_seconds` (300 by default) whatever the policy grants.
+  name, equal to the forwarded one. Warrants never outlive the certificate,
+  and last at most `max_warrant_seconds` (300 by default) whatever the policy
+  grants. The issuer holds no trust bundle in this mode, so it does not check
+  who signed the certificate. That stays the proxy's job.
+- Istio's generated configuration does not forward the certificate.
+  `require_certificate=False` accepts a header without it
+  ([With Istio](#with-istio)), and the issuer then takes the proxy's reading
+  of the name. Envoy 1.40.2 copies URI and DNS names from the certificate into
+  the header unescaped, so a certificate with a separator or a quote in a name
+  can add text of its own. The adapter therefore requires the URI to be the
+  last thing in the header. It reads the name to its end and never stops at a
+  separator inside it, with or without a header sent by the client. A header
+  that carries DNS names after the URI and no certificate is refused for the
+  same reason, unless you opt in with `allow_dns_names`. Spaces and tabs at
+  the end of a name are the exception: they are gone before the adapter sees
+  the header ([Limits of this mode](#limits-of-this-mode)).
+- A request is counted against its SPIFFE ID from before its body is read, and
+  at most 16 from one ID are in progress at once (`max_per_identity`).
 - The agent's holder key signs a statement bound to this issuer's `audience`,
   the task, and the current time. A captured request is no use at another
   issuer or for another task, and can only produce a warrant for the same
@@ -722,10 +724,11 @@ set_current_client_cert_details:
   cert: true
 ```
 
-`cert: true` is optional and recommended. It adds about a kilobyte to each
-request and lets the issuer check the SPIFFE ID against the certificate, as
-described above. Pass `require_certificate=True` to `SpiffeForwardedIdentity`
-to refuse any request that arrives without one.
+`cert: true` adds about a kilobyte to each request and lets the issuer check
+the SPIFFE ID against the certificate, as described above. Without it the
+issuer refuses every request, unless you pass `require_certificate=False` to
+`SpiffeForwardedIdentity` and accept
+[what that leaves to the proxy](#limits-of-this-mode).
 
 The listener's TLS settings must set `require_client_certificate: true` and a
 validation context with the trust bundle.
@@ -738,16 +741,17 @@ validation context with the trust bundle.
 | `FORWARD_ONLY`, `ALWAYS_FORWARD_ONLY` | Passes a client's made-up header through unchanged. | Never |
 
 Without `uri: true` Envoy sends the certificate hash and no SPIFFE ID, and the
-issuer refuses the request. Without `cert`, leave `dns` off: when the
-certificate has DNS names and Envoy forwards them, they follow the URI and the
-issuer refuses the request. With `cert` they are accepted, because the
-certificate vouches for the URI. `subject` and `chain` may be on; they come
-before the URI. On a listener without client certificates Envoy removed the
-header in every mode except `ALWAYS_FORWARD_ONLY`.
+issuer refuses the request. `dns` may be on: DNS names follow the URI and are
+accepted, because the certificate vouches for the URI. With
+`require_certificate=False` and no `cert`, leave `dns` off, or the issuer
+refuses certificates that have DNS names. `subject` and `chain` may be on;
+they come before the URI. On a listener without client certificates Envoy
+removed the header in every mode except `ALWAYS_FORWARD_ONLY`.
 
-Istio configures Envoy for you, and its defaults fit: see
-[With Istio](#with-istio) below. For another mesh, check which mode it uses
-for the issuer's inbound listener before relying on it.
+Istio configures Envoy for you: its mode fits, and it does not forward the
+certificate. See [With Istio](#with-istio) below. For another mesh, check
+which mode it uses for the issuer's inbound listener, and whether it forwards
+the certificate, before relying on it.
 
 ### Run the issuer behind the proxy
 
@@ -850,8 +854,22 @@ class NoProxyHeaders(UvicornWorker):
 ```
 
 With the stock Uvicorn worker, or Uvicorn without the switch, a request that
-carries `X-Forwarded-For` is refused. That is the port 0 backstop at work: it
-costs availability, never trust.
+carries `X-Forwarded-For` is refused. Two checks do that, and they cost
+availability, never trust:
+
+- Uvicorn reports an address it took from a bare `X-Forwarded-For` entry with
+  port 0, which no connected peer has.
+- An entry written as `address:port` gives Uvicorn a port too (Daphne takes
+  one from `X-Forwarded-Port`), and the result looks like a real peer. So the
+  issuer also refuses a request whose client address is named in its own
+  `X-Forwarded-For`, `Forwarded` or `X-Real-IP` header. With Uvicorn 0.54 a
+  caller on loopback that sent the proxy's address this way was refused, in
+  both forms and with `FORWARDED_ALLOW_IPS=*`.
+
+The second check also refuses a caller that really does share the proxy's
+address, when the proxy records that caller in `X-Forwarded-For`: a client on
+the same host as a loopback proxy, for example. Have the proxy reach the
+issuer over a Unix socket in that layout, as described next.
 
 A Unix socket narrows the path further, because file permissions decide who
 can connect. Start Uvicorn with `--uds /run/issuer/issuer.sock`, point the
@@ -914,8 +932,9 @@ python tenuo-python/examples/spiffe/istio/check.py
 ```
 
 [The manifests beside it](../tenuo-python/examples/spiffe/istio/) are a
-starting point for your own. Nothing in the proxy needs configuring. What the
-check shows:
+starting point for your own. Nothing in the proxy needs configuring. The
+issuer needs `require_certificate=False`, because Istio does not forward the
+certificate. What the check shows:
 
 - **The inbound listener appends.** Istio generates
   `forward_client_cert_details: APPEND_FORWARD` with `subject`, `dns` and `uri`
@@ -980,8 +999,17 @@ check shows:
   for a proxy you run yourself: an Istio sidecar reset connections that did
   not use Istio's own TLS protocol name.
 
-Istio does not forward the certificate, so the issuer cannot check the SPIFFE
-ID against it there, and `require_certificate` would refuse every request.
+Istio does not forward the certificate, and has no setting for which
+certificate fields it forwards, short of patching the listener it generates.
+The header Istio writes has no certificate in it, which an issuer with the
+default settings refuses (`The proxy did not forward the client certificate
+...`), so the issuer in the check is built with `require_certificate=False`.
+It then takes
+the sidecar's reading of the certificate's name:
+[Limits of this mode](#limits-of-this-mode) says what that leaves open.
+Istio's own authority builds names from Kubernetes namespace and service
+account names. If your mesh trusts other authorities, check what names they
+can issue.
 
 **With SPIRE issuing the mesh's certificates.** Istio can take workload
 certificates from SPIRE instead of its own authority
@@ -994,9 +1022,8 @@ assign.
 One difference matters. SPIRE entries can put DNS names on a certificate
 (`dnsNameTemplates`, or the chart's `autoPopulateDNSNames`), Istio always
 forwards them after the URI, and the issuer then refuses the request, because
-by default the URI must be the last thing in the header. Istio has no setting
-for which certificate fields it forwards, short of patching the listener it
-generates. For this case, pass `allow_dns_names=True` to
+without the certificate the URI must be the last thing in the header. For
+this case, pass `allow_dns_names=True` to
 `SpiffeForwardedIdentity`. The identity is then the URI up to the first
 separator, so a certificate whose URI name itself contained `;DNS=` would be
 read as the shorter name. Turn it on only when every authority the mesh trusts
@@ -1022,33 +1049,30 @@ Not tested: ambient mode.
   does not hold its certificate. Another workload that captured a request body
   could replay it within a minute and receive a warrant, for its own identity
   and bound to the first agent's holder key, which it cannot use.
-- **Without the forwarded certificate, the issuer takes the proxy's reading of
-  it.** It learns the SVID's ID and hash and nothing else, which is why
-  warrant lifetime is capped. Forwarding the certificate removes that limit
-  and the next one.
-- **Spaces and tabs at the end of a name do not reach the issuer.** Envoy
-  1.40.2 wrote a URI name ending in a space or a tab into the header as it
-  was. Uvicorn, Hypercorn, Daphne and Granian each dropped the ending, as
-  HTTP allows, so the issuer read the name without it and issued a warrant
-  for that SPIFFE ID. SPIRE 1.16.0 refused to register such an ID, and Istio
-  builds its names from Kubernetes namespace and service account names, which
-  cannot contain either. If another authority your proxy trusts could issue
-  one, do one of these:
+- **With `require_certificate=False`, the issuer takes the proxy's reading of
+  the certificate.** It learns the SVID's ID and hash and nothing else, so it
+  cannot end a warrant with the certificate, only cap its lifetime.
+- **With `require_certificate=False`, spaces and tabs at the end of a name do
+  not reach the issuer.** Envoy 1.40.2 wrote a URI name ending in a space or a
+  tab into the header as it was. Uvicorn, Hypercorn, Daphne and Granian each
+  dropped the ending, as HTTP allows, so the issuer read the name without it
+  and issued a warrant for that SPIFFE ID. With the certificate forwarded, the
+  issuer refused each of those requests, because the forwarded URI was not
+  the certificate's own. SPIRE 1.16.0 refused to register such an ID, and
+  Istio builds its names from Kubernetes namespace and service account names,
+  which cannot contain either. If you turn the check off and another
+  authority your proxy trusts could issue such a name, have Envoy refuse the
+  certificate. With this in the listener's validation context, the TLS
+  handshake failed for names ending in a space or a tab and succeeded for the
+  plain name. We ran it with a `trusted_ca` bundle, not with Envoy's SPIFFE
+  certificate validator:
 
-  - Forward the certificate (`cert: true`) and set `require_certificate=True`.
-    The issuer then refused each of those requests, because the forwarded URI
-    was not the certificate's own.
-  - Have Envoy refuse the certificate. With this in the listener's validation
-    context, the TLS handshake failed for names ending in a space or a tab
-    and succeeded for the plain name. We ran it with a `trusted_ca` bundle,
-    not with Envoy's SPIFFE certificate validator:
-
-    ```yaml
-    match_typed_subject_alt_names:
-    - san_type: URI
-      matcher:
-        safe_regex: {regex: "spiffe://acme\\.test/[A-Za-z0-9._/-]+"}
-    ```
+  ```yaml
+  match_typed_subject_alt_names:
+  - san_type: URI
+    matcher:
+      safe_regex: {regex: "spiffe://acme\\.test/[A-Za-z0-9._/-]+"}
+  ```
 
   Envoy answered 503 itself, without calling the issuer, for a name
   containing a line break.
@@ -1073,7 +1097,22 @@ CA issued. The adapter therefore decides per domain after the handshake:
 - A JWT-SVID is only checked against the keys of the trust domain in its
   subject.
 - Bundles must not overlap. A federated domain whose bundle shares an authority
-  or signing key with another domain, or imitates one, is not trusted at all.
+  or signing key with another domain is not trusted at all. Neither is one
+  that holds a certificate with the name of one of your authorities, or of an
+  intermediate above your own SVID, unless both carry key identifiers that
+  differ.
+- A federated domain cannot name your workloads, but its bundle can still get
+  in their way. The TLS library builds certificate chains from all bundles
+  together, so a certificate in a partner's bundle that was made to look like
+  one of your issuing authorities can be tried in its place, and the
+  handshake of your own workload then fails with `certificate signature
+  failure`. In our tests this took a copy of the name and key identifier of
+  an intermediate that is not in your bundle and did not issue the issuer's
+  own SVID, or eight certificates with your root's name when your SVIDs
+  carried no authority key identifier (SPIRE's carry one). A partner has to
+  publish such a certificate on purpose. If your own workloads start failing
+  that way after a partner's bundle changed, remove that domain from
+  `federates_with`.
 
 Your own bundle is taken at its word: an authority you list there can issue
 identities in your trust domain, whoever else also uses it.
@@ -1157,7 +1196,10 @@ with `issuer_id="spiffe://acme.test/issuer"` in `request_warrant`.
   library verified, and the adapter uses its trust anchor. Python 3.9 does not,
   so there a peer's SVID must be signed directly by an authority in its
   domain's bundle. SVID chains through an intermediate CA (nested SPIRE, some
-  upstream authorities) need Python 3.10 or newer when federation is on.
+  upstream authorities) need Python 3.10 or newer when federation is on. The
+  same holds, without federation, for a connection that is still open when an
+  update removes any authority from the bundle: on Python 3.9 it is refused
+  if its peer's SVID came through an intermediate, and a new connection works.
 
 ---
 
@@ -1214,7 +1256,8 @@ this:
 - New handshakes use the newest SVID and bundle. Listeners are not rebuilt and
   open connections are not dropped.
 - An unusable update (a half-written file, a key that does not match, an SVID
-  for another trust domain, an expired SVID) is ignored with a warning. The
+  for another trust domain, an expired SVID, an SVID whose authority is not in
+  the bundle delivered with it) is ignored with a warning. The
   adapter keeps the credentials it has and takes the next good update. An SVID
   that is not valid yet, as can happen with clock skew, is tried again at each
   check.
@@ -1273,13 +1316,16 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 | JWT holder proof age | 60 seconds either way | fixed |
 | JWT clock leeway for token times | 5 seconds | `SpiffeJWT(leeway_seconds=)` |
 | JWT requests in progress | 256, then HTTP 503 | `SpiffeJWTIssuerApp(max_concurrent=)` |
+| JWT requests in progress per SPIFFE ID | 16, then HTTP 503 | `SpiffeJWTIssuerApp(max_per_identity=)` |
 | JWT request body deadline | 10 seconds, then HTTP 408 | `SpiffeJWTIssuerApp(body_timeout=)` |
 | JWT warrants per issuer process | 16384 in any minute, then HTTP 503 | `SpiffeWarrantIssuer(max_jwt_proofs=)` |
+| JWT warrants per SPIFFE ID | a quarter of that (4096) in any minute, then HTTP 503 | `SpiffeWarrantIssuer(max_jwt_proofs_per_identity=)` |
 | JWT request body and token size | 64 KiB and 16 KiB | fixed |
 | JWT bundle file check | every 5 seconds, while requests arrive | fixed |
 | JWT keys kept while the SPIRE agent is unreachable | 300 seconds | `SpiffeJWT.from_workload_api(max_stale_seconds=)` |
 | JWT keys kept while SPIRE refuses the issuer its identity | 30 seconds | fixed |
-| Warrant lifetime for a forwarded identity | at most 300 seconds | `SpiffeForwardedIdentity(max_warrant_seconds=)`, 5 to 3600 |
+| Warrant lifetime for a forwarded identity | at most 300 seconds, capped by the forwarded certificate | `SpiffeForwardedIdentity(max_warrant_seconds=)`, 5 to 3600 |
+| Forwarded certificate | required | `SpiffeForwardedIdentity(require_certificate=)` |
 | Forwarded-identity requests in progress per SPIFFE ID | 16, then HTTP 503 | `SpiffeForwardedIssuerApp(max_per_identity=)` |
 | `x-forwarded-client-cert` size | 32 KiB | fixed |
 | Warrant lifetime | 300 seconds, capped by the SVID | `SpiffeGrant(ttl_seconds=)` |
@@ -1287,7 +1333,18 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 
 - `SpiffeForwardedIssuerApp` has the same `max_concurrent`, `body_timeout`,
   body size and holder proof age as the JWT endpoint, and `max_jwt_proofs`
-  counts warrants from both.
+  and `max_jwt_proofs_per_identity` count warrants from both.
+- Both HTTP endpoints check who is calling before they read the request body,
+  so a caller without a valid JWT-SVID, or without an identity from the
+  proxy, holds no place. Raise the per-ID limits if many replicas share one
+  SPIFFE ID.
+- Every time setting must be a positive, finite number. `nan` and `inf` are
+  refused: they would switch a limit off.
+- The agent-side `timeout=` of the HTTP calls bounds the whole exchange, from
+  looking up the host to the last byte of the reply. A lookup that stalls
+  cannot be interrupted, so a call that gives up on one leaves it to end by
+  itself. At most 64 exchanges exist in one process at a time, in progress or
+  left behind like that; further calls fail at once until some have ended.
 - With `SpiffeIssuerServer`, the 10-second deadline ends an exchange before
   the 30-second challenge lifetime matters. The challenge lifetime applies when
   you use the [lower-level API](#lower-level-api).
@@ -1378,6 +1435,9 @@ With JWT-SVIDs the agent's message starts `Issuer refused (HTTP <status>):`.
 | `...(HTTP 401): JWT-SVID was not signed by its own trust domain's keys` | With federation: the token names one trust domain and was signed by another's key. | Check which SPIRE minted the token. |
 | `...(HTTP 503): Issuer is busy; retry shortly` | 256 requests were already in progress. | Retry; check policy latency; raise `max_concurrent`. |
 | `...(HTTP 503): Issuer is at its limit for recent single-request exchanges; retry shortly` | The process issued 16384 warrants over HTTP within a minute. | Retry; add replicas or raise `max_jwt_proofs`. |
+| `...(HTTP 503): This workload is at its limit for recent single-request exchanges; retry shortly` | One SPIFFE ID was issued 4096 warrants over HTTP within a minute. | Retry; raise `max_jwt_proofs_per_identity` if many replicas share the ID. |
+| `The issuer at HOST:PORT did not answer within N seconds` | The whole HTTP exchange took longer than the agent's `timeout`. | Check issuer load and the network path; raise `timeout`. |
+| `Local SVID was not issued by an authority in the trust bundle delivered with it` | The SVID and the bundle do not belong together: a new authority's SVID arrived before the bundle that holds it, or the files are from different trust domains. The credentials in use are kept. | Deliver the bundle with the new authority first, as SPIRE does when it rotates. |
 | `The TLS certificate presented by HOST:PORT was not accepted: ...` | The load balancer's certificate does not chain to the agent's roots. | Pass `ca_file=` for a private CA. |
 | `Could not fetch a JWT-SVID from the Workload API at ...: PERMISSION_DENIED: no identity issued` | No registration entry matches the agent process. | Check the entry's selectors. |
 
@@ -1387,6 +1447,7 @@ JWT endpoint.
 
 | Message | Likely cause | Fix |
 |---|---|---|
+| `The client address is also named in a forwarding header` | The request's `X-Forwarded-For`, `Forwarded` or `X-Real-IP` names the address the server reported as the client, so the server may have taken it from there. | Start Uvicorn with `--no-proxy-headers` and unset `FORWARDED_ALLOW_IPS`. If a caller really shares the proxy's address, use a Unix socket between proxy and issuer. |
 | `Requests must arrive through the issuer's proxy` | The request's socket peer is not in `trusted_proxies`, or the server reported an address taken from a header. The issuer logs the address it saw, at most once a minute. | If that address is the original client's or has port 0, start Uvicorn with `--no-proxy-headers` and unset `FORWARDED_ALLOW_IPS`. If it is the proxy's, add it to `trusted_proxies` (an Istio sidecar connects from `127.0.0.6`). |
 | `The issuer at ... answered HTTP 503 without a warrant` (behind Istio) | The sidecar cannot reach the issuer, which is listening on `127.0.0.1` only. | Bind `0.0.0.0`, or use a Unix socket. See [With Istio](#with-istio). |
 | `No forwarded client identity: the proxy must terminate mutual TLS and set x-forwarded-client-cert` | The proxy sent no header: the client presented no certificate, the agent's sidecar is not adding mutual TLS, or the proxy is in its default `SANITIZE` mode. | Set `SANITIZE_SET` on the proxy and check the agent's sidecar. |
@@ -1398,7 +1459,7 @@ JWT endpoint.
 | `x-forwarded-client-cert must end with the certificate's URI: ...` | The proxy forwards the certificate's DNS names, or a name on the certificate contains a separator. | With your own Envoy, turn off `dns` in `set_current_client_cert_details`. Where the mesh always forwards DNS names (Istio with SPIRE entries that have them), see `allow_dns_names` under [With Istio](#with-istio). |
 | `The forwarded URI is not the certificate's only URI name` | The proxy forwarded the certificate, and its URI name is not exactly the forwarded SPIFFE ID: it has several, none, or one with extra characters. | Look at the client certificate's names; SPIFFE allows exactly one URI name. |
 | `The forwarded certificate ...` (`cannot be read`, `is not the one the header's hash names`, `is not currently valid`) | The `Cert` field is damaged, belongs to another certificate, or the certificate has expired. | Check that nothing between the proxy and the issuer rewrites the header, and the clocks. |
-| `The proxy did not forward the client certificate ...` | The issuer has `require_certificate=True` and the header has no `Cert`. | Enable `cert` in `set_current_client_cert_details`. |
+| `The proxy did not forward the client certificate ...` | The header has no `Cert`. | For Envoy, enable `cert` in `set_current_client_cert_details`. For Istio, which cannot forward it, pass `require_certificate=False`. |
 | `The forwarded identity was not recorded by the expected proxy` | `expected_by` is not the SPIFFE ID on the proxy's certificate. | Compare with the proxy's SVID. |
 | `Forwarded identity belongs to a different trust domain` | The client's SPIFFE ID is outside `trust_domain` and `federates_with`. | Fix the arguments, or the proxy's trust bundle. |
 | `Invalid holder proof` | The agent's `audience` differs from the issuer's. | Use the same string on both sides. |
@@ -1476,7 +1537,10 @@ Content-Type: application/json
 
 The reply is `200 {"warrant": "<base64>"}`, or `{"error": ..., "message": ...}`
 with status 400 (malformed), 401 (token not accepted), 403 (refused), 408, 413,
-or 503 (busy, or the policy or audit callback failed).
+or 503 (busy, or the policy or audit callback failed). The token is checked
+before the body is read, so a request with both a bad token and a bad body
+gets 401. `v` is the JSON integer `1`: `true` and `1.0` are refused, here and
+in the two other exchanges.
 
 The signature is Ed25519, by the holder key, over these bytes in order. Every
 field has a fixed width, so no JSON or text encoding rules are involved:
@@ -1538,8 +1602,9 @@ an unescaped semicolon. `By`, `Hash` and `URI` must not be quoted. The `URI`
 must be the last pair, with only `By`, `Hash`, `Cert`, `Chain` and `Subject`
 before it, so a header with `DNS` is refused unless the issuer sets
 `allow_dns_names` or the header carries the certificate. A `Cert` value is the
-certificate in PEM, URL-encoded; when present, its SHA-256 must equal `Hash`
-and its only URI name must equal `URI`. `Chain` and `Subject` are ignored.
+certificate in PEM, URL-encoded; its SHA-256 must equal `Hash` and its only
+URI name must equal `URI`. A header without `Cert` is refused unless the
+issuer sets `require_certificate=False`. `Chain` and `Subject` are ignored.
 The JSON form is not accepted.
 
 ### A client in another language
@@ -1591,11 +1656,11 @@ language. With a JWT-SVID it refuses plain `http://` except to loopback.
 | `SpiffeTLS.from_workload_api(trust_domain=, server_side=, socket_path=, spiffe_id=, timeout=, federates_with=)` | Takes credentials from the SPIRE agent and follows renewals. `close()` stops following. |
 | `SpiffeTLS(trust_domain=, bundle_file=, cert_file=, key_file=, server_side=, federated_bundle_files=)` | Loads credentials from files. `reload()` and `reload_if_changed()` pick up new ones. |
 | `transport.authenticate(connection, expected_id=)` | Returns the peer's `SpiffeIdentity`. `transport.identity` is the local one. |
-| `SpiffeWarrantIssuer(tls=, jwt=, forwarded=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=)` | Runs policy, challenges the holder key, mints warrants. |
+| `SpiffeWarrantIssuer(tls=, jwt=, forwarded=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=, max_jwt_proofs=, max_jwt_proofs_per_identity=)` | Runs policy, challenges the holder key, mints warrants. |
 | `SpiffeIssuerServer(issuer, host=, port=, max_connections=, timeout=, reload_interval=, max_workers=)` | The mTLS endpoint. `async with` it, then `serve_forever()`. |
 | `request_warrant(tls, address, issuer_id=, issuer_key=, holder_key=, task_id=, timeout=)` | Agent-side call. `arequest_warrant` for asyncio. `issuer_key` may be a list. |
 | `SpiffeJWT.from_workload_api(trust_domain=, audience=, socket_path=, federates_with=)` / `SpiffeJWT(trust_domain=, audience=, bundle_file=, federated_bundle_files=)` | Validates JWT-SVIDs. `authenticate(token)` returns a `SpiffeIdentity`. In `tenuo.spiffe_jwt`. |
-| `SpiffeJWTIssuerApp(issuer, path="/warrants", max_concurrent=, max_workers=, body_timeout=)` | ASGI endpoint for JWT-SVID bearers. |
+| `SpiffeJWTIssuerApp(issuer, path="/warrants", max_concurrent=, max_workers=, body_timeout=, max_per_identity=)` | ASGI endpoint for JWT-SVID bearers. |
 | `request_warrant_jwt(url, token=, audience=, issuer_key=, holder_key=, task_id=, ca_file=)` | Agent-side call. `arequest_warrant_jwt` for asyncio. |
 | `fetch_jwt_svid(audience, socket_path=, spiffe_id=)` | Gets a JWT-SVID from the SPIRE agent. |
 | `issuer.issue_jwt(token, holder, task_id, proof)` and `sign_jwt_holder_proof(...)` | The same exchange without the bundled endpoint, for other frameworks. The proof is a `SpiffeHolderProof` (also exported as `SpiffeJWTProof`). |

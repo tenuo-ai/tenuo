@@ -38,7 +38,10 @@ from tenuo import Exact, Range, SigningKey
 from tenuo.spiffe import SpiffeGrant, SpiffeWarrantIssuer
 from tenuo.spiffe_forwarded import SpiffeForwardedIdentity, SpiffeForwardedIssuerApp
 
-forwarded = SpiffeForwardedIdentity("example.test", audience="aud", trusted_proxies=os.environ["TRUSTED"].split(","))
+# These tests are about where a request arrived from, so the header carries no certificate.
+forwarded = SpiffeForwardedIdentity(
+    "example.test", audience="aud", trusted_proxies=os.environ["TRUSTED"].split(","), require_certificate=False
+)
 issuer = SpiffeWarrantIssuer(
     signing_key=SigningKey.generate(),
     policy=lambda identity, task: SpiffeGrant({"refund": {"customer": Exact("123"), "cents": Range(1, 10)}}),
@@ -73,11 +76,12 @@ def command(server: str, port: int, uds: str | None, rewriting: bool = False) ->
     }[server]
     uvicorn_switch = [] if rewriting else ["--no-proxy-headers"]
     worker = "uvicorn_worker.UvicornWorker" if rewriting else "workers.NoProxyHeaders"
+    daphne_switch = ["--proxy-headers"] if rewriting else []
     return {
         "uvicorn": [python, "-m", "uvicorn", "issuer_app:app", "--log-level", "warning", *uvicorn_switch],
         "gunicorn": [python, "-m", "gunicorn", "issuer_app:app", "-k", worker, "--log-level", "warning"],
         "hypercorn": [python, "-m", "hypercorn", "issuer_app:app"],
-        "daphne": [python, "-m", "daphne", "issuer_app:app"],
+        "daphne": [python, "-m", "daphne", "issuer_app:app", *daphne_switch],
         "granian": [python, "-m", "granian", "--interface", "asgi", "issuer_app:app"],
     }[server] + where  # fmt: skip
 
@@ -201,7 +205,14 @@ def test_a_caller_cannot_claim_the_proxys_address(server, environment):
     """The issuer trusts 10.0.0.5. A caller on loopback says it is 10.0.0.5, or that it is the Unix socket."""
     for trusted, claimed in (("10.0.0.5", "10.0.0.5"), ("unix", "unix")):
         with Running(server, "tcp", trusted, environment) as running:
-            for headers in (None, {"X-Forwarded-For": claimed}, {"Forwarded": f"for={claimed}"}):
+            for headers in (
+                None,
+                {"X-Forwarded-For": claimed},
+                {"X-Forwarded-For": f"{claimed}:40000"},
+                {"X-Forwarded-For": claimed, "X-Forwarded-Port": "40000"},
+                {"Forwarded": f"for={claimed}"},
+                {"Forwarded": f'for="{claimed}:40000"'},
+            ):
                 status, reply = running.post(headers)
                 assert (status, reply["error"]) == (403, "forbidden"), (trusted, headers)
 
@@ -213,3 +224,28 @@ def test_default_address_rewriting_fails_closed(server):
         assert running.post()[0] == 200
         status, reply = running.post({"X-Forwarded-For": "203.0.113.7"})
         assert (status, reply["error"]) == (403, "forbidden")  # Refused, not trusted as someone else.
+
+
+@pytest.mark.parametrize("server", ["uvicorn", "gunicorn", "daphne"])
+@pytest.mark.parametrize("environment", [None, {"FORWARDED_ALLOW_IPS": "*"}], ids=["default", "allow-all"])
+def test_a_rewritten_address_with_a_port_is_not_trusted(server, environment):
+    """With rewriting left on, a caller can hand the server the proxy's address and a port to go with it.
+
+    The server then reports a peer that looks real. The issuer refuses it,
+    because the address it was given is written in the request itself.
+    """
+    for trusted in ("10.0.0.5", "127.0.0.6"):
+        with Running(server, "tcp", trusted, environment, rewriting=True) as running:
+            for headers in (
+                {"X-Forwarded-For": f"{trusted}:40000"},
+                {"X-Forwarded-For": trusted, "X-Forwarded-Port": "40000"},
+                {"X-Forwarded-For": f"203.0.113.7, {trusted}:40000"},
+                # Uvicorn reads the port with int(), which takes more than digits.
+                {"X-Forwarded-For": f"{trusted}:+40000"},
+                {"X-Forwarded-For": f"{trusted}:4_0000"},
+                {"X-Forwarded-For": f"{trusted}: 40000"},
+                {"X-Forwarded-For": f"[{trusted}]:+40000"},
+                {"X-Forwarded-For": trusted, "X-Forwarded-Port": "+40000"},
+            ):
+                status, reply = running.post(headers)
+                assert (status, reply["error"]) == (403, "forbidden"), (trusted, headers)

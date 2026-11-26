@@ -47,9 +47,15 @@ def element(uri=AGENT, by=SERVER, digest=HASH, extra=""):
     return ";".join(parts) + extra
 
 
+def reader(*arguments, **options):
+    """A reader that accepts a header without the certificate, as a mesh that cannot forward it sends."""
+    options.setdefault("require_certificate", False)
+    return SpiffeForwardedIdentity(*arguments, **options)
+
+
 @pytest.fixture
 def forwarded():
-    return SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY])
+    return reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY])
 
 
 # -- header -------------------------------------------------------------------
@@ -98,7 +104,7 @@ def test_a_header_with_more_than_one_entry_is_refused(forwarded):
 
 def test_a_client_quote_cannot_reach_across_the_entry_an_appending_proxy_adds():
     """A header sent by a client whose certificate carries a name ending in a quote, as Envoy 1.40.2 forwarded it."""
-    both = SpiffeForwardedIdentity(
+    both = reader(
         DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], federates_with=["partner.test"], expected_by=SERVER
     )
     admin = f"spiffe://{DOMAIN}/admin"
@@ -227,7 +233,7 @@ def test_dns_names_are_accepted_only_when_the_operator_says_so(forwarded):
     header = f'By={SERVER};Hash={HASH};Subject="";URI={AGENT};DNS=agent.tenuo.svc.cluster.local;DNS=agent'
     with pytest.raises(SpiffeError, match="see allow_dns_names"):
         forwarded.authenticate(header, peer=PROXY)
-    lenient = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names=True)
+    lenient = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names=True)
     identity = lenient.authenticate(header, peer=PROXY)
     assert (identity.spiffe_id, identity.certificate_sha256) == (AGENT, HASH)
     assert lenient.authenticate(element(), peer=PROXY).spiffe_id == AGENT
@@ -252,7 +258,7 @@ def test_dns_names_are_accepted_only_when_the_operator_says_so(forwarded):
         with pytest.raises(SpiffeError):
             lenient.authenticate(refused, peer=PROXY)
     with pytest.raises(ValueError, match="allow_dns_names"):
-        SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names="yes")
+        reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names="yes")
 
 
 def forwarded_leaf(ca, uris=(AGENT,), dns=(), expires=600, starts=-10):  # noqa: F811
@@ -308,7 +314,7 @@ def test_a_forwarded_certificate_is_checked_against_the_identity(forwarded, ca):
     none, none_digest = forwarded_leaf(ca, uris=())
     expired, expired_digest = forwarded_leaf(ca, expires=-5, starts=-60)
     future, future_digest = forwarded_leaf(ca, starts=60)
-    lenient = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names=True)
+    lenient = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names=True)
     for header, message in (
         (with_certificate(encoded, digest, uri=admin), "not the certificate's only URI name"),
         (with_certificate(encoded, HASH), "not the one the header's hash names"),
@@ -326,14 +332,16 @@ def test_a_forwarded_certificate_is_checked_against_the_identity(forwarded, ca):
         (with_certificate(encoded, digest).replace(';Subject=""', f';Cert="{encoded}";Subject=""'), "Malformed"),
         (with_certificate(encoded, digest, extra=";Other=x"), "must end with the certificate's URI"),
     ):
-        for reader in (forwarded, lenient):  # The opt-in for DNS names does not loosen any of this.
+        for each in (forwarded, lenient):  # The opt-in for DNS names does not loosen any of this.
             with pytest.raises(SpiffeError, match=message):
-                reader.authenticate(header, peer=PROXY)
+                each.authenticate(header, peer=PROXY)
 
-    strict = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], require_certificate=True)
-    assert strict.authenticate(with_certificate(encoded, digest), peer=PROXY).spiffe_id == AGENT
+    # By default the certificate must be there. Only a reader told otherwise accepts a header without it.
+    default = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY])
+    assert default.authenticate(with_certificate(encoded, digest), peer=PROXY).spiffe_id == AGENT
     with pytest.raises(SpiffeError, match="did not forward the client certificate"):
-        strict.authenticate(element(), peer=PROXY)
+        default.authenticate(element(), peer=PROXY)
+    assert forwarded.authenticate(element(), peer=PROXY).spiffe_id == AGENT
     with pytest.raises(ValueError, match="require_certificate"):
         SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], require_certificate=1)
 
@@ -351,7 +359,7 @@ def test_a_warrant_never_outlives_a_forwarded_certificate(ca):  # noqa: F811
 
 
 def test_expected_proxy_identity():
-    pinned = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], expected_by=SERVER)
+    pinned = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], expected_by=SERVER)
     assert pinned.authenticate(element(), peer=PROXY).spiffe_id == AGENT
     for header in (
         element(by=f"spiffe://{DOMAIN}/other-proxy"),
@@ -364,7 +372,7 @@ def test_expected_proxy_identity():
 
 def test_federated_trust_domains():
     partner = "spiffe://partner.test/agent"
-    both = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], federates_with=["partner.test"])
+    both = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], federates_with=["partner.test"])
     assert both.authenticate(element(partner), peer=PROXY).trust_domain == "partner.test"
     assert both.authenticate(element(), peer=PROXY).trust_domain == DOMAIN
     with pytest.raises(SpiffeError, match="different trust domain"):
@@ -412,7 +420,7 @@ def test_federated_trust_domains():
     ],
 )
 def test_peer_must_be_a_trusted_proxy(trusted, peer, accepted):
-    forwarded = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=trusted)
+    forwarded = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=trusted)
     assert forwarded.trusts_peer(peer) is accepted
     if accepted:
         assert forwarded.authenticate(element(), peer=peer).spiffe_id == AGENT
@@ -515,7 +523,7 @@ def test_peer_and_header_are_checked_before_policy(forwarded_issuer):
 
 def test_warrant_lifetime_is_capped(forwarded):
     root = SigningKey.generate()
-    short = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], max_warrant_seconds=30)
+    short = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], max_warrant_seconds=30)
     for source, limit in ((forwarded, 300), (short, 30)):
         issuer = SpiffeWarrantIssuer(
             signing_key=root, policy=lambda *_: SpiffeGrant(REFUND, ttl_seconds=3600), forwarded=source
@@ -684,6 +692,25 @@ def test_endpoint_issues_a_warrant(app):
     assert status == 200
 
 
+def test_endpoint_requires_the_certificate_by_default(ca):  # noqa: F811
+    issuer = SpiffeWarrantIssuer(
+        signing_key=SigningKey.generate(),
+        policy=lambda identity, task_id: SpiffeGrant(REFUND),
+        forwarded=SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY]),
+    )
+    application = SpiffeForwardedIssuerApp(issuer)
+    try:
+        holder = SigningKey.generate()
+        status, _, reply, read = call_app(application, body=request_body(holder))  # URI and hash only.
+        assert (status, reply["error"], read) == (403, "unauthenticated", False)
+        assert "did not forward the client certificate" in reply["message"] and len(reply["message"]) < 200
+        header = with_certificate(*forwarded_leaf(ca))
+        status, *_ = call_app(application, headers=[("x-forwarded-client-cert", header)], body=request_body(holder))
+        assert status == 200
+    finally:
+        application.close()
+
+
 def test_endpoint_refuses_other_peers_before_reading_anything(app, caplog):
     application, *_ = app
     holder = SigningKey.generate()
@@ -710,7 +737,7 @@ def test_endpoint_refuses_other_peers_before_reading_anything(app, caplog):
 
 def test_endpoint_over_a_unix_socket(forwarded_issuer):
     issuer, root, *_ = forwarded_issuer
-    local = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[UNIX_SOCKET])
+    local = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[UNIX_SOCKET])
     application = SpiffeForwardedIssuerApp(
         SpiffeWarrantIssuer(signing_key=root, policy=lambda *_: SpiffeGrant(REFUND), forwarded=local)
     )
@@ -758,7 +785,7 @@ def test_endpoint_refusals(app):
         headers=[("x-forwarded-client-cert", element("spiffe://other.test/agent"))],
     )
     # Other names for the same idea are not read.
-    refused(403, "unauthenticated", headers=[("x-client-cert", element()), ("forwarded", f"for={PROXY}")])
+    refused(403, "unauthenticated", headers=[("x-client-cert", element()), ("forwarded", "for=203.0.113.7")])
     refused(403, "refused", "not authorized", body=request_body(holder, task="other-task"))
     refused(403, "refused", "Invalid holder proof", body=request_body(holder, audience="https://elsewhere.test"))
     refused(400, "invalid_request", body=b"{")
@@ -851,7 +878,7 @@ def test_client_through_a_sidecar(app, serve):
         request_warrant_forwarded(
             f"http://127.0.0.1:{port}/warrants", **{**options, "issuer_key": SigningKey.generate().public_key}
         )
-    with pytest.raises(SpiffeError, match="Could not complete the exchange"):
+    with pytest.raises(SpiffeError, match="Could not complete the exchange|did not answer within"):
         request_warrant_forwarded("http://127.0.0.1:9/warrants", timeout=2, **options)
 
 
@@ -890,7 +917,7 @@ def test_real_unix_socket_listener(forwarded_issuer, serve):
     if os.name == "nt" or not hasattr(socket, "AF_UNIX"):
         pytest.skip("needs a Unix socket listener")
     issuer, root, *_ = forwarded_issuer
-    local = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[UNIX_SOCKET])
+    local = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[UNIX_SOCKET])
     application = SpiffeForwardedIssuerApp(
         SpiffeWarrantIssuer(signing_key=root, policy=lambda *_: SpiffeGrant(REFUND), forwarded=local)
     )
@@ -957,7 +984,7 @@ def test_client_with_its_own_mutual_tls(app, serve, pki, ca, tmp_path):  # noqa:
         request_warrant_forwarded(f"https://127.0.0.1:{other}/warrants", tls=client, issuer_id=SERVER, **options)
 
 
-def test_guide_forwarded_code_runs(tmp_path, monkeypatch, serve):
+def test_guide_forwarded_code_runs(tmp_path, monkeypatch, serve, ca):  # noqa: F811
     """Execute the guide's forwarded-identity issuer and agent blocks behind a stand-in for the proxy."""
     from .test_spiffe import _guide_blocks
 
@@ -976,9 +1003,9 @@ def test_guide_forwarded_code_runs(tmp_path, monkeypatch, serve):
     agent_scope: dict = {}
     try:
         exec(localize(blocks["forwarded_issuer.py"]), issuer_scope)
-        proxy = InjectIdentity(
-            issuer_scope["app"], element("spiffe://acme.test/agents/refund", by="spiffe://acme.test/issuer")
-        )
+        agent = "spiffe://acme.test/agents/refund"
+        # As Envoy writes it with uri and cert forwarded.
+        proxy = InjectIdentity(issuer_scope["app"], with_certificate(*forwarded_leaf(ca, uris=(agent,)), uri=agent))
         port = serve(proxy)
         agent_code = localize(blocks["forwarded_agent.py"])
         assert agent_code.count('"http://issuer.acme.internal/warrants"') == 1
@@ -1040,7 +1067,7 @@ def test_endpoint_reads_the_identity_before_the_body(app):
 )
 def test_only_a_real_socket_address_is_a_peer(forwarded_issuer, client):
     issuer, root, *_ = forwarded_issuer
-    everything = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY, UNIX_SOCKET])
+    everything = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY, UNIX_SOCKET])
     application = SpiffeForwardedIssuerApp(
         SpiffeWarrantIssuer(signing_key=root, policy=lambda *_: SpiffeGrant(REFUND), forwarded=everything)
     )
@@ -1055,7 +1082,7 @@ def test_rewritten_client_address_is_never_trusted(forwarded_issuer, serve):
     """Even with Uvicorn told to believe X-Forwarded-For from anyone, a sender cannot pick a trusted address."""
     issuer, root, *_ = forwarded_issuer
     for trusted, claimed in ((["10.0.0.5"], "10.0.0.5"), ([UNIX_SOCKET], "unix"), (["10.0.0.5"], "unix")):
-        remote = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=trusted)
+        remote = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=trusted)
         application = SpiffeForwardedIssuerApp(
             SpiffeWarrantIssuer(signing_key=root, policy=lambda *_: SpiffeGrant(REFUND), forwarded=remote)
         )
@@ -1128,14 +1155,14 @@ def test_one_workload_cannot_hold_every_slot(forwarded_issuer):
 
 def test_shortest_warrant_cap_still_issues(forwarded_issuer):
     _, root, *_ = forwarded_issuer
-    brief = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], max_warrant_seconds=5)
+    brief = reader(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], max_warrant_seconds=5)
     issuer = SpiffeWarrantIssuer(signing_key=root, policy=lambda *_: SpiffeGrant(REFUND), forwarded=brief)
     assert issue(issuer, SigningKey.generate()).id
 
 
 def test_client_reports_an_unusable_host_name_as_a_spiffe_error():
     holder = SigningKey.generate()
-    with pytest.raises(SpiffeError, match="Could not complete the exchange"):
+    with pytest.raises(SpiffeError, match="Could not complete the exchange|did not answer within"):
         request_warrant_forwarded(
             "http://" + "a" * 64 + ".example/warrants",
             audience=AUDIENCE,
@@ -1288,3 +1315,150 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, serve, tmp_path
     # The same refusals as any other client.
     assert request(url, "https://another-issuer.example.test", "task-123")["message"] == "Invalid holder proof"
     assert "not authorized" in request(url, AUDIENCE, "another-task")["message"]
+
+
+@pytest.mark.parametrize(
+    ("client", "name", "value"),
+    [
+        (PROXY, "X-Forwarded-For", PROXY),
+        (
+            PROXY,
+            "X-Forwarded-For",
+            f"{PROXY}:40000",
+        ),  # Uvicorn copies this port, so the address looks like a real peer.
+        (PROXY, "X-Forwarded-For", f"203.0.113.7, {PROXY}:1234"),
+        (PROXY, "x-forwarded-for", f"  {PROXY}  "),
+        (PROXY, "Forwarded", f"for={PROXY}"),
+        (PROXY, "Forwarded", f'for="{PROXY}:40000";proto=http, for=203.0.113.7'),
+        (PROXY, "X-Real-IP", PROXY),
+        (PROXY, "X-Forwarded-For", f"::ffff:{PROXY}"),
+        (f"::ffff:{PROXY}", "X-Forwarded-For", f"{PROXY}:5"),
+        ("::1", "X-Forwarded-For", "[::1]:40000"),
+        ("::1", "Forwarded", 'for="[::1]:40000"'),
+        ("::1", "X-Forwarded-For", "0:0:0:0:0:0:0:1"),
+        # Ports as servers have been seen to accept them: Python's int() takes signs, underscores and white space.
+        (PROXY, "X-Forwarded-For", f"{PROXY}:+40000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}:4_0000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}: 40000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}:\x0b40000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}:\xa040000"),
+        (PROXY, "X-Forwarded-For", f"[{PROXY}]:+40000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}:"),
+        (PROXY, "X-Forwarded-For", f"x{PROXY}y"),
+        ("::1", "X-Forwarded-For", "[::1]:+40000"),
+        ("::1", "X-Forwarded-For", "::1:40000"),
+        # Too long to read in full: it cannot be ruled out, whatever it says.
+        (PROXY, "X-Forwarded-For", "203.0.113.7, " * 3000 + f"{PROXY}:40000"),
+        (PROXY, "Forwarded", "for=203.0.113.7;" * 3000),
+    ],
+    ids=lambda value: value if len(str(value)) < 60 else "too-long",
+)
+def test_a_peer_address_also_named_in_the_request_is_not_trusted(forwarded_issuer, caplog, client, name, value):
+    """A server that rewrites client addresses takes them, port included, from these headers."""
+    issuer, *_ = forwarded_issuer
+    reader = SpiffeForwardedIdentity(
+        DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY, "::1"], require_certificate=False
+    )
+    issuer.forwarded = reader
+    application = SpiffeForwardedIssuerApp(issuer)
+    caplog.set_level(logging.WARNING, logger="tenuo.spiffe")
+    try:
+        status, _, reply, read = call_app(
+            application,
+            headers=[("x-forwarded-client-cert", element()), (name, value)],
+            body=request_body(SigningKey.generate()),
+            client=(client, 40000),
+        )
+        assert (status, reply["error"], read) == (403, "forbidden", False)
+        assert "also named in a forwarding header" in reply["message"]
+        assert "uvicorn --no-proxy-headers" in caplog.text
+    finally:
+        application.close()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["203.0.113.7", "203.0.113.7:40000", "unknown", "_hidden", "127.0.0.10", "1127.0.0.1", "127.0.0.1.5", "[::2]:1"],
+)
+def test_a_forwarding_header_that_names_someone_else_changes_nothing(app, value):
+    """What a proxy adds about the original client is none of the issuer's business."""
+    application, *_ = app
+    for name in ("X-Forwarded-For", "Forwarded", "X-Real-IP"):
+        text = f"for={value}" if name == "Forwarded" else value
+        status, *_ = call_app(
+            application,
+            headers=[("x-forwarded-client-cert", element()), (name, text)],
+            body=request_body(SigningKey.generate()),
+        )
+        assert status == 200, (name, text)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), 0, -1, True])
+def test_time_settings_must_be_positive_and_finite(forwarded_issuer, value):
+    issuer, root, *_ = forwarded_issuer
+    with pytest.raises(ValueError, match="body_timeout"):
+        SpiffeForwardedIssuerApp(issuer, body_timeout=value)
+    holder = SigningKey.generate()
+    with pytest.raises(ValueError, match="timeout"):
+        request_warrant_forwarded(
+            "http://127.0.0.1:1/warrants",
+            audience=AUDIENCE,
+            issuer_key=root.public_key,
+            holder_key=holder,
+            task_id="task-123",
+            timeout=value,
+        )
+
+
+def test_only_a_decimal_suffix_is_read_as_a_port(forwarded_issuer):
+    """After the last colon of an IPv6 entry, digits may be a port. Anything else is part of another address."""
+    issuer, *_ = forwarded_issuer
+    proxy = "2001:db8::1"
+    issuer.forwarded = SpiffeForwardedIdentity(
+        DOMAIN, audience=AUDIENCE, trusted_proxies=[proxy], require_certificate=False
+    )
+    application = SpiffeForwardedIssuerApp(issuer)
+    try:
+        for value, expected in (
+            (f"{proxy}:abcd", 200),  # Another address.
+            (f"{proxy}:ABCD", 200),
+            ("2001:db8::2", 200),
+            (f"{proxy}:4000", 403),  # Could be this address and a port: not ruled out.
+            (f"[{proxy}]:4000", 403),
+            (proxy, 403),
+        ):
+            status, *_ = call_app(
+                application,
+                headers=[("x-forwarded-client-cert", element()), ("X-Forwarded-For", value)],
+                body=request_body(SigningKey.generate()),
+                client=(proxy, 40000),
+            )
+            assert status == expected, value
+    finally:
+        application.close()
+
+
+@pytest.mark.parametrize(
+    "value", ["[fe80::1%eth0]:40000", "fe80::1%eth0", "fe80::1", "[fe80::1]:40000", "fe80::1%25eth0"]
+)
+def test_a_zone_does_not_hide_an_address_named_in_the_request(forwarded_issuer, value):
+    """A link-local peer is reported with its zone. A header may name the same address with or without it."""
+    issuer, *_ = forwarded_issuer
+    reader = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=["fe80::1"], require_certificate=False)
+    assert reader.trusts_peer("fe80::1%eth0")
+    issuer.forwarded = reader
+    application = SpiffeForwardedIssuerApp(issuer)
+    try:
+        status, _, reply, read = call_app(
+            application,
+            headers=[("x-forwarded-client-cert", element()), ("X-Forwarded-For", value)],
+            body=request_body(SigningKey.generate()),
+            client=("fe80::1%eth0", 40000),
+        )
+        assert (status, reply["error"], read) == (403, "forbidden", False)
+        assert "also named in a forwarding header" in reply["message"]
+        # Without such a header the scoped peer is served as the proxy it is.
+        status, *_ = call_app(application, body=request_body(SigningKey.generate()), client=("fe80::1%eth0", 40000))
+        assert status == 200
+    finally:
+        application.close()

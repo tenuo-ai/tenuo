@@ -401,7 +401,7 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
     )
     root, holder = SigningKey.generate(), SigningKey.generate()
     app = SpiffeForwardedIssuerApp(SpiffeWarrantIssuer(signing_key=root, policy=recording_policy, forwarded=forwarded))
-    ports = {name: free_port() for name in ("issuer", "replace", "append", "plain", "crafted")}
+    ports = {name: free_port() for name in ("issuer", "replace", "append", "bare", "plain", "crafted")}
     crafted_tls = crafted_client(directory)
     # The issuer must see the real socket peer, so uvicorn's proxy-header rewriting is off.
     server = uvicorn.Server(
@@ -410,18 +410,20 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
     serving = asyncio.ensure_future(server.serve())
     mutual_tls = ENVOY_MUTUAL_TLS.format(directory=directory, bundle=directory / "bundle.pem")
     config = directory / "envoy.yaml"
+    with_certificate = "uri: true, cert: true"
     config.write_text(
         "static_resources:\n  listeners:"
-        # This listener forwards the certificate too, so the issuer checks the URI against it.
-        + ENVOY_LISTENER.format(
-            name="replace", port=ports["replace"], mode="SANITIZE_SET", details="uri: true, cert: true"
-        )
+        # These listeners forward the certificate with the URI, so the issuer checks the one against the other.
+        + ENVOY_LISTENER.format(name="replace", port=ports["replace"], mode="SANITIZE_SET", details=with_certificate)
         + mutual_tls
-        + ENVOY_LISTENER.format(name="append", port=ports["append"], mode="APPEND_FORWARD", details="uri: true")
+        + ENVOY_LISTENER.format(name="append", port=ports["append"], mode="APPEND_FORWARD", details=with_certificate)
         + mutual_tls
-        + ENVOY_LISTENER.format(name="plain", port=ports["plain"], mode="APPEND_FORWARD", details="uri: true")
+        # This one forwards the URI alone, which the issuer does not accept unless told to.
+        + ENVOY_LISTENER.format(name="bare", port=ports["bare"], mode="SANITIZE_SET", details="uri: true")
+        + mutual_tls
+        + ENVOY_LISTENER.format(name="plain", port=ports["plain"], mode="APPEND_FORWARD", details=with_certificate)
         # An appending listener that also accepts clients of an authority outside SPIRE.
-        + ENVOY_LISTENER.format(name="crafted", port=ports["crafted"], mode="APPEND_FORWARD", details="uri: true")
+        + ENVOY_LISTENER.format(name="crafted", port=ports["crafted"], mode="APPEND_FORWARD", details=with_certificate)
         + ENVOY_MUTUAL_TLS.format(directory=directory, bundle=directory / "other-bundle.pem")
         + ENVOY_CLUSTER.format(port=ports["issuer"])
     )
@@ -484,12 +486,11 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
             warrant = await arequest_warrant_forwarded(url, tls=agent_tls, issuer_id=ISSUER_ID, **options)
             if warrant.authorized_holder != holder.public_key:
                 raise RuntimeError("The warrant is bound to the wrong holder")
-            if listener == "replace":
-                # The policy grants 120 seconds. With the certificate forwarded, the warrant
-                # must end with the SVID, which SPIRE issued for at most that and has already aged.
-                expiry = datetime.fromisoformat(warrant.expires_at()).timestamp()
-                if expiry > agent_tls.identity.expires_at:
-                    raise RuntimeError("A warrant outlived the certificate the proxy forwarded")
+            # The policy grants 120 seconds. With the certificate forwarded, the warrant
+            # must end with the SVID, which SPIRE issued for at most that and has already aged.
+            expiry = datetime.fromisoformat(warrant.expires_at()).timestamp()
+            if expiry > agent_tls.identity.expires_at:
+                raise RuntimeError("A warrant outlived the certificate the proxy forwarded")
             try:
                 await arequest_warrant_forwarded(url, tls=unapproved_tls, issuer_id=ISSUER_ID, **options)
             except SpiffeError:
@@ -498,6 +499,15 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
                 raise RuntimeError("A workload the policy does not approve received a warrant")
         if seen != [(AGENT_ID, "forwarded"), (ISSUER_ID, "forwarded")] * 2:
             raise RuntimeError(f"Unexpected forwarded identities {seen}")
+        # Without the certificate in the header, the approved agent itself is refused.
+        try:
+            url = f"https://127.0.0.1:{ports['bare']}/warrants"
+            await arequest_warrant_forwarded(url, tls=agent_tls, issuer_id=ISSUER_ID, **options)
+        except SpiffeError as exc:
+            if "did not forward the client certificate" not in str(exc):
+                raise
+        else:
+            raise RuntimeError("A header without the certificate was accepted")
         # An agent that sends an identity header of its own gains nothing:
         # a replacing proxy discards it, and behind an appending proxy the issuer refuses the request.
         seen.clear()
@@ -519,9 +529,9 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
         await serving
         app.close()
     print(
-        "Verified: Envoy forwarded the agent's SPIRE identity to the issuer; "
-        "an unapproved workload, three requests carrying a made-up identity, "
-        "and a certificate with a crafted name got nothing extra."
+        "Verified: Envoy forwarded the agent's SPIRE identity and certificate to the issuer; "
+        "an unapproved workload, a header without the certificate, three requests carrying a "
+        "made-up identity, and a certificate with a crafted name got nothing extra."
     )
 
 
@@ -652,22 +662,50 @@ async def authority_rotation_check(directory: Path, server_socket: str, agent_so
             (directory / "new-bundle.pem").write_text(
                 command("spire-server", "bundle", "show", "-socketPath", server_socket)
             )
-            old_agent = SpiffeTLS(
-                trust_domain=DOMAIN,
-                bundle_file=str(directory / "new-bundle.pem"),
-                cert_file=str(directory / "old-agent.pem"),
-                key_file=str(directory / "old-agent-key.pem"),
-                server_side=False,
+            # The adapter does not load an SVID next to a bundle that no longer holds its authority.
+            try:
+                SpiffeTLS(
+                    trust_domain=DOMAIN,
+                    bundle_file=str(directory / "new-bundle.pem"),
+                    cert_file=str(directory / "old-agent.pem"),
+                    key_file=str(directory / "old-agent-key.pem"),
+                    server_side=False,
+                )
+            except SpiffeError:
+                pass
+            else:
+                raise RuntimeError("An SVID from the revoked authority was loaded next to a bundle without it")
+            # So present it with a plain TLS client, as a workload with any other library could.
+            old_agent = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            old_agent.check_hostname = False  # The issuer presents an SVID, which has no host name.
+            old_agent.load_verify_locations(cafile=str(directory / "new-bundle.pem"))
+            old_agent.load_cert_chain(str(directory / "old-agent.pem"), str(directory / "old-agent-key.pem"))
+            first_frame = (
+                json.dumps(
+                    {
+                        "v": 1,
+                        "holder": base64.b64encode(bytes(holder.public_key.to_bytes())).decode(),
+                        "task": "approved-refund-123",
+                    }
+                ).encode()
+                + b"\n"
             )
 
-            async def old_svid_refused() -> bool:
+            def old_svid_refused() -> bool:
+                """Whether the issuer answers the old SVID with anything but a challenge."""
                 try:
-                    await arequest_warrant(old_agent, server.address, **options)
-                except SpiffeError:
+                    with socket.create_connection(server.address, timeout=10) as raw:
+                        with old_agent.wrap_socket(raw) as connection:
+                            connection.sendall(first_frame)
+                            return b'"challenge"' not in connection.recv(65536)
+                except OSError:  # Includes TLS alerts: the issuer refused the certificate.
                     return True
-                return False
 
-            await until(old_svid_refused, 60, "the issuer refuses an SVID from the revoked X.509 authority")
+            await until(
+                lambda: asyncio.to_thread(old_svid_refused),
+                60,
+                "the issuer refuses an SVID from the revoked X.509 authority",
+            )
             if datetime.now(timezone.utc) >= old_expiry:
                 raise RuntimeError("The old SVID expired before the check; the refusal proves nothing")
             await still_flowing("after the old X.509 authority was revoked")

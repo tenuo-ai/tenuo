@@ -51,6 +51,7 @@ from tenuo.spiffe import (
     _forwarded_proof_bytes,
     _key_list,
     _positive_int,
+    _seconds,
     _trust_domain,
     _trust_domain_names,
 )
@@ -70,6 +71,10 @@ UNIX_SOCKET = "unix"
 """Name for "the proxy reaches the issuer over a Unix socket" in ``trusted_proxies``."""
 
 _HEADER = b"x-forwarded-client-cert"
+# Headers an ASGI server or a middleware may take the client address from.
+_ADDRESS_HEADERS = frozenset({b"x-forwarded-for", b"forwarded", b"x-real-ip"})
+_ADDRESS_RUN = re.compile(rb"[0-9A-Fa-f:.]+")
+_HEX_LETTER = re.compile(r"[A-Fa-f]")
 _MAX_HEADER_BYTES = 32 * 1024  # Room for a forwarded certificate and chain, which are ignored.
 _MAX_WARRANT_SECONDS = 3600
 _KEY = re.compile(r"[A-Za-z]+")
@@ -194,7 +199,8 @@ class SpiffeForwardedIdentity:
     nothing else: it trusts every request the server reports no address for.
 
     The header must describe exactly one client certificate, with exactly one
-    ``URI`` (the SPIFFE ID) and its ``Hash``. That is what a proxy writes when
+    ``URI`` (the SPIFFE ID), its ``Hash``, and by default the certificate
+    itself (``Cert``; for Envoy, ``cert: true``). That is what a proxy writes when
     it replaces the header or appends to an empty one (Envoy ``SANITIZE_SET``
     or ``APPEND_FORWARD``). A header with more than one entry is refused: the
     client sent one of its own, or the request crossed a second proxy. A proxy
@@ -202,37 +208,33 @@ class SpiffeForwardedIdentity:
     ``ALWAYS_FORWARD_ONLY``) must not be used. Set ``expected_by`` to the
     proxy's own SPIFFE ID to also require that the entry names it in ``By``.
 
-    Envoy copies URI and DNS names from the certificate into the header as
-    they are, so a certificate with separators in a name could add fields.
-    The ``URI`` must therefore be the last thing in the header: the name is
-    then read to its end, never cut short at a separator. A header with
-    ``DNS`` names is refused for the same reason, so forward the URI without
-    them. None of this replaces the proxy checking client certificates
-    against the trust bundle.
+    The forwarded certificate is what the ``URI`` is checked against: it must
+    be the certificate the ``Hash`` names, be valid now, and carry exactly one
+    URI name, equal to the header's. Warrants never outlive it, and never
+    last longer than ``max_warrant_seconds`` whatever the policy grants. This
+    does not replace the proxy checking client certificates against the trust
+    bundle: this class has no bundle and checks no signature.
 
-    One difference is lost before this class sees the header. HTTP servers
-    drop spaces and tabs from the end of a header value, so a certificate
-    name that ended in them is read as the name without them. SPIRE and Istio
-    issue no such names. Where another authority the proxy trusts might, have
-    the proxy forward the certificate (next paragraph) or check the name
-    itself; the guide shows both.
+    ``require_certificate=False`` accepts a header without the certificate,
+    for a mesh that cannot forward it (Istio does not). The issuer then takes
+    the proxy's reading of the name, with these consequences:
 
-    Some meshes always forward DNS names (Istio does), so a certificate that
-    has them could never be identified. ``allow_dns_names=True`` accepts
-    ``DNS`` names after the URI. The identity is then the URI up to the first
-    separator, and a certificate whose URI name itself contained ``;DNS=``
-    would be read as the shorter name. Turn it on only when every authority
-    the proxy trusts issues well-formed SPIFFE IDs, as SPIRE and Istio do.
+    * Envoy copies URI and DNS names from the certificate into the header as
+      they are, so a certificate with separators in a name could add fields.
+      The ``URI`` must therefore be the last thing in the header: the name is
+      then read to its end, never cut short at a separator. A header with
+      ``DNS`` names after the URI is refused for the same reason.
+    * HTTP servers drop spaces and tabs from the end of a header value before
+      this class sees it, so a certificate name that ended in them is read as
+      the name without them.
+    * Some meshes always forward DNS names (Istio does), so a certificate
+      that has them could never be identified. ``allow_dns_names=True``
+      accepts ``DNS`` names after the URI. The identity is then the URI up to
+      the first separator, and a certificate whose URI name itself contained
+      ``;DNS=`` would be read as the shorter name.
 
-    When the proxy also forwards the certificate (``Cert``; for Envoy,
-    ``cert: true``), none of that is taken on trust: the certificate must be
-    the one the ``Hash`` names, be valid, and carry exactly one URI name equal
-    to the header's. DNS names are then accepted without ``allow_dns_names``,
-    and warrants never outlive the certificate. ``require_certificate=True``
-    refuses a header without one.
-
-    The certificate's lifetime is not visible here, so warrants last at most
-    ``max_warrant_seconds`` whatever the policy grants.
+    So turn ``require_certificate`` off only when every authority the proxy
+    trusts issues well-formed SPIFFE IDs, as SPIRE and Istio do.
     """
 
     def __init__(
@@ -245,7 +247,7 @@ class SpiffeForwardedIdentity:
         expected_by: Optional[str] = None,
         max_warrant_seconds: int = 300,
         allow_dns_names: bool = False,
-        require_certificate: bool = False,
+        require_certificate: bool = True,
     ):
         self.trust_domain = trust_domain
         if not isinstance(allow_dns_names, bool) or not isinstance(require_certificate, bool):
@@ -349,8 +351,8 @@ class SpiffeForwardedIdentity:
             expires = min(expires, _forwarded_certificate(forwarded[0], uris[0], hashes[0]))
         elif self._require_certificate:
             raise SpiffeError(
-                "The proxy did not forward the client certificate "
-                "(for Envoy, enable cert in set_current_client_cert_details)"
+                "The proxy did not forward the client certificate (for Envoy, enable cert in "
+                "set_current_client_cert_details; for Istio, see require_certificate)"
             )
         # Without the certificate, the URI must end the header, after nothing but
         # what Envoy writes before it. Its value is then the certificate's whole
@@ -437,6 +439,7 @@ def request_warrant_forwarded(
         _trust_domain(issuer_id)
     elif tls is not None or issuer_id is not None:
         raise ValueError("tls= and issuer_id= apply to https:// only; with http:// the sidecar provides mutual TLS")
+    timeout = _seconds("timeout", timeout)
     proof = sign_forwarded_holder_proof(holder_key, audience=audience, task_id=task_id)
 
     def connect() -> http.client.HTTPConnection:
@@ -461,6 +464,7 @@ def request_warrant_forwarded(
         trusted,
         holder_key,
         before_request=None if tls is None else pin_proxy,
+        timeout=timeout,
     )
 
 
@@ -542,7 +546,7 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
         if isinstance(port, str) and port.isascii() and port.isdigit():
             port = int(port)  # Granian reports ports as text.
         # A connected TCP peer always has a port. Port 0 is how Uvicorn marks an
-        # address it took from X-Forwarded-For, which the sender chose.
+        # address it took from a bare X-Forwarded-For entry, which the sender chose.
         if not isinstance(host, str) or not _positive_int(port) or port < 1:
             return None
         try:
@@ -550,6 +554,46 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
         except ValueError:
             return None
         return host
+
+    @staticmethod
+    def _named_in_headers(peer: str, scope: Mapping[str, Any]) -> bool:
+        """Whether a header a server may rewrite the client address from names ``peer``.
+
+        A server that rewrites takes the address, and the port when the header
+        gives one, from such a header. The application cannot see which
+        happened, so a peer address that is also written in the request is not
+        proof of where the request came from.
+        """
+        try:
+            # Without its zone ("fe80::1%eth0"): a header may give the address with or without one.
+            address = ipaddress.ip_address(peer.partition("%")[0])
+        except ValueError:
+            return False  # A Unix socket.
+        mapped = getattr(address, "ipv4_mapped", None)
+        address = mapped or address
+        for name, value in scope.get("headers", ()):
+            if name.lower() not in _ADDRESS_HEADERS:
+                continue
+            if len(value) > _MAX_HEADER_BYTES:
+                return True  # Too long to read in full, so it cannot be ruled out.
+            # Servers differ in what they accept around an address and as a port
+            # ("+40000", "4_0000", white space of several kinds), so their parsing
+            # is not imitated. Whatever a server extracts is an unbroken run of
+            # address characters: the run itself, or the run up to its last colon
+            # when what follows could be a port.
+            for run in _ADDRESS_RUN.findall(value):
+                text = run.decode("ascii")
+                before, colon, after = text.rpartition(":")
+                # Letters after the last colon are the last group of an IPv6
+                # address, never a port. Digits, or nothing more in this run, may be one.
+                for candidate in (text, before) if colon and not _HEX_LETTER.search(after) else (text,):
+                    try:
+                        named = ipaddress.ip_address(candidate)
+                    except ValueError:
+                        continue
+                    if (getattr(named, "ipv4_mapped", None) or named) == address:
+                        return True
+        return False
 
     def _credential(self, scope: Mapping[str, Any]) -> SpiffeIdentity:
         peer = self._peer(scope)
@@ -566,6 +610,19 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
                     scope.get("client") or "an unknown address",
                 )
             raise _Refusal(403, "forbidden", "Requests must arrive through the issuer's proxy")
+        if peer is not None and self._named_in_headers(peer, scope):
+            now = time.monotonic()
+            if now - self._warned_at >= 60:
+                self._warned_at = now
+                logger.warning(
+                    "Refused a forwarded-identity request whose client address %s is also named in its "
+                    "X-Forwarded-For, Forwarded or X-Real-IP header: the ASGI server may have taken the address "
+                    "from there. Stop the server rewriting client addresses (uvicorn --no-proxy-headers). If a "
+                    "caller really shares the proxy's address, have the proxy reach the issuer over a Unix "
+                    "socket. This warning appears at most once a minute.",
+                    peer,
+                )
+            raise _Refusal(403, "forbidden", "The client address is also named in a forwarding header")
         values = [value for name, value in scope.get("headers", ()) if name.lower() == _HEADER]
         if len(values) != 1 or not values[0].strip():
             raise _Refusal(

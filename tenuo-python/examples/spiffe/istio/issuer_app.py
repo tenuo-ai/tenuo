@@ -18,6 +18,8 @@ forwarded = SpiffeForwardedIdentity(
     trusted_proxies=[os.environ.get("TRUSTED_PROXY", UNIX_SOCKET)],
     # The entry must have been recorded by this pod's own sidecar.
     expected_by="spiffe://cluster.local/ns/tenuo/sa/issuer",
+    # Istio does not forward the certificate itself, so the issuer takes the sidecar's reading of its name.
+    require_certificate=False,
     # Istio always forwards a certificate's DNS names. Istio's own certificates have none; SPIRE entries may.
     allow_dns_names=os.environ.get("ALLOW_DNS_NAMES") == "1",
 )
