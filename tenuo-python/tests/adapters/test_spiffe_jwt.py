@@ -150,12 +150,6 @@ def _unsigned(header, payload):
         (lambda a: a.token(sub=123), "Invalid JWT-SVID"),
         (lambda a: a.token(nbf=int(time.time()) + 600), "Invalid JWT-SVID"),
         (lambda a: a.token(headers={"kid": "unknown"}), "not in the trust bundle"),
-        (
-            lambda a: pyjwt.encode(
-                {"sub": AGENT, "aud": AUDIENCE, "exp": int(time.time()) + 60}, a.key, algorithm=a.algorithm
-            ),
-            "names no signing key",
-        ),
         (lambda a: a.token(headers={"typ": "at+jwt"}), "Malformed"),
         (lambda a: JWTAuthority(kid=a.kid).token(), "Invalid JWT-SVID"),  # Right key ID, wrong key.
         (lambda a: a.token()[:-4] + "AAAA", "Invalid JWT-SVID"),
@@ -201,7 +195,6 @@ def _unsigned(header, payload):
         "numeric-sub",
         "not-yet-valid",
         "unknown-kid",
-        "no-kid",
         "bad-typ",
         "same-kid-other-key",
         "bad-signature",
@@ -1755,5 +1748,111 @@ def test_unreadable_response_does_not_reset_an_expired_outage(authority, workloa
         api.publish_jwt_bundles(good)
         assert eventually(lambda: validator._unreadable_since is None and validator._lost_since is None)
         assert validator.authenticate(token).spiffe_id == AGENT
+    finally:
+        validator.close()
+
+
+def unnamed(signer, sub=AGENT, aud=AUDIENCE, exp=300, **headers):
+    """A JWT-SVID with no key ID in its header, which the standard allows."""
+    payload = {"sub": sub, "aud": aud, "exp": int(time.time()) + exp}
+    token = pyjwt.encode(payload, signer.key, algorithm=signer.algorithm, headers=headers or None)
+    assert "kid" not in pyjwt.get_unverified_header(token)
+    return token
+
+
+def test_a_token_need_not_name_its_signing_key(validator, authority, tmp_path):
+    """The JWT-SVID standard makes the kid header optional (section 2.2); only bundle keys must carry one."""
+    assert validator.authenticate(unnamed(authority)).spiffe_id == AGENT
+    assert validator.authenticate(unnamed(authority, typ="JWT")).spiffe_id == AGENT
+    # Everything else is checked as for any token.
+    for token, message in (
+        (unnamed(JWTAuthority()), "Invalid JWT-SVID"),  # Signed by a key the bundle does not hold.
+        (unnamed(authority, exp=-30), "expired"),
+        (unnamed(authority, aud="spiffe://example.test/someone-else"), "not for this issuer's audience"),
+        (unnamed(authority, sub="spiffe://other.test/agent"), "different trust domain"),
+        (unnamed(JWTAuthority("RSA")), "not in the trust bundle"),  # No key of that kind to try.
+        (authority.token(headers={"kid": ""}), "Malformed"),  # Present but empty is not the same as absent.
+    ):
+        with pytest.raises(SpiffeError, match=message):
+            validator.authenticate(token)
+
+    # With several keys in the bundle, each one the algorithm fits is tried.
+    others = [JWTAuthority(), JWTAuthority("EC", curve=ec.SECP384R1()), JWTAuthority("RSA")]
+    bundle = tmp_path / "several.json"
+    bundle.write_bytes(jwks(*others, authority))
+    several = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(bundle))
+    for signer in (*others, authority):
+        assert several.authenticate(unnamed(signer)).spiffe_id == AGENT
+    with pytest.raises(SpiffeError, match="Invalid JWT-SVID"):
+        several.authenticate(unnamed(JWTAuthority()))
+
+    # A token that names no key cannot make the validator try an unbounded number of them.
+    crowd = [JWTAuthority() for _ in range(17)]
+    crowded_file = tmp_path / "crowded.json"
+    crowded_file.write_bytes(jwks(*crowd))
+    crowded = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(crowded_file))
+    with pytest.raises(SpiffeError, match="too many keys to try"):
+        crowded.authenticate(unnamed(crowd[0]))
+    assert crowded.authenticate(crowd[0].token()).spiffe_id == AGENT  # Naming the key still works.
+
+
+def test_an_unnamed_key_still_vouches_only_for_its_own_trust_domain(federated, authority):
+    validator, partner, _ = federated
+    assert validator.authenticate(unnamed(partner, sub=PARTNER_AGENT)).trust_domain == PARTNER
+    assert validator.authenticate(unnamed(authority)).trust_domain == DOMAIN
+    with pytest.raises(SpiffeError, match="not signed by its own trust domain's keys"):
+        validator.authenticate(unnamed(partner, sub=AGENT))  # The partner's key names an example.test workload.
+    with pytest.raises(SpiffeError, match="not signed by its own trust domain's keys"):
+        validator.authenticate(unnamed(authority, sub=PARTNER_AGENT))
+
+
+def test_undecodable_federated_entry_does_not_hold_back_the_home_domain(authority, workload_api):  # noqa: F811
+    """One entry of the response cannot be decoded. A readable home entry still applies; the federated domain is refused."""
+    partner, successor = JWTAuthority(), JWTAuthority()
+    own, theirs = f"spiffe://{DOMAIN}", f"spiffe://{PARTNER}"
+    broken = _field(1, b"\xff\xff\xff\xff")  # A map entry that is not a message.
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{own: jwks(authority), theirs: jwks(partner)}))
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        socket_path=api.address,
+        timeout=5,
+        max_stale_seconds=1.0,
+        federates_with=[PARTNER],
+    )
+    old_token, new_token = authority.token(), successor.token()
+    partner_token = partner.token(sub=PARTNER_AGENT)
+
+    def accepted(token):
+        try:
+            validator.authenticate(token)
+        except SpiffeError:
+            return False
+        return True
+
+    try:
+        assert accepted(old_token) and accepted(partner_token)
+        # The home domain rotates its key in a response whose federated entry is damaged.
+        api.publish_jwt_bundles(bundles_response(**{own: jwks(successor)}) + broken)
+        assert eventually(lambda: accepted(new_token))
+        assert not accepted(old_token) and not accepted(partner_token)
+        assert validator._unreadable_since is None  # The home bundle was read: nothing is on a timer.
+        time.sleep(1.2)
+        assert accepted(new_token)
+        # The same for a withdrawal of the home domain's keys.
+        api.publish_jwt_bundles(broken + bundles_response(**{own: jwks()}))
+        assert eventually(lambda: not accepted(new_token))
+        with pytest.raises(SpiffeError, match="not in the trust bundle"):
+            validator.authenticate(new_token)
+        # With no readable home entry at all, the damaged one may have been it: keys are kept, for a bounded time.
+        api.publish_jwt_bundles(bundles_response(**{own: jwks(successor), theirs: jwks(partner)}))
+        assert eventually(lambda: accepted(new_token) and accepted(partner_token))
+        api.publish_jwt_bundles(broken)
+        assert eventually(lambda: validator._unreadable_since is not None)
+        assert accepted(new_token) and not accepted(partner_token)
+        time.sleep(1.2)
+        with pytest.raises(SpiffeError, match="JWT bundle cannot be read"):
+            validator.authenticate(new_token)
     finally:
         validator.close()

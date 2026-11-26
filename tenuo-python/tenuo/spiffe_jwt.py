@@ -84,6 +84,9 @@ _FILE_CHECK_SECONDS = 5.0
 # An agent answers that way for a moment while it replaces SVIDs after a forced rotation.
 _DENIED_GRACE_SECONDS = 30.0
 _NONCE_BYTES = 16
+# A JWT-SVID need not name its signing key. Without a key ID every key that fits the
+# token's algorithm is tried, up to this many, so such a token cannot buy unbounded work.
+_MAX_UNNAMED_KEY_ATTEMPTS = 16
 _COMPACT_JWS = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 # RFC 7518 signature algorithms the JWT-SVID standard allows, by key family.
 _RSA_ALGORITHMS = frozenset({"RS256", "RS384", "RS512", "PS256", "PS384", "PS512"})
@@ -173,6 +176,13 @@ def _jwks_keys(document: bytes, trust_domain: str) -> Dict[str, _Key]:
     return keys
 
 
+def _fits(algorithm: str, key: _Key) -> bool:
+    """Whether a signature algorithm belongs to this key's own type."""
+    if isinstance(key, rsa.RSAPublicKey):
+        return algorithm in _RSA_ALGORITHMS
+    return _EC_CURVES.get(algorithm) == key.curve.name
+
+
 def _no_keys(trust_domain: str) -> SpiffeError:
     return SpiffeError(f"JWT bundle for {trust_domain} contains no usable JWT-SVID signing keys")
 
@@ -196,21 +206,38 @@ def _jwt_bundles_from_response(
     and a ``_Malformed`` when it has one that cannot be read. A federated domain
     appears in the second result only with a readable bundle; one that is absent
     or malformed is simply not trusted. Domains that were not asked for are ignored.
+
+    Entries are read one by one. One that cannot be decoded costs only the
+    domain it was for: a readable entry for this domain still applies. If this
+    domain has no readable entry and some entry could not be decoded, that
+    entry may have been this domain's, so the result is ``_Malformed`` rather
+    than a withdrawal.
     """
     documents: Dict[str, bytes] = {}
+    undecodable = 0
     for field, value in _proto_fields(message):
         if field != 1 or not isinstance(value, bytes):  # bundles: map<string, bytes>
             continue
-        entry = {number: item for number, item in _proto_fields(value) if isinstance(item, bytes)}
+        try:
+            entry = {number: item for number, item in _proto_fields(value) if isinstance(item, bytes)}
+        except SpiffeError:
+            undecodable += 1
+            continue
         name = entry.get(1, b"").decode("utf-8", "replace")
         if name.startswith("spiffe://"):
             documents[name[len("spiffe://") :]] = entry.get(2, b"")
+    if undecodable:
+        logger.warning(
+            "Ignoring %d JWT bundle entr%s that cannot be decoded", undecodable, "y" if undecodable == 1 else "ies"
+        )
     own: Union[_Keys, None, _Malformed] = None
     if trust_domain in documents:
         try:
             own = _jwks_keys(documents[trust_domain], trust_domain)
         except SpiffeError as exc:
             own = _Malformed(str(exc))
+    elif undecodable:
+        own = _Malformed(f"The Workload API response has no readable JWT bundle for {trust_domain}")
     federated: Dict[str, _Keys] = {}
     for domain in federates_with:
         if domain not in documents:
@@ -545,18 +572,24 @@ class SpiffeJWT:
             raise SpiffeError("Malformed JWT-SVID")
         if not isinstance(algorithm, str):
             raise SpiffeError("Malformed JWT-SVID")
-        if not isinstance(kid, str) or not kid:
-            raise SpiffeError("JWT-SVID names no signing key")
+        if kid is not None and (not isinstance(kid, str) or not kid):
+            raise SpiffeError("Malformed JWT-SVID")
         # A key ID may exist in more than one trust domain. Each candidate key can
         # only vouch for subjects in the trust domain it belongs to.
         candidates: List[Tuple[str, _Key]] = []
-        home_key = self._keys.get(kid)
-        if home_key is not None:
-            candidates.append((self.trust_domain, home_key))
-        for domain, keys in self._federated_keys.items():
-            federated_key = keys.get(kid)
-            if federated_key is not None:
-                candidates.append((domain, federated_key))
+        domains = [(self.trust_domain, self._keys), *self._federated_keys.items()]
+        if kid is None:
+            # The standard makes the key ID optional (JWT-SVID, section 2.2): try
+            # each key the token's algorithm fits, home domain first.
+            for domain, keys in domains:
+                candidates.extend((domain, key) for key in keys.values() if _fits(algorithm, key))
+            if len(candidates) > _MAX_UNNAMED_KEY_ATTEMPTS:
+                raise SpiffeError("JWT-SVID names no signing key, and the trust bundles hold too many keys to try each")
+        else:
+            for domain, keys in domains:
+                named = keys.get(kid)
+                if named is not None:
+                    candidates.append((domain, named))
         if not candidates:
             raise SpiffeError("JWT-SVID was signed by a key that is not in the trust bundle")
         refusals: List[SpiffeError] = []
@@ -570,11 +603,7 @@ class SpiffeJWT:
 
     def _verify(self, token: str, algorithm: str, key: _Key, key_domain: str) -> SpiffeIdentity:
         # Tie the algorithm to the key's own type, so a token cannot pick one the key was not made for.
-        if isinstance(key, rsa.RSAPublicKey):
-            supported = algorithm in _RSA_ALGORITHMS
-        else:
-            supported = _EC_CURVES.get(algorithm) == key.curve.name
-        if not supported:
+        if not _fits(algorithm, key):
             raise SpiffeError("JWT-SVID uses an algorithm its signing key does not support")
         try:
             claims = pyjwt.decode(
