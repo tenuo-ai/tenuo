@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   keycloak:
-    name: Keycloak PKCE and task-scoped MCP refunds
+    name: Keycloak PKCE and task-scoped MCP refunds and email
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Build this checkout and install test dependencies
-        run: python -m pip install './tenuo-python[oauth,fastmcp]' pytest pytest-asyncio uvicorn playwright
+        run: python -m pip install './tenuo-python[oauth,fastmcp]' pytest pytest-asyncio uvicorn playwright aiosmtpd
       - name: Install real browser
         run: python -m playwright install --with-deps chromium
       - name: Adapter security and real OAuth end-to-end tests

@@ -1,9 +1,9 @@
-# OAuth login to a task-scoped refund
+# OAuth login to task-scoped refunds and email
 
 This example uses a real Keycloak server, browser Authorization Code + PKCE
-login, Tenuo's HTTP warrant issuer, and a separate FastMCP payments process.
-Only the upstream payments service is simulated: successful refunds are real
-SQLite writes. Denied calls must never enter the tool body.
+login, Tenuo's HTTP warrant issuer, and separate FastMCP payments and mail
+processes. The upstream payments service is simulated with real SQLite writes;
+email is delivered to a local SMTP sink. Denied calls must never enter the tool body.
 
 ## Run
 
@@ -12,7 +12,7 @@ From the repository root:
 
 ```sh
 python -m venv .venv-oauth
-.venv-oauth/bin/python -m pip install './tenuo-python[oauth,fastmcp]' uvicorn playwright pytest pytest-asyncio
+.venv-oauth/bin/python -m pip install './tenuo-python[oauth,fastmcp]' uvicorn playwright aiosmtpd pytest pytest-asyncio
 .venv-oauth/bin/python -m playwright install chromium
 PYTHONPATH=tenuo-python .venv-oauth/bin/python tenuo-python/examples/oauth/smoke.py
 ```
@@ -71,3 +71,35 @@ policy loader and audit list with your application database and durable audit
 sink. Keep the holder key in the agent's trusted runtime, outside model-visible
 context. Production endpoints require HTTPS; loopback HTTP is an explicit
 development opt-in. Do not pass a user's token to an unrelated agent service.
+
+## Second workflow: approved customer email
+
+The same command also runs a separate `mail-support` client using real browser
+login with `mail:send` scope. The refund client has no mail scope and cannot
+obtain an email warrant. `email_policy.py` binds the exact recipient, subject,
+body, empty attachment field, and operation ID from a trusted approval record.
+The mail task does not permit delegation.
+
+A separate MCP process sends through Python's SMTP client to a real loopback
+`aiosmtpd` server. No external email is sent. The test inspects the received SMTP
+envelope and MIME message, not just a mocked tool return. It verifies:
+
+- Recipient substitution, multiple recipients, CRLF header injection, changed
+  subject/body, attachments, extra BCC, and invented operation IDs fail before
+  the tool body runs.
+- Wrong holders and missing warrants cannot send; another tenant cannot obtain
+  authority for the task.
+- Approved content arrives once; captured calls and concurrent fresh retries
+  do not duplicate delivery, including after the tool process restarts.
+- A sink that records receipt but returns an SMTP error leaves the operation
+  `pending`. A later retry must not resend it.
+
+**SMTP cannot provide an atomic transaction with the operation database.** This
+example reserves an operation before sending. A crash before delivery can leave
+an unsent operation pending; a lost acknowledgement can leave a delivered one
+pending. Both require reconciliation. It deliberately does not promise exactly
+once delivery or automatic recovery. A production mail provider's idempotency
+API and delivery-status lookup would be preferable where available.
+
+This tests OAuth at the Tenuo issuance boundary, with an SMTP backend. It does
+not test Gmail/Microsoft Graph OAuth consent, refresh tokens, or vendor APIs.

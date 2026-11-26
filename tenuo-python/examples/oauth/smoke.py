@@ -48,6 +48,7 @@ from tenuo.oauth import (
 from tenuo_core import sign_meta
 
 from refund_policy import policy_for
+from email_smoke import exercise_email
 
 HERE = Path(__file__).resolve().parent
 IMAGE = "quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3"
@@ -283,13 +284,15 @@ def run():
             admin = {"Authorization": "Bearer " + response.json()["access_token"]}
             realm = json.loads((HERE / "keycloak-realm.json").read_text())
             realm["clients"][0]["redirectUris"] = [callback]
-            for client_id in ("wrong-audience", "short-support", "no-scope"):
+            for client_id in ("wrong-audience", "short-support", "no-scope", "mail-support"):
                 client = copy.deepcopy(realm["clients"][0])
                 client["clientId"] = client_id
                 if client_id == "wrong-audience":
                     client["protocolMappers"][0]["config"]["included.custom.audience"] = "another-api"
                 if client_id == "short-support":
                     client["attributes"]["access.token.lifespan"] = "3"
+                if client_id == "mail-support":
+                    client["defaultClientScopes"] = ["basic", "mail:send"]
                 if client_id == "no-scope":
                     client["defaultClientScopes"] = ["basic"]
                 realm["clients"].append(client)
@@ -303,9 +306,24 @@ def run():
                     wrong = login(browser, http, base, callback, client="wrong-audience")
                     short = login(browser, http, base, callback, client="short-support")
                     no_scope = login(browser, http, base, callback, client="no-scope")
+                    mail = login(browser, http, base, callback, client="mail-support")
+                    bob_mail = login(browser, http, base, callback, user="bob", client="mail-support")
                     with tempfile.TemporaryDirectory(prefix="tenuo-oauth-") as temp:
                         exercise_issuance(
-                            Path(temp), http, browser, base, callback, admin, alice, bob, wrong, short, no_scope, name
+                            Path(temp),
+                            http,
+                            browser,
+                            base,
+                            callback,
+                            admin,
+                            alice,
+                            bob,
+                            wrong,
+                            short,
+                            no_scope,
+                            name,
+                            mail,
+                            bob_mail,
                         )
                 finally:
                     browser.close()
@@ -314,7 +332,9 @@ def run():
             subprocess.run(["docker", "rm", "-f", name], check=False, stdout=subprocess.DEVNULL)
 
 
-def exercise_issuance(directory, http, browser, base, callback, admin, alice, bob, wrong, short, no_scope, container):
+def exercise_issuance(
+    directory, http, browser, base, callback, admin, alice, bob, wrong, short, no_scope, container, mail, bob_mail
+):
     issuer_url = base + "/realms/tenuo-smoke"
     credentials = OAuthAccessTokens(
         issuer=issuer_url,
@@ -322,7 +342,7 @@ def exercise_issuance(directory, http, browser, base, callback, admin, alice, bo
         jwks_url=issuer_url + "/protocol/openid-connect/certs",
         profile="keycloak",
         allow_loopback_http=True,
-        allowed_clients=frozenset({"support", "wrong-audience", "short-support", "no-scope"}),
+        allowed_clients=frozenset({"support", "wrong-audience", "short-support", "no-scope", "mail-support"}),
         timeout=2,
         refresh_interval=0.1,
     )
@@ -403,6 +423,16 @@ def exercise_issuance(directory, http, browser, base, callback, admin, alice, bo
                 pool.submit(lambda: asyncio.run(exercise_mcp(directory, root, holder, warrant, delegated_root))).result(
                     timeout=90
                 )
+            exercise_email(
+                directory,
+                credentials,
+                root,
+                holder,
+                mail["access_token"],
+                alice["access_token"],
+                bob_mail["access_token"],
+                issuer_server,
+            )
             # Rotate the real authorization server's active signing key.
             realm = http.get(base + "/admin/realms/tenuo-smoke", headers=admin).json()
             response = http.post(
