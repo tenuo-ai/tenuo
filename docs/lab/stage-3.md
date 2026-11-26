@@ -129,9 +129,9 @@ LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓
 TRIGGERED BY INJECTED CONTENT
   get_reservation(AA882)                                   ALLOWED  ✗
-      expected DENIED: checkin-agent rule permits get_reservation
+      expected DENIED, got ALLOWED — checkin-agent rule permits get_reservation
   check_in(AA882)                                          ALLOWED  ✗
-      expected DENIED: checkin-agent rule permits check_in
+      expected DENIED, got ALLOWED — checkin-agent rule permits check_in
   cancel_reservation(UA214)                                DENIED   ✓
       reason: checkin-agent may not cancel_reservation (actions: get_reservation, check_in)  [POLICY]
   wallet.charge(412)                                       DENIED   ✓
@@ -230,7 +230,7 @@ STARS   ★★★★
 </li>
 </ol>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>It works. Everything the rogue agent tried is blocked and Alice still gets to Cancún.</li><li>Keep this file. Stage 4 breaks it.</li></ul></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>It works. Everything the rogue agent tried is blocked and Alice still gets to Cancún.</li><li>Stage 4 starts from a reference version of this policy, not your file, and then a second traveler breaks it.</li></ul></aside>
 
 <aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>Detailed constraints can enforce least privilege for one known job, but static rules become difficult to manage as jobs change and overlap.</p></aside>
 

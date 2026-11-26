@@ -7,7 +7,7 @@
  *   npm run score      see your score and why
  *   npm run audit      what every agent can currently do
  *   npm run next       move to the next stage
- *   npm run share      submit a redacted scorecard (optionally add --username)
+ *   npm run share      show a redacted scorecard and send it if you confirm (--yes skips the question)
  *   npm run star       optionally star Tenuo without leaving the terminal
  *   npm run reset      back to stage 1
  */
@@ -23,12 +23,12 @@ import { measureMargin, type Margin } from "../harness/margin.ts";
 import { runScenario, type Built } from "../harness/run.ts";
 import { score, type Score } from "../harness/score.ts";
 import type { AuditRecord } from "../audit.ts";
-import { AGENTS } from "../mission.ts";
+import { AGENTS, ALICE } from "../mission.ts";
 import { LAB_HOME, loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
 import { recordAttempt, snapshot } from "../telemetry.ts";
 import { starRepository } from "../star.ts";
-import { buildShareReport, submitShareReport } from "../share.ts";
+import { buildShareReport, shareEndpoint, submitShareReport } from "../share.ts";
 
 const SITE = "https://tenuo.ai";
 
@@ -122,7 +122,8 @@ function walletLine(built: Built): string {
 }
 
 function blockedCount(probes: readonly ProbeResult[]): { blocked: number; total: number; unverified: number } {
-  const rogue = probes.filter((probe) => probe.category === "blocked");
+  // Stage 7's rogue attempts include two handoff tricks (7 and 8), scored as handoffs.
+  const rogue = probes.filter((probe) => probe.category === "blocked" || (probe.section === "INCIDENT" && probe.expected === "DENIED"));
   return {
     blocked: rogue.filter((probe) => probe.ok && probe.actual === "DENIED").length,
     total: rogue.length,
@@ -201,7 +202,8 @@ function printBattery(results: readonly ProbeResult[]): void {
     const mark = r.ok ? green("✓") : red("✗");
     console.log(`  ${pad(r.label, 56)} ${verdict}  ${mark}`);
     if (!r.ok || r.actual === "DENIED") {
-      console.log(dim(`      ${r.ok ? "reason" : `expected ${r.expected}`}: ${r.reason}${r.code !== undefined ? `  [${r.code}]` : ""}`));
+      const why = `${r.reason}${r.code !== undefined ? `  [${r.code}]` : ""}`;
+      console.log(dim(r.ok ? `      reason: ${why}` : `      expected ${r.expected}, got ${r.actual} — ${why}`));
     }
     if (r.keyBinding !== undefined) {
       console.log(dim(`      warrant.bound_key             ${r.keyBinding.warrantBoundKey}`));
@@ -409,6 +411,17 @@ async function evaluateStage(def: StageDef): Promise<{ runs: Evaluated[]; functi
   return { runs, functionality, probes, margin, score: score(functionality, probes, margin) };
 }
 
+/** Say which setting stopped the chain: a terminal link, or the root's maxDepth. */
+function terminalCredit(built: Built): string {
+  const tenuo = built.runtime.tenuo;
+  const root = tenuo?.session("travel-agent", ALICE.taskId)?.inspect();
+  const checkin = tenuo?.session("checkin-agent", ALICE.taskId)?.inspect();
+  if (root !== undefined && checkin !== undefined && checkin.maxDepth >= root.maxDepth) {
+    return `The root's maxDepth (${root.maxDepth}) stopped the chain at Check-in Agent, so it could not forward authority.`;
+  }
+  return "The deliberately terminal link blocked Check-in Agent from forwarding authority.";
+}
+
 async function cmdScore(def: StageDef): Promise<void> {
   header(def, def.scenario);
   const e = await evaluateStage(def);
@@ -424,12 +437,12 @@ async function cmdScore(def: StageDef): Promise<void> {
     const terminal = probes.find((probe) => probe.section === "TERMINAL");
     console.log(bold("TERMINAL HANDOFF"));
     if (terminal?.ok === true) {
-      console.log(`  ${green("✓")} The deliberately terminal link blocked Check-in Agent from forwarding authority.`);
+      console.log(`  ${green("✓")} ${terminalCredit(e.runs[0]!.built)}`);
       console.log(dim("  That break is the point of this exercise, so this boss level is complete and is not scored out of 100."));
       if (markComplete(def.n)) console.log(green(`  Stage ${def.n} done.`) + dim(`  Next: npm run next, then ${guideUrl(def.n + 1)}`));
     } else {
       console.log(`  ${red("✗")} The handoff is not terminal yet.`);
-      console.log(dim("  Make the final Check-in → Boarding link terminal, then run npm run score again."));
+      console.log(dim("  Add terminal: true to the Flight → Check-in link (or lower the root's maxDepth), then run npm run score again."));
     }
     console.log("");
     return;
@@ -476,7 +489,35 @@ async function cmdScore(def: StageDef): Promise<void> {
   }
 }
 
+function printShareHelp(): void {
+  console.log("npm run share [-- --yes] [-- --username NAME]");
+  console.log("");
+  console.log("  Builds a redacted scorecard (stars, check counts, tool names, lifetime buckets),");
+  console.log("  saves it locally, prints it, and asks before sending it to Tenuo.");
+  console.log("  Nothing leaves this machine unless you answer yes or pass --yes.");
+  console.log("");
+  console.log("  --yes, -y          send without asking (for scripts and non-interactive terminals)");
+  console.log("  --username NAME    optional GitHub-style display name (not identity-verified)");
+  console.log("  --help, -h         show this help; sends nothing");
+  console.log("");
+  console.log("  TENUO_LAB_EVENTS_URL=off switches sending off entirely.");
+}
+
+async function confirmShare(endpoint: URL): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`  Send this scorecard to ${endpoint.host}? [y/N] `);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
 async function cmdShare(def: StageDef): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    printShareHelp();
+    return;
+  }
   const state = loadState();
   // Stage 5 contains the SDK interaction we most need to learn from: the
   // participant's first narrowing attempt and their first complete chain.
@@ -510,8 +551,27 @@ async function cmdShare(def: StageDef): Promise<void> {
   }
   printHud(walletLine(e.runs[0]!.built), e.probes, e.score, e.runs.length);
   console.log(dim(`  Redacted scorecard saved locally: ${file}`));
+  console.log("");
+  console.log(bold("WHAT WOULD BE SENT"));
+  for (const line of JSON.stringify(report, null, 2).split("\n")) console.log(dim(`  ${line}`));
+  console.log("");
+  const endpoint = shareEndpoint();
+  const yes = args.includes("--yes") || args.includes("-y");
+  if (endpoint !== undefined && !yes) {
+    if (!process.stdin.isTTY) {
+      console.log(yellow("  Not sent: this terminal can't answer a confirmation question."));
+      console.log(dim("  To send it, run npm run share -- --yes"));
+      console.log("");
+      return;
+    }
+    if (!(await confirmShare(endpoint))) {
+      console.log(dim("  Not sent. No data left this machine."));
+      console.log("");
+      return;
+    }
+  }
   try {
-    const receipt = await submitShareReport(report);
+    const receipt = endpoint === undefined ? undefined : await submitShareReport(report);
     if (receipt === undefined) {
       console.log(dim("  Submission disabled; no data left this machine."));
     } else {

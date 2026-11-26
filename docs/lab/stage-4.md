@@ -202,19 +202,19 @@ PROBE (harness, independent of model)
 BOARDING AGENT AFTER THE HANDOFF
   issue_boarding_pass(UA214)   intended                    ALLOWED  ✓
   check_in(UA214)   inherited?                             ALLOWED  ✗
-      expected DENIED: checkin-agent rule permits check_in
+      expected DENIED, got ALLOWED — checkin-agent rule permits check_in
   get_reservation(UA214)   inherited?                      ALLOWED  ✗
-      expected DENIED: checkin-agent rule permits get_reservation
+      expected DENIED, got ALLOWED — checkin-agent rule permits get_reservation
 CROSS-TASK
   Task A agent: check_in(DL331)                            ALLOWED  ✗
-      expected DENIED: checkin-agent rule permits check_in
+      expected DENIED, got ALLOWED — checkin-agent rule permits check_in
   Task B agent: get_reservation(UA214)                     ALLOWED  ✗
-      expected DENIED: checkin-agent rule permits get_reservation
+      expected DENIED, got ALLOWED — checkin-agent rule permits get_reservation
   Task B agent: book_flight(UA214, CUN)                    ALLOWED  ✗
-      expected DENIED: flight-agent rule permits book_flight
+      expected DENIED, got ALLOWED — flight-agent rule permits book_flight
 ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
   requested: every reservation; read, check in, cancel     ALLOWED  ✗
-      expected DENIED: the policy service accepted a rule for boarding-agent from checkin-agent: it knows which reservations belong to which task, not what checkin-agent was granted, so it cannot tell that this is broader
+      expected DENIED, got ALLOWED — the shared policy accepted a rule for boarding-agent from checkin-agent: it knows which role may do what, not what checkin-agent was granted, so it cannot tell that this is broader
 
   6 of 15 checks did not land as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div>
@@ -286,9 +286,9 @@ PROBE (harness, independent of model)
 BOARDING AGENT AFTER THE HANDOFF
   issue_boarding_pass(UA214)   intended                    ALLOWED  ✓
   check_in(UA214)   inherited?                             ALLOWED  ✗
-      expected DENIED: checkin-agent:trip-alice-cun rule permits check_in
+      expected DENIED, got ALLOWED — checkin-agent:trip-alice-cun rule permits check_in
   get_reservation(UA214)   inherited?                      ALLOWED  ✗
-      expected DENIED: checkin-agent:trip-alice-cun rule permits get_reservation
+      expected DENIED, got ALLOWED — checkin-agent:trip-alice-cun rule permits get_reservation
 CROSS-TASK
   Task A agent: check_in(DL331)                            DENIED   ✓
       reason: reservation DL331 outside granted scope {UA214}  [POLICY]
@@ -298,7 +298,7 @@ CROSS-TASK
       reason: destination CUN is not SEA  [POLICY]
 ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
   requested: every reservation; read, check in, cancel     ALLOWED  ✗
-      expected DENIED: the identity registry accepted a rule for boarding-agent:trip-alice-cun from checkin-agent: it knows which identity belongs to which task, not what checkin-agent was granted, so it cannot tell that this is broader
+      expected DENIED, got ALLOWED — the identity registry accepted a rule for boarding-agent:trip-alice-cun from checkin-agent: it knows which identity belongs to which task, not what checkin-agent was granted, so it cannot tell that this is broader
 
   3 of 15 checks did not land as expected
   central_calls during the trip: 28   (calls to a component outside the acting agent)</code></pre></details></div>
@@ -382,7 +382,7 @@ export const config: PolicyConfig = {
 };
 {% endhighlight %}
 </figure>
-<p class="lab-muted">Notice that <code>checkin-agent:trip-alice-cun</code> still carries <code>issue_boarding_pass</code>. That is not part of its job; it is present only because Boarding Agent must inherit the whole credential. Act 2 exploits exactly this over-grant.</p>
+<p class="lab-muted">Notice that <code>checkin-agent:trip-alice-cun</code> still carries <code>issue_boarding_pass</code>. Check-in Agent never issues a boarding pass itself; it holds the tool only because Boarding Agent inherits its whole credential. The score doesn't charge for it, since handing that tool on is part of Check-in Agent's job, but nothing stops Check-in Agent from using it directly. Act 2 exploits exactly this over-grant.</p>
 <figure class="lab-code"><figcaption>Another way that works: policyService: true, and the per-task fields come from a service asked on every call <span>answers/04-two-travelers/policy-service.ts</span></figcaption>
 {% highlight ts %}
 export const config: PolicyConfig = {
@@ -422,7 +422,7 @@ export const config: PolicyConfig = {
 };
 {% endhighlight %}
 </figure>
-<p class="lab-muted">The same over-grant remains here: Check-in Agent carries <code>issue_boarding_pass</code> only so its whole credential can power Boarding Agent. Act 2 exploits it.</p></div></details>
+<p class="lab-muted">The same over-grant remains here: Check-in Agent carries <code>issue_boarding_pass</code> only so its whole credential can power Boarding Agent, and could use it directly. Act 2 exploits it.</p></div></details>
 
 <aside class="lab-callout stuck"><div class="lab-callout-title">If it does not work</div><ul><li>Registration happens at task start, then <code>central_calls: 1</code> on every call by a per-task identity. That is the cost.</li><li>Act 2's handoff checks stay red on purpose. Stop editing Act 1 when CROSS-TASK is clean; Check-in Agent has nothing narrower to give.</li></ul></aside>
 

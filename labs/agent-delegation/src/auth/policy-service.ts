@@ -30,7 +30,8 @@ export interface GrantRequest {
   readonly rule: RolePolicy;
 }
 
-export type Component = "identity registry" | "policy service";
+/** "shared policy" is the role file itself, when neither stage 4 fix is switched on. */
+export type Component = "identity registry" | "policy service" | "shared policy";
 
 export class PolicyService {
   private readonly tasks = new Map<string, TaskFacts>();
@@ -96,7 +97,9 @@ export class PolicyService {
     const knows =
       component === "identity registry"
         ? "which identity belongs to which task"
-        : "which reservations belong to which task";
+        : component === "policy service"
+          ? "which reservations belong to which task"
+          : "which role may do what";
     return {
       accepted: true,
       reason: `the ${component} accepted a rule for ${request.target} from ${request.requestedBy}: it knows ${knows}, not what ${request.requestedBy} was granted, so it cannot tell that this is broader`,

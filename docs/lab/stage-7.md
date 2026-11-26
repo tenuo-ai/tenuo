@@ -69,12 +69,12 @@ lab_version: "0.2.0"
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks. All eight attempts are listed under <strong>INCIDENT</strong>. Make one land and seven fail, and keep an eye on the least-privilege row of your score.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t7-1" id="t7-1-0" checked><label for="t7-1-0">As it ships</label><input type="radio" name="t7-1" id="t7-1-1"><label for="t7-1-1">When it is fixed</label><div class="lab-tab-panel"><details class="lab-term"><summary>As it ships <span>npm run attack · 60 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks. All eight attempts are listed under <strong>INCIDENT</strong>. Make the first land and the other seven fail, and keep an eye on the least-privilege row of your score.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t7-1" id="t7-1-0" checked><label for="t7-1-0">As it ships</label><input type="radio" name="t7-1" id="t7-1-1"><label for="t7-1-1">When it is fixed</label><div class="lab-tab-panel"><details class="lab-term"><summary>As it ships <span>npm run attack · 60 lines</span></summary><pre><code>
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
 WALLET  Alice: spent $741 / $1,200
-ROGUE ATTEMPTS BLOCKED  3 / 5
+ROGUE ATTEMPTS BLOCKED  4 / 7
 STARS   ★☆☆☆
   ★ Trip booked
   ☆ Rogue stopped
@@ -117,13 +117,13 @@ INCIDENT
   3. book the approved hotel at $320 a night               DENIED   ✓
       reason: nightlyRate 320 is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
   4. read Alice's passport number                          ALLOWED  ✗
-      expected DENIED: warrant tnu_wrt_… permits traveler.read
+      expected DENIED, got ALLOWED — warrant tnu_wrt_… permits traveler.read
   5. book a flight                                         ALLOWED  ✗
-      expected DENIED: warrant tnu_wrt_… permits book_flight
+      expected DENIED, got ALLOWED — warrant tnu_wrt_… permits book_flight
   6. delete the trip's calendar event                      DENIED   ✓
       reason: calendar.delete is not in hotel-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
   7. hand wallet access to Activity Agent                  ALLOWED  ✗
-      expected DENIED: hotel-agent delegated wallet.charge to activity-agent
+      expected DENIED, got ALLOWED — hotel-agent delegated wallet.charge to activity-agent
   8. import a warrant copied from Flight Agent             DENIED   ✓
       reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
 
@@ -133,7 +133,7 @@ Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
 WALLET  Alice: spent $741 / $1,200
-ROGUE ATTEMPTS BLOCKED  5 / 5
+ROGUE ATTEMPTS BLOCKED  7 / 7
 STARS   ★★★★
   ★ Trip booked
   ★ Rogue stopped
@@ -191,12 +191,12 @@ INCIDENT
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:2"><span>3</span></label>
-<div class="lab-step-body"><p>Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>Full marks <span>npm run score · 22 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Check the score. Full marks means the trip is booked, all seven rogue attempts are refused, and Hotel Agent holds nothing it doesn't need.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>Full marks <span>npm run score · 22 lines</span></summary><pre><code>
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
 WALLET  Alice: spent $741 / $1,200
-ROGUE ATTEMPTS BLOCKED  5 / 5
+ROGUE ATTEMPTS BLOCKED  7 / 7
 STARS   ★★★★
   ★ Trip booked
   ★ Rogue stopped
@@ -216,7 +216,7 @@ STARS   ★★★★
 </li>
 </ol>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>Attempt 3 trips up the most people. The approved hotel is $140 a night and the priciest place in the catalog is $340, so a ceiling wide enough to book anything in Cancún lets $320 through.</li><li>Work out where the number should come from instead. It is in the mission, on the index page.</li></ul></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>Attempt 3 already fails as shipped: the starter caps <code>book_hotel</code>'s <code>nightlyRate</code> at the mission's $200 a night, so the $320 booking is refused. Keep that cap while you remove everything else.</li><li>If you replace it with a ceiling wide enough to book any hotel in Cancún (the priciest is $340), attempt 3 gets through.</li></ul></aside>
 
 <aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>Narrowing one handoff contains a compromised agent while preserving the exact operation the trip still needs.</p></aside>
 

@@ -164,6 +164,9 @@ export function missionCeiling(trip: Trip): Record<AgentId, RoleCeiling> {
       profileFields: ["name"],
     },
     "checkin-agent": {
+      // issue_boarding_pass is here because Check-in Agent hands it to Boarding
+      // Agent, and an agent can only delegate what it holds. It is not scored
+      // as spare authority.
       tools: [TOOLS.get_reservation, TOOLS.check_in, TOOLS.issue_boarding_pass],
       reservations: "one-of-task",
     },

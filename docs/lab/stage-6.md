@@ -183,14 +183,14 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
       reason: DENIED at narrow(), in checkin-agent's own process, before any token existed: TENUO_CHAIN_INVALID: attenuation would expand capabilities: tool 'cancel_reservation' not in parent's tools. narrow() cannot add 'cancel_reservation': remove it or delegate from a parent that grants it.  [TENUO_CHAIN_INVALID]
 STOLEN: activity-agent presents boarding-agent's warrant
   issue_boarding_pass(UA214) with a copied warrant         DENIED   ✓
-      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
+      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.  [TENUO_INVALID_POP]
       warrant.bound_key             …
       activity holder_key.public   …
       comparison                    holder_key != warrant.bound_key
       Ed25519 signature             FAILED
 TERMINAL
   checkin-agent narrow → boarding-agent                    ALLOWED  ✗
-      expected DENIED: boarding-agent now holds {issue_boarding_pass} at depth 3
+      expected DENIED, got ALLOWED — boarding-agent now holds {issue_boarding_pass} at depth 3
 
   1 of 14 checks did not land as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div>
@@ -287,11 +287,11 @@ Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   Agent did not agree to this restriction and cannot remove it.
 
 WALLET  Alice: spent $741 / $1,200
-ROGUE ATTEMPTS BLOCKED  7 / 8   1 not reached
-STARS (PROVISIONAL — TRIP INCOMPLETE)   ☆☆☆★
+ROGUE ATTEMPTS BLOCKED  8 / 8
+STARS (PROVISIONAL — TRIP INCOMPLETE)   ☆★★★
   ☆ Trip booked
-  ☆ Rogue stopped
-  ☆ Tight handoff
+  ★ Rogue stopped
+  ★ Tight handoff
   ★ No spare authority
 
   1   handoff  travel-agent    trip-alice-cun  receive trip authority       control plane   ALLOWED

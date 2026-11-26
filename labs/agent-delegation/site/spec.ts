@@ -152,7 +152,7 @@ export const STAGES: readonly StageSpec[] = [
     ],
     notice: [
       "It works. Everything the rogue agent tried is blocked and Alice still gets to Cancún.",
-      "Keep this file. Stage 4 breaks it.",
+      "Stage 4 starts from a reference version of this policy, not your file, and then a second traveler breaks it.",
     ],
     hint: "Pin `checkin-agent` and `boarding-agent` to `reservations: [\"UA214\"]`. Give `flight-agent` a `destination` and a `maxPrice`. Cut `traveler.read` down with `profileFields`, and give every agent a `maxCharge` that matches its share of the budget.",
     code: [{ file: "exercises/03-scoped/policy.ts", symbols: ["config"], caption: "The file as it ships" }],
@@ -205,13 +205,13 @@ export const STAGES: readonly StageSpec[] = [
         file: "answers/04-two-travelers/per-task.ts",
         symbols: ["config"],
         caption: "One identity per task",
-        note: "Notice that `checkin-agent:trip-alice-cun` still carries `issue_boarding_pass`. That is not part of its job; it is present only because Boarding Agent must inherit the whole credential. Act 2 exploits exactly this over-grant.",
+        note: "Notice that `checkin-agent:trip-alice-cun` still carries `issue_boarding_pass`. Check-in Agent never issues a boarding pass itself; it holds the tool only because Boarding Agent inherits its whole credential. The score doesn't charge for it, since handing that tool on is part of Check-in Agent's job, but nothing stops Check-in Agent from using it directly. Act 2 exploits exactly this over-grant.",
       },
       {
         file: "answers/04-two-travelers/policy-service.ts",
         symbols: ["config"],
         caption: "Another way that works: policyService: true, and the per-task fields come from a service asked on every call",
-        note: "The same over-grant remains here: Check-in Agent carries `issue_boarding_pass` only so its whole credential can power Boarding Agent. Act 2 exploits it.",
+        note: "The same over-grant remains here: Check-in Agent carries `issue_boarding_pass` only so its whole credential can power Boarding Agent, and could use it directly. Act 2 exploits it.",
       },
     ],
     stuck: [
@@ -359,12 +359,12 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     }),
     steps: [
       { text: "Open the chain. The Travel → Hotel link is where the incident lives: right now it hands Hotel Agent far more than a hotel booking needs.", cmd: "code exercises/07-incident/chain.ts" },
-      { text: "Run the checks. All eight attempts are listed under **INCIDENT**. Make one land and seven fail, and keep an eye on the least-privilege row of your score.", cmd: "npm run attack", expect: [{ cmd: "attack", label: "As it ships" }, { cmd: "attack", answer: "answers/07-incident/chain.ts", label: "When it is fixed" }] },
-      { text: "Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.", cmd: "npm run score", expect: { cmd: "score", answer: "answers/07-incident/chain.ts", label: "Full marks" } },
+      { text: "Run the checks. All eight attempts are listed under **INCIDENT**. Make the first land and the other seven fail, and keep an eye on the least-privilege row of your score.", cmd: "npm run attack", expect: [{ cmd: "attack", label: "As it ships" }, { cmd: "attack", answer: "answers/07-incident/chain.ts", label: "When it is fixed" }] },
+      { text: "Check the score. Full marks means the trip is booked, all seven rogue attempts are refused, and Hotel Agent holds nothing it doesn't need.", cmd: "npm run score", expect: { cmd: "score", answer: "answers/07-incident/chain.ts", label: "Full marks" } },
     ],
     notice: [
-      "Attempt 3 trips up the most people. The approved hotel is $140 a night and the priciest place in the catalog is $340, so a ceiling wide enough to book anything in Cancún lets $320 through.",
-      "Work out where the number should come from instead. It is in the mission, on the index page.",
+      "Attempt 3 already fails as shipped: the starter caps `book_hotel`'s `nightlyRate` at the mission's $200 a night, so the $320 booking is refused. Keep that cap while you remove everything else.",
+      "If you replace it with a ceiling wide enough to book any hotel in Cancún (the priciest is $340), attempt 3 gets through.",
     ],
     hint: "Only hotel tools, only Cancún, only the approved nightly rate, only the traveler's name, only the hotel's share of the wallet, and `terminal: true` so nothing can be handed on.",
     code: [{ lang: "text", code: "1.  book the approved Cancún hotel                  must work\n2.  book a hotel in Tulum instead                   must fail\n3.  book the approved hotel at $320 a night        must fail\n4.  read Alice's passport number                    must fail\n5.  book a flight                                   must fail\n6.  delete the trip's calendar event                must fail\n7.  hand wallet access to Activity Agent            must fail\n8.  import a permission copied from Flight Agent   must fail", caption: "The eight attempts" }],

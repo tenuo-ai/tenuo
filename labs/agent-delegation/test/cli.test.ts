@@ -14,17 +14,17 @@ function home(): string {
   return path;
 }
 
-function cli(labHome: string, command: string, stage?: number, answer?: string): string {
+function cli(labHome: string, command: string, stage?: number, answer?: string, extra: { args?: string[]; eventsUrl?: string } = {}): string {
   // Use Node's loader entry directly: unlike the tsx CLI it does not need an
   // IPC socket, so this end-to-end test also runs in locked-down CI sandboxes.
-  const args = ["--import", "tsx", join(ROOT, "src", "cli", "index.ts"), command];
+  const args = ["--import", "tsx", join(ROOT, "src", "cli", "index.ts"), command, ...(extra.args ?? [])];
   if (stage !== undefined) args.push("--stage", String(stage));
   const result = spawnSync(process.execPath, args, {
     cwd: ROOT,
     env: {
       ...process.env,
       TENUO_LAB_HOME: labHome,
-      TENUO_LAB_EVENTS_URL: "off",
+      TENUO_LAB_EVENTS_URL: extra.eventsUrl ?? "off",
       ...(answer !== undefined ? { TENUO_LAB_ANSWER: answer } : {}),
       NODE_ENV: "development",
     },
@@ -117,6 +117,25 @@ describe("participant CLI", () => {
     expect(share).toContain("--username YOUR_GITHUB_USERNAME");
   }, 120_000);
 
+  it("never sends a scorecard without confirmation", () => {
+    const labHome = home();
+    // A receiver that would fail loudly if anything were sent to it.
+    const eventsUrl = "http://127.0.0.1:9/v1/lab/submissions";
+    for (const flagName of ["--help", "-h"]) {
+      const help = cli(labHome, "share", 5, undefined, { args: [flagName], eventsUrl });
+      expect(help).toContain("Nothing leaves this machine unless you answer yes or pass --yes.");
+      expect(help).not.toContain("WHAT WOULD BE SENT");
+      expect(existsSync(join(labHome, "share-stage-5.json"))).toBe(false);
+    }
+    const unconfirmed = cli(labHome, "share", 5, "answers/05-tenuo/chain.ts", { eventsUrl });
+    expect(unconfirmed).toContain("WHAT WOULD BE SENT");
+    expect(unconfirmed).toContain('"schema": "tenuo-lab-share-v2"');
+    expect(unconfirmed).toContain("Not sent: this terminal can't answer a confirmation question.");
+    expect(unconfirmed).toContain("npm run share -- --yes");
+    expect(unconfirmed).not.toContain("did not receive");
+    expect(existsSync(join(labHome, "share-stage-5.json"))).toBe(true);
+  }, 120_000);
+
   it("shares the Stage 5 handoff history from the final boss level", () => {
     const labHome = home();
     cli(labHome, "lab", 5);
@@ -145,9 +164,19 @@ describe("participant CLI", () => {
     expect(state.completed).toEqual([1, 2]);
   });
 
-  it("does not claim an unreachable stolen-warrant probe was verified", () => {
+  it("still checks a stolen warrant after the Stage 6 terminal change", () => {
     const output = cli(home(), "lab", 6, "answers/06-extensions/chain.ts");
-    expect(output).toMatch(/ROGUE ATTEMPTS BLOCKED\s+7 \/ 8\s+1 not reached/);
+    expect(output).toMatch(/ROGUE ATTEMPTS BLOCKED\s+8 \/ 8/);
+    expect(output).not.toContain("not reached");
+    const attack = cli(home(), "attack", 6, "answers/06-extensions/chain.ts");
+    expect(attack).toContain("STOLEN: activity-agent presents checkin-agent's warrant");
+    expect(attack).toContain("blocked by your terminal link");
+    expect(attack).toMatch(/clean: all \d+ checks landed as expected/);
+    expect(attack).not.toContain("If this followed narrow()");
+  });
+
+  it("counts all seven Stage 7 rogue attempts", () => {
+    expect(cli(home(), "lab", 7, "answers/07-incident/chain.ts")).toMatch(/ROGUE ATTEMPTS BLOCKED\s+7 \/ 7/);
   });
 
   it("marks boundary stars provisional while the trip is incomplete", () => {
