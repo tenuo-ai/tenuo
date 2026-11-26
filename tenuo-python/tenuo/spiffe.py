@@ -2,8 +2,10 @@
 
 Install ``tenuo[spiffe-workload-api]`` to take SVIDs from the SPIRE agent, or
 ``tenuo[spiffe]`` for credential files only. TLS terminates in this process: never pass identity
-headers or caller-supplied certificates to this adapter. Each SpiffeTLS instance
-trusts exactly one domain's bundle; pooled federation bundles are unsupported.
+headers or caller-supplied certificates to this adapter. A SpiffeTLS instance
+trusts one trust domain and, with federation, the other domains you name. Each
+domain's bundle is given separately and a peer is always tied to its own
+domain's bundle; a single file of pooled authorities is not supported.
 
 Production deployments normally run :class:`SpiffeIssuerServer` as the issuance
 endpoint and call :func:`request_warrant` from agents. Both reload rotated SPIRE
@@ -57,6 +59,7 @@ try:
         Encoding,
         NoEncryption,
         PrivateFormat,
+        PublicFormat,
         load_der_private_key,
     )
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -263,8 +266,8 @@ def _check_authorities(authorities: Sequence[x509.Certificate], trust_domain: st
                 raise SpiffeError("Trust bundle contains an authority for a different trust domain")
 
 
-def _verified_anchor(connection: Any) -> Optional[bytes]:
-    """The trust anchor the TLS library verified the peer's chain to, as DER, where Python exposes it."""
+def _verified_chain(connection: Any) -> Optional[List[bytes]]:
+    """The peer's chain as the TLS library verified it (leaf first, DER), where Python exposes it."""
     getter = getattr(connection, "get_verified_chain", None)  # Python 3.13 and newer.
     if getter is None:
         # CPython 3.10 to 3.12 keep the same call on the wrapped object.
@@ -275,14 +278,52 @@ def _verified_anchor(connection: Any) -> Optional[bytes]:
         chain = getter()
         if not chain:
             return None
-        anchor = chain[-1]
-        if isinstance(anchor, bytes):
-            return anchor
+        if all(isinstance(certificate, bytes) for certificate in chain):
+            return list(chain)
         import _ssl
 
-        return bytes(anchor.public_bytes(_ssl.ENCODING_DER))
+        return [bytes(certificate.public_bytes(_ssl.ENCODING_DER)) for certificate in chain]
     except Exception:
         return None
+
+
+def _key_identifier(certificate: x509.Certificate) -> Optional[bytes]:
+    try:
+        return certificate.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value.digest
+    except (x509.ExtensionNotFound, ValueError):
+        return None
+
+
+def _same_authority(first: x509.Certificate, second: x509.Certificate) -> bool:
+    """Whether two bundle certificates could stand in for each other during chain building.
+
+    True for the same key, and for the same subject unless both carry key
+    identifiers that differ (which is how the TLS library tells such certificates apart).
+    """
+    if first.public_key().public_bytes(
+        Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+    ) == second.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo):
+        return True
+    if first.subject != second.subject:
+        return False
+    identifiers = (_key_identifier(first), _key_identifier(second))
+    return None in identifiers or identifiers[0] == identifiers[1]
+
+
+def _overlapping_domains(domains: Mapping[str, Sequence[x509.Certificate]], home: str) -> Set[str]:
+    """Federated trust domains whose bundle shares an authority with another domain's.
+
+    A shared or lookalike authority would let one domain vouch for another, or
+    misdirect chain building, so such a domain is not trusted at all. The home
+    domain is never dropped; two federated domains that overlap are both dropped.
+    """
+    names = list(domains)
+    overlapping: Set[str] = set()
+    for index, first in enumerate(names):
+        for second in names[index + 1 :]:
+            if any(_same_authority(a, b) for a in domains[first] for b in domains[second]):
+                overlapping.update({first, second} - {home})
+    return overlapping
 
 
 def _read_snapshot(path: str, limit: int = 1024 * 1024) -> bytes:
@@ -296,7 +337,11 @@ def _read_snapshot(path: str, limit: int = 1024 * 1024) -> bytes:
 def _file_signature(paths: Tuple[str, ...]) -> Tuple[Tuple[int, int, int, int], ...]:
     signature = []
     for path in paths:
-        info = os.stat(path)
+        try:
+            info = os.stat(path)
+        except OSError:
+            signature.append((0, 0, 0, 0))  # Missing: reading it reports the problem.
+            continue
         signature.append((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns))
     return tuple(signature)
 
@@ -449,14 +494,16 @@ def _x509_snapshot(message: bytes, wanted: Optional[str], federates_with: Sequen
         raise SpiffeError("Malformed SVID from the Workload API") from exc
     if not chain or not authorities:
         raise SpiffeError("The Workload API returned an SVID without a certificate or bundle")
-    try:
-        federated = {
-            domain: [x509.load_der_x509_certificate(der) for der in _split_der(bundle)]
-            for domain, bundle in foreign.items()
-        }
-    except (ValueError, TypeError) as exc:
-        raise SpiffeError("Malformed federated bundle from the Workload API") from exc
-    return _Snapshot(chain, key_pem, authorities, {domain: certs for domain, certs in federated.items() if certs})
+    federated: Dict[str, List[x509.Certificate]] = {}
+    for domain, bundle in foreign.items():
+        try:
+            certificates = [x509.load_der_x509_certificate(der) for der in _split_der(bundle)]
+        except (ValueError, TypeError, SpiffeError) as exc:
+            logger.warning("Ignoring a malformed bundle for federated trust domain %s: %s", domain, exc)
+            continue
+        if certificates:
+            federated[domain] = certificates
+    return _Snapshot(chain, key_pem, authorities, federated)
 
 
 def _workload_api_target(address: Optional[str]) -> str:
@@ -659,9 +706,7 @@ class _Generation:
     not_before: float
     authorities: FrozenSet[bytes]  # Every trusted authority, as DER.
     domains: Mapping[str, Tuple[x509.Certificate, ...]] = field(default_factory=dict)  # By trust domain.
-
-    def anchors(self, trust_domain: str) -> FrozenSet[bytes]:
-        return frozenset(authority.public_bytes(Encoding.DER) for authority in self.domains.get(trust_domain, ()))
+    owners: Mapping[bytes, str] = field(default_factory=dict)  # Authority (DER) to its trust domain.
 
 
 class SpiffeTLS:
@@ -672,9 +717,12 @@ class SpiffeTLS:
 
     Federation: to accept peers from other trust domains, give each domain's
     bundle separately (``federated_bundle_files``, or ``federates_with`` with the
-    Workload API). Bundles are never pooled: after the handshake, a peer's SVID
-    must be anchored in the bundle of the trust domain it claims, so one
-    domain's authority cannot vouch for another domain's identities.
+    Workload API). The TLS handshake has to trust every accepted domain's
+    authorities at once, so the per-domain decision is made after it: a peer's
+    SVID belongs to the first bundle authority above it in the verified chain,
+    and that authority must be in the bundle of the trust domain the SVID
+    names. A federated domain whose bundle is missing, invalid, or shares an
+    authority with another domain is not trusted; the home domain is unaffected.
 
     Credentials come from PEM files (this constructor) or straight from the
     SPIRE agent with :meth:`from_workload_api`, which follows renewals itself.
@@ -809,6 +857,9 @@ class SpiffeTLS:
         context.check_hostname = False  # URI identity is checked in authenticate(), not DNS.
         context.verify_mode = ssl.CERT_REQUIRED
         context.minimum_version = ssl.TLSVersion.TLSv1_2
+        # Every certificate in a SPIFFE bundle is a trust anchor, self-signed or not,
+        # so a chain ends at the first bundle authority it reaches.
+        context.verify_flags |= getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", 0x80000)
         # A resumed session is not verified again, so it would outlive a reload
         # that removes its authority. Issue no tickets; authenticate() also
         # rejects any resumed session.
@@ -822,27 +873,47 @@ class SpiffeTLS:
 
     def _read_files(self) -> _Snapshot:
         assert self._paths is not None
-        bundle_pem, cert_pem, key_pem, *foreign = (_read_snapshot(path) for path in self._paths)
+        bundle_pem, cert_pem, key_pem = (_read_snapshot(path) for path in self._paths[:3])
         try:
             authorities = x509.load_pem_x509_certificates(bundle_pem)
             chain = x509.load_pem_x509_certificates(cert_pem)
-            federated = {
-                domain: x509.load_pem_x509_certificates(pem) for domain, pem in zip(self._federates_with, foreign)
-            }
         except ValueError as exc:
             raise SpiffeError("Trust bundle and certificate files must contain PEM certificates") from exc
+        federated: Dict[str, List[x509.Certificate]] = {}
+        for domain, path in zip(self._federates_with, self._paths[3:]):
+            # A missing, empty or unreadable file means the domain is not trusted
+            # for now. It never holds back the home domain's credentials.
+            try:
+                federated[domain] = x509.load_pem_x509_certificates(_read_snapshot(path))
+            except (OSError, ValueError) as exc:
+                logger.warning("Trust bundle for federated trust domain %s is unusable: %s", domain, exc)
         return _Snapshot(chain, key_pem, authorities, federated)
 
     def _build(self, snapshot: _Snapshot) -> _Generation:
         if not snapshot.chain or not snapshot.authorities:
             raise SpiffeError("An SVID and at least one authority are required")
+        _check_authorities(snapshot.authorities, self.trust_domain)
         domains: Dict[str, Tuple[x509.Certificate, ...]] = {self.trust_domain: tuple(snapshot.authorities)}
         for domain in self._federates_with:
-            if snapshot.federated.get(domain):
-                domains[domain] = tuple(snapshot.federated[domain])
-        for domain, bundle in domains.items():
-            _check_authorities(bundle, domain)
+            bundle = snapshot.federated.get(domain)
+            if not bundle:
+                continue
+            try:
+                _check_authorities(bundle, domain)
+            except SpiffeError as exc:
+                logger.warning("Trust bundle for federated trust domain %s is refused: %s", domain, exc)
+                continue
+            domains[domain] = tuple(bundle)
+        for domain in sorted(_overlapping_domains(domains, self.trust_domain)):
+            logger.warning(
+                "Trust bundle for federated trust domain %s is refused: it shares an authority with another domain",
+                domain,
+            )
+            del domains[domain]
         trusted = [authority for bundle in domains.values() for authority in bundle]
+        owners = {
+            authority.public_bytes(Encoding.DER): domain for domain, bundle in domains.items() for authority in bundle
+        }
         identity, not_before = _svid_identity(snapshot.chain[0], (self.trust_domain,))
         if not not_before <= time.time() < identity.expires_at:
             raise SpiffeError("Local SVID is not currently valid")
@@ -858,7 +929,7 @@ class SpiffeTLS:
             except ssl.SSLError as exc:
                 raise SpiffeError("Local SVID certificate and key do not match") from exc
         der = frozenset(authority.public_bytes(Encoding.DER) for authority in trusted)
-        return _Generation(context, identity, not_before, der, domains)
+        return _Generation(context, identity, not_before, der, domains, owners)
 
     def _install(self, generation: _Generation) -> None:
         with self._lock:
@@ -981,11 +1052,17 @@ class SpiffeTLS:
         authorities = generation.domains.get(trust_domain)
         if not authorities:
             raise SpiffeError(f"No trust bundle is loaded for trust domain {trust_domain}")
-        anchor = _verified_anchor(connection)
-        if anchor is not None:
-            if anchor not in generation.anchors(trust_domain):
-                raise SpiffeError("SVID was not issued by its own trust domain's authorities")
-            return
+        chain = _verified_chain(connection)
+        if chain is not None:
+            # The SVID belongs to the first bundle authority above it, whatever
+            # that authority itself chains to.
+            for certificate in chain[1:]:
+                owner = generation.owners.get(certificate)
+                if owner is not None:
+                    if owner == trust_domain:
+                        return
+                    break
+            raise SpiffeError("SVID was not issued by its own trust domain's authorities")
         # This Python does not expose the verified chain: accept only an SVID
         # signed directly by one of its trust domain's authorities.
         for authority in authorities:

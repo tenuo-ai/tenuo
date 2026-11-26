@@ -638,12 +638,22 @@ Two SPIRE deployments can federate, so that workloads of one trust domain can
 authenticate to workloads of another. A partner's agents, or agents in a
 second cluster of your own, can then ask your issuer for warrants.
 
-The adapter keeps each trust domain's bundle separate. That matters: if all
-authorities were pooled into one trust store, the partner's CA could issue an
-SVID naming one of *your* workloads and it would be accepted. Here, after the
-TLS handshake, a peer's SVID must be anchored in the bundle of the trust domain
-it claims, and a JWT-SVID is only checked against the keys of the trust domain
-in its subject.
+The risk in federation is one domain vouching for another's identities. A TLS
+handshake has to trust every accepted domain's authorities at once, so on its
+own it would accept an SVID naming one of *your* workloads that the partner's
+CA issued. The adapter therefore decides per domain after the handshake:
+
+- You give each domain's bundle separately, never as one pooled file.
+- An SVID belongs to the first bundle authority above it in the verified chain,
+  and that authority must be in the bundle of the trust domain the SVID names.
+  This holds when one domain's authority chains to a root in another's bundle.
+- A JWT-SVID is only checked against the keys of the trust domain in its
+  subject.
+- Bundles must not overlap. A federated domain whose bundle shares an authority
+  or signing key with another domain, or imitates one, is not trusted at all.
+
+Your own bundle is taken at its word: an authority you list there can issue
+identities in your trust domain, whoever else also uses it.
 
 ### On the SPIRE side
 
@@ -713,8 +723,13 @@ with `issuer_id="spiffe://acme.test/issuer"` in `request_warrant`.
   X.509 bundles as separate files (its `include_federated_domains` option pools
   them), so with files you export each domain's bundle yourself. The Workload
   API is the simpler route.
-- **A domain SPIRE stops offering** is no longer trusted: its workloads are
-  refused until the bundle returns.
+- **A federated domain is trusted only while its latest bundle is usable.** If
+  SPIRE stops offering it, or its file is missing, empty, or invalid, its
+  workloads are refused until a good bundle returns. That never holds back
+  your own domain: your SVID and bundle keep rotating. The issuer logs a
+  warning naming the domain.
+- **Every certificate in a bundle is a trust anchor**, whether or not it is
+  self-signed, as SPIFFE defines it.
 - **Python 3.9.** Python 3.10 and newer expose the certificate chain the TLS
   library verified, and the adapter uses its trust anchor. Python 3.9 does not,
   so there a peer's SVID must be signed directly by an authority in its
@@ -886,7 +901,7 @@ matching reason on the `tenuo.spiffe` logger.
 | `Unexpected peer SPIFFE ID` | `issuer_id` is not the ID on the issuer's SVID. | Compare with the issuer's registration entry. |
 | `SVID belongs to a different trust domain` | `trust_domain` does not match the SVID, or the peer's domain is not in `federates_with`. | Fix the `SpiffeTLS` arguments or the files. |
 | `SVID was not issued by its own trust domain's authorities` | With federation: the peer's SVID chains to another domain's authority, or (Python 3.9) through an intermediate CA. | Check which SPIRE issued the SVID; use Python 3.10+ for chains with intermediates. |
-| `No trust bundle is loaded for trust domain ...` | SPIRE is not offering that domain's bundle to this workload. | Add `-federatesWith` to the registration entry and set the bundle on the server. |
+| `No trust bundle is loaded for trust domain ...` | SPIRE is not offering that domain's bundle to this workload, or the adapter refused it (see the issuer's warnings: unusable, or `shares an authority with another domain`). | Add `-federatesWith` to the registration entry and set the bundle on the server; make sure the two domains' bundles do not overlap. |
 | `No usable SVID from the Workload API at ...: PERMISSION_DENIED: no identity issued` (at startup) | No registration entry matches this process. | Compare the entry's selectors with the user or pod the workload runs as. A new entry can take a few seconds to reach the SPIRE agent. |
 | `No usable SVID from the Workload API at ...: UNAVAILABLE: ...` (at startup) | The socket path is wrong, or the SPIRE agent is not running. | Check `socket_path` or `SPIFFE_ENDPOINT_SOCKET`, and that the workload can open the socket. |
 | `The Workload API did not offer spiffe://...` | `spiffe_id` names an SVID this process is not entitled to. | The message lists the SVIDs that were offered. |

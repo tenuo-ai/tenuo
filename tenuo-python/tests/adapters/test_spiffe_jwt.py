@@ -655,6 +655,63 @@ def test_federated_keys_from_one_helper_file_and_their_withdrawal(authority, tmp
     assert validator.authenticate(token).trust_domain == PARTNER
 
 
+def test_damaged_federated_file_does_not_pin_home_keys(federated, authority, tmp_path, monkeypatch):
+    monkeypatch.setattr("tenuo.spiffe_jwt._FILE_CHECK_SECONDS", 0.0)
+    validator, partner, partner_file = federated
+    own_file = tmp_path / "own.json"
+    successor = JWTAuthority()
+    time.sleep(0.01)
+    partner_file.write_bytes(b"half-written")
+    own_file.write_bytes(jwks(successor))  # The home domain rotated its key at the same time.
+    assert validator.authenticate(successor.token()).spiffe_id == AGENT
+    with pytest.raises(SpiffeError, match="not in the trust bundle"):
+        validator.authenticate(authority.token())  # The retired home key is gone.
+    with pytest.raises(SpiffeError, match="not in the trust bundle"):
+        validator.authenticate(partner.token(sub=PARTNER_AGENT))
+    # A damaged home file keeps the home keys, and a partner change still applies.
+    time.sleep(0.01)
+    partner_file.write_bytes(jwks(partner))
+    own_file.write_bytes(b"half-written")
+    assert validator.authenticate(partner.token(sub=PARTNER_AGENT)).trust_domain == PARTNER
+    assert validator.authenticate(successor.token()).spiffe_id == AGENT
+    partner_file.unlink()
+    with pytest.raises(SpiffeError, match="not in the trust bundle"):
+        validator.authenticate(partner.token(sub=PARTNER_AGENT))
+
+
+def test_domains_sharing_a_signing_key_are_not_federated(authority, tmp_path, caplog):
+    own_file, partner_file = tmp_path / "own.json", tmp_path / "partner.json"
+    own_file.write_bytes(jwks(authority))
+    partner_file.write_bytes(jwks(authority))  # The same key set for both domains.
+    with caplog.at_level("WARNING", logger="tenuo.spiffe"):
+        validator = SpiffeJWT(
+            trust_domain=DOMAIN,
+            audience=AUDIENCE,
+            bundle_file=str(own_file),
+            federated_bundle_files={PARTNER: str(partner_file)},
+        )
+    assert "shares a signing key with another domain" in caplog.text
+    assert validator._federated_keys == {}
+    assert validator.authenticate(authority.token()).spiffe_id == AGENT
+    with pytest.raises(SpiffeError):
+        validator.authenticate(authority.token(sub=PARTNER_AGENT))
+
+
+def test_duplicate_key_id_reports_the_specific_refusal(tmp_path):
+    own, partner = JWTAuthority(kid="shared"), JWTAuthority(kid="shared")
+    own_file, partner_file = tmp_path / "own.json", tmp_path / "partner.json"
+    own_file.write_bytes(jwks(own))
+    partner_file.write_bytes(jwks(partner))
+    validator = SpiffeJWT(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        bundle_file=str(own_file),
+        federated_bundle_files={PARTNER: str(partner_file)},
+    )
+    with pytest.raises(SpiffeError, match="has expired"):
+        validator.authenticate(partner.token(sub=PARTNER_AGENT, exp=-60))
+
+
 def test_federation_configuration_is_validated(authority, tmp_path):
     path = tmp_path / "bundle.json"
     path.write_bytes(jwks(authority))
@@ -687,11 +744,19 @@ def test_workload_api_federated_jwt_bundles(authority, workload_api):  # noqa: F
             validator.authenticate(foreign.token(sub="spiffe://foreign.test/agent"))  # Not asked for.
         with pytest.raises(SpiffeError, match="its own trust domain's keys"):
             validator.authenticate(partner.token(sub=AGENT))
-        # A malformed bundle for the partner keeps its keys in use; the home domain still updates.
+        # A malformed bundle for the partner costs only the partner; the home domain still updates.
         successor = JWTAuthority()
         api.publish_jwt_bundles(bundles_response(**{own: jwks(authority, successor), theirs: b"garbage"}))
         assert eventually(lambda: successor.kid in validator._keys)
-        assert accepted()
+        assert not accepted()
+        api.publish_jwt_bundles(full)
+        assert eventually(accepted)
+        # A malformed home bundle keeps the home keys, and the partner's withdrawal still applies.
+        api.publish_jwt_bundles(bundles_response(**{own: b"garbage"}))
+        assert eventually(lambda: not accepted())
+        assert validator.authenticate(authority.token()).spiffe_id == AGENT
+        api.publish_jwt_bundles(full)
+        assert eventually(accepted)
         # SPIRE stops offering the partner's bundle: its tokens are refused, the home domain's are not.
         api.publish_jwt_bundles(bundles_response(**{own: jwks(authority)}))
         assert eventually(lambda: not accepted())

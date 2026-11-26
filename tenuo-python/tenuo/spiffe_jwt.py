@@ -39,6 +39,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequ
 try:
     import jwt as pyjwt
     from cryptography.hazmat.primitives.asymmetric import ec, rsa
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 except ImportError as exc:
     raise ImportError("JWT-SVID support requires pip install 'tenuo[spiffe-jwt]'") from exc
 
@@ -183,15 +184,22 @@ def _no_keys(trust_domain: str) -> SpiffeError:
 _Keys = Dict[str, _Key]
 
 
+class _Malformed:
+    """Stands for a home-domain bundle that could not be read, with the reason."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+
 def _jwt_bundles_from_response(
     message: bytes, trust_domain: str, federates_with: Sequence[str] = ()
-) -> Tuple[Optional[_Keys], Dict[str, Optional[_Keys]]]:
+) -> Tuple[Union[_Keys, None, _Malformed], Dict[str, _Keys]]:
     """Read the JWKS of this trust domain and of each federated one from a JWTBundlesResponse.
 
-    The first result is None when the response is well formed but has no bundle
-    for this domain. For a federated domain, an empty result means the response
-    no longer offers it (its keys are withdrawn) and None means its bundle was
-    malformed (keep what is in use). Domains that were not asked for are ignored.
+    The first result is None when the response has no bundle for this domain
+    and a ``_Malformed`` when it has one that cannot be read. A federated domain
+    appears in the second result only with a readable bundle; one that is absent
+    or malformed is simply not trusted. Domains that were not asked for are ignored.
     """
     documents: Dict[str, bytes] = {}
     for field, value in _proto_fields(message):
@@ -201,18 +209,46 @@ def _jwt_bundles_from_response(
         name = entry.get(1, b"").decode("utf-8", "replace")
         if name.startswith("spiffe://"):
             documents[name[len("spiffe://") :]] = entry.get(2, b"")
-    own = _jwks_keys(documents[trust_domain], trust_domain) if trust_domain in documents else None
-    federated: Dict[str, Optional[_Keys]] = {}
+    own: Union[_Keys, None, _Malformed] = None
+    if trust_domain in documents:
+        try:
+            own = _jwks_keys(documents[trust_domain], trust_domain)
+        except SpiffeError as exc:
+            own = _Malformed(str(exc))
+    federated: Dict[str, _Keys] = {}
     for domain in federates_with:
         if domain not in documents:
-            federated[domain] = {}
             continue
         try:
             federated[domain] = _jwks_keys(documents[domain], domain)
         except SpiffeError as exc:
-            logger.warning("Ignoring a malformed JWT bundle for federated trust domain %s: %s", domain, exc)
-            federated[domain] = None
+            logger.warning("JWT bundle for federated trust domain %s is unusable: %s", domain, exc)
     return own, federated
+
+
+def _without_overlap(home: _Keys, federated: Mapping[str, _Keys], home_domain: str) -> Dict[str, _Keys]:
+    """Drop federated trust domains that share a signing key with another domain.
+
+    A shared key could sign for either domain, so such a domain is not trusted.
+    The home domain is never dropped; two federated domains that overlap both are.
+    """
+
+    def fingerprints(keys: _Keys) -> set:
+        return {key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo) for key in keys.values()}
+
+    prints = {home_domain: fingerprints(home)}
+    prints.update({domain: fingerprints(keys) for domain, keys in federated.items() if keys})
+    names = list(prints)
+    overlapping = set()
+    for index, first in enumerate(names):
+        for second in names[index + 1 :]:
+            if prints[first] & prints[second]:
+                overlapping.update({first, second} - {home_domain})
+    for domain in sorted(overlapping):
+        logger.warning(
+            "JWT bundle for federated trust domain %s is refused: it shares a signing key with another domain", domain
+        )
+    return {domain: keys for domain, keys in federated.items() if keys and domain not in overlapping}
 
 
 class SpiffeJWT:
@@ -249,9 +285,10 @@ class SpiffeJWT:
         self._init_common(trust_domain, audience, leeway_seconds, tuple(federated))
         self._paths = (bundle_file, *federated.values())
         self._signature = _file_signature(self._paths)
-        self._keys, self._federated_keys = self._read_files()
+        self._keys = self._read_home()
         if not self._keys:
             raise _no_keys(trust_domain)
+        self._federated_keys = _without_overlap(self._keys, self._read_federated(), trust_domain)
 
     @classmethod
     def from_workload_api(
@@ -293,19 +330,20 @@ class SpiffeJWT:
         self._max_stale = max_stale_seconds
         owner = weakref.ref(self)
 
-        def deliver(update: Tuple[Optional[_Keys], Dict[str, Optional[_Keys]]]) -> None:
+        def deliver(update: Tuple[Union[_Keys, None, _Malformed], Dict[str, _Keys]]) -> None:
             validator = owner()
             if validator is None:
                 raise _OwnerGone
             keys, foreign = update
             validator._lost_since = None
             validator._stale_warned = False
-            if keys or validator._loaded:
-                # Keep a federated domain's keys only when its bundle was malformed.
-                validator._federated_keys = {
-                    domain: validator._federated_keys.get(domain, {}) if found is None else found
-                    for domain, found in foreign.items()
-                }
+            malformed = isinstance(keys, _Malformed)
+            home: _Keys = validator._keys if isinstance(keys, _Malformed) or keys is None else keys
+            if validator._loaded or (keys and not malformed):
+                # Federated domains follow this response whatever happens to the home bundle.
+                validator._federated_keys = _without_overlap(home, foreign, trust_domain)
+            if isinstance(keys, _Malformed):
+                raise SpiffeError(keys.reason)  # Keep the home keys in use.
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
                 reason = (
@@ -369,14 +407,20 @@ class SpiffeJWT:
         self._stale_warned = False
         self._max_stale = 0.0
 
-    def _read_files(self) -> Tuple[_Keys, Dict[str, _Keys]]:
+    def _read_home(self) -> _Keys:
         assert self._paths is not None
-        own = _jwks_keys(_read_snapshot(self._paths[0]), self.trust_domain)
-        federated = {
-            domain: _jwks_keys(_read_snapshot(path), domain)
-            for domain, path in zip(self._federates_with, self._paths[1:])
-        }
-        return own, federated
+        return _jwks_keys(_read_snapshot(self._paths[0]), self.trust_domain)
+
+    def _read_federated(self) -> Dict[str, _Keys]:
+        """Each federated domain's keys. A missing or unreadable bundle means the domain is not trusted."""
+        assert self._paths is not None
+        federated: Dict[str, _Keys] = {}
+        for domain, path in zip(self._federates_with, self._paths[1:]):
+            try:
+                federated[domain] = _jwks_keys(_read_snapshot(path), domain)
+            except (OSError, SpiffeError) as exc:
+                logger.warning("JWT bundle for federated trust domain %s is unusable: %s", domain, exc)
+        return federated
 
     def _withdraw(self, reason: str) -> None:
         if self._keys:
@@ -388,12 +432,20 @@ class SpiffeJWT:
 
         An unreadable or malformed file keeps the current keys. A well-formed
         bundle replaces them, including one with no usable key, which withdraws them.
+        Federated domains are read separately: a problem with one never holds
+        back the home domain, and a domain without a usable bundle is not trusted.
         """
         if self._paths is None:
             return
         with self._reload_lock:
             signature = _file_signature(self._paths)
-            keys, self._federated_keys = self._read_files()
+            federated = self._read_federated()
+            try:
+                keys = self._read_home()
+            except Exception:
+                self._federated_keys = _without_overlap(self._keys, federated, self.trust_domain)
+                raise
+            self._federated_keys = _without_overlap(keys, federated, self.trust_domain)
             self._signature = signature
             if not keys:
                 self._withdraw(str(_no_keys(self.trust_domain)))
@@ -456,21 +508,23 @@ class SpiffeJWT:
         # A key ID may exist in more than one trust domain. Each candidate key can
         # only vouch for subjects in the trust domain it belongs to.
         candidates: List[Tuple[str, _Key]] = []
-        if kid in self._keys:
-            candidates.append((self.trust_domain, self._keys[kid]))
+        home_key = self._keys.get(kid)
+        if home_key is not None:
+            candidates.append((self.trust_domain, home_key))
         for domain, keys in self._federated_keys.items():
-            if kid in keys:
-                candidates.append((domain, keys[kid]))
+            federated_key = keys.get(kid)
+            if federated_key is not None:
+                candidates.append((domain, federated_key))
         if not candidates:
             raise SpiffeError("JWT-SVID was signed by a key that is not in the trust bundle")
-        refusal: Optional[SpiffeError] = None
+        refusals: List[SpiffeError] = []
         for domain, key in candidates:
             try:
                 return self._verify(token, algorithm, key, domain)
             except SpiffeError as exc:
-                refusal = refusal or exc
-        assert refusal is not None
-        raise refusal
+                refusals.append(exc)
+        # With one key ID in several domains, report the most specific refusal.
+        raise next((refusal for refusal in refusals if str(refusal) != "Invalid JWT-SVID"), refusals[0])
 
     def _verify(self, token: str, algorithm: str, key: _Key, key_domain: str) -> SpiffeIdentity:
         # Tie the algorithm to the key's own type, so a token cannot pick one the key was not made for.

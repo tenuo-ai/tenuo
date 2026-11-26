@@ -1912,7 +1912,7 @@ def test_one_trust_domain_cannot_issue_identities_for_another(ca, federation, mo
         with pytest.raises(SpiffeError, match="not issued (directly )?by its own trust domain's authorities"):
             server.authenticate(connection)
     # The same holds where Python does not expose the verified chain.
-    monkeypatch.setattr("tenuo.spiffe._verified_anchor", lambda connection: None)
+    monkeypatch.setattr("tenuo.spiffe._verified_chain", lambda connection: None)
     for forged in (forged_own, forged_partner):
         connection, _ = connect(server, raw_client(forged, ca.pem))
         with pytest.raises(SpiffeError, match="not issued directly by its own trust domain's authorities"):
@@ -1936,14 +1936,14 @@ def test_client_checks_the_issuers_domain_binding(ca, federation):
 
 
 def test_federated_svid_through_an_intermediate_authority(ca, federation, tmp_path):
-    from tenuo.spiffe import _verified_anchor
+    from tenuo.spiffe import _verified_chain
 
     server, partner, bundles = federation
     intermediate = sub_ca(partner, tmp_path)
     paths = intermediate.files("via-intermediate", PARTNER_AGENT)
     paths["cert"].write_bytes(paths["cert"].read_bytes() + intermediate.pem)  # Leaf, then its issuer.
     connection, _ = connect(server, raw_client(paths, ca.pem))
-    if _verified_anchor(connection) is None:  # Python 3.9
+    if _verified_chain(connection) is None:  # Python 3.9
         with pytest.raises(SpiffeError, match="Python 3.10 or newer"):
             server.authenticate(connection)
     else:
@@ -1980,15 +1980,170 @@ def test_federation_configuration_is_validated(ca, tmp_path):
     for bad in ({DOMAIN: partner_bundle}, {"Partner.Test": partner_bundle}, {"": partner_bundle}):
         with pytest.raises(ValueError):
             tls_in(DOMAIN, paths, True, bad)
-    # A federated bundle may not carry an authority that names another trust domain.
-    tagged, _ = partner.leaf(f"spiffe://{DOMAIN}", is_ca=True)
-    partner_bundle.write_bytes(partner.pem + tagged)
-    with pytest.raises(SpiffeError, match="authority for a different trust domain"):
-        tls_in(DOMAIN, paths, True, {PARTNER: partner_bundle})
+
+
+def partner_refused_home_served(server, ca, partner, pki):
+    """The partner's workloads are refused, and the home domain is unaffected."""
+    try:
+        connection, _ = connect(
+            server, raw_client(partner.files(f"refused-{time.monotonic_ns()}", PARTNER_AGENT), ca.pem)
+        )
+    except ssl.SSLError:
+        refused = True  # Its authority is not in the trust store at all.
+    else:
+        with pytest.raises(SpiffeError):
+            server.authenticate(connection)
+        refused = True
+    own, _ = connect(server, pki())
+    return refused and server.authenticate(own).spiffe_id == AGENT
+
+
+def lookalike(original, name="lookalike"):
+    """A self-signed certificate copying another authority's subject and key identifier, under its own key."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    now = datetime.now(timezone.utc)
+    identifier = original.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+    return (
+        x509.CertificateBuilder()
+        .subject_name(original.subject)
+        .issuer_name(original.subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(True, None), True)
+        .add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), True)
+        .add_extension(identifier, False)
+        .sign(key, hashes.SHA256())
+        .public_bytes(serialization.Encoding.PEM)
+    )
+
+
+def test_unusable_federated_bundles_only_cost_that_domain(ca, federation, pki, caplog):
+    server, partner, bundles = federation
+    tagged, _ = partner.leaf(f"spiffe://{DOMAIN}", is_ca=True)  # An authority naming another trust domain.
     leaf, _ = partner.leaf(PARTNER_AGENT)
-    partner_bundle.write_bytes(leaf)
-    with pytest.raises(SpiffeError, match="only CA certificates"):
-        tls_in(DOMAIN, paths, True, {PARTNER: partner_bundle})
+    for bad in (partner.pem + tagged, leaf, b"\xff\xfe garbage", b"", ca.pem, partner.pem + ca.pem):
+        time.sleep(0.01)
+        bundles[PARTNER].write_bytes(bad)
+        with caplog.at_level("WARNING", logger="tenuo.spiffe"):
+            server.reload()
+        assert partner_refused_home_served(server, ca, partner, pki)
+        assert PARTNER in caplog.text
+        caplog.clear()
+    bundles[PARTNER].unlink()  # A missing file withdraws the domain too.
+    assert server.reload_if_changed() is True
+    assert partner_refused_home_served(server, ca, partner, pki)
+    bundles[PARTNER].write_bytes(partner.pem)
+    assert server.reload_if_changed() is True
+    connection, _ = connect(server, raw_client(partner.files("restored", PARTNER_AGENT), ca.pem))
+    assert server.authenticate(connection).spiffe_id == PARTNER_AGENT
+
+
+def test_broken_federated_bundle_does_not_hold_back_home_rotation(ca, tmp_path, pki):
+    partner = CA(tmp_path, "partner root")
+    partner_bundle = tmp_path / "partner.pem"
+    partner_bundle.write_bytes(partner.pem)
+    paths = ca.files("fed-rotating", SERVER)
+    server = tls_in(DOMAIN, paths, True, {PARTNER: partner_bundle})
+    before = server.identity
+    time.sleep(0.01)
+    partner_bundle.write_bytes(b"half-written")
+    _rewrite(ca, paths, SERVER)
+    assert server.reload_if_changed() is True
+    assert server.identity != before  # The home SVID rotated regardless.
+    assert partner_refused_home_served(server, ca, partner, pki)
+
+
+def test_shared_root_topologies_keep_domains_apart(ca, tmp_path, pki):
+    """One domain's authority chains to a root in the other's bundle: the nearest authority decides."""
+    # The partner's authority is an intermediate issued by the home root.
+    partner_ca = sub_ca(ca, tmp_path, "partner intermediate")
+    bundle = tmp_path / "partner-intermediate.pem"
+    bundle.write_bytes(partner_ca.pem)
+    server = tls_in(DOMAIN, ca.files("shared-server", SERVER), True, {PARTNER: bundle})
+
+    def present(issuer, identity, name):
+        paths = issuer.files(name, identity)
+        if issuer is not ca:
+            paths["cert"].write_bytes(paths["cert"].read_bytes() + issuer.pem)
+        return connect(server, raw_client(paths, ca.pem))[0]
+
+    assert server.authenticate(present(partner_ca, PARTNER_AGENT, "shared-genuine")).spiffe_id == PARTNER_AGENT
+    assert server.authenticate(present(ca, AGENT, "shared-home")).spiffe_id == AGENT
+    with pytest.raises(SpiffeError, match="its own trust domain's authorities"):
+        server.authenticate(present(partner_ca, AGENT, "shared-forged-home"))
+    with pytest.raises(SpiffeError, match="its own trust domain's authorities"):
+        server.authenticate(present(ca, PARTNER_AGENT, "shared-forged-partner"))
+
+    # The mirror image: the home authority is an intermediate under the partner's root.
+    partner_root = CA(tmp_path, "partner root")
+    home_ca = sub_ca(partner_root, tmp_path, "home intermediate")
+    home_bundle, partner_bundle = tmp_path / "home-intermediate.pem", tmp_path / "partner-root.pem"
+    home_bundle.write_bytes(home_ca.pem)
+    partner_bundle.write_bytes(partner_root.pem)
+    mirror_paths = home_ca.files("mirror-server", SERVER, bundle=home_ca.pem)
+    mirror = tls_in(DOMAIN, mirror_paths, True, {PARTNER: partner_bundle})
+    trusted = home_ca.pem + partner_root.pem
+
+    def show(issuer, identity, name):
+        return connect(mirror, raw_client(issuer.files(name, identity), trusted))[0]
+
+    assert mirror.authenticate(show(home_ca, AGENT, "mirror-home")).spiffe_id == AGENT
+    assert mirror.authenticate(show(partner_root, PARTNER_AGENT, "mirror-partner")).spiffe_id == PARTNER_AGENT
+    for issuer, identity, name in (
+        (partner_root, AGENT, "mirror-forged-home"),
+        (home_ca, PARTNER_AGENT, "mirror-forged-partner"),
+    ):
+        with pytest.raises(SpiffeError, match="its own trust domain's authorities"):
+            mirror.authenticate(show(issuer, identity, name))
+
+
+def test_overlapping_or_lookalike_authorities_drop_the_federated_domain(ca, tmp_path, pki, caplog):
+    partner = CA(tmp_path, "partner root")
+    bundle = tmp_path / "partner.pem"
+    paths = ca.files("overlap-server", SERVER)
+    without_identifier = x509.load_pem_x509_certificate(lookalike(ca.cert))
+    for name, content in (
+        ("the home authority itself", partner.pem + ca.pem),
+        (
+            "copies of the home root's subject and key identifier",
+            partner.pem + b"".join(lookalike(ca.cert) for _ in range(8)),
+        ),
+    ):
+        bundle.write_bytes(content)
+        with caplog.at_level("WARNING", logger="tenuo.spiffe"):
+            server = tls_in(DOMAIN, paths, True, {PARTNER: bundle})
+        assert "shares an authority with another domain" in caplog.text, name
+        caplog.clear()
+        # The partner is not trusted, and genuine home workloads still complete every handshake.
+        for _ in range(12):
+            assert partner_refused_home_served(server, ca, partner, pki), name
+    assert without_identifier.subject == ca.cert.subject
+
+    # Two federated domains that overlap with each other are both dropped; the home domain is not.
+    second = tmp_path / "second.pem"
+    bundle.write_bytes(partner.pem)
+    second.write_bytes(partner.pem)
+    server = tls_in(DOMAIN, paths, True, {PARTNER: bundle, "second.test": second})
+    assert partner_refused_home_served(server, ca, partner, pki)
+
+
+def test_workload_api_broken_federated_bundle_does_not_hold_back_home(ca, workload_api, from_api, tmp_path, pki):
+    partner = CA(tmp_path, "partner root")
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER), federated=[(f"spiffe://{PARTNER}", partner.pem)]))
+    server = from_api(api, federates_with=[PARTNER])
+    connection, _ = connect(server, raw_client(partner.files("wl-before", PARTNER_AGENT), ca.pem))
+    assert server.authenticate(connection).spiffe_id == PARTNER_AGENT
+    before = server.identity
+    # The partner's bundle is garbage in the same response that renews the home SVID.
+    broken = _field(1, svid_entry(ca, SERVER)) + _field(
+        3, _field(1, f"spiffe://{PARTNER}".encode()) + _field(2, b"\x30\x82\xff\xff")
+    )
+    api.publish(broken)
+    assert eventually(lambda: server.identity != before)
+    assert partner_refused_home_served(server, ca, partner, pki)
 
 
 def test_workload_api_federated_bundles(ca, workload_api, from_api, tmp_path):
