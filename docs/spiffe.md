@@ -690,11 +690,13 @@ What the adapter does with the trust you give it:
 - Envoy 1.40.2 copies URI and DNS names from the certificate into the header
   unescaped, so a certificate with a separator or a quote in a name can add
   text of its own. The adapter therefore requires the URI to be the last
-  thing in the header. The identity it accepts is the certificate's whole URI
-  name, never a part of it, with or without a header sent by the client. A
-  header that carries DNS names after the URI is refused for the same reason,
-  unless you opt in with `allow_dns_names` ([With Istio](#with-istio) says
-  when you would).
+  thing in the header. It reads the name to its end and never stops at a
+  separator inside it, with or without a header sent by the client. A header
+  that carries DNS names after the URI is refused for the same reason, unless
+  you opt in with `allow_dns_names` ([With Istio](#with-istio) says when you
+  would). Spaces and tabs at the end of a name are the exception: they are
+  gone before the adapter sees the header
+  ([Limits of this mode](#limits-of-this-mode)).
 - A request is counted against its SPIFFE ID from before its body is read, and
   at most 16 from one ID are in progress at once (`max_per_identity`).
 - When the proxy forwards the certificate itself, the issuer checks the
@@ -1022,10 +1024,34 @@ Not tested: ambient mode.
   and bound to the first agent's holder key, which it cannot use.
 - **Without the forwarded certificate, the issuer takes the proxy's reading of
   it.** It learns the SVID's ID and hash and nothing else, which is why
-  warrant lifetime is capped, and it relies on the proxy's authorities issuing
-  only well-formed names: HTTP trims spaces from the end of a header value, so
-  a name that ended in one cannot be told from one that did not. Forwarding
-  the certificate removes both limits.
+  warrant lifetime is capped. Forwarding the certificate removes that limit
+  and the next one.
+- **Spaces and tabs at the end of a name do not reach the issuer.** Envoy
+  1.40.2 wrote a URI name ending in a space or a tab into the header as it
+  was. Uvicorn, Hypercorn, Daphne and Granian each dropped the ending, as
+  HTTP allows, so the issuer read the name without it and issued a warrant
+  for that SPIFFE ID. SPIRE 1.16.0 refused to register such an ID, and Istio
+  builds its names from Kubernetes namespace and service account names, which
+  cannot contain either. If another authority your proxy trusts could issue
+  one, do one of these:
+
+  - Forward the certificate (`cert: true`) and set `require_certificate=True`.
+    The issuer then refused each of those requests, because the forwarded URI
+    was not the certificate's own.
+  - Have Envoy refuse the certificate. With this in the listener's validation
+    context, the TLS handshake failed for names ending in a space or a tab
+    and succeeded for the plain name. We ran it with a `trusted_ca` bundle,
+    not with Envoy's SPIFFE certificate validator:
+
+    ```yaml
+    match_typed_subject_alt_names:
+    - san_type: URI
+      matcher:
+        safe_regex: {regex: "spiffe://acme\\.test/[A-Za-z0-9._/-]+"}
+    ```
+
+  Envoy answered 503 itself, without calling the issuer, for a name
+  containing a line break.
 
 ---
 

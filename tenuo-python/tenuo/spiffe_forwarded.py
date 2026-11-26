@@ -204,11 +204,18 @@ class SpiffeForwardedIdentity:
 
     Envoy copies URI and DNS names from the certificate into the header as
     they are, so a certificate with separators in a name could add fields.
-    The ``URI`` must therefore be the last thing in the header: the identity
-    is then the certificate's whole URI name, never a part of it. A header
-    with ``DNS`` names is refused for the same reason, so forward the URI
-    without them. None of this replaces the proxy checking client certificates
+    The ``URI`` must therefore be the last thing in the header: the name is
+    then read to its end, never cut short at a separator. A header with
+    ``DNS`` names is refused for the same reason, so forward the URI without
+    them. None of this replaces the proxy checking client certificates
     against the trust bundle.
+
+    One difference is lost before this class sees the header. HTTP servers
+    drop spaces and tabs from the end of a header value, so a certificate
+    name that ended in them is read as the name without them. SPIRE and Istio
+    issue no such names. Where another authority the proxy trusts might, have
+    the proxy forward the certificate (next paragraph) or check the name
+    itself; the guide shows both.
 
     Some meshes always forward DNS names (Istio does), so a certificate that
     has them could never be identified. ``allow_dns_names=True`` accepts
@@ -311,8 +318,9 @@ class SpiffeForwardedIdentity:
             raise SpiffeError("The request did not arrive from a trusted proxy")
         if not isinstance(header, str) or len(header) > _MAX_HEADER_BYTES:
             raise SpiffeError("Malformed x-forwarded-client-cert header")
-        # No trimming here: the identity is read to the very end of the header, so
-        # nothing after a SPIFFE ID may be dropped on the way.
+        # No trimming here: the identity is read to the very end of the header as
+        # the server delivered it. The server has already dropped spaces and tabs
+        # from that end, which only a forwarded certificate can show.
         if header.lstrip(" \t").startswith("["):
             raise SpiffeError("The JSON form of x-forwarded-client-cert is not supported; use the text form")
         elements = _parse_forwarded(header)
