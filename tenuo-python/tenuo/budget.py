@@ -45,8 +45,9 @@ lifetime. The period is signed with the warrant like the total, so a delegated
 warrant cannot change it. The meter keeps one running total per warrant and
 period and tells the core which period it counted by. A day, week or month
 starts at midnight in ``timezone`` (UTC unless given); a week starts on Monday.
-An hour is an hour on the UTC clock. A period's total is kept for an hour after
-the period ends, for calls still running at the boundary.
+An hour is an hour on the UTC clock. Period totals use the same retention as
+lifetime totals: the warrant expiry plus the store margin, so crossing a
+period boundary does not discard reservations for calls still running.
 
 Scope: a total holds only where every call passes a meter on the same store.
 The in-memory backend is per process and :class:`SqliteBudgetBackend` is per
@@ -78,9 +79,6 @@ MODEL_FIELD = "model"
 PERIOD_FIELD = "period"
 ZONE_FIELD = "period_timezone"
 PERIODS = ("hour", "day", "week", "month")
-# How long a period's total is kept after the period ends, so that a call still
-# running at the boundary settles against what was counted and not against nothing.
-PERIOD_GRACE_SECONDS = 3600
 
 __all__ = [
     "BudgetBackend",
@@ -621,7 +619,7 @@ class BudgetLevel:
     own: bool
     constraint: Optional[Any]  # the signed total, when this warrant has one
     limit: Optional[int]  # its upper bound, when it is a plain Range
-    expires_at: float  # when the row may be dropped: the warrant's end, or a while after the period's
+    expires_at: float  # warrant expiry; period boundaries must not discard reservations
     used: int = 0  # filled in as the call proceeds
     key: str = ""  # where the store keeps this total: the warrant, or the warrant and period
     period: Optional[str] = None  # the signed period, when the total is per period
@@ -794,8 +792,10 @@ class TokenMeter:
                 expires_at=_expiry(w),
             )
             if PERIOD_FIELD in signed or ZONE_FIELD in signed:
-                # The total is for each period: one row per warrant and period, kept
-                # until that period ends.
+                # The total is for each period: one row per warrant and period.
+                # Keep the warrant expiry: there is no bound on how long a call
+                # may run across a period boundary, so an early expiry loses
+                # its reservation before settlement applies the usage delta.
                 level.period, level.zone = _signed_text(signed.get(PERIOD_FIELD)), _signed_text(signed.get(ZONE_FIELD))
                 try:
                     if ZONE_FIELD in signed and not level.zone:
@@ -806,8 +806,6 @@ class TokenMeter:
                     level.problem = str(exc)
                 else:
                     level.key = f"{level.warrant_id}@{label}"
-                    kept = level.resets_at + PERIOD_GRACE_SECONDS
-                    level.expires_at = min(level.expires_at, kept) if level.expires_at else kept
             out.append(level)
         return out
 

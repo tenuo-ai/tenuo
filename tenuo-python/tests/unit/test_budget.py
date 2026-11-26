@@ -837,22 +837,22 @@ class TestPeriod:
         now[0] += 24 * 3600
         call(meter, worker, keys.worker, keys.issuer, [root])
 
-    def test_rows_of_a_past_period_are_dropped_from_the_store(self, keys, tmp_path):
-        from tenuo.budget import PERIOD_GRACE_SECONDS, _expiry
+    def test_period_rows_keep_the_warrant_expiry(self, keys, tmp_path):
+        from tenuo.budget import _expiry
 
         meter = TokenMeter(BudgetStore(str(tmp_path / "b.db"), margin_seconds=0),
                            input_estimator=fixed_estimate(3000))
         long = long_root(keys, total_tokens=8000, period="hour")
         call(meter, long, keys.lead, keys.issuer)
         level = meter.levels(long)[0]
-        # Kept for a while after the hour ends, which is before this warrant does.
+        # A period boundary must not shorten retention while the warrant is valid.
         assert 0 < level.resets_at - time.time() <= 3600
-        assert level.expires_at == level.resets_at + PERIOD_GRACE_SECONDS
+        assert level.expires_at == _expiry(long) > level.resets_at
         assert meter.store.used(level.key) == {level.key: 3500}
         # Never longer than the warrant itself.
         short = mint_root(keys, total_tokens=8000, period="hour")
         level = meter.levels(short)[0]
-        assert level.expires_at == _expiry(short) < level.resets_at + PERIOD_GRACE_SECONDS
+        assert level.expires_at == _expiry(short)
 
     @pytest.mark.parametrize("backend", ["memory", "sqlite"])
     def test_a_call_still_running_when_its_period_ends_is_settled_in_full(self, keys, tmp_path, monkeypatch, backend):
@@ -877,9 +877,40 @@ class TestPeriod:
         assert store.used(ending.key) == {ending.key: 9500}
         assert record["over_budget"] == [root.id]
         assert meter.status(root)[0]["used"] == 3500  # the new hour holds only its own call
-        now[0] = hour_ends + budget.PERIOD_GRACE_SECONDS + 300
-        call(meter, root, keys.lead, keys.issuer)
-        assert store.used(ending.key) == {ending.key: 0}  # dropped once no call can still be running
+        now[0] = ending.expires_at + 300
+        store.add({"cleanup": 1})
+        assert store.used(ending.key) == {ending.key: 0}  # normal warrant-expiry cleanup
+
+    @pytest.mark.parametrize("backend", ["memory", "sqlite"])
+    @pytest.mark.parametrize("actual", [2000, 3500, 9500])
+    def test_late_settlement_keeps_the_reservation_after_the_old_period_grace(
+        self, keys, tmp_path, monkeypatch, backend, actual,
+    ):
+        import types
+
+        from tenuo import budget
+
+        hour_ends = (time.time() // 3600 + 1) * 3600
+        now = [hour_ends - 5]
+        monkeypatch.setattr(budget, "time", types.SimpleNamespace(
+            time=lambda: now[0], monotonic=time.monotonic, sleep=time.sleep))
+        path = str(tmp_path / "late.db")
+        store = BudgetStore(path) if backend == "sqlite" else BudgetStore()
+        meter = TokenMeter(store, input_estimator=fixed_estimate(3000), clock=lambda: now[0])
+        root = long_root(keys, total_tokens=8000, period="hour")
+        ending = meter.levels(root)[0]
+        held = meter.begin(root, None, REQUEST, requested_output=500,
+                           authorize=authorizer(root, keys.lead, keys.issuer))
+        # A different SQLite connection must not evict the reservation either.
+        writer_store = BudgetStore(path) if backend == "sqlite" else store
+        writer = TokenMeter(writer_store, input_estimator=fixed_estimate(3000), clock=lambda: now[0])
+        now[0] = hour_ends + 3900  # beyond the former hour of grace and store margin
+        call(writer, root, keys.lead, keys.issuer)
+        record = held.settle({"input_tokens": actual - 500, "output_tokens": 500})
+        assert store.used(ending.key) == {ending.key: actual}
+        assert record["budget"][0]["used"] == actual
+        assert record.get("over_budget", []) == ([root.id] if actual > 8000 else [])
+        assert meter.status(root)[0]["used"] == 3500
 
     @needs_zones
     @pytest.mark.parametrize("zone,around", [
