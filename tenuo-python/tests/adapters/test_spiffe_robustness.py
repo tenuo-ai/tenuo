@@ -363,3 +363,30 @@ def test_a_replaced_retry_timer_does_nothing_when_it_fires_late():
         assert watcher._retry_timer is second and offered == ["first update", "a newer update"]
     finally:
         watcher.stop(join=False)
+
+
+@pytest.mark.parametrize("sent_above_the_leaf", ["nothing", "the home authority", "the home authority and the root"])
+def test_a_complete_local_chain_does_not_cost_a_partner_its_trust(ca, tmp_path, sent_above_the_leaf):  # noqa: F811
+    """The home authority is an intermediate under the partner's root, and the local SVID file holds the whole chain.
+
+    Only what lies between the SVID and the home authority counts as a home
+    authority when looking for overlap. The root above it is the partner's.
+    """
+    partner_root = ts.CA(tmp_path, "partner root")
+    home_ca = ts.sub_ca(partner_root, tmp_path, "home intermediate")
+    partner_bundle = tmp_path / "partner-root.pem"
+    partner_bundle.write_bytes(partner_root.pem)
+    paths = home_ca.files("server", ts.SERVER, bundle=home_ca.pem)
+    extra = {"nothing": b"", "the home authority": home_ca.pem}.get(sent_above_the_leaf, home_ca.pem + partner_root.pem)
+    paths["cert"].write_bytes(paths["cert"].read_bytes() + extra)
+    server = ts.tls_in(ts.DOMAIN, paths, True, {ts.PARTNER: partner_bundle})
+    assert sorted(server._current.domains) == [ts.DOMAIN, ts.PARTNER]
+    trusted = home_ca.pem + partner_root.pem
+    for issuer, identity in ((home_ca, ts.AGENT), (partner_root, ts.PARTNER_AGENT)):
+        connection, _ = ts.connect(
+            server, ts.raw_client(issuer.files(f"peer-{issuer.name.rfc4514_string()}", identity), trusted)
+        )
+        assert server.authenticate(connection).spiffe_id == identity
+    forged, _ = ts.connect(server, ts.raw_client(partner_root.files("forged", ts.AGENT), trusted))
+    with pytest.raises(SpiffeError, match="its own trust domain's authorities"):
+        server.authenticate(forged)
