@@ -565,6 +565,47 @@ def test_request_during_recovery_cannot_discard_the_recovered_keys(authority, wo
         validator.close()
 
 
+def test_malformed_home_bundle_is_consumed_once(authority, workload_api, monkeypatch):  # noqa: F811
+    """A response with an unreadable home bundle must not be replayed as if SPIRE had sent it again."""
+    grpc = pytest.importorskip("grpc")
+    monkeypatch.setattr("tenuo.spiffe._PENDING_RETRY", (0.1, 0.2))
+    partner = JWTAuthority()
+    own, theirs = f"spiffe://{DOMAIN}", f"spiffe://{PARTNER}"
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{own: jwks(authority), theirs: jwks(partner)}))
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        socket_path=api.address,
+        timeout=5,
+        max_stale_seconds=1.0,
+        federates_with=[PARTNER],
+    )
+    token, partner_token = authority.token(), partner.token(sub=PARTNER_AGENT)
+    try:
+        api.publish_jwt_bundles(bundles_response(**{own: b"garbage", theirs: jwks(partner)}))
+        time.sleep(0.4)
+        assert validator._watcher._pending is None  # Nothing is left to deliver again.
+        assert validator.authenticate(token).spiffe_id == AGENT  # The home keys are kept.
+        assert validator.authenticate(partner_token).trust_domain == PARTNER
+
+        # An outage is still timed from when the stream was lost, whatever retries run meanwhile.
+        api.refuse = grpc.StatusCode.UNAVAILABLE
+        api.drop_streams()
+        assert eventually(lambda: validator._lost_since is not None)
+        time.sleep(1.4)
+        with pytest.raises(SpiffeError, match="SPIRE agent is unreachable"):
+            validator.authenticate(token)
+
+        # Keys withdrawn because SPIRE refused this workload stay withdrawn.
+        api.refuse = grpc.StatusCode.PERMISSION_DENIED
+        assert eventually(lambda: validator._keys == {} and validator._federated_keys == {})
+        time.sleep(0.6)
+        assert validator._keys == {} and validator._federated_keys == {}
+    finally:
+        validator.close()
+
+
 def test_workload_api_startup_needs_usable_keys(workload_api):  # noqa: F811
     api = workload_api()
     api.publish_jwt_bundles(bundles_response(**{f"spiffe://{DOMAIN}": jwks()}))

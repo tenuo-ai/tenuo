@@ -553,6 +553,7 @@ class _WorkloadAPIWatcher:
         parse: Callable[[bytes], Any],
         deliver: Callable[[Any], None],
         on_lost: Optional[Callable[[str], None]] = None,
+        on_received: Optional[Callable[[], None]] = None,
     ):
         self.target = target
         self.last_error: Optional[str] = None
@@ -560,6 +561,7 @@ class _WorkloadAPIWatcher:
         self._parse = parse
         self._deliver = deliver
         self._on_lost = on_lost  # Called with a gRPC status name each time the stream ends.
+        self._on_received = on_received  # Called for each message that actually arrives, never for a retry.
         self._deliver_lock = threading.Lock()
         self._pending: Optional[Any] = None  # Newest update that could not be used yet.
         self._first = threading.Event()  # A usable SVID arrived, or retrying is pointless.
@@ -626,6 +628,15 @@ class _WorkloadAPIWatcher:
         self._first.set()
         return True
 
+    def _received(self) -> None:
+        if self._on_received is not None:
+            try:
+                self._on_received()
+            except _OwnerGone:
+                self._stop.set()
+            except Exception:
+                logger.exception("Workload API message handler failed")
+
     def _lost(self, status: str) -> None:
         if self._on_lost is not None and not self._stop.is_set():
             try:
@@ -654,6 +665,7 @@ class _WorkloadAPIWatcher:
                     self._method, request_serializer=lambda _: b"", response_deserializer=lambda raw: raw
                 )
                 for message in fetch(None, metadata=_WORKLOAD_API_METADATA):
+                    self._received()
                     try:
                         snapshot = self._parse(message)
                     except Exception as exc:

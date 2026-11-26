@@ -335,15 +335,20 @@ class SpiffeJWT:
             if validator is None:
                 raise _OwnerGone
             keys, foreign = update
-            validator._lost_since = None
-            validator._stale_warned = False
             malformed = isinstance(keys, _Malformed)
             home: _Keys = validator._keys if isinstance(keys, _Malformed) or keys is None else keys
             if validator._loaded or (keys and not malformed):
                 # Federated domains follow this response whatever happens to the home bundle.
                 validator._federated_keys = _without_overlap(home, foreign, trust_domain)
             if isinstance(keys, _Malformed):
-                raise SpiffeError(keys.reason)  # Keep the home keys in use.
+                if not validator._loaded:
+                    raise SpiffeError(keys.reason)  # Not usable to start with.
+                # Consumed once: keep the home keys, and leave nothing behind to be
+                # delivered again as if SPIRE had sent it afresh.
+                logger.warning(
+                    "Ignoring a malformed JWT bundle for %s; keeping the keys in use: %s", trust_domain, keys.reason
+                )
+                return
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
                 reason = (
@@ -358,6 +363,14 @@ class SpiffeJWT:
             validator._keys = keys
             validator._loaded = True
             logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(keys), trust_domain)
+
+        def received() -> None:
+            # Only a message that really arrived shows the SPIRE agent is reachable.
+            validator = owner()
+            if validator is None:
+                raise _OwnerGone
+            validator._lost_since = None
+            validator._stale_warned = False
 
         def lost(status: str) -> None:
             validator = owner()
@@ -375,6 +388,7 @@ class SpiffeJWT:
             lambda raw: _jwt_bundles_from_response(raw, trust_domain, domains),
             deliver,
             lost,
+            received,
         )
         self._watcher = watcher
         weakref.finalize(self, watcher.stop, False)
