@@ -374,6 +374,41 @@ def test_one_token_has_one_spelling(validator, authority):
         validator.authenticate(authority.token(exp=10**400))
 
 
+@pytest.mark.parametrize("kind", ["EC", "RSA"])
+def test_a_segment_has_one_base64url_spelling(tmp_path, kind):
+    """The last character of a segment can carry spare bits that decoders ignore. Only the plain spelling is accepted."""
+    authority = JWTAuthority(kind)
+    path = tmp_path / "jwt_bundle.json"
+    path.write_bytes(jwks(authority))
+    validator = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+    def decoded(segment):
+        return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+
+    token = authority.token()
+    segments = token.split(".")
+    assert validator.authenticate(token).spiffe_id == AGENT
+    respelled = []
+    for index, segment in enumerate(segments):
+        if len(segment) % 4 == 0:
+            continue  # No spare bits.
+        other = segment[:-1] + alphabet[alphabet.index(segment[-1]) + 1]
+        assert decoded(other) == decoded(segment)  # The same bytes, spelled differently.
+        respelled.append(".".join(segments[:index] + [other] + segments[index + 1 :]))
+    # The signature always has spare bits: 64 and 256 bytes are not multiples of three.
+    assert respelled and respelled[-1].rsplit(".", 1)[0] == token.rsplit(".", 1)[0]
+    for variant in respelled:
+        with pytest.raises(SpiffeError, match="Malformed JWT-SVID"):
+            validator.authenticate(variant)
+        with pytest.raises(SpiffeError, match="Malformed JWT-SVID"):
+            sign_jwt_holder_proof(variant, SigningKey.generate(), audience=AUDIENCE, task_id="t")
+    # A segment one character longer than a multiple of four is not base64url at all.
+    assert len(segments[2] + "AAA") % 4 == 1
+    with pytest.raises(SpiffeError, match="Malformed JWT-SVID"):
+        validator.authenticate(token + "AAA")
+
+
 def test_bundle_file_rotation(authority, tmp_path, monkeypatch):
     monkeypatch.setattr("tenuo.spiffe_jwt._FILE_CHECK_SECONDS", 0.0)
     path = tmp_path / "bundle.json"
@@ -1532,7 +1567,7 @@ def test_client_and_endpoint_over_http_and_https(app, authority, serve, tmp_path
 
 def test_client_never_sends_the_token_in_the_clear():
     holder = SigningKey.generate()
-    options = dict(token="a.b.c", audience=AUDIENCE, issuer_key=holder.public_key, holder_key=holder, task_id="t")
+    options = dict(token="aaaa.bbbb.cccc", audience=AUDIENCE, issuer_key=holder.public_key, holder_key=holder, task_id="t")
     for url in (
         "http://issuer.acme.internal/warrants",
         "http://10.0.0.5:8080/warrants",

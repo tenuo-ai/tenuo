@@ -176,6 +176,25 @@ def _jwks_keys(document: bytes, trust_domain: str) -> Dict[str, _Key]:
     return keys
 
 
+def _one_spelling(token: Any) -> bool:
+    """Whether ``token`` is a compact JWS whose every segment is the only base64url spelling of its bytes.
+
+    Unpadded base64url still leaves spare bits in a segment's last character,
+    and decoders ignore them. A segment that does not encode back to itself is
+    refused, so the same bytes cannot arrive under two spellings.
+    """
+    if not isinstance(token, str) or len(token) > _MAX_TOKEN_BYTES or not _COMPACT_JWS.fullmatch(token):
+        return False
+    for segment in token.split("."):
+        try:
+            decoded = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+        except ValueError:
+            return False
+        if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != segment:
+            return False
+    return True
+
+
 def _claimed_trust_domain(token: str) -> str:
     """The trust domain in a token's subject, read before any signature is checked.
 
@@ -589,9 +608,10 @@ class SpiffeJWT:
                     self.trust_domain,
                 )
             raise SpiffeError("JWT-SVIDs are refused while SPIRE issues this workload no identity")
-        # Exactly three unpadded base64url segments, so one token has one spelling
-        # (and one SHA-256) whatever the installed PyJWT tolerates.
-        if not isinstance(token, str) or len(token) > _MAX_TOKEN_BYTES or not _COMPACT_JWS.fullmatch(token):
+        # Exactly three base64url segments, each the one spelling of its bytes, so a
+        # header, payload and signature have one text form (and one SHA-256)
+        # whatever the installed PyJWT tolerates.
+        if not _one_spelling(token):
             raise SpiffeError("Malformed JWT-SVID")
         try:
             header = pyjwt.get_unverified_header(token)
@@ -754,7 +774,7 @@ def sign_jwt_holder_proof(
     SHA-256, so it is useless for any other token, issuer, task, or Tenuo
     signature. Each call uses a fresh random nonce, so a retry is a new proof.
     """
-    if not isinstance(token, str) or len(token) > _MAX_TOKEN_BYTES or not _COMPACT_JWS.fullmatch(token):
+    if not _one_spelling(token):
         raise SpiffeError("Malformed JWT-SVID")
     if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
         raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
