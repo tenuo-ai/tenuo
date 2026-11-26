@@ -100,6 +100,14 @@ jobs:
         run: cargo test --all-features
         working-directory: tenuo-core
 
+      # --all-features builds the AAT verifier with ES256. This is the build
+      # without it.
+      - name: Test the AAT verifier without ES256
+        run: |
+          cargo test --features aat-jws --lib aat::
+          cargo test --features aat-jws --test aat_jws_vectors
+        working-directory: tenuo-core
+
       - name: Attenuation soundness (proptest)
         run: cargo test --test attenuation_soundness --all-features -- --nocapture
         working-directory: tenuo-core

@@ -8,7 +8,7 @@
 use base64::Engine;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use tenuo::aat::{verify_chain, Limits, ReplayStore, TrustAnchor, VerifyOptions};
+use tenuo::aat::{verify_chain, Algorithm, Limits, ReplayStore, TrustAnchor, VerifyOptions};
 use tenuo::{PublicKey, SigningKey};
 
 const VECTORS: &str = include_str!("../../tests/vectors/aat-jws-vectors.json");
@@ -27,6 +27,9 @@ impl ReplayStore for Accepted {
 struct Suite {
     doc: Value,
     anchors: Vec<TrustAnchor>,
+    /// The algorithms the enforcement point permits. The suite's own policy
+    /// is the default, `Ed25519` only.
+    algorithms: &'static [Algorithm],
 }
 
 impl Suite {
@@ -44,11 +47,17 @@ impl Suite {
                     .expect("base64url");
                 TrustAnchor {
                     issuer: anchor["iss"].as_str().expect("iss").to_owned(),
-                    key: PublicKey::from_bytes(&x.try_into().expect("32 bytes")).expect("key"),
+                    key: PublicKey::from_bytes(&x.try_into().expect("32 bytes"))
+                        .expect("key")
+                        .into(),
                 }
             })
             .collect();
-        Self { doc, anchors }
+        Self {
+            doc,
+            anchors,
+            algorithms: &[Algorithm::Ed25519],
+        }
     }
 
     fn vectors(&self) -> &[Value] {
@@ -97,6 +106,7 @@ impl Suite {
         let audience = text(&self.doc["params"]["audience"]);
         let mut opts = VerifyOptions::new(&audience, vector["now"].as_i64().expect("now"));
         opts.limits = self.limits(vector);
+        opts.algorithms = self.algorithms;
         opts.require_pop_aud = policy["require_pop_aud"].as_bool().unwrap_or(false);
         opts.require_chain_aud = policy["require_chain_aud"].as_bool().unwrap_or(false);
         opts.nonce = policy["nonce"].as_str();
@@ -136,6 +146,29 @@ fn corrupt_signature(compact: &mut String) {
         "A"
     };
     compact.replace_range(at..=at, replacement);
+}
+
+/// Every chain in the suite uses Ed25519 keys, so permitting ES256 as well
+/// changes no verdict and no failing step.
+#[cfg(feature = "aat-es256")]
+#[test]
+fn every_vector_is_unchanged_when_es256_is_also_permitted() {
+    let mut suite = Suite::load();
+    suite.algorithms = &[Algorithm::Ed25519, Algorithm::Es256];
+    let differing: Vec<String> = suite
+        .vectors()
+        .iter()
+        .filter_map(|vector| {
+            let expected = (
+                text(&vector["expected"]["verdict"]),
+                vector["expected"]["step"].as_str().map(str::to_owned),
+            );
+            let (got, _) = suite.run(vector, |_, _, _| {});
+            (got != expected)
+                .then(|| format!("{}: expected {expected:?}, got {got:?}", vector["id"]))
+        })
+        .collect();
+    assert!(differing.is_empty(), "{}", differing.join("\n"));
 }
 
 #[test]

@@ -13,7 +13,7 @@
 //! # fn demo(issuer_key: tenuo::PublicKey, chain: Vec<String>, pop: String) {
 //! let anchors = [TrustAnchor {
 //!     issuer: "https://auth.example.com".into(),
-//!     key: issuer_key,
+//!     key: issuer_key.into(),
 //! }];
 //! let chain: Vec<&str> = chain.iter().map(String::as_str).collect();
 //! let mut opts = VerifyOptions::new("https://tools.example.com", 1_704_067_500);
@@ -21,6 +21,40 @@
 //!     Ok(verified) => println!("permit, issued by {}", verified.issuer),
 //!     Err(denied) => println!("deny: {denied}"),
 //! }
+//! # }
+//! ```
+//!
+//! # Signature algorithms
+//!
+//! Tokens and proofs of possession are signed with `Ed25519`, which the
+//! draft makes mandatory to implement. The `aat-es256` feature adds `ES256`
+//! for P-256 keys, the second algorithm the draft recommends.
+//!
+//! An enforcement point names the algorithms it permits in
+//! [`VerifyOptions::algorithms`]. The default is `Ed25519` alone, and the
+//! list applies to every token in a chain and to the PoP JWT, each on its
+//! own. The type of a key fixes the one algorithm it is used with, so the
+//! `alg` a token names never chooses how a key is used.
+//!
+//! An ES256 signature has a second valid form, so one token can be written
+//! as more than one compact text. Identify a token by its `jti`, not by its
+//! text. Verification already does: `par_hash` and `aat_hash` cover the JWS
+//! Signing Input, and replay is tracked by the PoP `jti`.
+//!
+//! ```no_run
+//! # #[cfg(feature = "aat-es256")]
+//! # fn demo(x: [u8; 32], y: [u8; 32]) -> Option<()> {
+//! use tenuo::aat::{Algorithm, P256PublicKey, TrustAnchor, VerifyOptions};
+//!
+//! // An issuer that signs root tokens with ES256.
+//! let anchors = [TrustAnchor {
+//!     issuer: "https://auth.example.com".into(),
+//!     key: P256PublicKey::from_coordinates(&x, &y)?.into(),
+//! }];
+//! let mut opts = VerifyOptions::new("https://tools.example.com", 1_704_067_500);
+//! opts.algorithms = &[Algorithm::Ed25519, Algorithm::Es256];
+//! # let _ = anchors;
+//! # Some(())
 //! # }
 //! ```
 
@@ -32,13 +66,144 @@ mod verify;
 use crate::crypto::PublicKey;
 use std::fmt;
 
+/// A P-256 public key, used with the JWS `alg` value `ES256`.
+#[cfg(feature = "aat-es256")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aat-es256")))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct P256PublicKey {
+    x: [u8; 32],
+    y: [u8; 32],
+    key: p256::ecdsa::VerifyingKey,
+}
+
+#[cfg(feature = "aat-es256")]
+impl std::hash::Hash for P256PublicKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // The coordinates determine the key.
+        self.x.hash(state);
+        self.y.hash(state);
+    }
+}
+
+#[cfg(feature = "aat-es256")]
+impl P256PublicKey {
+    /// The key with the affine coordinates of a JWK's `x` and `y`, or `None`
+    /// when they are not a point on the curve.
+    pub fn from_coordinates(x: &[u8; 32], y: &[u8; 32]) -> Option<Self> {
+        // SEC 1 uncompressed form: 0x04 || X || Y.
+        let mut sec1 = [0u8; 65];
+        sec1[0] = 0x04;
+        sec1[1..33].copy_from_slice(x);
+        sec1[33..].copy_from_slice(y);
+        let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1).ok()?;
+        Some(Self { x: *x, y: *y, key })
+    }
+
+    /// The affine coordinates, as a JWK's `x` and `y` carry them.
+    pub fn coordinates(&self) -> (&[u8; 32], &[u8; 32]) {
+        (&self.x, &self.y)
+    }
+
+    /// Verify an ECDSA P-256 SHA-256 signature given as `R || S`, the form
+    /// a JWS carries (RFC 7518 Section 3.4).
+    pub(crate) fn verify(&self, message: &[u8], signature: &[u8; 64]) -> bool {
+        use p256::ecdsa::signature::Verifier;
+        p256::ecdsa::Signature::from_slice(signature)
+            .is_ok_and(|signature| self.key.verify(message, &signature).is_ok())
+    }
+}
+
+/// A JWS signature algorithm this verifier implements, by its
+/// fully-specified `alg` value (RFC 9864).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Algorithm {
+    /// `Ed25519`. Mandatory to implement.
+    Ed25519,
+    /// `ES256`: ECDSA using P-256 and SHA-256.
+    #[cfg(feature = "aat-es256")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "aat-es256")))]
+    Es256,
+}
+
+impl Algorithm {
+    /// The JWS `alg` header value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Ed25519 => "Ed25519",
+            #[cfg(feature = "aat-es256")]
+            Self::Es256 => "ES256",
+        }
+    }
+}
+
+impl fmt::Display for Algorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// A key that verifies the signature of an AAT or a PoP JWT. The type of the
+/// key fixes the one algorithm it is used with: [`Algorithm::Ed25519`] for an
+/// Ed25519 key and `Algorithm::Es256` for a P-256 key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum VerifyingKey {
+    /// An Ed25519 key. Mandatory to implement.
+    Ed25519(PublicKey),
+    /// A P-256 key.
+    #[cfg(feature = "aat-es256")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "aat-es256")))]
+    P256(P256PublicKey),
+}
+
+impl VerifyingKey {
+    /// The one algorithm this key is used with.
+    pub fn algorithm(&self) -> Algorithm {
+        match self {
+            Self::Ed25519(_) => Algorithm::Ed25519,
+            #[cfg(feature = "aat-es256")]
+            Self::P256(_) => Algorithm::Es256,
+        }
+    }
+
+    /// The Ed25519 key, or `None` for a key of another type.
+    pub fn as_ed25519(&self) -> Option<&PublicKey> {
+        match self {
+            Self::Ed25519(key) => Some(key),
+            #[cfg(feature = "aat-es256")]
+            Self::P256(_) => None,
+        }
+    }
+
+    /// The RFC 7638 thumbprint of this key as an RFC 9278 URI. It is the
+    /// `iss` of a token this key signs as a holder, and it identifies a key
+    /// of either type.
+    pub fn thumbprint_uri(&self) -> String {
+        jose::Jwk::from_key(self).thumbprint_uri()
+    }
+}
+
+impl From<PublicKey> for VerifyingKey {
+    fn from(key: PublicKey) -> Self {
+        Self::Ed25519(key)
+    }
+}
+
+#[cfg(feature = "aat-es256")]
+impl From<P256PublicKey> for VerifyingKey {
+    fn from(key: P256PublicKey) -> Self {
+        Self::P256(key)
+    }
+}
+
 /// A root issuer this enforcement point trusts.
 #[derive(Debug, Clone)]
 pub struct TrustAnchor {
     /// The issuer identifier a root token's `iss` must equal.
     pub issuer: String,
     /// The key that verifies root tokens from this issuer.
-    pub key: PublicKey,
+    pub key: VerifyingKey,
 }
 
 /// Verification limits. The defaults are the draft's recommended values.
@@ -85,7 +250,9 @@ pub trait ReplayStore {
     fn record(&mut self, pop_jti: &str) -> bool;
 }
 
-/// What this enforcement point requires of a presentation.
+/// What this enforcement point requires of a presentation. Build one with
+/// [`VerifyOptions::new`] and set the fields that differ from its defaults.
+#[non_exhaustive]
 pub struct VerifyOptions<'a> {
     /// The identifier of this enforcement point. A PoP `aat_aud` and every
     /// chain `aud` that is present must name it.
@@ -94,6 +261,13 @@ pub struct VerifyOptions<'a> {
     pub now: i64,
     /// Size, depth and clock limits.
     pub limits: Limits,
+    /// The signature algorithms this enforcement point permits (Section
+    /// 9.11). The list is applied to every token in the chain and to the PoP
+    /// JWT, each on its own: a signature made with an algorithm that is not
+    /// listed is denied, and so is a `cnf.jwk` of a key type that only an
+    /// unlisted algorithm uses. A trust anchor's key type does not add its
+    /// algorithm to the list. The default permits `Ed25519` only.
+    pub algorithms: &'a [Algorithm],
     /// Deny a PoP that carries no `aat_aud`.
     pub require_pop_aud: bool,
     /// Deny a chain in which no token carries `aud`.
@@ -106,12 +280,14 @@ pub struct VerifyOptions<'a> {
 }
 
 impl<'a> VerifyOptions<'a> {
-    /// Default limits, no audience or nonce requirement, no replay tracking.
+    /// Default limits, `Ed25519` only, no audience or nonce requirement, no
+    /// replay tracking.
     pub fn new(audience: &'a str, now: i64) -> Self {
         Self {
             audience,
             now,
             limits: Limits::default(),
+            algorithms: &[Algorithm::Ed25519],
             require_pop_aud: false,
             require_chain_aud: false,
             nonce: None,
@@ -122,13 +298,14 @@ impl<'a> VerifyOptions<'a> {
 
 /// A permitted invocation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Verified {
     /// The trust anchor issuer whose key verified the root token.
     pub issuer: String,
     /// The `jti` of every token in the chain, root first.
     pub token_ids: Vec<String>,
     /// The leaf holder's key, which signed the PoP.
-    pub holder: PublicKey,
+    pub holder: VerifyingKey,
 }
 
 /// A denied presentation.
