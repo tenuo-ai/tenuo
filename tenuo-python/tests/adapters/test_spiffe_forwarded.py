@@ -1222,7 +1222,7 @@ def test_cancelled_request_keeps_its_slot_while_its_policy_call_runs(forwarded):
         application.close()
 
 
-def test_a_client_in_another_language_gets_a_usable_warrant(app, serve):
+def test_a_client_in_another_language_gets_a_usable_warrant(app, serve, tmp_path):
     """The Node.js example builds the request from the guide's wire description alone."""
     import shutil
     import subprocess
@@ -1238,8 +1238,13 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, serve):
     port = serve(InjectIdentity(application))
     url = f"http://127.0.0.1:{port}/warrants"
 
+    key_file = tmp_path / "holder.pem"
+    environment = {**os.environ, "HOLDER_KEY_FILE": str(key_file)}
+
     def request(*arguments):
-        result = subprocess.run([node, str(script), *arguments], capture_output=True, text=True, timeout=60)
+        result = subprocess.run(
+            [node, str(script), *arguments], capture_output=True, text=True, timeout=60, env=environment
+        )
         if not result.stdout.strip():
             pytest.skip(f"this Node.js cannot run the example: {result.stderr.strip()[:200]}")
         return json.loads(result.stdout)
@@ -1249,6 +1254,24 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, serve):
     warrant = Warrant.from_base64(reply["warrant"])
     assert warrant.issuer == root.public_key
     assert warrant.authorized_holder == PublicKey.from_bytes(base64.b64decode(reply["holder"]))
+    # The point of the exchange: the caller still has the holder key, and with it the warrant works at a tool.
+    assert key_file.stat().st_mode & 0o077 == 0 or os.name == "nt"
+    holder = SigningKey.from_pem(key_file.read_text())
+    assert warrant.authorized_holder == holder.public_key
+    args = {"customer": "123", "cents": 100}
+    Authorizer(trusted_roots=[root.public_key]).authorize(
+        warrant, "refund", args, warrant.sign(holder, "refund", args, int(time.time()))
+    )
+    # A second request reuses the key in the file, and the example will not run without somewhere to keep it.
+    assert request(url, AUDIENCE, "task-123")["holder"] == reply["holder"]
+    forgetful = subprocess.run(
+        [node, str(script), url, AUDIENCE, "task-123"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(os.environ, HOLDER_KEY_FILE=""),
+    )
+    assert forgetful.returncode == 2 and not forgetful.stdout and "HOLDER_KEY_FILE" in forgetful.stderr
     # The same refusals as any other client.
     assert request(url, "https://another-issuer.example.test", "task-123")["message"] == "Invalid holder proof"
     assert "not authorized" in request(url, AUDIENCE, "another-task")["message"]

@@ -1665,7 +1665,7 @@ def test_guide_jwt_code_runs(tmp_path, monkeypatch, authority, workload_api, ser
     assert refund(call({"customer": "999", "cents": 100})).startswith("denied: ")
 
 
-def test_a_client_in_another_language_gets_a_usable_warrant(app, authority, serve):
+def test_a_client_in_another_language_gets_a_usable_warrant(app, authority, serve, tmp_path):
     """The Node.js example presents a JWT-SVID and builds the holder proof from the guide's wire description."""
     import shutil
     import subprocess
@@ -1680,8 +1680,15 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, authority, serv
     application, _, root = app
     url = f"http://127.0.0.1:{serve(application)}/warrants"
 
+    import os
+
+    key_file = tmp_path / "holder.pem"
+    environment = {**os.environ, "HOLDER_KEY_FILE": str(key_file)}
+
     def request(*arguments):
-        result = subprocess.run([node, str(script), *arguments], capture_output=True, text=True, timeout=60)
+        result = subprocess.run(
+            [node, str(script), *arguments], capture_output=True, text=True, timeout=60, env=environment
+        )
         if not result.stdout.strip():
             pytest.skip(f"this Node.js cannot run the example: {result.stderr.strip()[:200]}")
         return json.loads(result.stdout)
@@ -1691,12 +1698,28 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, authority, serv
     warrant = Warrant.from_base64(reply["warrant"])
     assert warrant.issuer == root.public_key
     assert warrant.authorized_holder == PublicKey.from_bytes(base64.b64decode(reply["holder"]))
+    # The point of the exchange: the caller still has the holder key, and with it the warrant works at a tool.
+    assert key_file.stat().st_mode & 0o077 == 0 or os.name == "nt"
+    holder = SigningKey.from_pem(key_file.read_text())
+    assert warrant.authorized_holder == holder.public_key
+    args = {"customer": "123", "cents": 100}
+    Authorizer(trusted_roots=[root.public_key]).authorize(
+        warrant, "refund", args, warrant.sign(holder, "refund", args, int(time.time()))
+    )
+    # A second request reuses the key in the file, and the example will not run without somewhere to keep it.
+    assert request(url, AUDIENCE, "task-123", authority.token())["holder"] == reply["holder"]
+    forgetful = subprocess.run([node, str(script), url, AUDIENCE, "task-123", authority.token()], capture_output=True, text=True, timeout=60, env=dict(os.environ, HOLDER_KEY_FILE=""))
+    assert forgetful.returncode == 2 and not forgetful.stdout and "HOLDER_KEY_FILE" in forgetful.stderr
     refused = request(url, AUDIENCE, "task-123", authority.token(aud="spiffe://example.test/another"))
     assert refused["status"] == 401 and "audience" in refused["message"]
     # A bearer token is never sent in plain HTTP to another machine. Nothing is sent at all.
     for plain in ("http://issuer.example.test/warrants", "http://10.0.0.5:8080/warrants", "ftp://127.0.0.1/warrants"):
         result = subprocess.run(
-            [node, str(script), plain, AUDIENCE, "task-123", authority.token()], capture_output=True, text=True, timeout=60
+            [node, str(script), plain, AUDIENCE, "task-123", authority.token()],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=environment,
         )
         assert result.returncode == 2 and not result.stdout and "bearer token" in result.stderr, result
 

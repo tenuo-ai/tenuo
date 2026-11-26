@@ -156,12 +156,17 @@ result.
 
 `clients/request_warrant.mjs` obtains a warrant over HTTP with nothing but
 Node.js's standard library, for an identity forwarded by a mesh sidecar or
-with a JWT-SVID. It follows the wire formats in the guide's reference section,
-and the Python test suite runs it against both endpoints.
+with a JWT-SVID. It follows the wire formats in the guide's reference section.
+The Python test suite runs it against both endpoints and signs a tool call
+with the key it kept.
 
 ```bash
-node tenuo-python/examples/spiffe/clients/request_warrant.mjs URL AUDIENCE TASK_ID [JWT_SVID]
+HOLDER_KEY_FILE=holder.pem node tenuo-python/examples/spiffe/clients/request_warrant.mjs URL AUDIENCE TASK_ID [JWT_SVID]
 ```
+
+The warrant works only with the holder key, so the script keeps it in the file
+`HOLDER_KEY_FILE` names (created if missing, readable by you alone). In an
+agent, import `requestWarrant` and pass a key you hold in memory instead.
 
 ## Use credentials from an existing SPIRE deployment
 

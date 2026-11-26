@@ -1516,20 +1516,25 @@ The JSON form is not accepted.
 ### A client in another language
 
 [`request_warrant.mjs`](../tenuo-python/examples/spiffe/clients/request_warrant.mjs)
-is the two HTTP exchanges above in about 60 lines of Node.js, using only its
-standard library. The test suite runs it against both endpoints and checks the
-warrants it receives.
+is the two HTTP exchanges above in Node.js, using only its standard library.
+The test suite runs it against both endpoints, then signs a tool call with the
+key it kept and checks that a tool accepts it.
+
+A warrant is only usable with the private half of the holder key, so the
+caller owns that key. An agent imports `requestWarrant` and passes a key it
+keeps in memory. From a shell, `HOLDER_KEY_FILE` names a file for it, created
+readable by you alone if it does not exist and reused if it does:
 
 ```bash
 # Identity forwarded by a mesh sidecar:
-node request_warrant.mjs http://issuer.acme.internal/warrants https://issuer.acme.internal/warrants refund-task-123
+HOLDER_KEY_FILE=holder.pem node request_warrant.mjs http://issuer.acme.internal/warrants https://issuer.acme.internal/warrants refund-task-123
 # A JWT-SVID as bearer token:
-node request_warrant.mjs https://issuer.acme.internal/warrants spiffe://acme.test/issuer refund-task-123 "$JWT_SVID"
+HOLDER_KEY_FILE=holder.pem node request_warrant.mjs https://issuer.acme.internal/warrants spiffe://acme.test/issuer refund-task-123 "$JWT_SVID"
 ```
 
 It prints the warrant and the holder public key as JSON. To call tools with
 the warrant, sign each call with the holder key using the Tenuo SDK for your
-language.
+language. With a JWT-SVID it refuses plain `http://` except to loopback.
 
 ### What this adapter does not do
 
