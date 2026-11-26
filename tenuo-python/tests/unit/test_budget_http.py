@@ -1683,8 +1683,8 @@ class TestCountsThatCannotBeRight:
     CHAT_BODY = {"model": MODEL, "messages": MESSAGES, "max_tokens": 100}
     GEMINI_BODY = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "generationConfig": {"maxOutputTokens": 100}}
 
-    @pytest.mark.parametrize("count", [0, 10 ** 12, 2 ** 63, 1e30, 10 ** 400],
-                             ids=["zero", "over", "int64", "float", "past-float"])
+    @pytest.mark.parametrize("count", [0, 10 ** 12, 2 ** 63, 1e30, 10 ** 400, 10 ** 9 + 0.5],
+                             ids=["zero", "over", "int64", "float", "past-float", "just-over"])
     def test_a_count_no_call_could_have_keeps_the_reservation(self, keys, count):
         answers = [
             (CHAT, self.CHAT_BODY, {"usage": {"prompt_tokens": count, "completion_tokens": 0, "total_tokens": count}}),
@@ -1696,6 +1696,25 @@ class TestCountsThatCannotBeRight:
         for url, body, answer in answers:
             total, usage = self.settle(keys, url, body, answer)
             assert total == INPUT + 100 and usage["estimated"] is True, url
+
+    @pytest.mark.parametrize("count", [10 ** 9 + 0.5, float("inf"), float("nan"), -0.5, 10 ** 400],
+                             ids=["just-over", "inf", "nan", "below-zero", "past-float"])
+    def test_every_dialect_reads_such_a_count_as_none(self, count):
+        from tenuo.budget import usage_counts
+        from tenuo.budget_http import _DIALECTS, _GOOGLE
+
+        anthropic = next(d for _, d in _DIALECTS if d.name.startswith("anthropic"))
+        assert anthropic._total({"input_tokens": 5, "cache_read_input_tokens": count, "output_tokens": 3}) is None
+        assert _GOOGLE._total({"promptTokenCount": 5, "thoughtsTokenCount": count}) is None
+        assert _GOOGLE._total({"promptTokenCount": 5, "candidatesTokenCount": 3, "totalTokenCount": count}) is None
+        assert usage_counts({"prompt_tokens": 5, "completion_tokens": count}) is None
+
+    def test_a_fraction_inside_the_limit_is_still_a_count(self):
+        from tenuo.budget_http import _DIALECTS, _GOOGLE
+
+        anthropic = next(d for _, d in _DIALECTS if d.name.startswith("anthropic"))
+        assert anthropic._total({"input_tokens": 10.0, "output_tokens": 5.9})["total_tokens"] == 15
+        assert _GOOGLE._total({"promptTokenCount": 10.0, "candidatesTokenCount": 5.9})["total_tokens"] == 15
 
     def test_the_calls_after_one_are_counted_as_usual(self, keys, tmp_path):
         from tenuo.budget import BudgetStore

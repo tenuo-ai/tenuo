@@ -100,6 +100,7 @@ from tenuo.budget import (
     MeteredCall,
     ModelCallDenied,
     TokenMeter,
+    _is_count,
     usage_counts,
 )
 
@@ -380,13 +381,13 @@ class _AnthropicMessages(_Dialect):
             value = usage.get(name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 seen.append(value)
-                return int(value)
+                return int(value) if _is_count(value) else 0
             return 0
 
         # Cached input is reported apart from input_tokens; all of it is input.
         inp = read("input_tokens") + read("cache_creation_input_tokens") + read("cache_read_input_tokens")
         out = read("output_tokens")
-        if not seen or min(seen) < 0:
+        if not seen or not all(_is_count(value) for value in seen):
             return None  # nothing usable was reported: the reservation stands, as for missing usage
         return {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out}
 
@@ -489,13 +490,13 @@ class _GoogleGenerate(_Dialect):
             value = meta.get(name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 seen.append(value)
-                return int(value)
+                return int(value) if _is_count(value) else 0
             return 0
 
         inp = read("promptTokenCount") + read("toolUsePromptTokenCount")
         out = read("candidatesTokenCount") + read("thoughtsTokenCount")  # thinking is billed as output
         total = max(read("totalTokenCount"), inp + out)  # a total below its own parts is not a total
-        if not seen or min(seen) < 0:
+        if not seen or not all(_is_count(value) for value in seen):
             return None  # nothing usable was reported: the reservation stands, as for missing usage
         return {"input_tokens": inp, "output_tokens": out, "total_tokens": total}
 

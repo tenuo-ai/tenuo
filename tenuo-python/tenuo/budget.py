@@ -569,6 +569,15 @@ def estimate_input_tokens(request: Mapping[str, Any]) -> int:
     return math.ceil(len(data.encode("utf-8")) / 3) + 16 + media
 
 
+def _is_count(value: Any) -> bool:
+    """Whether one call could have used this many tokens.
+
+    False for a number below zero, above ``MAX_CALL_TOKENS``, or not a number
+    at all (NaN). Asked of the number as reported, before any rounding.
+    """
+    return bool(0 <= value <= MAX_CALL_TOKENS)
+
+
 def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
     """Normalize a provider usage object to input, output and total tokens.
 
@@ -590,9 +599,7 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
             if isinstance(value, bool):
                 continue
             if isinstance(value, (int, float)):
-                # The bounds come first: an integer too large for a float
-                # cannot be asked whether it is finite.
-                if value < 0 or value > MAX_CALL_TOKENS or not math.isfinite(value):
+                if not _is_count(value):
                     impossible.append(name)
                     continue
                 return int(value)
