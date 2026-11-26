@@ -92,7 +92,7 @@ llm_capability(total_tokens=50_000, period="day", timezone="America/Vancouver")
 
 The period is signed like the total, so a child warrant cannot drop or change it. The meter keeps one running total per warrant and period and tells the warrant check which period it counted by; a meter that counts by another, or an older one that knows nothing of periods, is refused. `status()` gives `period` and `resets_at` with the current period's use, and `BudgetExceeded` carries both.
 
-A call is counted in the period it was reserved in, also when its reply arrives after the period ends. This is a local allowance, held where the meter's store is; a period budget handed out across hosts by an issuer is [below](#how-a-period-budget-is-handed-out).
+A call is counted in the period it was reserved in, also when its reply arrives after the period ends; a period's total is kept for an hour past its end for that. An hour is an hour on the UTC clock, whatever the time zone. This is a local allowance, held where the meter's store is; a period budget handed out across hosts by an issuer is [below](#how-a-period-budget-is-handed-out).
 
 ---
 

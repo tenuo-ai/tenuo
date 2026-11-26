@@ -45,6 +45,8 @@ lifetime. The period is signed with the warrant like the total, so a delegated
 warrant cannot change it. The meter keeps one running total per warrant and
 period and tells the core which period it counted by. A day, week or month
 starts at midnight in ``timezone`` (UTC unless given); a week starts on Monday.
+An hour is an hour on the UTC clock. A period's total is kept for an hour after
+the period ends, for calls still running at the boundary.
 
 Scope: a total holds only where every call passes a meter on the same store.
 The in-memory backend is per process and :class:`SqliteBudgetBackend` is per
@@ -76,6 +78,9 @@ MODEL_FIELD = "model"
 PERIOD_FIELD = "period"
 ZONE_FIELD = "period_timezone"
 PERIODS = ("hour", "day", "week", "month")
+# How long a period's total is kept after the period ends, so that a call still
+# running at the boundary settles against what was counted and not against nothing.
+PERIOD_GRACE_SECONDS = 3600
 
 __all__ = [
     "BudgetBackend",
@@ -616,7 +621,7 @@ class BudgetLevel:
     own: bool
     constraint: Optional[Any]  # the signed total, when this warrant has one
     limit: Optional[int]  # its upper bound, when it is a plain Range
-    expires_at: float  # when the row may be dropped: the warrant's end, or the period's
+    expires_at: float  # when the row may be dropped: the warrant's end, or a while after the period's
     used: int = 0  # filled in as the call proceeds
     key: str = ""  # where the store keeps this total: the warrant, or the warrant and period
     period: Optional[str] = None  # the signed period, when the total is per period
@@ -798,8 +803,8 @@ class TokenMeter:
                     level.problem = str(exc)
                 else:
                     level.key = f"{level.warrant_id}@{label}"
-                    ends = [t for t in (level.expires_at, level.resets_at) if t]
-                    level.expires_at = min(ends) if ends else 0.0
+                    kept = level.resets_at + PERIOD_GRACE_SECONDS
+                    level.expires_at = min(level.expires_at, kept) if level.expires_at else kept
             out.append(level)
         return out
 
@@ -1046,11 +1051,14 @@ def _period_bounds(period: Optional[str], zone: Optional[str], now: float) -> Tu
     """
     if period not in PERIODS:
         raise ValueError(f"its period must be signed as one of {', '.join(PERIODS)}")
-    at = datetime.fromtimestamp(now, _zone(zone))
+    tz = _zone(zone)  # checked for every period, though an hour does not use it
     if period == "hour":
-        start = at.replace(minute=0, second=0, microsecond=0)
-        # By elapsed time, so the hour that repeats when clocks go back is two periods.
-        return "hour:" + start.astimezone(_timezone.utc).strftime("%Y-%m-%dT%H"), start.timestamp() + 3600
+        # An hour of elapsed time on the UTC clock, whatever the zone: local clocks can
+        # repeat or skip part of an hour, and some by half an hour.
+        start = math.floor(now / 3600) * 3600
+        label = datetime.fromtimestamp(start, _timezone.utc).strftime("%Y-%m-%dT%H")
+        return "hour:" + label, float(start + 3600)
+    at = datetime.fromtimestamp(now, tz)
     day = at.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
     if period == "day":
         first, following = day, day + timedelta(days=1)

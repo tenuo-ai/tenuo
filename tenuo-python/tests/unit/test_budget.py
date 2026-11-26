@@ -659,6 +659,12 @@ def at(hours):
     return now, (lambda: now[0])
 
 
+def long_root(keys, **caps):
+    """A root that lasts three hours, so that an hour can end while it is still valid."""
+    return (Warrant.mint_builder().capability("llm.chat", llm_capability(**caps))
+            .holder(keys.lead.public_key).ttl(3 * 3600).mint(keys.issuer))
+
+
 def call(meter, warrant, key, issuer, chain=None, tokens=3000, output=500):
     """One model request: reserved, authorized by the warrant, settled to what it used."""
     held = meter.begin(warrant, chain, REQUEST, requested_output=output,
@@ -801,11 +807,70 @@ class TestPeriod:
         call(meter, worker, keys.worker, keys.issuer, [root])
 
     def test_rows_of_a_past_period_are_dropped_from_the_store(self, keys, tmp_path):
-        root = mint_root(keys, total_tokens=8000, period="hour")
+        from tenuo.budget import PERIOD_GRACE_SECONDS, _expiry
+
         meter = TokenMeter(BudgetStore(str(tmp_path / "b.db"), margin_seconds=0),
                            input_estimator=fixed_estimate(3000))
-        call(meter, root, keys.lead, keys.issuer)
-        level = meter.levels(root)[0]
-        # Kept until the hour ends, which is before this one-hour warrant does.
-        assert level.expires_at == level.resets_at and 0 < level.resets_at - time.time() <= 3600
+        long = long_root(keys, total_tokens=8000, period="hour")
+        call(meter, long, keys.lead, keys.issuer)
+        level = meter.levels(long)[0]
+        # Kept for a while after the hour ends, which is before this warrant does.
+        assert 0 < level.resets_at - time.time() <= 3600
+        assert level.expires_at == level.resets_at + PERIOD_GRACE_SECONDS
         assert meter.store.used(level.key) == {level.key: 3500}
+        # Never longer than the warrant itself.
+        short = mint_root(keys, total_tokens=8000, period="hour")
+        level = meter.levels(short)[0]
+        assert level.expires_at == _expiry(short) < level.resets_at + PERIOD_GRACE_SECONDS
+
+    @pytest.mark.parametrize("backend", ["memory", "sqlite"])
+    def test_a_call_still_running_when_its_period_ends_is_settled_in_full(self, keys, tmp_path, monkeypatch, backend):
+        import types
+
+        from tenuo import budget
+
+        # The meter and the store read one pretend clock, five seconds before the hour ends.
+        hour_ends = (time.time() // 3600 + 1) * 3600
+        now = [hour_ends - 5]
+        monkeypatch.setattr(budget, "time", types.SimpleNamespace(
+            time=lambda: now[0], monotonic=time.monotonic, sleep=time.sleep))
+        store = BudgetStore(str(tmp_path / "b.db")) if backend == "sqlite" else BudgetStore()
+        meter = TokenMeter(store, input_estimator=fixed_estimate(3000), clock=lambda: now[0])
+        root = long_root(keys, total_tokens=8000, period="hour")
+        ending = meter.levels(root)[0]
+        held = meter.begin(root, None, REQUEST, requested_output=500,
+                           authorize=authorizer(root, keys.lead, keys.issuer))
+        now[0] = hour_ends + 300  # the hour is over, and so is the store's margin
+        call(meter, root, keys.lead, keys.issuer)  # a write in the new hour: old rows are dropped on writes
+        record = held.settle({"input_tokens": 9000, "output_tokens": 500})
+        assert store.used(ending.key) == {ending.key: 9500}
+        assert record["over_budget"] == [root.id]
+        assert meter.status(root)[0]["used"] == 3500  # the new hour holds only its own call
+        now[0] = hour_ends + budget.PERIOD_GRACE_SECONDS + 300
+        call(meter, root, keys.lead, keys.issuer)
+        assert store.used(ending.key) == {ending.key: 0}  # dropped once no call can still be running
+
+    @needs_zones
+    @pytest.mark.parametrize("zone,around", [
+        # Lord Howe Island moves its clocks by half an hour: 01:30 to 02:00 happens twice that night.
+        ("Australia/Lord_Howe", (2027, 4, 3, 12)),
+        ("Australia/Lord_Howe", (2027, 10, 2, 12)),
+        ("Europe/Berlin", (2026, 10, 24, 21)),
+        ("Asia/Kolkata", (2030, 1, 2, 12)),  # half an hour off UTC all year
+    ])
+    def test_an_hour_is_an_hour_of_elapsed_time_in_every_zone(self, zone, around):
+        from datetime import datetime, timezone
+
+        from tenuo.budget import _period_bounds
+
+        start = datetime(*around, tzinfo=timezone.utc).timestamp()
+        hours = {}
+        for minute in range(0, 6 * 60, 5):
+            now = start + minute * 60
+            label, ends = _period_bounds("hour", zone, now)
+            assert now < ends <= now + 3600
+            assert (label, ends) == _period_bounds("hour", None, now)
+            assert hours.setdefault(label, ends) == ends
+            for period in ("day", "week", "month"):
+                assert _period_bounds(period, zone, now)[1] > now
+        assert len(hours) == 6
