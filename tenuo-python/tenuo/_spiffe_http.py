@@ -49,7 +49,7 @@ class _Refusal(Exception):
 
 
 class _Places:
-    """The requests in progress, overall and per caller, during one run of the application.
+    """The requests in progress, overall and per caller, and the callers being checked, during one run.
 
     A restart (lifespan shutdown, then startup) begins a new count. A request
     of the earlier run that finishes late gives its place back to the earlier
@@ -60,6 +60,7 @@ class _Places:
     def __init__(self) -> None:
         self.in_progress = 0
         self.per_key: Dict[str, int] = {}
+        self.checking = 0
 
 
 class _Slot:
@@ -127,6 +128,10 @@ class _IssuerApp:
     def _credential(self, scope: _Scope) -> Any:
         """Take the caller's credential from the request, or raise ``_Refusal``. Runs before the body is read."""
         raise NotImplementedError
+
+    async def _checked(self, credential: Any) -> Any:
+        """Verify the credential where that takes real work, before the request is admitted. May raise ``_Refusal``."""
+        return credential
 
     def _limit_key(self, credential: Any) -> Optional[str]:
         """The caller to count requests against, when it is already known from the credential."""
@@ -197,7 +202,7 @@ class _IssuerApp:
             raise _Refusal(404, "not_found", "No such endpoint")
         if scope.get("method") != "POST":
             raise _Refusal(405, "method_not_allowed", "Use POST")
-        credential = self._credential(scope)
+        credential = await self._checked(self._credential(scope))
         # A request takes one place before its body is read and keeps it until it
         # has finished, so one limit covers the requests being read and those
         # being worked on, and a request over the limit is refused at once.
@@ -313,53 +318,34 @@ def _post_for_warrant(
 
     Redirects are never followed. ``before_request`` runs on the open
     connection before anything is sent (for example to authenticate the peer).
-    ``timeout`` bounds the whole exchange: the connection's own timeout only
-    bounds each wait for more bytes, which a slow sender can renew for ever.
+    ``timeout`` bounds the whole exchange, from looking up the host to the
+    last byte of the reply.
     """
-    connection: Optional[http.client.HTTPConnection] = None
     guard = threading.Lock()
-    overdue = False  # The deadline has passed.
-    expired = threading.Event()  # The deadline has passed with the connection open: the exchange is over.
     opened: List[Any] = []  # The connection's socket, once there is one.
-
-    def cut_off() -> None:
-        nonlocal overdue
-        with guard:
-            overdue = True
-            if not opened:
-                return  # Still connecting, which has its own time limit; hold_socket ends the exchange after it.
-            expired.set()
-        try:
-            # The plain socket's own method: it wakes a read in progress and leaves the TLS state to its owner.
-            socket.socket.shutdown(opened[0], socket.SHUT_RDWR)
-        except OSError:
-            pass
+    abandoned = False  # The caller's deadline has passed.
+    late = f"The issuer at {where} did not answer within {timeout:g} seconds" if timeout is not None else ""
 
     def hold_socket(connected: http.client.HTTPConnection) -> None:
-        """Keep the socket for the deadline to act on.
+        """Keep the socket for the deadline to act on, and stop if the deadline has already passed.
 
-        The connection lets go of it as soon as a reply says it will close,
-        while the reply's body is still to be read from it.
+        The connection lets go of its socket as soon as a reply says it will
+        close, while the reply's body is still to be read from it.
         """
         sock = getattr(connected, "sock", None)
         with guard:
             if sock is not None and not opened:
                 opened.append(sock)
-            if overdue and opened:
-                expired.set()
-        if expired.is_set():
-            raise SpiffeError(f"The issuer at {where} did not answer within {timeout:g} seconds")
+            gone = abandoned
+        if gone:
+            raise SpiffeError(late)
 
-    deadline = threading.Timer(timeout, cut_off) if timeout is not None else None
-    if deadline is not None:
-        deadline.daemon = True
-        deadline.start()
-    try:
+    def exchange() -> Tuple[int, bytes]:
+        connection = connect()
         try:
-            connection = connect()
+            connection.connect()
+            hold_socket(connection)  # Nothing is sent once the caller has given up.
             if before_request is not None:
-                connection.connect()
-                hold_socket(connection)
                 before_request(connection)
             connection.request(
                 "POST",
@@ -367,16 +353,49 @@ def _post_for_warrant(
                 body=body,
                 headers={"Content-Type": "application/json", "Accept": "application/json", **headers},
             )
-            hold_socket(connection)
             response = connection.getresponse()
-            status = response.status
-            payload = response.read(_MAX_BODY_BYTES + 1)
-        except Exception as exc:
-            if expired.is_set():
-                raise SpiffeError(f"The issuer at {where} did not answer within {timeout:g} seconds") from exc
-            raise
-        if expired.is_set():  # Cut off mid-reply: what was read is not the whole answer.
-            raise SpiffeError(f"The issuer at {where} did not answer within {timeout:g} seconds")
+            return response.status, response.read(_MAX_BODY_BYTES + 1)
+        finally:
+            connection.close()
+
+    def within_the_deadline() -> Tuple[int, bytes]:
+        """Run the exchange in a thread of its own and wait for it no longer than ``timeout``.
+
+        Nothing less covers every step. Looking up a host name has no time
+        limit, each address tried gets a whole one, and each read of the reply
+        starts another.
+        """
+        nonlocal abandoned
+        outcome: List[Tuple[bool, Any]] = []
+        finished = threading.Event()
+
+        def run() -> None:
+            try:
+                outcome.append((True, exchange()))
+            except BaseException as exc:
+                outcome.append((False, exc))
+            finally:
+                finished.set()
+
+        threading.Thread(target=run, name="tenuo-spiffe-exchange", daemon=True).start()
+        if not finished.wait(timeout):
+            with guard:
+                abandoned = True
+                sock = opened[0] if opened else None
+            if sock is not None:
+                try:
+                    # The plain socket's own method: it wakes a read in progress and leaves the TLS state to its owner.
+                    socket.socket.shutdown(sock, socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            raise SpiffeError(late)
+        succeeded, value = outcome[0]
+        if not succeeded:
+            raise value
+        return value
+
+    try:
+        status, payload = exchange() if timeout is None else within_the_deadline()
     except SpiffeError:
         raise
     except ssl.SSLCertVerificationError as exc:
@@ -385,11 +404,6 @@ def _post_for_warrant(
         raise SpiffeError(f"TLS with the issuer at {where} failed: {exc.reason or exc}") from exc
     except (OSError, http.client.HTTPException, UnicodeError) as exc:  # UnicodeError: an unusable host name.
         raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
-    finally:
-        if deadline is not None:
-            deadline.cancel()
-        if connection is not None:
-            connection.close()
     try:
         reply = json.loads(payload) if len(payload) <= _MAX_BODY_BYTES else None
     except (ValueError, RecursionError):

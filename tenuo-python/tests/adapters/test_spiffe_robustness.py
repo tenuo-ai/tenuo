@@ -339,3 +339,26 @@ def test_a_partner_copy_of_the_issuers_own_intermediate_drops_the_partner(ca, tm
     connection, _ = ts.connect(server, ts.raw_client(agent, ca.pem))  # Home workloads are served as before.
     if spiffe._verified_chain(connection) is not None:  # Python 3.9 cannot follow an intermediate with federation on.
         assert server.authenticate(connection).spiffe_id == ts.AGENT
+
+
+def test_a_replaced_retry_timer_does_nothing_when_it_fires_late():
+    offered = []
+
+    def not_valid_yet(snapshot):
+        offered.append(snapshot)
+        raise SpiffeError("Local SVID is not currently valid")
+
+    watcher = spiffe._WorkloadAPIWatcher("127.0.0.1:1", spiffe._FETCH_X509_SVID, lambda raw: raw, not_valid_yet)
+    try:
+        with watcher._deliver_lock:
+            watcher._offer("first update")
+        first = watcher._retry_timer
+        with watcher._deliver_lock:
+            watcher._offer("a newer update")  # Cancels the first timer and starts its own.
+        second = watcher._retry_timer
+        assert second is not first and second.interval == spiffe._PENDING_RETRY[0]
+        watcher._retry_tick(first)  # The first had already fired and was waiting its turn.
+        # Still the one timer, on its own schedule, and no retry outside it.
+        assert watcher._retry_timer is second and offered == ["first update", "a newer update"]
+    finally:
+        watcher.stop(join=False)

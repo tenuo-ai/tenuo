@@ -878,7 +878,7 @@ def test_client_through_a_sidecar(app, serve):
         request_warrant_forwarded(
             f"http://127.0.0.1:{port}/warrants", **{**options, "issuer_key": SigningKey.generate().public_key}
         )
-    with pytest.raises(SpiffeError, match="Could not complete the exchange"):
+    with pytest.raises(SpiffeError, match="Could not complete the exchange|did not answer within"):
         request_warrant_forwarded("http://127.0.0.1:9/warrants", timeout=2, **options)
 
 
@@ -1162,7 +1162,7 @@ def test_shortest_warrant_cap_still_issues(forwarded_issuer):
 
 def test_client_reports_an_unusable_host_name_as_a_spiffe_error():
     holder = SigningKey.generate()
-    with pytest.raises(SpiffeError, match="Could not complete the exchange"):
+    with pytest.raises(SpiffeError, match="Could not complete the exchange|did not answer within"):
         request_warrant_forwarded(
             "http://" + "a" * 64 + ".example/warrants",
             audience=AUDIENCE,
@@ -1397,3 +1397,31 @@ def test_time_settings_must_be_positive_and_finite(forwarded_issuer, value):
             task_id="task-123",
             timeout=value,
         )
+
+
+def test_only_a_decimal_suffix_is_read_as_a_port(forwarded_issuer):
+    """After the last colon of an IPv6 entry, digits may be a port. Anything else is part of another address."""
+    issuer, *_ = forwarded_issuer
+    proxy = "2001:db8::1"
+    issuer.forwarded = SpiffeForwardedIdentity(
+        DOMAIN, audience=AUDIENCE, trusted_proxies=[proxy], require_certificate=False
+    )
+    application = SpiffeForwardedIssuerApp(issuer)
+    try:
+        for value, expected in (
+            (f"{proxy}:abcd", 200),  # Another address.
+            (f"{proxy}:ABCD", 200),
+            ("2001:db8::2", 200),
+            (f"{proxy}:4000", 403),  # Could be this address and a port: not ruled out.
+            (f"[{proxy}]:4000", 403),
+            (proxy, 403),
+        ):
+            status, *_ = call_app(
+                application,
+                headers=[("x-forwarded-client-cert", element()), ("X-Forwarded-For", value)],
+                body=request_body(SigningKey.generate()),
+                client=(proxy, 40000),
+            )
+            assert status == expected, value
+    finally:
+        application.close()

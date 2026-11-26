@@ -670,10 +670,14 @@ class _WorkloadAPIWatcher:
         timer.start()
 
     def _retry_tick(self, timer: Optional[threading.Timer] = None) -> None:
-        if timer is None or self._retry_timer is timer:  # A timer that was replaced leaves its successor alone.
+        # One step under the delivery lock: a newer update arriving in the middle
+        # could otherwise have its timer forgotten here and a second one started.
+        with self._deliver_lock:
+            if timer is not None and self._retry_timer is not timer:
+                return  # Replaced by a newer update's timer, which does the retrying now.
             self._retry_timer = None
-        if not self._stop.is_set():
-            self.retry_pending()
+            if not self._stop.is_set():
+                self.retry_pending()
 
     def _offer(self, snapshot: Any, retry: bool = False) -> bool:
         """Hand one update to the owner. Callers hold ``_deliver_lock``."""

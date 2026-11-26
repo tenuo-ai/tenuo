@@ -1586,7 +1586,7 @@ def test_client_never_sends_the_token_in_the_clear():
     with socket.socket() as unused:
         unused.bind(("127.0.0.1", 0))
         port = unused.getsockname()[1]
-    with pytest.raises(SpiffeError, match="Could not complete the exchange"):
+    with pytest.raises(SpiffeError, match="Could not complete the exchange|did not answer within"):
         request_warrant_jwt(f"http://127.0.0.1:{port}/warrants", timeout=2, **options)
 
 
@@ -1600,7 +1600,7 @@ def test_client_addresses_ipv6_hosts_correctly(authority, monkeypatch):
         def __init__(self, host, port=None, **_):
             seen.append((host, port))
 
-        def request(self, *_, **__):
+        def connect(self):
             raise OSError("stop here")
 
         def close(self):
@@ -1619,7 +1619,7 @@ def test_client_addresses_ipv6_hosts_correctly(authority, monkeypatch):
         ("https://issuer.acme.internal/warrants", ("issuer.acme.internal", 443)),
         ("https://issuer.acme.internal:8443/warrants", ("issuer.acme.internal", 8443)),
     ):
-        with pytest.raises(SpiffeError, match="Could not complete the exchange"):
+        with pytest.raises(SpiffeError, match="Could not complete the exchange|did not answer within"):
             request_warrant_jwt(url, **options)
         assert seen[-1] == expected
     for bad in ("https://issuer.acme.internal:port/warrants", "https://[::1/warrants", "http://[::ffff:10.0.0.1]/w"):
@@ -2612,4 +2612,77 @@ def test_a_restart_does_not_inherit_places_from_the_run_before(jwt_issuer, autho
         assert asyncio.run(second_run()) == ((0, {}), 200, 0)
     finally:
         finish.set()
+        application.close()
+
+
+def test_client_timeout_covers_looking_up_the_host(authority, monkeypatch):
+    """A name lookup has no time limit of its own. The call's deadline covers it."""
+    lookup = socket.getaddrinfo
+    release = threading.Event()
+
+    def slow(*arguments, **options):
+        release.wait(10)
+        return lookup(*arguments, **options)
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow)
+    holder = SigningKey.generate()
+    began = time.monotonic()
+    try:
+        with pytest.raises(SpiffeError, match="did not answer within 0.5 seconds"):
+            request_warrant_jwt(
+                "http://localhost:9/warrants",
+                token=authority.token(),
+                audience=AUDIENCE,
+                issuer_key=holder.public_key,
+                holder_key=holder,
+                task_id="task-123",
+                timeout=0.5,
+            )
+        assert time.monotonic() - began < 3
+    finally:
+        release.set()
+
+
+def test_endpoint_checks_tokens_off_the_event_loop_and_bounds_that_work(jwt_issuer, authority):
+    issuer, *_ = jwt_issuer
+    application = SpiffeJWTIssuerApp(issuer, max_concurrent=2)
+    holder, good = SigningKey.generate(), authority.token()
+    real, entered, release, threads = issuer.jwt.authenticate, threading.Semaphore(0), threading.Event(), []
+
+    def slow(token):
+        threads.append(threading.current_thread().name)
+        entered.release()
+        release.wait(10)
+        return real(token)
+
+    issuer.jwt.authenticate = slow
+
+    async def scenario():
+        async def whole():
+            return {"type": "http.request", "body": request_body(good, holder), "more_body": False}
+
+        async def one():
+            sent = []
+            await application(_asgi_scope(good), whole, lambda message: _collect(sent, message))
+            return sent[0]["status"]
+
+        loop_thread = threading.current_thread().name
+        waiting = [asyncio.ensure_future(one()) for _ in range(2)]
+        for _ in waiting:
+            await asyncio.to_thread(entered.acquire, True, 5)
+        third = await asyncio.wait_for(one(), 2)  # Both checks are taken: answered at once, the loop is free.
+        checking = application._places.checking
+        release.set()
+        return third, checking, await asyncio.gather(*waiting), application._places.checking, loop_thread
+
+    try:
+        third, checking, served, afterwards, loop_thread = asyncio.run(scenario())
+        assert (third, checking, afterwards) == (503, 2, 0)
+        assert served == [200, 200]  # Once their tokens were checked, both were admitted and served.
+        # The first check of each token ran in the token pool, the second with the policy. None ran on the loop.
+        assert all(name.startswith("tenuo-spiffe-token") for name in threads[:2])
+        assert len(threads) == 4 and loop_thread not in threads
+    finally:
+        release.set()
+        issuer.jwt.authenticate = real
         application.close()

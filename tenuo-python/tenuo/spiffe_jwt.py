@@ -19,6 +19,7 @@ between replicas, so it works behind load balancers without session affinity. Se
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import hashlib
 import http.client
@@ -915,6 +916,16 @@ class SpiffeJWTIssuerApp(_IssuerApp):
         self._max_per_key = max_per_identity
         self._validator: Any = issuer.jwt
 
+    def _new_pool(self) -> ThreadPoolExecutor:
+        # Tokens are checked in threads of their own, so that policy calls waiting
+        # on a slow dependency never hold up telling a valid caller from an invalid one.
+        self._token_pool = ThreadPoolExecutor(min(4, self._max_workers), thread_name_prefix="tenuo-spiffe-token")
+        return super()._new_pool()
+
+    def close(self) -> None:
+        super().close()
+        self._token_pool.shutdown(wait=False)
+
     def _identity(self, token: bytes) -> SpiffeIdentity:
         try:
             return self._validator.authenticate(token.decode("ascii"))
@@ -923,15 +934,38 @@ class SpiffeJWTIssuerApp(_IssuerApp):
         except SpiffeError as exc:
             raise _Refusal(401, "unauthorized", str(exc)) from exc
 
-    def _credential(self, scope: Mapping[str, Any]) -> Tuple[bytes, str]:
+    def _credential(self, scope: Mapping[str, Any]) -> bytes:
         tokens = [value for name, value in scope.get("headers", ()) if name.lower() == b"authorization"]
         scheme, _, credential = (tokens[0] if len(tokens) == 1 else b"").partition(b" ")
         if scheme.lower() != b"bearer" or not credential or len(credential) > _MAX_TOKEN_BYTES:
             raise _Refusal(401, "unauthorized", "Send the JWT-SVID as one Authorization: Bearer header")
-        # Check the token now, before the body is read, so that only a caller with
-        # a valid one can hold a place. The work is bounded: a token of at most
-        # 16 KiB and one signature check, or a few for a token that names no key.
-        return credential, self._identity(credential).spiffe_id
+        return credential
+
+    async def _checked(self, credential: bytes) -> Tuple[bytes, str]:
+        """Check the token before the body is read, so that only a caller with a valid one can hold a place.
+
+        Signature checks and a look at the bundle file are not work for the
+        event loop. They run in a small pool, and at most ``max_concurrent``
+        tokens are waiting or being checked: beyond that the answer is 503.
+        A check that has been handed over is counted until it has run, whether
+        or not its caller is still there.
+        """
+        places = self._places
+        if places.checking >= self._max_concurrent:
+            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
+        try:
+            work = asyncio.wrap_future(self._token_pool.submit(self._identity, credential))
+        except RuntimeError:
+            raise _Refusal(503, "unavailable", "Issuer is shutting down") from None
+        places.checking += 1
+
+        def checked(done: "asyncio.Future[SpiffeIdentity]") -> None:
+            places.checking -= 1
+            if not done.cancelled():
+                done.exception()  # Looked at, so a caller that left does not leave a warning behind.
+
+        work.add_done_callback(checked)
+        return credential, (await asyncio.shield(work)).spiffe_id
 
     def _limit_key(self, credential: Tuple[bytes, str]) -> str:
         return credential[1]

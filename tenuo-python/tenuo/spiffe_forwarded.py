@@ -577,7 +577,10 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
             for piece in _ADDRESS_SEPARATORS.split(value):
                 text = piece.decode("latin-1")
                 # An entry may be an address, address:port, [address] or [address]:port.
-                for candidate in (text, text.rpartition(":")[0]):
+                # Only digits after the last colon are a port: anything else there
+                # is the last group of an IPv6 address, which is a different address.
+                before, _, after = text.rpartition(":")
+                for candidate in (text, before) if after.isascii() and after.isdigit() else (text,):
                     try:
                         named = ipaddress.ip_address(candidate.strip("[]"))
                     except ValueError:
