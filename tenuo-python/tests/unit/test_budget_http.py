@@ -1679,6 +1679,39 @@ class TestCountsThatCannotBeRight:
                                {"usageMetadata": {"promptTokenCount": 40, "candidatesTokenCount": 60, "totalTokenCount": 5}})
         assert total == 100
 
+    GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent"
+    CHAT_BODY = {"model": MODEL, "messages": MESSAGES, "max_tokens": 100}
+    GEMINI_BODY = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "generationConfig": {"maxOutputTokens": 100}}
+
+    @pytest.mark.parametrize("count", [0, 10 ** 12, 2 ** 63, 1e30], ids=["zero", "over", "int64", "float"])
+    def test_a_count_no_call_could_have_keeps_the_reservation(self, keys, count):
+        answers = [
+            (CHAT, self.CHAT_BODY, {"usage": {"prompt_tokens": count, "completion_tokens": 0, "total_tokens": count}}),
+            ("https://provider.test/v1/messages", self.CHAT_BODY,
+             {"type": "message", "content": [], "usage": {"input_tokens": count, "output_tokens": 0}}),
+            (self.GEMINI, self.GEMINI_BODY,
+             {"usageMetadata": {"promptTokenCount": count, "candidatesTokenCount": 0, "totalTokenCount": count}}),
+        ]
+        for url, body, answer in answers:
+            total, usage = self.settle(keys, url, body, answer)
+            assert total == INPUT + 100 and usage["estimated"] is True, url
+
+    def test_the_calls_after_one_are_counted_as_usual(self, keys, tmp_path):
+        from tenuo.budget import BudgetStore
+
+        counts = iter([1e30, 40])
+
+        def provider(request):
+            return httpx.Response(200, json={"usage": {"prompt_tokens": next(counts), "completion_tokens": 0}})
+
+        store = BudgetStore(str(tmp_path / "budgets.db"))  # one file, as two agents on a host share
+        first, second = mint(keys, total_tokens=5000), mint(keys, total_tokens=5000)
+        one, meter = client_for(keys, first, provider, store=store)
+        two, _ = client_for(keys, second, provider, store=store)
+        assert one.post(CHAT, json=self.CHAT_BODY).status_code == 200
+        assert two.post(CHAT, json=self.CHAT_BODY).status_code == 200
+        assert used(meter, first) == INPUT + 100 and used(meter, second) == 40
+
 
 class TestOneCountPerProcessByDefault:
     def test_clients_given_no_store_spend_from_the_same_count(self, keys):
