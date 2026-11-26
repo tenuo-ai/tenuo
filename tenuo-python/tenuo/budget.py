@@ -1034,8 +1034,8 @@ def _signed_text(constraint: Any) -> Optional[str]:
 
 
 def _zone(name: Optional[str]) -> Any:
-    """The time zone a period starts in: UTC when none is signed."""
-    if not name or name == "UTC":
+    """The time zone a period starts in: UTC when none is signed. An empty name is not a zone."""
+    if name is None or name == "UTC":
         return _timezone.utc
     from zoneinfo import ZoneInfo
 

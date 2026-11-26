@@ -688,6 +688,7 @@ class TestPeriod:
         {"period": "day"},  # an allowance of nothing
         {"total_tokens": 1000, "timezone": "UTC"},  # a zone with no period to start
         {"total_tokens": 1000, "period": "day", "timezone": "Mars/Olympus"},
+        {"total_tokens": 1000, "period": "day", "timezone": ""},  # only a zone left out means UTC
     ])
     def test_rejects_what_cannot_be_counted_by(self, bad):
         with pytest.raises(ValueError):
@@ -733,6 +734,8 @@ class TestPeriod:
     def test_each_period_has_its_own_start_and_end(self, period, label, ends):
         from tenuo.budget import _period_bounds
 
+        with pytest.raises(ValueError, match="time zone"):
+            _period_bounds(period, "", NOON)
         assert _period_bounds(period, None, NOON + 600) == (label, ends)
         assert _period_bounds(period, None, ends - 1)[0] == label
         assert _period_bounds(period, None, ends)[0] != label
