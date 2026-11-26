@@ -87,6 +87,7 @@ __all__ = [
     "BudgetLevel",
     "BudgetStore",
     "InMemoryBudgetBackend",
+    "MAX_CALL_TOKENS",
     "MeteredCall",
     "ModelCallDenied",
     "SqliteBudgetBackend",
@@ -459,7 +460,9 @@ class BudgetStore:
         with self._owed_lock:
             for key, delta in deltas.items():
                 if delta > 0:
-                    self._owed[key] = self._owed.get(key, 0) + delta
+                    # No one call adds more, and a number the backend cannot
+                    # take must not ride along with every later write.
+                    self._owed[key] = self._owed.get(key, 0) + int(min(delta, MAX_CALL_TOKENS))
             for key, expiry in (expires_at or {}).items():
                 if key in self._owed and expiry:
                     self._owed_expiries[key] = max(self._owed_expiries.get(key, 0.0), expiry + self._margin)
@@ -482,6 +485,10 @@ class BudgetStore:
 _INPUT_KEYS = ("messages", "input", "prompt", "suffix", "instructions", "tools", "functions", "response_format",
                "text", "prediction")
 
+
+# The most tokens one call is taken to have used. Far above any real call; a
+# provider count beyond it is a fault in the report, not usage.
+MAX_CALL_TOKENS = 1_000_000_000
 
 # What one image is reserved at, whatever its size in bytes: providers bill an
 # image by its dimensions, typically a few hundred to a couple of thousand tokens.
@@ -562,13 +569,24 @@ def estimate_input_tokens(request: Mapping[str, Any]) -> int:
     return math.ceil(len(data.encode("utf-8")) / 3) + 16 + media
 
 
+def _is_count(value: Any) -> bool:
+    """Whether one call could have used this many tokens.
+
+    False for a number below zero, above ``MAX_CALL_TOKENS``, or not a number
+    at all (NaN). Asked of the number as reported, before any rounding.
+    """
+    return bool(0 <= value <= MAX_CALL_TOKENS)
+
+
 def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
     """Normalize a provider usage object to input, output and total tokens.
 
     Accepts the Chat Completions shape (``prompt_tokens`` /
     ``completion_tokens``), the Responses shape (``input_tokens`` /
     ``output_tokens``), objects or dicts. Returns None when there is no usable
-    count, so the caller keeps the reservation as the charge.
+    count, so the caller keeps the reservation as the charge. A count below
+    zero, a total of zero, and a count above ``MAX_CALL_TOKENS`` are not usable:
+    no call that ran used them.
     """
     if usage is None:
         return None
@@ -581,7 +599,7 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
             if isinstance(value, bool):
                 continue
             if isinstance(value, (int, float)):
-                if not math.isfinite(value) or value < 0:
+                if not _is_count(value):
                     impossible.append(name)
                     continue
                 return int(value)
@@ -591,13 +609,15 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
     out = read("completion_tokens", "output_tokens")
     total = read("total_tokens")
     if impossible:
-        return None  # a count below zero, or not a finite number, is not a count: the reservation stands
+        return None  # a count no call could have is not a count: the reservation stands
     if total is None:
         if inp is None and out is None:
             return None
         total = (inp or 0) + (out or 0)
     inp, out = inp or 0, out or 0
     total = max(total, inp + out)  # a total below its own parts is not a total
+    if total == 0 or total > MAX_CALL_TOKENS:
+        return None  # a call that ran used tokens: zero means the provider did not count
     if total > inp + out:
         # Some providers leave thinking tokens out of the completion count but
         # bill them in the total. They are output.
