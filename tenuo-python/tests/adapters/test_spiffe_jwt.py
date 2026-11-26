@@ -2722,3 +2722,42 @@ def test_endpoint_reports_a_callback_that_raises_spiffe_error_as_an_issuer_error
         assert (status, reply["message"]) == (403, "Workload is not authorized for this task")
     finally:
         application.close()
+
+
+def test_calls_left_behind_at_their_deadline_are_bounded(authority, monkeypatch):
+    """A stalled name lookup cannot be interrupted. Calls that give up on one must not pile up threads without end."""
+    import tenuo._spiffe_http as http_module
+
+    lookup, release = socket.getaddrinfo, threading.Event()
+
+    def stalled(*arguments, **options):
+        release.wait(10)
+        return lookup(*arguments, **options)
+
+    monkeypatch.setattr(socket, "getaddrinfo", stalled)
+    monkeypatch.setattr(http_module, "_MAX_LEFT_BEHIND", 2)
+    holder = SigningKey.generate()
+
+    def call():
+        began = time.monotonic()
+        with pytest.raises(SpiffeError) as refused:
+            request_warrant_jwt(
+                "http://localhost:9/warrants",
+                token=authority.token(),
+                audience=AUDIENCE,
+                issuer_key=holder.public_key,
+                holder_key=holder,
+                task_id="task-123",
+                timeout=0.3,
+            )
+        return str(refused.value), time.monotonic() - began
+
+    try:
+        assert all("did not answer within" in call()[0] for _ in range(2))
+        message, took = call()  # Two lookups are still stalled: this one does not start a third.
+        assert "too many earlier exchanges have not ended yet" in message and took < 0.2
+    finally:
+        release.set()
+    assert eventually(lambda: http_module._left_behind == 0)
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
+    assert "too many earlier exchanges" not in call()[0]  # Nothing is left behind any more, so calls run again.

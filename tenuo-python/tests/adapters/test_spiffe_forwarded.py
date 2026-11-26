@@ -1336,6 +1336,17 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, serve, tmp_path
         ("::1", "X-Forwarded-For", "[::1]:40000"),
         ("::1", "Forwarded", 'for="[::1]:40000"'),
         ("::1", "X-Forwarded-For", "0:0:0:0:0:0:0:1"),
+        # Ports as servers have been seen to accept them: Python's int() takes signs, underscores and white space.
+        (PROXY, "X-Forwarded-For", f"{PROXY}:+40000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}:4_0000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}: 40000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}:\x0b40000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}:\xa040000"),
+        (PROXY, "X-Forwarded-For", f"[{PROXY}]:+40000"),
+        (PROXY, "X-Forwarded-For", f"{PROXY}:"),
+        (PROXY, "X-Forwarded-For", f"x{PROXY}y"),
+        ("::1", "X-Forwarded-For", "[::1]:+40000"),
+        ("::1", "X-Forwarded-For", "::1:40000"),
         # Too long to read in full: it cannot be ruled out, whatever it says.
         (PROXY, "X-Forwarded-For", "203.0.113.7, " * 3000 + f"{PROXY}:40000"),
         (PROXY, "Forwarded", "for=203.0.113.7;" * 3000),

@@ -240,6 +240,12 @@ def test_a_rewritten_address_with_a_port_is_not_trusted(server, environment):
                 {"X-Forwarded-For": f"{trusted}:40000"},
                 {"X-Forwarded-For": trusted, "X-Forwarded-Port": "40000"},
                 {"X-Forwarded-For": f"203.0.113.7, {trusted}:40000"},
+                # Uvicorn reads the port with int(), which takes more than digits.
+                {"X-Forwarded-For": f"{trusted}:+40000"},
+                {"X-Forwarded-For": f"{trusted}:4_0000"},
+                {"X-Forwarded-For": f"{trusted}: 40000"},
+                {"X-Forwarded-For": f"[{trusted}]:+40000"},
+                {"X-Forwarded-For": trusted, "X-Forwarded-Port": "+40000"},
             ):
                 status, reply = running.post(headers)
                 assert (status, reply["error"]) == (403, "forbidden"), (trusted, headers)

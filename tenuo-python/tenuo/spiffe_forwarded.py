@@ -73,7 +73,8 @@ UNIX_SOCKET = "unix"
 _HEADER = b"x-forwarded-client-cert"
 # Headers an ASGI server or a middleware may take the client address from.
 _ADDRESS_HEADERS = frozenset({b"x-forwarded-for", b"forwarded", b"x-real-ip"})
-_ADDRESS_SEPARATORS = re.compile(rb'[\s,;="]+')
+_ADDRESS_RUN = re.compile(rb"[0-9A-Fa-f:.]+")
+_HEX_LETTER = re.compile(r"[A-Fa-f]")
 _MAX_HEADER_BYTES = 32 * 1024  # Room for a forwarded certificate and chain, which are ignored.
 _MAX_WARRANT_SECONDS = 3600
 _KEY = re.compile(r"[A-Za-z]+")
@@ -574,15 +575,19 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
                 continue
             if len(value) > _MAX_HEADER_BYTES:
                 return True  # Too long to read in full, so it cannot be ruled out.
-            for piece in _ADDRESS_SEPARATORS.split(value):
-                text = piece.decode("latin-1")
-                # An entry may be an address, address:port, [address] or [address]:port.
-                # Only digits after the last colon are a port: anything else there
-                # is the last group of an IPv6 address, which is a different address.
-                before, _, after = text.rpartition(":")
-                for candidate in (text, before) if after.isascii() and after.isdigit() else (text,):
+            # Servers differ in what they accept around an address and as a port
+            # ("+40000", "4_0000", white space of several kinds), so their parsing
+            # is not imitated. Whatever a server extracts is an unbroken run of
+            # address characters: the run itself, or the run up to its last colon
+            # when what follows could be a port.
+            for run in _ADDRESS_RUN.findall(value):
+                text = run.decode("ascii")
+                before, colon, after = text.rpartition(":")
+                # Letters after the last colon are the last group of an IPv6
+                # address, never a port. Digits, or nothing more in this run, may be one.
+                for candidate in (text, before) if colon and not _HEX_LETTER.search(after) else (text,):
                     try:
-                        named = ipaddress.ip_address(candidate.strip("[]"))
+                        named = ipaddress.ip_address(candidate)
                     except ValueError:
                         continue
                     if (getattr(named, "ipv4_mapped", None) or named) == address:

@@ -36,6 +36,21 @@ from tenuo.spiffe import (
 logger = logging.getLogger("tenuo.spiffe")
 
 _MAX_BODY_BYTES = 64 * 1024
+# A call that reaches its deadline leaves its exchange to end by itself, which a
+# stalled name lookup may take a while to do. No more than this many are left
+# behind at once: further calls fail at once instead of adding threads.
+_MAX_LEFT_BEHIND = 32
+_left_behind = 0
+_left_behind_lock = threading.Lock()
+
+
+def _count_left_behind(change: int) -> int:
+    global _left_behind
+    with _left_behind_lock:
+        _left_behind += change
+        return _left_behind
+
+
 _PROTOCOL_VERSION = 1
 _REQUEST_FIELDS = frozenset({"v", "holder", "task", "timestamp", "nonce", "signature"})
 
@@ -372,29 +387,44 @@ def _post_for_warrant(
         starts another.
         """
         nonlocal abandoned
+        if _count_left_behind(0) >= _MAX_LEFT_BEHIND:
+            raise SpiffeError(
+                f"Could not complete the exchange with the issuer at {where}: "
+                "too many earlier exchanges have not ended yet"
+            )
         outcome: List[Tuple[bool, Any]] = []
         finished = threading.Event()
+        ended = False
 
         def run() -> None:
+            nonlocal ended
             try:
                 outcome.append((True, exchange()))
             except BaseException as exc:
                 outcome.append((False, exc))
             finally:
+                with guard:
+                    ended = True
+                    if abandoned:
+                        _count_left_behind(-1)
                 finished.set()
 
         threading.Thread(target=run, name="tenuo-spiffe-exchange", daemon=True).start()
         if not finished.wait(timeout):
             with guard:
-                abandoned = True
-                sock = opened[0] if opened else None
-            if sock is not None:
-                try:
-                    # The plain socket's own method: it wakes a read in progress and leaves the TLS state to its owner.
-                    socket.socket.shutdown(sock, socket.SHUT_RDWR)
-                except OSError:
-                    pass
-            raise SpiffeError(late)
+                if not ended:
+                    abandoned = True
+                    _count_left_behind(1)
+                sock = opened[0] if abandoned and opened else None
+            if abandoned:
+                if sock is not None:
+                    try:
+                        # The plain socket's own method: it wakes a read in progress and leaves the TLS state alone.
+                        socket.socket.shutdown(sock, socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                raise SpiffeError(late)
+            finished.wait()  # It ended in the very moment the deadline passed.
         succeeded, value = outcome[0]
         if not succeeded:
             raise value
