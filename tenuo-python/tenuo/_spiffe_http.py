@@ -48,6 +48,20 @@ class _Refusal(Exception):
         self.status, self.error, self.message = status, error, message
 
 
+class _Places:
+    """The requests in progress, overall and per caller, during one run of the application.
+
+    A restart (lifespan shutdown, then startup) begins a new count. A request
+    of the earlier run that finishes late gives its place back to the earlier
+    count, which nobody reads any more, so it can neither stay occupied for
+    ever nor be subtracted from the new run's.
+    """
+
+    def __init__(self) -> None:
+        self.in_progress = 0
+        self.per_key: Dict[str, int] = {}
+
+
 class _Slot:
     """One request's place among those in progress, overall and for its caller. It is given up exactly once.
 
@@ -55,25 +69,26 @@ class _Slot:
     """
 
     def __init__(self, app: "_IssuerApp", key: Optional[str]):
-        self._app: Optional["_IssuerApp"] = app
+        places = app._places
+        self._places: Optional[_Places] = places
         self._key = key
         self.follows_work = False  # Set when a cancelled request leaves its work running.
-        app._in_progress += 1
+        places.in_progress += 1
         if key is not None:
-            app._per_key[key] = app._per_key.get(key, 0) + 1
+            places.per_key[key] = places.per_key.get(key, 0) + 1
 
     def release(self, *_: Any) -> None:
-        app, self._app = self._app, None
-        if app is None:
+        places, self._places = self._places, None
+        if places is None:
             return
-        app._in_progress -= 1
+        places.in_progress -= 1
         if self._key is None:
             return
-        remaining = app._per_key[self._key] - 1
+        remaining = places.per_key[self._key] - 1
         if remaining:
-            app._per_key[self._key] = remaining
+            places.per_key[self._key] = remaining
         else:
-            del app._per_key[self._key]
+            del places.per_key[self._key]
 
 
 class _IssuerApp:
@@ -101,9 +116,8 @@ class _IssuerApp:
         self._path = path
         self._max_concurrent = max_concurrent
         self._body_timeout = body_timeout
-        self._in_progress = 0  # Requests admitted and not finished: being read, or with work running.
+        self._places = _Places()  # Requests admitted and not finished: being read, or with work running.
         self._max_per_key: Optional[int] = None  # Requests in progress per caller, where the caller is known early.
-        self._per_key: Dict[str, int] = {}
         self._max_workers = max_workers
         self._closed = False
         self._pool = self._new_pool()
@@ -124,6 +138,14 @@ class _IssuerApp:
 
     # -- ASGI -------------------------------------------------------------
 
+    @property
+    def _in_progress(self) -> int:
+        return self._places.in_progress
+
+    @property
+    def _per_key(self) -> Dict[str, int]:
+        return self._places.per_key
+
     def _new_pool(self) -> ThreadPoolExecutor:
         return ThreadPoolExecutor(self._max_workers, thread_name_prefix="tenuo-spiffe-http")
 
@@ -138,7 +160,9 @@ class _IssuerApp:
                 message = await receive()
                 if message["type"] == "lifespan.startup":
                     if self._closed:  # Started again after a shutdown: the server was restarted in this process.
-                        self._pool, self._closed = self._new_pool(), False
+                        # Work the earlier run left behind may never report back (its event
+                        # loop is gone), so this run counts its requests afresh.
+                        self._pool, self._places, self._closed = self._new_pool(), _Places(), False
                     await send({"type": "lifespan.startup.complete"})
                 elif message["type"] == "lifespan.shutdown":
                     self.close()
@@ -293,17 +317,38 @@ def _post_for_warrant(
     bounds each wait for more bytes, which a slow sender can renew for ever.
     """
     connection: Optional[http.client.HTTPConnection] = None
-    expired = threading.Event()
+    guard = threading.Lock()
+    overdue = False  # The deadline has passed.
+    expired = threading.Event()  # The deadline has passed with the connection open: the exchange is over.
+    opened: List[Any] = []  # The connection's socket, once there is one.
 
     def cut_off() -> None:
-        expired.set()
-        sock = getattr(connection, "sock", None)
-        if sock is not None:
-            try:
-                # The plain socket's own method: it wakes a read in progress and leaves the TLS state to its owner.
-                socket.socket.shutdown(sock, socket.SHUT_RDWR)
-            except OSError:
-                pass
+        nonlocal overdue
+        with guard:
+            overdue = True
+            if not opened:
+                return  # Still connecting, which has its own time limit; hold_socket ends the exchange after it.
+            expired.set()
+        try:
+            # The plain socket's own method: it wakes a read in progress and leaves the TLS state to its owner.
+            socket.socket.shutdown(opened[0], socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def hold_socket(connected: http.client.HTTPConnection) -> None:
+        """Keep the socket for the deadline to act on.
+
+        The connection lets go of it as soon as a reply says it will close,
+        while the reply's body is still to be read from it.
+        """
+        sock = getattr(connected, "sock", None)
+        with guard:
+            if sock is not None and not opened:
+                opened.append(sock)
+            if overdue and opened:
+                expired.set()
+        if expired.is_set():
+            raise SpiffeError(f"The issuer at {where} did not answer within {timeout:g} seconds")
 
     deadline = threading.Timer(timeout, cut_off) if timeout is not None else None
     if deadline is not None:
@@ -314,6 +359,7 @@ def _post_for_warrant(
             connection = connect()
             if before_request is not None:
                 connection.connect()
+                hold_socket(connection)
                 before_request(connection)
             connection.request(
                 "POST",
@@ -321,6 +367,7 @@ def _post_for_warrant(
                 body=body,
                 headers={"Content-Type": "application/json", "Accept": "application/json", **headers},
             )
+            hold_socket(connection)
             response = connection.getresponse()
             status = response.status
             payload = response.read(_MAX_BODY_BYTES + 1)

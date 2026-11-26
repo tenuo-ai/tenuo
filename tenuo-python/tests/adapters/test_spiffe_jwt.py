@@ -2493,8 +2493,21 @@ def test_a_reconnect_with_an_unreadable_home_bundle_keeps_the_partner(authority,
         validator.close()
 
 
-def test_client_timeout_bounds_the_whole_exchange(authority):
-    """A reply that arrives a byte at a time keeps every single read short. The call still ends on time."""
+@pytest.mark.parametrize(
+    "head",
+    [
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 400\r\n\r\n",
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+        b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n",
+    ],
+    ids=["keep-alive", "connection-close", "http-1.0"],
+)
+def test_client_timeout_bounds_the_whole_exchange(authority, head):
+    """A reply that arrives a byte at a time keeps every single read short. The call still ends on time.
+
+    With a reply that closes the connection, the HTTP library lets go of the
+    socket before the body is read. The deadline must still reach it.
+    """
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
@@ -2507,9 +2520,9 @@ def test_client_timeout_bounds_the_whole_exchange(authority):
             request = b""
             while b"\r\n\r\n" not in request:
                 request += connection.recv(65536)
-            reply = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 400\r\n\r\n" + b" " * 400
             try:
-                for byte in reply:
+                connection.sendall(head)  # The headers at once: it is the body that never quite arrives.
+                for byte in b" " * 400:
                     if stop.is_set():
                         return
                     connection.sendall(bytes([byte]))
@@ -2537,3 +2550,66 @@ def test_client_timeout_bounds_the_whole_exchange(authority):
         stop.set()
         thread.join(timeout=5)
         listener.close()
+
+
+def test_a_restart_does_not_inherit_places_from_the_run_before(jwt_issuer, authority):
+    """A request cancelled in one run, whose policy call outlives that run's event loop, holds nothing in the next."""
+    issuer, *_ = jwt_issuer
+    entered, finish = threading.Event(), threading.Event()
+    approve = issuer._policy
+
+    def slow(identity, task_id):
+        if not finish.is_set():
+            entered.set()
+            finish.wait(10)
+        return approve(identity, task_id)
+
+    issuer._policy = slow
+    application = SpiffeJWTIssuerApp(issuer, max_per_identity=1)
+    holder = SigningKey.generate()
+
+    async def lifespan(*types):
+        messages = iter([{"type": name} for name in types])
+
+        async def receive():
+            for message in messages:
+                return message
+            await asyncio.sleep(30)
+
+        task = asyncio.ensure_future(application({"type": "lifespan"}, receive, lambda message: _collect([], message)))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def post():
+        token, sent = authority.token(exp=300 + secrets.randbelow(1000)), []
+
+        async def whole():
+            return {"type": "http.request", "body": request_body(token, holder), "more_body": False}
+
+        await application(_asgi_scope(token), whole, lambda message: _collect(sent, message))
+        return sent[0]["status"]
+
+    async def first_run():
+        await lifespan("lifespan.startup")
+        request = asyncio.ensure_future(post())
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        request.cancel()  # The client went away; the policy call is still running.
+        await asyncio.gather(request, return_exceptions=True)
+        held = dict(application._per_key)
+        await lifespan("lifespan.shutdown")
+        return held
+
+    async def second_run():
+        await lifespan("lifespan.startup")
+        before = (application._in_progress, dict(application._per_key))
+        return before, await post(), application._in_progress
+
+    try:
+        assert asyncio.run(first_run()) == {AGENT: 1}  # That run's event loop is now closed.
+        finish.set()  # Its policy call returns into nothing.
+        assert asyncio.run(second_run()) == ((0, {}), 200, 0)
+    finally:
+        finish.set()
+        application.close()

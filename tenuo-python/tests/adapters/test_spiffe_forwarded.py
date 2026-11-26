@@ -1336,7 +1336,11 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, serve, tmp_path
         ("::1", "X-Forwarded-For", "[::1]:40000"),
         ("::1", "Forwarded", 'for="[::1]:40000"'),
         ("::1", "X-Forwarded-For", "0:0:0:0:0:0:0:1"),
+        # Too long to read in full: it cannot be ruled out, whatever it says.
+        (PROXY, "X-Forwarded-For", "203.0.113.7, " * 3000 + f"{PROXY}:40000"),
+        (PROXY, "Forwarded", "for=203.0.113.7;" * 3000),
     ],
+    ids=lambda value: value if len(str(value)) < 60 else "too-long",
 )
 def test_a_peer_address_also_named_in_the_request_is_not_trusted(forwarded_issuer, caplog, client, name, value):
     """A server that rewrites client addresses takes them, port included, from these headers."""

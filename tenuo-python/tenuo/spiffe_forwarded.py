@@ -572,7 +572,9 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
         for name, value in scope.get("headers", ()):
             if name.lower() not in _ADDRESS_HEADERS:
                 continue
-            for piece in _ADDRESS_SEPARATORS.split(value[:_MAX_HEADER_BYTES]):
+            if len(value) > _MAX_HEADER_BYTES:
+                return True  # Too long to read in full, so it cannot be ruled out.
+            for piece in _ADDRESS_SEPARATORS.split(value):
                 text = piece.decode("latin-1")
                 # An entry may be an address, address:port, [address] or [address]:port.
                 for candidate in (text, text.rpartition(":")[0]):
