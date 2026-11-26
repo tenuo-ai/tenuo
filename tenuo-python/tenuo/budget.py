@@ -798,6 +798,9 @@ class TokenMeter:
                 # until that period ends.
                 level.period, level.zone = _signed_text(signed.get(PERIOD_FIELD)), _signed_text(signed.get(ZONE_FIELD))
                 try:
+                    if ZONE_FIELD in signed and not level.zone:
+                        # Signed, but not as one zone: never counted as if none were signed.
+                        raise ValueError("its period's time zone must be signed as one exact zone name")
                     label, level.resets_at = _period_bounds(level.period, level.zone, now)
                 except ValueError as exc:
                     level.problem = str(exc)

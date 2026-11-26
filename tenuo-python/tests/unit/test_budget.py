@@ -793,6 +793,34 @@ class TestPeriod:
                         authorize=authorizer(odd, keys.lead, keys.issuer))
         assert meter.store.used(odd.id) == {odd.id: 0}
 
+    @needs_zones
+    @pytest.mark.parametrize("signed", ["one_of", "empty"])
+    def test_a_time_zone_not_signed_as_one_zone_is_refused_not_read_as_utc(self, keys, signed):
+        from tenuo import Exact, OneOf, Range
+
+        zone = OneOf(["Asia/Tokyo"]) if signed == "one_of" else Exact("")
+        odd = (Warrant.mint_builder()
+               .capability("llm.chat", {"total_tokens": Range(min=0, max=8000), "period": Exact("day"),
+                                        "period_timezone": zone})
+               .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer))
+        meter = TokenMeter(input_estimator=fixed_estimate(100))
+        level = meter.levels(odd)[0]
+        assert "time zone" in level.problem and level.key == odd.id and not level.resets_at
+        with pytest.raises(ModelCallDenied, match="time zone"):
+            meter.begin(odd, None, REQUEST, requested_output=10,
+                        authorize=authorizer(odd, keys.lead, keys.issuer))
+        assert meter.store.used(odd.id) == {odd.id: 0}
+        # As a parent in the chain it stops the call too.
+        if signed == "one_of":
+            child = (odd.grant_builder()
+                     .capability("llm.chat", llm_capability(total_tokens=4000, period="day", timezone="Asia/Tokyo"))
+                     .holder(keys.worker.public_key).ttl(600).grant(keys.lead))
+            with pytest.raises(ModelCallDenied, match="time zone"):
+                meter.begin(child, [odd], REQUEST, requested_output=10,
+                            authorize=authorizer(child, keys.worker, keys.issuer, [odd]))
+            assert meter.store.used(*[lv.key for lv in meter.levels(child, [odd])]) == {
+                lv.key: 0 for lv in meter.levels(child, [odd])}
+
     def test_workers_share_a_parents_daily_allowance_and_keep_their_own_total(self, keys):
         root = mint_root(keys, total_tokens=8000, period="day")
         worker = grant(root, keys, total_tokens=8000, period="day")
