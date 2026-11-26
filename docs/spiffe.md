@@ -27,8 +27,9 @@ where agents have only a sidecar. It can accept workloads from
 [wire protocol](#wire-protocol), and tools can verify warrants with any Tenuo
 SDK. We run the exchanges on this page against SPIRE 1.16.0 in CI, including a
 renewal of both SVIDs while the issuer is serving, and the forwarded-identity
-exchange through Envoy 1.40.2. The Python blocks that start with a file name
-are executed by the test suite.
+exchange through Envoy 1.40.2. We have also run the forwarded-identity
+exchange by hand in a cluster with Istio 1.30.8. The Python blocks that start
+with a file name are executed by the test suite.
 
 ---
 
@@ -711,10 +712,9 @@ names and Envoy forwards them, they follow the URI and the issuer refuses the
 request. `subject`, `cert` and `chain` may be on; they come before the URI. On a listener without client certificates Envoy
 removed the header in every mode except `ALWAYS_FORWARD_ONLY`.
 
-Istio and other meshes configure Envoy for you. We test this exchange against
-Envoy itself, with SVIDs from SPIRE, not against a mesh's generated
-configuration. Check which mode your mesh uses for the issuer's inbound
-listener before relying on it.
+Istio configures Envoy for you, and its defaults fit: see
+[With Istio](#with-istio) below. For another mesh, check which mode it uses
+for the issuer's inbound listener before relying on it.
 
 ### Run the issuer behind the proxy
 
@@ -788,7 +788,8 @@ Two details in that command matter:
 Meshes differ in the address their sidecar connects from, and to. If the
 issuer refuses its own proxy, its warning on the `tenuo.spiffe` logger shows
 the address it saw (at most once a minute); set `trusted_proxies` and `--host`
-to match.
+to match. Istio needs different values from the ones above:
+see [With Istio](#with-istio).
 
 A Unix socket narrows the path further, because file permissions decide who
 can connect. Start Uvicorn with `--uds /run/issuer/issuer.sock`, point the
@@ -837,6 +838,70 @@ connection to the issuer's proxy itself. Pass an `https://` URL with
 `tls=SpiffeTLS.from_workload_api(trust_domain="acme.test", server_side=False)`
 and `issuer_id="spiffe://acme.test/issuer"`. The client checks the proxy's
 SPIFFE ID before it sends anything.
+
+### With Istio
+
+We ran this exchange in a cluster with Istio 1.30.8 in sidecar mode (its proxy
+is Envoy 1.38), using Istio's own workload certificates and the configuration
+it generates. Nothing in the proxy needs configuring. What we found:
+
+- **The inbound listener appends.** Istio generates
+  `forward_client_cert_details: APPEND_FORWARD` with `subject`, `dns` and `uri`
+  forwarded. The issuer receives
+  `By=spiffe://cluster.local/ns/tenuo/sa/issuer;Hash=...;Subject="";URI=spiffe://cluster.local/ns/tenuo/sa/agent`.
+  The SPIFFE ID is the caller's namespace and service account, so that is
+  what your policy matches on, and `trust_domain` is `cluster.local` unless
+  you changed the mesh's. The certificates Istio issued carried no DNS names,
+  so the URI ends the header as the issuer requires. A certificate that does
+  carry DNS names would be refused behind Istio, because Istio forwards them.
+- **The sidecar connects from `127.0.0.6`, to the pod's own address.** With the
+  settings shown above (`--host 127.0.0.1`, `trusted_proxies=["127.0.0.1"]`)
+  agents got HTTP 503 from the sidecar, and after binding all addresses, 403
+  from the issuer. Use `--host 0.0.0.0` and `trusted_proxies=["127.0.0.6"]`.
+  A pod that connected straight to the issuer's pod address still arrived
+  through the sidecar, and a connection from inside the issuer's pod, from
+  loopback or the pod address, was refused. A process inside the issuer's pod
+  that binds `127.0.0.6` as its source address is accepted with any header it
+  writes, so keep other containers out of that pod.
+- **A Unix socket closes that last gap.** Istio can deliver inbound traffic to
+  a socket instead of a port. The issuer then has no TCP listener at all:
+
+  ```yaml
+  apiVersion: networking.istio.io/v1
+  kind: Sidecar
+  metadata: {name: issuer, namespace: tenuo}
+  spec:
+    workloadSelector: {labels: {app: issuer}}
+    ingress:
+    - port: {number: 8080, protocol: HTTP, name: http}
+      defaultEndpoint: unix:///run/issuer/issuer.sock
+  ```
+
+  Give the pod an in-memory `emptyDir` volume mounted at `/run/issuer` in the
+  issuer container, mount it into the sidecar with the pod annotation
+  `sidecar.istio.io/userVolumeMount: '[{"name": "issuer-socket", "mountPath": "/run/issuer"}]'`,
+  start Uvicorn with `--uds /run/issuer/issuer.sock --no-proxy-headers`, and
+  pass `trusted_proxies=[UNIX_SOCKET]`. The Service and `containerPort` stay
+  on 8080.
+- **A caller cannot supply the header.** The calling pod's own sidecar removed
+  an `x-forwarded-client-cert` the agent sent. A workload that took its mesh
+  certificate and connected around its sidecar, sending a complete made-up
+  entry, a partial one that opens a quote, two header lines, or a made-up
+  `X-Forwarded-For`, was refused every time or served as itself.
+- **Without a sidecar there is no identity.** With mutual TLS in Istio's
+  default `PERMISSIVE` mode, a pod outside the mesh reaches the issuer in
+  plain HTTP; Istio drops any `x-forwarded-client-cert` it sent and the issuer
+  answers 403. In `STRICT` mode the connection is reset before that.
+- **Uvicorn's address rewriting did not trigger**, because Uvicorn trusts
+  `X-Forwarded-For` only from `127.0.0.1` by default. Pass `--no-proxy-headers`
+  anyway, so that a later change to that setting cannot matter.
+- **Agents use the plain `http://` URL.** The `https://` form with `tls=` is
+  for a proxy you run yourself: an Istio sidecar reset connections that did
+  not use Istio's own TLS protocol name.
+
+Not tested: a request that enters through an Istio ingress gateway and then
+the sidecar (two entries, which the issuer refuses by design), and ambient
+mode.
 
 ### Limits of this mode
 
@@ -1170,7 +1235,8 @@ JWT endpoint.
 
 | Message | Likely cause | Fix |
 |---|---|---|
-| `Requests must arrive through the issuer's proxy` | The request's socket peer is not in `trusted_proxies`, or the server reported an address taken from a header. The issuer logs the address it saw, at most once a minute. | If that address is the original client's or has port 0, start Uvicorn with `--no-proxy-headers` and unset `FORWARDED_ALLOW_IPS`. If it is the proxy's, add it to `trusted_proxies`. |
+| `Requests must arrive through the issuer's proxy` | The request's socket peer is not in `trusted_proxies`, or the server reported an address taken from a header. The issuer logs the address it saw, at most once a minute. | If that address is the original client's or has port 0, start Uvicorn with `--no-proxy-headers` and unset `FORWARDED_ALLOW_IPS`. If it is the proxy's, add it to `trusted_proxies` (an Istio sidecar connects from `127.0.0.6`). |
+| `The issuer at ... answered HTTP 503 without a warrant` (behind Istio) | The sidecar cannot reach the issuer, which is listening on `127.0.0.1` only. | Bind `0.0.0.0`, or use a Unix socket. See [With Istio](#with-istio). |
 | `No forwarded client identity: the proxy must terminate mutual TLS and set x-forwarded-client-cert` | The proxy sent no header: the client presented no certificate, the agent's sidecar is not adding mutual TLS, or the proxy is in its default `SANITIZE` mode. | Set `SANITIZE_SET` on the proxy and check the agent's sidecar. |
 | `The proxy did not forward exactly one URI for the client certificate ...` | The proxy is not forwarding the SPIFFE ID, or the certificate has none or several. | Set `uri: true` in `set_current_client_cert_details`. |
 | `x-forwarded-client-cert describes more than one client certificate ...` | The agent sent a header of its own to an appending proxy, or the request crossed two proxies. | Do not copy incoming headers onto the request; use one proxy hop, or `SANITIZE_SET`. |

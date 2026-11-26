@@ -146,7 +146,8 @@ class SpiffeForwardedIdentity:
     their holder proof, so a proof made for one issuer is useless at another.
 
     ``trusted_proxies`` lists where the proxy connects from: IP addresses or
-    networks such as ``"127.0.0.1"`` for a sidecar, or :data:`UNIX_SOCKET`.
+    networks such as ``"127.0.0.1"`` for a sidecar you run yourself or
+    ``"127.0.0.6"`` for an Istio sidecar, or :data:`UNIX_SOCKET`.
     Requests from anywhere else are refused before the header is read. There is
     no default, because this list is the whole security boundary: anything that
     can connect from one of these addresses can claim any identity. List
@@ -322,7 +323,8 @@ def request_warrant_forwarded(
       the issuer's proxy sees no client certificate and the request is refused.
     * ``https://`` with a client-side ``tls`` and ``issuer_id``: this process
       opens the mutual TLS connection itself and pins the SPIFFE ID of the
-      proxy in front of the issuer before sending anything.
+      proxy in front of the issuer before sending anything. This is for a
+      proxy you run yourself; an Istio sidecar does not accept it.
 
     ``audience`` must be the issuer's configured audience. Redirects are not
     followed. The returned warrant is checked against ``issuer_key`` and
@@ -458,7 +460,8 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
                 self._warned_at = now
                 logger.warning(
                     "Refused a forwarded-identity request from %s, which is not a socket peer in trusted_proxies. "
-                    "If that is the original client's address, stop the ASGI server rewriting client addresses "
+                    "If that is your proxy's address, add it (an Istio sidecar connects from 127.0.0.6). "
+                    "If it is the original client's, stop the ASGI server rewriting client addresses "
                     "(uvicorn --no-proxy-headers, and no FORWARDED_ALLOW_IPS in the environment). "
                     "This warning appears at most once a minute.",
                     scope.get("client") or "an unknown address",
