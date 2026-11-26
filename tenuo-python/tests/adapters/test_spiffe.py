@@ -1334,6 +1334,7 @@ class FakeWorkloadAPI:
 
         self._grpc, self._queue = grpc, queue
         self._lock = threading.Lock()
+        self._stopped = threading.Event()
         self._streams = []
         self._current = None
         self.refuse = None  # A grpc.StatusCode to answer with instead of streaming.
@@ -1358,7 +1359,8 @@ class FakeWorkloadAPI:
                     return grpc.unary_unary_rpc_method_handler(api._fetch_jwt_svid, **raw)
                 return None
 
-        self._server = grpc.server(ThreadPoolExecutor(max_workers=8))
+        self._executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="fake-workload-api")
+        self._server = grpc.server(self._executor)
         self._server.add_generic_rpc_handlers((Handler(),))
         port = self._server.add_insecure_port(bind)
         self.address = bind if bind.startswith("unix:") else f"tcp://127.0.0.1:{port}"
@@ -1369,28 +1371,38 @@ class FakeWorkloadAPI:
         self.saw_header.append(dict(context.invocation_metadata()).get("workload.spiffe.io"))
         if self.refuse is not None:
             context.abort(self.refuse, "no identity issued")
-        stream = self._queue.Queue()
-        with self._lock:
-            self._streams.append(stream)
-            if self._current is not None:
-                stream.put(self._current)
-        while True:
-            message = stream.get()
-            if message is None or not context.is_active():
-                return
-            yield message
+        yield from self._follow("_streams", lambda: self._current, context)
 
     def _fetch_jwt_bundles(self, request, context):
         self.calls += 1
         if self.refuse is not None:
             context.abort(self.refuse, "no identity issued")
+        yield from self._follow("_jwt_streams", lambda: self._jwt_current, context)
+
+    def _follow(self, streams, current, context):
+        """One open stream. It never waits for ever: a handler left waiting would keep the process from exiting.
+
+        A client can open a stream at any moment, including while this server is
+        being stopped, so the handler checks between short waits whether the
+        server has stopped or the client has gone.
+        """
         stream = self._queue.Queue()
         with self._lock:
-            self._jwt_streams.append(stream)
-            if self._jwt_current is not None:
-                stream.put(self._jwt_current)
+            if self._stopped.is_set():
+                return
+            getattr(self, streams).append(stream)
+            if current() is not None:
+                stream.put(current())
         while True:
-            message = stream.get()
+            try:
+                message = stream.get(timeout=0.1)
+            except self._queue.Empty:
+                if self._stopped.is_set() or not context.is_active():
+                    with self._lock:
+                        if stream in getattr(self, streams):
+                            getattr(self, streams).remove(stream)
+                    return
+                continue
             if message is None or not context.is_active():
                 return
             yield message
@@ -1423,8 +1435,10 @@ class FakeWorkloadAPI:
             stream.put(None)
 
     def stop(self):
+        self._stopped.set()  # First: a stream that opens from here on ends by itself.
         self.drop_streams()
         self._server.stop(0)
+        self._executor.shutdown(wait=True)  # Every handler has returned, so nothing outlives the test.
 
 
 @pytest.fixture
@@ -2452,3 +2466,50 @@ def test_guide_federation_code_runs(tmp_path, workload_api):
             transport.authenticate(forged)
     finally:
         transport.close()
+
+
+def test_fake_workload_api_stops_whenever_a_stream_opens(workload_api):
+    """The stand-in for the SPIRE agent must never leave a handler waiting: that would keep the test run from exiting.
+
+    The adapter reconnects within milliseconds, so a stream can open at any point of the shutdown.
+    """
+    grpc = pytest.importorskip("grpc")
+
+    def handlers():
+        return [thread for thread in threading.enumerate() if thread.name.startswith("fake-workload-api")]
+
+    def open_stream(api):
+        channel = grpc.insecure_channel(api.address.replace("tcp://", ""))
+        call = channel.unary_stream(
+            "/SpiffeWorkloadAPI/FetchX509SVID", request_serializer=lambda _: b"", response_deserializer=lambda raw: raw
+        )
+        stream = call(None, metadata=(("workload.spiffe.io", "true"),))
+
+        def drain():
+            try:
+                for _ in stream:
+                    pass
+            except grpc.RpcError:
+                pass
+
+        threading.Thread(target=drain, daemon=True).start()
+        return channel
+
+    before = set(handlers())
+    # A stream that opens between the two halves of the shutdown.
+    api = workload_api()
+    first = open_stream(api)
+    assert eventually(lambda: len(api._streams) == 1)
+    api.drop_streams()
+    second = open_stream(api)
+    assert eventually(lambda: len(api._streams) == 1)
+    api.stop()
+    assert [thread for thread in handlers() if thread not in before and thread.is_alive()] == []
+    # A client that goes away without the server stopping frees its handler too.
+    other = workload_api()
+    third = open_stream(other)
+    assert eventually(lambda: len(other._streams) == 1)
+    third.close()
+    assert eventually(lambda: other._streams == [])
+    for channel in (first, second):
+        channel.close()
