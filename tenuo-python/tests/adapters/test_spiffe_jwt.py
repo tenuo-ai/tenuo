@@ -1693,6 +1693,12 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, authority, serv
     assert warrant.authorized_holder == PublicKey.from_bytes(base64.b64decode(reply["holder"]))
     refused = request(url, AUDIENCE, "task-123", authority.token(aud="spiffe://example.test/another"))
     assert refused["status"] == 401 and "audience" in refused["message"]
+    # A bearer token is never sent in plain HTTP to another machine. Nothing is sent at all.
+    for plain in ("http://issuer.example.test/warrants", "http://10.0.0.5:8080/warrants", "ftp://127.0.0.1/warrants"):
+        result = subprocess.run(
+            [node, str(script), plain, AUDIENCE, "task-123", authority.token()], capture_output=True, text=True, timeout=60
+        )
+        assert result.returncode == 2 and not result.stdout and "bearer token" in result.stderr, result
 
 
 @pytest.mark.parametrize("malformed_wire", [False, True])
@@ -1854,5 +1860,64 @@ def test_undecodable_federated_entry_does_not_hold_back_the_home_domain(authorit
         time.sleep(1.2)
         with pytest.raises(SpiffeError, match="JWT bundle cannot be read"):
             validator.authenticate(new_token)
+    finally:
+        validator.close()
+
+
+def test_recovered_keys_are_in_force_before_the_outage_is_over(authority, workload_api):  # noqa: F811
+    """Requests run in other threads: none may find the outage markers cleared while the earlier keys are still in place."""
+    successor = JWTAuthority()
+    own = f"spiffe://{DOMAIN}"
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{own: jwks(authority)}))
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, max_stale_seconds=1.0
+    )
+    seen = []
+
+    class Probe(type(validator)):
+        """Records which keys are in force at the instant each refusal marker is cleared."""
+
+        def _cleared(self, name):
+            seen.append((name, sorted(self._keys)))
+
+    def marker(name):
+        slot = "_probe" + name
+
+        def read(self):
+            return self.__dict__.get(slot)
+
+        def write(self, value):
+            if value is None and self.__dict__.get(slot) is not None:
+                self._cleared(name)
+            self.__dict__[slot] = value
+
+        return property(read, write)
+
+    for name in ("_lost_since", "_denied_since", "_unreadable_since"):
+        setattr(Probe, name, marker(name))
+    values = {name: validator.__dict__.pop(name) for name in ("_lost_since", "_denied_since", "_unreadable_since")}
+    validator.__class__ = Probe
+    for name, value in values.items():
+        setattr(validator, name, value)
+    try:
+        for recovery, expected in (
+            (bundles_response(**{own: jwks(successor)}), [successor.kid]),  # The keys were rotated meanwhile.
+            (bundles_response(**{own: jwks()}), []),  # Or withdrawn.
+        ):
+            # An outage, a refusal by SPIRE and an unreadable bundle, all past their grace periods.
+            expired = time.monotonic() - 600
+            validator._lost_since = validator._denied_since = validator._unreadable_since = expired
+            with pytest.raises(SpiffeError):
+                validator.authenticate(authority.token())
+            seen.clear()
+            api.publish_jwt_bundles(recovery)
+            assert eventually(lambda: validator._lost_since is None and validator._unreadable_since is None)
+            assert sorted(name for name, _ in seen) == ["_denied_since", "_lost_since", "_unreadable_since"]
+            assert all(keys == expected for _, keys in seen), seen
+            with pytest.raises(SpiffeError, match="not in the trust bundle"):
+                validator.authenticate(authority.token())  # The retired key is refused after recovery too.
+            api.publish_jwt_bundles(bundles_response(**{own: jwks(authority)}))
+            assert eventually(lambda: authority.kid in validator._keys)
     finally:
         validator.close()

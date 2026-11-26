@@ -384,12 +384,6 @@ class SpiffeJWT:
                     "Ignoring a malformed JWT bundle for %s; keeping the keys in use: %s", trust_domain, keys.reason
                 )
                 return
-            # Receiving bytes alone is not recovery. Only a readable home
-            # bundle (including an explicit withdrawal) ends the outage.
-            validator._lost_since = None
-            validator._stale_warned = False
-            validator._denied_since = None
-            validator._denied_warned = False
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
                 reason = (
@@ -399,13 +393,21 @@ class SpiffeJWT:
                 )
                 if not validator._loaded:
                     raise SpiffeError(reason)  # Not usable to start with.
-                validator._unreadable_since = None
                 validator._withdraw(reason)
-                return
-            validator._keys = keys
-            validator._loaded = True
+            else:
+                validator._keys = keys
+                validator._loaded = True
+            # Receiving bytes alone is not recovery. Only a readable home bundle
+            # (including an explicit withdrawal) ends an outage, and only once the
+            # keys it describes are in force: requests run in other threads, and
+            # must never find the outage over while the earlier keys are still in place.
+            validator._lost_since = None
+            validator._stale_warned = False
+            validator._denied_since = None
+            validator._denied_warned = False
             validator._unreadable_since = None
-            logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(keys), trust_domain)
+            if keys:
+                logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(keys), trust_domain)
 
         def lost(status: str) -> None:
             validator = owner()

@@ -17,6 +17,16 @@ if (!url || !audience || !task) {
   process.exit(2);
 }
 
+// A JWT-SVID is a bearer token: whoever sees it can use it. It goes over HTTPS only,
+// except to this machine. Without a token there is nothing to steal, and plain HTTP
+// is what a mesh sidecar expects.
+const target = new URL(url);
+const loopback = ["localhost", "[::1]"].includes(target.hostname) || /^127\.\d+\.\d+\.\d+$/.test(target.hostname);
+if (!["https:", "http:"].includes(target.protocol) || (token && target.protocol !== "https:" && !loopback)) {
+  console.error("A JWT-SVID is a bearer token: use https:// (http:// is allowed for loopback only)");
+  process.exit(2);
+}
+
 // The holder key: an Ed25519 key pair that never leaves this process.
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 const holder = publicKey.export({ format: "der", type: "spki" }).subarray(-32); // The raw 32-byte public key.
