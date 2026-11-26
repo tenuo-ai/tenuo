@@ -809,6 +809,7 @@ With JWT-SVIDs the agent's message starts `Issuer refused (HTTP <status>):`.
 |---|---|---|
 | `...(HTTP 401): JWT-SVID is not for this issuer's audience (...)` | The agent requested a token for a different audience. | Use the issuer's `audience` in `fetch_jwt_svid` and `request_warrant_jwt`. |
 | `...(HTTP 401): JWT-SVID was signed by a key that is not in the trust bundle` | Another trust domain, a rotated key the issuer has not received, or the issuer has withdrawn its keys (it logs `JWT-SVIDs for ... are refused until keys return`). | Check the trust domain; check the issuer's log and its connection to the SPIRE agent. |
+| `...(HTTP 401): JWT-SVIDs are refused while the SPIRE agent is unreachable` | The issuer lost its Workload API stream more than five minutes ago. | Restore the SPIRE agent; the issuer resumes by itself. |
 | `...(HTTP 401): JWT-SVID has expired` | The token sat too long, or the clocks disagree. | Fetch the token just before the request, as the example does. |
 | `...(HTTP 403): Holder proof is too old or from the future; check the clocks on both sides` | Agent and issuer clocks differ by more than 60 seconds. | Synchronize clocks. |
 | `...(HTTP 403): SVID expires too soon to issue a warrant` | The token had about a second left. | Fetch a fresh token. |

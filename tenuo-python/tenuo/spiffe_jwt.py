@@ -243,6 +243,7 @@ class SpiffeJWT:
             if validator is None:
                 raise _OwnerGone
             validator._lost_since = None
+            validator._stale_warned = False
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
                 reason = (
@@ -299,6 +300,7 @@ class SpiffeJWT:
         self._keys = {}
         self._loaded = False  # A usable bundle has been installed at least once.
         self._lost_since: Optional[float] = None  # When the Workload API stream was last lost.
+        self._stale_warned = False
         self._max_stale = 0.0
 
     def _read_file(self) -> Dict[str, _Key]:
@@ -352,9 +354,16 @@ class SpiffeJWT:
     def authenticate(self, token: str) -> SpiffeIdentity:
         """Validate a JWT-SVID and return the workload identity it names."""
         self._refresh()
+        # Refuse on old information without touching the shared keys: the watcher
+        # may be installing a recovered bundle at this very moment.
         lost = self._lost_since
         if lost is not None and time.monotonic() - lost > self._max_stale:
-            self._withdraw("the SPIRE agent has been unreachable for too long")
+            if not self._stale_warned:
+                self._stale_warned = True
+                logger.warning(
+                    "JWT-SVIDs for %s are refused until the SPIRE agent is reachable again", self.trust_domain
+                )
+            raise SpiffeError("JWT-SVIDs are refused while the SPIRE agent is unreachable")
         # Exactly three unpadded base64url segments, so one token has one spelling
         # (and one SHA-256) whatever the installed PyJWT tolerates.
         if not isinstance(token, str) or len(token) > _MAX_TOKEN_BYTES or not _COMPACT_JWS.fullmatch(token):

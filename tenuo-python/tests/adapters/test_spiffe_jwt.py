@@ -455,17 +455,64 @@ def test_workload_api_outage_is_tolerated_for_a_bounded_time(authority, workload
     validator = SpiffeJWT.from_workload_api(
         trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, max_stale_seconds=1.0
     )
+
+    def accepted():
+        try:
+            return validator.authenticate(token).spiffe_id == AGENT
+        except SpiffeError:
+            return False
+
     try:
         api.refuse = grpc.StatusCode.UNAVAILABLE  # The SPIRE agent is restarting.
         api.drop_streams()
         assert eventually(lambda: validator._lost_since is not None)
-        assert validator.authenticate(token).spiffe_id == AGENT  # Still served during a short outage.
+        assert accepted()  # Still served during a short outage.
         time.sleep(1.2)
-        with pytest.raises(SpiffeError, match="not in the trust bundle"):
+        with pytest.raises(SpiffeError, match="SPIRE agent is unreachable"):
             validator.authenticate(token)
         api.refuse = None
-        assert eventually(lambda: bool(validator._keys))
+        assert eventually(accepted)
+    finally:
+        validator.close()
+
+
+def test_request_during_recovery_cannot_discard_the_recovered_keys(authority, workload_api):  # noqa: F811
+    """A request that saw the outage as too long must not undo a bundle installed meanwhile."""
+    token = authority.token()
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{f"spiffe://{DOMAIN}": jwks(authority)}))
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, max_stale_seconds=1.0
+    )
+    try:
+        keys = validator._keys
+        validator._lost_since = time.monotonic() - 60  # The outage timer has long expired.
+        with pytest.raises(SpiffeError, match="SPIRE agent is unreachable"):
+            validator.authenticate(token)
+        assert validator._keys is keys  # Refused, but nothing shared was cleared.
+        validator._lost_since = None  # The watcher reconnects; SPIRE has nothing new to send.
         assert validator.authenticate(token).spiffe_id == AGENT
+
+        # The same interleaving, with the stale read racing a real recovery many times.
+        outcomes = []
+
+        def hammer():
+            for _ in range(300):
+                try:
+                    validator.authenticate(token)
+                    outcomes.append(True)
+                except SpiffeError:
+                    outcomes.append(False)
+
+        workers = [threading.Thread(target=hammer) for _ in range(4)]
+        for worker in workers:
+            worker.start()
+        for _ in range(200):
+            validator._lost_since = time.monotonic() - 60
+            validator._lost_since = None
+        for worker in workers:
+            worker.join()
+        assert validator._keys is keys and validator.authenticate(token).spiffe_id == AGENT
     finally:
         validator.close()
 
