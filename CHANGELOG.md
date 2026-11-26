@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Python: token budgets per period.** `llm_capability(total_tokens=N,
+  period="day", timezone=...)` signs an allowance that starts again each hour,
+  day, week or month. The meter counts per warrant and period and the warrant
+  check verifies the period it counted by. See
+  [token budgets](docs/token-budgets.md#a-budget-per-period).
+
 - **`tenuo::aat`: verify ES256 signatures** (Rust, behind the new `aat-es256`
   feature, which adds the `p256` crate). A trust anchor, a holder's `cnf.jwk`
   and a PoP JWT may use a P-256 key, alone or beside Ed25519 keys in one
@@ -26,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VerifyOptions.algorithms`, applied to every token and to the PoP JWT. The
   default is `Ed25519` only, so behavior is unchanged until ES256 is
   listed.
+
 - Python SPIFFE adapter (`tenuo[spiffe]`): authenticate X.509-SVID peers over
   mTLS, verify a separate Tenuo holder key, and issue task-scoped warrants under
   explicit application policy. Includes an asyncio issuance endpoint
