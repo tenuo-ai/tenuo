@@ -1069,6 +1069,7 @@ def test_full_proof_memory_refuses_new_requests_and_never_forgets_a_live_proof(v
         policy=lambda identity, task: SpiffeGrant(REFUND) if task == "task-123" else None,
         jwt=validator,
         max_jwt_proofs=4,
+        max_jwt_proofs_per_identity=4,
     )
     holder, token = SigningKey.generate(), authority.token()
     first = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
@@ -1084,8 +1085,8 @@ def test_full_proof_memory_refuses_new_requests_and_never_forgets_a_live_proof(v
         issuer.issue_jwt(token, holder.public_key, "task-123", first)
     assert len(issuer._proofs) == 4
     # Entries expire once their timestamps are no longer acceptable, and admissions resume.
-    later = time.monotonic() + 62
-    monkeypatch.setattr("tenuo.spiffe.time.monotonic", lambda: later)
+    later = time.time() + 62
+    monkeypatch.setattr("tenuo.spiffe.time.time", lambda: later)
     assert issue(issuer, token, holder).id
     assert len(issuer._proofs) == 1
     with pytest.raises(ValueError):
@@ -1250,6 +1251,8 @@ def test_endpoint_refusals(app, authority):
         b"[" * 5000,
         request_body(token, holder, extra=1),
         request_body(token, holder, v=2),
+        request_body(token, holder, v=True),
+        request_body(token, holder, v=1.0),
         request_body(token, holder, holder="!!"),
         request_body(token, holder, holder="AAAA"),
         request_body(token, holder, signature=5),
@@ -1567,7 +1570,9 @@ def test_client_and_endpoint_over_http_and_https(app, authority, serve, tmp_path
 
 def test_client_never_sends_the_token_in_the_clear():
     holder = SigningKey.generate()
-    options = dict(token="aaaa.bbbb.cccc", audience=AUDIENCE, issuer_key=holder.public_key, holder_key=holder, task_id="t")
+    options = dict(
+        token="aaaa.bbbb.cccc", audience=AUDIENCE, issuer_key=holder.public_key, holder_key=holder, task_id="t"
+    )
     for url in (
         "http://issuer.acme.internal/warrants",
         "http://10.0.0.5:8080/warrants",
@@ -1866,8 +1871,10 @@ def test_unreadable_response_does_not_reset_an_expired_outage(authority, workloa
             validator.authenticate(token)
         api.publish_jwt_bundles(b"\xff" if malformed_wire else bundles_response(**{own: b"garbage"}))
         assert eventually(lambda: validator._unreadable_since is not None)
-        assert validator._lost_since == lost
-        with pytest.raises(SpiffeError):
+        # SPIRE is answering, so the outage is over. The kept keys are still as old
+        # as the outage made them: their time runs from when it began.
+        assert (validator._lost_since, validator._unreadable_since) == (None, lost)
+        with pytest.raises(SpiffeError, match="cannot be read"):
             validator.authenticate(token)
         api.publish_jwt_bundles(good)
         assert eventually(lambda: validator._unreadable_since is None and validator._lost_since is None)
@@ -2248,3 +2255,285 @@ def test_unreadable_home_bundle_does_not_cost_a_partner_its_fresh_keys(authority
                 validator.authenticate(token)
     finally:
         validator.close()
+
+
+def test_one_workload_cannot_fill_the_proof_memory(validator, authority):
+    issuer = SpiffeWarrantIssuer(
+        signing_key=SigningKey.generate(),
+        policy=lambda *_: SpiffeGrant(REFUND),
+        jwt=validator,
+        max_jwt_proofs=8,
+        max_jwt_proofs_per_identity=2,
+    )
+    holder, busy = SigningKey.generate(), authority.token()
+    for _ in range(2):
+        issue(issuer, busy, holder)
+    with pytest.raises(SpiffeError, match="This workload is at its limit"):
+        issue(issuer, busy, holder)
+    # Another workload is still served, and a refused request leaves nothing behind.
+    assert issue(issuer, authority.token(sub=f"spiffe://{DOMAIN}/other"), holder).id
+    assert issuer._proofs_held == {AGENT: 2, f"spiffe://{DOMAIN}/other": 1} and len(issuer._proofs) == 3
+    # A quarter of the memory by default.
+    default = SpiffeWarrantIssuer(signing_key=SigningKey.generate(), policy=lambda *_: None, jwt=validator)
+    assert default._max_jwt_proofs_per_identity == default._max_jwt_proofs // 4
+    for bad in (0, 9, True, 1.5):
+        with pytest.raises(ValueError, match="max_jwt_proofs_per_identity"):
+            SpiffeWarrantIssuer(
+                signing_key=SigningKey.generate(),
+                policy=lambda *_: None,
+                jwt=validator,
+                max_jwt_proofs=8,
+                max_jwt_proofs_per_identity=bad,
+            )
+
+
+def test_setting_the_clock_back_does_not_reopen_a_used_proof(jwt_issuer, authority, monkeypatch):
+    issuer, *_ = jwt_issuer
+    holder, token = SigningKey.generate(), authority.token()
+    first = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
+    assert issuer.issue_jwt(token, holder.public_key, "task-123", first).id
+    start = time.time()
+    # A minute on, the proof is too old, and the next request lets the issuer forget it.
+    monkeypatch.setattr("tenuo.spiffe.time.time", lambda: start + 62)
+    with pytest.raises(SpiffeError, match="too old"):
+        issuer.issue_jwt(token, holder.public_key, "task-123", first)
+    assert issue(issuer, token, holder).id
+    assert first.signature not in issuer._proofs
+    # The issuer's clock is set back half a minute. The first proof's timestamp looks fresh again.
+    monkeypatch.setattr("tenuo.spiffe.time.time", lambda: start + 32)
+    with pytest.raises(SpiffeError, match="too old"):
+        issuer.issue_jwt(token, holder.public_key, "task-123", first)
+    assert issue(issuer, token, holder).id  # A proof signed now is still served.
+
+
+def _asgi_scope(token):
+    return {
+        "type": "http",
+        "method": "POST",
+        "path": "/warrants",
+        "headers": [(b"authorization", f"Bearer {token}".encode())],
+    }
+
+
+def test_endpoint_checks_the_token_before_taking_a_place(jwt_issuer, authority):
+    """A caller without a valid token is answered at once: its body is never asked for and it holds no place."""
+    issuer, *_ = jwt_issuer
+    application = SpiffeJWTIssuerApp(issuer, max_concurrent=2, body_timeout=5)
+    stranger, holder, good = JWTAuthority(), SigningKey.generate(), authority.token()
+
+    async def scenario():
+        asked = []
+
+        async def never():
+            asked.append(1)
+            await asyncio.sleep(30)
+
+        async def whole():
+            return {"type": "http.request", "body": request_body(good, holder), "more_body": False}
+
+        async def one(token, receive):
+            sent = []
+            await application(_asgi_scope(token), receive, lambda message: _collect(sent, message))
+            return sent[0]["status"]
+
+        without = [
+            await asyncio.wait_for(one(token, never), 2)
+            for token in (
+                stranger.token(),
+                authority.token(exp=-60),
+                authority.token(aud="https://elsewhere.test"),
+                "aaaa.bbbb.cccc",
+            )
+        ]
+        return without, asked, application._in_progress, await one(good, whole)
+
+    try:
+        assert asyncio.run(scenario()) == ([401, 401, 401, 401], [], 0, 200)
+    finally:
+        application.close()
+
+
+def test_endpoint_limits_requests_in_progress_per_workload(jwt_issuer, authority):
+    issuer, *_ = jwt_issuer
+    application = SpiffeJWTIssuerApp(issuer, max_per_identity=1, body_timeout=5)
+    holder = SigningKey.generate()
+
+    async def scenario():
+        async def never():
+            await asyncio.sleep(30)
+
+        async def one(token, receive=None):
+            sent = []
+
+            async def whole():
+                return {"type": "http.request", "body": request_body(token, holder), "more_body": False}
+
+            await application(_asgi_scope(token), receive or whole, lambda message: _collect(sent, message))
+            return sent[0]["status"], json.loads(sent[1]["body"]).get("message")
+
+        waiting = asyncio.ensure_future(one(authority.token(), never))  # Holds this workload's only place.
+        await asyncio.sleep(0.05)
+        second = await one(authority.token(exp=301))
+        other = await one(authority.token(sub=f"spiffe://{DOMAIN}/other"))  # Reaches the policy, which says no.
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+        return second, other[0], application._per_key, await one(authority.token(exp=302))
+
+    try:
+        second, other, held, after = asyncio.run(scenario())
+        assert second == (503, "Too many requests in progress for this workload; retry shortly")
+        assert (other, held, after[0]) == (403, {}, 200)
+        with pytest.raises(ValueError, match="max_per_identity"):
+            SpiffeJWTIssuerApp(issuer, max_per_identity=0)
+    finally:
+        application.close()
+
+
+def test_endpoint_serves_again_after_a_lifespan_restart(jwt_issuer, authority):
+    """A server started twice in one process sends shutdown and then startup to the same application."""
+    issuer, *_ = jwt_issuer
+    application = SpiffeJWTIssuerApp(issuer)
+    holder, token = SigningKey.generate(), authority.token()
+
+    async def lifespan():
+        messages = iter([{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}])
+        sent = []
+
+        async def receive():
+            return next(messages)
+
+        await application({"type": "lifespan"}, receive, lambda message: _collect(sent, message))
+        return [message["type"] for message in sent]
+
+    def post():
+        headers = [("Authorization", f"Bearer {token}")]
+        return call_app(application, headers=headers, body=request_body(token, holder))[0]
+
+    try:
+        assert asyncio.run(lifespan()) == ["lifespan.startup.complete", "lifespan.shutdown.complete"]
+        assert post() == 503  # Shut down.
+        assert asyncio.run(lifespan())[0] == "lifespan.startup.complete"
+        assert post() == 503  # That run ended with a shutdown too.
+
+        async def start_only():
+            sent = []
+            started = asyncio.Event()
+
+            async def receive():
+                if not started.is_set():
+                    started.set()
+                    return {"type": "lifespan.startup"}
+                await asyncio.sleep(30)
+
+            task = asyncio.ensure_future(
+                application({"type": "lifespan"}, receive, lambda message: _collect(sent, message))
+            )
+            await asyncio.sleep(0.05)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        asyncio.run(start_only())
+        assert post() == 200  # Started again and not shut down: it serves.
+    finally:
+        application.close()
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), 0, -1, True])
+def test_time_settings_must_be_positive_and_finite(jwt_issuer, authority, workload_api, value):  # noqa: F811
+    issuer, *_ = jwt_issuer
+    with pytest.raises(ValueError, match="body_timeout"):
+        SpiffeJWTIssuerApp(issuer, body_timeout=value)
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{f"spiffe://{DOMAIN}": jwks(authority)}))
+    for setting in ("timeout", "max_stale_seconds"):
+        with pytest.raises(ValueError, match=setting):
+            SpiffeJWT.from_workload_api(
+                trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, **{"timeout": 5, setting: value}
+            )
+    holder = SigningKey.generate()
+    with pytest.raises(ValueError, match="timeout"):
+        request_warrant_jwt(
+            "http://127.0.0.1:1/warrants",
+            token=authority.token(),
+            audience=AUDIENCE,
+            issuer_key=holder.public_key,
+            holder_key=holder,
+            task_id="task-123",
+            timeout=value,
+        )
+
+
+def test_a_reconnect_with_an_unreadable_home_bundle_keeps_the_partner(authority, workload_api):  # noqa: F811
+    """SPIRE answers again after an outage, but its home bundle cannot be read: the partner's, which can, still counts."""
+    partner = JWTAuthority()
+    own, other = f"spiffe://{DOMAIN}", "spiffe://partner.test"
+    home_unreadable = bundles_response(**{own: b"garbage", other: jwks(partner)})
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{own: jwks(authority), other: jwks(partner)}))
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        socket_path=api.address,
+        timeout=5,
+        max_stale_seconds=1.0,
+        federates_with=["partner.test"],
+    )
+    try:
+        api._jwt_current = home_unreadable  # What a new stream will be sent.
+        calls = api.calls
+        api.drop_streams()
+        assert eventually(lambda: api.calls > calls and validator._unreadable_since is not None)
+        assert validator._lost_since is None
+        time.sleep(1.3)  # Longer than max_stale_seconds.
+        token = partner.token(sub="spiffe://partner.test/agent")
+        assert validator.authenticate(token).spiffe_id == "spiffe://partner.test/agent"
+        with pytest.raises(SpiffeError, match="cannot be read"):  # The home keys were not confirmed, and have aged out.
+            validator.authenticate(authority.token())
+    finally:
+        validator.close()
+
+
+def test_client_timeout_bounds_the_whole_exchange(authority):
+    """A reply that arrives a byte at a time keeps every single read short. The call still ends on time."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def trickle():
+        connection, _ = listener.accept()
+        with connection:
+            request = b""
+            while b"\r\n\r\n" not in request:
+                request += connection.recv(65536)
+            reply = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 400\r\n\r\n" + b" " * 400
+            try:
+                for byte in reply:
+                    if stop.is_set():
+                        return
+                    connection.sendall(bytes([byte]))
+                    time.sleep(0.05)
+            except OSError:
+                pass  # The client gave up, as it should.
+
+    thread = threading.Thread(target=trickle, daemon=True)
+    thread.start()
+    holder = SigningKey.generate()
+    began = time.monotonic()
+    try:
+        with pytest.raises(SpiffeError, match="did not answer within 1 seconds"):
+            request_warrant_jwt(
+                f"http://127.0.0.1:{port}/warrants",
+                token=authority.token(),
+                audience=AUDIENCE,
+                issuer_key=holder.public_key,
+                holder_key=holder,
+                task_id="task-123",
+                timeout=1,
+            )
+        assert time.monotonic() - began < 5  # The whole reply would take over twenty seconds.
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+        listener.close()

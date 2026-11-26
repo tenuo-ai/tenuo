@@ -19,9 +19,11 @@ import base64
 import binascii
 import contextlib
 import hashlib
+import heapq
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -232,7 +234,7 @@ def _svid_identity(cert: x509.Certificate, trust_domains: Collection[str]) -> Tu
         fingerprint = cert.fingerprint(hashes.SHA256()).hex()
     except SpiffeError:
         raise
-    except ValueError as exc:
+    except Exception as exc:  # The library reports unreadable content with several unrelated types.
         raise SpiffeError("Malformed X.509-SVID") from exc
     if len(uris) != 1 or basic.ca:
         raise SpiffeError("Expected a leaf SVID with exactly one URI SAN")
@@ -293,6 +295,33 @@ def _check_authorities(authorities: Sequence[x509.Certificate], trust_domain: st
                 not uri.startswith(f"spiffe://{trust_domain}/") or _trust_domain(uri) != trust_domain
             ):
                 raise SpiffeError("Trust bundle contains an authority for a different trust domain")
+
+
+def _issued_by(certificate: x509.Certificate, issuer: x509.Certificate) -> bool:
+    try:
+        certificate.verify_directly_issued_by(issuer)
+    except Exception:  # A wrong name or signature, or a key type the library cannot check.
+        return False
+    return True
+
+
+def _anchored(chain: Sequence[x509.Certificate], authorities: Sequence[x509.Certificate]) -> bool:
+    """Whether the SVID was issued by one of ``authorities``, directly or through the intermediates sent with it.
+
+    Names and signatures only: dates and constraints are for the TLS library,
+    at each handshake. This catches an SVID delivered next to a bundle that
+    does not hold its authority, which no peer with that bundle could accept.
+    """
+    current, intermediates = chain[0], list(chain[1:])
+    for _ in range(len(chain)):
+        if any(_issued_by(current, authority) for authority in authorities):
+            return True
+        issuer = next((candidate for candidate in intermediates if _issued_by(current, candidate)), None)
+        if issuer is None:
+            return False
+        intermediates.remove(issuer)
+        current = issuer
+    return False
 
 
 def _verified_chain(connection: Any) -> Optional[List[bytes]]:
@@ -524,7 +553,7 @@ def _x509_snapshot(message: bytes, wanted: Optional[str], federates_with: Sequen
         authorities = [x509.load_der_x509_certificate(der) for der in _split_der(chosen.get(4, b""))]
         key = load_der_private_key(chosen.get(3, b""), password=None)
         key_pem = key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
-    except (ValueError, TypeError) as exc:
+    except Exception as exc:  # Bad encodings, and versions, key types or curves the library does not know.
         raise SpiffeError("Malformed SVID from the Workload API") from exc
     if not chain or not authorities:
         raise SpiffeError("The Workload API returned an SVID without a certificate or bundle")
@@ -532,7 +561,7 @@ def _x509_snapshot(message: bytes, wanted: Optional[str], federates_with: Sequen
     for domain, bundle in foreign.items():
         try:
             certificates = [x509.load_der_x509_certificate(der) for der in _split_der(bundle)]
-        except (ValueError, TypeError, SpiffeError) as exc:
+        except Exception as exc:
             logger.warning("Ignoring a malformed bundle for federated trust domain %s: %s", domain, exc)
             continue
         if certificates:
@@ -634,13 +663,15 @@ class _WorkloadAPIWatcher:
         if self._stop.is_set() or self._retry_timer is not None:
             return
         timer = threading.Timer(self._retry_delay, self._retry_tick)
+        timer.args = (timer,)
         timer.daemon = True
         self._retry_timer = timer
         self._retry_delay = min(self._retry_delay * 2, _PENDING_RETRY[1])
         timer.start()
 
-    def _retry_tick(self) -> None:
-        self._retry_timer = None
+    def _retry_tick(self, timer: Optional[threading.Timer] = None) -> None:
+        if timer is None or self._retry_timer is timer:  # A timer that was replaced leaves its successor alone.
+            self._retry_timer = None
         if not self._stop.is_set():
             self.retry_pending()
 
@@ -655,7 +686,11 @@ class _WorkloadAPIWatcher:
             return False
         except Exception as exc:  # Keep the current credentials and keep listening.
             if self._pending is not snapshot:
-                self._retry_delay = _PENDING_RETRY[0]  # A new update: start the retry schedule over.
+                # A new update: start the retry schedule over, including a wait already under way.
+                self._retry_delay = _PENDING_RETRY[0]
+                waiting, self._retry_timer = self._retry_timer, None
+                if waiting is not None:
+                    waiting.cancel()
             self._pending = snapshot
             self.last_error = str(exc)
             if not retry:
@@ -842,8 +877,7 @@ class SpiffeTLS:
         domains = self._federates_with
         if spiffe_id is not None and _trust_domain(spiffe_id) != trust_domain:
             raise ValueError("spiffe_id is not in trust_domain")
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        timeout = _seconds("timeout", timeout)
         owner = weakref.ref(self)
 
         def deliver(snapshot: _Snapshot) -> None:
@@ -931,7 +965,7 @@ class SpiffeTLS:
         try:
             authorities = x509.load_pem_x509_certificates(bundle_pem)
             chain = x509.load_pem_x509_certificates(cert_pem)
-        except ValueError as exc:
+        except Exception as exc:  # Not PEM, or a certificate the library refuses outright.
             raise SpiffeError("Trust bundle and certificate files must contain PEM certificates") from exc
         federated: Dict[str, List[x509.Certificate]] = {}
         for domain, path in zip(self._federates_with, self._paths[3:]):
@@ -939,7 +973,7 @@ class SpiffeTLS:
             # for now. It never holds back the home domain's credentials.
             try:
                 federated[domain] = x509.load_pem_x509_certificates(_read_snapshot(path))
-            except (OSError, ValueError) as exc:
+            except Exception as exc:  # Whatever is wrong with it costs that domain only.
                 logger.warning("Trust bundle for federated trust domain %s is unusable: %s", domain, exc)
         return _Snapshot(chain, key_pem, authorities, federated)
 
@@ -947,6 +981,8 @@ class SpiffeTLS:
         if not snapshot.chain or not snapshot.authorities:
             raise SpiffeError("An SVID and at least one authority are required")
         _check_authorities(snapshot.authorities, self.trust_domain)
+        if not _anchored(snapshot.chain, snapshot.authorities):
+            raise SpiffeError("Local SVID was not issued by an authority in the trust bundle delivered with it")
         domains: Dict[str, Tuple[x509.Certificate, ...]] = {self.trust_domain: tuple(snapshot.authorities)}
         for domain in self._federates_with:
             bundle = snapshot.federated.get(domain)
@@ -961,7 +997,11 @@ class SpiffeTLS:
                 logger.warning("Trust bundle for federated trust domain %s is refused: %s", domain, exc)
                 continue
             domains[domain] = tuple(bundle)
-        for domain in sorted(_overlapping_domains(domains, self.trust_domain)):
+        # The intermediates sent with this workload's own SVID are home authorities
+        # too, for this purpose: a federated certificate that imitates one would be
+        # picked ahead of it when a home peer's chain is built.
+        compared = {**domains, self.trust_domain: (*snapshot.authorities, *snapshot.chain[1:])}
+        for domain in sorted(_overlapping_domains(compared, self.trust_domain)):
             logger.warning(
                 "Trust bundle for federated trust domain %s is refused: it shares an authority with another domain",
                 domain,
@@ -996,12 +1036,14 @@ class SpiffeTLS:
             # connection made under one that trusted an authority since removed
             # is accepted only if its peer is anchored in an authority still
             # trusted (see authenticate).
-            self._previous = weakref.WeakKeyDictionary(
-                {context: authorities for context, authorities in known if authorities <= generation.authorities}
-            )
+            # Retired first: authenticate reads these without the lock, and a
+            # context must never be, even for a moment, in neither collection.
             for context, authorities in known:
                 if not authorities <= generation.authorities:
                     self._retired.add(context)
+            self._previous = weakref.WeakKeyDictionary(
+                {context: authorities for context, authorities in known if authorities <= generation.authorities}
+            )
             self._generation = generation
         logger.info(
             "Loaded SVID %s (expires %s)",
@@ -1209,6 +1251,13 @@ def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _seconds(name: str, value: Any) -> float:
+    """A positive, finite number of seconds. NaN and infinity would switch a limit off without saying so."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be positive and finite")
+    return float(value)
+
+
 def _validate_grant(grant: Any) -> SpiffeGrant:
     if not isinstance(grant, SpiffeGrant):
         raise SpiffeError("Policy must return a SpiffeGrant or None")
@@ -1253,7 +1302,9 @@ class SpiffeWarrantIssuer:
     With ``jwt=`` (a :class:`tenuo.spiffe_jwt.SpiffeJWT`) the issuer also, or
     instead, accepts JWT-SVIDs through :meth:`issue_jwt`. It remembers up to
     ``max_jwt_proofs`` recent holder proofs (each for about a minute) to refuse
-    exact replays, and asks callers to retry when that memory is full.
+    exact replays, and asks callers to retry when that memory is full. One
+    SPIFFE ID may hold at most ``max_jwt_proofs_per_identity`` of them (a
+    quarter by default), so one busy workload cannot keep the others out.
     """
 
     def __init__(
@@ -1268,6 +1319,7 @@ class SpiffeWarrantIssuer:
         jwt: Optional[Any] = None,
         max_jwt_proofs: int = _JWT_PROOF_MEMORY,
         forwarded: Optional[Any] = None,
+        max_jwt_proofs_per_identity: Optional[int] = None,
     ):
         if tls is None and jwt is None and forwarded is None:
             raise ValueError(
@@ -1282,11 +1334,22 @@ class SpiffeWarrantIssuer:
         ):
             if not _positive_int(value) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if max_jwt_proofs_per_identity is None:
+            max_jwt_proofs_per_identity = max(1, max_jwt_proofs // 4)
+        if not _positive_int(max_jwt_proofs_per_identity) or not 1 <= max_jwt_proofs_per_identity <= max_jwt_proofs:
+            raise ValueError("max_jwt_proofs_per_identity must be a positive integer, at most max_jwt_proofs")
         self._max_jwt_proofs = max_jwt_proofs
+        self._max_jwt_proofs_per_identity = max_jwt_proofs_per_identity
         self.tls = tls
         self.jwt = jwt  # A tenuo.spiffe_jwt.SpiffeJWT, or None.
         self.forwarded = forwarded  # A tenuo.spiffe_forwarded.SpiffeForwardedIdentity, or None.
-        self._proofs: Dict[bytes, float] = {}
+        # Each remembered proof: the wall-clock time until which its timestamp stays
+        # acceptable, and whose it is. The heap orders them by that time; an entry
+        # dropped early (a failed request) stays in the heap until it is skipped.
+        self._proofs: Dict[bytes, Tuple[float, str]] = {}
+        self._proof_order: List[Tuple[float, bytes]] = []
+        self._proofs_held: Dict[str, int] = {}
+        self._proofs_forgotten_to = float("-inf")  # Proofs acceptable no later than this have been forgotten.
         self._key = signing_key
         self._issuer_hex = bytes(signing_key.public_key.to_bytes()).hex()
         self._policy = policy
@@ -1401,18 +1464,28 @@ class SpiffeWarrantIssuer:
         # Refuse an exact replay seen by this process. The proof is reserved
         # while the request runs and kept only if a warrant is issued, so a
         # denied or failed request leaves nothing behind and can be retried.
-        # It is remembered for as long as its timestamp stays acceptable. A
-        # live entry is never dropped to make room: when the memory is full,
-        # new requests wait their turn instead.
-        now = time.monotonic()
-        acceptable_for = max(0.0, timestamp + _JWT_PROOF_SECONDS - time.time()) + 1
+        # It is remembered until the wall clock passes the last moment its
+        # timestamp is acceptable: the same clock that judges freshness above.
+        # A live entry is never dropped to make room: when the memory is full,
+        # or this workload holds its share, new requests wait their turn instead.
+        spiffe_id = identity.spiffe_id
+        keep_until = float(timestamp + _JWT_PROOF_SECONDS + 1)
         with self._lock:
-            self._proofs = {seen: until for seen, until in self._proofs.items() if until > now}
+            self._forget_old_proofs()
+            if keep_until <= self._proofs_forgotten_to:
+                # Had this proof been used, it would be forgotten by now. That only
+                # happens to a timestamp that passed the check above when the clock
+                # has been set back, so it cannot be told from a replay.
+                raise SpiffeError("Holder proof is too old or from the future; check the clocks on both sides")
             if signature in self._proofs:
                 raise SpiffeError("This holder proof was already used; sign a new one")
             if len(self._proofs) >= self._max_jwt_proofs:
                 raise _IssuerBusy("Issuer is at its limit for recent single-request exchanges; retry shortly")
-            self._proofs[signature] = now + acceptable_for
+            if self._proofs_held.get(spiffe_id, 0) >= self._max_jwt_proofs_per_identity:
+                raise _IssuerBusy("This workload is at its limit for recent single-request exchanges; retry shortly")
+            self._proofs[signature] = (keep_until, spiffe_id)
+            self._proofs_held[spiffe_id] = self._proofs_held.get(spiffe_id, 0) + 1
+            heapq.heappush(self._proof_order, (keep_until, signature))
         try:
             grant = self._policy(identity, task_id)
             if grant is None:
@@ -1425,8 +1498,34 @@ class SpiffeWarrantIssuer:
             return self._mint(identity, key, task_id, grant)
         except BaseException:
             with self._lock:
-                self._proofs.pop(signature, None)
+                self._forget_proof(signature)
             raise
+
+    def _forget_proof(self, signature: bytes) -> None:
+        """Drop one remembered proof. Call with the lock held."""
+        entry = self._proofs.pop(signature, None)
+        if entry is None:
+            return
+        held = self._proofs_held[entry[1]] - 1
+        if held:
+            self._proofs_held[entry[1]] = held
+        else:
+            del self._proofs_held[entry[1]]
+
+    def _forget_old_proofs(self) -> None:
+        """Drop the proofs whose timestamps are no longer acceptable. Call with the lock held."""
+        now, order = time.time(), self._proof_order
+        self._proofs_forgotten_to = max(self._proofs_forgotten_to, now)
+        while order and order[0][0] <= now:
+            until, signature = heapq.heappop(order)
+            entry = self._proofs.get(signature)
+            if entry is not None and entry[0] == until:
+                self._forget_proof(signature)
+        # Entries of failed requests are skipped above only when their time comes.
+        # Rebuild before they outnumber the live ones by much.
+        if len(order) > 2 * len(self._proofs) + 1024:
+            self._proof_order = [(until, signature) for signature, (until, _) in self._proofs.items()]
+            heapq.heapify(self._proof_order)
 
     def _challenge(self, identity: SpiffeIdentity, holder: PublicKey, task_id: str) -> bytes:
         if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
@@ -1643,6 +1742,7 @@ def request_warrant(
         raise ValueError("request_warrant requires a client-side SpiffeTLS")
     trusted = _key_list(issuer_key)
     _trust_domain(issuer_id)
+    timeout = _seconds("timeout", timeout)
     tls._refresh()
     where = f"{address[0]}:{address[1]}"
     try:
@@ -1752,6 +1852,10 @@ class _ServerConnection:
         self._writer.close()
 
 
+class _CallbackFailed(Exception):
+    """A policy or audit callback raised. The cause is chained."""
+
+
 def _consume_result(work: "asyncio.Future[Any]") -> None:
     """Retrieve a shielded result nobody awaited, so it is not logged as unhandled."""
     if not work.cancelled():
@@ -1791,8 +1895,7 @@ class SpiffeIssuerServer:
         for name, value in (("max_connections", max_connections), ("max_workers", max_workers)):
             if not _positive_int(value) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
-        if timeout <= 0 or reload_interval <= 0:
-            raise ValueError("timeout and reload_interval must be positive")
+        timeout, reload_interval = _seconds("timeout", timeout), _seconds("reload_interval", reload_interval)
         if issuer.tls is None:
             raise ValueError("SpiffeIssuerServer needs an issuer built with tls=; for JWT-SVIDs use SpiffeJWTIssuerApp")
         self._tls: SpiffeTLS = issuer.tls
@@ -1895,6 +1998,13 @@ class SpiffeIssuerServer:
         def run() -> Any:
             try:
                 return function(*args)
+            except SpiffeError:
+                raise
+            except Exception as exc:
+                # A policy or audit callback may fail with anything, including the
+                # OSError family (a database connection refused, a disk full). That
+                # is the issuer's failure, not the agent's connection breaking.
+                raise _CallbackFailed() from exc
             finally:
                 try:
                     loop.call_soon_threadsafe(slots.release)
@@ -1946,10 +2056,25 @@ class SpiffeIssuerServer:
         await connection.handshake()
         tls = self._tls
         challenge: Optional[bytes] = None
+        guard = threading.Lock()
+        made: List[bytes] = []
+        abandoned = False
+
+        def make_challenge(identity: SpiffeIdentity, holder: PublicKey, task_id: Any) -> bytes:
+            # Runs in a worker, and may finish after the exchange has timed out and
+            # unwound. Then nobody is left to discard the challenge but this function.
+            created = self.issuer._challenge(identity, holder, task_id)
+            with guard:
+                if abandoned:
+                    self.issuer._discard(created)
+                    raise SpiffeError("The exchange ended before its challenge was ready")
+                made.append(created)
+            return created
+
         try:
             identity = tls.authenticate(connection.tls)
             request = _parse_frame(await connection.readline(), frozenset({"v", "holder", "task"}))
-            if request["v"] != _PROTOCOL_VERSION:
+            if type(request["v"]) is not int or request["v"] != _PROTOCOL_VERSION:  # Not true, not 1.0.
                 raise SpiffeError("Unsupported protocol version")
             try:
                 holder = PublicKey.from_bytes(_decode(request["holder"], limit=64))
@@ -1957,7 +2082,7 @@ class SpiffeIssuerServer:
                 raise
             except Exception as exc:
                 raise SpiffeError("Invalid holder key") from exc
-            challenge = await self._in_worker(self.issuer._challenge, identity, holder, request["task"])
+            challenge = await self._in_worker(make_challenge, identity, holder, request["task"])
             await connection.send({"challenge": _encode(challenge)})
             proof = _parse_frame(await connection.readline(), frozenset({"signature"}))
             signature = _decode(proof["signature"], limit=128)
@@ -1969,5 +2094,7 @@ class SpiffeIssuerServer:
             await connection.send({"error": "refused", "message": str(exc)})
             return
         finally:
-            self.issuer._discard(challenge)
+            with guard:
+                abandoned = True
+            self.issuer._discard(made[0] if made else None)
         await connection.send({"warrant": warrant.to_base64()})

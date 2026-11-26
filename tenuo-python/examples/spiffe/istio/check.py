@@ -313,7 +313,13 @@ def check_around_the_sidecar(cluster: Cluster) -> None:
                 "a complete made-up entry": "403 unauthenticated: x-forwarded-client-cert describes more than one",
                 "an entry that opens a quote": "403 unauthenticated: Malformed",
                 "two made-up header lines": "403 unauthenticated: x-forwarded-client-cert describes more than one",
-                "a made-up X-Forwarded-For": "403 refused: Workload is not authorized",
+                # The header names the sidecar's own address. An issuer on TCP sees that address as its
+                # peer and cannot tell the two apart; an issuer on a Unix socket has no peer address.
+                "a made-up X-Forwarded-For": (
+                    "403 forbidden: The client address is also named in a forwarding header"
+                    if issuer == ISSUER_TCP
+                    else "403 refused: Workload is not authorized"
+                ),
             },
         )
     print(

@@ -13,7 +13,9 @@ import binascii
 import http.client
 import json
 import logging
+import socket
 import ssl
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -26,6 +28,7 @@ from tenuo.spiffe import (
     _consume_result,
     _IssuerBusy,
     _positive_int,
+    _seconds,
 )
 
 logger = logging.getLogger("tenuo.spiffe")
@@ -93,8 +96,7 @@ class _IssuerApp:
         for name, value in (("max_concurrent", max_concurrent), ("max_workers", max_workers)):
             if not _positive_int(value) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
-        if body_timeout <= 0:
-            raise ValueError("body_timeout must be positive")
+        body_timeout = _seconds("body_timeout", body_timeout)
         self.issuer = issuer
         self._path = path
         self._max_concurrent = max_concurrent
@@ -102,7 +104,9 @@ class _IssuerApp:
         self._in_progress = 0  # Requests admitted and not finished: being read, or with work running.
         self._max_per_key: Optional[int] = None  # Requests in progress per caller, where the caller is known early.
         self._per_key: Dict[str, int] = {}
-        self._pool = ThreadPoolExecutor(max_workers, thread_name_prefix="tenuo-spiffe-http")
+        self._max_workers = max_workers
+        self._closed = False
+        self._pool = self._new_pool()
 
     # -- hooks ------------------------------------------------------------
 
@@ -120,8 +124,12 @@ class _IssuerApp:
 
     # -- ASGI -------------------------------------------------------------
 
+    def _new_pool(self) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(self._max_workers, thread_name_prefix="tenuo-spiffe-http")
+
     def close(self) -> None:
         """Release the worker threads. Called on ASGI lifespan shutdown."""
+        self._closed = True
         self._pool.shutdown(wait=False)
 
     async def __call__(self, scope: _Scope, receive: _Receive, send: _Send) -> None:
@@ -129,6 +137,8 @@ class _IssuerApp:
             while True:
                 message = await receive()
                 if message["type"] == "lifespan.startup":
+                    if self._closed:  # Started again after a shutdown: the server was restarted in this process.
+                        self._pool, self._closed = self._new_pool(), False
                     await send({"type": "lifespan.startup.complete"})
                 elif message["type"] == "lifespan.shutdown":
                     self.close()
@@ -191,7 +201,7 @@ class _IssuerApp:
             request = json.loads(body)
             if not isinstance(request, dict) or set(request) != _REQUEST_FIELDS:
                 raise ValueError
-            if request["v"] != _PROTOCOL_VERSION:
+            if type(request["v"]) is not int or request["v"] != _PROTOCOL_VERSION:  # Not true, not 1.0.
                 raise _Refusal(400, "invalid_request", "Unsupported protocol version")
             holder = PublicKey.from_bytes(base64.b64decode(request["holder"], validate=True))
             proof = SpiffeHolderProof(
@@ -273,27 +283,53 @@ def _post_for_warrant(
     trusted: List[PublicKey],
     holder_key: SigningKey,
     before_request: Optional[Callable[[http.client.HTTPConnection], None]] = None,
+    timeout: Optional[float] = None,
 ) -> Warrant:
     """POST one issuance request and return the checked warrant. Every failure is a ``SpiffeError``.
 
     Redirects are never followed. ``before_request`` runs on the open
     connection before anything is sent (for example to authenticate the peer).
+    ``timeout`` bounds the whole exchange: the connection's own timeout only
+    bounds each wait for more bytes, which a slow sender can renew for ever.
     """
     connection: Optional[http.client.HTTPConnection] = None
+    expired = threading.Event()
+
+    def cut_off() -> None:
+        expired.set()
+        sock = getattr(connection, "sock", None)
+        if sock is not None:
+            try:
+                # The plain socket's own method: it wakes a read in progress and leaves the TLS state to its owner.
+                socket.socket.shutdown(sock, socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    deadline = threading.Timer(timeout, cut_off) if timeout is not None else None
+    if deadline is not None:
+        deadline.daemon = True
+        deadline.start()
     try:
-        connection = connect()
-        if before_request is not None:
-            connection.connect()
-            before_request(connection)
-        connection.request(
-            "POST",
-            path,
-            body=body,
-            headers={"Content-Type": "application/json", "Accept": "application/json", **headers},
-        )
-        response = connection.getresponse()
-        status = response.status
-        payload = response.read(_MAX_BODY_BYTES + 1)
+        try:
+            connection = connect()
+            if before_request is not None:
+                connection.connect()
+                before_request(connection)
+            connection.request(
+                "POST",
+                path,
+                body=body,
+                headers={"Content-Type": "application/json", "Accept": "application/json", **headers},
+            )
+            response = connection.getresponse()
+            status = response.status
+            payload = response.read(_MAX_BODY_BYTES + 1)
+        except Exception as exc:
+            if expired.is_set():
+                raise SpiffeError(f"The issuer at {where} did not answer within {timeout:g} seconds") from exc
+            raise
+        if expired.is_set():  # Cut off mid-reply: what was read is not the whole answer.
+            raise SpiffeError(f"The issuer at {where} did not answer within {timeout:g} seconds")
     except SpiffeError:
         raise
     except ssl.SSLCertVerificationError as exc:
@@ -303,6 +339,8 @@ def _post_for_warrant(
     except (OSError, http.client.HTTPException, UnicodeError) as exc:  # UnicodeError: an unusable host name.
         raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
     finally:
+        if deadline is not None:
+            deadline.cancel()
         if connection is not None:
             connection.close()
     try:

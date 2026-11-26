@@ -313,10 +313,8 @@ def test_unswitched_listener_handshake_cannot_complete(pki):
 
 def test_untrusted_certificate(pki, tmp_path):
     other = CA(tmp_path, "untrusted")
-    other_bundle = tmp_path / "other.pem"
-    other_bundle.write_bytes(other.pem)
     with pytest.raises(ssl.SSLError):
-        connect(pki(server=True, bundle_file=other_bundle), pki(peer_only=True))
+        connect(_tls(other.files("other-server", SERVER), True), pki(peer_only=True))
 
 
 def test_tls_requires_client_certificate(pki, ca):
@@ -924,11 +922,22 @@ def _raw_session(client_tls, address, payload, read=True):
         b"x" * (70 * 1024) + b"\n",
         b"not json\n",
         b'{"v": 2, "holder": "", "task": "task-123"}\n',
+        b'{"v": true, "holder": "", "task": "task-123"}\n',
+        b'{"v": 1.0, "holder": "", "task": "task-123"}\n',
         b'{"v": 1, "holder": "AAAA", "task": "task-123"}\n',
         b'{"v": 1, "holder": "AAAA", "task": "task-123", "extra": 1}\n',
         b"[]\n",
     ],
-    ids=["oversized", "not-json", "wrong-version", "short-holder", "extra-key", "not-an-object"],
+    ids=[
+        "oversized",
+        "not-json",
+        "wrong-version",
+        "version-true",
+        "version-float",
+        "short-holder",
+        "extra-key",
+        "not-an-object",
+    ],
 )
 def test_server_rejects_malformed_requests(served, payload):
     issuer, client_tls, *_ = served
@@ -2513,3 +2522,59 @@ def test_fake_workload_api_stops_whenever_a_stream_opens(workload_api):
     assert eventually(lambda: other._streams == [])
     for channel in (first, second):
         channel.close()
+
+
+def test_an_svid_must_come_from_an_authority_in_its_own_bundle(ca, tmp_path):
+    """An SVID next to a bundle that does not hold its authority is refused: no peer with that bundle could accept it."""
+    other = CA(tmp_path, "another root")
+    with pytest.raises(SpiffeError, match="not issued by an authority in the trust bundle"):
+        _tls(other.files("stray", SERVER, bundle=ca.pem), True)
+    # As an update, it is ignored and the good credentials stay in use.
+    paths, client = ca.files("rotating", SERVER), _tls(ca.files("client", AGENT), False)
+    server = _tls(paths, True)
+    before = server.identity.certificate_sha256
+    cert, key = other.leaf(SERVER)
+    paths["cert"].write_bytes(cert)
+    paths["key"].write_bytes(key)
+    with pytest.raises(SpiffeError, match="not issued by an authority in the trust bundle"):
+        server.reload()
+    server._refresh()  # What the server's timer calls: it logs and carries on.
+    assert server.identity.certificate_sha256 == before
+    connect(server, client)
+    # Once the bundle that holds the new authority arrives too, the pair is taken.
+    paths["bundle"].write_bytes(ca.pem + other.pem)
+    assert server.reload_if_changed()
+    assert server.identity.certificate_sha256 != before
+
+
+def test_workload_api_update_with_an_unanchored_svid_is_ignored(ca, tmp_path, workload_api, from_api, caplog):
+    other = CA(tmp_path, "another root")
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    tls = from_api(api)
+    before = tls.identity.certificate_sha256
+    caplog.set_level("WARNING", logger="tenuo.spiffe")
+    api.publish(x509_response(svid_entry(other, SERVER, bundle=ca.pem)))
+    assert eventually(lambda: "not issued by an authority in the trust bundle" in caplog.text)
+    assert tls.identity.certificate_sha256 == before
+    api.publish(x509_response(svid_entry(ca, SERVER)))  # The next good update is taken.
+    assert eventually(lambda: tls.identity.certificate_sha256 != before)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), 0, -1, True, "10", None])
+def test_time_settings_must_be_positive_and_finite(served, value):
+    """NaN compares false with everything, so it would switch a deadline off without a word."""
+    issuer, client_tls, root, holder = served
+    for setting in ("timeout", "reload_interval"):
+        with pytest.raises(ValueError, match=setting):
+            SpiffeIssuerServer(issuer, host="127.0.0.1", port=0, **{setting: value})
+    with pytest.raises(ValueError, match="timeout"):
+        request_warrant(
+            client_tls,
+            ("127.0.0.1", 1),
+            issuer_id=SERVER,
+            issuer_key=root.public_key,
+            holder_key=holder,
+            task_id="task-123",
+            timeout=value,
+        )
