@@ -305,23 +305,29 @@ def _issued_by(certificate: x509.Certificate, issuer: x509.Certificate) -> bool:
     return True
 
 
-def _anchored(chain: Sequence[x509.Certificate], authorities: Sequence[x509.Certificate]) -> bool:
-    """Whether the SVID was issued by one of ``authorities``, directly or through the intermediates sent with it.
+def _below_anchor(
+    chain: Sequence[x509.Certificate], authorities: Sequence[x509.Certificate]
+) -> Optional[List[x509.Certificate]]:
+    """The intermediates between the SVID and the nearest of ``authorities`` above it, or None if none is above it.
 
     Names and signatures only: dates and constraints are for the TLS library,
-    at each handshake. This catches an SVID delivered next to a bundle that
+    at each handshake. None means the SVID was delivered next to a bundle that
     does not hold its authority, which no peer with that bundle could accept.
+    Certificates sent above the nearest authority (a root that authority
+    chains to, say) are not part of the answer: they are not this domain's.
     """
     current, intermediates = chain[0], list(chain[1:])
+    below: List[x509.Certificate] = []
     for _ in range(len(chain)):
         if any(_issued_by(current, authority) for authority in authorities):
-            return True
+            return below
         issuer = next((candidate for candidate in intermediates if _issued_by(current, candidate)), None)
         if issuer is None:
-            return False
+            return None
         intermediates.remove(issuer)
+        below.append(issuer)
         current = issuer
-    return False
+    return None
 
 
 def _verified_chain(connection: Any) -> Optional[List[bytes]]:
@@ -985,7 +991,8 @@ class SpiffeTLS:
         if not snapshot.chain or not snapshot.authorities:
             raise SpiffeError("An SVID and at least one authority are required")
         _check_authorities(snapshot.authorities, self.trust_domain)
-        if not _anchored(snapshot.chain, snapshot.authorities):
+        below_anchor = _below_anchor(snapshot.chain, snapshot.authorities)
+        if below_anchor is None:
             raise SpiffeError("Local SVID was not issued by an authority in the trust bundle delivered with it")
         domains: Dict[str, Tuple[x509.Certificate, ...]] = {self.trust_domain: tuple(snapshot.authorities)}
         for domain in self._federates_with:
@@ -1001,10 +1008,12 @@ class SpiffeTLS:
                 logger.warning("Trust bundle for federated trust domain %s is refused: %s", domain, exc)
                 continue
             domains[domain] = tuple(bundle)
-        # The intermediates sent with this workload's own SVID are home authorities
-        # too, for this purpose: a federated certificate that imitates one would be
-        # picked ahead of it when a home peer's chain is built.
-        compared = {**domains, self.trust_domain: (*snapshot.authorities, *snapshot.chain[1:])}
+        # The intermediates between this workload's own SVID and its home authority
+        # are home authorities too, for this purpose: a federated certificate that
+        # imitates one would be picked ahead of it when a home peer's chain is built.
+        # Anything the SVID file holds above that authority is not: where the home
+        # authority chains to a partner's root, that root is the partner's own.
+        compared = {**domains, self.trust_domain: (*snapshot.authorities, *below_anchor)}
         for domain in sorted(_overlapping_domains(compared, self.trust_domain)):
             logger.warning(
                 "Trust bundle for federated trust domain %s is refused: it shares an authority with another domain",
