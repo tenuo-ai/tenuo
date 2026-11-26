@@ -582,8 +582,9 @@ issuer takes the trust domain's JWT signing keys from the SPIRE agent and
 follows key rotation. Signing keys carry no expiry date, so the issuer does not
 keep trusting them on old information: if SPIRE withdraws the keys or stops
 issuing the issuer its own identity, tokens are refused at once, and if the
-SPIRE agent is unreachable for five minutes (`max_stale_seconds`), tokens are
-refused until it returns. `audience` is the name agents request tokens for. Make it
+SPIRE agent is unreachable for five minutes (`max_stale_seconds`), or sends
+only JWT bundles the issuer cannot read for that long, tokens are refused
+until it returns. `audience` is the name agents request tokens for. Make it
 specific to this issuer; its SPIFFE ID is the usual choice.
 
 One issuer can serve both kinds of SVID. Pass `tls=` and `jwt=` together, run

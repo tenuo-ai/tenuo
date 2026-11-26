@@ -1643,3 +1643,29 @@ def test_guide_jwt_code_runs(tmp_path, monkeypatch, authority, workload_api, ser
     # The guide's policy grants a bearer token less than an mTLS peer.
     assert refund(call({"customer": "123", "cents": 4000})).startswith("denied: ")
     assert refund(call({"customer": "999", "cents": 100})).startswith("denied: ")
+
+
+def test_keys_from_before_an_unreadable_bundle_are_trusted_for_a_bounded_time(authority, workload_api):  # noqa: F811
+    """A bundle that cannot be read keeps the keys in use, but only for as long as an outage would."""
+    own, token = f"spiffe://{DOMAIN}", authority.token()
+    good = bundles_response(**{own: jwks(authority)})
+    api = workload_api()
+    api.publish_jwt_bundles(good)
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, max_stale_seconds=1.0
+    )
+    try:
+        api.publish_jwt_bundles(bundles_response(**{own: b"garbage"}))
+        assert eventually(lambda: validator._unreadable_since is not None)
+        assert validator.authenticate(token).spiffe_id == AGENT  # Kept for now.
+        since = validator._unreadable_since
+        api.publish_jwt_bundles(bundles_response(**{own: b"more garbage"}))  # Does not restart the clock.
+        time.sleep(1.2)
+        assert validator._unreadable_since == since
+        with pytest.raises(SpiffeError, match="JWT bundle cannot be read"):
+            validator.authenticate(token)
+        api.publish_jwt_bundles(good)
+        assert eventually(lambda: validator._unreadable_since is None)
+        assert validator.authenticate(token).spiffe_id == AGENT
+    finally:
+        validator.close()

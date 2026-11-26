@@ -337,7 +337,10 @@ class SpiffeJWT:
                 if not validator._loaded:
                     raise SpiffeError(keys.reason)  # Not usable to start with.
                 # Consumed once: keep the home keys, and leave nothing behind to be
-                # delivered again as if SPIRE had sent it afresh.
+                # delivered again as if SPIRE had sent it afresh. They are kept for a
+                # bounded time only: what SPIRE meant to say about them is unknown.
+                if validator._unreadable_since is None:
+                    validator._unreadable_since = time.monotonic()
                 logger.warning(
                     "Ignoring a malformed JWT bundle for %s; keeping the keys in use: %s", trust_domain, keys.reason
                 )
@@ -351,10 +354,12 @@ class SpiffeJWT:
                 )
                 if not validator._loaded:
                     raise SpiffeError(reason)  # Not usable to start with.
+                validator._unreadable_since = None
                 validator._withdraw(reason)
                 return
             validator._keys = keys
             validator._loaded = True
+            validator._unreadable_since = None
             logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(keys), trust_domain)
 
         def received() -> None:
@@ -411,6 +416,7 @@ class SpiffeJWT:
         self._federated_keys = {}
         self._loaded = False  # A usable bundle has been installed at least once.
         self._lost_since: Optional[float] = None  # When the Workload API stream was last lost.
+        self._unreadable_since: Optional[float] = None  # Since when the home bundle could not be read.
         self._stale_warned = False
         self._max_stale = 0.0
 
@@ -494,6 +500,14 @@ class SpiffeJWT:
                     "JWT-SVIDs for %s are refused until the SPIRE agent is reachable again", self.trust_domain
                 )
             raise SpiffeError("JWT-SVIDs are refused while the SPIRE agent is unreachable")
+        unreadable = self._unreadable_since
+        if unreadable is not None and time.monotonic() - unreadable > self._max_stale:
+            if not self._stale_warned:
+                self._stale_warned = True
+                logger.warning(
+                    "JWT-SVIDs for %s are refused until SPIRE sends a JWT bundle that can be read", self.trust_domain
+                )
+            raise SpiffeError("JWT-SVIDs are refused while SPIRE's JWT bundle cannot be read")
         # Exactly three unpadded base64url segments, so one token has one spelling
         # (and one SHA-256) whatever the installed PyJWT tolerates.
         if not isinstance(token, str) or len(token) > _MAX_TOKEN_BYTES or not _COMPACT_JWS.fullmatch(token):
