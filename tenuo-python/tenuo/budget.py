@@ -590,7 +590,9 @@ def usage_counts(usage: Any) -> Optional[Dict[str, int]]:
             if isinstance(value, bool):
                 continue
             if isinstance(value, (int, float)):
-                if not math.isfinite(value) or value < 0 or value > MAX_CALL_TOKENS:
+                # The bounds come first: an integer too large for a float
+                # cannot be asked whether it is finite.
+                if value < 0 or value > MAX_CALL_TOKENS or not math.isfinite(value):
                     impossible.append(name)
                     continue
                 return int(value)

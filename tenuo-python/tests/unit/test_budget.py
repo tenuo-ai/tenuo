@@ -287,7 +287,9 @@ class TestUsage:
     @pytest.mark.parametrize("usage", [
         {"total_tokens": MAX_CALL_TOKENS + 1}, {"total_tokens": 2 ** 63}, {"total_tokens": 1e30},
         {"prompt_tokens": 10, "completion_tokens": 10 ** 30}, {"input_tokens": MAX_CALL_TOKENS, "output_tokens": 1},
-    ], ids=["over", "int64", "float", "part", "sum"])
+        {"total_tokens": 10 ** 400}, {"prompt_tokens": 10 ** 400, "completion_tokens": 5},
+        {"total_tokens": float("inf")}, {"total_tokens": float("nan")},
+    ], ids=["over", "int64", "float", "part", "sum", "past-float", "past-float-part", "inf", "nan"])
     def test_more_than_one_call_can_use_is_no_count(self, usage):
         assert usage_counts(usage) is None
 

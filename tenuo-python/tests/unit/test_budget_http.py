@@ -1683,7 +1683,8 @@ class TestCountsThatCannotBeRight:
     CHAT_BODY = {"model": MODEL, "messages": MESSAGES, "max_tokens": 100}
     GEMINI_BODY = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "generationConfig": {"maxOutputTokens": 100}}
 
-    @pytest.mark.parametrize("count", [0, 10 ** 12, 2 ** 63, 1e30], ids=["zero", "over", "int64", "float"])
+    @pytest.mark.parametrize("count", [0, 10 ** 12, 2 ** 63, 1e30, 10 ** 400],
+                             ids=["zero", "over", "int64", "float", "past-float"])
     def test_a_count_no_call_could_have_keeps_the_reservation(self, keys, count):
         answers = [
             (CHAT, self.CHAT_BODY, {"usage": {"prompt_tokens": count, "completion_tokens": 0, "total_tokens": count}}),
