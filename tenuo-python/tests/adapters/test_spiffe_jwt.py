@@ -1806,9 +1806,10 @@ def test_an_unnamed_key_still_vouches_only_for_its_own_trust_domain(federated, a
     validator, partner, _ = federated
     assert validator.authenticate(unnamed(partner, sub=PARTNER_AGENT)).trust_domain == PARTNER
     assert validator.authenticate(unnamed(authority)).trust_domain == DOMAIN
-    with pytest.raises(SpiffeError, match="not signed by its own trust domain's keys"):
+    # Only the keys of the domain a token says it is from are tried, so a key of the other domain never verifies it.
+    with pytest.raises(SpiffeError, match="Invalid JWT-SVID"):
         validator.authenticate(unnamed(partner, sub=AGENT))  # The partner's key names an example.test workload.
-    with pytest.raises(SpiffeError, match="not signed by its own trust domain's keys"):
+    with pytest.raises(SpiffeError, match="Invalid JWT-SVID"):
         validator.authenticate(unnamed(authority, sub=PARTNER_AGENT))
 
 
@@ -1921,3 +1922,35 @@ def test_recovered_keys_are_in_force_before_the_outage_is_over(authority, worklo
             assert eventually(lambda: authority.kid in validator._keys)
     finally:
         validator.close()
+
+
+def test_another_domains_keys_never_count_against_a_token_that_names_no_key(authority, tmp_path):
+    """Only the keys of the token's own trust domain are tried, however many keys its neighbours publish."""
+    partner_keys = [JWTAuthority() for _ in range(40)]
+    own_file, partner_file = tmp_path / "own.json", tmp_path / "partner.json"
+    own_file.write_bytes(jwks(authority))
+    partner_file.write_bytes(jwks(*partner_keys))
+    validator = SpiffeJWT(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        bundle_file=str(own_file),
+        federated_bundle_files={PARTNER: str(partner_file)},
+    )
+    assert validator.authenticate(unnamed(authority)).spiffe_id == AGENT
+    # The partner's own unnamed tokens meet the limit, for the partner's domain alone.
+    with pytest.raises(SpiffeError, match="its trust domain's bundle holds too many keys"):
+        validator.authenticate(unnamed(partner_keys[0], sub=PARTNER_AGENT))
+    assert validator.authenticate(partner_keys[0].token(sub=PARTNER_AGENT)).trust_domain == PARTNER
+    # A subject that cannot be read, or names no trust domain this validator accepts, selects no keys.
+    for sub, message in ((123, "Invalid JWT-SVID"), ("agent", "Invalid workload SPIFFE ID"), ("spiffe://other.test/a", "different trust domain")):
+        with pytest.raises(SpiffeError, match=message):
+            validator.authenticate(unnamed(authority, sub=sub))
+    # The claim only picks the keys: a home key cannot vouch for a partner subject, nor the reverse.
+    few = tmp_path / "few.json"
+    few.write_bytes(jwks(partner_keys[0]))
+    small = SpiffeJWT(
+        trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(own_file), federated_bundle_files={PARTNER: str(few)}
+    )
+    for signer, sub in ((authority, PARTNER_AGENT), (partner_keys[0], AGENT)):
+        with pytest.raises(SpiffeError):
+            small.authenticate(unnamed(signer, sub=sub))

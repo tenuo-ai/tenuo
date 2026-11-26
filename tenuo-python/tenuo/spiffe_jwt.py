@@ -176,6 +176,22 @@ def _jwks_keys(document: bytes, trust_domain: str) -> Dict[str, _Key]:
     return keys
 
 
+def _claimed_trust_domain(token: str) -> str:
+    """The trust domain in a token's subject, read before any signature is checked.
+
+    Use it only to choose which keys to try: nothing here is verified.
+    """
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (ValueError, IndexError, RecursionError) as exc:
+        raise SpiffeError("Invalid JWT-SVID") from exc
+    subject = claims.get("sub") if isinstance(claims, dict) else None
+    if not isinstance(subject, str):
+        raise SpiffeError("Invalid JWT-SVID")
+    return _trust_domain(subject)
+
+
 def _fits(algorithm: str, key: _Key) -> bool:
     """Whether a signature algorithm belongs to this key's own type."""
     if isinstance(key, rsa.RSAPublicKey):
@@ -582,11 +598,20 @@ class SpiffeJWT:
         domains = [(self.trust_domain, self._keys), *self._federated_keys.items()]
         if kid is None:
             # The standard makes the key ID optional (JWT-SVID, section 2.2): try
-            # each key the token's algorithm fits, home domain first.
-            for domain, keys in domains:
-                candidates.extend((domain, key) for key in keys.values() if _fits(algorithm, key))
+            # each key the token's algorithm fits. Only the keys of the trust
+            # domain the token says it is from are tried, so what another
+            # domain's bundle holds never matters. That claim is not trusted
+            # here: it only picks the keys, and _verify checks the signed
+            # subject against the domain of the key that verified it.
+            claimed = _claimed_trust_domain(token)
+            if claimed != self.trust_domain and claimed not in self._federates_with:
+                raise SpiffeError("JWT-SVID belongs to a different trust domain")
+            keys = self._keys if claimed == self.trust_domain else self._federated_keys.get(claimed, {})
+            candidates = [(claimed, key) for key in keys.values() if _fits(algorithm, key)]
             if len(candidates) > _MAX_UNNAMED_KEY_ATTEMPTS:
-                raise SpiffeError("JWT-SVID names no signing key, and the trust bundles hold too many keys to try each")
+                raise SpiffeError(
+                    "JWT-SVID names no signing key, and its trust domain's bundle holds too many keys to try each"
+                )
         else:
             for domain, keys in domains:
                 named = keys.get(kid)

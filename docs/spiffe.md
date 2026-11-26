@@ -1469,8 +1469,9 @@ The token must be three unpadded base64url segments with nothing before or
 after. The issuer accepts RS256/384/512, PS256/384/512 and ES256/384/512 tokens
 with no header other than `alg`, `kid` and `typ`, and it
 requires `sub`, `aud` and `exp`. The `kid` header is optional, as the standard
-says: a token without one is checked against each key in the trust bundle that
-its algorithm fits, up to 16. Every key in a bundle must have a `kid`.
+says: a token without one is checked against each key its algorithm fits in
+the bundle of the trust domain its subject names, up to 16. Every key in a
+bundle must have a `kid`.
 
 ### Forwarded identity wire protocol
 
