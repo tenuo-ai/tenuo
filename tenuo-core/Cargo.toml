@@ -40,6 +40,10 @@ sdk = []
 # Attenuating Agent Tokens in their JWT/JWS encoding: chain verification per
 # draft-niyikiza-oauth-attenuating-agent-tokens-02 Section 8. No extra dependencies.
 aat-jws = []
+# ES256 (ECDSA using P-256 and SHA-256) for AAT and PoP JWT signatures, the
+# second algorithm Section 9.11 of the draft recommends. Adds the p256
+# dependency. An enforcement point still has to permit ES256 by name.
+aat-es256 = ["aat-jws", "dep:p256"]
 # Guarded file open. Subpath stays lexical; this feature pins a local jail
 # and opens the authorized argument through path_jail. Unix only at runtime.
 filesystem = ["sdk", "dep:path_jail"]
@@ -107,6 +111,7 @@ required-features = ["data-plane"]
 ed25519-dalek = { version = "3.0", features = ["rand_core", "serde", "batch", "pkcs8", "zeroize"] }
 rand = "0.10"
 sha2 = "0.11"
+p256 = { version = "0.14", default-features = false, features = ["ecdsa"], optional = true }
 subtle = "2.6"  # Constant-time comparison for secrets
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1.7"
@@ -205,6 +210,11 @@ required-features = ["server"]
 name = "aat_jws_vectors"
 path = "tests/aat_jws_vectors.rs"
 required-features = ["aat-jws"]
+
+[[test]]
+name = "aat_es256"
+path = "tests/aat_es256.rs"
+required-features = ["aat-es256"]
 
 [[test]]
 name = "filesystem_guard"

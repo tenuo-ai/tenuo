@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`tenuo::aat`: a trust anchor's key and the verified holder key are a
+  `VerifyingKey`.** `TrustAnchor.key` and `Verified.holder` were the Ed25519
+  `PublicKey`. Build an anchor with `key: public_key.into()`, and read an
+  Ed25519 holder with `verified.holder.as_ed25519()`. `VerifyOptions` gains
+  the field `algorithms`. `VerifyOptions` and `Verified` are now
+  `#[non_exhaustive]`: build options with `VerifyOptions::new` and set
+  fields on the value.
+
 ### Added
 
 - **Python: token budgets per period.** `llm_capability(total_tokens=N,
@@ -14,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   day, week or month. The meter counts per warrant and period and the warrant
   check verifies the period it counted by. See
   [token budgets](docs/token-budgets.md#a-budget-per-period).
+
+- **`tenuo::aat`: verify ES256 signatures** (Rust, behind the new `aat-es256`
+  feature, which adds the `p256` crate). A trust anchor, a holder's `cnf.jwk`
+  and a PoP JWT may use a P-256 key, alone or beside Ed25519 keys in one
+  chain. An enforcement point permits algorithms by name in
+  `VerifyOptions.algorithms`, applied to every token and to the PoP JWT. The
+  default is `Ed25519` only, so behavior is unchanged until ES256 is
+  listed.
 
 - Python SPIFFE adapter (`tenuo[spiffe]`): authenticate X.509-SVID peers over
   mTLS, verify a separate Tenuo holder key, and issue task-scoped warrants under
