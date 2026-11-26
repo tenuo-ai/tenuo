@@ -68,6 +68,7 @@ Verified: a workload from a federated trust domain was accepted over mTLS and by
 Verified: Envoy forwarded the agent's SPIRE identity to the issuer; an unapproved workload, three requests carrying a made-up identity, and a certificate with a crafted name got nothing extra.
 Verified: issuer and agent followed a renewal straight from the Workload API.
 Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
+Verified: the X.509 and JWT signing authorities were rotated and the old ones revoked; all 123 exchanges during the rotation succeeded, and credentials from the old authorities were refused.
 ```
 
 - The first line is the JWT-SVID exchange: the agent fetches a token from the
@@ -87,6 +88,10 @@ Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
   reading the SPIRE agent's socket.
 - The fifth is the same pair reading credential files that the harness
   rewrites.
+- The sixth rotates the trust domain's X.509 and JWT signing authorities on
+  the SPIRE server (`spire-server localauthority ... prepare`, `activate`,
+  `taint`, `revoke`) while an issuer serves. Warrants are requested four times
+  a second throughout, so the count varies; none may fail.
 
 Processes, SQLite
 state, private keys, and sockets are temporary and cleaned up on exit. No ports
@@ -107,6 +112,56 @@ PYTHONPATH=tenuo-python python tenuo-python/examples/spiffe/live_spire.py
 ```
 
 The harness uses container-local ports 18081 and 18082 for SPIRE; they must be available.
+
+## Behind Istio
+
+`istio/` runs the forwarded-identity exchange in a real mesh: an issuer whose
+callers are identified by the header its Istio sidecar sets, and an agent that
+needs no SPIFFE code of its own.
+
+```bash
+python tenuo-python/examples/spiffe/istio/check.py           # Istio's own certificates
+python tenuo-python/examples/spiffe/istio/check.py --spire   # SPIRE issues the mesh's certificates
+```
+
+It needs `docker`, `kubectl` and `helm`. It starts a single-node Kubernetes
+(k3s) in a container, installs Istio 1.30.8, and uses a kubeconfig in a
+temporary directory, so your own contexts are never read or changed.
+Everything is removed afterwards; `--keep` leaves the cluster up and prints how
+to reach it. Expected result:
+
+```text
+Istio generated for the issuer's inbound listener: {"connects_from": "127.0.0.6", "forward_client_cert_details": "APPEND_FORWARD", "set_current_client_cert_details": {"subject": true, "dns": true, "uri": true}}
+Verified: an agent in the mesh was issued a warrant on its Istio identity, over a Unix socket and over TCP.
+Verified: another workload, sending identity headers of its own around its sidecar, was refused or served as itself.
+Verified: a pod without a sidecar got no identity, whatever header it sent.
+Verified: inside the issuer's pod, only a process that binds the sidecar's own address reaches a TCP issuer (the documented limit); the Unix-socket issuer has no port to reach.
+Verified: through an ingress gateway, a caller is the gateway's own identity over plain HTTP (refused by policy), and is refused as a second proxy hop over mutual TLS.
+Verified: with STRICT mutual TLS the pod outside the mesh is cut off and the agent is still served.
+```
+
+With `--spire` the last lines are instead about a certificate that carries DNS
+names: refused by default, accepted once the issuer sets `allow_dns_names`.
+
+| File | What it is |
+|---|---|
+| `istio/manifests.yaml` | The issuer (on a Unix socket, through an Istio `Sidecar` resource) and an agent. A starting point for your own. |
+| `istio/issuer_app.py`, `istio/agent.py` | The guide's issuer and agent, with Istio's trust domain and service-account identities. |
+| `istio/checks.yaml`, `istio/probe.py` | Workloads and requests used only to show what the issuer refuses. |
+
+["With Istio" in the guide](../../../docs/spiffe.md#with-istio) explains each
+result.
+
+## A client in another language
+
+`clients/request_warrant.mjs` obtains a warrant over HTTP with nothing but
+Node.js's standard library, for an identity forwarded by a mesh sidecar or
+with a JWT-SVID. It follows the wire formats in the guide's reference section,
+and the Python test suite runs it against both endpoints.
+
+```bash
+node tenuo-python/examples/spiffe/clients/request_warrant.mjs URL AUDIENCE TASK_ID [JWT_SVID]
+```
 
 ## Use credentials from an existing SPIRE deployment
 

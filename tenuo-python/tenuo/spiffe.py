@@ -880,6 +880,8 @@ class SpiffeTLS:
         self._lock = threading.Lock()
         self._reload_lock = threading.Lock()
         self._previous: "weakref.WeakKeyDictionary[ssl.SSLContext, FrozenSet[bytes]]" = weakref.WeakKeyDictionary()
+        # Our own earlier contexts that trusted an authority since removed.
+        self._retired: "weakref.WeakSet[ssl.SSLContext]" = weakref.WeakSet()
         self._generation: Optional[_Generation] = None
         self._front: Optional[ssl.SSLContext] = None
         if server_side:
@@ -990,11 +992,16 @@ class SpiffeTLS:
         with self._lock:
             old = self._generation
             known = list(self._previous.items()) + ([(old.context, old.authorities)] if old is not None else [])
-            # Connections verified under an authority that is no longer trusted
-            # are dropped: only generations whose authorities all remain are kept.
+            # Generations whose authorities all remain are kept as they are. A
+            # connection made under one that trusted an authority since removed
+            # is accepted only if its peer is anchored in an authority still
+            # trusted (see authenticate).
             self._previous = weakref.WeakKeyDictionary(
                 {context: authorities for context, authorities in known if authorities <= generation.authorities}
             )
+            for context, authorities in known:
+                if not authorities <= generation.authorities:
+                    self._retired.add(context)
             self._generation = generation
         logger.info(
             "Loaded SVID %s (expires %s)",
@@ -1059,7 +1066,7 @@ class SpiffeTLS:
             )
 
     def _accepts(self, context: ssl.SSLContext) -> bool:
-        return context is self._current.context or context in self._previous
+        return context is self._current.context or context in self._previous or context in self._retired
 
     # -- authentication ----------------------------------------------------
 
@@ -1088,7 +1095,18 @@ class SpiffeTLS:
         except ValueError as exc:
             raise SpiffeError("Malformed X.509-SVID") from exc
         identity, not_before = _svid_identity(cert, (self.trust_domain, *self._federates_with))
-        if self._federates_with:
+        if context in self._retired:
+            # The handshake ran under a bundle that has since lost an authority,
+            # for example a connection that was being set up while the update
+            # arrived. It stands only if the peer is anchored in an authority
+            # that is still trusted.
+            try:
+                self._check_domain_binding(connection, cert, identity.trust_domain)
+            except SpiffeError:
+                raise SpiffeError(
+                    "Connection was verified by an authority that is no longer trusted; open a new connection"
+                ) from None
+        elif self._federates_with:
             self._check_domain_binding(connection, cert, identity.trust_domain)
         if expected_id is not None and identity.spiffe_id != expected_id:
             raise SpiffeError("Unexpected peer SPIFFE ID")

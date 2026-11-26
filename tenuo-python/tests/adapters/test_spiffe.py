@@ -731,15 +731,25 @@ def test_reload_removing_authority_drops_old_connections(ca, pki, tmp_path):
     server = _tls(paths, True)
     old_connection, _ = connect(server, pki())  # Agent from the original CA.
     # Remove the original authority, as after revocation of a compromised CA.
+    # A connection from an agent that already holds an SVID from the successor, made before the removal.
+    renewed_paths = successor.files("renewed-agent", AGENT, bundle=ca.pem + successor.pem)
+    in_flight, _ = connect(server, _tls(renewed_paths, False))
     _rewrite(successor, paths, SERVER, bundle=successor.pem)
     server.reload()
-    with pytest.raises(SpiffeError, match="not verified by this SPIFFE TLS context"):
+    with pytest.raises(SpiffeError, match="authority that is no longer trusted"):
         server.authenticate(old_connection)
+    # The removal does not cost a connection whose peer the remaining authority issued.
+    assert server.authenticate(in_flight).spiffe_id == AGENT
     with pytest.raises(ssl.SSLError):
         connect(server, pki(peer_only=True))
     agent_paths = successor.files("successor-agent", AGENT)
     connection, _ = connect(server, _tls(agent_paths, False))
     assert server.authenticate(connection).spiffe_id == AGENT
+    # A context that was never this object's is still refused outright.
+    foreign = _tls(ca.files("unrelated-server", SERVER, bundle=ca.pem + successor.pem), True)
+    other_connection, _ = connect(foreign, _tls(renewed_paths, False))
+    with pytest.raises(SpiffeError, match="not verified by this SPIFFE TLS context"):
+        server.authenticate(other_connection)
 
 
 def test_reload_adding_authority_keeps_old_connections(ca, pki, tmp_path):
@@ -1609,7 +1619,7 @@ def test_workload_api_authority_removal_and_federated_bundles(ca, pki, workload_
     before = server.identity
     api.publish(x509_response(svid_entry(successor, SERVER)))  # The original authority is gone.
     assert eventually(lambda: server.identity != before)
-    with pytest.raises(SpiffeError, match="not verified by this SPIFFE TLS context"):
+    with pytest.raises(SpiffeError, match="authority that is no longer trusted"):
         server.authenticate(old_connection)
     with pytest.raises(ssl.SSLError):
         connect(server, pki(peer_only=True))
@@ -2310,6 +2320,7 @@ def _guide_blocks():
         "federated_issuer.py",
         "forwarded_issuer.py",
         "forwarded_agent.py",
+        "workers.py",
     }
     return blocks
 

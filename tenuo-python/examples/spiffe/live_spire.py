@@ -9,7 +9,8 @@ credential files and once straight from the Workload API socket. It also
 exchanges a real JWT-SVID for a warrant over HTTP, starts a second SPIRE
 deployment for another trust domain to exercise federation, and, when envoy is
 on PATH, puts a real Envoy in front of an issuer that takes the agent's
-identity from the header Envoy sets.
+identity from the header Envoy sets. Last, it rotates the trust domain's X.509
+and JWT signing authorities on the SPIRE server while an issuer keeps serving.
 """
 
 from __future__ import annotations
@@ -51,7 +52,13 @@ from tenuo.spiffe_forwarded import (
     arequest_warrant_forwarded,
     sign_forwarded_holder_proof,
 )
-from tenuo.spiffe_jwt import SpiffeJWT, SpiffeJWTIssuerApp, arequest_warrant_jwt, fetch_jwt_svid
+from tenuo.spiffe_jwt import (
+    SpiffeJWT,
+    SpiffeJWTIssuerApp,
+    arequest_warrant_jwt,
+    fetch_jwt_svid,
+    sign_jwt_holder_proof,
+)
 
 SVID_TTL_SECONDS = 120  # SPIRE renews at about half of this.
 DOMAIN = "demo.test"
@@ -283,7 +290,7 @@ ENVOY_LISTENER = """
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
           stat_prefix: {name}
           forward_client_cert_details: {mode}
-          set_current_client_cert_details: {{uri: true}}
+          set_current_client_cert_details: {{{details}}}
           route_config:
             virtual_hosts:
             - name: issuer
@@ -405,13 +412,16 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
     config = directory / "envoy.yaml"
     config.write_text(
         "static_resources:\n  listeners:"
-        + ENVOY_LISTENER.format(name="replace", port=ports["replace"], mode="SANITIZE_SET")
+        # This listener forwards the certificate too, so the issuer checks the URI against it.
+        + ENVOY_LISTENER.format(
+            name="replace", port=ports["replace"], mode="SANITIZE_SET", details="uri: true, cert: true"
+        )
         + mutual_tls
-        + ENVOY_LISTENER.format(name="append", port=ports["append"], mode="APPEND_FORWARD")
+        + ENVOY_LISTENER.format(name="append", port=ports["append"], mode="APPEND_FORWARD", details="uri: true")
         + mutual_tls
-        + ENVOY_LISTENER.format(name="plain", port=ports["plain"], mode="APPEND_FORWARD")
+        + ENVOY_LISTENER.format(name="plain", port=ports["plain"], mode="APPEND_FORWARD", details="uri: true")
         # An appending listener that also accepts clients of an authority outside SPIRE.
-        + ENVOY_LISTENER.format(name="crafted", port=ports["crafted"], mode="APPEND_FORWARD")
+        + ENVOY_LISTENER.format(name="crafted", port=ports["crafted"], mode="APPEND_FORWARD", details="uri: true")
         + ENVOY_MUTUAL_TLS.format(directory=directory, bundle=directory / "other-bundle.pem")
         + ENVOY_CLUSTER.format(port=ports["issuer"])
     )
@@ -474,6 +484,12 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
             warrant = await arequest_warrant_forwarded(url, tls=agent_tls, issuer_id=ISSUER_ID, **options)
             if warrant.authorized_holder != holder.public_key:
                 raise RuntimeError("The warrant is bound to the wrong holder")
+            if listener == "replace":
+                # The policy grants 120 seconds. With the certificate forwarded, the warrant
+                # must end with the SVID, which SPIRE issued for at most that and has already aged.
+                expiry = datetime.fromisoformat(warrant.expires_at()).timestamp()
+                if expiry > agent_tls.identity.expires_at:
+                    raise RuntimeError("A warrant outlived the certificate the proxy forwarded")
             try:
                 await arequest_warrant_forwarded(url, tls=unapproved_tls, issuer_id=ISSUER_ID, **options)
             except SpiffeError:
@@ -509,12 +525,183 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
     )
 
 
-async def renewal_checks(directory: Path, agent_socket: str, partner_socket: str, refetch, launch) -> None:
+async def rotate_authority(server_socket: str, kind: str) -> str:
+    """Prepare and activate a new signing authority, and taint the old one. Returns the old authority's ID."""
+
+    def authority(action: str, *arguments: str) -> dict:
+        output = command(
+            "spire-server", "localauthority", kind, action, "-socketPath", server_socket, "-output", "json", *arguments
+        )
+        return json.loads(output)
+
+    prepared = authority("prepare")["prepared_authority"]["authority_id"]
+    # As an operator would: let the new authority reach every workload's bundle before anything is signed with it.
+    await asyncio.sleep(10)
+    authority("activate", "-authorityID", prepared)
+    old = authority("show")["old"]["authority_id"]
+    # Tainting tells agents to replace everything the old authority signed, without waiting for expiry.
+    authority("taint", "-authorityID", old)
+    return old
+
+
+async def until(condition, seconds: float, what: str):
+    """Wait for ``condition()`` (which may raise SpiffeError meanwhile) and return its value."""
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            value = condition()
+            if asyncio.iscoroutine(value):
+                value = await value
+            if value:
+                return value
+        except SpiffeError:
+            pass
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"Timed out waiting until {what}")
+        await asyncio.sleep(0.5)
+
+
+async def authority_rotation_check(directory: Path, server_socket: str, agent_socket: str, refetch) -> None:
+    """Rotate the trust domain's X.509 and JWT authorities while an issuer serves from the Workload API."""
+    server_tls = SpiffeTLS.from_workload_api(
+        trust_domain=DOMAIN, server_side=True, socket_path=agent_socket, spiffe_id=ISSUER_ID
+    )
+    client_tls = SpiffeTLS.from_workload_api(
+        trust_domain=DOMAIN, server_side=False, socket_path=agent_socket, spiffe_id=AGENT_ID
+    )
+    tokens = SpiffeJWT.from_workload_api(trust_domain=DOMAIN, audience=ISSUER_ID, socket_path=agent_socket)
+    root, holder = SigningKey.generate(), SigningKey.generate()
+    issuer = SpiffeWarrantIssuer(tls=server_tls, jwt=tokens, signing_key=root, policy=policy)
+    options = dict(issuer_id=ISSUER_ID, issuer_key=root.public_key, holder_key=holder, task_id="approved-refund-123")
+    exchanges = failures = 0
+
+    def revoke(kind: str, authority_id: str) -> None:
+        command(
+            "spire-server", "localauthority", kind, "revoke", "-socketPath", server_socket, "-authorityID", authority_id
+        )
+
+    try:
+        async with SpiffeIssuerServer(issuer, host="127.0.0.1", port=0) as server:
+
+            def token() -> str:
+                return fetch_jwt_svid(ISSUER_ID, socket_path=agent_socket, spiffe_id=AGENT_ID)
+
+            # A JWT-SVID that must stay acceptable while the X.509 authority is rotated:
+            # the agent replaces every SVID then, and for a moment has none to give.
+            steady_token = [await asyncio.to_thread(token)]
+
+            async def keep_exchanging() -> None:
+                """Request warrants continuously, so any gap in service during the rotation is counted."""
+                nonlocal exchanges, failures
+                while True:
+                    exchanges += 1
+                    try:
+                        await arequest_warrant(client_tls, server.address, **options)
+                        if steady_token:
+                            tokens.authenticate(steady_token[0])
+                    except SpiffeError as exc:
+                        failures += 1
+                        print(f"An exchange failed during the rotation: {exc}")
+                    await asyncio.sleep(0.25)
+
+            traffic = asyncio.ensure_future(keep_exchanging())
+
+            # X.509. Keep one SVID signed by the old authority to present after the rotation.
+            await asyncio.to_thread(refetch)
+            for name in ("agent.pem", "agent-key.pem"):
+                shutil.copy(directory / name, directory / f"old-{name}")
+            old_expiry = x509.load_pem_x509_certificate((directory / "old-agent.pem").read_bytes()).not_valid_after_utc
+            before = (server_tls.identity.certificate_sha256, client_tls.identity.certificate_sha256)
+            old_x509 = await rotate_authority(server_socket, "x509")
+            # Both sides receive SVIDs from the new authority, and are served throughout.
+            await until(
+                lambda: (
+                    server_tls.identity.certificate_sha256 != before[0]
+                    and client_tls.identity.certificate_sha256 != before[1]
+                ),
+                60,
+                "both sides hold SVIDs from the new X.509 authority",
+            )
+            revoke("x509", old_x509)
+            (directory / "new-bundle.pem").write_text(
+                command("spire-server", "bundle", "show", "-socketPath", server_socket)
+            )
+            old_agent = SpiffeTLS(
+                trust_domain=DOMAIN,
+                bundle_file=str(directory / "new-bundle.pem"),
+                cert_file=str(directory / "old-agent.pem"),
+                key_file=str(directory / "old-agent-key.pem"),
+                server_side=False,
+            )
+
+            async def old_svid_refused() -> bool:
+                try:
+                    await arequest_warrant(old_agent, server.address, **options)
+                except SpiffeError:
+                    return True
+                return False
+
+            await until(old_svid_refused, 60, "the issuer refuses an SVID from the revoked X.509 authority")
+            if datetime.now(timezone.utc) >= old_expiry:
+                raise RuntimeError("The old SVID expired before the check; the refusal proves nothing")
+
+            # JWT. Keep one token signed by the old key.
+            steady_token.clear()  # From here on, old tokens are meant to stop working.
+
+            def key_id(value: str) -> str:
+                header = value.split(".")[0]
+                return json.loads(base64.urlsafe_b64decode(header + "=" * (-len(header) % 4)))["kid"]
+
+            old_token = await asyncio.to_thread(token)
+            tokens.authenticate(old_token)
+            old_jwt = await rotate_authority(server_socket, "jwt")
+
+            def new_token_accepted():
+                fresh = token()
+                if key_id(fresh) == key_id(old_token):
+                    return None
+                proof = sign_jwt_holder_proof(fresh, holder, audience=ISSUER_ID, task_id="approved-refund-123")
+                issuer.issue_jwt(fresh, holder.public_key, "approved-refund-123", proof)
+                return fresh
+
+            fresh = await until(
+                lambda: asyncio.to_thread(new_token_accepted), 60, "a token signed by the new JWT authority is accepted"
+            )
+            revoke("jwt", old_jwt)
+
+            def old_token_refused() -> bool:
+                try:
+                    tokens.authenticate(old_token)
+                except SpiffeError as exc:
+                    if "not in the trust bundle" not in str(exc):
+                        raise RuntimeError(f"Unexpected refusal of the old token: {exc}") from exc
+                    tokens.authenticate(fresh)  # ...while the new key's tokens are still accepted.
+                    return True
+                return False
+
+            await until(old_token_refused, 60, "a token signed by the revoked JWT authority is refused")
+            traffic.cancel()
+    finally:
+        for source in (server_tls, client_tls, tokens):
+            source.close()
+    if failures or exchanges < 20:
+        raise RuntimeError(f"{failures} of {exchanges} exchanges failed during the authority rotation")
+    print(
+        f"Verified: the X.509 and JWT signing authorities were rotated and the old ones revoked; "
+        f"all {exchanges} exchanges during the rotation succeeded, and credentials from the old authorities were refused."
+    )
+
+
+async def renewal_checks(
+    directory: Path, server_socket: str, agent_socket: str, partner_socket: str, refetch, launch
+) -> None:
     await jwt_check(agent_socket)
     await federation_check(agent_socket, partner_socket)
     await forwarded_check(directory, launch, refetch)
     # Both checks wait for the same renewal, so run them together.
     await asyncio.gather(rotation_check(directory, refetch), workload_api_check(agent_socket))
+    # Last, because it replaces the authorities everything above was issued under.
+    await authority_rotation_check(directory, server_socket, agent_socket, refetch)
 
 
 def start_server(launch, directory: Path, trust_domain: str, port: int) -> str:
@@ -670,6 +857,7 @@ def main():
             asyncio.run(
                 renewal_checks(
                     directory,
+                    server_socket,
                     agent_socket,
                     partner_socket,
                     lambda: export_svids(agent_socket, exported, directory),

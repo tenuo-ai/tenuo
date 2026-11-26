@@ -43,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over HTTPS for deployments where mTLS cannot reach the issuer
   (`tenuo[spiffe-jwt]`, `tenuo.spiffe_jwt`), identity forwarded by a trusted
   mesh proxy in `x-forwarded-client-cert` for agents that have only a sidecar
-  (`tenuo.spiffe_forwarded`), SPIFFE federation with each trust
+  (`tenuo.spiffe_forwarded`; checked against Envoy and against Istio with its
+  own and with SPIRE's certificates), SPIFFE federation with each trust
   domain bound to its own bundle, SVID-bounded expiry,
   and development-PKI and real-SPIRE demos. See [the SPIFFE guide](docs/spiffe.md).
 

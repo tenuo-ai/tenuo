@@ -31,7 +31,11 @@ import re
 import secrets
 import ssl
 import time
+import urllib.parse
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes as certificate_hashes
 
 from tenuo import PublicKey, SigningKey, Warrant
 from tenuo._spiffe_http import _IssuerApp, _post_for_warrant, _Refusal, _request_body, _split_url, _where
@@ -75,6 +79,7 @@ _BARE_KEYS = frozenset({"by", "hash", "uri", "dns"})
 # What Envoy writes ahead of the URI. None of it is text a client certificate controls unescaped.
 _BEFORE_URI = frozenset({"by", "hash", "cert", "chain", "subject"})
 _SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
+_DNS_NAME = re.compile(r"[A-Za-z0-9*_.-]{1,253}")
 _Network = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
 
@@ -138,6 +143,39 @@ def _parse_forwarded(header: str) -> List[List[Tuple[str, str]]]:
             raise malformed
 
 
+def _forwarded_certificate(encoded: str, uri: str, digest: str) -> float:
+    """Check the certificate a proxy forwarded against the identity read from the header. Returns its expiry.
+
+    The certificate must be the one the header's ``Hash`` names, be valid now,
+    and carry exactly one URI name, equal to the header's ``URI`` character
+    for character.
+    """
+    try:
+        certificates = x509.load_pem_x509_certificates(urllib.parse.unquote_to_bytes(encoded))
+    except ValueError:
+        certificates = []
+    if len(certificates) != 1:
+        raise SpiffeError("The forwarded certificate cannot be read")
+    leaf = certificates[0]
+    if leaf.fingerprint(certificate_hashes.SHA256()).hex() != digest.lower():
+        raise SpiffeError("The forwarded certificate is not the one the header's hash names")
+    try:
+        names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(
+            x509.UniformResourceIdentifier
+        )
+        starts, expires = leaf.not_valid_before_utc.timestamp(), leaf.not_valid_after_utc.timestamp()
+    except x509.ExtensionNotFound:
+        names = []
+        starts, expires = 0.0, 0.0
+    except Exception as exc:  # The library reports unreadable content with several unrelated types.
+        raise SpiffeError("The forwarded certificate cannot be read") from exc
+    if names != [uri]:
+        raise SpiffeError("The forwarded URI is not the certificate's only URI name")
+    if not starts <= time.time() < expires:
+        raise SpiffeError("The forwarded certificate is not currently valid")
+    return expires
+
+
 class SpiffeForwardedIdentity:
     """Accepts the client identity a trusted proxy forwarded in ``x-forwarded-client-cert``.
 
@@ -171,6 +209,20 @@ class SpiffeForwardedIdentity:
     without them. None of this replaces the proxy checking client certificates
     against the trust bundle.
 
+    Some meshes always forward DNS names (Istio does), so a certificate that
+    has them could never be identified. ``allow_dns_names=True`` accepts
+    ``DNS`` names after the URI. The identity is then the URI up to the first
+    separator, and a certificate whose URI name itself contained ``;DNS=``
+    would be read as the shorter name. Turn it on only when every authority
+    the proxy trusts issues well-formed SPIFFE IDs, as SPIRE and Istio do.
+
+    When the proxy also forwards the certificate (``Cert``; for Envoy,
+    ``cert: true``), none of that is taken on trust: the certificate must be
+    the one the ``Hash`` names, be valid, and carry exactly one URI name equal
+    to the header's. DNS names are then accepted without ``allow_dns_names``,
+    and warrants never outlive the certificate. ``require_certificate=True``
+    refuses a header without one.
+
     The certificate's lifetime is not visible here, so warrants last at most
     ``max_warrant_seconds`` whatever the policy grants.
     """
@@ -184,8 +236,14 @@ class SpiffeForwardedIdentity:
         federates_with: Sequence[str] = (),
         expected_by: Optional[str] = None,
         max_warrant_seconds: int = 300,
+        allow_dns_names: bool = False,
+        require_certificate: bool = False,
     ):
         self.trust_domain = trust_domain
+        if not isinstance(allow_dns_names, bool) or not isinstance(require_certificate, bool):
+            raise ValueError("allow_dns_names and require_certificate must be True or False")
+        self._allow_dns_names = allow_dns_names
+        self._require_certificate = require_certificate
         self._domains = frozenset((trust_domain, *_trust_domain_names(trust_domain, federates_with)))
         if not isinstance(audience, str) or not audience or len(audience) > 2048:
             raise ValueError("audience must be a non-empty string of at most 2048 characters")
@@ -261,21 +319,40 @@ class SpiffeForwardedIdentity:
                 "The proxy did not forward exactly one URI for the client certificate "
                 "(for Envoy, enable uri in set_current_client_cert_details)"
             )
-        # The URI must end the header, after nothing but what Envoy writes before
-        # it. Its value is then the certificate's whole URI name: a name with a
-        # separator in it would leave something behind it and be refused here.
-        if keys[-1] != "uri" or not _BEFORE_URI.issuperset(keys[:-1]):
-            raise SpiffeError(
-                "x-forwarded-client-cert must end with the certificate's URI: the certificate has DNS names, or a "
-                "name with a separator in it (for Envoy, forward uri without dns in set_current_client_cert_details)"
-            )
         if len(hashes) != 1 or not _SHA256_HEX.fullmatch(hashes[0]):
             raise SpiffeError("The proxy did not forward the client certificate hash")
+        expires = time.time() + self._max_warrant_seconds
+        forwarded = [value for key, value in element if key == "cert"]
+        if len(forwarded) > 1:
+            raise SpiffeError("Malformed x-forwarded-client-cert header")
+        if forwarded:
+            # With the certificate at hand the URI is checked against it, not taken as read.
+            expires = min(expires, _forwarded_certificate(forwarded[0], uris[0], hashes[0]))
+        elif self._require_certificate:
+            raise SpiffeError(
+                "The proxy did not forward the client certificate "
+                "(for Envoy, enable cert in set_current_client_cert_details)"
+            )
+        # Without the certificate, the URI must end the header, after nothing but
+        # what Envoy writes before it. Its value is then the certificate's whole
+        # URI name: a name with a separator in it would leave something behind it
+        # and be refused here.
+        position = keys.index("uri")
+        after = element[position + 1 :]
+        if (forwarded or self._allow_dns_names) and all(
+            key == "dns" and _DNS_NAME.fullmatch(value) for key, value in after
+        ):
+            after = []  # Checked against the certificate, or accepted by the operator.
+        if after or not _BEFORE_URI.issuperset(keys[:position]):
+            raise SpiffeError(
+                "x-forwarded-client-cert must end with the certificate's URI: "
+                "stop the proxy forwarding DNS names, or see allow_dns_names"
+            )
         if self._expected_by is not None and [value for key, value in element if key == "by"] != [self._expected_by]:
             raise SpiffeError("The forwarded identity was not recorded by the expected proxy")
         if _trust_domain(uris[0]) not in self._domains:
             raise SpiffeError("Forwarded identity belongs to a different trust domain")
-        return SpiffeIdentity(uris[0], hashes[0].lower(), time.time() + self._max_warrant_seconds, "forwarded")
+        return SpiffeIdentity(uris[0], hashes[0].lower(), expires, "forwarded")
 
 
 # -- agent side -------------------------------------------------------------
@@ -443,6 +520,8 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
         if not isinstance(client, (list, tuple)) or len(client) != 2:
             return None
         host, port = client
+        if isinstance(port, str) and port.isascii() and port.isdigit():
+            port = int(port)  # Granian reports ports as text.
         # A connected TCP peer always has a port. Port 0 is how Uvicorn marks an
         # address it took from X-Forwarded-For, which the sender chose.
         if not isinstance(host, str) or not _positive_int(port) or port < 1:

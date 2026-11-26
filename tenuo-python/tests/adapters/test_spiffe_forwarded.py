@@ -56,12 +56,8 @@ def forwarded():
 
 
 def test_reads_what_envoy_writes(forwarded):
-    # As captured from Envoy with subject, cert and uri forwarding on.
-    header = (
-        f"By={SERVER};Hash={HASH};"
-        'Cert="-----BEGIN%20CERTIFICATE-----%0AMIIB%2Bz%3D%3D%0A-----END%20CERTIFICATE-----%0A";'
-        f'Subject="CN=agent,O=Example \\"Quoted\\", Inc.";URI={AGENT}'
-    )
+    # The shape Envoy writes with subject and uri forwarding on.
+    header = f'By={SERVER};Hash={HASH};Subject="CN=agent,O=Example \\"Quoted\\", Inc.";URI={AGENT}'
     identity = forwarded.authenticate(header, peer=PROXY)
     # With dns forwarding on as well, the URI no longer ends the header.
     for names in (";DNS=agent.example.test", ";DNS=agent.example.test;DNS=agent"):
@@ -194,7 +190,7 @@ def test_names_copied_from_a_certificate_cannot_name_someone_else(forwarded):
         (element(digest=None), "certificate hash"),
         (element(digest="ab" * 31), "certificate hash"),
         (element(digest="zz" * 32), "certificate hash"),
-        (element() + f";Hash={HASH}", "must end with the certificate's URI"),
+        (element() + f";Hash={HASH}", "certificate hash"),
         (f"By={SERVER};Hash={HASH};Hash={HASH};URI={AGENT}", "certificate hash"),
         (element(uri="https://example.test/agent"), "Invalid workload SPIFFE ID"),
         (element(uri=f"spiffe://{DOMAIN}"), "Invalid workload SPIFFE ID"),
@@ -224,6 +220,134 @@ def test_header_must_be_text(forwarded):
     for header in (None, b"URI=x", 7):
         with pytest.raises(SpiffeError, match="Malformed"):
             forwarded.authenticate(header, peer=PROXY)
+
+
+def test_dns_names_are_accepted_only_when_the_operator_says_so(forwarded):
+    """What Istio 1.30.8 forwarded for a SPIRE-issued certificate with two DNS names."""
+    header = f'By={SERVER};Hash={HASH};Subject="";URI={AGENT};DNS=agent.tenuo.svc.cluster.local;DNS=agent'
+    with pytest.raises(SpiffeError, match="see allow_dns_names"):
+        forwarded.authenticate(header, peer=PROXY)
+    lenient = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names=True)
+    identity = lenient.authenticate(header, peer=PROXY)
+    assert (identity.spiffe_id, identity.certificate_sha256) == (AGENT, HASH)
+    assert lenient.authenticate(element(), peer=PROXY).spiffe_id == AGENT
+    assert lenient.authenticate(element(extra=";DNS=*.example.test"), peer=PROXY).spiffe_id == AGENT
+    # Nothing but DNS names may follow, nothing but Envoy's own fields may come first, and the rest still holds.
+    for refused in (
+        element(extra=";Other=x"),
+        element(extra=";DNS=a;Other=x"),
+        element(extra=f";DNS=a;URI={AGENT}"),
+        element(extra=f";DNS=a;Hash={HASH}"),
+        element(extra=f";DNS=a;By={SERVER}"),
+        element(extra=';DNS=a;Subject="CN=x"'),
+        element(extra=";DNS="),
+        element(extra=";DNS=a b"),
+        element(extra=";DNS=a/b"),
+        element(extra=";DNS=" + "a" * 254),
+        f"DNS=a;{element()}",
+        f"{element()};DNS=a,{element()}",
+        f"{element(f'spiffe://{DOMAIN}/admin')};DNS=a,{element()};DNS=b",
+        element(uri=f'{AGENT}";DNS=a'),
+    ):
+        with pytest.raises(SpiffeError):
+            lenient.authenticate(refused, peer=PROXY)
+    with pytest.raises(ValueError, match="allow_dns_names"):
+        SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names="yes")
+
+
+def forwarded_leaf(ca, uris=(AGENT,), dns=(), expires=600, starts=-10):  # noqa: F811
+    """A certificate from the test authority, as Envoy encodes it in the header, and its SHA-256."""
+    import urllib.parse
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    now = datetime.now(timezone.utc)
+    names = [x509.UniformResourceIdentifier(uri) for uri in uris] + [x509.DNSName(name) for name in dns]
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([]))
+        .issuer_name(ca.name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now + timedelta(seconds=starts))
+        .not_valid_after(now + timedelta(seconds=expires))
+        .add_extension(x509.BasicConstraints(False, None), True)
+    )
+    if names:
+        builder = builder.add_extension(x509.SubjectAlternativeName(names), True)
+    certificate = builder.sign(ca.key, hashes.SHA256())
+    pem = certificate.public_bytes(serialization.Encoding.PEM)
+    return urllib.parse.quote(pem, safe=""), certificate.fingerprint(hashes.SHA256()).hex()
+
+
+def with_certificate(encoded, digest, uri=AGENT, extra=""):
+    return f'By={SERVER};Hash={digest};Cert="{encoded}";Subject="";URI={uri}{extra}'
+
+
+def test_a_forwarded_certificate_is_checked_against_the_identity(forwarded, ca):  # noqa: F811
+    """When the proxy forwards the certificate, the URI is checked against it instead of being taken as read."""
+    encoded, digest = forwarded_leaf(ca, expires=60)
+    identity = forwarded.authenticate(with_certificate(encoded, digest), peer=PROXY)
+    assert (identity.spiffe_id, identity.certificate_sha256) == (AGENT, digest)
+    assert 50 < identity.expires_at - time.time() <= 60  # The certificate's own expiry, not the 300-second cap.
+    # A chain forwarded as well is ignored, and DNS names are fine once the certificate vouches for the URI.
+    with_names, names_digest = forwarded_leaf(ca, dns=("agent.example.test", "agent"))
+    header = with_certificate(with_names, names_digest, extra=";DNS=agent.example.test;DNS=agent")
+    assert forwarded.authenticate(header, peer=PROXY).spiffe_id == AGENT
+    chained = header.replace(';Subject=""', f';Chain="{with_names}{encoded}";Subject=""')
+    assert forwarded.authenticate(chained, peer=PROXY).spiffe_id == AGENT
+
+    admin = f"spiffe://{DOMAIN}/admin"
+    separator, separator_digest = forwarded_leaf(ca, uris=(f"{AGENT};DNS=x",))
+    spaced, spaced_digest = forwarded_leaf(ca, uris=(f"{AGENT} ",))
+    two, two_digest = forwarded_leaf(ca, uris=(AGENT, admin))
+    none, none_digest = forwarded_leaf(ca, uris=())
+    expired, expired_digest = forwarded_leaf(ca, expires=-5, starts=-60)
+    future, future_digest = forwarded_leaf(ca, starts=60)
+    lenient = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], allow_dns_names=True)
+    for header, message in (
+        (with_certificate(encoded, digest, uri=admin), "not the certificate's only URI name"),
+        (with_certificate(encoded, HASH), "not the one the header's hash names"),
+        # A name with a separator in it, as Envoy would write it: read as the shorter name, and caught.
+        (with_certificate(separator, separator_digest, extra=";DNS=x"), "not the certificate's only URI name"),
+        # A name ending in a space, which HTTP trims from the end of the header.
+        (with_certificate(spaced, spaced_digest), "not the certificate's only URI name"),
+        (with_certificate(two, two_digest), "not the certificate's only URI name"),
+        (with_certificate(none, none_digest), "not the certificate's only URI name"),
+        (with_certificate(expired, expired_digest), "not currently valid"),
+        (with_certificate(future, future_digest), "not currently valid"),
+        (with_certificate(encoded + encoded, digest), "cannot be read"),
+        (with_certificate("not%20a%20certificate", digest), "cannot be read"),
+        (with_certificate("", digest), "cannot be read"),
+        (with_certificate(encoded, digest).replace(';Subject=""', f';Cert="{encoded}";Subject=""'), "Malformed"),
+        (with_certificate(encoded, digest, extra=";Other=x"), "must end with the certificate's URI"),
+    ):
+        for reader in (forwarded, lenient):  # The opt-in for DNS names does not loosen any of this.
+            with pytest.raises(SpiffeError, match=message):
+                reader.authenticate(header, peer=PROXY)
+
+    strict = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], require_certificate=True)
+    assert strict.authenticate(with_certificate(encoded, digest), peer=PROXY).spiffe_id == AGENT
+    with pytest.raises(SpiffeError, match="did not forward the client certificate"):
+        strict.authenticate(element(), peer=PROXY)
+    with pytest.raises(ValueError, match="require_certificate"):
+        SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY], require_certificate=1)
+
+
+def test_a_warrant_never_outlives_a_forwarded_certificate(ca):  # noqa: F811
+    from datetime import datetime
+
+    forwarded = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=[PROXY])
+    issuer = SpiffeWarrantIssuer(
+        signing_key=SigningKey.generate(), policy=lambda *_: SpiffeGrant(REFUND, ttl_seconds=3600), forwarded=forwarded
+    )
+    encoded, digest = forwarded_leaf(ca, expires=40)
+    warrant = issue(issuer, SigningKey.generate(), header=with_certificate(encoded, digest))
+    assert datetime.fromisoformat(warrant.expires_at()).timestamp() - time.time() <= 40
 
 
 def test_expected_proxy_identity():
@@ -535,6 +659,8 @@ def test_endpoint_issues_a_warrant(app):
     assert status == 200 and headers[b"cache-control"] == b"no-store"
     warrant = Warrant.from_base64(reply["warrant"])
     assert warrant.authorized_holder == holder.public_key and warrant.issuer == root.public_key
+    # A server that reports the port as text (Granian) is understood.
+    assert call_app(application, body=request_body(holder), client=(PROXY, "40000"))[0] == 200
     # The header name is matched whatever its case, and a dual-stack peer address is understood.
     status, *_ = call_app(
         application,
@@ -886,7 +1012,10 @@ def test_endpoint_reads_the_identity_before_the_body(app):
     [
         (PROXY, 0),  # How Uvicorn reports an address it took from X-Forwarded-For.
         (PROXY, None),
-        (PROXY, "40000"),
+        (PROXY, "0"),
+        (PROXY, "-1"),
+        (PROXY, "4e4"),
+        (PROXY, ""),
         (PROXY, True),
         ("unix", 40000),
         ("unix", 0),
@@ -1091,3 +1220,35 @@ def test_cancelled_request_keeps_its_slot_while_its_policy_call_runs(forwarded):
     finally:
         finish.set()
         application.close()
+
+
+def test_a_client_in_another_language_gets_a_usable_warrant(app, serve):
+    """The Node.js example builds the request from the guide's wire description alone."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from tenuo import PublicKey
+
+    script = Path(__file__).resolve().parents[2] / "examples" / "spiffe" / "clients" / "request_warrant.mjs"
+    node = shutil.which("node")
+    if node is None or not script.exists():
+        pytest.skip("needs Node.js and the examples directory")
+    application, _, root = app
+    port = serve(InjectIdentity(application))
+    url = f"http://127.0.0.1:{port}/warrants"
+
+    def request(*arguments):
+        result = subprocess.run([node, str(script), *arguments], capture_output=True, text=True, timeout=60)
+        if not result.stdout.strip():
+            pytest.skip(f"this Node.js cannot run the example: {result.stderr.strip()[:200]}")
+        return json.loads(result.stdout)
+
+    reply = request(url, AUDIENCE, "task-123")
+    assert reply["status"] == 200, reply
+    warrant = Warrant.from_base64(reply["warrant"])
+    assert warrant.issuer == root.public_key
+    assert warrant.authorized_holder == PublicKey.from_bytes(base64.b64decode(reply["holder"]))
+    # The same refusals as any other client.
+    assert request(url, "https://another-issuer.example.test", "task-123")["message"] == "Invalid holder proof"
+    assert "not authorized" in request(url, AUDIENCE, "another-task")["message"]

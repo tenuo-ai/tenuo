@@ -80,6 +80,9 @@ _FETCH_JWT_SVID = "/SpiffeWorkloadAPI/FetchJWTSVID"
 _MAX_TOKEN_BYTES = 16 * 1024
 _MIN_RSA_BITS = 2048
 _FILE_CHECK_SECONDS = 5.0
+# How long "no identity issued" from the SPIRE agent is waited out before tokens are refused.
+# An agent answers that way for a moment while it replaces SVIDs after a forced rotation.
+_DENIED_GRACE_SECONDS = 30.0
 _NONCE_BYTES = 16
 _COMPACT_JWS = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 # RFC 7518 signature algorithms the JWT-SVID standard allows, by key family.
@@ -302,10 +305,10 @@ class SpiffeJWT:
         seconds for the first bundle, then follows updates until :meth:`close`.
 
         Signing keys carry no expiry, so the validator never trusts them on old
-        information: when SPIRE withdraws the domain's keys or refuses this
-        workload its identity, tokens are refused at once; when the SPIRE agent
-        has been unreachable for ``max_stale_seconds``, tokens are refused
-        until the stream returns.
+        information: when SPIRE withdraws the domain's keys, tokens are refused
+        at once; when SPIRE has refused this workload its identity for 30
+        seconds, or the SPIRE agent has been unreachable for
+        ``max_stale_seconds``, tokens are refused until the stream returns.
 
         ``federates_with`` names other trust domains whose tokens are accepted;
         their keys come from the same stream when the registration entry has
@@ -358,6 +361,8 @@ class SpiffeJWT:
             # bundle (including an explicit withdrawal) ends the outage.
             validator._lost_since = None
             validator._stale_warned = False
+            validator._denied_since = None
+            validator._denied_warned = False
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
                 reason = (
@@ -381,9 +386,10 @@ class SpiffeJWT:
                 raise _OwnerGone
             if validator._lost_since is None:
                 validator._lost_since = time.monotonic()
-            if status == "PERMISSION_DENIED" and validator._loaded:
-                validator._withdraw("SPIRE no longer issues this workload an identity")
-                validator._federated_keys = {}
+            # Not a withdrawal yet: a SPIRE agent says this for a moment while it
+            # replaces a workload's SVIDs. authenticate() refuses once it has lasted.
+            if status == "PERMISSION_DENIED" and validator._loaded and validator._denied_since is None:
+                validator._denied_since = time.monotonic()
 
         watcher = _WorkloadAPIWatcher(
             _workload_api_target(socket_path),
@@ -422,6 +428,8 @@ class SpiffeJWT:
         self._lost_since: Optional[float] = None  # When the Workload API stream was last lost.
         self._unreadable_since: Optional[float] = None  # Since when the home bundle could not be read.
         self._stale_warned = False
+        self._denied_since: Optional[float] = None  # Since when SPIRE has refused this workload an identity.
+        self._denied_warned = False
         self._max_stale = 0.0
 
     def _read_home(self) -> _Keys:
@@ -512,6 +520,15 @@ class SpiffeJWT:
                     "JWT-SVIDs for %s are refused until SPIRE sends a JWT bundle that can be read", self.trust_domain
                 )
             raise SpiffeError("JWT-SVIDs are refused while SPIRE's JWT bundle cannot be read")
+        denied = self._denied_since
+        if denied is not None and time.monotonic() - denied > _DENIED_GRACE_SECONDS:
+            if not self._denied_warned:
+                self._denied_warned = True
+                logger.warning(
+                    "JWT-SVIDs for %s are refused until SPIRE issues this workload an identity again",
+                    self.trust_domain,
+                )
+            raise SpiffeError("JWT-SVIDs are refused while SPIRE issues this workload no identity")
         # Exactly three unpadded base64url segments, so one token has one spelling
         # (and one SHA-256) whatever the installed PyJWT tolerates.
         if not isinstance(token, str) or len(token) > _MAX_TOKEN_BYTES or not _COMPACT_JWS.fullmatch(token):

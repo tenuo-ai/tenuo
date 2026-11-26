@@ -454,8 +454,9 @@ def test_withdrawn_file_keys_are_no_longer_trusted(authority, tmp_path, monkeypa
         SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(empty))  # Never usable to start with.
 
 
-def test_workload_api_withdrawals_stop_trust_at_once(authority, workload_api):  # noqa: F811
+def test_workload_api_withdrawals_stop_trust_at_once(authority, workload_api, monkeypatch):  # noqa: F811
     grpc = pytest.importorskip("grpc")
+    monkeypatch.setattr("tenuo.spiffe._WORKLOAD_API_BACKOFF", (0.1, 0.2))
     own, token = f"spiffe://{DOMAIN}", authority.token()
     good = bundles_response(**{own: jwks(authority)})
     api = workload_api()
@@ -485,11 +486,30 @@ def test_workload_api_withdrawals_stop_trust_at_once(authority, workload_api):  
         api.publish_jwt_bundles(b"\xff\xff not protobuf")
         time.sleep(0.3)
         assert not refused()
-        # SPIRE stops issuing this workload an identity.
+        # SPIRE says "no identity issued" for a moment, as an agent does while it replaces
+        # SVIDs after a forced rotation. Tokens stay accepted throughout.
+        monkeypatch.setattr("tenuo.spiffe_jwt._DENIED_GRACE_SECONDS", 1.0)
         api.refuse = grpc.StatusCode.PERMISSION_DENIED
         api.drop_streams()
-        assert eventually(refused)
+        assert eventually(lambda: validator._denied_since is not None)
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            assert not refused()
+            time.sleep(0.02)
         api.publish_jwt_bundles(good)  # What a reconnecting stream is sent first.
+        api.refuse = None
+        assert eventually(lambda: validator._denied_since is None)
+        time.sleep(1.2)
+        assert not refused()  # The earlier denial is forgotten once the stream is back.
+        # SPIRE stops issuing this workload an identity for good.
+        api.refuse = grpc.StatusCode.PERMISSION_DENIED
+        api.drop_streams()
+        assert eventually(lambda: validator._denied_since is not None)
+        assert not refused()
+        assert eventually(refused, seconds=5)
+        with pytest.raises(SpiffeError, match="SPIRE issues this workload no identity"):
+            validator.authenticate(token)
+        api.publish_jwt_bundles(good)
         api.refuse = None
         assert eventually(lambda: not refused())
     finally:
@@ -598,11 +618,16 @@ def test_malformed_home_bundle_is_consumed_once(authority, workload_api, monkeyp
         with pytest.raises(SpiffeError, match="SPIRE agent is unreachable"):
             validator.authenticate(token)
 
-        # Keys withdrawn because SPIRE refused this workload stay withdrawn.
+        # SPIRE refusing this workload its identity is timed from the first refusal as well.
+        monkeypatch.setattr("tenuo.spiffe_jwt._DENIED_GRACE_SECONDS", 0.3)
         api.refuse = grpc.StatusCode.PERMISSION_DENIED
-        assert eventually(lambda: validator._keys == {} and validator._federated_keys == {})
+        assert eventually(lambda: validator._denied_since is not None)
+        since = validator._denied_since
         time.sleep(0.6)
-        assert validator._keys == {} and validator._federated_keys == {}
+        assert validator._denied_since == since
+        for refused_token in (token, partner_token):
+            with pytest.raises(SpiffeError, match="unreachable|no identity"):
+                validator.authenticate(refused_token)
     finally:
         validator.close()
 
@@ -762,7 +787,7 @@ def test_federation_configuration_is_validated(authority, tmp_path):
             SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path), federated_bundle_files=bad)
 
 
-def test_workload_api_federated_jwt_bundles(authority, workload_api):  # noqa: F811
+def test_workload_api_federated_jwt_bundles(authority, workload_api, monkeypatch):  # noqa: F811
     grpc = pytest.importorskip("grpc")
     partner, foreign = JWTAuthority(), JWTAuthority()
     own, theirs = f"spiffe://{DOMAIN}", f"spiffe://{PARTNER}"
@@ -805,11 +830,13 @@ def test_workload_api_federated_jwt_bundles(authority, workload_api):  # noqa: F
         assert validator.authenticate(authority.token()).spiffe_id == AGENT
         api.publish_jwt_bundles(full)
         assert eventually(accepted)
-        # Losing this workload's own identity withdraws every domain's keys.
+        # Losing this workload's own identity for longer than a moment refuses every domain's tokens.
+        monkeypatch.setattr("tenuo.spiffe_jwt._DENIED_GRACE_SECONDS", 0.3)
         api.refuse = grpc.StatusCode.PERMISSION_DENIED
         api.drop_streams()
         assert eventually(lambda: not accepted())
-        assert validator._federated_keys == {}
+        with pytest.raises(SpiffeError, match="SPIRE issues this workload no identity"):
+            validator.authenticate(authority.token())
     finally:
         validator.close()
     with pytest.raises(ValueError, match="list of names"):
@@ -1643,6 +1670,36 @@ def test_guide_jwt_code_runs(tmp_path, monkeypatch, authority, workload_api, ser
     # The guide's policy grants a bearer token less than an mTLS peer.
     assert refund(call({"customer": "123", "cents": 4000})).startswith("denied: ")
     assert refund(call({"customer": "999", "cents": 100})).startswith("denied: ")
+
+
+def test_a_client_in_another_language_gets_a_usable_warrant(app, authority, serve):
+    """The Node.js example presents a JWT-SVID and builds the holder proof from the guide's wire description."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from tenuo import PublicKey, Warrant
+
+    script = Path(__file__).resolve().parents[2] / "examples" / "spiffe" / "clients" / "request_warrant.mjs"
+    node = shutil.which("node")
+    if node is None or not script.exists():
+        pytest.skip("needs Node.js and the examples directory")
+    application, _, root = app
+    url = f"http://127.0.0.1:{serve(application)}/warrants"
+
+    def request(*arguments):
+        result = subprocess.run([node, str(script), *arguments], capture_output=True, text=True, timeout=60)
+        if not result.stdout.strip():
+            pytest.skip(f"this Node.js cannot run the example: {result.stderr.strip()[:200]}")
+        return json.loads(result.stdout)
+
+    reply = request(url, AUDIENCE, "task-123", authority.token())
+    assert reply["status"] == 200, reply
+    warrant = Warrant.from_base64(reply["warrant"])
+    assert warrant.issuer == root.public_key
+    assert warrant.authorized_holder == PublicKey.from_bytes(base64.b64decode(reply["holder"]))
+    refused = request(url, AUDIENCE, "task-123", authority.token(aud="spiffe://example.test/another"))
+    assert refused["status"] == 401 and "audience" in refused["message"]
 
 
 @pytest.mark.parametrize("malformed_wire", [False, True])
