@@ -100,6 +100,7 @@ from tenuo.budget import (
     MeteredCall,
     ModelCallDenied,
     TokenMeter,
+    _is_count,
     usage_counts,
 )
 
@@ -380,13 +381,13 @@ class _AnthropicMessages(_Dialect):
             value = usage.get(name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 seen.append(value)
-                return int(value)
+                return int(value) if _is_count(value) else 0
             return 0
 
         # Cached input is reported apart from input_tokens; all of it is input.
         inp = read("input_tokens") + read("cache_creation_input_tokens") + read("cache_read_input_tokens")
         out = read("output_tokens")
-        if not seen or min(seen) < 0:
+        if not seen or not all(_is_count(value) for value in seen):
             return None  # nothing usable was reported: the reservation stands, as for missing usage
         return {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out}
 
@@ -404,9 +405,10 @@ class _AnthropicMessages(_Dialect):
             merged.update({k: v for k, v in message["usage"].items() if v is not None})
         if isinstance(event.get("usage"), Mapping):
             merged.update({k: v for k, v in event["usage"].items() if v is not None})
-        total = self._total(merged) if merged else None
-        if total is not None:
-            state["usage"] = total
+        if merged:
+            # Also when it is no count: a count that cannot be right replaces
+            # the running one, so the stream is not settled on the earlier figure.
+            state["usage"] = self._total(merged)
         # message_start reports one output token; the real count comes with the
         # closing message_delta.
         if event.get("type") in ("message_delta", "message_stop"):
@@ -489,13 +491,13 @@ class _GoogleGenerate(_Dialect):
             value = meta.get(name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 seen.append(value)
-                return int(value)
+                return int(value) if _is_count(value) else 0
             return 0
 
         inp = read("promptTokenCount") + read("toolUsePromptTokenCount")
         out = read("candidatesTokenCount") + read("thoughtsTokenCount")  # thinking is billed as output
         total = max(read("totalTokenCount"), inp + out)  # a total below its own parts is not a total
-        if not seen or min(seen) < 0:
+        if not seen or not all(_is_count(value) for value in seen):
             return None  # nothing usable was reported: the reservation stands, as for missing usage
         return {"input_tokens": inp, "output_tokens": out, "total_tokens": total}
 
@@ -510,9 +512,10 @@ class _GoogleGenerate(_Dialect):
 
     def event_usage(self, state: Dict[str, Any], event: Any) -> None:
         meta = event.get("usageMetadata") if isinstance(event, Mapping) else None
-        total = self._total(meta) if isinstance(meta, Mapping) else None
-        if total is not None:
-            state["usage"] = total  # cumulative: the last chunk has the totals
+        if isinstance(meta, Mapping):
+            # Cumulative: the last chunk has the totals. One whose count cannot
+            # be right replaces the running one too, and the reservation stands.
+            state["usage"] = self._total(meta)
         candidates = event.get("candidates") if isinstance(event, Mapping) else None
         if _all_finished(state, candidates, "finishReason"):
             state["complete"] = True  # every candidate asked for has finished

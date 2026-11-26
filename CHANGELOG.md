@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   domain bound to its own bundle, SVID-bounded expiry,
   and development-PKI and real-SPIRE demos. See [the SPIFFE guide](docs/spiffe.md).
 
+### Changed
+
+- **Token budgets: a usage report no call could have is not counted
+  (Python).** A reply that reports zero tokens, or more than
+  `tenuo.budget.MAX_CALL_TOKENS` (a billion) for one call, is treated like a
+  reply without usage: the reservation is the charge, and `usage_counts`
+  returns `None` for it. Before, a zero count was charged nothing.
+
 ## [0.3.8] - 2026-11-24
 
 ### Added
