@@ -1343,8 +1343,8 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 - The agent-side `timeout=` of the HTTP calls bounds the whole exchange, from
   looking up the host to the last byte of the reply. A lookup that stalls
   cannot be interrupted, so a call that gives up on one leaves it to end by
-  itself. At most 32 calls are left behind like that in one process; further
-  calls fail at once until some have ended.
+  itself. At most 64 exchanges exist in one process at a time, in progress or
+  left behind like that; further calls fail at once until some have ended.
 - With `SpiffeIssuerServer`, the 10-second deadline ends an exchange before
   the 30-second challenge lifetime matters. The challenge lifetime applies when
   you use the [lower-level API](#lower-level-api).

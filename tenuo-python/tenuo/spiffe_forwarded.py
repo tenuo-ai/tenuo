@@ -565,7 +565,8 @@ class SpiffeForwardedIssuerApp(_IssuerApp):
         proof of where the request came from.
         """
         try:
-            address = ipaddress.ip_address(peer)
+            # Without its zone ("fe80::1%eth0"): a header may give the address with or without one.
+            address = ipaddress.ip_address(peer.partition("%")[0])
         except ValueError:
             return False  # A Unix socket.
         mapped = getattr(address, "ipv4_mapped", None)

@@ -2724,18 +2724,21 @@ def test_endpoint_reports_a_callback_that_raises_spiffe_error_as_an_issuer_error
         application.close()
 
 
-def test_calls_left_behind_at_their_deadline_are_bounded(authority, monkeypatch):
+def test_exchanges_in_progress_or_left_behind_are_bounded(authority, monkeypatch):
     """A stalled name lookup cannot be interrupted. Calls that give up on one must not pile up threads without end."""
     import tenuo._spiffe_http as http_module
 
     lookup, release = socket.getaddrinfo, threading.Event()
+    stalled_lookups = []
 
     def stalled(*arguments, **options):
+        stalled_lookups.append(1)
         release.wait(10)
         return lookup(*arguments, **options)
 
     monkeypatch.setattr(socket, "getaddrinfo", stalled)
-    monkeypatch.setattr(http_module, "_MAX_LEFT_BEHIND", 2)
+    # Two more than whatever earlier tests have left to finish (a refused connection takes a while on Windows).
+    monkeypatch.setattr(http_module, "_MAX_EXCHANGES", http_module._exchanges + 2)
     holder = SigningKey.generate()
 
     def call():
@@ -2753,11 +2756,22 @@ def test_calls_left_behind_at_their_deadline_are_bounded(authority, monkeypatch)
         return str(refused.value), time.monotonic() - began
 
     try:
-        assert all("did not answer within" in call()[0] for _ in range(2))
-        message, took = call()  # Two lookups are still stalled: this one does not start a third.
-        assert "too many earlier exchanges have not ended yet" in message and took < 0.2
+        # Eight calls at once: two get a place, the rest are turned away without starting anything.
+        results = []
+        callers = [threading.Thread(target=lambda: results.append(call())) for _ in range(8)]
+        for caller in callers:
+            caller.start()
+        for caller in callers:
+            caller.join(10)
+        messages = sorted(message.split(": ")[-1] for message, _ in results)
+        assert len(stalled_lookups) == 2
+        assert sum("did not answer within" in message for message, _ in results) == 2, messages
+        assert sum("too many exchanges are in progress" in message for message, _ in results) == 6, messages
+        # The two lookups are still stalled, so a later call is turned away at once too.
+        message, took = call()
+        assert "too many exchanges are in progress or have not ended yet" in message and took < 0.2
     finally:
         release.set()
-    assert eventually(lambda: http_module._left_behind == 0)
+    assert eventually(lambda: http_module._exchanges == 0, seconds=15)
     monkeypatch.setattr(socket, "getaddrinfo", lookup)
-    assert "too many earlier exchanges" not in call()[0]  # Nothing is left behind any more, so calls run again.
+    assert "too many exchanges" not in call()[0]  # Their places are back, so calls run again.

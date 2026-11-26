@@ -1436,3 +1436,29 @@ def test_only_a_decimal_suffix_is_read_as_a_port(forwarded_issuer):
             assert status == expected, value
     finally:
         application.close()
+
+
+@pytest.mark.parametrize(
+    "value", ["[fe80::1%eth0]:40000", "fe80::1%eth0", "fe80::1", "[fe80::1]:40000", "fe80::1%25eth0"]
+)
+def test_a_zone_does_not_hide_an_address_named_in_the_request(forwarded_issuer, value):
+    """A link-local peer is reported with its zone. A header may name the same address with or without it."""
+    issuer, *_ = forwarded_issuer
+    reader = SpiffeForwardedIdentity(DOMAIN, audience=AUDIENCE, trusted_proxies=["fe80::1"], require_certificate=False)
+    assert reader.trusts_peer("fe80::1%eth0")
+    issuer.forwarded = reader
+    application = SpiffeForwardedIssuerApp(issuer)
+    try:
+        status, _, reply, read = call_app(
+            application,
+            headers=[("x-forwarded-client-cert", element()), ("X-Forwarded-For", value)],
+            body=request_body(SigningKey.generate()),
+            client=("fe80::1%eth0", 40000),
+        )
+        assert (status, reply["error"], read) == (403, "forbidden", False)
+        assert "also named in a forwarding header" in reply["message"]
+        # Without such a header the scoped peer is served as the proxy it is.
+        status, *_ = call_app(application, body=request_body(SigningKey.generate()), client=("fe80::1%eth0", 40000))
+        assert status == 200
+    finally:
+        application.close()

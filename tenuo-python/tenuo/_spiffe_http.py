@@ -36,19 +36,29 @@ from tenuo.spiffe import (
 logger = logging.getLogger("tenuo.spiffe")
 
 _MAX_BODY_BYTES = 64 * 1024
-# A call that reaches its deadline leaves its exchange to end by itself, which a
-# stalled name lookup may take a while to do. No more than this many are left
-# behind at once: further calls fail at once instead of adding threads.
-_MAX_LEFT_BEHIND = 32
-_left_behind = 0
-_left_behind_lock = threading.Lock()
+# Each call runs its exchange in a thread of its own, and a call that reaches its
+# deadline leaves that thread to end by itself: a stalled name lookup cannot be
+# interrupted. No more than this many such threads exist in a process at once,
+# in progress or left behind. A place is taken before a thread is started and
+# given back when it ends, so calls that overlap cannot exceed it.
+_MAX_EXCHANGES = 64
+_exchanges = 0
+_exchanges_lock = threading.Lock()
 
 
-def _count_left_behind(change: int) -> int:
-    global _left_behind
-    with _left_behind_lock:
-        _left_behind += change
-        return _left_behind
+def _reserve_exchange() -> bool:
+    global _exchanges
+    with _exchanges_lock:
+        if _exchanges >= _MAX_EXCHANGES:
+            return False
+        _exchanges += 1
+        return True
+
+
+def _release_exchange() -> None:
+    global _exchanges
+    with _exchanges_lock:
+        _exchanges -= 1
 
 
 _PROTOCOL_VERSION = 1
@@ -387,44 +397,39 @@ def _post_for_warrant(
         starts another.
         """
         nonlocal abandoned
-        if _count_left_behind(0) >= _MAX_LEFT_BEHIND:
+        if not _reserve_exchange():
             raise SpiffeError(
                 f"Could not complete the exchange with the issuer at {where}: "
-                "too many earlier exchanges have not ended yet"
+                "too many exchanges are in progress or have not ended yet"
             )
         outcome: List[Tuple[bool, Any]] = []
         finished = threading.Event()
-        ended = False
 
         def run() -> None:
-            nonlocal ended
             try:
                 outcome.append((True, exchange()))
             except BaseException as exc:
                 outcome.append((False, exc))
             finally:
-                with guard:
-                    ended = True
-                    if abandoned:
-                        _count_left_behind(-1)
+                _release_exchange()
                 finished.set()
 
-        threading.Thread(target=run, name="tenuo-spiffe-exchange", daemon=True).start()
+        try:
+            threading.Thread(target=run, name="tenuo-spiffe-exchange", daemon=True).start()
+        except RuntimeError as exc:  # The interpreter cannot start another thread.
+            _release_exchange()
+            raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
         if not finished.wait(timeout):
             with guard:
-                if not ended:
-                    abandoned = True
-                    _count_left_behind(1)
-                sock = opened[0] if abandoned and opened else None
-            if abandoned:
-                if sock is not None:
-                    try:
-                        # The plain socket's own method: it wakes a read in progress and leaves the TLS state alone.
-                        socket.socket.shutdown(sock, socket.SHUT_RDWR)
-                    except OSError:
-                        pass
-                raise SpiffeError(late)
-            finished.wait()  # It ended in the very moment the deadline passed.
+                abandoned = True
+                sock = opened[0] if opened else None
+            if sock is not None:
+                try:
+                    # The plain socket's own method: it wakes a read in progress and leaves the TLS state alone.
+                    socket.socket.shutdown(sock, socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            raise SpiffeError(late)
         succeeded, value = outcome[0]
         if not succeeded:
             raise value
