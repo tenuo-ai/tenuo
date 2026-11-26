@@ -2686,3 +2686,39 @@ def test_endpoint_checks_tokens_off_the_event_loop_and_bounds_that_work(jwt_issu
         release.set()
         issuer.jwt.authenticate = real
         application.close()
+
+
+@pytest.mark.parametrize("callback", ["policy", "audit"])
+def test_endpoint_reports_a_callback_that_raises_spiffe_error_as_an_issuer_error(validator, authority, caplog, callback):
+    """A callback may raise anything. Its message goes to the issuer's log, never to the caller."""
+
+    def fail(*_):
+        raise SpiffeError("task store detail")
+
+    issuer = SpiffeWarrantIssuer(
+        signing_key=SigningKey.generate(),
+        policy=fail if callback == "policy" else (lambda *_: SpiffeGrant(REFUND)),
+        audit=fail if callback == "audit" else None,
+        jwt=validator,
+    )
+    application = SpiffeJWTIssuerApp(issuer)
+    holder, token = SigningKey.generate(), authority.token()
+    try:
+        with caplog.at_level("INFO", logger="tenuo.spiffe"):
+            status, _, reply = call_app(
+                application, headers=[("Authorization", f"Bearer {token}")], body=request_body(token, holder)
+            )
+        assert (status, reply) == (503, {"error": "unavailable", "message": "Issuer error"})
+        assert [record for record in caplog.records if record.levelname == "ERROR"]
+        assert issuer._proofs == {}  # Nothing is kept for a request that failed.
+        # A direct caller of the issuer still sees the callback's own exception.
+        with pytest.raises(SpiffeError, match="task store detail"):
+            issue(issuer, token, holder)
+        # And a refusal the issuer itself decides is still a refusal, with its message.
+        issuer._policy, issuer._audit = (lambda *_: None), None
+        status, _, reply = call_app(
+            application, headers=[("Authorization", f"Bearer {token}")], body=request_body(token, holder)
+        )
+        assert (status, reply["message"]) == (403, "Workload is not authorized for this task")
+    finally:
+        application.close()

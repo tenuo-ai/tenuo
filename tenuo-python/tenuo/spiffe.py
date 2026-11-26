@@ -1255,6 +1255,27 @@ def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _run_callback(callback: Callable[..., Any], *arguments: Any) -> Any:
+    """Call a policy or audit callback, marking whatever it raises as the callback's own failure.
+
+    The exception still reaches a direct caller unchanged. The bundled
+    endpoints read the mark: a callback may raise anything, a ``SpiffeError``
+    included, and that is the issuer failing, not the workload being refused.
+    """
+    try:
+        return callback(*arguments)
+    except Exception as exc:
+        try:
+            exc._tenuo_callback_failure = True  # type: ignore[attr-defined]
+        except AttributeError:
+            raise _CallbackFailed() from exc  # An exception type that takes no attributes.
+        raise
+
+
+def _from_callback(exc: BaseException) -> bool:
+    return getattr(exc, "_tenuo_callback_failure", False) is True
+
+
 def _seconds(name: str, value: Any) -> float:
     """A positive, finite number of seconds. NaN and infinity would switch a limit off without saying so."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
@@ -1491,7 +1512,7 @@ class SpiffeWarrantIssuer:
             self._proofs_held[spiffe_id] = self._proofs_held.get(spiffe_id, 0) + 1
             heapq.heappush(self._proof_order, (keep_until, signature))
         try:
-            grant = self._policy(identity, task_id)
+            grant = _run_callback(self._policy, identity, task_id)
             if grant is None:
                 raise SpiffeError("Workload is not authorized for this task")
             try:
@@ -1536,7 +1557,7 @@ class SpiffeWarrantIssuer:
             raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
         if not isinstance(holder, PublicKey):
             raise SpiffeError("holder must be a Tenuo PublicKey")
-        grant = self._policy(identity, task_id)
+        grant = _run_callback(self._policy, identity, task_id)
         if grant is None:
             raise SpiffeError("Workload is not authorized for this task")
         try:
@@ -1602,7 +1623,7 @@ class SpiffeWarrantIssuer:
             identity, task_id, holder.hex(), warrant.id, warrant.expires_at(), tuple(grant.capabilities)
         )
         if self._audit is not None:
-            self._audit(record)
+            _run_callback(self._audit, record)
         logger.info("Issued warrant %s to %s for task %r", warrant.id, identity.spiffe_id, task_id)
         return warrant
 
@@ -2002,7 +2023,9 @@ class SpiffeIssuerServer:
         def run() -> Any:
             try:
                 return function(*args)
-            except SpiffeError:
+            except SpiffeError as exc:
+                if _from_callback(exc):
+                    raise _CallbackFailed() from exc  # Its message is for the issuer's log, not for the agent.
                 raise
             except Exception as exc:
                 # A policy or audit callback may fail with anything, including the

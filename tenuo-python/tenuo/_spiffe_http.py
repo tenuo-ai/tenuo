@@ -24,8 +24,10 @@ from tenuo.spiffe import (
     SpiffeError,
     SpiffeHolderProof,
     SpiffeWarrantIssuer,
+    _CallbackFailed,
     _checked_warrant,
     _consume_result,
+    _from_callback,
     _IssuerBusy,
     _positive_int,
     _seconds,
@@ -251,9 +253,13 @@ class _IssuerApp:
                 return self._authorize(credential, holder, task_id, proof)
             except _Refusal:
                 raise
-            except _IssuerBusy as exc:
-                raise _Refusal(503, "unavailable", str(exc)) from exc
             except SpiffeError as exc:
+                if _from_callback(exc):
+                    # The policy or audit callback raised it. That is the issuer
+                    # failing: logged in full here, and no detail sent to the caller.
+                    raise _CallbackFailed() from exc
+                if isinstance(exc, _IssuerBusy):
+                    raise _Refusal(503, "unavailable", str(exc)) from exc
                 raise _Refusal(403, "refused", str(exc)) from exc
 
         return await self._in_worker(work, slot)

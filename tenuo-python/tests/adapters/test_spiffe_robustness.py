@@ -39,6 +39,7 @@ FAILURES = {
     "ConnectionRefusedError": ConnectionRefusedError(61, "Connection refused"),
     "OSError": OSError(28, "No space left on device"),
     "TimeoutError": TimeoutError("task store timed out"),
+    "SpiffeError": SpiffeError("task store detail"),  # Its text belongs in the issuer's log only.
 }
 
 
@@ -75,7 +76,7 @@ def test_a_failing_callback_is_the_issuers_error_whatever_it_raises(pki, caplog,
     with caplog.at_level("INFO", logger="tenuo.spiffe"):
         message = ts.run_server(issuer, body)
     errors = [record.getMessage() for record in caplog.records if record.levelname == "ERROR"]
-    assert "Issuer error; see the issuer's log" in message
+    assert "Issuer error; see the issuer's log" in message and "task store" not in message
     assert any("Issuance exchange failed" in line for line in errors)
 
 
