@@ -1,0 +1,73 @@
+# OAuth login to a task-scoped refund
+
+This example uses a real Keycloak server, browser Authorization Code + PKCE
+login, Tenuo's HTTP warrant issuer, and a separate FastMCP payments process.
+Only the upstream payments service is simulated: successful refunds are real
+SQLite writes. Denied calls must never enter the tool body.
+
+## Run
+
+Requires Docker, Python 3.10+, and a Rust toolchain to build the checkout.
+From the repository root:
+
+```sh
+python -m venv .venv-oauth
+.venv-oauth/bin/python -m pip install './tenuo-python[oauth,fastmcp]' uvicorn playwright pytest pytest-asyncio
+.venv-oauth/bin/python -m playwright install chromium
+PYTHONPATH=tenuo-python .venv-oauth/bin/python tenuo-python/examples/oauth/smoke.py
+```
+
+On Linux, use `playwright install --with-deps chromium`. The smoke harness
+starts a digest-pinned Keycloak 26.8.2 container on a random loopback port,
+imports the checked-in realm with an exact callback URI, and drives Chromium.
+It removes its container, servers, browser contexts, and temporary databases
+on exit. It does not use or modify your real identity provider or Docker volumes.
+The realm's users/passwords are local fixtures; never import it into production.
+The password grant is used only to bootstrap this disposable server's admin
+configuration. All tested application tokens come from browser login with PKCE.
+
+To invoke the same test via pytest:
+
+```sh
+TENUO_KEYCLOAK_SMOKE=1 PYTHONPATH=tenuo-python .venv-oauth/bin/python -m pytest tenuo-python/tests/e2e/test_oauth_keycloak.py -q --override-ini='addopts='
+```
+
+## What runs
+
+1. Browser login, state validation, OIDC ID-token/nonce validation, and code
+   exchange. Wrong PKCE verifier and reused authorization codes are refused.
+2. The issuer validates an **access token** whose audience is `tenuo-authority`.
+   The ID token is never accepted as an API credential.
+3. `refund_policy.py` loads a server-owned task and binds its payment, currency,
+   operation ID and maximum cents to actual warrant constraints. Ownership is
+   checked using issuer + subject + tenant; the token also needs `refunds:write`.
+4. The agent proves possession of its holder key. The issuer reserves that
+   proof in SQLite, runs policy, caps lifetime, signs, and records issuance.
+5. The MCP server receives only the issuer public key. Its middleware verifies
+   the warrant and proof before calling the refund function.
+6. Wrong payment, currency, amount, holder and missing warrant are denied with
+   no tool-body calls. Unknown/unapproved/cross-tenant tasks, wrong-audience,
+   expired and ID tokens, missing scope, and repeated issuance proofs fail.
+7. A narrower child warrant succeeds; an attempted broader child is rejected.
+8. The actual Keycloak signing key rotates. Issuance discovers the new key.
+   A paused provider works only within the existing JWKS cache lifetime; an
+   expired cache fails closed and recovers after the provider returns.
+
+The refund limit is **per call**, not a cumulative budget. An exact operation
+ID and atomic ledger transaction make this example a single refund: identical
+retries return the existing outcome, and conflicting retries are refused.
+This also prevents captured invocations from duplicating effects; it does not
+claim that the underlying MCP PoP format rejects every replay cryptographically.
+
+## Bring your provider
+
+Start with [the adapter guide](../../../docs/oauth.md). Configure the expected
+issuer, audience, trusted JWKS URL and allowed client IDs. Keycloak support is
+explicit; other providers need an RFC 9068 access-token profile or a separately
+reviewed adapter profile. Changing a URL is not a claim of vendor compatibility.
+
+Keep task records and issuer signing keys on the server. Replace the fixture
+policy loader and audit list with your application database and durable audit
+sink. Keep the holder key in the agent's trusted runtime, outside model-visible
+context. Production endpoints require HTTPS; loopback HTTP is an explicit
+development opt-in. Do not pass a user's token to an unrelated agent service.

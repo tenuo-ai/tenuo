@@ -188,7 +188,7 @@ class _IssuerApp:
         except asyncio.TimeoutError:
             raise _Refusal(408, "timeout", "Request body was not received in time") from None
         try:
-            request = json.loads(body)
+            request = self._decode_request(body)
             if not isinstance(request, dict) or set(request) != _REQUEST_FIELDS:
                 raise ValueError
             if request["v"] != _PROTOCOL_VERSION:
@@ -218,6 +218,10 @@ class _IssuerApp:
                 raise _Refusal(403, "refused", str(exc)) from exc
 
         return await self._in_worker(work, slot)
+
+    @staticmethod
+    def _decode_request(body: bytes) -> Any:
+        return json.loads(body)
 
     @staticmethod
     async def _read_body(receive: _Receive) -> bytes:

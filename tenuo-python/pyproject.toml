@@ -46,6 +46,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+oauth = [
+    "cryptography>=42",
+    "PyJWT>=2.8",
+    "httpx>=0.27",
+]
 spiffe = [
     "cryptography>=42",  # X.509-SVID parsing and Ed25519 holder proof validation
 ]
@@ -134,7 +139,7 @@ dev = [
     "uvicorn",
     "langchain-openai",
     # Include ALL optional groups for complete dev environment
-    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,fastmcp,temporal,spiffe,spiffe-workload-api,spiffe-jwt]",
+    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,fastmcp,temporal,spiffe,spiffe-workload-api,spiffe-jwt,oauth]",
 ]
 
 [project.scripts]

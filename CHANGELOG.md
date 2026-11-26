@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python OAuth adapter (`tenuo[oauth]`): explicit Keycloak and RFC 9068 JWT
+  access-token profiles, task templates bound to trusted approval records,
+  holder-bound HTTP warrant issuance, durable issuance replay protection, and
+  a real Keycloak browser/PKCE-to-MCP smoke test. See [the guide](docs/oauth.md).
+
 - **Python: token budgets per period.** `llm_capability(total_tokens=N,
   period="day", timezone=...)` signs an allowance that starts again each hour,
   day, week or month. The meter counts per warrant and period and the warrant

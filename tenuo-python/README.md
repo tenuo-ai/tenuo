@@ -294,6 +294,13 @@ keyring = Keyring(
 all_pubkeys = keyring.all_public_keys
 ```
 
+## OAuth Integration
+
+For OAuth-protected applications, see the [OAuth adapter](../docs/oauth.md) and
+[Keycloak browser-to-MCP example](examples/oauth/README.md). The adapter checks
+access tokens and issues holder-bound warrants from trusted task templates;
+your application retains its existing login and approval policy.
+
 ## SPIFFE Integration
 
 Use SPIFFE/SPIRE workload identity to authenticate warrant issuance, then use
