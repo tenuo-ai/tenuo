@@ -219,6 +219,21 @@ def test_rejected_tokens(validator, authority, build, message):
         validator.authenticate(build(authority))
 
 
+def test_only_standard_headers_are_accepted(validator, authority):
+    """The JWT-SVID standard forbids headers beyond alg, kid and typ."""
+    for extra in (
+        {"jku": "https://attacker.example/keys.json"},
+        {"jwk": authority.jwk},
+        {"x5u": "https://attacker.example/cert.pem"},
+        {"crit": ["exp"]},
+        {"cty": "JWT"},
+        {"custom": 1},
+    ):
+        with pytest.raises(SpiffeError, match="Malformed JWT-SVID"):
+            validator.authenticate(authority.token(headers=extra))
+    assert validator.authenticate(authority.token(headers={"typ": "JWT"})).spiffe_id == AGENT
+
+
 def test_algorithm_must_match_the_key_type(tmp_path):
     rsa_authority, ec_authority = JWTAuthority("RSA"), JWTAuthority("EC")
     # The EC authority's token names the RSA key's ID, and the reverse.
@@ -276,7 +291,8 @@ def test_unusable_bundles_are_refused(authority, tmp_path):
         (b"not json", "not a JWKS document"),
         (b"[]", "not a JWKS document"),
         (b'{"keys": "x"}', "not a JWKS document"),
-        (json.dumps({"other.test": "AAAA"}).encode(), "no entry for trust domain"),
+        (json.dumps({"other.test": "AAAA"}).encode(), "no usable JWT-SVID signing keys"),
+        (json.dumps({DOMAIN: 5}).encode(), "not a JWKS document"),
         (json.dumps({DOMAIN: "!!"}).encode(), "not a JWKS document"),
         (jwks(), "no usable JWT-SVID signing keys"),
         (jwks(authority, authority), "must be unique"),
@@ -391,7 +407,8 @@ def test_withdrawn_file_keys_are_no_longer_trusted(authority, tmp_path, monkeypa
     validator = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
     token = authority.token()
     unsupported = {"kty": "AKP", "alg": "ML-DSA-44", "pub": "AAAA", "kid": "pq", "use": "jwt-svid"}
-    for withdrawal in (jwks(), jwks(extra=[unsupported])):
+    other_domain_only = json.dumps({"other.test": base64.b64encode(jwks(JWTAuthority())).decode()}).encode()
+    for withdrawal in (jwks(), jwks(extra=[unsupported]), other_domain_only, b"{}"):
         time.sleep(0.01)
         path.write_bytes(withdrawal)  # A well-formed bundle that no longer lists the key.
         with pytest.raises(SpiffeError, match="not in the trust bundle"):

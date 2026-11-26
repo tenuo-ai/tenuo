@@ -123,8 +123,11 @@ def _jwks_keys(document: bytes, trust_domain: str) -> Dict[str, _Key]:
         data = json.loads(document)
         if isinstance(data, dict) and "keys" not in data:
             encoded = data.get(trust_domain, data.get(f"spiffe://{trust_domain}"))
+            if encoded is None:
+                # The helper's file no longer lists this trust domain: its keys are withdrawn.
+                return {}
             if not isinstance(encoded, str):
-                raise SpiffeError(f"JWT bundle has no entry for trust domain {trust_domain}")
+                raise SpiffeError("JWT bundle is not a JWKS document")
             data = json.loads(base64.b64decode(encoded, validate=True))
     except SpiffeError:
         raise
@@ -372,7 +375,8 @@ class SpiffeJWT:
             header = pyjwt.get_unverified_header(token)
         except (pyjwt.PyJWTError, ValueError, TypeError, RecursionError) as exc:
             raise SpiffeError("Malformed JWT-SVID") from exc
-        if not isinstance(header, dict):
+        # The JWT-SVID standard allows these three headers and no others.
+        if not isinstance(header, dict) or not set(header) <= {"alg", "kid", "typ"}:
             raise SpiffeError("Malformed JWT-SVID")
         algorithm, kid, kind = header.get("alg"), header.get("kid"), header.get("typ")
         if kind is not None and kind not in ("JWT", "JOSE"):

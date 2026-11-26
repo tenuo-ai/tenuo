@@ -911,7 +911,8 @@ the issuer's clock.
 
 The token must be three unpadded base64url segments with nothing before or
 after. The issuer accepts RS256/384/512, PS256/384/512 and ES256/384/512 tokens
-that carry a `kid`, and requires `sub`, `aud` and `exp`.
+that carry a `kid` and no header other than `alg`, `kid` and `typ`, and it
+requires `sub`, `aud` and `exp`.
 
 ### What this adapter does not do
 
