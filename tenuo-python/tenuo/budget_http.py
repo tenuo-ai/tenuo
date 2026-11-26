@@ -405,9 +405,10 @@ class _AnthropicMessages(_Dialect):
             merged.update({k: v for k, v in message["usage"].items() if v is not None})
         if isinstance(event.get("usage"), Mapping):
             merged.update({k: v for k, v in event["usage"].items() if v is not None})
-        total = self._total(merged) if merged else None
-        if total is not None:
-            state["usage"] = total
+        if merged:
+            # Also when it is no count: a count that cannot be right replaces
+            # the running one, so the stream is not settled on the earlier figure.
+            state["usage"] = self._total(merged)
         # message_start reports one output token; the real count comes with the
         # closing message_delta.
         if event.get("type") in ("message_delta", "message_stop"):
@@ -511,9 +512,10 @@ class _GoogleGenerate(_Dialect):
 
     def event_usage(self, state: Dict[str, Any], event: Any) -> None:
         meta = event.get("usageMetadata") if isinstance(event, Mapping) else None
-        total = self._total(meta) if isinstance(meta, Mapping) else None
-        if total is not None:
-            state["usage"] = total  # cumulative: the last chunk has the totals
+        if isinstance(meta, Mapping):
+            # Cumulative: the last chunk has the totals. One whose count cannot
+            # be right replaces the running one too, and the reservation stands.
+            state["usage"] = self._total(meta)
         candidates = event.get("candidates") if isinstance(event, Mapping) else None
         if _all_finished(state, candidates, "finishReason"):
             state["complete"] = True  # every candidate asked for has finished

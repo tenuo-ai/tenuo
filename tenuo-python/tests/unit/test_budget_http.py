@@ -1709,6 +1709,50 @@ class TestCountsThatCannotBeRight:
         assert _GOOGLE._total({"promptTokenCount": 5, "candidatesTokenCount": 3, "totalTokenCount": count}) is None
         assert usage_counts({"prompt_tokens": 5, "completion_tokens": count}) is None
 
+    def stream(self, keys, url, body, events):
+        warrant = mint(keys, total_tokens=5000)
+        seen = []
+        answer = httpx.Response(200, headers={"content-type": "text/event-stream"}, content=sse(events, done=False))
+        http, meter = client_for(keys, warrant, lambda r: answer, events=seen)
+        with http.stream("POST", url, json=body) as streamed:
+            streamed.read()
+        return used(meter, warrant), seen[-1].usage
+
+    LAST_COUNTS = pytest.mark.parametrize(
+        "last", [10 ** 9 + 1, -5, 10 ** 400, float("inf")], ids=["over", "below-zero", "past-float", "inf"])
+
+    @LAST_COUNTS
+    def test_an_anthropic_stream_that_ends_on_such_a_count_keeps_the_reservation(self, keys, last):
+        events = [
+            {"type": "message_start", "message": {"usage": {"input_tokens": 10, "output_tokens": 1}}},
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": last}},
+            {"type": "message_stop"},
+        ]
+        total, usage = self.stream(keys, "https://provider.test/v1/messages", {**self.CHAT_BODY, "stream": True}, events)
+        assert total == INPUT + 100 and usage["estimated"] is True
+
+    @LAST_COUNTS
+    def test_a_gemini_stream_that_ends_on_such_a_count_keeps_the_reservation(self, keys, last):
+        def chunk(out, finish):
+            candidate = {"index": 0, "content": {"role": "model", "parts": [{"text": "x"}]}}
+            if finish:
+                candidate["finishReason"] = "STOP"
+            return {"candidates": [candidate], "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": out}}
+
+        url = self.GEMINI.replace(":generateContent", ":streamGenerateContent") + "?alt=sse"
+        total, usage = self.stream(keys, url, self.GEMINI_BODY, [chunk(1, False), chunk(last, True)])
+        assert total == INPUT + 100 and usage["estimated"] is True
+
+    def test_a_stream_that_ends_on_a_good_count_is_settled_on_it(self, keys):
+        events = [
+            {"type": "message_start", "message": {"usage": {"input_tokens": 10, "output_tokens": 1}}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 40}},
+            {"type": "message_stop"},
+        ]
+        total, usage = self.stream(keys, "https://provider.test/v1/messages", {**self.CHAT_BODY, "stream": True}, events)
+        assert total == 50 and "estimated" not in usage
+
     def test_a_fraction_inside_the_limit_is_still_a_count(self):
         from tenuo.budget_http import _DIALECTS, _GOOGLE
 
