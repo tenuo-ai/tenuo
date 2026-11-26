@@ -610,41 +610,40 @@ class SpiffeJWT:
             raise SpiffeError("Malformed JWT-SVID")
         if kid is not None and (not isinstance(kid, str) or not kid):
             raise SpiffeError("Malformed JWT-SVID")
-        # A key ID may exist in more than one trust domain. Each candidate key can
-        # only vouch for subjects in the trust domain it belongs to.
-        candidates: List[Tuple[str, _Key]] = []
+        # A key can only vouch for subjects in the trust domain it belongs to, so
+        # only the keys of the domain the token says it is from are tried. What
+        # another domain's bundle holds (a key ID may exist in several) never adds
+        # work. That claim is not trusted here: it only picks the keys, and
+        # _verify checks the signed subject against the domain of the key used.
         home_keys, federated_keys = self._trusted  # One look: the two always belong together.
-        domains = [(self.trust_domain, home_keys), *federated_keys.items()]
-        if kid is None:
-            # The standard makes the key ID optional (JWT-SVID, section 2.2): try
-            # each key the token's algorithm fits. Only the keys of the trust
-            # domain the token says it is from are tried, so what another
-            # domain's bundle holds never matters. That claim is not trusted
-            # here: it only picks the keys, and _verify checks the signed
-            # subject against the domain of the key that verified it.
-            claimed = _claimed_trust_domain(token)
-            if claimed != self.trust_domain and claimed not in self._federates_with:
-                raise SpiffeError("JWT-SVID belongs to a different trust domain")
-            keys = home_keys if claimed == self.trust_domain else federated_keys.get(claimed, {})
-            candidates = [(claimed, key) for key in keys.values() if _fits(algorithm, key)]
-            if len(candidates) > _MAX_UNNAMED_KEY_ATTEMPTS:
-                raise SpiffeError(
-                    "JWT-SVID names no signing key, and its trust domain's bundle holds too many keys to try each"
-                )
-        else:
-            for domain, keys in domains:
-                named = keys.get(kid)
-                if named is not None:
-                    candidates.append((domain, named))
+        claimed = _claimed_trust_domain(token)
+        if claimed != self.trust_domain and claimed not in self._federates_with:
+            raise SpiffeError("JWT-SVID belongs to a different trust domain")
+        keys = home_keys if claimed == self.trust_domain else federated_keys.get(claimed, {})
+        if kid is not None:
+            named = keys.get(kid)
+            if named is None:
+                elsewhere = [home_keys, *federated_keys.values()]
+                if any(kid in other for other in elsewhere):
+                    raise SpiffeError("JWT-SVID was not signed by its own trust domain's keys")
+                raise SpiffeError("JWT-SVID was signed by a key that is not in the trust bundle")
+            return self._verify(token, algorithm, named, claimed)  # One signature check.
+        # The standard makes the key ID optional (JWT-SVID, section 2.2): try
+        # each key of that domain the token's algorithm fits.
+        candidates = [key for key in keys.values() if _fits(algorithm, key)]
         if not candidates:
             raise SpiffeError("JWT-SVID was signed by a key that is not in the trust bundle")
+        if len(candidates) > _MAX_UNNAMED_KEY_ATTEMPTS:
+            raise SpiffeError(
+                "JWT-SVID names no signing key, and its trust domain's bundle holds too many keys to try each"
+            )
         refusals: List[SpiffeError] = []
-        for domain, key in candidates:
+        for key in candidates:
             try:
-                return self._verify(token, algorithm, key, domain)
+                return self._verify(token, algorithm, key, claimed)
             except SpiffeError as exc:
                 refusals.append(exc)
-        # With one key ID in several domains, report the most specific refusal.
+        # Report the most specific refusal.
         raise next((refusal for refusal in refusals if str(refusal) != "Invalid JWT-SVID"), refusals[0])
 
     def _verify(self, token: str, algorithm: str, key: _Key, key_domain: str) -> SpiffeIdentity:

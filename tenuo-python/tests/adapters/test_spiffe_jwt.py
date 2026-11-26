@@ -800,7 +800,7 @@ def test_workload_api_federated_jwt_bundles(authority, workload_api, monkeypatch
 
     try:
         assert accepted()
-        with pytest.raises(SpiffeError, match="not in the trust bundle"):
+        with pytest.raises(SpiffeError, match="different trust domain"):
             validator.authenticate(foreign.token(sub="spiffe://foreign.test/agent"))  # Not asked for.
         with pytest.raises(SpiffeError, match="its own trust domain's keys"):
             validator.authenticate(partner.token(sub=AGENT))
@@ -2062,3 +2062,47 @@ def test_withdrawn_home_keys_do_not_cost_a_partner_its_bundle(authority, workloa
         assert validator.authenticate(moving.token()).trust_domain == DOMAIN
     finally:
         validator.close()
+
+
+def test_a_named_key_costs_one_signature_check_however_many_domains_share_its_id(authority, tmp_path, monkeypatch):
+    """A key ID is unique within a bundle, not across them: partners may publish keys under the same ID."""
+    domains = [f"partner{number}.test" for number in range(12)]
+    partners = {domain: JWTAuthority(kid=authority.kid) for domain in domains}
+    files = {}
+    for domain, partner in partners.items():
+        files[domain] = tmp_path / f"{domain}.json"
+        files[domain].write_bytes(jwks(partner))
+    own_file = tmp_path / "own.json"
+    own_file.write_bytes(jwks(authority))
+    validator = SpiffeJWT(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        bundle_file=str(own_file),
+        federated_bundle_files={domain: str(path) for domain, path in files.items()},
+    )
+    checks = []
+    decode = pyjwt.decode
+    monkeypatch.setattr(pyjwt, "decode", lambda *args, **options: checks.append(1) or decode(*args, **options))
+
+    assert validator.authenticate(authority.token()).spiffe_id == AGENT
+    assert len(checks) == 1
+    last = domains[-1]
+    assert validator.authenticate(partners[last].token(sub=f"spiffe://{last}/agent")).trust_domain == last
+    assert len(checks) == 2
+    # A forgery under that shared ID is checked against its claimed domain's key alone.
+    with pytest.raises(SpiffeError, match="Invalid JWT-SVID"):
+        validator.authenticate(JWTAuthority(kid=authority.kid).token())
+    assert len(checks) == 3
+    # Each key still vouches only for its own domain.
+    with pytest.raises(SpiffeError, match="Invalid JWT-SVID"):
+        validator.authenticate(partners[last].token(sub=AGENT))
+    with pytest.raises(SpiffeError, match="Invalid JWT-SVID"):
+        validator.authenticate(authority.token(sub=f"spiffe://{last}/agent"))
+    assert len(checks) == 5
+    # A key ID that only another domain has is refused without any signature check.
+    lone = JWTAuthority()
+    files[last].write_bytes(jwks(lone))
+    validator.reload()
+    with pytest.raises(SpiffeError, match="not signed by its own trust domain's keys"):
+        validator.authenticate(lone.token(sub=AGENT))
+    assert len(checks) == 5

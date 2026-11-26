@@ -525,8 +525,8 @@ async def forwarded_check(directory: Path, launch, refetch) -> None:
     )
 
 
-async def rotate_authority(server_socket: str, kind: str) -> str:
-    """Prepare and activate a new signing authority, and taint the old one. Returns the old authority's ID."""
+async def rotate_authority(server_socket: str, kind: str) -> tuple:
+    """Prepare and activate a new signing authority, and taint the old one. Returns (old ID, new ID)."""
 
     def authority(action: str, *arguments: str) -> dict:
         output = command(
@@ -541,7 +541,7 @@ async def rotate_authority(server_socket: str, kind: str) -> str:
     old = authority("show")["old"]["authority_id"]
     # Tainting tells agents to replace everything the old authority signed, without waiting for expiry.
     authority("taint", "-authorityID", old)
-    return old
+    return old, prepared
 
 
 async def until(condition, seconds: float, what: str):
@@ -574,6 +574,7 @@ async def authority_rotation_check(directory: Path, server_socket: str, agent_so
     issuer = SpiffeWarrantIssuer(tls=server_tls, jwt=tokens, signing_key=root, policy=policy)
     options = dict(issuer_id=ISSUER_ID, issuer_key=root.public_key, holder_key=holder, task_id="approved-refund-123")
     exchanges = failures = 0
+    traffic = None
 
     def revoke(kind: str, authority_id: str) -> None:
         command(
@@ -606,22 +607,47 @@ async def authority_rotation_check(directory: Path, server_socket: str, agent_so
 
             traffic = asyncio.ensure_future(keep_exchanging())
 
+            async def still_flowing(stage: str) -> None:
+                """The warrant requests must still be running, and still completing, at each stage."""
+                count = exchanges
+                await asyncio.sleep(1)
+                if traffic.done() or exchanges == count:
+                    reason = (
+                        traffic.exception() if traffic.done() and not traffic.cancelled() else "no exchange completed"
+                    )
+                    raise RuntimeError(f"Warrant requests stopped {stage}: {reason}")
+
+            def issued_by_new_authority() -> bool:
+                """Both sides hold, in this process, an SVID the new X.509 authority signed."""
+                try:
+                    current = refetch()  # What the Workload API serves now, by role.
+                except (subprocess.CalledProcessError, RuntimeError, KeyError):
+                    return False  # The agent is between SVIDs.
+                for role, credentials in (("issuer", server_tls), ("agent", client_tls)):
+                    certificate = x509.load_pem_x509_certificate((directory / f"{role}.pem").read_bytes())
+                    signer = certificate.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier).value
+                    if signer.key_identifier.hex() != new_x509:
+                        return False
+                    if credentials.identity.certificate_sha256 != current[role]:
+                        return False
+                return True
+
             # X.509. Keep one SVID signed by the old authority to present after the rotation.
             await asyncio.to_thread(refetch)
             for name in ("agent.pem", "agent-key.pem"):
                 shutil.copy(directory / name, directory / f"old-{name}")
             old_expiry = x509.load_pem_x509_certificate((directory / "old-agent.pem").read_bytes()).not_valid_after_utc
-            before = (server_tls.identity.certificate_sha256, client_tls.identity.certificate_sha256)
-            old_x509 = await rotate_authority(server_socket, "x509")
-            # Both sides receive SVIDs from the new authority, and are served throughout.
+            new_x509 = ""  # Known once the rotation has begun.
+            old_x509, new_x509 = await rotate_authority(server_socket, "x509")
+            # Both sides receive SVIDs from the new authority, and are served throughout. The old
+            # authority is revoked only once that is so: a changed certificate alone could be an
+            # ordinary renewal the old authority signed.
             await until(
-                lambda: (
-                    server_tls.identity.certificate_sha256 != before[0]
-                    and client_tls.identity.certificate_sha256 != before[1]
-                ),
-                60,
+                lambda: asyncio.to_thread(issued_by_new_authority),
+                90,
                 "both sides hold SVIDs from the new X.509 authority",
             )
+            await still_flowing("after the X.509 authority changed")
             revoke("x509", old_x509)
             (directory / "new-bundle.pem").write_text(
                 command("spire-server", "bundle", "show", "-socketPath", server_socket)
@@ -644,6 +670,7 @@ async def authority_rotation_check(directory: Path, server_socket: str, agent_so
             await until(old_svid_refused, 60, "the issuer refuses an SVID from the revoked X.509 authority")
             if datetime.now(timezone.utc) >= old_expiry:
                 raise RuntimeError("The old SVID expired before the check; the refusal proves nothing")
+            await still_flowing("after the old X.509 authority was revoked")
 
             # JWT. Keep one token signed by the old key.
             steady_token.clear()  # From here on, old tokens are meant to stop working.
@@ -654,12 +681,12 @@ async def authority_rotation_check(directory: Path, server_socket: str, agent_so
 
             old_token = await asyncio.to_thread(token)
             tokens.authenticate(old_token)
-            old_jwt = await rotate_authority(server_socket, "jwt")
+            old_jwt, new_jwt = await rotate_authority(server_socket, "jwt")
 
             def new_token_accepted():
                 fresh = token()
-                if key_id(fresh) == key_id(old_token):
-                    return None
+                if key_id(fresh) != new_jwt:
+                    return None  # Not yet signed by the new authority.
                 proof = sign_jwt_holder_proof(fresh, holder, audience=ISSUER_ID, task_id="approved-refund-123")
                 issuer.issue_jwt(fresh, holder.public_key, "approved-refund-123", proof)
                 return fresh
@@ -667,6 +694,7 @@ async def authority_rotation_check(directory: Path, server_socket: str, agent_so
             fresh = await until(
                 lambda: asyncio.to_thread(new_token_accepted), 60, "a token signed by the new JWT authority is accepted"
             )
+            await still_flowing("after the JWT authority changed")
             revoke("jwt", old_jwt)
 
             def old_token_refused() -> bool:
@@ -680,8 +708,10 @@ async def authority_rotation_check(directory: Path, server_socket: str, agent_so
                 return False
 
             await until(old_token_refused, 60, "a token signed by the revoked JWT authority is refused")
-            traffic.cancel()
+            await still_flowing("after the old JWT authority was revoked")
     finally:
+        if traffic is not None:
+            traffic.cancel()
         for source in (server_tls, client_tls, tokens):
             source.close()
     if failures or exchanges < 20:
