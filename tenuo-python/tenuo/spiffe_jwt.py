@@ -394,7 +394,10 @@ class SpiffeJWT:
             keys, foreign = update
             malformed = isinstance(keys, _Malformed)
             home_now, federated = validator._trusted
-            home: _Keys = home_now if isinstance(keys, _Malformed) or keys is None else keys
+            # The home keys that will be in force once this response is applied: kept
+            # when its home bundle cannot be read, none when it withdraws them. Federated
+            # bundles are compared with those, not with keys that are on their way out.
+            home: _Keys = home_now if isinstance(keys, _Malformed) else (keys or {})
             if validator._loaded or (keys and not malformed):
                 # Federated domains follow this response whatever happens to the home bundle.
                 federated = _without_overlap(home, foreign, trust_domain)

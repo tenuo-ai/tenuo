@@ -2031,3 +2031,34 @@ def test_a_key_that_changes_domain_is_never_trusted_for_both(authority, workload
             validator.authenticate(moving.token())
     finally:
         validator.close()
+
+
+def test_withdrawn_home_keys_do_not_cost_a_partner_its_bundle(authority, workload_api):  # noqa: F811
+    """The home domain's keys are withdrawn in the response in which one of them turns up in a partner's bundle."""
+    moving, partner = JWTAuthority(), JWTAuthority()
+    own, theirs = f"spiffe://{DOMAIN}", f"spiffe://{PARTNER}"
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{own: jwks(authority, moving), theirs: jwks(partner)}))
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, federates_with=[PARTNER]
+    )
+    try:
+        for withdrawal in ({}, {own: jwks()}):  # The home domain is absent, or present with no usable key.
+            api.publish_jwt_bundles(bundles_response(**{**withdrawal, theirs: jwks(partner, moving)}))
+            assert eventually(lambda: validator._keys == {} and moving.kid in validator._federated_keys.get(PARTNER, {}))
+            # The partner's tokens are accepted, under either of its keys; the home domain's are not.
+            for signer in (partner, moving):
+                assert validator.authenticate(signer.token(sub=PARTNER_AGENT)).trust_domain == PARTNER
+            for signer in (authority, moving):
+                with pytest.raises(SpiffeError):
+                    validator.authenticate(signer.token())
+            api.publish_jwt_bundles(bundles_response(**{own: jwks(authority, moving), theirs: jwks(partner)}))
+            assert eventually(lambda: moving.kid in validator._keys)
+        # While the home keys are kept, a partner bundle that shares one of them is still refused.
+        api.publish_jwt_bundles(bundles_response(**{own: jwks(authority, moving), theirs: jwks(partner, moving)}))
+        assert eventually(lambda: PARTNER not in validator._federated_keys)
+        with pytest.raises(SpiffeError):
+            validator.authenticate(partner.token(sub=PARTNER_AGENT))
+        assert validator.authenticate(moving.token()).trust_domain == DOMAIN
+    finally:
+        validator.close()
