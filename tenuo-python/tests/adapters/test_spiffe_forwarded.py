@@ -381,6 +381,16 @@ def test_federated_trust_domains():
         (["127.0.0.1"], "127.0.0.2", False),
         (["127.0.0.0/8"], "127.0.0.6", True),
         (["127.0.0.1"], "::ffff:127.0.0.1", True),  # Dual-stack listener.
+        (["127.0.0.1"], "::ffff:127.0.0.2", False),
+        # The proxy listed in its IPv4-mapped form matches either way the peer is reported.
+        (["::ffff:127.0.0.1"], "::ffff:127.0.0.1", True),
+        (["::ffff:127.0.0.1"], "127.0.0.1", True),
+        (["::ffff:127.0.0.1"], "127.0.0.2", False),
+        (["::ffff:127.0.0.1"], "::1", False),
+        (["::ffff:10.1.0.0/112"], "10.1.200.3", True),
+        (["::ffff:10.1.0.0/112"], "::ffff:10.1.200.3", True),
+        (["::ffff:10.1.0.0/112"], "10.2.0.1", False),
+        (["::ffff:10.1.0.7/112"], "::ffff:10.1.9.9", True),  # Host bits ignored here too.
         (["127.0.0.1"], "::1", False),
         (["::1"], "::1", True),
         (["::1"], "127.0.0.1", False),
@@ -419,6 +429,9 @@ def test_peer_must_be_a_trusted_proxy(trusted, peer, accepted):
         dict(trusted_proxies=["localhost"]),
         dict(trusted_proxies=["0.0.0.0/0"]),
         dict(trusted_proxies=["::/0"]),
+        dict(trusted_proxies=["::ffff:0:0/96"]),  # Every IPv4 address, written the IPv6 way.
+        dict(trusted_proxies=["::ffff:0.0.0.0/96"]),
+        dict(trusted_proxies=["::/1"]),  # Covers that range as well.
         dict(trusted_proxies=[None]),
         dict(audience=""),
         dict(audience=None),

@@ -81,6 +81,7 @@ _BEFORE_URI = frozenset({"by", "hash", "cert", "chain", "subject"})
 _SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
 _DNS_NAME = re.compile(r"[A-Za-z0-9*_.-]{1,253}")
 _Network = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
+_MAPPED_IPV4 = ipaddress.IPv6Network("::ffff:0:0/96")  # IPv4 addresses as a dual-stack listener reports them.
 
 
 def _parse_forwarded(header: str) -> List[List[Tuple[str, str]]]:
@@ -260,6 +261,16 @@ class SpiffeForwardedIdentity:
                 network = ipaddress.ip_network(entry, strict=False)
             except (ValueError, TypeError):
                 raise ValueError(f"trusted_proxies entries are IP addresses, networks, or 'unix': {entry!r}") from None
+            if isinstance(network, ipaddress.IPv6Network):
+                if _MAPPED_IPV4.subnet_of(network):
+                    # Every IPv4 address, written the IPv6 way (or all of IPv6 with it).
+                    raise ValueError("trusted_proxies must not cover every address")
+                if network.subnet_of(_MAPPED_IPV4):
+                    # An IPv4 address or network in its IPv4-mapped form. Peers are compared
+                    # as IPv4 however the listener reports them, so keep one form here too.
+                    network = ipaddress.IPv4Network(
+                        (int(network.network_address) & 0xFFFFFFFF, network.prefixlen - 96), strict=False
+                    )
             if network.prefixlen == 0:
                 raise ValueError("trusted_proxies must not cover every address")
             networks.append(network)
