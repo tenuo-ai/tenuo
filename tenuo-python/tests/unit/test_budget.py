@@ -9,6 +9,7 @@ import pytest
 from tenuo import SigningKey, Warrant
 from tenuo._enforcement import enforce_tool_call
 from tenuo.budget import (
+    MAX_CALL_TOKENS,
     BudgetExceeded,
     BudgetStore,
     InMemoryBudgetBackend,
@@ -227,6 +228,12 @@ class TestBudgetStore:
         store = BudgetStore(backend=Meanwhile())
         assert store.add({"w": 10}) == {"w": 60} and store.used("w") == {"w": 60}
 
+    def test_an_owed_amount_no_call_could_add_does_not_stop_later_writes(self, tmp_path):
+        store = BudgetStore(str(tmp_path / "budgets.db"))
+        store.owe({"w": 10 ** 30})
+        assert store.add({"other": 10})["other"] == 10
+        assert store.used("w") == {"w": MAX_CALL_TOKENS}
+
     def test_owed_usage_is_written_once_by_concurrent_writers(self):
         entered, go = threading.Event(), threading.Event()
 
@@ -269,8 +276,27 @@ class TestUsage:
     def test_a_count_below_zero_is_no_count(self):
         assert usage_counts({"prompt_tokens": -5, "completion_tokens": 3, "total_tokens": -2}) is None
         assert usage_counts({"input_tokens": 7, "output_tokens": -2}) is None
-        assert usage_counts({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}) == {
-            "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+
+    @pytest.mark.parametrize("usage", [
+        {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, {"total_tokens": 0},
+        {"input_tokens": 0, "output_tokens": 0}, {"input_tokens": 0},
+    ], ids=["chat", "total", "responses", "input"])
+    def test_a_total_of_zero_is_no_count(self, usage):
+        assert usage_counts(usage) is None
+
+    @pytest.mark.parametrize("usage", [
+        {"total_tokens": MAX_CALL_TOKENS + 1}, {"total_tokens": 2 ** 63}, {"total_tokens": 1e30},
+        {"prompt_tokens": 10, "completion_tokens": 10 ** 30}, {"input_tokens": MAX_CALL_TOKENS, "output_tokens": 1},
+        {"total_tokens": 10 ** 400}, {"prompt_tokens": 10 ** 400, "completion_tokens": 5},
+        {"total_tokens": float("inf")}, {"total_tokens": float("nan")},
+    ], ids=["over", "int64", "float", "part", "sum", "past-float", "past-float-part", "inf", "nan"])
+    def test_more_than_one_call_can_use_is_no_count(self, usage):
+        assert usage_counts(usage) is None
+
+    def test_the_most_one_call_can_use_is_a_count(self):
+        assert usage_counts({"total_tokens": MAX_CALL_TOKENS})["total_tokens"] == MAX_CALL_TOKENS
+        assert usage_counts({"prompt_tokens": 12, "completion_tokens": 0}) == {
+            "input_tokens": 12, "output_tokens": 0, "total_tokens": 12,
         }
 
     def test_thinking_left_out_of_the_completion_count_is_output(self):
@@ -480,6 +506,26 @@ class TestMeter:
         record = call.settle(None)
         assert record["estimated"] is True and record["total_tokens"] == 110
         assert meter.store.used(root.id) == {root.id: 110}
+
+    @pytest.mark.parametrize("usage", [
+        {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, {"total_tokens": 1e30},
+        {"prompt_tokens": 10, "completion_tokens": 2 ** 63},
+    ], ids=["zero", "float", "int64"])
+    def test_usage_no_call_could_have_keeps_the_reservation(self, keys, tmp_path, usage):
+        root = mint_root(keys, total_tokens=1000)
+        meter = TokenMeter(str(tmp_path / "budgets.db"), input_estimator=fixed_estimate(10))
+        call = meter.begin(root, None, REQUEST, requested_output=100,
+                           authorize=authorizer(root, keys.lead, keys.issuer))
+        record = call.settle(usage)
+        assert record["estimated"] is True and record["total_tokens"] == 110
+        assert meter.store.used(root.id) == {root.id: 110}
+        # The next call, on this warrant or another, is counted as usual.
+        other = mint_root(keys, total_tokens=1000)
+        for warrant in (root, other):
+            again = meter.begin(warrant, None, REQUEST, requested_output=100,
+                                authorize=authorizer(warrant, keys.lead, keys.issuer))
+            assert again.settle({"prompt_tokens": 10, "completion_tokens": 20})["total_tokens"] == 30
+        assert meter.store.used(root.id, other.id) == {root.id: 140, other.id: 30}
 
     def test_low_estimate_can_pass_the_total_and_the_record_says_so(self, keys):
         root = mint_root(keys, total_tokens=100)

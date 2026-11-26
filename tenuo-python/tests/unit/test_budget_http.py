@@ -1679,6 +1679,103 @@ class TestCountsThatCannotBeRight:
                                {"usageMetadata": {"promptTokenCount": 40, "candidatesTokenCount": 60, "totalTokenCount": 5}})
         assert total == 100
 
+    GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent"
+    CHAT_BODY = {"model": MODEL, "messages": MESSAGES, "max_tokens": 100}
+    GEMINI_BODY = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "generationConfig": {"maxOutputTokens": 100}}
+
+    @pytest.mark.parametrize("count", [0, 10 ** 12, 2 ** 63, 1e30, 10 ** 400, 10 ** 9 + 0.5],
+                             ids=["zero", "over", "int64", "float", "past-float", "just-over"])
+    def test_a_count_no_call_could_have_keeps_the_reservation(self, keys, count):
+        answers = [
+            (CHAT, self.CHAT_BODY, {"usage": {"prompt_tokens": count, "completion_tokens": 0, "total_tokens": count}}),
+            ("https://provider.test/v1/messages", self.CHAT_BODY,
+             {"type": "message", "content": [], "usage": {"input_tokens": count, "output_tokens": 0}}),
+            (self.GEMINI, self.GEMINI_BODY,
+             {"usageMetadata": {"promptTokenCount": count, "candidatesTokenCount": 0, "totalTokenCount": count}}),
+        ]
+        for url, body, answer in answers:
+            total, usage = self.settle(keys, url, body, answer)
+            assert total == INPUT + 100 and usage["estimated"] is True, url
+
+    @pytest.mark.parametrize("count", [10 ** 9 + 0.5, float("inf"), float("nan"), -0.5, 10 ** 400],
+                             ids=["just-over", "inf", "nan", "below-zero", "past-float"])
+    def test_every_dialect_reads_such_a_count_as_none(self, count):
+        from tenuo.budget import usage_counts
+        from tenuo.budget_http import _DIALECTS, _GOOGLE
+
+        anthropic = next(d for _, d in _DIALECTS if d.name.startswith("anthropic"))
+        assert anthropic._total({"input_tokens": 5, "cache_read_input_tokens": count, "output_tokens": 3}) is None
+        assert _GOOGLE._total({"promptTokenCount": 5, "thoughtsTokenCount": count}) is None
+        assert _GOOGLE._total({"promptTokenCount": 5, "candidatesTokenCount": 3, "totalTokenCount": count}) is None
+        assert usage_counts({"prompt_tokens": 5, "completion_tokens": count}) is None
+
+    def stream(self, keys, url, body, events):
+        warrant = mint(keys, total_tokens=5000)
+        seen = []
+        answer = httpx.Response(200, headers={"content-type": "text/event-stream"}, content=sse(events, done=False))
+        http, meter = client_for(keys, warrant, lambda r: answer, events=seen)
+        with http.stream("POST", url, json=body) as streamed:
+            streamed.read()
+        return used(meter, warrant), seen[-1].usage
+
+    LAST_COUNTS = pytest.mark.parametrize(
+        "last", [10 ** 9 + 1, -5, 10 ** 400, float("inf")], ids=["over", "below-zero", "past-float", "inf"])
+
+    @LAST_COUNTS
+    def test_an_anthropic_stream_that_ends_on_such_a_count_keeps_the_reservation(self, keys, last):
+        events = [
+            {"type": "message_start", "message": {"usage": {"input_tokens": 10, "output_tokens": 1}}},
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": last}},
+            {"type": "message_stop"},
+        ]
+        total, usage = self.stream(keys, "https://provider.test/v1/messages", {**self.CHAT_BODY, "stream": True}, events)
+        assert total == INPUT + 100 and usage["estimated"] is True
+
+    @LAST_COUNTS
+    def test_a_gemini_stream_that_ends_on_such_a_count_keeps_the_reservation(self, keys, last):
+        def chunk(out, finish):
+            candidate = {"index": 0, "content": {"role": "model", "parts": [{"text": "x"}]}}
+            if finish:
+                candidate["finishReason"] = "STOP"
+            return {"candidates": [candidate], "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": out}}
+
+        url = self.GEMINI.replace(":generateContent", ":streamGenerateContent") + "?alt=sse"
+        total, usage = self.stream(keys, url, self.GEMINI_BODY, [chunk(1, False), chunk(last, True)])
+        assert total == INPUT + 100 and usage["estimated"] is True
+
+    def test_a_stream_that_ends_on_a_good_count_is_settled_on_it(self, keys):
+        events = [
+            {"type": "message_start", "message": {"usage": {"input_tokens": 10, "output_tokens": 1}}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 40}},
+            {"type": "message_stop"},
+        ]
+        total, usage = self.stream(keys, "https://provider.test/v1/messages", {**self.CHAT_BODY, "stream": True}, events)
+        assert total == 50 and "estimated" not in usage
+
+    def test_a_fraction_inside_the_limit_is_still_a_count(self):
+        from tenuo.budget_http import _DIALECTS, _GOOGLE
+
+        anthropic = next(d for _, d in _DIALECTS if d.name.startswith("anthropic"))
+        assert anthropic._total({"input_tokens": 10.0, "output_tokens": 5.9})["total_tokens"] == 15
+        assert _GOOGLE._total({"promptTokenCount": 10.0, "candidatesTokenCount": 5.9})["total_tokens"] == 15
+
+    def test_the_calls_after_one_are_counted_as_usual(self, keys, tmp_path):
+        from tenuo.budget import BudgetStore
+
+        counts = iter([1e30, 40])
+
+        def provider(request):
+            return httpx.Response(200, json={"usage": {"prompt_tokens": next(counts), "completion_tokens": 0}})
+
+        store = BudgetStore(str(tmp_path / "budgets.db"))  # one file, as two agents on a host share
+        first, second = mint(keys, total_tokens=5000), mint(keys, total_tokens=5000)
+        one, meter = client_for(keys, first, provider, store=store)
+        two, _ = client_for(keys, second, provider, store=store)
+        assert one.post(CHAT, json=self.CHAT_BODY).status_code == 200
+        assert two.post(CHAT, json=self.CHAT_BODY).status_code == 200
+        assert used(meter, first) == INPUT + 100 and used(meter, second) == 40
+
 
 class TestOneCountPerProcessByDefault:
     def test_clients_given_no_store_spend_from_the_same_count(self, keys):
