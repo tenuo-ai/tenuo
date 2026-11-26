@@ -45,6 +45,26 @@ class _Refusal(Exception):
         self.status, self.error, self.message = status, error, message
 
 
+class _Slot:
+    """One caller's place among the requests in progress. It is given up exactly once."""
+
+    def __init__(self, counts: Dict[str, int], key: str):
+        self._counts: Optional[Dict[str, int]] = counts
+        self._key = key
+        self.follows_work = False  # Set when a cancelled request leaves its work running.
+        counts[key] = counts.get(key, 0) + 1
+
+    def release(self, *_: Any) -> None:
+        counts, self._counts = self._counts, None
+        if counts is None:
+            return
+        remaining = counts[self._key] - 1
+        if remaining:
+            counts[self._key] = remaining
+        else:
+            del counts[self._key]
+
+
 class _IssuerApp:
     """ASGI endpoint for one-request issuance. Subclasses say how the caller is identified."""
 
@@ -139,20 +159,19 @@ class _IssuerApp:
         credential = self._credential(scope)
         key = self._limit_key(credential) if self._max_per_key is not None else None
         if key is None:
-            return await self._serve(credential, receive)
+            return await self._serve(credential, receive, None)
         if self._per_key.get(key, 0) >= (self._max_per_key or 0):
             raise _Refusal(503, "unavailable", "Too many requests in progress for this workload; retry shortly")
-        self._per_key[key] = self._per_key.get(key, 0) + 1
+        slot = _Slot(self._per_key, key)
         try:
-            return await self._serve(credential, receive)
+            return await self._serve(credential, receive, slot)
         finally:
-            remaining = self._per_key[key] - 1
-            if remaining:
-                self._per_key[key] = remaining
-            else:
-                del self._per_key[key]
+            # A cancelled request whose policy or audit call is still running
+            # keeps its place until that call returns.
+            if not slot.follows_work:
+                slot.release()
 
-    async def _serve(self, credential: Any, receive: _Receive) -> Warrant:
+    async def _serve(self, credential: Any, receive: _Receive, slot: Optional[_Slot]) -> Warrant:
         # Bound the requests being read as well as those being worked on, and
         # give each a deadline, so slow senders cannot pile up before the caller is checked.
         if self._reading >= self._max_concurrent:
@@ -194,7 +213,7 @@ class _IssuerApp:
             except SpiffeError as exc:
                 raise _Refusal(403, "refused", str(exc)) from exc
 
-        return await self._in_worker(work)
+        return await self._in_worker(work, slot)
 
     @staticmethod
     async def _read_body(receive: _Receive) -> bytes:
@@ -209,8 +228,8 @@ class _IssuerApp:
             if not message.get("more_body"):
                 return bytes(body)
 
-    async def _in_worker(self, function: Callable[[], Warrant]) -> Warrant:
-        """Run blocking work in the pool. A slot is held until the work itself has finished."""
+    async def _in_worker(self, function: Callable[[], Warrant], slot: Optional[_Slot] = None) -> Warrant:
+        """Run blocking work in the pool. Its places are held until the work itself has finished."""
         loop = asyncio.get_running_loop()
         if self._busy >= self._max_concurrent:
             raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
@@ -236,6 +255,9 @@ class _IssuerApp:
         try:
             return await asyncio.shield(work)
         except asyncio.CancelledError:
+            if slot is not None:
+                slot.follows_work = True
+                work.add_done_callback(slot.release)
             work.add_done_callback(_consume_result)
             raise
 

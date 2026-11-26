@@ -72,6 +72,8 @@ _KEY = re.compile(r"[A-Za-z]+")
 _QUOTED_STOP = re.compile(r'["\\;]')
 # Envoy writes these bare. Reading a quoted one would let a quote decide where the identity ends.
 _BARE_KEYS = frozenset({"by", "hash", "uri", "dns"})
+# What Envoy writes ahead of the URI. None of it is text a client certificate controls unescaped.
+_BEFORE_URI = frozenset({"by", "hash", "cert", "chain", "subject"})
 _SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
 _Network = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
@@ -161,10 +163,12 @@ class SpiffeForwardedIdentity:
     proxy's own SPIFFE ID to also require that the entry names it in ``By``.
 
     Envoy copies URI and DNS names from the certificate into the header as
-    they are, so a certificate with separators in a name could add fields. The
-    rules above, and requiring the ``URI`` to come before any ``DNS`` name,
-    keep such a certificate from naming anyone else. They do not replace the
-    proxy checking client certificates against the trust bundle.
+    they are, so a certificate with separators in a name could add fields.
+    The ``URI`` must therefore be the last thing in the header: the identity
+    is then the certificate's whole URI name, never a part of it. A header
+    with ``DNS`` names is refused for the same reason, so forward the URI
+    without them. None of this replaces the proxy checking client certificates
+    against the trust bundle.
 
     The certificate's lifetime is not visible here, so warrants last at most
     ``max_warrant_seconds`` whatever the policy grants.
@@ -255,8 +259,14 @@ class SpiffeForwardedIdentity:
                 "The proxy did not forward exactly one URI for the client certificate "
                 "(for Envoy, enable uri in set_current_client_cert_details)"
             )
-        if "dns" in keys and keys.index("dns") < keys.index("uri"):
-            raise SpiffeError("Malformed x-forwarded-client-cert header")  # Envoy writes the URI first.
+        # The URI must end the header, after nothing but what Envoy writes before
+        # it. Its value is then the certificate's whole URI name: a name with a
+        # separator in it would leave something behind it and be refused here.
+        if keys[-1] != "uri" or not _BEFORE_URI.issuperset(keys[:-1]):
+            raise SpiffeError(
+                "x-forwarded-client-cert must end with the certificate's URI: the certificate has DNS names, or a "
+                "name with a separator in it (for Envoy, forward uri without dns in set_current_client_cert_details)"
+            )
         if len(hashes) != 1 or not _SHA256_HEX.fullmatch(hashes[0]):
             raise SpiffeError("The proxy did not forward the client certificate hash")
         if self._expected_by is not None and [value for key, value in element if key == "by"] != [self._expected_by]:

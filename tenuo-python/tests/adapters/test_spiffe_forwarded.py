@@ -56,13 +56,17 @@ def forwarded():
 
 
 def test_reads_what_envoy_writes(forwarded):
-    # As captured from Envoy with subject, cert, dns and uri forwarding on.
+    # As captured from Envoy with subject, cert and uri forwarding on.
     header = (
         f"By={SERVER};Hash={HASH};"
         'Cert="-----BEGIN%20CERTIFICATE-----%0AMIIB%2Bz%3D%3D%0A-----END%20CERTIFICATE-----%0A";'
-        f'Subject="CN=agent,O=Example \\"Quoted\\", Inc.";URI={AGENT};DNS=agent.example.test;DNS=agent'
+        f'Subject="CN=agent,O=Example \\"Quoted\\", Inc.";URI={AGENT}'
     )
     identity = forwarded.authenticate(header, peer=PROXY)
+    # With dns forwarding on as well, the URI no longer ends the header.
+    for names in (";DNS=agent.example.test", ";DNS=agent.example.test;DNS=agent"):
+        with pytest.raises(SpiffeError, match="must end with the certificate's URI"):
+            forwarded.authenticate(header + names, peer=PROXY)
     assert (identity.spiffe_id, identity.certificate_sha256, identity.svid_type) == (AGENT, HASH, "forwarded")
     assert identity.trust_domain == DOMAIN
     assert 298 < identity.expires_at - time.time() <= 300
@@ -147,9 +151,15 @@ def test_names_copied_from_a_certificate_cannot_name_someone_else(forwarded):
     ):
         with pytest.raises(SpiffeError):
             forwarded.authenticate(header, peer=PROXY)
-    # A name can at most be cut short, which stays inside whatever prefix its issuer allowed.
-    identity = forwarded.authenticate(f"{prefix};URI=spiffe://{DOMAIN}/agent;DNS=x;Other=y", peer=PROXY)
-    assert identity.spiffe_id == AGENT
+    # A name is never cut short either: whatever follows a separator inside it leaves the URI
+    # short of the end of the header. The identity is the certificate's whole URI name or nothing.
+    for name in (f"{AGENT};DNS=x", f"{AGENT};Other=y", f"{AGENT};x", f"{AGENT};", f'{AGENT};Subject="CN=x"'):
+        with pytest.raises(SpiffeError):
+            forwarded.authenticate(f"{prefix};URI={name}", peer=PROXY)
+    # Nor can something ahead of the URI be anything but what Envoy writes there.
+    for ahead in ("DNS=x", "Other=y", f"Hash={HASH};DNS=x"):
+        with pytest.raises(SpiffeError):
+            forwarded.authenticate(f"By={SERVER};{ahead};Hash={HASH};URI={AGENT}", peer=PROXY)
     # Escapes inside a quoted subject are read in pairs.
     header = f'{prefix};Subject="CN=a \\"q\\"\\, b\\\\";URI={AGENT}'
     assert forwarded.authenticate(header, peer=PROXY).spiffe_id == AGENT
@@ -167,7 +177,11 @@ def test_names_copied_from_a_certificate_cannot_name_someone_else(forwarded):
         (f"{element()},", "Malformed"),
         (f",{element()}", "Malformed"),
         (f"{element()},{element()}", "more than one client certificate"),
-        (f"DNS=agent.example.test;{element()}", "Malformed"),
+        (f"DNS=agent.example.test;{element()}", "must end with the certificate's URI"),
+        (f"Other=x;{element()}", "must end with the certificate's URI"),
+        (element() + ";DNS=agent.example.test", "must end with the certificate's URI"),
+        (element() + ";Other=x", "must end with the certificate's URI"),
+        (element() + f";By={SERVER}", "must end with the certificate's URI"),
         (f'{element()};X="open', "Malformed"),
         (f'{element()};X="closed"trailing', "Malformed"),
         (f'{element()};X=un"quoted', "Malformed"),
@@ -180,7 +194,8 @@ def test_names_copied_from_a_certificate_cannot_name_someone_else(forwarded):
         (element(digest=None), "certificate hash"),
         (element(digest="ab" * 31), "certificate hash"),
         (element(digest="zz" * 32), "certificate hash"),
-        (element() + f";Hash={HASH}", "certificate hash"),
+        (element() + f";Hash={HASH}", "must end with the certificate's URI"),
+        (f"By={SERVER};Hash={HASH};Hash={HASH};URI={AGENT}", "certificate hash"),
         (element(uri="https://example.test/agent"), "Invalid workload SPIFFE ID"),
         (element(uri=f"spiffe://{DOMAIN}"), "Invalid workload SPIFFE ID"),
         (element(uri=f"spiffe://{DOMAIN}/a/../admin"), "Invalid workload SPIFFE ID"),
@@ -214,7 +229,7 @@ def test_expected_proxy_identity():
     for header in (
         element(by=f"spiffe://{DOMAIN}/other-proxy"),
         element(by=None),
-        element() + f";By=spiffe://{DOMAIN}/other-proxy",
+        f"By=spiffe://{DOMAIN}/other-proxy;{element()}",
     ):
         with pytest.raises(SpiffeError, match="expected proxy"):
             pinned.authenticate(header, peer=PROXY)
@@ -984,3 +999,92 @@ def test_client_reports_an_unusable_host_name_as_a_spiffe_error():
             task_id="task-123",
             timeout=2,
         )
+
+
+def test_cancelled_request_keeps_its_slot_while_its_policy_call_runs(forwarded):
+    """Cancelling a request does not free the workload's place while the work it started is still running."""
+    import threading
+
+    entered, finish = threading.Event(), threading.Event()
+
+    def slow_policy(identity, task_id):
+        entered.set()
+        finish.wait(10)
+        return SpiffeGrant(REFUND)
+
+    issuer = SpiffeWarrantIssuer(signing_key=SigningKey.generate(), policy=slow_policy, forwarded=forwarded)
+    application = SpiffeForwardedIssuerApp(issuer, max_per_identity=1)
+
+    async def request(identity=AGENT):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": request_body(SigningKey.generate()), "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/warrants",
+            "root_path": "",
+            "client": (PROXY, 40000),
+            "server": ("127.0.0.1", 8080),
+            "headers": [(b"x-forwarded-client-cert", element(identity).encode())],
+        }
+        await application(scope, receive, send)
+        return sent[0]["status"], json.loads(sent[1]["body"])
+
+    async def run():
+        first = asyncio.ensure_future(request())
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        first.cancel()  # The client went away; the policy call is still running.
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await asyncio.sleep(0.05)
+        assert application._per_key == {AGENT: 1}
+        status, reply = await request()
+        assert status == 503 and "for this workload" in reply["message"]
+        finish.set()
+        for _ in range(200):
+            if not application._per_key:
+                break
+            await asyncio.sleep(0.01)
+        assert application._per_key == {} and application._busy == 0
+        assert (await request())[0] == 200
+        # A request cancelled before any work started gives its place back at once.
+        stalled = asyncio.Event()
+
+        async def never_sends(scope_identity=AGENT):
+            async def receive():
+                await stalled.wait()
+
+            async def send(message):
+                pass
+
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/warrants",
+                "root_path": "",
+                "client": (PROXY, 40000),
+                "server": ("127.0.0.1", 8080),
+                "headers": [(b"x-forwarded-client-cert", element(scope_identity).encode())],
+            }
+            await application(scope, receive, send)
+
+        waiting = asyncio.ensure_future(never_sends())
+        await asyncio.sleep(0.05)
+        assert application._per_key == {AGENT: 1}
+        waiting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        assert application._per_key == {} and application._reading == 0
+
+    try:
+        asyncio.run(run())
+    finally:
+        finish.set()
+        application.close()

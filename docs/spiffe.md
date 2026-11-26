@@ -672,9 +672,10 @@ What the adapter does with the trust you give it:
   or the request crossed a second proxy.
 - Envoy 1.40.2 copies URI and DNS names from the certificate into the header
   unescaped, so a certificate with a separator or a quote in a name can add
-  text of its own. The adapter reads the header strictly enough that such a
-  certificate, with or without a header sent by the client, cannot name a
-  different workload. At most its own name is cut short at the separator.
+  text of its own. The adapter therefore requires the URI to be the last
+  thing in the header. The identity it accepts is the certificate's whole URI
+  name, never a part of it, with or without a header sent by the client. A
+  header that carries DNS names after the URI is refused for the same reason.
 - A request is counted against its SPIFFE ID from before its body is read, and
   at most 16 from one ID are in progress at once (`max_per_identity`).
 - The certificate's expiry is not in the header, so warrants last at most
@@ -705,7 +706,9 @@ validation context with the trust bundle.
 | `FORWARD_ONLY`, `ALWAYS_FORWARD_ONLY` | Passes a client's made-up header through unchanged. | Never |
 
 Without `uri: true` Envoy sends the certificate hash and no SPIFFE ID, and the
-issuer refuses the request. On a listener without client certificates Envoy
+issuer refuses the request. Leave `dns` off: when the certificate has DNS
+names and Envoy forwards them, they follow the URI and the issuer refuses the
+request. `subject`, `cert` and `chain` may be on; they come before the URI. On a listener without client certificates Envoy
 removed the header in every mode except `ALWAYS_FORWARD_ONLY`.
 
 Istio and other meshes configure Envoy for you. We test this exchange against
@@ -1174,6 +1177,7 @@ JWT endpoint.
 | `Malformed x-forwarded-client-cert header` | The header is not what Envoy writes for one certificate: for example the client sent a partial header of its own, or a name on the certificate contains a quote. | Look at the header the proxy sends; do not copy incoming headers onto the request. |
 | `x-forwarded-client-cert is too large; forward the URI without the certificate` | The proxy forwards the certificate and chain, and they exceed 32 KiB. | Turn off `cert` and `chain` in `set_current_client_cert_details`. |
 | `...(HTTP 503): Too many requests in progress for this workload; retry shortly` | 16 requests from one SPIFFE ID are unfinished at the same time. | Retry; raise `max_per_identity` if many replicas share the ID. |
+| `x-forwarded-client-cert must end with the certificate's URI ...` | The proxy forwards the certificate's DNS names, or a name on the certificate contains a separator. | Turn off `dns` in `set_current_client_cert_details`. A certificate with DNS names cannot be identified through a proxy that forwards them. |
 | `The forwarded identity was not recorded by the expected proxy` | `expected_by` is not the SPIFFE ID on the proxy's certificate. | Compare with the proxy's SVID. |
 | `Forwarded identity belongs to a different trust domain` | The client's SPIFFE ID is outside `trust_domain` and `federates_with`. | Fix the arguments, or the proxy's trust bundle. |
 | `Invalid holder proof` | The agent's `audience` differs from the issuer's. | Use the same string on both sides. |
@@ -1306,10 +1310,11 @@ The signature is Ed25519, by the holder key, over these bytes in order:
 The header is read in Envoy's text form: one entry of `Key=value` pairs
 separated by semicolons, keys in any case. `Cert`, `Chain` and `Subject` may
 be in double quotes with backslash escapes, and a quoted value may not contain
-an unescaped semicolon. `By`, `Hash`, `URI` and `DNS` must not be quoted, and
-the `URI` must come before any `DNS`. Apart from the one `URI` and `Hash`, and
-`By` when `expected_by` is set, the values are ignored. The JSON form is not
-accepted.
+an unescaped semicolon. `By`, `Hash` and `URI` must not be quoted. The `URI`
+must be the last pair, with only `By`, `Hash`, `Cert`, `Chain` and `Subject`
+before it, so a header with `DNS` is refused. Apart from the one `URI` and
+`Hash`, and `By` when `expected_by` is set, the values are ignored. The JSON
+form is not accepted.
 
 ### What this adapter does not do
 
