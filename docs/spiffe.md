@@ -590,7 +590,10 @@ refused at once. If SPIRE refuses the issuer its own identity for 30 seconds,
 or the SPIRE agent is unreachable for five minutes (`max_stale_seconds`) or
 sends only JWT bundles the issuer cannot read for that long, tokens are
 refused until a readable update arrives. This includes malformed Workload API
-messages; receiving unreadable bytes does not restart the grace period. The 30
+messages; receiving unreadable bytes does not restart the grace period. An
+unreadable bundle for the issuer's own trust domain stops that domain's tokens
+only: a federated domain whose bundle in the same response was read is still
+accepted. The 30
 seconds are deliberate: a SPIRE agent answers "no identity issued" for a
 moment while it replaces a workload's SVIDs after a forced rotation (about a
 second with SPIRE 1.16.0, when we tainted an authority), and tokens stay valid

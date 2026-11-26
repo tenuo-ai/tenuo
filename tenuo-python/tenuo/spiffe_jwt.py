@@ -575,14 +575,11 @@ class SpiffeJWT:
                     "JWT-SVIDs for %s are refused until the SPIRE agent is reachable again", self.trust_domain
                 )
             raise SpiffeError("JWT-SVIDs are refused while the SPIRE agent is unreachable")
+        # An unreadable home bundle says nothing about the other domains, whose
+        # bundles in the same responses were read. It is looked at here, before
+        # the keys, and acted on below for home-domain tokens only.
         unreadable = self._unreadable_since
-        if unreadable is not None and time.monotonic() - unreadable > self._max_stale:
-            if not self._stale_warned:
-                self._stale_warned = True
-                logger.warning(
-                    "JWT-SVIDs for %s are refused until SPIRE sends a JWT bundle that can be read", self.trust_domain
-                )
-            raise SpiffeError("JWT-SVIDs are refused while SPIRE's JWT bundle cannot be read")
+        home_keys_too_old = unreadable is not None and time.monotonic() - unreadable > self._max_stale
         denied = self._denied_since
         if denied is not None and time.monotonic() - denied > _DENIED_GRACE_SECONDS:
             if not self._denied_warned:
@@ -619,6 +616,13 @@ class SpiffeJWT:
         claimed = _claimed_trust_domain(token)
         if claimed != self.trust_domain and claimed not in self._federates_with:
             raise SpiffeError("JWT-SVID belongs to a different trust domain")
+        if home_keys_too_old and claimed == self.trust_domain:
+            if not self._stale_warned:
+                self._stale_warned = True
+                logger.warning(
+                    "JWT-SVIDs for %s are refused until SPIRE sends a JWT bundle that can be read", self.trust_domain
+                )
+            raise SpiffeError("JWT-SVIDs are refused while SPIRE's JWT bundle cannot be read")
         keys = home_keys if claimed == self.trust_domain else federated_keys.get(claimed, {})
         if kid is not None:
             named = keys.get(kid)

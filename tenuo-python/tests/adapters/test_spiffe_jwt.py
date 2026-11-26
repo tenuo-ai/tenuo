@@ -2106,3 +2106,50 @@ def test_a_named_key_costs_one_signature_check_however_many_domains_share_its_id
     with pytest.raises(SpiffeError, match="not signed by its own trust domain's keys"):
         validator.authenticate(lone.token(sub=AGENT))
     assert len(checks) == 5
+
+
+def test_unreadable_home_bundle_does_not_cost_a_partner_its_fresh_keys(authority, workload_api):  # noqa: F811
+    """The home bundle stays unreadable past the limit while the same responses carry the partner's, readable."""
+    partner, successor = JWTAuthority(), JWTAuthority()
+    own, theirs = f"spiffe://{DOMAIN}", f"spiffe://{PARTNER}"
+    api = workload_api()
+    api.publish_jwt_bundles(bundles_response(**{own: jwks(authority), theirs: jwks(partner)}))
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        socket_path=api.address,
+        timeout=5,
+        max_stale_seconds=1.0,
+        federates_with=[PARTNER],
+    )
+    try:
+        api.publish_jwt_bundles(bundles_response(**{own: b"garbage", theirs: jwks(partner)}))
+        assert eventually(lambda: validator._unreadable_since is not None)
+        time.sleep(1.2)
+        # The home domain's keys are now too old to trust...
+        with pytest.raises(SpiffeError, match="JWT bundle cannot be read"):
+            validator.authenticate(authority.token())
+        # ...the partner's are not: they came in a bundle that was read.
+        assert validator.authenticate(partner.token(sub=PARTNER_AGENT)).trust_domain == PARTNER
+        # And the partner keeps being followed: a rotation of its key takes effect.
+        api.publish_jwt_bundles(bundles_response(**{own: b"still garbage", theirs: jwks(successor)}))
+        assert eventually(lambda: successor.kid in validator._federated_keys.get(PARTNER, {}))
+        assert validator.authenticate(successor.token(sub=PARTNER_AGENT)).trust_domain == PARTNER
+        with pytest.raises(SpiffeError):
+            validator.authenticate(partner.token(sub=PARTNER_AGENT))
+        with pytest.raises(SpiffeError, match="JWT bundle cannot be read"):
+            validator.authenticate(authority.token())
+        # A response that cannot be read at all carries no partner bundle either: then nobody is accepted.
+        api.publish_jwt_bundles(b"\xff\xff not protobuf")
+        assert eventually(lambda: validator._federated_keys == {})
+        with pytest.raises(SpiffeError):
+            validator.authenticate(successor.token(sub=PARTNER_AGENT))
+        # An unreachable agent still refuses every domain: nothing is fresh then.
+        api.publish_jwt_bundles(bundles_response(**{own: jwks(authority), theirs: jwks(successor)}))
+        assert eventually(lambda: validator._unreadable_since is None)
+        validator._lost_since = time.monotonic() - 60
+        for token in (authority.token(), successor.token(sub=PARTNER_AGENT)):
+            with pytest.raises(SpiffeError, match="SPIRE agent is unreachable"):
+                validator.authenticate(token)
+    finally:
+        validator.close()
