@@ -1307,11 +1307,71 @@ def test_endpoint_bounds_and_times_out_body_reads(jwt_issuer, authority):
         stalled = [asyncio.ensure_future(one(never)) for _ in range(2)]
         await asyncio.sleep(0.05)
         refused = await one(never)  # Both read slots are taken by senders that never finish.
-        return refused, await asyncio.gather(*stalled), application._reading
+        return refused, await asyncio.gather(*stalled), application._in_progress
 
     try:
         assert asyncio.run(scenario()) == (503, [408, 408], 0)
     finally:
+        application.close()
+
+
+def test_endpoint_counts_reading_and_working_requests_against_one_limit(jwt_issuer, authority):
+    """A request being read and a request being worked on each take one of the ``max_concurrent`` places."""
+    issuer, *_ = jwt_issuer
+    holder = SigningKey.generate()
+    entered, gate = threading.Event(), threading.Event()
+
+    def slow(*_):
+        entered.set()
+        gate.wait(10)
+        return SpiffeGrant(REFUND)
+
+    issuer._policy = slow
+    application = SpiffeJWTIssuerApp(issuer, max_concurrent=2, body_timeout=1)
+
+    async def scenario():
+        async def never():
+            await asyncio.sleep(30)
+
+        async def one(receive=None):
+            token = authority.token(exp=300 + secrets.randbelow(1000))
+            sent = []
+
+            async def whole():
+                return {"type": "http.request", "body": request_body(token, holder), "more_body": False}
+
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/warrants",
+                "headers": [(b"authorization", f"Bearer {token}".encode())],
+            }
+            await application(scope, receive or whole, lambda message: _collect(sent, message))
+            return sent[0]["status"]
+
+        working = asyncio.ensure_future(one())  # Its policy call is running.
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        reading = asyncio.ensure_future(one(never))  # Its body has not arrived.
+        await asyncio.sleep(0.05)
+
+        asked = []
+
+        async def watched():
+            asked.append(1)
+            await never()
+
+        started = time.monotonic()
+        third = await one(watched)
+        waited = time.monotonic() - started
+        gate.set()
+        return third, asked, waited < 0.5, await working, await reading, application._in_progress
+
+    try:
+        # The third is refused at once, without its body being asked for; then both places come back.
+        assert asyncio.run(scenario()) == (503, [], True, 200, 408, 0)
+    finally:
+        gate.set()
         application.close()
 
 

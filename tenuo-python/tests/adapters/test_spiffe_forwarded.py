@@ -1197,7 +1197,7 @@ def test_cancelled_request_keeps_its_slot_while_its_policy_call_runs(forwarded):
             if not application._per_key:
                 break
             await asyncio.sleep(0.01)
-        assert application._per_key == {} and application._busy == 0
+        assert application._per_key == {} and application._in_progress == 0
         assert (await request())[0] == 200
         # A request cancelled before any work started gives its place back at once.
         stalled = asyncio.Event()
@@ -1226,7 +1226,7 @@ def test_cancelled_request_keeps_its_slot_while_its_policy_call_runs(forwarded):
         waiting.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiting
-        assert application._per_key == {} and application._reading == 0
+        assert application._per_key == {} and application._in_progress == 0
 
     try:
         asyncio.run(run())

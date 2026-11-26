@@ -46,23 +46,31 @@ class _Refusal(Exception):
 
 
 class _Slot:
-    """One caller's place among the requests in progress. It is given up exactly once."""
+    """One request's place among those in progress, overall and for its caller. It is given up exactly once.
 
-    def __init__(self, counts: Dict[str, int], key: str):
-        self._counts: Optional[Dict[str, int]] = counts
+    Taken and given up on the event loop only.
+    """
+
+    def __init__(self, app: "_IssuerApp", key: Optional[str]):
+        self._app: Optional["_IssuerApp"] = app
         self._key = key
         self.follows_work = False  # Set when a cancelled request leaves its work running.
-        counts[key] = counts.get(key, 0) + 1
+        app._in_progress += 1
+        if key is not None:
+            app._per_key[key] = app._per_key.get(key, 0) + 1
 
     def release(self, *_: Any) -> None:
-        counts, self._counts = self._counts, None
-        if counts is None:
+        app, self._app = self._app, None
+        if app is None:
             return
-        remaining = counts[self._key] - 1
+        app._in_progress -= 1
+        if self._key is None:
+            return
+        remaining = app._per_key[self._key] - 1
         if remaining:
-            counts[self._key] = remaining
+            app._per_key[self._key] = remaining
         else:
-            del counts[self._key]
+            del app._per_key[self._key]
 
 
 class _IssuerApp:
@@ -91,8 +99,7 @@ class _IssuerApp:
         self._path = path
         self._max_concurrent = max_concurrent
         self._body_timeout = body_timeout
-        self._busy = 0
-        self._reading = 0
+        self._in_progress = 0  # Requests admitted and not finished: being read, or with work running.
         self._max_per_key: Optional[int] = None  # Requests in progress per caller, where the caller is known early.
         self._per_key: Dict[str, int] = {}
         self._pool = ThreadPoolExecutor(max_workers, thread_name_prefix="tenuo-spiffe-http")
@@ -157,12 +164,15 @@ class _IssuerApp:
         if scope.get("method") != "POST":
             raise _Refusal(405, "method_not_allowed", "Use POST")
         credential = self._credential(scope)
+        # A request takes one place before its body is read and keeps it until it
+        # has finished, so one limit covers the requests being read and those
+        # being worked on, and a request over the limit is refused at once.
+        if self._in_progress >= self._max_concurrent:
+            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
         key = self._limit_key(credential) if self._max_per_key is not None else None
-        if key is None:
-            return await self._serve(credential, receive, None)
-        if self._per_key.get(key, 0) >= (self._max_per_key or 0):
+        if key is not None and self._per_key.get(key, 0) >= (self._max_per_key or 0):
             raise _Refusal(503, "unavailable", "Too many requests in progress for this workload; retry shortly")
-        slot = _Slot(self._per_key, key)
+        slot = _Slot(self, key)
         try:
             return await self._serve(credential, receive, slot)
         finally:
@@ -171,18 +181,12 @@ class _IssuerApp:
             if not slot.follows_work:
                 slot.release()
 
-    async def _serve(self, credential: Any, receive: _Receive, slot: Optional[_Slot]) -> Warrant:
-        # Bound the requests being read as well as those being worked on, and
-        # give each a deadline, so slow senders cannot pile up before the caller is checked.
-        if self._reading >= self._max_concurrent:
-            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
-        self._reading += 1
+    async def _serve(self, credential: Any, receive: _Receive, slot: _Slot) -> Warrant:
+        # A deadline for the body, so a slow sender cannot hold its place for long.
         try:
             body = await asyncio.wait_for(self._read_body(receive), self._body_timeout)
         except asyncio.TimeoutError:
             raise _Refusal(408, "timeout", "Request body was not received in time") from None
-        finally:
-            self._reading -= 1
         try:
             request = json.loads(body)
             if not isinstance(request, dict) or set(request) != _REQUEST_FIELDS:
@@ -228,36 +232,17 @@ class _IssuerApp:
             if not message.get("more_body"):
                 return bytes(body)
 
-    async def _in_worker(self, function: Callable[[], Warrant], slot: Optional[_Slot] = None) -> Warrant:
-        """Run blocking work in the pool. Its places are held until the work itself has finished."""
-        loop = asyncio.get_running_loop()
-        if self._busy >= self._max_concurrent:
-            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
-        self._busy += 1
-
-        def release() -> None:
-            self._busy -= 1
-
-        def run() -> Warrant:
-            try:
-                return function()
-            finally:
-                try:
-                    loop.call_soon_threadsafe(release)
-                except RuntimeError:
-                    pass  # The loop closed during shutdown.
-
+    async def _in_worker(self, function: Callable[[], Warrant], slot: _Slot) -> Warrant:
+        """Run blocking work in the pool. The request's place is held until the work itself has finished."""
         try:
-            work = asyncio.wrap_future(self._pool.submit(run))
+            work = asyncio.wrap_future(self._pool.submit(function))
         except RuntimeError:
-            self._busy -= 1
             raise _Refusal(503, "unavailable", "Issuer is shutting down") from None
         try:
             return await asyncio.shield(work)
         except asyncio.CancelledError:
-            if slot is not None:
-                slot.follows_work = True
-                work.add_done_callback(slot.release)
+            slot.follows_work = True
+            work.add_done_callback(slot.release)
             work.add_done_callback(_consume_result)
             raise
 
