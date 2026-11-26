@@ -49,6 +49,14 @@ dependencies = [
 spiffe = [
     "cryptography>=42",  # X.509-SVID parsing and Ed25519 holder proof validation
 ]
+spiffe-workload-api = [
+    "tenuo[spiffe]",
+    "grpcio>=1.60",  # SPIRE Workload API stream; no protobuf dependency
+]
+spiffe-jwt = [
+    "tenuo[spiffe]",
+    "PyJWT>=2.8",  # JWT-SVID validation
+]
 # Feature flags for users - we use permissive constraints and warn at runtime
 # See docs/compatibility-matrix.md for recommended versions
 openai = [
@@ -126,7 +134,7 @@ dev = [
     "uvicorn",
     "langchain-openai",
     # Include ALL optional groups for complete dev environment
-    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,fastmcp,temporal,spiffe]",
+    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,fastmcp,temporal,spiffe,spiffe-workload-api,spiffe-jwt]",
 ]
 
 [project.scripts]

@@ -272,7 +272,7 @@ jobs:
           echo "=== Site packages ==="
           ls -la "$(python -c 'import site; print(site.getsitepackages()[0])')" | sed -n '1,20p'
           echo "=== Installing other deps ==="
-          uv pip install --system pytest pytest-asyncio hypothesis ruff mypy "cryptography>=42"
+          uv pip install --system pytest pytest-asyncio hypothesis ruff mypy "cryptography>=42" grpcio "PyJWT>=2.8"
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
           uv pip install --system types-PyYAML types-requests types-jsonschema
@@ -677,7 +677,7 @@ jobs:
           maturin build --release
           uv pip install --system target/wheels/*.whl
           uv pip install --system langchain langchain-core langgraph fastapi httpx pydantic PyYAML
-          uv pip install --system nbmake pytest ipykernel "cryptography>=42"
+          uv pip install --system nbmake pytest ipykernel "cryptography>=42" "PyJWT>=2.8"
 
       - name: Test Notebooks
         run: |

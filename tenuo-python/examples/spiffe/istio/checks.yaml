@@ -1,0 +1,99 @@
+# Extra workloads check.py uses to show what the issuer refuses. Not part of a real deployment.
+#
+# issuer-tcp: the same issuer listening on TCP, trusting the address an Istio sidecar connects from.
+apiVersion: v1
+kind: Service
+metadata: {name: issuer-tcp, namespace: tenuo}
+spec:
+  selector: {app: issuer-tcp}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: issuer-tcp, namespace: tenuo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: issuer-tcp}}
+  template:
+    metadata: {labels: {app: issuer-tcp}}
+    spec:
+      serviceAccountName: issuer
+      containers:
+      - name: issuer-tcp
+        image: tenuo-spiffe-demo:istio
+        imagePullPolicy: Never
+        workingDir: /work/tenuo-python/examples/spiffe/istio
+        env:
+        - {name: AUDIENCE, value: "http://issuer-tcp.tenuo.svc.cluster.local:8080/warrants"}
+        - {name: TRUSTED_PROXY, value: "127.0.0.6"}
+        command: ["python", "-m", "uvicorn", "issuer_app:app", "--host=0.0.0.0", "--port=8080", "--no-proxy-headers"]
+        ports: [{containerPort: 8080}]
+        volumeMounts:
+        - {name: keys, mountPath: /keys, readOnly: true}
+        - {name: work, mountPath: /work, readOnly: true}
+      volumes:
+      - {name: keys, secret: {secretName: issuer-key}}
+      - {name: work, hostPath: {path: /work}}
+---
+# other: in the mesh, with a service account the policy does not approve.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: other, namespace: tenuo}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: other, namespace: tenuo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: other}}
+  template:
+    metadata:
+      labels: {app: other}
+      annotations:
+        # Hand this pod its own mesh certificate and let it connect around its sidecar,
+        # as a workload that controls its pod could arrange.
+        proxy.istio.io/config: '{"proxyMetadata": {"OUTPUT_CERTS": "/etc/istio-output-certs"}}'
+        sidecar.istio.io/userVolumeMount: '[{"name": "istio-certs", "mountPath": "/etc/istio-output-certs"}]'
+        traffic.sidecar.istio.io/excludeOutboundPorts: "8080"
+    spec:
+      serviceAccountName: other
+      containers:
+      - name: other
+        image: tenuo-spiffe-demo:istio
+        imagePullPolicy: Never
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - {name: istio-certs, mountPath: /certs, readOnly: true}
+        - {name: pub, mountPath: /pub, readOnly: true}
+        - {name: work, mountPath: /work, readOnly: true}
+      volumes:
+      - {name: istio-certs, emptyDir: {medium: Memory}}
+      - {name: pub, configMap: {name: issuer-pub}}
+      - {name: work, hostPath: {path: /work}}
+---
+# outsider: a pod with no sidecar, in a namespace outside the mesh.
+apiVersion: v1
+kind: Namespace
+metadata: {name: outside-mesh}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: outsider, namespace: outside-mesh}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: outsider}}
+  template:
+    metadata: {labels: {app: outsider}}
+    spec:
+      containers:
+      - name: outsider
+        image: tenuo-spiffe-demo:istio
+        imagePullPolicy: Never
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - {name: work, mountPath: /work, readOnly: true}
+        - {name: gateway-client, mountPath: /gateway-client, readOnly: true}
+      volumes:
+      - {name: work, hostPath: {path: /work}}
+      # A client certificate for the ingress gateway's mutual TLS, once check.py has made one.
+      - {name: gateway-client, secret: {secretName: gateway-client, optional: true}}

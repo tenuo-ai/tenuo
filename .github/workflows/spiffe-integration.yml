@@ -4,8 +4,14 @@ on:
   pull_request:
     paths:
       - 'tenuo-python/tenuo/spiffe.py'
+      - 'tenuo-python/tenuo/spiffe_jwt.py'
+      - 'tenuo-python/tenuo/spiffe_forwarded.py'
+      - 'tenuo-python/tenuo/_spiffe_http.py'
       - 'tenuo-python/examples/spiffe/**'
       - 'tenuo-python/tests/adapters/test_spiffe.py'
+      - 'tenuo-python/tests/adapters/test_spiffe_jwt.py'
+      - 'tenuo-python/tests/adapters/test_spiffe_forwarded.py'
+      - 'tenuo-python/tests/adapters/test_spiffe_asgi_servers.py'
       - '.github/workflows/spiffe-integration.yml'
   workflow_dispatch:
 
@@ -23,3 +29,29 @@ jobs:
         run: docker build -t tenuo-spiffe-demo:ci -f tenuo-python/examples/spiffe/Dockerfile .
       - name: Exercise Workload API credentials, issuance, delegation, and enforcement
         run: docker run --rm --mount "type=bind,source=$PWD,target=/work,readonly" tenuo-spiffe-demo:ci
+      - name: Run the forwarded-identity endpoint on each ASGI server the guide lists
+        run: >
+          docker run --rm --mount "type=bind,source=$PWD,target=/work,readonly" -w /work/tenuo-python
+          tenuo-spiffe-demo:ci python -m pytest tests/adapters/test_spiffe_asgi_servers.py -q -p no:cacheprovider
+
+  istio:
+    name: Forwarded identity behind Istio (${{ matrix.certificates }} certificates)
+    # This image ships docker, kubectl and helm, which the check needs.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - certificates: Istio
+            arguments: ""
+          - certificates: SPIRE
+            arguments: "--spire"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the demo image
+        run: docker build -t tenuo-spiffe-demo:ci -f tenuo-python/examples/spiffe/Dockerfile .
+      - name: Run the exchange and the refusal checks in a throwaway cluster
+        env:
+          TENUO_SPIFFE_IMAGE: tenuo-spiffe-demo:ci
+        run: python3 tenuo-python/examples/spiffe/istio/check.py ${{ matrix.arguments }}

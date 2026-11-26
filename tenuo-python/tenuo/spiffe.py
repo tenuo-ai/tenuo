@@ -1,8 +1,11 @@
 """X.509-SVID authentication and task-scoped warrant issuance.
 
-Install ``tenuo[spiffe]``. TLS terminates in this process: never pass identity
-headers or caller-supplied certificates to this adapter. Each SpiffeTLS instance
-trusts exactly one domain's bundle; pooled federation bundles are unsupported.
+Install ``tenuo[spiffe-workload-api]`` to take SVIDs from the SPIRE agent, or
+``tenuo[spiffe]`` for credential files only. TLS terminates in this process: never pass identity
+headers or caller-supplied certificates to this adapter. A SpiffeTLS instance
+trusts one trust domain and, with federation, the other domains you name. Each
+domain's bundle is given separately and a peer is always tied to its own
+domain's bundle; a single file of pooled authorities is not supported.
 
 Production deployments normally run :class:`SpiffeIssuerServer` as the issuance
 endpoint and call :func:`request_warrant` from agents. Both reload rotated SPIRE
@@ -14,6 +17,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
+import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -26,16 +32,36 @@ import threading
 import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 try:
     from cryptography import x509
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+        PublicFormat,
+        load_der_private_key,
+    )
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     from cryptography.x509.oid import ExtendedKeyUsageOID
 except ImportError as exc:
@@ -49,7 +75,9 @@ __all__ = [
     "SpiffeGrant",
     "SpiffeIdentity",
     "SpiffeIssuance",
+    "SpiffeHolderProof",
     "SpiffeIssuerServer",
+    "SpiffeJWTProof",
     "SpiffeTLS",
     "SpiffeWarrantIssuer",
     "arequest_warrant",
@@ -66,6 +94,15 @@ IssuerKeys = Union[PublicKey, Sequence[PublicKey]]
 # therefore cannot choose the first bytes of what the holder key signs, and the
 # signature cannot be reused as any other Tenuo signature (all start "tenuo-").
 _HOLDER_CONTEXT = b"tenuo.spiffe.holder-binding.v1\x00"
+# JWT-SVID exchanges are a single request, so the holder signs a timestamped
+# statement bound to the exact token instead of an issuer challenge.
+_JWT_HOLDER_CONTEXT = b"tenuo.spiffe.jwt-holder-binding.v1\x00"
+# A proxy-forwarded identity has no token to bind to: the proof covers the
+# issuer's audience, the task, and the time.
+_FORWARDED_HOLDER_CONTEXT = b"tenuo.spiffe.forwarded-holder-binding.v1\x00"
+_JWT_PROOF_SECONDS = 60  # Accepted distance between the proof timestamp and the issuer clock.
+_JWT_PROOF_MEMORY = 16384  # Default number of live proofs remembered to refuse an exact replay.
+_JWT_NONCE_BYTES = 16
 _CHALLENGE_FIELDS = frozenset({"nonce", "issuer", "spiffe_id", "certificate", "holder", "task_id"})
 _CHALLENGE_SECONDS = 30
 _MAX_SPIFFE_ID = 2048
@@ -106,6 +143,39 @@ class SpiffeError(ValueError):
     """Authentication, holder proof, or issuance was rejected."""
 
 
+class _IssuerBusy(SpiffeError):
+    """The issuer cannot take the request right now; the caller should retry."""
+
+
+def _jwt_proof_bytes(
+    audience: str, holder: bytes, task_id: str, timestamp: int, nonce: bytes, token_sha256: bytes
+) -> bytes:
+    """What the holder key signs to bind itself to one JWT-SVID, issuer audience, and task.
+
+    Fixed-width binary fields, so every language produces the same bytes:
+    context, SHA-256 of the token, holder key, 8-byte big-endian timestamp,
+    16-byte nonce, SHA-256 of the audience, SHA-256 of the task ID.
+    """
+    try:
+        texts = hashlib.sha256(audience.encode("utf-8")).digest() + hashlib.sha256(task_id.encode("utf-8")).digest()
+    except UnicodeEncodeError as exc:
+        raise SpiffeError("audience and task_id must be valid Unicode text") from exc
+    return _JWT_HOLDER_CONTEXT + token_sha256 + holder + timestamp.to_bytes(8, "big") + nonce + texts
+
+
+def _forwarded_proof_bytes(audience: str, holder: bytes, task_id: str, timestamp: int, nonce: bytes) -> bytes:
+    """What the holder key signs when its identity is forwarded by a proxy.
+
+    Fixed-width binary fields: context, holder key, 8-byte big-endian
+    timestamp, 16-byte nonce, SHA-256 of the audience, SHA-256 of the task ID.
+    """
+    try:
+        texts = hashlib.sha256(audience.encode("utf-8")).digest() + hashlib.sha256(task_id.encode("utf-8")).digest()
+    except UnicodeEncodeError as exc:
+        raise SpiffeError("audience and task_id must be valid Unicode text") from exc
+    return _FORWARDED_HOLDER_CONTEXT + holder + timestamp.to_bytes(8, "big") + nonce + texts
+
+
 def _trust_domain(spiffe_id: str) -> str:
     # Parse without URL normalization: encoded separators and relative segments
     # must never turn into an authorized identity.
@@ -121,14 +191,28 @@ def _trust_domain(spiffe_id: str) -> str:
 
 @dataclass(frozen=True)
 class SpiffeIdentity:
-    """Peer identity authenticated against a domain-specific TLS trust bundle."""
+    """A workload identity, and how the issuer learned it.
+
+    ``svid_type`` is ``"x509"`` for a peer authenticated over mTLS, ``"jwt"``
+    for a JWT-SVID bearer token, both checked against one trust domain's
+    bundle, and ``"forwarded"`` for an identity a trusted proxy reported, which
+    the issuer could not check itself. ``certificate_sha256`` is the SHA-256 of
+    the SVID: the certificate (as the proxy reported it, when forwarded), or
+    the token.
+    """
 
     spiffe_id: str
     certificate_sha256: str
     expires_at: float
+    svid_type: str = "x509"
+
+    @property
+    def trust_domain(self) -> str:
+        """The trust domain part of ``spiffe_id``. With federation, check it in your policy."""
+        return self.spiffe_id[len("spiffe://") :].split("/", 1)[0]
 
 
-def _svid_identity(cert: x509.Certificate, trust_domain: str) -> Tuple[SpiffeIdentity, float]:
+def _svid_identity(cert: x509.Certificate, trust_domains: Collection[str]) -> Tuple[SpiffeIdentity, float]:
     """Check the X.509-SVID leaf profile. Returns the identity and not-before time."""
     try:
         extensions = cert.extensions
@@ -160,9 +244,116 @@ def _svid_identity(cert: x509.Certificate, trust_domain: str) -> Tuple[SpiffeIde
         oid in eku for oid in (ExtendedKeyUsageOID.CLIENT_AUTH, ExtendedKeyUsageOID.SERVER_AUTH)
     ):
         raise SpiffeError("SVID EKU must allow client and server authentication")
-    if _trust_domain(uris[0]) != trust_domain:
+    if _trust_domain(uris[0]) not in trust_domains:
         raise SpiffeError("SVID belongs to a different trust domain")
     return SpiffeIdentity(uris[0], fingerprint, expires_at), not_before
+
+
+def _trust_domain_names(own: str, federated: Sequence[str]) -> Tuple[str, ...]:
+    """Validate a trust domain and the other domains it accepts peers from."""
+    if isinstance(federated, str):
+        raise ValueError("Pass federated trust domains as a list of names")
+    names = tuple(federated)
+    for name in (own, *names):
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9._-]{1,255}", name):
+            raise ValueError("Invalid trust domain")
+    if own in names or len(set(names)) != len(names):
+        raise ValueError("Federated trust domains must be distinct and exclude your own")
+    return names
+
+
+def _check_authorities(authorities: Sequence[x509.Certificate], trust_domain: str) -> None:
+    """A bundle may hold only CA certificates, and none that names another trust domain."""
+    for authority in authorities:
+        # Certificates are parsed lazily, and the library reports unreadable
+        # content with several unrelated exception types. Read everything used
+        # later now, so a bad certificate is refused here and nowhere else.
+        try:
+            authority.extensions
+            authority.subject
+            authority.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+        except Exception as exc:
+            raise SpiffeError("Malformed or unsupported X.509 certificate in trust bundle") from exc
+        try:
+            is_ca = authority.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+        except (x509.ExtensionNotFound, ValueError):
+            is_ca = False
+        if not is_ca:
+            raise SpiffeError("Trust bundle may contain only CA certificates")
+        try:
+            uris = authority.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(
+                x509.UniformResourceIdentifier
+            )
+        except x509.ExtensionNotFound:
+            uris = []
+        except ValueError as exc:
+            raise SpiffeError("Malformed X.509 certificate in trust bundle") from exc
+        for uri in uris:
+            if uri != f"spiffe://{trust_domain}" and (
+                not uri.startswith(f"spiffe://{trust_domain}/") or _trust_domain(uri) != trust_domain
+            ):
+                raise SpiffeError("Trust bundle contains an authority for a different trust domain")
+
+
+def _verified_chain(connection: Any) -> Optional[List[bytes]]:
+    """The peer's chain as the TLS library verified it (leaf first, DER), where Python exposes it."""
+    getter = getattr(connection, "get_verified_chain", None)  # Python 3.13 and newer.
+    if getter is None:
+        # CPython 3.10 to 3.12 keep the same call on the wrapped object.
+        getter = getattr(getattr(connection, "_sslobj", None), "get_verified_chain", None)
+    if getter is None:
+        return None
+    try:
+        chain = getter()
+        if not chain:
+            return None
+        if all(isinstance(certificate, bytes) for certificate in chain):
+            return list(chain)
+        import _ssl
+
+        der = getattr(_ssl, "ENCODING_DER")  # Not in the type stubs for every Python version.
+        return [bytes(certificate.public_bytes(der)) for certificate in chain]
+    except Exception:
+        return None
+
+
+def _key_identifier(certificate: x509.Certificate) -> Optional[bytes]:
+    try:
+        return certificate.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value.digest
+    except (x509.ExtensionNotFound, ValueError):
+        return None
+
+
+def _same_authority(first: x509.Certificate, second: x509.Certificate) -> bool:
+    """Whether two bundle certificates could stand in for each other during chain building.
+
+    True for the same key, and for the same subject unless both carry key
+    identifiers that differ (which is how the TLS library tells such certificates apart).
+    """
+    if first.public_key().public_bytes(
+        Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+    ) == second.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo):
+        return True
+    if first.subject != second.subject:
+        return False
+    identifiers = (_key_identifier(first), _key_identifier(second))
+    return None in identifiers or identifiers[0] == identifiers[1]
+
+
+def _overlapping_domains(domains: Mapping[str, Sequence[x509.Certificate]], home: str) -> Set[str]:
+    """Federated trust domains whose bundle shares an authority with another domain's.
+
+    A shared or lookalike authority would let one domain vouch for another, or
+    misdirect chain building, so such a domain is not trusted at all. The home
+    domain is never dropped; two federated domains that overlap are both dropped.
+    """
+    names = list(domains)
+    overlapping: Set[str] = set()
+    for index, first in enumerate(names):
+        for second in names[index + 1 :]:
+            if any(_same_authority(a, b) for a in domains[first] for b in domains[second]):
+                overlapping.update({first, second} - {home})
+    return overlapping
 
 
 def _read_snapshot(path: str, limit: int = 1024 * 1024) -> bytes:
@@ -176,9 +367,388 @@ def _read_snapshot(path: str, limit: int = 1024 * 1024) -> bytes:
 def _file_signature(paths: Tuple[str, ...]) -> Tuple[Tuple[int, int, int, int], ...]:
     signature = []
     for path in paths:
-        info = os.stat(path)
+        try:
+            info = os.stat(path)
+        except OSError:
+            signature.append((0, 0, 0, 0))  # Missing: reading it reports the problem.
+            continue
         signature.append((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns))
     return tuple(signature)
+
+
+@contextlib.contextmanager
+def _private_files(cert_pem: bytes, key_pem: bytes) -> Iterator[Tuple[str, str]]:
+    """Paths holding exactly these bytes, for ``load_cert_chain``, which only reads paths.
+
+    On Linux the bytes stay in anonymous memory. Elsewhere they pass through a
+    private temporary directory that is removed straight after the load.
+    """
+    memfd_create = getattr(os, "memfd_create", None)
+    if memfd_create is not None and os.path.isdir("/proc/self/fd"):
+        descriptors: List[int] = []
+        try:
+            for data in (cert_pem, key_pem):
+                descriptor = memfd_create("tenuo-spiffe")
+                descriptors.append(descriptor)
+                os.write(descriptor, data)
+            yield f"/proc/self/fd/{descriptors[0]}", f"/proc/self/fd/{descriptors[1]}"
+        finally:
+            for descriptor in descriptors:
+                os.close(descriptor)
+        return
+    with tempfile.TemporaryDirectory(prefix="tenuo-spiffe-") as private:
+        cert_path, key_path = os.path.join(private, "svid.pem"), os.path.join(private, "key.pem")
+        for path, data in ((cert_path, cert_pem), (key_path, key_pem)):
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+        yield cert_path, key_path
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    """One consistent set of credentials, from files or from the Workload API."""
+
+    chain: List[x509.Certificate]  # Leaf first.
+    key_pem: bytes
+    authorities: List[x509.Certificate]
+    federated: Mapping[str, Sequence[x509.Certificate]] = field(default_factory=dict)  # By trust domain.
+
+
+def _pem(certificates: Sequence[x509.Certificate]) -> bytes:
+    return b"".join(certificate.public_bytes(Encoding.PEM) for certificate in certificates)
+
+
+# -- SPIFFE Workload API (X.509) ---------------------------------------------
+#
+# The X.509 call is one server-streaming RPC with a small message, so the
+# adapter speaks it with grpcio alone and reads the protobuf wire format
+# directly instead of depending on protobuf and generated code.
+
+_FETCH_X509_SVID = "/SpiffeWorkloadAPI/FetchX509SVID"
+_WORKLOAD_API_METADATA = (("workload.spiffe.io", "true"),)
+_WORKLOAD_API_BACKOFF = (1.0, 30.0)  # First and longest wait between attempts, in seconds.
+_WORKLOAD_API_STARTUP_BACKOFF = 2.0  # Longest wait until the first usable SVID has arrived.
+_PENDING_RETRY = (1.0, 30.0)  # First and longest wait before trying an unusable update again.
+
+
+def _proto_fields(data: bytes) -> Iterator[Tuple[int, Union[int, bytes]]]:
+    """Yield (field number, value) for one protobuf message."""
+    position, size = 0, len(data)
+
+    def varint() -> int:
+        nonlocal position
+        value = shift = 0
+        while True:
+            if position >= size or shift > 63:
+                raise SpiffeError("Malformed Workload API response")
+            byte = data[position]
+            position += 1
+            value |= (byte & 0x7F) << shift
+            if not byte & 0x80:
+                return value
+            shift += 7
+
+    while position < size:
+        key = varint()
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            yield field, varint()
+            continue
+        length = {1: 8, 5: 4}.get(wire) if wire != 2 else varint()
+        if length is None or position + length > size:
+            raise SpiffeError("Malformed Workload API response")
+        yield field, data[position : position + length]
+        position += length
+
+
+def _split_der(data: bytes) -> List[bytes]:
+    """Split concatenated DER certificates."""
+    parts, position = [], 0
+    while position < len(data):
+        if data[position] != 0x30 or position + 2 > len(data):
+            raise SpiffeError("Malformed certificate data from the Workload API")
+        first = data[position + 1]
+        header = 2
+        if first < 0x80:
+            length = first
+        else:
+            count = first & 0x7F
+            if not 1 <= count <= 4 or position + 2 + count > len(data):
+                raise SpiffeError("Malformed certificate data from the Workload API")
+            length = int.from_bytes(data[position + 2 : position + 2 + count], "big")
+            header += count
+        end = position + header + length
+        if end > len(data):
+            raise SpiffeError("Malformed certificate data from the Workload API")
+        parts.append(data[position:end])
+        position = end
+    return parts
+
+
+def _x509_snapshot(message: bytes, wanted: Optional[str], federates_with: Sequence[str] = ()) -> _Snapshot:
+    """Pick one SVID from an X509SVIDResponse.
+
+    Federated bundles are taken only for the trust domains in ``federates_with``;
+    any others in the response are ignored.
+    """
+    chosen: Optional[Dict[int, bytes]] = None
+    offered = []
+    foreign: Dict[str, bytes] = {}
+    for number, value in _proto_fields(message):
+        if number == 3 and isinstance(value, bytes):  # federated_bundles: map<string, bytes>
+            try:
+                entry = {key: item for key, item in _proto_fields(value) if isinstance(item, bytes)}
+            except SpiffeError:
+                logger.warning("Ignoring a malformed federated bundle entry in the Workload API response")
+                continue
+            name = entry.get(1, b"").decode("utf-8", "replace")
+            if name.startswith("spiffe://") and name[len("spiffe://") :] in federates_with:
+                foreign[name[len("spiffe://") :]] = entry.get(2, b"")
+            continue
+        if number != 1 or not isinstance(value, bytes):  # svids
+            continue
+        svid = {number: item for number, item in _proto_fields(value) if isinstance(item, bytes)}
+        identity = svid.get(1, b"").decode("utf-8", "replace")
+        offered.append(identity)
+        if chosen is None and (wanted is None or identity == wanted):
+            chosen = svid
+    if chosen is None:
+        if wanted is None:
+            raise SpiffeError("The Workload API returned no SVID")
+        shown = ", ".join(repr(identity[:200]) for identity in offered[:8]) or "none"
+        more = f" and {len(offered) - 8} more" if len(offered) > 8 else ""
+        raise SpiffeError(f"The Workload API did not offer {wanted} (offered: {shown}{more})")
+    try:
+        chain = [x509.load_der_x509_certificate(der) for der in _split_der(chosen.get(2, b""))]
+        authorities = [x509.load_der_x509_certificate(der) for der in _split_der(chosen.get(4, b""))]
+        key = load_der_private_key(chosen.get(3, b""), password=None)
+        key_pem = key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+    except (ValueError, TypeError) as exc:
+        raise SpiffeError("Malformed SVID from the Workload API") from exc
+    if not chain or not authorities:
+        raise SpiffeError("The Workload API returned an SVID without a certificate or bundle")
+    federated: Dict[str, List[x509.Certificate]] = {}
+    for domain, bundle in foreign.items():
+        try:
+            certificates = [x509.load_der_x509_certificate(der) for der in _split_der(bundle)]
+        except (ValueError, TypeError, SpiffeError) as exc:
+            logger.warning("Ignoring a malformed bundle for federated trust domain %s: %s", domain, exc)
+            continue
+        if certificates:
+            federated[domain] = certificates
+    return _Snapshot(chain, key_pem, authorities, federated)
+
+
+def _workload_api_target(address: Optional[str]) -> str:
+    """Turn a socket path or SPIFFE_ENDPOINT_SOCKET value into a gRPC target."""
+    address = address or os.environ.get("SPIFFE_ENDPOINT_SOCKET")
+    if not address:
+        raise ValueError("Pass socket_path or set SPIFFE_ENDPOINT_SOCKET")
+    if address.startswith("unix://"):
+        address = address[len("unix://") :]
+    if address.startswith("/"):
+        # gRPC reads the target as a URI: these would be decoded or cut off.
+        if any(character in address for character in "%?#"):
+            raise ValueError("Workload API socket paths may not contain %, ? or #")
+        return "unix://" + address
+    match = re.fullmatch(r"tcp://(\[[0-9A-Fa-f:.]+\]|[0-9.]+):([0-9]{1,5})", address)
+    if match:
+        host = match[1]
+        try:
+            ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+            ip = ipaddress.IPv6Address(host[1:-1]) if host.startswith("[") else ipaddress.IPv4Address(host)
+            valid = 0 < int(match[2]) < 65536
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("A tcp:// Workload API address must be tcp://IP:PORT")
+        # The Workload API is unencrypted and unauthenticated by design: it hands
+        # out private keys to whoever connects, and relies on being local.
+        if not ip.is_loopback:
+            raise ValueError("A tcp:// Workload API address must be a loopback address; use the Unix socket otherwise")
+        return f"{host}:{match[2]}"
+    raise ValueError("Workload API address must be an absolute socket path, unix:///path, or tcp://IP:PORT on loopback")
+
+
+def _next_delay(delay: float, usable: bool) -> float:
+    """Double the reconnect wait. Before the first SVID, stay eager."""
+    longest = _WORKLOAD_API_BACKOFF[1] if usable else min(_WORKLOAD_API_STARTUP_BACKOFF, _WORKLOAD_API_BACKOFF[1])
+    return min(delay * 2, longest)
+
+
+class _WorkloadAPIWatcher:
+    """Background thread that follows the X.509-SVID stream and reconnects."""
+
+    def __init__(
+        self,
+        target: str,
+        method: str,
+        parse: Callable[[bytes], Any],
+        deliver: Callable[[Any], None],
+        on_lost: Optional[Callable[[str], None]] = None,
+        on_received: Optional[Callable[[], None]] = None,
+    ):
+        self.target = target
+        self.last_error: Optional[str] = None
+        self._method = method
+        self._parse = parse
+        self._deliver = deliver
+        self._on_lost = on_lost  # Called with a gRPC status name each time the stream ends.
+        self._on_received = on_received  # Called for each message that actually arrives, never for a retry.
+        # Re-entrant: the owner may be closed from inside its own delivery.
+        self._deliver_lock = threading.RLock()
+        self._pending: Optional[Any] = None  # Newest update that could not be used yet.
+        self._first = threading.Event()  # A usable SVID arrived, or retrying is pointless.
+        self._usable = False
+        self._stop = threading.Event()
+        self._channel: Any = None
+        self._thread = threading.Thread(target=self._run, name="tenuo-spiffe-workload-api", daemon=True)
+        self._retry_timer: Optional[threading.Timer] = None
+        self._retry_delay = _PENDING_RETRY[0]
+
+    def start(self, timeout: float) -> bool:
+        self._thread.start()
+        deadline = time.monotonic() + timeout
+        while not self._first.wait(min(0.5, max(0.0, deadline - time.monotonic()))):
+            if time.monotonic() >= deadline:
+                break
+            self.retry_pending()  # For example an SVID that was not valid yet.
+        return self._usable
+
+    def stop(self, join: bool = True) -> None:
+        # Wait out a delivery in progress, so nothing is installed once this returns.
+        with self._deliver_lock:
+            self._stop.set()
+        timer = self._retry_timer
+        if timer is not None:
+            timer.cancel()
+        channel = self._channel
+        if channel is not None:
+            channel.close()  # Cancels the stream the thread is reading.
+        if join and self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout=5)
+
+    def _schedule_retry(self) -> None:
+        """Try a waiting update again later, without relying on anyone to call reload."""
+        if self._stop.is_set() or self._retry_timer is not None:
+            return
+        timer = threading.Timer(self._retry_delay, self._retry_tick)
+        timer.daemon = True
+        self._retry_timer = timer
+        self._retry_delay = min(self._retry_delay * 2, _PENDING_RETRY[1])
+        timer.start()
+
+    def _retry_tick(self) -> None:
+        self._retry_timer = None
+        if not self._stop.is_set():
+            self.retry_pending()
+
+    def _offer(self, snapshot: Any, retry: bool = False) -> bool:
+        """Hand one update to the owner. Callers hold ``_deliver_lock``."""
+        if self._stop.is_set():
+            return False
+        try:
+            self._deliver(snapshot)
+        except _OwnerGone:
+            self._stop.set()
+            return False
+        except Exception as exc:  # Keep the current credentials and keep listening.
+            if self._pending is not snapshot:
+                self._retry_delay = _PENDING_RETRY[0]  # A new update: start the retry schedule over.
+            self._pending = snapshot
+            self.last_error = str(exc)
+            if not retry:
+                logger.warning("Ignoring an unusable Workload API update: %s", exc)
+            self._schedule_retry()
+            return False
+        self._pending = None
+        self.last_error = None
+        self._usable = True
+        self._first.set()
+        return True
+
+    def _received(self) -> None:
+        if self._on_received is not None and not self._stop.is_set():
+            try:
+                self._on_received()
+            except _OwnerGone:
+                self._stop.set()
+            except Exception:
+                logger.exception("Workload API message handler failed")
+
+    def _lost(self, status: str) -> None:
+        if self._on_lost is not None and not self._stop.is_set():
+            try:
+                self._on_lost(status)
+            except _OwnerGone:
+                self._stop.set()
+            except Exception:
+                logger.exception("Workload API stream-loss handler failed")
+
+    def retry_pending(self) -> bool:
+        """Try again an update that was refused earlier. Returns True if it is now in use."""
+        with self._deliver_lock:
+            return self._pending is not None and self._offer(self._pending, retry=True)
+
+    def _run(self) -> None:
+        import grpc
+
+        delay = _WORKLOAD_API_BACKOFF[0]
+        while not self._stop.is_set():
+            # The endpoint is local: never send this traffic through an HTTP proxy.
+            channel = self._channel = grpc.insecure_channel(self.target, options=[("grpc.enable_http_proxy", 0)])
+            try:
+                if self._stop.is_set():
+                    break
+                fetch = channel.unary_stream(
+                    self._method, request_serializer=lambda _: b"", response_deserializer=lambda raw: raw
+                )
+                for message in fetch(None, metadata=_WORKLOAD_API_METADATA):
+                    self._received()
+                    try:
+                        snapshot = self._parse(message)
+                    except Exception as exc:
+                        with self._deliver_lock:
+                            # The newest response supersedes an older update that was
+                            # waiting to become usable, even when it offers nothing.
+                            self._pending = None
+                        self.last_error = str(exc)
+                        logger.warning("Ignoring an unusable Workload API update: %s", exc)
+                        continue
+                    with self._deliver_lock:
+                        if self._offer(snapshot):
+                            delay = _WORKLOAD_API_BACKOFF[0]
+                self.last_error = "the Workload API closed the stream"
+                self._lost("CLOSED")
+            except grpc.RpcError as exc:
+                if self._stop.is_set():
+                    break
+                code = exc.code()
+                self.last_error = f"{code.name}: {exc.details()}"
+                self._lost(code.name)
+                unsupported = code in (grpc.StatusCode.INVALID_ARGUMENT, grpc.StatusCode.UNIMPLEMENTED)
+                if unsupported and not self._usable:
+                    # Not a Workload API endpoint: report at once instead of waiting out the timeout.
+                    logger.error("The Workload API at %s rejected the request (%s)", self.target, self.last_error)
+                    self._first.set()
+                    break
+            except Exception as exc:
+                self.last_error = str(exc)
+                self._lost("ERROR")
+            finally:
+                channel.close()
+            if self._stop.is_set():
+                break
+            logger.warning(
+                "Workload API stream at %s ended (%s); retrying in %.0f s", self.target, self.last_error, delay
+            )
+            self._stop.wait(delay)
+            delay = _next_delay(delay, self._usable)
+
+
+class _OwnerGone(Exception):
+    """The SpiffeTLS that owned a watcher was garbage-collected."""
 
 
 @dataclass(frozen=True)
@@ -186,7 +756,9 @@ class _Generation:
     context: ssl.SSLContext
     identity: SpiffeIdentity
     not_before: float
-    authorities: FrozenSet[bytes]
+    authorities: FrozenSet[bytes]  # Every trusted authority, as DER.
+    domains: Mapping[str, Tuple[x509.Certificate, ...]] = field(default_factory=dict)  # By trust domain.
+    owners: Mapping[bytes, str] = field(default_factory=dict)  # Authority (DER) to its trust domain.
 
 
 class SpiffeTLS:
@@ -195,8 +767,19 @@ class SpiffeTLS:
     ``bundle_file`` must contain ONLY the configured trust domain's authorities.
     No system roots are loaded. The local SVID is validated at load time.
 
-    Rotation: call :meth:`reload` (or :meth:`reload_if_changed`) after SPIRE or
-    spiffe-helper writes new files. On the server side ``context`` is a stable
+    Federation: to accept peers from other trust domains, give each domain's
+    bundle separately (``federated_bundle_files``, or ``federates_with`` with the
+    Workload API). The TLS handshake has to trust every accepted domain's
+    authorities at once, so the per-domain decision is made after it: a peer's
+    SVID belongs to the first bundle authority above it in the verified chain,
+    and that authority must be in the bundle of the trust domain the SVID
+    names. A federated domain whose bundle is missing, invalid, or shares an
+    authority with another domain is not trusted; the home domain is unaffected.
+
+    Credentials come from PEM files (this constructor) or straight from the
+    SPIRE agent with :meth:`from_workload_api`, which follows renewals itself.
+    With files, call :meth:`reload` (or :meth:`reload_if_changed`) after SPIRE or
+    spiffe-helper writes new ones. On the server side ``context`` is a stable
     listener context: each new handshake switches to the newest credentials and
     trust bundle, so listeners never need to be rebuilt. On the client side,
     read ``context`` for each new connection. Connections made before a reload
@@ -204,16 +787,102 @@ class SpiffeTLS:
     rejected and must reconnect.
     """
 
-    def __init__(self, *, trust_domain: str, bundle_file: str, cert_file: str, key_file: str, server_side: bool):
-        if not re.fullmatch(r"[a-z0-9._-]{1,255}", trust_domain):
-            raise ValueError("Invalid trust domain")
+    _paths: Optional[Tuple[str, ...]]
+    _signature: Tuple[Tuple[int, int, int, int], ...]
+
+    def __init__(
+        self,
+        *,
+        trust_domain: str,
+        bundle_file: str,
+        cert_file: str,
+        key_file: str,
+        server_side: bool,
+        federated_bundle_files: Optional[Mapping[str, str]] = None,
+    ):
+        federated = dict(federated_bundle_files or {})
+        self._init_common(trust_domain, server_side, tuple(federated))
+        self._paths = (bundle_file, cert_file, key_file, *federated.values())
+        self._signature = _file_signature(self._paths)
+        self._install(self._build(self._read_files()))
+
+    @classmethod
+    def from_workload_api(
+        cls,
+        *,
+        trust_domain: str,
+        server_side: bool,
+        socket_path: Optional[str] = None,
+        spiffe_id: Optional[str] = None,
+        timeout: float = 30.0,
+        federates_with: Sequence[str] = (),
+    ) -> "SpiffeTLS":
+        """Take the SVID, key and bundle from the SPIRE agent's Workload API.
+
+        Needs ``pip install 'tenuo[spiffe-workload-api]'``. ``socket_path`` is an
+        absolute socket path, ``unix:///path`` or, for a loopback address only,
+        ``tcp://IP:PORT`` (the Workload API is unencrypted); without it
+        ``SPIFFE_ENDPOINT_SOCKET`` is used. If SPIRE offers this process several
+        SVIDs, name the one to use with ``spiffe_id``; otherwise the first is
+        used. Waits up to ``timeout`` seconds for a usable SVID, then follows
+        renewals in a background thread until :meth:`close`. A lost stream is
+        retried with backoff while the current credentials stay in use.
+
+        ``federates_with`` names other trust domains whose workloads this one
+        accepts. Their bundles come from the Workload API too, which offers
+        them when the registration entry has ``-federatesWith``. A domain the
+        response does not carry is not trusted.
+        """
+        try:
+            import grpc  # noqa: F401
+        except ImportError as exc:
+            raise ImportError("The Workload API source requires pip install 'tenuo[spiffe-workload-api]'") from exc
+        self = cls.__new__(cls)
+        self._init_common(trust_domain, server_side, federates_with)
+        domains = self._federates_with
+        if spiffe_id is not None and _trust_domain(spiffe_id) != trust_domain:
+            raise ValueError("spiffe_id is not in trust_domain")
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        owner = weakref.ref(self)
+
+        def deliver(snapshot: _Snapshot) -> None:
+            tls = owner()
+            if tls is None:
+                raise _OwnerGone
+            generation = tls._build(snapshot)
+            if spiffe_id is not None and generation.identity.spiffe_id != spiffe_id:
+                raise SpiffeError(f"The Workload API returned a certificate for a different SPIFFE ID than {spiffe_id}")
+            tls._install(generation)
+
+        watcher = _WorkloadAPIWatcher(
+            _workload_api_target(socket_path),
+            _FETCH_X509_SVID,
+            lambda raw: _x509_snapshot(raw, spiffe_id, domains),
+            deliver,
+        )
+        self._watcher = watcher
+        # Stop the thread if the instance is dropped without close().
+        weakref.finalize(self, watcher.stop, False)
+        if not watcher.start(timeout):
+            watcher.stop()
+            reason = watcher.last_error or "no response"
+            raise SpiffeError(f"No usable SVID from the Workload API at {watcher.target}: {reason}")
+        return self
+
+    def _init_common(self, trust_domain: str, server_side: bool, federates_with: Sequence[str] = ()) -> None:
+        self._federates_with = _trust_domain_names(trust_domain, federates_with)
         self.trust_domain = trust_domain
         self.server_side = server_side
-        self._paths = (bundle_file, cert_file, key_file)
+        self._paths = None
+        self._signature = ()
+        self._watcher: Optional[_WorkloadAPIWatcher] = None
         self._lock = threading.Lock()
+        self._reload_lock = threading.Lock()
         self._previous: "weakref.WeakKeyDictionary[ssl.SSLContext, FrozenSet[bytes]]" = weakref.WeakKeyDictionary()
-        self._signature = _file_signature(self._paths)
-        self._current = self._load()
+        # Our own earlier contexts that trusted an authority since removed.
+        self._retired: "weakref.WeakSet[ssl.SSLContext]" = weakref.WeakSet()
+        self._generation: Optional[_Generation] = None
         self._front: Optional[ssl.SSLContext] = None
         if server_side:
             # Holds no credentials or trust anchors of its own: a handshake that
@@ -221,6 +890,18 @@ class SpiffeTLS:
             front = self._new_context()
             front.sni_callback = self._select_generation
             self._front = front
+
+    def close(self) -> None:
+        """Stop following the Workload API. Existing connections are unaffected."""
+        if self._watcher is not None:
+            self._watcher.stop()
+
+    @property
+    def _current(self) -> _Generation:
+        generation = self._generation
+        if generation is None:
+            raise SpiffeError("No SVID has been loaded yet")
+        return generation
 
     # -- contexts ---------------------------------------------------------
 
@@ -230,6 +911,9 @@ class SpiffeTLS:
         context.check_hostname = False  # URI identity is checked in authenticate(), not DNS.
         context.verify_mode = ssl.CERT_REQUIRED
         context.minimum_version = ssl.TLSVersion.TLSv1_2
+        # Every certificate in a SPIFFE bundle is a trust anchor, self-signed or not,
+        # so a chain ends at the first bundle authority it reaches.
+        context.verify_flags |= getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", 0x80000)
         # A resumed session is not verified again, so it would outlive a reload
         # that removes its authority. Issue no tickets; authenticate() also
         # rejects any resumed session.
@@ -241,55 +925,92 @@ class SpiffeTLS:
                 pass
         return context
 
-    def _load(self) -> _Generation:
-        bundle_pem, cert_pem, key_pem = (_read_snapshot(path) for path in self._paths)
+    def _read_files(self) -> _Snapshot:
+        assert self._paths is not None
+        bundle_pem, cert_pem, key_pem = (_read_snapshot(path) for path in self._paths[:3])
         try:
             authorities = x509.load_pem_x509_certificates(bundle_pem)
             chain = x509.load_pem_x509_certificates(cert_pem)
         except ValueError as exc:
             raise SpiffeError("Trust bundle and certificate files must contain PEM certificates") from exc
-        for authority in authorities:
+        federated: Dict[str, List[x509.Certificate]] = {}
+        for domain, path in zip(self._federates_with, self._paths[3:]):
+            # A missing, empty or unreadable file means the domain is not trusted
+            # for now. It never holds back the home domain's credentials.
             try:
-                is_ca = authority.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
-            except (x509.ExtensionNotFound, ValueError):
-                is_ca = False
-            if not is_ca:
-                raise SpiffeError("Trust bundle may contain only CA certificates")
+                federated[domain] = x509.load_pem_x509_certificates(_read_snapshot(path))
+            except (OSError, ValueError) as exc:
+                logger.warning("Trust bundle for federated trust domain %s is unusable: %s", domain, exc)
+        return _Snapshot(chain, key_pem, authorities, federated)
+
+    def _build(self, snapshot: _Snapshot) -> _Generation:
+        if not snapshot.chain or not snapshot.authorities:
+            raise SpiffeError("An SVID and at least one authority are required")
+        _check_authorities(snapshot.authorities, self.trust_domain)
+        domains: Dict[str, Tuple[x509.Certificate, ...]] = {self.trust_domain: tuple(snapshot.authorities)}
+        for domain in self._federates_with:
+            bundle = snapshot.federated.get(domain)
+            if not bundle:
+                continue
+            # Whatever is wrong with a federated bundle costs that domain only.
             try:
-                uris = authority.extensions.get_extension_for_class(
-                    x509.SubjectAlternativeName
-                ).value.get_values_for_type(x509.UniformResourceIdentifier)
-            except x509.ExtensionNotFound:
-                uris = []
-            except ValueError as exc:
-                raise SpiffeError("Malformed X.509 certificate in trust bundle") from exc
-            for uri in uris:
-                if uri != f"spiffe://{self.trust_domain}" and (
-                    not uri.startswith(f"spiffe://{self.trust_domain}/") or _trust_domain(uri) != self.trust_domain
-                ):
-                    raise SpiffeError("Trust bundle contains an authority for a different trust domain")
-        identity, not_before = _svid_identity(chain[0], self.trust_domain)
+                _check_authorities(bundle, domain)
+                # The TLS library must accept it too, or it would fail the whole trust store below.
+                ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=_pem(bundle).decode("ascii"))
+            except Exception as exc:
+                logger.warning("Trust bundle for federated trust domain %s is refused: %s", domain, exc)
+                continue
+            domains[domain] = tuple(bundle)
+        for domain in sorted(_overlapping_domains(domains, self.trust_domain)):
+            logger.warning(
+                "Trust bundle for federated trust domain %s is refused: it shares an authority with another domain",
+                domain,
+            )
+            del domains[domain]
+        trusted = [authority for bundle in domains.values() for authority in bundle]
+        owners = {
+            authority.public_bytes(Encoding.DER): domain for domain, bundle in domains.items() for authority in bundle
+        }
+        identity, not_before = _svid_identity(snapshot.chain[0], (self.trust_domain,))
         if not not_before <= time.time() < identity.expires_at:
             raise SpiffeError("Local SVID is not currently valid")
         context = self._new_context()
+        # Trust exactly the certificates validated above, re-encoded.
         try:
-            context.load_verify_locations(cadata=bundle_pem.decode("ascii", "strict"))
-        except (UnicodeDecodeError, ssl.SSLError) as exc:
-            raise SpiffeError("Trust bundle must be ASCII PEM") from exc
-        # load_cert_chain only reads paths. Load the exact bytes validated above
-        # from a private copy, so a concurrent writer cannot swap them.
-        with tempfile.TemporaryDirectory(prefix="tenuo-spiffe-") as private:
-            cert_path, key_path = os.path.join(private, "svid.pem"), os.path.join(private, "key.pem")
-            for path, data in ((cert_path, cert_pem), (key_path, key_pem)):
-                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(descriptor, "wb") as handle:
-                    handle.write(data)
+            context.load_verify_locations(cadata=_pem(trusted).decode("ascii"))
+        except ssl.SSLError as exc:
+            raise SpiffeError("Trust bundle could not be loaded") from exc
+        with _private_files(_pem(snapshot.chain), snapshot.key_pem) as (cert_path, key_path):
             try:
                 context.load_cert_chain(cert_path, key_path)
             except ssl.SSLError as exc:
                 raise SpiffeError("Local SVID certificate and key do not match") from exc
-        der = frozenset(authority.public_bytes(Encoding.DER) for authority in authorities)
-        return _Generation(context, identity, not_before, der)
+        der = frozenset(authority.public_bytes(Encoding.DER) for authority in trusted)
+        return _Generation(context, identity, not_before, der, domains, owners)
+
+    def _install(self, generation: _Generation) -> None:
+        with self._lock:
+            old = self._generation
+            known = list(self._previous.items()) + ([(old.context, old.authorities)] if old is not None else [])
+            # Generations whose authorities all remain are kept as they are. A
+            # connection made under one that trusted an authority since removed
+            # is accepted only if its peer is anchored in an authority still
+            # trusted (see authenticate).
+            self._previous = weakref.WeakKeyDictionary(
+                {context: authorities for context, authorities in known if authorities <= generation.authorities}
+            )
+            for context, authorities in known:
+                if not authorities <= generation.authorities:
+                    self._retired.add(context)
+            self._generation = generation
+        logger.info(
+            "Loaded SVID %s (expires %s)",
+            generation.identity.spiffe_id,
+            datetime.fromtimestamp(generation.identity.expires_at, timezone.utc).isoformat(),
+        )
+        missing = [domain for domain in self._federates_with if domain not in generation.domains]
+        if missing:
+            logger.warning("No trust bundle for federated trust domain(s) %s; their workloads are refused", missing)
 
     def _select_generation(self, connection: TLSConnection, server_name: Optional[str], _: ssl.SSLContext) -> None:
         connection.context = self._current.context
@@ -305,29 +1026,25 @@ class SpiffeTLS:
         return self._current.identity
 
     def reload(self) -> None:
-        """Load the credential files again. On failure, keep the current credentials."""
-        with self._lock:
+        """Load the credential files again. On failure, keep the current credentials.
+
+        Does nothing with :meth:`from_workload_api`, where updates arrive on their own.
+        """
+        if self._paths is None:
+            return
+        with self._reload_lock:
             signature = _file_signature(self._paths)
-            generation = self._load()
-            old = self._current
-            previous: "weakref.WeakKeyDictionary[ssl.SSLContext, FrozenSet[bytes]]" = weakref.WeakKeyDictionary(
-                {
-                    context: authorities
-                    for context, authorities in list(self._previous.items()) + [(old.context, old.authorities)]
-                    if authorities <= generation.authorities
-                }
-            )
-            self._previous = previous
-            self._current = generation
+            self._install(self._build(self._read_files()))
             self._signature = signature
-        logger.info(
-            "Loaded SVID %s (expires %s)",
-            generation.identity.spiffe_id,
-            datetime.fromtimestamp(generation.identity.expires_at, timezone.utc).isoformat(),
-        )
 
     def reload_if_changed(self) -> bool:
-        """Reload when any credential file changed. Cheap enough to call often."""
+        """Reload when any credential file changed. Cheap enough to call often.
+
+        With :meth:`from_workload_api`, retries an update that was not usable
+        when it arrived (for example an SVID that was not valid yet).
+        """
+        if self._paths is None:
+            return self._watcher is not None and self._watcher.retry_pending()
         if _file_signature(self._paths) == self._signature:
             return False
         self.reload()
@@ -349,7 +1066,7 @@ class SpiffeTLS:
             )
 
     def _accepts(self, context: ssl.SSLContext) -> bool:
-        return context is self._current.context or context in self._previous
+        return context is self._current.context or context in self._previous or context in self._retired
 
     # -- authentication ----------------------------------------------------
 
@@ -377,12 +1094,60 @@ class SpiffeTLS:
             cert = x509.load_der_x509_certificate(der)
         except ValueError as exc:
             raise SpiffeError("Malformed X.509-SVID") from exc
-        identity, not_before = _svid_identity(cert, self.trust_domain)
+        identity, not_before = _svid_identity(cert, (self.trust_domain, *self._federates_with))
+        if context in self._retired:
+            # The handshake ran under a bundle that has since lost an authority,
+            # for example a connection that was being set up while the update
+            # arrived. It stands only if the peer is anchored in an authority
+            # that is still trusted.
+            try:
+                self._check_domain_binding(connection, cert, identity.trust_domain)
+            except SpiffeError:
+                raise SpiffeError(
+                    "Connection was verified by an authority that is no longer trusted; open a new connection"
+                ) from None
+        elif self._federates_with:
+            self._check_domain_binding(connection, cert, identity.trust_domain)
         if expected_id is not None and identity.spiffe_id != expected_id:
             raise SpiffeError("Unexpected peer SPIFFE ID")
         if not not_before <= time.time() < identity.expires_at:
             raise SpiffeError("SVID is not currently valid")
         return identity
+
+    def _check_domain_binding(self, connection: TLSConnection, cert: x509.Certificate, trust_domain: str) -> None:
+        """With several bundles trusted, tie the peer's SVID to its own trust domain's bundle.
+
+        The TLS handshake only proves the chain ends at *some* trusted authority.
+        Without this check an authority of one domain could issue an SVID that
+        names another domain.
+        """
+        generation = self._current  # The newest bundles, not the ones the handshake saw.
+        authorities = generation.domains.get(trust_domain)
+        if not authorities:
+            raise SpiffeError(f"No trust bundle is loaded for trust domain {trust_domain}")
+        chain = _verified_chain(connection)
+        if chain is not None:
+            # The SVID belongs to the first bundle authority above it, whatever
+            # that authority itself chains to.
+            for certificate in chain[1:]:
+                owner = generation.owners.get(certificate)
+                if owner is not None:
+                    if owner == trust_domain:
+                        return
+                    break
+            raise SpiffeError("SVID was not issued by its own trust domain's authorities")
+        # This Python does not expose the verified chain: accept only an SVID
+        # signed directly by one of its trust domain's authorities.
+        for authority in authorities:
+            try:
+                cert.verify_directly_issued_by(authority)
+                return
+            except Exception:
+                continue
+        raise SpiffeError(
+            "SVID was not issued directly by its own trust domain's authorities "
+            "(with federation, SVID chains through intermediate CAs need Python 3.10 or newer)"
+        )
 
 
 # -- issuance ---------------------------------------------------------------
@@ -401,6 +1166,22 @@ class SpiffeGrant:
     capabilities: Mapping[str, Mapping[str, Any]]
     ttl_seconds: int = 300
     max_depth: int = 0
+
+
+@dataclass(frozen=True)
+class SpiffeHolderProof:
+    """A holder key's signed statement for one single-request exchange.
+
+    Build it with :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof` or
+    :func:`tenuo.spiffe_forwarded.sign_forwarded_holder_proof`.
+    """
+
+    timestamp: int
+    nonce: bytes
+    signature: bytes
+
+
+SpiffeJWTProof = SpiffeHolderProof
 
 
 @dataclass(frozen=True)
@@ -468,24 +1249,44 @@ class SpiffeWarrantIssuer:
     exchange steps to the same instance. ``max_pending_per_identity`` stops one
     workload from exhausting ``max_pending``. ``audit`` receives every issuance
     before the warrant is released; if it raises, the warrant is not released.
+
+    With ``jwt=`` (a :class:`tenuo.spiffe_jwt.SpiffeJWT`) the issuer also, or
+    instead, accepts JWT-SVIDs through :meth:`issue_jwt`. It remembers up to
+    ``max_jwt_proofs`` recent holder proofs (each for about a minute) to refuse
+    exact replays, and asks callers to retry when that memory is full.
     """
 
     def __init__(
         self,
         *,
-        tls: SpiffeTLS,
+        tls: Optional[SpiffeTLS] = None,
         signing_key: SigningKey,
         policy: Callable[[SpiffeIdentity, str], Optional[SpiffeGrant]],
         max_pending: int = 1024,
         max_pending_per_identity: int = 16,
         audit: Optional[Callable[[SpiffeIssuance], None]] = None,
+        jwt: Optional[Any] = None,
+        max_jwt_proofs: int = _JWT_PROOF_MEMORY,
+        forwarded: Optional[Any] = None,
     ):
-        if not tls.server_side:
+        if tls is None and jwt is None and forwarded is None:
+            raise ValueError(
+                "Pass tls (X.509-SVIDs over mTLS), jwt (JWT-SVIDs), forwarded (identity from a trusted proxy), or several"
+            )
+        if tls is not None and not tls.server_side:
             raise ValueError("Issuance requires a server-side SPIFFE TLS context")
-        for name, value in (("max_pending", max_pending), ("max_pending_per_identity", max_pending_per_identity)):
+        for name, value in (
+            ("max_pending", max_pending),
+            ("max_pending_per_identity", max_pending_per_identity),
+            ("max_jwt_proofs", max_jwt_proofs),
+        ):
             if not _positive_int(value) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        self._max_jwt_proofs = max_jwt_proofs
         self.tls = tls
+        self.jwt = jwt  # A tenuo.spiffe_jwt.SpiffeJWT, or None.
+        self.forwarded = forwarded  # A tenuo.spiffe_forwarded.SpiffeForwardedIdentity, or None.
+        self._proofs: Dict[bytes, float] = {}
         self._key = signing_key
         self._issuer_hex = bytes(signing_key.public_key.to_bytes()).hex()
         self._policy = policy
@@ -497,11 +1298,135 @@ class SpiffeWarrantIssuer:
 
     def challenge(self, connection: TLSConnection, holder: PublicKey, task_id: str) -> bytes:
         """Return a challenge for the holder to sign with :func:`sign_holder_challenge`."""
-        return self._challenge(self.tls.authenticate(connection), holder, task_id)
+        return self._challenge(self._mtls().authenticate(connection), holder, task_id)
 
     def issue(self, connection: TLSConnection, challenge: bytes, signature: bytes) -> Warrant:
         """Consume a challenge, verify holder possession, and mint the approved grant."""
-        return self._issue(self.tls.authenticate(connection), challenge, signature)
+        return self._issue(self._mtls().authenticate(connection), challenge, signature)
+
+    def issue_jwt(self, token: str, holder: PublicKey, task_id: str, proof: SpiffeHolderProof) -> Warrant:
+        """Authenticate a JWT-SVID, verify the holder proof, run policy, and mint.
+
+        ``proof`` comes from :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof`. A
+        JWT-SVID is a bearer token: send it only over TLS, and prefer the mTLS
+        exchange where you can.
+        """
+        if self.jwt is None:
+            raise SpiffeError("This issuer does not accept JWT-SVIDs")
+        return self._issue_jwt(self.jwt.authenticate(token), holder, task_id, proof)
+
+    def _mtls(self) -> SpiffeTLS:
+        if self.tls is None:
+            raise SpiffeError("This issuer does not accept X.509-SVIDs")
+        return self.tls
+
+    def _issue_jwt(
+        self, identity: SpiffeIdentity, holder: PublicKey, task_id: str, proof: SpiffeHolderProof
+    ) -> Warrant:
+        if self.jwt is None or identity.svid_type != "jwt":
+            raise SpiffeError("This issuer does not accept JWT-SVIDs")
+        audience, token = self.jwt.audience, bytes.fromhex(identity.certificate_sha256)
+        return self._issue_with_proof(
+            identity,
+            holder,
+            task_id,
+            proof,
+            lambda key, timestamp, nonce: _jwt_proof_bytes(audience, key, task_id, timestamp, nonce, token),
+        )
+
+    def issue_forwarded(
+        self, header: str, peer: Optional[str], holder: PublicKey, task_id: str, proof: SpiffeHolderProof
+    ) -> Warrant:
+        """Accept the identity a trusted proxy forwarded, verify the holder proof, run policy, and mint.
+
+        ``header`` is the ``x-forwarded-client-cert`` value and ``peer`` the
+        address the request arrived from, as the socket reports it. The issuer
+        cannot verify this identity itself: it is exactly as trustworthy as the
+        proxy and the path from the proxy to this process. See
+        :class:`tenuo.spiffe_forwarded.SpiffeForwardedIdentity`.
+        """
+        if self.forwarded is None:
+            raise SpiffeError("This issuer does not accept proxy-forwarded identities")
+        return self._issue_forwarded(self.forwarded.authenticate(header, peer=peer), holder, task_id, proof)
+
+    def _issue_forwarded(
+        self, identity: SpiffeIdentity, holder: PublicKey, task_id: str, proof: SpiffeHolderProof
+    ) -> Warrant:
+        if self.forwarded is None or identity.svid_type != "forwarded":
+            raise SpiffeError("This issuer does not accept proxy-forwarded identities")
+        audience = self.forwarded.audience
+        return self._issue_with_proof(
+            identity,
+            holder,
+            task_id,
+            proof,
+            lambda key, timestamp, nonce: _forwarded_proof_bytes(audience, key, task_id, timestamp, nonce),
+        )
+
+    def _issue_with_proof(
+        self,
+        identity: SpiffeIdentity,
+        holder: PublicKey,
+        task_id: str,
+        proof: SpiffeHolderProof,
+        statement: Callable[[bytes, int, bytes], bytes],
+    ) -> Warrant:
+        """The single-request exchange: check the holder's signed statement, then policy, then mint."""
+        if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
+            raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
+        if not isinstance(holder, PublicKey):
+            raise SpiffeError("holder must be a Tenuo PublicKey")
+        if not isinstance(proof, SpiffeHolderProof):
+            raise SpiffeError("Invalid holder proof")
+        timestamp, nonce, signature = proof.timestamp, proof.nonce, proof.signature
+        if (
+            not _positive_int(timestamp)
+            or not 0 <= timestamp < 2**40
+            or abs(time.time() - timestamp) > _JWT_PROOF_SECONDS
+        ):
+            raise SpiffeError("Holder proof is too old or from the future; check the clocks on both sides")
+        if (
+            not isinstance(nonce, bytes)
+            or len(nonce) != _JWT_NONCE_BYTES
+            or not isinstance(signature, bytes)
+            or len(signature) != 64
+        ):
+            raise SpiffeError("Invalid holder proof")
+        key = bytes(holder.to_bytes())
+        message = statement(key, timestamp, nonce)
+        try:
+            Ed25519PublicKey.from_public_bytes(key).verify(signature, message)
+        except (InvalidSignature, ValueError) as exc:
+            raise SpiffeError("Invalid holder proof") from exc
+        # Refuse an exact replay seen by this process. The proof is reserved
+        # while the request runs and kept only if a warrant is issued, so a
+        # denied or failed request leaves nothing behind and can be retried.
+        # It is remembered for as long as its timestamp stays acceptable. A
+        # live entry is never dropped to make room: when the memory is full,
+        # new requests wait their turn instead.
+        now = time.monotonic()
+        acceptable_for = max(0.0, timestamp + _JWT_PROOF_SECONDS - time.time()) + 1
+        with self._lock:
+            self._proofs = {seen: until for seen, until in self._proofs.items() if until > now}
+            if signature in self._proofs:
+                raise SpiffeError("This holder proof was already used; sign a new one")
+            if len(self._proofs) >= self._max_jwt_proofs:
+                raise _IssuerBusy("Issuer is at its limit for recent single-request exchanges; retry shortly")
+            self._proofs[signature] = now + acceptable_for
+        try:
+            grant = self._policy(identity, task_id)
+            if grant is None:
+                raise SpiffeError("Workload is not authorized for this task")
+            try:
+                grant = _validate_grant(grant)
+            except SpiffeError as exc:
+                logger.warning("Invalid policy grant for %s task %r: %s", identity.spiffe_id, task_id, exc)
+                raise
+            return self._mint(identity, key, task_id, grant)
+        except BaseException:
+            with self._lock:
+                self._proofs.pop(signature, None)
+            raise
 
     def _challenge(self, identity: SpiffeIdentity, holder: PublicKey, task_id: str) -> bytes:
         if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
@@ -557,24 +1482,25 @@ class SpiffeWarrantIssuer:
             Ed25519PublicKey.from_public_bytes(pending.holder).verify(signature, _HOLDER_CONTEXT + challenge)
         except (InvalidSignature, ValueError) as exc:
             raise SpiffeError("Invalid holder proof") from exc
-        grant = pending.grant
+        return self._mint(identity, pending.holder, pending.task_id, pending.grant)
+
+    def _mint(self, identity: SpiffeIdentity, holder: bytes, task_id: str, grant: SpiffeGrant) -> Warrant:
+        """Mint a validated grant for a proven holder key, bounded by the SVID's expiry."""
         ttl = min(grant.ttl_seconds, int(identity.expires_at - time.time()) - 1)
         if ttl < 1:
             raise SpiffeError("SVID expires too soon to issue a warrant")
-        builder = (
-            Warrant.mint_builder().holder(PublicKey.from_bytes(pending.holder)).ttl(ttl).max_depth(grant.max_depth)
-        )
+        builder = Warrant.mint_builder().holder(PublicKey.from_bytes(holder)).ttl(ttl).max_depth(grant.max_depth)
         for tool, constraints in grant.capabilities.items():
             builder.capability(tool, dict(constraints))
         warrant = builder.mint(self._key)
         if datetime.fromisoformat(warrant.expires_at()).timestamp() > identity.expires_at:
             raise SpiffeError("Warrant would outlive the authenticated SVID")
         record = SpiffeIssuance(
-            identity, pending.task_id, pending.holder.hex(), warrant.id, warrant.expires_at(), tuple(grant.capabilities)
+            identity, task_id, holder.hex(), warrant.id, warrant.expires_at(), tuple(grant.capabilities)
         )
         if self._audit is not None:
             self._audit(record)
-        logger.info("Issued warrant %s to %s for task %r", warrant.id, identity.spiffe_id, pending.task_id)
+        logger.info("Issued warrant %s to %s for task %r", warrant.id, identity.spiffe_id, task_id)
         return warrant
 
     def _discard(self, challenge: Optional[bytes]) -> None:
@@ -729,6 +1655,11 @@ def request_warrant(
         raise SpiffeError(f"TLS with the issuer at {where} failed: {exc.reason or exc}") from exc
     except OSError as exc:  # Refused, reset, or timed out.
         raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
+    return _checked_warrant(encoded, trusted, holder_key)
+
+
+def _checked_warrant(encoded: Any, trusted: List[PublicKey], holder_key: SigningKey) -> Warrant:
+    """Accept an issuer's reply only if it is a current warrant from a trusted key for this holder."""
     if not isinstance(encoded, str):
         raise SpiffeError("Invalid warrant response")
     try:
@@ -862,6 +1793,9 @@ class SpiffeIssuerServer:
                 raise ValueError(f"{name} must be a positive integer")
         if timeout <= 0 or reload_interval <= 0:
             raise ValueError("timeout and reload_interval must be positive")
+        if issuer.tls is None:
+            raise ValueError("SpiffeIssuerServer needs an issuer built with tls=; for JWT-SVIDs use SpiffeJWTIssuerApp")
+        self._tls: SpiffeTLS = issuer.tls
         self.issuer = issuer
         self.host, self.port = host, port
         self._max_connections = max_connections
@@ -895,7 +1829,7 @@ class SpiffeIssuerServer:
         self._server = await asyncio.start_server(self._handle, self.host, self.port)
         self._reloader = asyncio.ensure_future(self._reload_loop())
         host, port = self.address
-        logger.info("Issuing warrants on %s:%s as %s", host, port, self.issuer.tls.identity.spiffe_id)
+        logger.info("Issuing warrants on %s:%s as %s", host, port, self._tls.identity.spiffe_id)
 
     async def serve_forever(self) -> None:
         if self._server is None:
@@ -933,7 +1867,7 @@ class SpiffeIssuerServer:
         while True:
             await asyncio.sleep(self._reload_interval)
             try:
-                await loop.run_in_executor(self._reload_worker, self.issuer.tls._refresh)
+                await loop.run_in_executor(self._reload_worker, self._tls._refresh)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -989,7 +1923,7 @@ class SpiffeIssuerServer:
         task = asyncio.current_task()
         if task is not None:
             self._tasks.add(task)
-        connection = _ServerConnection(reader, writer, self.issuer.tls.context)
+        connection = _ServerConnection(reader, writer, self._tls.context)
         try:
             await asyncio.wait_for(self._exchange(connection), self._timeout)
         except asyncio.TimeoutError:
@@ -1010,7 +1944,7 @@ class SpiffeIssuerServer:
 
     async def _exchange(self, connection: _ServerConnection) -> None:
         await connection.handshake()
-        tls = self.issuer.tls
+        tls = self._tls
         challenge: Optional[bytes] = None
         try:
             identity = tls.authenticate(connection.tls)
