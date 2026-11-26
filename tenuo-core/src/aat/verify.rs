@@ -3,7 +3,7 @@
 use super::constraint::{self, Tools};
 use super::jose::{self, Jwk, AAT_TYP, POP_TYP};
 use super::json::{self, Json, Obj};
-use super::{deny, Denied, TrustAnchor, Verified, VerifyOptions};
+use super::{deny, Algorithm, Denied, TrustAnchor, Verified, VerifyOptions};
 
 const AAT_TYPE: &str = "attenuating_agent_token";
 
@@ -54,8 +54,8 @@ pub(super) fn verify_chain(
     }
 
     // 3: root
-    let (root_claims, verifying) = verify_root_signature(root_compact, anchors)?;
-    let (root, issuer) = verify_root(root_claims, anchors, verifying, now, opts)?;
+    let (root_claims, verifying) = verify_root_signature(root_compact, anchors, opts.algorithms)?;
+    let (root, issuer) = verify_root(root_compact, root_claims, anchors, verifying, now, opts)?;
 
     // 4: adjacent pairs
     let mut tokens = vec![root];
@@ -131,7 +131,14 @@ pub(super) fn verify_chain(
     if pop.len() > limits.max_token_size {
         return Err(deny("7a", "the PoP JWT exceeds MAX_TOKEN_SIZE"));
     }
-    let pop = jose::verify(pop, Some(&leaf.holder), POP_TYP, "7a", "7b")?;
+    let pop = jose::verify(
+        pop,
+        Some(&leaf.holder),
+        POP_TYP,
+        opts.algorithms,
+        "7a",
+        "7b",
+    )?;
     let pop_jti = non_empty_str(&pop, "jti")
         .ok_or_else(|| deny("7c", "PoP jti is missing or not a non-empty string"))?;
     let (Some(aat_id), Some(aat_hash), Some(aat_tool)) = (
@@ -224,19 +231,36 @@ pub(super) fn verify_chain(
 fn verify_root_signature<'a>(
     root: &str,
     anchors: &'a [TrustAnchor],
+    permitted: &[Algorithm],
 ) -> Result<(Obj, &'a TrustAnchor), Denied> {
-    let mut last = deny("3b", "no trust anchor is configured");
+    let mut denial: Option<Denied> = None;
     for anchor in anchors {
-        match jose::verify(root, Some(&Jwk::from_key(&anchor.key)), AAT_TYP, "3a", "3b") {
+        let key = Jwk::from_key(&anchor.key);
+        match jose::verify(root, Some(&key), AAT_TYP, permitted, "3a", "3b") {
             Ok(claims) => return Ok((claims, anchor)),
-            Err(denied) => last = denied,
+            // Anchors of different key types can fail one root at different
+            // steps: its `alg` fits the keys of one type only. A signature
+            // that did not verify under a key the `alg` fits (3b) is the
+            // failure to report, whatever order the anchors are in.
+            Err(denied) => {
+                if denied.step == "3b" || denial.as_ref().is_none_or(|d| d.step != "3b") {
+                    denial = Some(denied);
+                }
+            }
         }
     }
-    Err(last)
+    Err(denial.unwrap_or_else(|| deny("3b", "no trust anchor is configured")))
+}
+
+/// Whether the root verifies under this anchor's key (steps 3a and 3b).
+fn anchor_verifies(root: &str, anchor: &TrustAnchor, permitted: &[Algorithm]) -> bool {
+    let key = Jwk::from_key(&anchor.key);
+    jose::verify(root, Some(&key), AAT_TYP, permitted, "3a", "3b").is_ok()
 }
 
 /// Steps 3b (after the signature) to 3n.
 fn verify_root(
+    compact: &str,
     claims: Obj,
     anchors: &[TrustAnchor],
     verifying: &TrustAnchor,
@@ -286,9 +310,15 @@ fn verify_root(
         .and_then(Json::as_str)
         .filter(|iss| is_uri(iss))
         .filter(|iss| {
-            anchors
-                .iter()
-                .any(|anchor| anchor.key == verifying.key && anchor.issuer == *iss)
+            // Trust anchors are a set: the root is this issuer's when an
+            // anchor for the issuer verifies it. That anchor is not always
+            // the first whose key verified, because an ECDSA signature also
+            // verifies under a second public key.
+            anchors.iter().any(|anchor| {
+                anchor.issuer == *iss
+                    && (anchor.key == verifying.key
+                        || anchor_verifies(compact, anchor, opts.algorithms))
+            })
         })
         .ok_or_else(|| {
             deny(
@@ -297,7 +327,7 @@ fn verify_root(
             )
         })?
         .to_owned();
-    let holder = holder_key(&claims, "3l")?;
+    let holder = holder_key(&claims, opts.algorithms, "3l")?;
     let entry = aat_entry(&claims, true, "3m")?;
     let tools = constraint::decode_tools(entry, limits.max_constraint_depth, "3n")?;
     let root = Token {
@@ -322,11 +352,18 @@ fn verify_derived(
     opts: &VerifyOptions<'_>,
 ) -> Result<Token, Denied> {
     let limits = opts.limits;
-    let claims = jose::verify(compact, Some(&parent.holder), AAT_TYP, "4a", "4b")?;
+    let claims = jose::verify(
+        compact,
+        Some(&parent.holder),
+        AAT_TYP,
+        opts.algorithms,
+        "4a",
+        "4b",
+    )?;
     let jti = non_empty_str(&claims, "jti")
         .ok_or_else(|| deny("4b1", "jti is missing or not a non-empty string"))?
         .to_owned();
-    let holder = holder_key(&claims, "4b2")?;
+    let holder = holder_key(&claims, opts.algorithms, "4b2")?;
     if claims
         .get("authorization_details")
         .and_then(Json::as_arr)
@@ -407,10 +444,18 @@ fn verify_derived(
     })
 }
 
-/// Steps 3l and 4b2: `cnf.jwk` is a public Ed25519 key.
-fn holder_key(claims: &Obj, step: &'static str) -> Result<Jwk, Denied> {
+/// Steps 3l and 4b2: `cnf.jwk` is a public key, of a type a permitted
+/// algorithm uses. A key of any other type could only sign a token or a PoP
+/// that step 4a or 7a denies, so the token that binds it is refused here.
+fn holder_key(claims: &Obj, permitted: &[Algorithm], step: &'static str) -> Result<Jwk, Denied> {
     let jwk = jose::cnf_jwk(claims);
     let holder = Jwk::from_json(jwk).ok_or_else(|| deny(step, "cnf.jwk is missing or invalid"))?;
+    if !permitted.contains(&holder.algorithm()) {
+        return Err(deny(
+            step,
+            "cnf.jwk is a key of a type no permitted algorithm uses",
+        ));
+    }
     if jwk
         .and_then(Json::as_obj)
         .is_some_and(|jwk| jwk.contains("d"))

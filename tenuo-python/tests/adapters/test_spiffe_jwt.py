@@ -1645,7 +1645,10 @@ def test_guide_jwt_code_runs(tmp_path, monkeypatch, authority, workload_api, ser
     assert refund(call({"customer": "999", "cents": 100})).startswith("denied: ")
 
 
-def test_keys_from_before_an_unreadable_bundle_are_trusted_for_a_bounded_time(authority, workload_api):  # noqa: F811
+@pytest.mark.parametrize("malformed_wire", [False, True])
+def test_keys_from_before_an_unreadable_bundle_are_trusted_for_a_bounded_time(
+    authority, workload_api, malformed_wire,  # noqa: F811
+):
     """A bundle that cannot be read keeps the keys in use, but only for as long as an outage would."""
     own, token = f"spiffe://{DOMAIN}", authority.token()
     good = bundles_response(**{own: jwks(authority)})
@@ -1655,17 +1658,45 @@ def test_keys_from_before_an_unreadable_bundle_are_trusted_for_a_bounded_time(au
         trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, max_stale_seconds=1.0
     )
     try:
-        api.publish_jwt_bundles(bundles_response(**{own: b"garbage"}))
+        api.publish_jwt_bundles(b"\xff\xff not protobuf" if malformed_wire else bundles_response(**{own: b"garbage"}))
         assert eventually(lambda: validator._unreadable_since is not None)
         assert validator.authenticate(token).spiffe_id == AGENT  # Kept for now.
         since = validator._unreadable_since
-        api.publish_jwt_bundles(bundles_response(**{own: b"more garbage"}))  # Does not restart the clock.
+        api.publish_jwt_bundles(b"\xff" if malformed_wire else bundles_response(**{own: b"more garbage"}))
         time.sleep(1.2)
         assert validator._unreadable_since == since
         with pytest.raises(SpiffeError, match="JWT bundle cannot be read"):
             validator.authenticate(token)
         api.publish_jwt_bundles(good)
         assert eventually(lambda: validator._unreadable_since is None)
+        assert validator.authenticate(token).spiffe_id == AGENT
+    finally:
+        validator.close()
+
+
+@pytest.mark.parametrize("malformed_wire", [False, True])
+def test_unreadable_response_does_not_reset_an_expired_outage(authority, workload_api, malformed_wire):  # noqa: F811
+    own, token = f"spiffe://{DOMAIN}", authority.token()
+    good = bundles_response(**{own: jwks(authority)})
+    api = workload_api()
+    api.publish_jwt_bundles(good)
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, max_stale_seconds=1.0
+    )
+    try:
+        # Model an outage whose grace period has already elapsed, then a reconnect
+        # that returns bytes but no usable information about the retained keys.
+        lost = time.monotonic() - 60
+        validator._lost_since = lost
+        with pytest.raises(SpiffeError, match="SPIRE agent is unreachable"):
+            validator.authenticate(token)
+        api.publish_jwt_bundles(b"\xff" if malformed_wire else bundles_response(**{own: b"garbage"}))
+        assert eventually(lambda: validator._unreadable_since is not None)
+        assert validator._lost_since == lost
+        with pytest.raises(SpiffeError):
+            validator.authenticate(token)
+        api.publish_jwt_bundles(good)
+        assert eventually(lambda: validator._unreadable_since is None and validator._lost_since is None)
         assert validator.authenticate(token).spiffe_id == AGENT
     finally:
         validator.close()

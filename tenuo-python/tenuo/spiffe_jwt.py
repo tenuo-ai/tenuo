@@ -323,6 +323,15 @@ class SpiffeJWT:
         self._max_stale = max_stale_seconds
         owner = weakref.ref(self)
 
+        def parse(raw: bytes) -> Tuple[Union[_Keys, None, _Malformed], Dict[str, _Keys]]:
+            try:
+                return _jwt_bundles_from_response(raw, trust_domain, domains)
+            except Exception as exc:
+                # A broken envelope says nothing usable about any domain. Route
+                # it through the same bounded retention as an unreadable JWKS;
+                # the watcher's generic parse-error path cannot track key age.
+                return _Malformed(str(exc)), {}
+
         def deliver(update: Tuple[Union[_Keys, None, _Malformed], Dict[str, _Keys]]) -> None:
             validator = owner()
             if validator is None:
@@ -345,6 +354,10 @@ class SpiffeJWT:
                     "Ignoring a malformed JWT bundle for %s; keeping the keys in use: %s", trust_domain, keys.reason
                 )
                 return
+            # Receiving bytes alone is not recovery. Only a readable home
+            # bundle (including an explicit withdrawal) ends the outage.
+            validator._lost_since = None
+            validator._stale_warned = False
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
                 reason = (
@@ -362,14 +375,6 @@ class SpiffeJWT:
             validator._unreadable_since = None
             logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(keys), trust_domain)
 
-        def received() -> None:
-            # Only a message that really arrived shows the SPIRE agent is reachable.
-            validator = owner()
-            if validator is None:
-                raise _OwnerGone
-            validator._lost_since = None
-            validator._stale_warned = False
-
         def lost(status: str) -> None:
             validator = owner()
             if validator is None:
@@ -383,10 +388,9 @@ class SpiffeJWT:
         watcher = _WorkloadAPIWatcher(
             _workload_api_target(socket_path),
             _FETCH_JWT_BUNDLES,
-            lambda raw: _jwt_bundles_from_response(raw, trust_domain, domains),
+            parse,
             deliver,
             lost,
-            received,
         )
         self._watcher = watcher
         weakref.finalize(self, watcher.stop, False)

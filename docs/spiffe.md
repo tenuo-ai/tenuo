@@ -584,7 +584,8 @@ keep trusting them on old information: if SPIRE withdraws the keys or stops
 issuing the issuer its own identity, tokens are refused at once, and if the
 SPIRE agent is unreachable for five minutes (`max_stale_seconds`), or sends
 only JWT bundles the issuer cannot read for that long, tokens are refused
-until it returns. `audience` is the name agents request tokens for. Make it
+until a readable update arrives. This includes malformed Workload API messages;
+receiving unreadable bytes does not restart the grace period. `audience` is the name agents request tokens for. Make it
 specific to this issuer; its SPIFFE ID is the usual choice.
 
 One issuer can serve both kinds of SVID. Pass `tls=` and `jwt=` together, run
