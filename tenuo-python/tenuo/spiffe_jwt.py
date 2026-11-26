@@ -308,8 +308,17 @@ class SpiffeJWT:
 
     _paths: Optional[Tuple[str, ...]]
     _signature: Tuple[Tuple[int, int, int, int], ...]
-    _keys: _Keys
-    _federated_keys: Dict[str, _Keys]
+    # The home domain's keys and each federated domain's, replaced together in one
+    # assignment. Requests run in other threads: read both from one look at this.
+    _trusted: Tuple[_Keys, Dict[str, _Keys]]
+
+    @property
+    def _keys(self) -> _Keys:
+        return self._trusted[0]
+
+    @property
+    def _federated_keys(self) -> Dict[str, _Keys]:
+        return self._trusted[1]
 
     def __init__(
         self,
@@ -324,10 +333,10 @@ class SpiffeJWT:
         self._init_common(trust_domain, audience, leeway_seconds, tuple(federated))
         self._paths = (bundle_file, *federated.values())
         self._signature = _file_signature(self._paths)
-        self._keys = self._read_home()
-        if not self._keys:
+        home = self._read_home()
+        if not home:
             raise _no_keys(trust_domain)
-        self._federated_keys = _without_overlap(self._keys, self._read_federated(), trust_domain)
+        self._trusted = (home, _without_overlap(home, self._read_federated(), trust_domain))
 
     @classmethod
     def from_workload_api(
@@ -384,10 +393,11 @@ class SpiffeJWT:
                 raise _OwnerGone
             keys, foreign = update
             malformed = isinstance(keys, _Malformed)
-            home: _Keys = validator._keys if isinstance(keys, _Malformed) or keys is None else keys
+            home_now, federated = validator._trusted
+            home: _Keys = home_now if isinstance(keys, _Malformed) or keys is None else keys
             if validator._loaded or (keys and not malformed):
                 # Federated domains follow this response whatever happens to the home bundle.
-                validator._federated_keys = _without_overlap(home, foreign, trust_domain)
+                federated = _without_overlap(home, foreign, trust_domain)
             if isinstance(keys, _Malformed):
                 if not validator._loaded:
                     raise SpiffeError(keys.reason)  # Not usable to start with.
@@ -399,6 +409,7 @@ class SpiffeJWT:
                 logger.warning(
                     "Ignoring a malformed JWT bundle for %s; keeping the keys in use: %s", trust_domain, keys.reason
                 )
+                validator._trusted = (home_now, federated)
                 return
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
@@ -409,9 +420,11 @@ class SpiffeJWT:
                 )
                 if not validator._loaded:
                     raise SpiffeError(reason)  # Not usable to start with.
-                validator._withdraw(reason)
+                validator._withdraw(reason, federated)
             else:
-                validator._keys = keys
+                # One assignment for both: a key that moves between domains is
+                # never trusted for the old and the new one at once.
+                validator._trusted = (keys, federated)
                 validator._loaded = True
             # Receiving bytes alone is not recovery. Only a readable home bundle
             # (including an explicit withdrawal) ends an outage, and only once the
@@ -467,8 +480,7 @@ class SpiffeJWT:
         self._watcher: Optional[_WorkloadAPIWatcher] = None
         self._reload_lock = threading.Lock()
         self._checked = time.monotonic()
-        self._keys = {}
-        self._federated_keys = {}
+        self._trusted = ({}, {})
         self._loaded = False  # A usable bundle has been installed at least once.
         self._lost_since: Optional[float] = None  # When the Workload API stream was last lost.
         self._unreadable_since: Optional[float] = None  # Since when the home bundle could not be read.
@@ -492,10 +504,12 @@ class SpiffeJWT:
                 logger.warning("JWT bundle for federated trust domain %s is unusable: %s", domain, exc)
         return federated
 
-    def _withdraw(self, reason: str) -> None:
-        if self._keys:
+    def _withdraw(self, reason: str, federated: Optional[Dict[str, _Keys]] = None) -> None:
+        """Drop the home domain's keys, installing ``federated`` (or keeping the current ones) in the same step."""
+        home, current = self._trusted
+        if home:
             logger.warning("JWT-SVIDs for %s are refused until keys return: %s", self.trust_domain, reason)
-        self._keys = {}
+        self._trusted = ({}, current if federated is None else federated)
 
     def reload(self) -> None:
         """Read the bundle file again.
@@ -513,15 +527,16 @@ class SpiffeJWT:
             try:
                 keys = self._read_home()
             except Exception:
-                self._federated_keys = _without_overlap(self._keys, federated, self.trust_domain)
+                home = self._keys
+                self._trusted = (home, _without_overlap(home, federated, self.trust_domain))
                 raise
-            self._federated_keys = _without_overlap(keys, federated, self.trust_domain)
+            federated = _without_overlap(keys, federated, self.trust_domain)
             self._signature = signature
             if not keys:
-                self._withdraw(str(_no_keys(self.trust_domain)))
+                self._withdraw(str(_no_keys(self.trust_domain)), federated)
                 return
-            self._keys = keys
-        logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(self._keys), self.trust_domain)
+            self._trusted = (keys, federated)
+        logger.info("Loaded %d JWT-SVID signing key(s) for %s", len(keys), self.trust_domain)
 
     def reload_if_changed(self) -> bool:
         """Reload when the bundle file changed. Called automatically while tokens arrive."""
@@ -595,7 +610,8 @@ class SpiffeJWT:
         # A key ID may exist in more than one trust domain. Each candidate key can
         # only vouch for subjects in the trust domain it belongs to.
         candidates: List[Tuple[str, _Key]] = []
-        domains = [(self.trust_domain, self._keys), *self._federated_keys.items()]
+        home_keys, federated_keys = self._trusted  # One look: the two always belong together.
+        domains = [(self.trust_domain, home_keys), *federated_keys.items()]
         if kid is None:
             # The standard makes the key ID optional (JWT-SVID, section 2.2): try
             # each key the token's algorithm fits. Only the keys of the trust
@@ -606,7 +622,7 @@ class SpiffeJWT:
             claimed = _claimed_trust_domain(token)
             if claimed != self.trust_domain and claimed not in self._federates_with:
                 raise SpiffeError("JWT-SVID belongs to a different trust domain")
-            keys = self._keys if claimed == self.trust_domain else self._federated_keys.get(claimed, {})
+            keys = home_keys if claimed == self.trust_domain else federated_keys.get(claimed, {})
             candidates = [(claimed, key) for key in keys.values() if _fits(algorithm, key)]
             if len(candidates) > _MAX_UNNAMED_KEY_ATTEMPTS:
                 raise SpiffeError(

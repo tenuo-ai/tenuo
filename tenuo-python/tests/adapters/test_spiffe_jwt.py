@@ -1977,3 +1977,57 @@ def test_another_domains_keys_never_count_against_a_token_that_names_no_key(auth
     for signer, sub in ((authority, PARTNER_AGENT), (partner_keys[0], AGENT)):
         with pytest.raises(SpiffeError):
             small.authenticate(unnamed(signer, sub=sub))
+
+
+@pytest.mark.parametrize("source", ["files", "workload-api"])
+def test_a_key_that_changes_domain_is_never_trusted_for_both(authority, workload_api, tmp_path, source):  # noqa: F811
+    """Home and federated keys are replaced in one step, so no request sees a key under two trust domains."""
+    moving, partner = JWTAuthority(), JWTAuthority()
+    own, theirs = f"spiffe://{DOMAIN}", f"spiffe://{PARTNER}"
+    before = {own: jwks(authority, moving), theirs: jwks(partner)}
+    after = {own: jwks(authority), theirs: jwks(partner, moving)}  # The key leaves one domain for the other.
+    if source == "files":
+        own_file, partner_file = tmp_path / "own.json", tmp_path / "partner.json"
+        own_file.write_bytes(before[own])
+        partner_file.write_bytes(before[theirs])
+        validator = SpiffeJWT(
+            trust_domain=DOMAIN,
+            audience=AUDIENCE,
+            bundle_file=str(own_file),
+            federated_bundle_files={PARTNER: str(partner_file)},
+        )
+    else:
+        api = workload_api()
+        api.publish_jwt_bundles(bundles_response(**before))
+        validator = SpiffeJWT.from_workload_api(
+            trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, federates_with=[PARTNER]
+        )
+    shared = []
+
+    class Probe(type(validator)):
+        """Looks at the keys in force after every change of state, as a request in another thread might."""
+
+        def __setattr__(self, name, value):
+            super().__setattr__(name, value)
+            home, federated = self._keys, self._federated_keys
+            shared.extend(kid for keys in federated.values() for kid in keys if kid in home)
+
+    validator.__class__ = Probe
+    try:
+        assert moving.kid in validator._keys
+        if source == "files":
+            time.sleep(0.01)
+            partner_file.write_bytes(after[theirs])
+            own_file.write_bytes(after[own])
+            validator.reload()
+        else:
+            api.publish_jwt_bundles(bundles_response(**after))
+            assert eventually(lambda: moving.kid in validator._federated_keys.get(PARTNER, {}))
+        assert moving.kid not in validator._keys and moving.kid in validator._federated_keys[PARTNER]
+        assert shared == []
+        # The key now vouches for the partner's subjects only.
+        assert validator.authenticate(moving.token(sub=PARTNER_AGENT)).trust_domain == PARTNER
+        with pytest.raises(SpiffeError):
+            validator.authenticate(moving.token())
+    finally:
+        validator.close()
