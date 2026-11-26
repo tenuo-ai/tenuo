@@ -63,6 +63,7 @@ them, and checks that both sides switch to the renewed SVIDs without a restart:
 
 ```text
 Verified: a JWT-SVID from SPIRE was exchanged for a warrant; two improper requests were refused.
+Verified: a workload from a federated trust domain was accepted over mTLS and by JWT-SVID, and refused without federation.
 Verified: issuer and agent followed a renewal straight from the Workload API.
 Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
 ```
@@ -70,9 +71,12 @@ Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
 - The first line is the JWT-SVID exchange: the agent fetches a token from the
   SPIRE agent and posts it to the HTTP endpoint. A token for another audience
   and a workload the policy does not approve are both refused.
-- The second is an issuer and agent built with `SpiffeTLS.from_workload_api`,
+- The second is federation: the harness starts a second SPIRE deployment for
+  `partner.test`, exchanges bundles between the two servers, and has a partner
+  workload obtain a warrant from the issuer in `demo.test`.
+- The third is an issuer and agent built with `SpiffeTLS.from_workload_api`,
   reading the SPIRE agent's socket.
-- The third is the same pair reading credential files that the harness
+- The fourth is the same pair reading credential files that the harness
   rewrites.
 
 Processes, SQLite
@@ -91,7 +95,7 @@ On Linux with SPIRE binaries and the Python dependencies already installed:
 PYTHONPATH=tenuo-python python tenuo-python/examples/spiffe/live_spire.py
 ```
 
-The harness uses container-local port 18081 for SPIRE; it must be available.
+The harness uses container-local ports 18081 and 18082 for SPIRE; they must be available.
 
 ## Use credentials from an existing SPIRE deployment
 

@@ -34,7 +34,7 @@ import time
 import urllib.parse
 import weakref
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 try:
     import jwt as pyjwt
@@ -62,6 +62,7 @@ from tenuo.spiffe import (
     _proto_fields,
     _read_snapshot,
     _trust_domain,
+    _trust_domain_names,
     _workload_api_target,
     _WorkloadAPIWatcher,
 )
@@ -136,10 +137,19 @@ def _jwks_keys(document: bytes, trust_domain: str) -> Dict[str, _Key]:
     entries = data.get("keys") if isinstance(data, dict) else None
     if not isinstance(entries, list):
         raise SpiffeError("JWT bundle is not a JWKS document")
+    # A SPIFFE-format bundle marks every key with its use, and holds X.509
+    # authorities next to JWT keys: there, only keys marked "jwt-svid" count.
+    # The JWT bundles SPIRE's Workload API and spiffe-helper deliver are plain
+    # JWKS documents with no "use" at all, and every key in them is a JWT key.
+    marked = "spiffe_sequence" in data or any(isinstance(entry, dict) and "use" in entry for entry in entries)
     keys: Dict[str, _Key] = {}
     for entry in entries:
-        if not isinstance(entry, dict) or entry.get("use", "jwt-svid") != "jwt-svid":
-            continue  # X.509 authorities in a combined SPIFFE bundle.
+        if not isinstance(entry, dict) or "x5c" in entry:
+            continue  # Not a key, or an X.509 authority.
+        if marked and entry.get("use") != "jwt-svid":
+            if "use" not in entry:
+                logger.warning("Skipping a key without a use in a SPIFFE-format bundle for %s", trust_domain)
+            continue
         kid, kty = entry.get("kid"), entry.get("kty")
         if not isinstance(kid, str) or not kid:
             logger.warning("Skipping a JWT bundle key without a key ID")
@@ -170,18 +180,39 @@ def _no_keys(trust_domain: str) -> SpiffeError:
     return SpiffeError(f"JWT bundle for {trust_domain} contains no usable JWT-SVID signing keys")
 
 
-def _jwt_bundle_from_response(message: bytes, trust_domain: str) -> Optional[Dict[str, _Key]]:
-    """Pick this trust domain's JWKS from a JWTBundlesResponse. Other domains are ignored.
+_Keys = Dict[str, _Key]
 
-    Returns None when the response is well formed but has no bundle for the domain.
+
+def _jwt_bundles_from_response(
+    message: bytes, trust_domain: str, federates_with: Sequence[str] = ()
+) -> Tuple[Optional[_Keys], Dict[str, Optional[_Keys]]]:
+    """Read the JWKS of this trust domain and of each federated one from a JWTBundlesResponse.
+
+    The first result is None when the response is well formed but has no bundle
+    for this domain. For a federated domain, an empty result means the response
+    no longer offers it (its keys are withdrawn) and None means its bundle was
+    malformed (keep what is in use). Domains that were not asked for are ignored.
     """
+    documents: Dict[str, bytes] = {}
     for field, value in _proto_fields(message):
         if field != 1 or not isinstance(value, bytes):  # bundles: map<string, bytes>
             continue
         entry = {number: item for number, item in _proto_fields(value) if isinstance(item, bytes)}
-        if entry.get(1, b"") == f"spiffe://{trust_domain}".encode():
-            return _jwks_keys(entry.get(2, b""), trust_domain)
-    return None
+        name = entry.get(1, b"").decode("utf-8", "replace")
+        if name.startswith("spiffe://"):
+            documents[name[len("spiffe://") :]] = entry.get(2, b"")
+    own = _jwks_keys(documents[trust_domain], trust_domain) if trust_domain in documents else None
+    federated: Dict[str, Optional[_Keys]] = {}
+    for domain in federates_with:
+        if domain not in documents:
+            federated[domain] = {}
+            continue
+        try:
+            federated[domain] = _jwks_keys(documents[domain], domain)
+        except SpiffeError as exc:
+            logger.warning("Ignoring a malformed JWT bundle for federated trust domain %s: %s", domain, exc)
+            federated[domain] = None
+    return own, federated
 
 
 class SpiffeJWT:
@@ -193,17 +224,32 @@ class SpiffeJWT:
     ``spiffe-helper`` writes also works) or from the SPIRE agent with
     :meth:`from_workload_api`, which follows key rotation. A changed file is
     picked up within a few seconds.
+
+    Federation: to accept tokens from other trust domains, give each domain's
+    keys separately (``federated_bundle_files``, or ``federates_with`` with the
+    Workload API). A token is only ever checked against the keys of the trust
+    domain its subject names.
     """
 
     _paths: Optional[Tuple[str, ...]]
     _signature: Tuple[Tuple[int, int, int, int], ...]
-    _keys: Dict[str, _Key]
+    _keys: _Keys
+    _federated_keys: Dict[str, _Keys]
 
-    def __init__(self, *, trust_domain: str, audience: str, bundle_file: str, leeway_seconds: float = 5.0):
-        self._init_common(trust_domain, audience, leeway_seconds)
-        self._paths = (bundle_file,)
+    def __init__(
+        self,
+        *,
+        trust_domain: str,
+        audience: str,
+        bundle_file: str,
+        leeway_seconds: float = 5.0,
+        federated_bundle_files: Optional[Mapping[str, str]] = None,
+    ):
+        federated = dict(federated_bundle_files or {})
+        self._init_common(trust_domain, audience, leeway_seconds, tuple(federated))
+        self._paths = (bundle_file, *federated.values())
         self._signature = _file_signature(self._paths)
-        self._keys = self._read_file()
+        self._keys, self._federated_keys = self._read_files()
         if not self._keys:
             raise _no_keys(trust_domain)
 
@@ -217,6 +263,7 @@ class SpiffeJWT:
         timeout: float = 30.0,
         leeway_seconds: float = 5.0,
         max_stale_seconds: float = 300.0,
+        federates_with: Sequence[str] = (),
     ) -> "SpiffeJWT":
         """Take the trust domain's JWT signing keys from the SPIRE agent.
 
@@ -229,24 +276,36 @@ class SpiffeJWT:
         workload its identity, tokens are refused at once; when the SPIRE agent
         has been unreachable for ``max_stale_seconds``, tokens are refused
         until the stream returns.
+
+        ``federates_with`` names other trust domains whose tokens are accepted;
+        their keys come from the same stream when the registration entry has
+        ``-federatesWith``.
         """
         try:
             import grpc  # noqa: F401
         except ImportError as exc:
             raise ImportError("The Workload API source requires pip install 'tenuo[spiffe-workload-api]'") from exc
         self = cls.__new__(cls)
-        self._init_common(trust_domain, audience, leeway_seconds)
+        self._init_common(trust_domain, audience, leeway_seconds, federates_with)
+        domains = self._federates_with
         if timeout <= 0 or max_stale_seconds <= 0:
             raise ValueError("timeout and max_stale_seconds must be positive")
         self._max_stale = max_stale_seconds
         owner = weakref.ref(self)
 
-        def deliver(keys: Optional[Dict[str, _Key]]) -> None:
+        def deliver(update: Tuple[Optional[_Keys], Dict[str, Optional[_Keys]]]) -> None:
             validator = owner()
             if validator is None:
                 raise _OwnerGone
+            keys, foreign = update
             validator._lost_since = None
             validator._stale_warned = False
+            if keys or validator._loaded:
+                # Keep a federated domain's keys only when its bundle was malformed.
+                validator._federated_keys = {
+                    domain: validator._federated_keys.get(domain, {}) if found is None else found
+                    for domain, found in foreign.items()
+                }
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
                 reason = (
@@ -270,11 +329,12 @@ class SpiffeJWT:
                 validator._lost_since = time.monotonic()
             if status == "PERMISSION_DENIED" and validator._loaded:
                 validator._withdraw("SPIRE no longer issues this workload an identity")
+                validator._federated_keys = {}
 
         watcher = _WorkloadAPIWatcher(
             _workload_api_target(socket_path),
             _FETCH_JWT_BUNDLES,
-            lambda raw: _jwt_bundle_from_response(raw, trust_domain),
+            lambda raw: _jwt_bundles_from_response(raw, trust_domain, domains),
             deliver,
             lost,
         )
@@ -286,8 +346,10 @@ class SpiffeJWT:
             raise SpiffeError(f"No usable JWT bundle from the Workload API at {watcher.target}: {reason}")
         return self
 
-    def _init_common(self, trust_domain: str, audience: str, leeway_seconds: float) -> None:
-        _trust_domain(f"spiffe://{trust_domain}/x")  # Validates the name.
+    def _init_common(
+        self, trust_domain: str, audience: str, leeway_seconds: float, federates_with: Sequence[str] = ()
+    ) -> None:
+        self._federates_with = _trust_domain_names(trust_domain, federates_with)
         if not isinstance(audience, str) or not audience or len(audience) > 2048:
             raise ValueError("audience must be a non-empty string")
         if not 0 <= leeway_seconds <= 60:
@@ -301,14 +363,20 @@ class SpiffeJWT:
         self._reload_lock = threading.Lock()
         self._checked = time.monotonic()
         self._keys = {}
+        self._federated_keys = {}
         self._loaded = False  # A usable bundle has been installed at least once.
         self._lost_since: Optional[float] = None  # When the Workload API stream was last lost.
         self._stale_warned = False
         self._max_stale = 0.0
 
-    def _read_file(self) -> Dict[str, _Key]:
+    def _read_files(self) -> Tuple[_Keys, Dict[str, _Keys]]:
         assert self._paths is not None
-        return _jwks_keys(_read_snapshot(self._paths[0]), self.trust_domain)
+        own = _jwks_keys(_read_snapshot(self._paths[0]), self.trust_domain)
+        federated = {
+            domain: _jwks_keys(_read_snapshot(path), domain)
+            for domain, path in zip(self._federates_with, self._paths[1:])
+        }
+        return own, federated
 
     def _withdraw(self, reason: str) -> None:
         if self._keys:
@@ -325,7 +393,7 @@ class SpiffeJWT:
             return
         with self._reload_lock:
             signature = _file_signature(self._paths)
-            keys = self._read_file()
+            keys, self._federated_keys = self._read_files()
             self._signature = signature
             if not keys:
                 self._withdraw(str(_no_keys(self.trust_domain)))
@@ -385,9 +453,26 @@ class SpiffeJWT:
             raise SpiffeError("Malformed JWT-SVID")
         if not isinstance(kid, str) or not kid:
             raise SpiffeError("JWT-SVID names no signing key")
-        key = self._keys.get(kid)
-        if key is None:
+        # A key ID may exist in more than one trust domain. Each candidate key can
+        # only vouch for subjects in the trust domain it belongs to.
+        candidates: List[Tuple[str, _Key]] = []
+        if kid in self._keys:
+            candidates.append((self.trust_domain, self._keys[kid]))
+        for domain, keys in self._federated_keys.items():
+            if kid in keys:
+                candidates.append((domain, keys[kid]))
+        if not candidates:
             raise SpiffeError("JWT-SVID was signed by a key that is not in the trust bundle")
+        refusal: Optional[SpiffeError] = None
+        for domain, key in candidates:
+            try:
+                return self._verify(token, algorithm, key, domain)
+            except SpiffeError as exc:
+                refusal = refusal or exc
+        assert refusal is not None
+        raise refusal
+
+    def _verify(self, token: str, algorithm: str, key: _Key, key_domain: str) -> SpiffeIdentity:
         # Tie the algorithm to the key's own type, so a token cannot pick one the key was not made for.
         if isinstance(key, rsa.RSAPublicKey):
             supported = algorithm in _RSA_ALGORITHMS
@@ -418,8 +503,11 @@ class SpiffeJWT:
             or not 0 < expires < 2**40
         ):
             raise SpiffeError("Invalid JWT-SVID")
-        if _trust_domain(subject) != self.trust_domain:
+        subject_domain = _trust_domain(subject)
+        if subject_domain != self.trust_domain and subject_domain not in self._federates_with:
             raise SpiffeError("JWT-SVID belongs to a different trust domain")
+        if subject_domain != key_domain:
+            raise SpiffeError("JWT-SVID was not signed by its own trust domain's keys")
         digest = hashlib.sha256(token.encode("ascii")).hexdigest()
         return SpiffeIdentity(subject, digest, float(expires), "jwt")
 

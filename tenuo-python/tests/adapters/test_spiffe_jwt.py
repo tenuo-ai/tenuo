@@ -270,6 +270,37 @@ def test_bundle_file_formats(authority, tmp_path):
         assert validator.authenticate(authority.token()).spiffe_id == AGENT
 
 
+def test_only_marked_keys_count_in_a_spiffe_format_bundle(authority, tmp_path):
+    """In a bundle that also holds X.509 authorities, an unmarked key is not a JWT signing key."""
+    unmarked, x509_authority = JWTAuthority(), JWTAuthority()
+    plain = {key: value for key, value in unmarked.jwk.items() if key != "use"}
+    with_chain = {**{k: v for k, v in x509_authority.jwk.items() if k != "use"}, "x5c": ["AAAA"]}
+    path = tmp_path / "bundle.json"
+    # As `spire-server bundle show -format spiffe` writes it: every key carries a use.
+    path.write_bytes(
+        json.dumps(
+            {
+                "spiffe_sequence": 3,
+                "keys": [authority.jwk, plain, {**x509_authority.jwk, "use": "x509-svid", "x5c": ["AAAA"]}],
+            }
+        ).encode()
+    )
+    validator = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+    assert list(validator._keys) == [authority.kid]
+    assert validator.authenticate(authority.token()).spiffe_id == AGENT
+    for forged in (unmarked.token(), x509_authority.token()):
+        with pytest.raises(SpiffeError, match="not in the trust bundle"):
+            validator.authenticate(forged)
+    # A key that carries a certificate chain is an X.509 authority in any document.
+    path.write_bytes(json.dumps({"keys": [plain, with_chain]}).encode())
+    validator = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+    assert list(validator._keys) == [unmarked.kid]
+    # A sequence number alone marks the SPIFFE format: nothing unmarked is accepted.
+    path.write_bytes(json.dumps({"spiffe_sequence": 1, "keys": [plain]}).encode())
+    with pytest.raises(SpiffeError, match="no usable JWT-SVID signing keys"):
+        SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+
+
 def test_unusable_bundles_are_refused(authority, tmp_path):
     small = JWTAuthority("RSA", bits=1024)
     private = json.loads(pyjwt.algorithms.ECAlgorithm.to_jwk(authority.key))
@@ -539,6 +570,159 @@ def test_workload_api_startup_needs_usable_keys(workload_api):  # noqa: F811
     api.publish_jwt_bundles(bundles_response(**{f"spiffe://{DOMAIN}": jwks()}))
     with pytest.raises(SpiffeError, match="no usable JWT-SVID signing keys"):
         SpiffeJWT.from_workload_api(trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=0.5)
+
+
+# -- federation ---------------------------------------------------------------
+
+PARTNER = "partner.test"
+PARTNER_AGENT = f"spiffe://{PARTNER}/agent"
+
+
+@pytest.fixture
+def federated(authority, tmp_path):
+    """A validator for example.test that also accepts partner.test tokens."""
+    partner = JWTAuthority()
+    own_file, partner_file = tmp_path / "own.json", tmp_path / "partner.json"
+    own_file.write_bytes(jwks(authority))
+    partner_file.write_bytes(jwks(partner))
+    validator = SpiffeJWT(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        bundle_file=str(own_file),
+        federated_bundle_files={PARTNER: str(partner_file)},
+    )
+    return validator, partner, partner_file
+
+
+def test_federated_tokens_are_accepted_for_their_own_domain(federated, authority):
+    validator, partner, _ = federated
+    identity = validator.authenticate(partner.token(sub=PARTNER_AGENT))
+    assert (identity.spiffe_id, identity.trust_domain, identity.svid_type) == (PARTNER_AGENT, PARTNER, "jwt")
+    assert validator.authenticate(authority.token()).trust_domain == DOMAIN
+
+
+def test_one_domains_keys_cannot_sign_for_another(federated, authority):
+    validator, partner, _ = federated
+    with pytest.raises(SpiffeError, match="not signed by its own trust domain's keys"):
+        validator.authenticate(partner.token(sub=AGENT))  # The partner's key names an example.test workload.
+    with pytest.raises(SpiffeError, match="not signed by its own trust domain's keys"):
+        validator.authenticate(authority.token(sub=PARTNER_AGENT))
+    with pytest.raises(SpiffeError, match="different trust domain"):
+        validator.authenticate(partner.token(sub="spiffe://other.test/agent"))
+
+
+def test_key_ids_shared_between_domains_stay_separate(tmp_path):
+    own, partner = JWTAuthority(kid="shared"), JWTAuthority(kid="shared")
+    own_file, partner_file = tmp_path / "own.json", tmp_path / "partner.json"
+    own_file.write_bytes(jwks(own))
+    partner_file.write_bytes(jwks(partner))
+    validator = SpiffeJWT(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        bundle_file=str(own_file),
+        federated_bundle_files={PARTNER: str(partner_file)},
+    )
+    assert validator.authenticate(own.token()).spiffe_id == AGENT
+    assert validator.authenticate(partner.token(sub=PARTNER_AGENT)).spiffe_id == PARTNER_AGENT
+    for forged in (partner.token(sub=AGENT), own.token(sub=PARTNER_AGENT)):
+        with pytest.raises(SpiffeError):
+            validator.authenticate(forged)
+
+
+def test_federated_keys_from_one_helper_file_and_their_withdrawal(authority, tmp_path, monkeypatch):
+    monkeypatch.setattr("tenuo.spiffe_jwt._FILE_CHECK_SECONDS", 0.0)
+    partner = JWTAuthority()
+    helper = tmp_path / "jwt_bundle.json"
+
+    def write(**domains):
+        time.sleep(0.01)
+        helper.write_bytes(json.dumps({d: base64.b64encode(doc).decode() for d, doc in domains.items()}).encode())
+
+    write(**{DOMAIN: jwks(authority), PARTNER: jwks(partner)})
+    validator = SpiffeJWT(
+        trust_domain=DOMAIN,
+        audience=AUDIENCE,
+        bundle_file=str(helper),
+        federated_bundle_files={PARTNER: str(helper)},
+    )
+    token = partner.token(sub=PARTNER_AGENT)
+    assert validator.authenticate(token).trust_domain == PARTNER
+    write(**{DOMAIN: jwks(authority)})  # The helper no longer lists the partner.
+    with pytest.raises(SpiffeError, match="not in the trust bundle"):
+        validator.authenticate(token)
+    assert validator.authenticate(authority.token()).spiffe_id == AGENT  # The home domain is unaffected.
+    write(**{DOMAIN: jwks(authority), PARTNER: jwks(partner)})
+    assert validator.authenticate(token).trust_domain == PARTNER
+
+
+def test_federation_configuration_is_validated(authority, tmp_path):
+    path = tmp_path / "bundle.json"
+    path.write_bytes(jwks(authority))
+    for bad in ({DOMAIN: str(path)}, {"Partner.Test": str(path)}):
+        with pytest.raises(ValueError):
+            SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path), federated_bundle_files=bad)
+
+
+def test_workload_api_federated_jwt_bundles(authority, workload_api):  # noqa: F811
+    grpc = pytest.importorskip("grpc")
+    partner, foreign = JWTAuthority(), JWTAuthority()
+    own, theirs = f"spiffe://{DOMAIN}", f"spiffe://{PARTNER}"
+    full = bundles_response(**{own: jwks(authority), theirs: jwks(partner), "spiffe://foreign.test": jwks(foreign)})
+    api = workload_api()
+    api.publish_jwt_bundles(full)
+    validator = SpiffeJWT.from_workload_api(
+        trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=5, federates_with=[PARTNER]
+    )
+    token = partner.token(sub=PARTNER_AGENT)
+
+    def accepted():
+        try:
+            return validator.authenticate(token).trust_domain == PARTNER
+        except SpiffeError:
+            return False
+
+    try:
+        assert accepted()
+        with pytest.raises(SpiffeError, match="not in the trust bundle"):
+            validator.authenticate(foreign.token(sub="spiffe://foreign.test/agent"))  # Not asked for.
+        with pytest.raises(SpiffeError, match="its own trust domain's keys"):
+            validator.authenticate(partner.token(sub=AGENT))
+        # A malformed bundle for the partner keeps its keys in use; the home domain still updates.
+        successor = JWTAuthority()
+        api.publish_jwt_bundles(bundles_response(**{own: jwks(authority, successor), theirs: b"garbage"}))
+        assert eventually(lambda: successor.kid in validator._keys)
+        assert accepted()
+        # SPIRE stops offering the partner's bundle: its tokens are refused, the home domain's are not.
+        api.publish_jwt_bundles(bundles_response(**{own: jwks(authority)}))
+        assert eventually(lambda: not accepted())
+        assert validator.authenticate(authority.token()).spiffe_id == AGENT
+        api.publish_jwt_bundles(full)
+        assert eventually(accepted)
+        # Losing this workload's own identity withdraws every domain's keys.
+        api.refuse = grpc.StatusCode.PERMISSION_DENIED
+        api.drop_streams()
+        assert eventually(lambda: not accepted())
+        assert validator._federated_keys == {}
+    finally:
+        validator.close()
+    with pytest.raises(ValueError, match="list of names"):
+        SpiffeJWT.from_workload_api(
+            trust_domain=DOMAIN, audience=AUDIENCE, socket_path=api.address, timeout=1, federates_with=PARTNER
+        )
+
+
+def test_jwt_issuance_across_trust_domains(federated):
+    validator, partner, _ = federated
+    seen = []
+
+    def policy(identity, task_id):
+        seen.append((identity.trust_domain, identity.svid_type))
+        return SpiffeGrant(REFUND) if identity.trust_domain == PARTNER else None
+
+    issuer = SpiffeWarrantIssuer(signing_key=SigningKey.generate(), policy=policy, jwt=validator)
+    holder = SigningKey.generate()
+    warrant = issue(issuer, partner.token(sub=PARTNER_AGENT), holder)
+    assert seen == [(PARTNER, "jwt")] and warrant.authorized_holder == holder.public_key
 
 
 def svids_response(*pairs):

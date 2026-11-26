@@ -20,7 +20,8 @@ one more registered workload.
 The adapter is Python. It takes SVIDs straight from the SPIRE agent, or from
 files. It authenticates agents with X.509-SVIDs over mTLS, or with
 [JWT-SVIDs](#jwt-svids-when-mtls-cannot-reach-the-issuer) where mTLS cannot
-reach the issuer. Agents in other languages can use the
+reach the issuer, and it can accept workloads from
+[federated trust domains](#federation-workloads-from-another-trust-domain). Agents in other languages can use the
 [wire protocol](#wire-protocol), and tools can verify warrants with any Tenuo
 SDK. We run the exchange on this page against SPIRE 1.16.0 in CI, including a
 renewal of both SVIDs while the issuer is serving. The Python blocks that start
@@ -624,8 +625,101 @@ was close to expiry. Raise the entry's JWT-SVID lifetime with
 **With files.** `spiffe-helper` can write both sides' inputs (`jwt_svids` and
 `jwt_bundle_file_name` in its config). On the issuer, use
 `SpiffeJWT(trust_domain=..., audience=..., bundle_file="/run/spiffe/jwt_bundle.json")`;
-a changed file is picked up within a few seconds. On the agent, pass
+a changed file is picked up within a few seconds. A bundle in SPIFFE format
+(`spire-server bundle show -format spiffe`) works too; from it only the keys
+marked `jwt-svid` are used. On the agent, pass
 `token=lambda: Path("/run/spiffe/jwt_svid.token").read_text()`.
+
+---
+
+## Federation: workloads from another trust domain
+
+Two SPIRE deployments can federate, so that workloads of one trust domain can
+authenticate to workloads of another. A partner's agents, or agents in a
+second cluster of your own, can then ask your issuer for warrants.
+
+The adapter keeps each trust domain's bundle separate. That matters: if all
+authorities were pooled into one trust store, the partner's CA could issue an
+SVID naming one of *your* workloads and it would be accepted. Here, after the
+TLS handshake, a peer's SVID must be anchored in the bundle of the trust domain
+it claims, and a JWT-SVID is only checked against the keys of the trust domain
+in its subject.
+
+### On the SPIRE side
+
+Each SPIRE server needs the other domain's bundle, and each registration entry
+that should receive it needs `-federatesWith`. This is standard SPIRE
+federation; the
+[SPIRE federation guide](https://spiffe.io/docs/latest/architecture/federation/readme/)
+covers keeping bundles in sync automatically.
+
+```bash
+# On acme.test's server; repeat in the other direction on partner.test's server.
+spire-server bundle show -format spiffe > acme.test.bundle
+spire-server bundle set -format spiffe -id spiffe://acme.test -path acme.test.bundle   # run on partner.test
+
+spire-server entry create -parentID spiffe://acme.test/node-a \
+    -spiffeID spiffe://acme.test/issuer -selector unix:uid:1001 \
+    -federatesWith spiffe://partner.test
+```
+
+### In the issuer and the agent
+
+Name the trust domains you accept. With the Workload API, their bundles arrive
+on the same stream as your own:
+
+```python
+# federated_issuer.py
+from tenuo import Exact, Range
+from tenuo.spiffe import SpiffeGrant, SpiffeTLS
+
+transport = SpiffeTLS.from_workload_api(
+    trust_domain="acme.test",
+    socket_path="/run/spire/sockets/agent.sock",
+    server_side=True,
+    federates_with=["partner.test"],
+)
+
+approved_tasks = {
+    "refund-task-123": {"agent": "spiffe://partner.test/agents/refund", "customer": "123", "max_cents": 500},
+}
+
+
+def policy(identity, task_id):
+    task = approved_tasks.get(task_id)
+    # The full SPIFFE ID includes the trust domain. Never match on the path alone.
+    if task is None or task["agent"] != identity.spiffe_id:
+        return None
+    if identity.trust_domain not in ("acme.test", "partner.test"):
+        return None
+    return SpiffeGrant(
+        capabilities={"refund": {"customer": Exact(task["customer"]), "cents": Range(1, task["max_cents"])}},
+        ttl_seconds=120,
+    )
+```
+
+The rest of `issuer.py` from step 3 is unchanged. The partner's agent does the
+mirror image: `trust_domain="partner.test"` and `federates_with=["acme.test"]`,
+with `issuer_id="spiffe://acme.test/issuer"` in `request_warrant`.
+
+- **Policy.** `identity.trust_domain` tells you where a caller comes from. A
+  workload named `/agents/refund` in the partner's domain is a different
+  workload from yours with the same path, so compare whole SPIFFE IDs.
+- **JWT-SVIDs.** `SpiffeJWT.from_workload_api(..., federates_with=["partner.test"])`
+  works the same way.
+- **With files.** Pass each domain's bundle separately:
+  `SpiffeTLS(..., federated_bundle_files={"partner.test": "/run/spiffe/partner_bundle.pem"})`,
+  and the same argument on `SpiffeJWT`. `spiffe-helper` cannot write federated
+  X.509 bundles as separate files (its `include_federated_domains` option pools
+  them), so with files you export each domain's bundle yourself. The Workload
+  API is the simpler route.
+- **A domain SPIRE stops offering** is no longer trusted: its workloads are
+  refused until the bundle returns.
+- **Python 3.9.** Python 3.10 and newer expose the certificate chain the TLS
+  library verified, and the adapter uses its trust anchor. Python 3.9 does not,
+  so there a peer's SVID must be signed directly by an authority in its
+  domain's bundle. SVID chains through an intermediate CA (nested SPIRE, some
+  upstream authorities) need Python 3.10 or newer when federation is on.
 
 ---
 
@@ -790,7 +884,9 @@ matching reason on the `tenuo.spiffe` logger.
 | `Could not complete the exchange with the issuer at HOST:PORT: ...` | Connection refused, reset, or timed out. A reset can mean the issuer is at `max_connections`. | Check the address, the network path, and issuer load. |
 | `Connection closed before a reply` | The issuer's 10-second deadline passed, usually a slow policy or audit call. | Check policy latency in the issuer log. |
 | `Unexpected peer SPIFFE ID` | `issuer_id` is not the ID on the issuer's SVID. | Compare with the issuer's registration entry. |
-| `SVID belongs to a different trust domain` | `trust_domain` does not match the SVID. | Fix the `SpiffeTLS` argument or the files. |
+| `SVID belongs to a different trust domain` | `trust_domain` does not match the SVID, or the peer's domain is not in `federates_with`. | Fix the `SpiffeTLS` arguments or the files. |
+| `SVID was not issued by its own trust domain's authorities` | With federation: the peer's SVID chains to another domain's authority, or (Python 3.9) through an intermediate CA. | Check which SPIRE issued the SVID; use Python 3.10+ for chains with intermediates. |
+| `No trust bundle is loaded for trust domain ...` | SPIRE is not offering that domain's bundle to this workload. | Add `-federatesWith` to the registration entry and set the bundle on the server. |
 | `No usable SVID from the Workload API at ...: PERMISSION_DENIED: no identity issued` (at startup) | No registration entry matches this process. | Compare the entry's selectors with the user or pod the workload runs as. A new entry can take a few seconds to reach the SPIRE agent. |
 | `No usable SVID from the Workload API at ...: UNAVAILABLE: ...` (at startup) | The socket path is wrong, or the SPIRE agent is not running. | Check `socket_path` or `SPIFFE_ENDPOINT_SOCKET`, and that the workload can open the socket. |
 | `The Workload API did not offer spiffe://...` | `spiffe_id` names an SVID this process is not entitled to. | The message lists the SVIDs that were offered. |
@@ -813,6 +909,7 @@ With JWT-SVIDs the agent's message starts `Issuer refused (HTTP <status>):`.
 | `...(HTTP 401): JWT-SVID has expired` | The token sat too long, or the clocks disagree. | Fetch the token just before the request, as the example does. |
 | `...(HTTP 403): Holder proof is too old or from the future; check the clocks on both sides` | Agent and issuer clocks differ by more than 60 seconds. | Synchronize clocks. |
 | `...(HTTP 403): SVID expires too soon to issue a warrant` | The token had about a second left. | Fetch a fresh token. |
+| `...(HTTP 401): JWT-SVID was not signed by its own trust domain's keys` | With federation: the token names one trust domain and was signed by another's key. | Check which SPIRE minted the token. |
 | `...(HTTP 503): Issuer is busy; retry shortly` | 256 requests were already in progress. | Retry; check policy latency; raise `max_concurrent`. |
 | `...(HTTP 503): Issuer is at its limit for recent JWT-SVID requests; retry shortly` | The process issued 16384 JWT warrants within a minute. | Retry; add replicas or raise `max_jwt_proofs`. |
 | `The TLS certificate presented by HOST:PORT was not accepted: ...` | The load balancer's certificate does not chain to the agent's roots. | Pass `ca_file=` for a private CA. |
@@ -916,8 +1013,10 @@ requires `sub`, `aud` and `exp`.
 
 ### What this adapter does not do
 
-- **Federation and forwarded identity headers** are not supported. One
-  `SpiffeTLS` or `SpiffeJWT` trusts one trust domain's bundle.
+- **Forwarded identity headers** are not supported: the issuer never takes a
+  caller's identity from a proxy's word.
+- **It does not exchange bundles between trust domains.** SPIRE does that; the
+  adapter consumes what SPIRE delivers.
 - **JWT-SVIDs signed with ML-DSA**, which the standard also allows, are not
   accepted yet.
 - **It does not revoke.** Removing a workload's registration entry stops new
@@ -933,20 +1032,20 @@ requires `sub`, `aud` and `exp`.
 
 | Name | Purpose |
 |---|---|
-| `SpiffeTLS.from_workload_api(trust_domain=, server_side=, socket_path=, spiffe_id=, timeout=)` | Takes credentials from the SPIRE agent and follows renewals. `close()` stops following. |
-| `SpiffeTLS(trust_domain=, bundle_file=, cert_file=, key_file=, server_side=)` | Loads credentials from files. `reload()` and `reload_if_changed()` pick up new ones. |
+| `SpiffeTLS.from_workload_api(trust_domain=, server_side=, socket_path=, spiffe_id=, timeout=, federates_with=)` | Takes credentials from the SPIRE agent and follows renewals. `close()` stops following. |
+| `SpiffeTLS(trust_domain=, bundle_file=, cert_file=, key_file=, server_side=, federated_bundle_files=)` | Loads credentials from files. `reload()` and `reload_if_changed()` pick up new ones. |
 | `transport.authenticate(connection, expected_id=)` | Returns the peer's `SpiffeIdentity`. `transport.identity` is the local one. |
 | `SpiffeWarrantIssuer(tls=, jwt=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=)` | Runs policy, challenges the holder key, mints warrants. |
 | `SpiffeIssuerServer(issuer, host=, port=, max_connections=, timeout=, reload_interval=, max_workers=)` | The mTLS endpoint. `async with` it, then `serve_forever()`. |
 | `request_warrant(tls, address, issuer_id=, issuer_key=, holder_key=, task_id=, timeout=)` | Agent-side call. `arequest_warrant` for asyncio. `issuer_key` may be a list. |
-| `SpiffeJWT.from_workload_api(trust_domain=, audience=, socket_path=)` / `SpiffeJWT(trust_domain=, audience=, bundle_file=)` | Validates JWT-SVIDs. `authenticate(token)` returns a `SpiffeIdentity`. In `tenuo.spiffe_jwt`. |
+| `SpiffeJWT.from_workload_api(trust_domain=, audience=, socket_path=, federates_with=)` / `SpiffeJWT(trust_domain=, audience=, bundle_file=, federated_bundle_files=)` | Validates JWT-SVIDs. `authenticate(token)` returns a `SpiffeIdentity`. In `tenuo.spiffe_jwt`. |
 | `SpiffeJWTIssuerApp(issuer, path="/warrants", max_concurrent=, max_workers=, body_timeout=)` | ASGI endpoint for JWT-SVID bearers. |
 | `request_warrant_jwt(url, token=, audience=, issuer_key=, holder_key=, task_id=, ca_file=)` | Agent-side call. `arequest_warrant_jwt` for asyncio. |
 | `fetch_jwt_svid(audience, socket_path=, spiffe_id=)` | Gets a JWT-SVID from the SPIRE agent. |
 | `issuer.issue_jwt(token, holder, task_id, proof)` and `sign_jwt_holder_proof(...)` | The same exchange without the bundled endpoint, for other frameworks. The proof is a `SpiffeJWTProof`. |
 | `SpiffeGrant(capabilities, ttl_seconds=300, max_depth=0)` | What a policy returns. |
 | `ANY_ARGUMENTS` | Explicit "no argument constraints" for one tool. |
-| `SpiffeIdentity` | `spiffe_id`, `svid_type` (`"x509"` or `"jwt"`), `certificate_sha256` (of the certificate or token), `expires_at`. |
+| `SpiffeIdentity` | `spiffe_id`, `trust_domain`, `svid_type` (`"x509"` or `"jwt"`), `certificate_sha256` (of the certificate or token), `expires_at`. |
 | `SpiffeIssuance` | The record passed to `audit`. |
 | `sign_holder_challenge(...)` | Agent-side signing for the lower-level API. |
 | `SpiffeError` | Raised for every refusal and client failure. A subclass of `ValueError`. |

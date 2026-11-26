@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   taken directly from the SPIRE Workload API (`tenuo[spiffe-workload-api]`) or
   from files, renewal without rebuilding listeners, JWT-SVID authentication
   over HTTPS for deployments where mTLS cannot reach the issuer
-  (`tenuo[spiffe-jwt]`, `tenuo.spiffe_jwt`), SVID-bounded expiry,
+  (`tenuo[spiffe-jwt]`, `tenuo.spiffe_jwt`), SPIFFE federation with each trust
+  domain bound to its own bundle, SVID-bounded expiry,
   and development-PKI and real-SPIRE demos. See [the SPIFFE guide](docs/spiffe.md).
 
 ## [0.3.8] - 2026-11-24

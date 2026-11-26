@@ -1708,6 +1708,26 @@ def test_workload_api_uses_update_once_it_becomes_valid(ca, workload_api, from_a
     assert server.identity != before and server.reload_if_changed() is False
 
 
+def test_workload_api_installs_a_waiting_renewal_by_itself(ca, workload_api, from_api):
+    """Nothing has to call reload for a renewal that was not valid yet to take effect."""
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    server = from_api(api)
+    before = server.identity
+    api.publish(x509_response(svid_entry(ca, SERVER, starts=2)))  # Valid two seconds from now.
+    time.sleep(0.3)
+    assert server.identity == before
+    assert eventually(lambda: server.identity != before, seconds=10)
+    assert server._watcher._pending is None
+    # A watcher that is stopped does not keep retrying.
+    api.publish(x509_response(svid_entry(ca, SERVER, starts=2)))
+    assert eventually(lambda: server._watcher._pending is not None)
+    current = server.identity
+    server.close()
+    time.sleep(2.6)
+    assert server.identity == current
+
+
 def test_workload_api_newer_response_supersedes_a_waiting_update(ca, workload_api, from_api):
     api = workload_api()
     api.publish(x509_response(svid_entry(ca, SERVER)))
@@ -1803,6 +1823,229 @@ def test_workload_api_message_decoder_rejects_malformed_input(message):
         _x509_snapshot(message, None)
 
 
+# -- federation ----------------------------------------------------------------------
+
+PARTNER = "partner.test"
+PARTNER_AGENT = f"spiffe://{PARTNER}/agent"
+
+
+def sub_ca(parent, directory, name="intermediate"):
+    """An intermediate CA signed by ``parent``, able to issue leaves."""
+    child = CA.__new__(CA)
+    child.directory = directory
+    child.key = ec.generate_private_key(ec.SECP256R1())
+    child.name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+    now = datetime.now(timezone.utc)
+    child.cert = (
+        x509.CertificateBuilder()
+        .subject_name(child.name)
+        .issuer_name(parent.name)
+        .public_key(child.key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(True, 0), True)
+        .add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(child.key.public_key()), False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(parent.key.public_key()), False)
+        .sign(parent.key, hashes.SHA256())
+    )
+    child.pem = child.cert.public_bytes(serialization.Encoding.PEM)
+    return child
+
+
+def tls_in(domain, paths, server, federated=None):
+    return SpiffeTLS(
+        trust_domain=domain,
+        bundle_file=str(paths["bundle"]),
+        cert_file=str(paths["cert"]),
+        key_file=str(paths["key"]),
+        server_side=server,
+        federated_bundle_files={name: str(path) for name, path in (federated or {}).items()},
+    )
+
+
+def raw_client(paths, trusted_pem):
+    """A plain TLS client presenting whatever certificate ``paths`` holds."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.load_verify_locations(cadata=trusted_pem.decode())
+    context.load_cert_chain(str(paths["cert"]), str(paths["key"]))
+    return SimpleNamespace(context=context)
+
+
+@pytest.fixture
+def federation(ca, tmp_path):
+    """An issuer in example.test that also accepts workloads from partner.test."""
+    partner = CA(tmp_path, "partner root")
+    bundles = {DOMAIN: tmp_path / "own-bundle.pem", PARTNER: tmp_path / "partner-bundle.pem"}
+    bundles[DOMAIN].write_bytes(ca.pem)
+    bundles[PARTNER].write_bytes(partner.pem)
+    server = tls_in(DOMAIN, ca.files("fed-server", SERVER), True, {PARTNER: bundles[PARTNER]})
+    return server, partner, bundles
+
+
+def test_federated_peers_authenticate_each_other(ca, federation, pki):
+    server, partner, bundles = federation
+    agent = tls_in(PARTNER, partner.files("fed-agent", PARTNER_AGENT), False, {DOMAIN: bundles[DOMAIN]})
+    connection, peer = connect(server, agent)
+    identity = server.authenticate(connection)
+    assert (identity.spiffe_id, identity.trust_domain) == (PARTNER_AGENT, PARTNER)
+    assert agent.authenticate(peer, expected_id=SERVER).trust_domain == DOMAIN
+    # Workloads of the issuer's own trust domain are accepted as before.
+    own, _ = connect(server, pki())
+    assert server.authenticate(own).spiffe_id == AGENT
+    # A domain that is not listed stays untrusted, whoever signed the SVID.
+    stranger = partner.files("fed-stranger", "spiffe://other.test/agent")
+    unlisted, _ = connect(server, raw_client(stranger, ca.pem))
+    with pytest.raises(SpiffeError, match="different trust domain"):
+        server.authenticate(unlisted)
+
+
+def test_one_trust_domain_cannot_issue_identities_for_another(ca, federation, monkeypatch):
+    server, partner, bundles = federation
+    # The partner's authority signs an SVID that names the issuer's own trust domain, and the reverse.
+    forged_own = partner.files("forged-own", AGENT)
+    forged_partner = ca.files("forged-partner", PARTNER_AGENT)
+    for forged in (forged_own, forged_partner):
+        connection, _ = connect(server, raw_client(forged, ca.pem))  # The TLS handshake alone succeeds.
+        with pytest.raises(SpiffeError, match="not issued (directly )?by its own trust domain's authorities"):
+            server.authenticate(connection)
+    # The same holds where Python does not expose the verified chain.
+    monkeypatch.setattr("tenuo.spiffe._verified_anchor", lambda connection: None)
+    for forged in (forged_own, forged_partner):
+        connection, _ = connect(server, raw_client(forged, ca.pem))
+        with pytest.raises(SpiffeError, match="not issued directly by its own trust domain's authorities"):
+            server.authenticate(connection)
+    genuine, _ = connect(server, raw_client(partner.files("genuine", PARTNER_AGENT), ca.pem))
+    assert server.authenticate(genuine).spiffe_id == PARTNER_AGENT
+
+
+def test_client_checks_the_issuers_domain_binding(ca, federation):
+    _, partner, bundles = federation
+    # A partner-domain authority runs a server that claims to be the issuer in example.test.
+    impostor = SimpleNamespace(context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER))
+    forged = partner.files("forged-issuer", SERVER)
+    impostor.context.verify_mode = ssl.CERT_REQUIRED
+    impostor.context.load_verify_locations(cadata=partner.pem.decode())
+    impostor.context.load_cert_chain(str(forged["cert"]), str(forged["key"]))
+    agent = tls_in(PARTNER, partner.files("fed-agent-2", PARTNER_AGENT), False, {DOMAIN: bundles[DOMAIN]})
+    _, peer = connect(impostor, agent)
+    with pytest.raises(SpiffeError, match="its own trust domain's authorities"):
+        agent.authenticate(peer, expected_id=SERVER)
+
+
+def test_federated_svid_through_an_intermediate_authority(ca, federation, tmp_path):
+    from tenuo.spiffe import _verified_anchor
+
+    server, partner, bundles = federation
+    intermediate = sub_ca(partner, tmp_path)
+    paths = intermediate.files("via-intermediate", PARTNER_AGENT)
+    paths["cert"].write_bytes(paths["cert"].read_bytes() + intermediate.pem)  # Leaf, then its issuer.
+    connection, _ = connect(server, raw_client(paths, ca.pem))
+    if _verified_anchor(connection) is None:  # Python 3.9
+        with pytest.raises(SpiffeError, match="Python 3.10 or newer"):
+            server.authenticate(connection)
+    else:
+        assert server.authenticate(connection).spiffe_id == PARTNER_AGENT
+    # An intermediate under the partner's root still cannot vouch for the issuer's domain.
+    forged = intermediate.files("forged-via-intermediate", AGENT)
+    forged["cert"].write_bytes(forged["cert"].read_bytes() + intermediate.pem)
+    connection, _ = connect(server, raw_client(forged, ca.pem))
+    with pytest.raises(SpiffeError, match="its own trust domain's authorities"):
+        server.authenticate(connection)
+
+
+def test_federated_bundle_rotation_and_withdrawal(ca, federation, tmp_path):
+    server, partner, bundles = federation
+    old_connection, _ = connect(server, raw_client(partner.files("before", PARTNER_AGENT), ca.pem))
+    assert server.authenticate(old_connection).spiffe_id == PARTNER_AGENT
+    successor = CA(tmp_path, "partner successor root")
+    time.sleep(0.01)
+    bundles[PARTNER].write_bytes(successor.pem)  # The partner replaced its authority.
+    assert server.reload_if_changed() is True
+    with pytest.raises(SpiffeError):
+        server.authenticate(old_connection)
+    with pytest.raises(ssl.SSLError):
+        connect(server, raw_client(partner.files("retired", PARTNER_AGENT), ca.pem))
+    connection, _ = connect(server, raw_client(successor.files("after", PARTNER_AGENT), ca.pem))
+    assert server.authenticate(connection).spiffe_id == PARTNER_AGENT
+
+
+def test_federation_configuration_is_validated(ca, tmp_path):
+    partner = CA(tmp_path, "partner root")
+    partner_bundle = tmp_path / "partner.pem"
+    partner_bundle.write_bytes(partner.pem)
+    paths = ca.files("fed-config", SERVER)
+    for bad in ({DOMAIN: partner_bundle}, {"Partner.Test": partner_bundle}, {"": partner_bundle}):
+        with pytest.raises(ValueError):
+            tls_in(DOMAIN, paths, True, bad)
+    # A federated bundle may not carry an authority that names another trust domain.
+    tagged, _ = partner.leaf(f"spiffe://{DOMAIN}", is_ca=True)
+    partner_bundle.write_bytes(partner.pem + tagged)
+    with pytest.raises(SpiffeError, match="authority for a different trust domain"):
+        tls_in(DOMAIN, paths, True, {PARTNER: partner_bundle})
+    leaf, _ = partner.leaf(PARTNER_AGENT)
+    partner_bundle.write_bytes(leaf)
+    with pytest.raises(SpiffeError, match="only CA certificates"):
+        tls_in(DOMAIN, paths, True, {PARTNER: partner_bundle})
+
+
+def test_workload_api_federated_bundles(ca, workload_api, from_api, tmp_path):
+    partner, foreign = CA(tmp_path, "partner root"), CA(tmp_path, "foreign root")
+    offered = [(f"spiffe://{PARTNER}", partner.pem), ("spiffe://foreign.test", foreign.pem)]
+    api = workload_api()
+    api.publish(x509_response(svid_entry(ca, SERVER), federated=offered))
+    server = from_api(api, federates_with=[PARTNER])
+    connection, _ = connect(server, raw_client(partner.files("wl-partner", PARTNER_AGENT), ca.pem))
+    assert server.authenticate(connection).trust_domain == PARTNER
+    # A federated bundle that was not asked for is ignored, and forgery is refused.
+    with pytest.raises(ssl.SSLError):
+        connect(server, raw_client(foreign.files("wl-foreign", "spiffe://foreign.test/agent"), ca.pem))
+    forged, _ = connect(server, raw_client(partner.files("wl-forged", AGENT), ca.pem))
+    with pytest.raises(SpiffeError, match="its own trust domain's authorities"):
+        server.authenticate(forged)
+    # SPIRE stops offering the partner's bundle: its workloads are refused.
+    before = server.identity
+    api.publish(x509_response(svid_entry(ca, SERVER)))
+    assert eventually(lambda: server.identity != before)
+    with pytest.raises(SpiffeError):
+        server.authenticate(connection)
+    with pytest.raises(ssl.SSLError):
+        connect(server, raw_client(partner.files("wl-partner-2", PARTNER_AGENT), ca.pem))
+    with pytest.raises(ValueError, match="list of names"):
+        from_api(api, federates_with=PARTNER)
+
+
+def test_issuance_across_trust_domains(ca, federation):
+    server, partner, bundles = federation
+    agent = tls_in(PARTNER, partner.files("fed-issuance", PARTNER_AGENT), False, {DOMAIN: bundles[DOMAIN]})
+    root, holder = SigningKey.generate(), SigningKey.generate()
+    seen = []
+
+    def policy(identity, task_id):
+        seen.append((identity.trust_domain, identity.spiffe_id))
+        if identity.trust_domain == PARTNER and identity.spiffe_id == PARTNER_AGENT:
+            return SpiffeGrant({"refund": {"customer": Exact("123"), "cents": Range(1, 500)}})
+        return None
+
+    issuer = SpiffeWarrantIssuer(tls=server, signing_key=root, policy=policy)
+
+    async def body(address):
+        return await asyncio.to_thread(
+            request_warrant,
+            agent,
+            address,
+            issuer_id=SERVER,
+            issuer_key=root.public_key,
+            holder_key=holder,
+            task_id="task-123",
+        )
+
+    warrant = run_server(issuer, body)
+    assert seen == [(PARTNER, PARTNER_AGENT)] and warrant.authorized_holder == holder.public_key
+
+
 # -- the guide's code ---------------------------------------------------------------
 
 GUIDE = Path(__file__).parents[3] / "docs" / "spiffe.md"
@@ -1822,6 +2065,7 @@ def _guide_blocks():
         "delegate.py",
         "jwt_issuer.py",
         "jwt_agent.py",
+        "federated_issuer.py",
     }
     return blocks
 
@@ -1919,3 +2163,37 @@ def test_guide_code_runs(tmp_path, monkeypatch, caplog, workload_api):
         {"chain": ["AAAA"], "args": {}, "proof": "!!"},
     ):
         assert refund(attempt).startswith("denied: ")
+
+
+def test_guide_federation_code_runs(tmp_path, workload_api):
+    """Execute the guide's federated issuer block: a partner's workload is accepted and bound to its domain."""
+    code = _guide_blocks()["federated_issuer.py"]
+    acme, partner = CA(tmp_path, "acme.test root"), CA(tmp_path, "partner.test root")
+    api = workload_api()
+    api.publish(
+        x509_response(svid_entry(acme, "spiffe://acme.test/issuer"), federated=[("spiffe://partner.test", partner.pem)])
+    )
+    assert code.count('"/run/spire/sockets/agent.sock"') == 1
+    scope: dict = {}
+    exec(code.replace('"/run/spire/sockets/agent.sock"', repr(api.address)), scope)
+    transport, policy = scope["transport"], scope["policy"]
+    try:
+        refund_agent = "spiffe://partner.test/agents/refund"
+        connection, _ = connect(transport, raw_client(partner.files("guide-partner", refund_agent), acme.pem))
+        identity = transport.authenticate(connection)
+        assert (identity.spiffe_id, identity.trust_domain) == (refund_agent, "partner.test")
+        assert policy(identity, "refund-task-123") is not None
+        assert policy(identity, "another-task") is None
+        # The same path in the issuer's own domain is a different workload, and the policy says so.
+        lookalike, _ = connect(
+            transport, raw_client(acme.files("guide-lookalike", "spiffe://acme.test/agents/refund"), acme.pem)
+        )
+        assert policy(transport.authenticate(lookalike), "refund-task-123") is None
+        # The partner's authority cannot name a workload in acme.test.
+        forged, _ = connect(
+            transport, raw_client(partner.files("guide-forged", "spiffe://acme.test/agents/refund"), acme.pem)
+        )
+        with pytest.raises(SpiffeError, match="its own trust domain's authorities"):
+            transport.authenticate(forged)
+    finally:
+        transport.close()
