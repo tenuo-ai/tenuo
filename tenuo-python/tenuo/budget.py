@@ -37,6 +37,18 @@ from. When the parents are presented (``warrant_chain``), each parent's total
 is checked too, so workers that share a parent share its budget. Without the
 parents only the leaf's own total can be enforced.
 
+Periods
+-------
+``llm_capability(total_tokens=50_000, period="day")`` makes the total an
+allowance for each hour, day, week or month instead of for the warrant's
+lifetime. The period is signed with the warrant like the total, so a delegated
+warrant cannot change it. The meter keeps one running total per warrant and
+period and tells the core which period it counted by. A day, week or month
+starts at midnight in ``timezone`` (UTC unless given); a week starts on Monday.
+An hour is an hour on the UTC clock. Period totals use the same retention as
+lifetime totals: the warrant expiry plus the store margin, so crossing a
+period boundary does not discard reservations for calls still running.
+
 Scope: a total holds only where every call passes a meter on the same store.
 The in-memory backend is per process and :class:`SqliteBudgetBackend` is per
 host; several hosts need a shared :class:`BudgetBackend`. A process holding the
@@ -54,7 +66,8 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass, field as dc_field
-from datetime import datetime
+from datetime import datetime, timedelta
+from datetime import timezone as _timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
 
 logger = logging.getLogger("tenuo.budget")
@@ -63,6 +76,9 @@ DEFAULT_TOOL = "llm.chat"
 DEFAULT_FIELD = "total_tokens"
 OUTPUT_FIELD = "max_tokens"
 MODEL_FIELD = "model"
+PERIOD_FIELD = "period"
+ZONE_FIELD = "period_timezone"
+PERIODS = ("hour", "day", "week", "month")
 
 __all__ = [
     "BudgetBackend",
@@ -91,18 +107,36 @@ def llm_capability(
     total_tokens: Optional[int] = None,
     max_tokens: Optional[int] = None,
     models: Optional[Sequence[str]] = None,
+    period: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Constraints for a model-call capability.
 
     Args:
         total_tokens: Input plus output tokens the warrant, and everything
-            delegated from it, may spend in its lifetime.
+            delegated from it, may spend: in its lifetime, or in each
+            ``period`` when one is given.
         max_tokens: Most output tokens one call may ask for.
         models: Models the warrant may call.
+        period: ``"hour"``, ``"day"``, ``"week"`` or ``"month"`` to make
+            ``total_tokens`` an allowance that starts again each period.
+        timezone: IANA zone whose midnight starts a day, week or month
+            (``"America/Vancouver"``). UTC when left out.
     """
-    from tenuo import OneOf, Range
+    from tenuo import Exact, OneOf, Range
 
     out: Dict[str, Any] = {}
+    if period is not None:
+        if period not in PERIODS:
+            raise ValueError(f"period must be one of {', '.join(PERIODS)}")
+        if total_tokens is None:
+            raise ValueError("a period needs total_tokens: it is the allowance for each period")
+        out[PERIOD_FIELD] = Exact(period)
+    if timezone is not None:
+        if period is None:
+            raise ValueError("timezone says where a period starts; give a period too")
+        _zone(timezone)  # a zone this machine does not know is refused here, not on the first call
+        out[ZONE_FIELD] = Exact(timezone)
     if models is not None:
         out[MODEL_FIELD] = OneOf(list(models))
     # Both ranges start at 0, not unbounded: a delegated warrant may only narrow
@@ -143,17 +177,25 @@ class BudgetExceeded(BudgetError):
         needed: Fewest tokens this call would have added.
     """
 
-    def __init__(self, *, warrant_id: str, own: bool, limit: Optional[int], used: int, needed: int) -> None:
+    def __init__(self, *, warrant_id: str, own: bool, limit: Optional[int], used: int, needed: int,
+                 period: Optional[str] = None, resets_at: Optional[float] = None) -> None:
         self.warrant_id = warrant_id
         self.own = own
         self.limit = limit
         self.used = used
         self.needed = needed
+        self.period = period
+        self.resets_at = resets_at
         whose = "this warrant" if own else "the warrant this one was delegated from"
-        allows = f"allows {limit:,} tokens" if limit is not None else "has a token total"
+        each = f" a {period}" if period else ""
+        allows = f"allows {limit:,} tokens{each}" if limit is not None else "has a token total"
+        again = ""
+        if resets_at is not None:
+            again = "; the next " + str(period) + " starts at " + datetime.fromtimestamp(
+                resets_at, _timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         super().__init__(
             f"tenuo: token budget reached: {whose} {allows}, "
-            f"{used:,} are used and this call needs at least {needed:,}"
+            f"{used:,} are used and this call needs at least {needed:,}{again}"
         )
 
 
@@ -577,11 +619,24 @@ class BudgetLevel:
     own: bool
     constraint: Optional[Any]  # the signed total, when this warrant has one
     limit: Optional[int]  # its upper bound, when it is a plain Range
-    expires_at: float
+    expires_at: float  # warrant expiry; period boundaries must not discard reservations
     used: int = 0  # filled in as the call proceeds
+    key: str = ""  # where the store keeps this total: the warrant, or the warrant and period
+    period: Optional[str] = None  # the signed period, when the total is per period
+    zone: Optional[str] = None  # the signed time zone of that period, when one was given
+    resets_at: Optional[float] = None  # when the current period ends
+    problem: Optional[str] = None  # why a signed period cannot be counted by, if it cannot
+
+    def __post_init__(self) -> None:
+        if not self.key:
+            self.key = self.warrant_id
 
     def snapshot(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"warrant_id": self.warrant_id, "used": self.used}
+        if self.period is not None:
+            out["period"] = self.period
+            if self.resets_at is not None:
+                out["resets_at"] = self.resets_at
         if self.limit is not None:
             out["limit"] = self.limit
         if not self.own:
@@ -642,11 +697,11 @@ class MeteredCall:
             if delta > 0:
                 # The call used more than was reserved and the store could not
                 # take the difference: it must not be forgotten.
-                self._store.owe({lv.warrant_id: delta for lv in self.levels},
-                                {lv.warrant_id: lv.expires_at for lv in self.levels})
+                self._store.owe({lv.key: delta for lv in self.levels},
+                                {lv.key: lv.expires_at for lv in self.levels})
             raise
         for level in self.levels:
-            level.used = totals.get(level.warrant_id, level.used)
+            level.used = totals.get(level.key, level.used)
         record: Dict[str, Any] = dict(counts)
         if estimated:
             record["estimated"] = True
@@ -668,10 +723,10 @@ class MeteredCall:
         self._apply(-self.reserved)
 
     def _apply(self, delta: int) -> Dict[str, int]:
-        keys = [lv.warrant_id for lv in self.levels]
+        keys = [lv.key for lv in self.levels]
         if delta == 0:
             return self._store.used(*keys)
-        return self._store.add({k: delta for k in keys}, {lv.warrant_id: lv.expires_at for lv in self.levels})
+        return self._store.add({k: delta for k in keys}, {lv.key: lv.expires_at for lv in self.levels})
 
 
 class TokenMeter:
@@ -687,6 +742,8 @@ class TokenMeter:
         default_max_output: Output cap used when neither the caller nor the
             warrant gives one.
         input_estimator: ``request -> tokens`` used for the reservation.
+        clock: ``() -> Unix time`` that says which period a call falls in,
+            for budgets signed with one. Rows are still dropped by real time.
     """
 
     def __init__(
@@ -698,7 +755,9 @@ class TokenMeter:
         enforce: bool = True,
         default_max_output: int = 4096,
         input_estimator: Callable[[Mapping[str, Any]], int] = estimate_input_tokens,
+        clock: Callable[[], float] = time.time,
     ) -> None:
+        self.clock = clock  # says which period a call falls in
         self.store = store if isinstance(store, BudgetStore) else BudgetStore(store)
         self.tool = tool
         self.field = field
@@ -720,32 +779,49 @@ class TokenMeter:
     def levels(self, warrant: Any, chain: Optional[Sequence[Any]] = None) -> List[BudgetLevel]:
         """The warrants a call spends from, root first, the caller's own last."""
         out: List[BudgetLevel] = []
+        now = self.clock()
         for w in list(chain or []) + [warrant]:
-            constraint = self._constraints(w).get(self.field)
-            out.append(
-                BudgetLevel(
-                    warrant=w,
-                    warrant_id=str(w.id),
-                    own=w is warrant,
-                    constraint=constraint,
-                    limit=_upper_bound(constraint),
-                    expires_at=_expiry(w),
-                )
+            signed = self._constraints(w)
+            constraint = signed.get(self.field)
+            level = BudgetLevel(
+                warrant=w,
+                warrant_id=str(w.id),
+                own=w is warrant,
+                constraint=constraint,
+                limit=_upper_bound(constraint),
+                expires_at=_expiry(w),
             )
+            if PERIOD_FIELD in signed or ZONE_FIELD in signed:
+                # The total is for each period: one row per warrant and period.
+                # Keep the warrant expiry: there is no bound on how long a call
+                # may run across a period boundary, so an early expiry loses
+                # its reservation before settlement applies the usage delta.
+                level.period, level.zone = _signed_text(signed.get(PERIOD_FIELD)), _signed_text(signed.get(ZONE_FIELD))
+                try:
+                    if ZONE_FIELD in signed and not level.zone:
+                        # Signed, but not as one zone: never counted as if none were signed.
+                        raise ValueError("its period's time zone must be signed as one exact zone name")
+                    label, level.resets_at = _period_bounds(level.period, level.zone, now)
+                except ValueError as exc:
+                    level.problem = str(exc)
+                else:
+                    level.key = f"{level.warrant_id}@{label}"
+            out.append(level)
         return out
 
     def status(self, warrant: Any, chain: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
         """Where each warrant a call would spend from stands, root first.
 
         One entry per warrant: ``warrant_id``, ``used``, and for a warrant
-        with a total, ``limit`` and ``remaining``. ``used`` includes the
-        reservations of calls still running.
+        with a total, ``limit`` and ``remaining``. A total that is per period
+        also has ``period`` and ``resets_at``, and ``used`` is for the current
+        period. ``used`` includes the reservations of calls still running.
         """
         levels = self.levels(warrant, chain)
-        used = self.store.used(*[lv.warrant_id for lv in levels])
+        used = self.store.used(*[lv.key for lv in levels])
         out = []
         for lv in levels:
-            lv.used = used.get(lv.warrant_id, 0)
+            lv.used = used.get(lv.key, 0)
             entry = lv.snapshot()
             if lv.limit is not None:
                 entry["remaining"] = max(0, lv.limit - lv.used)
@@ -817,7 +893,7 @@ class TokenMeter:
         model = request.get(MODEL_FIELD)
         if self.enforce:
             for lv in levels:
-                problem = _budget_problem(lv.constraint)
+                problem = lv.problem or _budget_problem(lv.constraint)
                 if problem is not None:
                     # A budget the meter cannot count against is refused, not
                     # guessed at: the running total is checked as an upper bound.
@@ -828,9 +904,9 @@ class TokenMeter:
 
         choices = max(1, int(choices or 1))
         input_estimate = max(0, int(self._estimate(request)))
-        before = self.store.used(*[lv.warrant_id for lv in levels])
+        before = self.store.used(*[lv.key for lv in levels])
         for lv in levels:
-            lv.used = before.get(lv.warrant_id, 0)
+            lv.used = before.get(lv.key, 0)
 
         own = self._constraints(warrant)
         want = requested_output
@@ -852,7 +928,7 @@ class TokenMeter:
         call = MeteredCall(self.tool, model, cap, reserved, input_estimate, clamped, True, levels, self.store)
         call.lowered = cap < want
         totals = self.store.add(
-            {lv.warrant_id: reserved for lv in levels}, {lv.warrant_id: lv.expires_at for lv in levels}
+            {lv.key: reserved for lv in levels}, {lv.key: lv.expires_at for lv in levels}
         )
         try:
             self._decide(call, own, checked, totals, before, input_estimate + choices, authorize)
@@ -860,7 +936,7 @@ class TokenMeter:
             call.release()
             raise
         for lv in levels:
-            lv.used = totals.get(lv.warrant_id, lv.used)
+            lv.used = totals.get(lv.key, lv.used)
         return call
 
     def _decide(
@@ -880,10 +956,11 @@ class TokenMeter:
         from tenuo.core import check_constraint
 
         for lv in call.levels[:-1]:
-            if lv.constraint is not None and not check_constraint(lv.constraint, totals[lv.warrant_id]):
+            if lv.constraint is not None and not check_constraint(lv.constraint, totals[lv.key]):
                 raise BudgetExceeded(
                     warrant_id=lv.warrant_id, own=False, limit=lv.limit,
-                    used=before.get(lv.warrant_id, 0), needed=needed,
+                    used=before.get(lv.key, 0), needed=needed,
+                    period=lv.period, resets_at=lv.resets_at,
                 )
 
         # The caller's own warrant goes through the adapter's full check
@@ -898,15 +975,22 @@ class TokenMeter:
             for name in own:
                 if name not in args and not name.startswith("_") and name != self.field and name in request:
                     args[name] = request[name]
+        # A total per period: the meter says which period it counted by, and the core
+        # checks that against the signed one.
+        if PERIOD_FIELD in own:
+            args[PERIOD_FIELD] = leaf.period
+        if ZONE_FIELD in own:
+            args[ZONE_FIELD] = leaf.zone
         if not own or self.field in own:
-            args[self.field] = totals[leaf.warrant_id]
+            args[self.field] = totals[leaf.key]
         result = authorize(self.tool, args)
         if getattr(result, "allowed", False):
             return
         if getattr(result, "constraint_violated", None) == self.field:
             raise BudgetExceeded(
                 warrant_id=leaf.warrant_id, own=True, limit=leaf.limit,
-                used=before.get(leaf.warrant_id, 0), needed=needed,
+                used=before.get(leaf.key, 0), needed=needed,
+                period=leaf.period, resets_at=leaf.resets_at,
             )
         raise ModelCallDenied(result)
 
@@ -939,6 +1023,55 @@ def _budget_problem(constraint: Any) -> Optional[str]:
     if isinstance(lower, (int, float)) and not isinstance(lower, bool) and lower > 0:
         return "its range must start at 0"
     return None
+
+
+def _signed_text(constraint: Any) -> Optional[str]:
+    """The one value an Exact constraint allows, as text; None for anything else."""
+    value = getattr(constraint, "value", None)
+    return value if isinstance(value, str) else None
+
+
+def _zone(name: Optional[str]) -> Any:
+    """The time zone a period starts in: UTC when none is signed. An empty name is not a zone."""
+    if name is None or name == "UTC":
+        return _timezone.utc
+    from zoneinfo import ZoneInfo
+
+    try:
+        return ZoneInfo(name)
+    except Exception as exc:
+        raise ValueError(f"its period's time zone {name!r} is not one this machine knows") from exc
+
+
+def _period_bounds(period: Optional[str], zone: Optional[str], now: float) -> Tuple[str, float]:
+    """The period ``now`` falls in: a label that names it, and when it ends.
+
+    Raises ValueError, worded to follow "the token budget ... is not usable:",
+    for a period this meter cannot count by. A budget whose period is not
+    understood is refused, never counted as if it had none.
+    """
+    if period not in PERIODS:
+        raise ValueError(f"its period must be signed as one of {', '.join(PERIODS)}")
+    tz = _zone(zone)  # checked for every period, though an hour does not use it
+    if period == "hour":
+        # An hour of elapsed time on the UTC clock, whatever the zone: local clocks can
+        # repeat or skip part of an hour, and some by half an hour.
+        start = math.floor(now / 3600) * 3600
+        label = datetime.fromtimestamp(start, _timezone.utc).strftime("%Y-%m-%dT%H")
+        return "hour:" + label, float(start + 3600)
+    at = datetime.fromtimestamp(now, tz)
+    day = at.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    if period == "day":
+        first, following = day, day + timedelta(days=1)
+    elif period == "week":
+        first = day - timedelta(days=day.weekday())
+        following = first + timedelta(days=7)
+    else:
+        first = day.replace(day=1)
+        following = (first + timedelta(days=32)).replace(day=1)
+    # Midnight on the wall clock of the zone, whatever the offset is on that date.
+    end = following.replace(tzinfo=at.tzinfo).timestamp()
+    return f"{period}:{first.strftime('%Y-%m-%d')}", end
 
 
 def _upper_bound(constraint: Any) -> Optional[int]:
