@@ -242,8 +242,9 @@ class SpiffeForwardedIdentity:
             raise SpiffeError("The request did not arrive from a trusted proxy")
         if not isinstance(header, str) or len(header) > _MAX_HEADER_BYTES:
             raise SpiffeError("Malformed x-forwarded-client-cert header")
-        header = header.strip(" \t")
-        if header.startswith("["):
+        # No trimming here: the identity is read to the very end of the header, so
+        # nothing after a SPIFFE ID may be dropped on the way.
+        if header.lstrip(" \t").startswith("["):
             raise SpiffeError("The JSON form of x-forwarded-client-cert is not supported; use the text form")
         elements = _parse_forwarded(header)
         if len(elements) != 1:

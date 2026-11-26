@@ -208,6 +208,9 @@ def test_names_copied_from_a_certificate_cannot_name_someone_else(forwarded):
         (element(extra=';Subject="CN=a;b"'), "Malformed"),  # Envoy writes that semicolon escaped.
         (element(extra=';X="a;b"'), "Malformed"),
         (element(uri="spiffe://other.test/agent"), "different trust domain"),
+        (element() + " ", "Invalid workload SPIFFE ID"),  # Nothing may follow the SPIFFE ID, not even a space.
+        (element() + "\t", "Invalid workload SPIFFE ID"),
+        (element(uri=AGENT + " x"), "Invalid workload SPIFFE ID"),
         ("x" * (32 * 1024 + 1), "Malformed"),
     ],
     ids=lambda value: None if len(str(value)) < 40 else str(value)[:24] + "...",

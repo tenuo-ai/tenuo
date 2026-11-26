@@ -311,7 +311,8 @@ def _verified_chain(connection: Any) -> Optional[List[bytes]]:
             return list(chain)
         import _ssl
 
-        return [bytes(certificate.public_bytes(_ssl.ENCODING_DER)) for certificate in chain]
+        der = getattr(_ssl, "ENCODING_DER")  # Not in the type stubs for every Python version.
+        return [bytes(certificate.public_bytes(der)) for certificate in chain]
     except Exception:
         return None
 

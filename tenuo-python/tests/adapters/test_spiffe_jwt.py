@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import secrets
 import socket
 import threading
@@ -1517,7 +1518,16 @@ def test_client_does_not_follow_redirects(authority):
     def answer():
         connection, _ = listener.accept()
         with connection:
-            received.append(connection.recv(65536))
+            # Read the whole request before answering: closing with unread data
+            # resets the connection on Windows, and the client would never see the reply.
+            request = b""
+            while b"\r\n\r\n" not in request:
+                request += connection.recv(65536)
+            head, _, body = request.partition(b"\r\n\r\n")
+            length = int(re.search(rb"(?i)content-length: *(\d+)", head)[1])
+            while len(body) < length:
+                body += connection.recv(65536)
+            received.append(request)
             connection.sendall(
                 b"HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:1/steal\r\nContent-Length: 0\r\n\r\n"
             )
