@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Python: token budgets per period.** `llm_capability(total_tokens=N,
+  period="day", timezone=...)` signs an allowance that starts again each hour,
+  day, week or month. The meter counts per warrant and period and the warrant
+  check verifies the period it counted by. See
+  [token budgets](docs/token-budgets.md#a-budget-per-period).
+
 - Python SPIFFE adapter (`tenuo[spiffe]`): authenticate X.509-SVID peers over
   mTLS, verify a separate Tenuo holder key, and issue task-scoped warrants under
   explicit application policy. Includes an asyncio issuance endpoint

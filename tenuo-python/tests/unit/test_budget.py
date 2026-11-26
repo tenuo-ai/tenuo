@@ -628,3 +628,184 @@ class TestStatus:
                    .holder(keys.lead.public_key).ttl(600).mint(keys.issuer))
         meter = TokenMeter()
         assert meter.remaining(warrant) is None and "remaining" not in meter.status(warrant)[0]
+
+
+# ---------------------------------------------------------------------------
+# A total per period: an allowance that starts again each hour, day, week or month
+# ---------------------------------------------------------------------------
+
+# A Wednesday noon UTC that is still ahead: the store drops a period's row once that period
+# has really ended, so a pretend "now" must not lie in the past.
+NOON = 1893585600.0  # 2030-01-02 12:00:00 UTC
+
+
+def _has_zones():
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo("Asia/Tokyo")
+        return True
+    except Exception:
+        return False
+
+
+# Named zones come from the system's time zone database, which some platforms lack.
+needs_zones = pytest.mark.skipif(not _has_zones(), reason="no time zone database on this machine")
+
+
+def at(hours):
+    """A meter clock that reads NOON plus `hours`, and can be moved."""
+    now = [NOON + hours * 3600]
+    return now, (lambda: now[0])
+
+
+def call(meter, warrant, key, issuer, chain=None, tokens=3000, output=500):
+    """One model request: reserved, authorized by the warrant, settled to what it used."""
+    held = meter.begin(warrant, chain, REQUEST, requested_output=output,
+                       authorize=authorizer(warrant, key, issuer, chain))
+    return held.settle({"input_tokens": tokens, "output_tokens": output})
+
+
+class TestPeriod:
+    def test_capability_fields(self):
+        caps = llm_capability(total_tokens=1000, period="week")
+        assert set(caps) == {"total_tokens", "period"} and caps["period"].value == "week"
+
+    @needs_zones
+    def test_capability_fields_with_a_time_zone(self):
+        caps = llm_capability(total_tokens=1000, period="day", timezone="Asia/Tokyo")
+        assert set(caps) == {"total_tokens", "period", "period_timezone"}
+        assert caps["period"].value == "day" and caps["period_timezone"].value == "Asia/Tokyo"
+
+    @pytest.mark.parametrize("bad", [
+        {"total_tokens": 1000, "period": "fortnight"},
+        {"period": "day"},  # an allowance of nothing
+        {"total_tokens": 1000, "timezone": "UTC"},  # a zone with no period to start
+        {"total_tokens": 1000, "period": "day", "timezone": "Mars/Olympus"},
+    ])
+    def test_rejects_what_cannot_be_counted_by(self, bad):
+        with pytest.raises(ValueError):
+            llm_capability(**bad)
+
+    def test_the_allowance_is_refused_when_used_up_and_starts_again_the_next_day(self, keys):
+        root = mint_root(keys, total_tokens=8000, period="day")
+        now, clock = at(0)
+        meter = TokenMeter(input_estimator=fixed_estimate(3000), clock=clock)
+        call(meter, root, keys.lead, keys.issuer)
+        call(meter, root, keys.lead, keys.issuer)
+        assert meter.remaining(root) == 1000
+        with pytest.raises(BudgetExceeded) as stopped:
+            call(meter, root, keys.lead, keys.issuer)
+        midnight = NOON + 12 * 3600
+        assert (stopped.value.period, stopped.value.resets_at, stopped.value.used) == ("day", midnight, 7000)
+        assert "8,000 tokens a day" in str(stopped.value) and "2030-01-03 00:00 UTC" in str(stopped.value)
+        now[0] = midnight - 1
+        with pytest.raises(BudgetExceeded):
+            call(meter, root, keys.lead, keys.issuer)
+        now[0] = midnight
+        call(meter, root, keys.lead, keys.issuer)  # a new day
+        assert meter.status(root) == [{"warrant_id": root.id, "used": 3500, "period": "day",
+                                       "resets_at": midnight + 86400, "limit": 8000, "remaining": 4500}]
+
+    @needs_zones
+    def test_a_day_starts_at_midnight_in_the_signed_time_zone(self, keys):
+        # Noon UTC on the 2nd is 02:00 on the 3rd in Kiritimati (UTC+14) and 21:00 on the 2nd in Tokyo.
+        for zone, label, hours_to_midnight in (("Pacific/Kiritimati", "day:2030-01-03", 22),
+                                               ("Asia/Tokyo", "day:2030-01-02", 3)):
+            root = mint_root(keys, total_tokens=8000, period="day", timezone=zone)
+            _, clock = at(0)
+            level = TokenMeter(clock=clock).levels(root)[0]
+            assert level.key == f"{root.id}@{label}"
+            assert level.resets_at == NOON + hours_to_midnight * 3600
+
+    @pytest.mark.parametrize("period,label,ends", [
+        ("hour", "hour:2030-01-02T12", NOON + 3600),
+        ("day", "day:2030-01-02", NOON + 12 * 3600),
+        ("week", "week:2029-12-31", NOON + (4 * 24 + 12) * 3600),  # Monday to Monday
+        ("month", "month:2030-01-01", NOON + (29 * 24 + 12) * 3600),  # 1 February
+    ])
+    def test_each_period_has_its_own_start_and_end(self, period, label, ends):
+        from tenuo.budget import _period_bounds
+
+        assert _period_bounds(period, None, NOON + 600) == (label, ends)
+        assert _period_bounds(period, None, ends - 1)[0] == label
+        assert _period_bounds(period, None, ends)[0] != label
+
+    @needs_zones
+    def test_a_day_is_a_wall_clock_day_when_the_clocks_change(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from tenuo.budget import _period_bounds
+
+        zone = ZoneInfo("Europe/Berlin")
+        # 25 October 2026: clocks go back there, so this day lasts 25 hours.
+        morning = datetime(2026, 10, 25, 9, 0, tzinfo=zone).timestamp()
+        label, ends = _period_bounds("day", "Europe/Berlin", morning)
+        assert label == "day:2026-10-25"
+        assert ends == datetime(2026, 10, 26, 0, 0, tzinfo=zone).timestamp()
+        assert ends - datetime(2026, 10, 25, 0, 0, tzinfo=zone).timestamp() == 25 * 3600
+
+    def test_a_call_is_settled_in_the_period_it_was_reserved_in(self, keys):
+        root = mint_root(keys, total_tokens=8000, period="day")
+        now, clock = at(11.99)
+        meter = TokenMeter(input_estimator=fixed_estimate(3000), clock=clock)
+        held = meter.begin(root, None, REQUEST, requested_output=500,
+                           authorize=authorizer(root, keys.lead, keys.issuer))
+        now[0] += 3600  # the reply arrives after midnight
+        held.settle({"input_tokens": 3100, "output_tokens": 400})
+        assert meter.status(root)[0]["used"] == 0  # the new day is untouched
+        now[0] -= 3600
+        assert meter.status(root)[0]["used"] == 3500
+
+    def test_the_period_is_signed_a_child_cannot_drop_or_change_it(self, keys):
+        root = mint_root(keys, total_tokens=8000, period="day")
+        for caps in ({"total_tokens": 4000}, {"total_tokens": 4000, "period": "week"}):
+            with pytest.raises(Exception, match="(?i)missing|monoton|exact|constraint"):
+                grant(root, keys, **caps)
+        child = grant(root, keys, total_tokens=4000, period="day")
+        assert child.capabilities["llm.chat"]["period"].value == "day"
+
+    def test_the_core_checks_the_period_the_meter_counted_by(self, keys):
+        root = mint_root(keys, total_tokens=8000, period="day")
+        authorize = authorizer(root, keys.lead, keys.issuer)
+        assert authorize("llm.chat", {"total_tokens": 10, "period": "day"}).allowed
+        # A meter that counted by another period, or one from before periods existed and
+        # so says nothing about it, is refused: the allowance is never read as a total.
+        assert not authorize("llm.chat", {"total_tokens": 10, "period": "month"}).allowed
+        assert not authorize("llm.chat", {"total_tokens": 10}).allowed
+
+    def test_a_period_this_meter_does_not_know_is_refused_not_guessed(self, keys):
+        from tenuo import Exact, Range
+
+        odd = (Warrant.mint_builder()
+               .capability("llm.chat", {"total_tokens": Range(min=0, max=8000), "period": Exact("fortnight")})
+               .holder(keys.lead.public_key).ttl(3600).mint(keys.issuer))
+        meter = TokenMeter(input_estimator=fixed_estimate(100))
+        with pytest.raises(ModelCallDenied, match="period"):
+            meter.begin(odd, None, REQUEST, requested_output=10,
+                        authorize=authorizer(odd, keys.lead, keys.issuer))
+        assert meter.store.used(odd.id) == {odd.id: 0}
+
+    def test_workers_share_a_parents_daily_allowance_and_keep_their_own_total(self, keys):
+        root = mint_root(keys, total_tokens=8000, period="day")
+        worker = grant(root, keys, total_tokens=8000, period="day")
+        now, clock = at(0)
+        meter = TokenMeter(input_estimator=fixed_estimate(3000), clock=clock)
+        call(meter, worker, keys.worker, keys.issuer, [root])
+        call(meter, root, keys.lead, keys.issuer)  # the lead spends from the same day
+        with pytest.raises(BudgetExceeded) as stopped:
+            call(meter, worker, keys.worker, keys.issuer, [root])
+        assert stopped.value.own is False and stopped.value.period == "day"
+        now[0] += 24 * 3600
+        call(meter, worker, keys.worker, keys.issuer, [root])
+
+    def test_rows_of_a_past_period_are_dropped_from_the_store(self, keys, tmp_path):
+        root = mint_root(keys, total_tokens=8000, period="hour")
+        meter = TokenMeter(BudgetStore(str(tmp_path / "b.db"), margin_seconds=0),
+                           input_estimator=fixed_estimate(3000))
+        call(meter, root, keys.lead, keys.issuer)
+        level = meter.levels(root)[0]
+        # Kept until the hour ends, which is before this one-hour warrant does.
+        assert level.expires_at == level.resets_at and 0 < level.resets_at - time.time() <= 3600
+        assert meter.store.used(level.key) == {level.key: 3500}
