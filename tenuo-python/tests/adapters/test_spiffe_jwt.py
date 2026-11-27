@@ -2725,7 +2725,7 @@ def test_endpoint_reports_a_callback_that_raises_spiffe_error_as_an_issuer_error
 
 def test_exchanges_in_progress_or_left_behind_are_bounded(authority, monkeypatch):
     """A stalled name lookup cannot be interrupted. Calls that give up on one must not pile up threads without end."""
-    import tenuo._spiffe_http as http_module
+    import tenuo._issuance_http as http_module
 
     lookup, release = socket.getaddrinfo, threading.Event()
     stalled_lookups = []

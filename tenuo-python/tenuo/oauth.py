@@ -33,7 +33,7 @@ except ImportError as exc:
     raise ImportError("Install tenuo[oauth] to use the OAuth adapter") from exc
 
 from tenuo import Exact, PublicKey, Range, SigningKey, Warrant
-from tenuo._spiffe_http import _IssuerApp, _Refusal, _request_body
+from tenuo._issuance_http import _IssuerApp, _Refusal, _request_body
 from tenuo.spiffe import SpiffeHolderProof, _checked_warrant
 
 __all__ = [

@@ -42,7 +42,7 @@ except ImportError as exc:
     raise ImportError("JWT-SVID support requires pip install 'tenuo[spiffe-jwt]'") from exc
 
 from tenuo import PublicKey, SigningKey, Warrant
-from tenuo._spiffe_http import _IssuerApp, _post_for_warrant, _Refusal, _request_body, _split_url, _where
+from tenuo._issuance_http import _IssuerApp, _post_for_warrant, _Refusal, _request_body, _split_url, _where
 from tenuo.spiffe import (
     _MAX_TASK_ID,
     _WORKLOAD_API_METADATA,
@@ -856,6 +856,7 @@ def request_warrant_jwt(
         trusted,
         holder_key,
         timeout=timeout,
+        error=SpiffeError,
     )
 
 

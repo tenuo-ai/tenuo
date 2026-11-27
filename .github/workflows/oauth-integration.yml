@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - 'tenuo-python/tenuo/oauth.py'
-      - 'tenuo-python/tenuo/_spiffe_http.py'
+      - 'tenuo-python/tenuo/_issuance_http.py'
       - 'tenuo-python/tenuo/spiffe.py'
       - 'tenuo-python/tenuo/mcp/**'
       - 'tenuo-python/examples/oauth/**'

@@ -1,8 +1,8 @@
-"""Shared HTTP plumbing for the single-request SPIFFE issuance exchanges.
+"""Shared HTTP plumbing for the single-request issuance exchanges.
 
-Internal. :mod:`tenuo.spiffe_jwt` and :mod:`tenuo.spiffe_forwarded` build their
-endpoints and clients on this, so limits, deadlines and error handling are the
-same for both.
+Internal. The endpoints and clients of :mod:`tenuo.spiffe_jwt`,
+:mod:`tenuo.spiffe_forwarded` and :mod:`tenuo.oauth` are built on this, so
+limits, deadlines and error handling are the same for all of them.
 """
 
 from __future__ import annotations
@@ -17,18 +17,17 @@ import socket
 import ssl
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Tuple, Type
 
 from tenuo import PublicKey, SigningKey, Warrant
-from tenuo.spiffe import (
-    SpiffeError,
-    SpiffeHolderProof,
-    SpiffeWarrantIssuer,
+from tenuo._issuance import (
+    HolderProof,
+    IssuanceBusy,
+    IssuanceError,
     _CallbackFailed,
     _checked_warrant,
     _consume_result,
     _from_callback,
-    _IssuerBusy,
     _positive_int,
     _seconds,
 )
@@ -124,10 +123,11 @@ class _IssuerApp:
 
     _what = "issuance"  # For log lines.
     _challenge: Optional[bytes] = None  # WWW-Authenticate value sent with 401.
+    _log = logging.getLogger("tenuo.spiffe")  # Each family logs under its own name.
 
     def __init__(
         self,
-        issuer: SpiffeWarrantIssuer,
+        issuer: Any,
         *,
         path: str = "/warrants",
         max_concurrent: int = 256,
@@ -164,8 +164,8 @@ class _IssuerApp:
         """The caller to count requests against, when it is already known from the credential."""
         return None
 
-    def _authorize(self, credential: Any, holder: PublicKey, task_id: Any, proof: SpiffeHolderProof) -> Warrant:
-        """Authenticate the credential and issue. Runs in a worker thread; raises ``SpiffeError`` or ``_Refusal``."""
+    def _authorize(self, credential: Any, holder: PublicKey, task_id: Any, proof: HolderProof) -> Warrant:
+        """Authenticate the credential and issue. Runs in a worker thread; raises the family's ``IssuanceError`` or ``_Refusal``."""
         raise NotImplementedError
 
     # -- ASGI -------------------------------------------------------------
@@ -206,9 +206,9 @@ class _IssuerApp:
             status, reply = 200, {"warrant": (await self._issue(scope, receive)).to_base64()}
         except _Refusal as refusal:
             status, reply = refusal.status, {"error": refusal.error, "message": refusal.message}
-            logger.info("%s refused (%d): %s", self._what, status, refusal.message)
+            self._log.info("%s refused (%d): %s", self._what, status, refusal.message)
         except Exception:
-            logger.exception("%s failed", self._what)
+            self._log.exception("%s failed", self._what)
             status, reply = 503, {"error": "unavailable", "message": "Issuer error"}
         body = json.dumps(reply, separators=(",", ":")).encode("utf-8")
         headers = [
@@ -260,7 +260,7 @@ class _IssuerApp:
             if type(request["v"]) is not int or request["v"] != _PROTOCOL_VERSION:  # Not true, not 1.0.
                 raise _Refusal(400, "invalid_request", "Unsupported protocol version")
             holder = PublicKey.from_bytes(base64.b64decode(request["holder"], validate=True))
-            proof = SpiffeHolderProof(
+            proof = HolderProof(
                 request["timestamp"],
                 base64.b64decode(request["nonce"], validate=True),
                 base64.b64decode(request["signature"], validate=True),
@@ -278,12 +278,12 @@ class _IssuerApp:
                 return self._authorize(credential, holder, task_id, proof)
             except _Refusal:
                 raise
-            except SpiffeError as exc:
+            except IssuanceError as exc:
                 if _from_callback(exc):
                     # The policy or audit callback raised it. That is the issuer
                     # failing: logged in full here, and no detail sent to the caller.
                     raise _CallbackFailed() from exc
-                if isinstance(exc, _IssuerBusy):
+                if isinstance(exc, IssuanceBusy):
                     raise _Refusal(503, "unavailable", str(exc)) from exc
                 raise _Refusal(403, "refused", str(exc)) from exc
 
@@ -324,7 +324,7 @@ class _IssuerApp:
 # -- agent side -------------------------------------------------------------
 
 
-def _request_body(holder_key: SigningKey, task_id: str, proof: SpiffeHolderProof) -> bytes:
+def _request_body(holder_key: SigningKey, task_id: str, proof: HolderProof) -> bytes:
     return json.dumps(
         {
             "v": _PROTOCOL_VERSION,
@@ -348,8 +348,9 @@ def _post_for_warrant(
     holder_key: SigningKey,
     before_request: Optional[Callable[[http.client.HTTPConnection], None]] = None,
     timeout: Optional[float] = None,
+    error: Type[IssuanceError] = IssuanceError,
 ) -> Warrant:
-    """POST one issuance request and return the checked warrant. Every failure is a ``SpiffeError``.
+    """POST one issuance request and return the checked warrant. Every failure is an ``error``.
 
     Redirects are never followed. ``before_request`` runs on the open
     connection before anything is sent (for example to authenticate the peer).
@@ -373,7 +374,7 @@ def _post_for_warrant(
                 opened.append(sock)
             gone = abandoned
         if gone:
-            raise SpiffeError(late)
+            raise error(late)
 
     def exchange() -> Tuple[int, bytes]:
         connection = connect()
@@ -402,7 +403,7 @@ def _post_for_warrant(
         """
         nonlocal abandoned
         if not _reserve_exchange():
-            raise SpiffeError(
+            raise error(
                 f"Could not complete the exchange with the issuer at {where}: "
                 "too many exchanges are in progress or have not ended yet"
             )
@@ -422,7 +423,7 @@ def _post_for_warrant(
             threading.Thread(target=run, name="tenuo-spiffe-exchange", daemon=True).start()
         except RuntimeError as exc:  # The interpreter cannot start another thread.
             _release_exchange()
-            raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
+            raise error(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
         if not finished.wait(timeout):
             with guard:
                 abandoned = True
@@ -433,7 +434,7 @@ def _post_for_warrant(
                     socket.socket.shutdown(sock, socket.SHUT_RDWR)
                 except OSError:
                     pass
-            raise SpiffeError(late)
+            raise error(late)
         succeeded, value = outcome[0]
         if not succeeded:
             raise value
@@ -441,14 +442,14 @@ def _post_for_warrant(
 
     try:
         status, payload = exchange() if timeout is None else within_the_deadline()
-    except SpiffeError:
+    except IssuanceError:
         raise
     except ssl.SSLCertVerificationError as exc:
-        raise SpiffeError(f"The TLS certificate presented by {where} was not accepted: {exc.verify_message}") from exc
+        raise error(f"The TLS certificate presented by {where} was not accepted: {exc.verify_message}") from exc
     except ssl.SSLError as exc:
-        raise SpiffeError(f"TLS with the issuer at {where} failed: {exc.reason or exc}") from exc
+        raise error(f"TLS with the issuer at {where} failed: {exc.reason or exc}") from exc
     except (OSError, http.client.HTTPException, UnicodeError) as exc:  # UnicodeError: an unusable host name.
-        raise SpiffeError(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
+        raise error(f"Could not complete the exchange with the issuer at {where}: {exc}") from exc
     try:
         reply = json.loads(payload) if len(payload) <= _MAX_BODY_BYTES else None
     except (ValueError, RecursionError):
@@ -456,9 +457,9 @@ def _post_for_warrant(
     if status != 200 or not isinstance(reply, dict):
         message = reply.get("message") if isinstance(reply, dict) else None
         if isinstance(message, str) and message:
-            raise SpiffeError(f"Issuer refused (HTTP {status}): {message[:200]}")
-        raise SpiffeError(f"The issuer at {where} answered HTTP {status} without a warrant")
-    return _checked_warrant(reply.get("warrant"), trusted, holder_key)
+            raise error(f"Issuer refused (HTTP {status}): {message[:200]}")
+        raise error(f"The issuer at {where} answered HTTP {status} without a warrant")
+    return _checked_warrant(reply.get("warrant"), trusted, holder_key, error)
 
 
 def _split_url(url: str) -> Tuple[str, str, int, str]:

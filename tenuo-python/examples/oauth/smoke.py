@@ -33,7 +33,7 @@ import uvicorn
 from playwright.sync_api import sync_playwright
 
 from tenuo import Exact, Range, SigningKey
-from tenuo._spiffe_http import _request_body
+from tenuo._issuance_http import _request_body
 from tenuo.mcp import SecureMCPClient
 from tenuo.mcp._compat import call_tool_result_is_error
 from tenuo.oauth import (

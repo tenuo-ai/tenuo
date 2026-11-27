@@ -38,7 +38,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes as certificate_hashes
 
 from tenuo import PublicKey, SigningKey, Warrant
-from tenuo._spiffe_http import _IssuerApp, _post_for_warrant, _Refusal, _request_body, _split_url, _where
+from tenuo._issuance_http import _IssuerApp, _post_for_warrant, _Refusal, _request_body, _split_url, _where
 from tenuo.spiffe import (
     _JWT_NONCE_BYTES,
     _MAX_TASK_ID,
@@ -465,6 +465,7 @@ def request_warrant_forwarded(
         holder_key,
         before_request=None if tls is None else pin_proxy,
         timeout=timeout,
+        error=SpiffeError,
     )
 
 

@@ -19,7 +19,7 @@ pytest.importorskip("cryptography")
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from tenuo import Authorizer, SigningKey
-from tenuo._spiffe_http import _request_body
+from tenuo._issuance_http import _request_body
 from tenuo.oauth import (
     ExactFrom,
     MaximumFrom,
