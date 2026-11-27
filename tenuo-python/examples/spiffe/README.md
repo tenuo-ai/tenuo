@@ -65,7 +65,7 @@ them, and checks that both sides switch to the renewed SVIDs without a restart:
 ```text
 Verified: a JWT-SVID from SPIRE was exchanged for a warrant; two improper requests were refused.
 Verified: a workload from a federated trust domain was accepted over mTLS and by JWT-SVID, and refused without federation.
-Verified: Envoy forwarded the agent's SPIRE identity to the issuer; an unapproved workload, three requests carrying a made-up identity, and a certificate with a crafted name got nothing extra.
+Verified: Envoy forwarded the agent's SPIRE identity and certificate to the issuer; an unapproved workload, a header without the certificate, three requests carrying a made-up identity, and a certificate with a crafted name got nothing extra.
 Verified: issuer and agent followed a renewal straight from the Workload API.
 Verified: a running issuer and agent switched to SVIDs renewed by SPIRE.
 Verified: the X.509 and JWT signing authorities were rotated and the old ones revoked; all 123 exchanges during the rotation succeeded, and credentials from the old authorities were refused.
@@ -79,7 +79,8 @@ Verified: the X.509 and JWT signing authorities were rotated and the old ones re
   workload obtain a warrant from the issuer in `demo.test`.
 - The third is forwarded identity: a real Envoy in front of the issuer ends
   the agent's mutual TLS with SPIRE-issued certificates and passes the agent's
-  SPIFFE ID on in `x-forwarded-client-cert`. The harness then sends an
+  SPIFFE ID and certificate on in `x-forwarded-client-cert`. A listener that
+  passes the ID without the certificate is refused. The harness then sends an
   identity header of its own through a replacing listener, an appending
   listener, and a listener without TLS; none of them lets it choose who it is.
   Last, a client with a certificate from an authority outside SPIRE, whose name

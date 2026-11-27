@@ -19,6 +19,7 @@ between replicas, so it works behind load balancers without session affinity. Se
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import hashlib
 import http.client
@@ -57,6 +58,7 @@ from tenuo.spiffe import (
     _positive_int,
     _proto_fields,
     _read_snapshot,
+    _seconds,
     _trust_domain,
     _trust_domain_names,
     _workload_api_target,
@@ -392,9 +394,8 @@ class SpiffeJWT:
         self = cls.__new__(cls)
         self._init_common(trust_domain, audience, leeway_seconds, federates_with)
         domains = self._federates_with
-        if timeout <= 0 or max_stale_seconds <= 0:
-            raise ValueError("timeout and max_stale_seconds must be positive")
-        self._max_stale = max_stale_seconds
+        timeout = _seconds("timeout", timeout)
+        self._max_stale = _seconds("max_stale_seconds", max_stale_seconds)
         owner = weakref.ref(self)
 
         def parse(raw: bytes) -> Tuple[Union[_Keys, None, _Malformed], Dict[str, _Keys]]:
@@ -426,12 +427,22 @@ class SpiffeJWT:
                 # Consumed once: keep the home keys, and leave nothing behind to be
                 # delivered again as if SPIRE had sent it afresh. They are kept for a
                 # bounded time only: what SPIRE meant to say about them is unknown.
-                if validator._unreadable_since is None:
-                    validator._unreadable_since = time.monotonic()
+                # That time runs from when they were last confirmed, which is the
+                # start of an outage this response ends.
+                since = validator._lost_since if validator._lost_since is not None else time.monotonic()
+                if validator._unreadable_since is None or since < validator._unreadable_since:
+                    validator._unreadable_since = since
                 logger.warning(
                     "Ignoring a malformed JWT bundle for %s; keeping the keys in use: %s", trust_domain, keys.reason
                 )
                 validator._trusted = (home_now, federated)
+                # SPIRE is answering again, so the outage is over for the other
+                # domains, whose bundles in this response were read. The home keys
+                # stay bounded by the time set above, which is in place already.
+                validator._lost_since = None
+                validator._stale_warned = False
+                validator._denied_since = None
+                validator._denied_warned = False
                 return
             if not keys:
                 # A well-formed answer that offers nothing: SPIRE has withdrawn the keys.
@@ -826,6 +837,7 @@ def request_warrant_jwt(
     if not isinstance(value, str):
         raise SpiffeError("Malformed JWT-SVID")
     value = value.strip()
+    timeout = _seconds("timeout", timeout)
     proof = sign_jwt_holder_proof(value, holder_key, audience=audience, task_id=task_id)
 
     def connect() -> http.client.HTTPConnection:
@@ -843,6 +855,7 @@ def request_warrant_jwt(
         {"Authorization": f"Bearer {value}"},
         trusted,
         holder_key,
+        timeout=timeout,
     )
 
 
@@ -875,7 +888,9 @@ class SpiffeJWTIssuerApp(_IssuerApp):
     ...}`` with 400 (malformed), 401 (token not accepted), 403 (refused), 408,
     413, or 503 (busy, or the policy or audit callback failed). Policy and audit run
     in up to ``max_workers`` threads; at most ``max_concurrent`` requests are in
-    progress at once and the rest get 503.
+    progress at once, at most ``max_per_identity`` of them from one SPIFFE ID,
+    and the rest get 503. The token is checked before the request body is
+    read, so only a caller with a valid one can hold a place.
     """
 
     _what = "JWT-SVID issuance"
@@ -889,13 +904,35 @@ class SpiffeJWTIssuerApp(_IssuerApp):
         max_concurrent: int = 256,
         max_workers: int = 32,
         body_timeout: float = 10.0,
+        max_per_identity: int = 16,
     ):
         if issuer.jwt is None:
             raise ValueError("SpiffeJWTIssuerApp needs an issuer built with jwt=SpiffeJWT(...)")
+        if not _positive_int(max_per_identity) or max_per_identity < 1:
+            raise ValueError("max_per_identity must be a positive integer")
         super().__init__(
             issuer, path=path, max_concurrent=max_concurrent, max_workers=max_workers, body_timeout=body_timeout
         )
+        self._max_per_key = max_per_identity
         self._validator: Any = issuer.jwt
+
+    def _new_pool(self) -> ThreadPoolExecutor:
+        # Tokens are checked in threads of their own, so that policy calls waiting
+        # on a slow dependency never hold up telling a valid caller from an invalid one.
+        self._token_pool = ThreadPoolExecutor(min(4, self._max_workers), thread_name_prefix="tenuo-spiffe-token")
+        return super()._new_pool()
+
+    def close(self) -> None:
+        super().close()
+        self._token_pool.shutdown(wait=False)
+
+    def _identity(self, token: bytes) -> SpiffeIdentity:
+        try:
+            return self._validator.authenticate(token.decode("ascii"))
+        except UnicodeDecodeError:
+            raise _Refusal(400, "invalid_request", "Malformed request") from None
+        except SpiffeError as exc:
+            raise _Refusal(401, "unauthorized", str(exc)) from exc
 
     def _credential(self, scope: Mapping[str, Any]) -> bytes:
         tokens = [value for name, value in scope.get("headers", ()) if name.lower() == b"authorization"]
@@ -904,11 +941,37 @@ class SpiffeJWTIssuerApp(_IssuerApp):
             raise _Refusal(401, "unauthorized", "Send the JWT-SVID as one Authorization: Bearer header")
         return credential
 
-    def _authorize(self, credential: bytes, holder: PublicKey, task_id: Any, proof: SpiffeJWTProof) -> Warrant:
+    async def _checked(self, credential: bytes) -> Tuple[bytes, str]:
+        """Check the token before the body is read, so that only a caller with a valid one can hold a place.
+
+        Signature checks and a look at the bundle file are not work for the
+        event loop. They run in a small pool, and at most ``max_concurrent``
+        tokens are waiting or being checked: beyond that the answer is 503.
+        A check that has been handed over is counted until it has run, whether
+        or not its caller is still there.
+        """
+        places = self._places
+        if places.checking >= self._max_concurrent:
+            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
         try:
-            identity = self._validator.authenticate(credential.decode("ascii"))
-        except UnicodeDecodeError:
-            raise _Refusal(400, "invalid_request", "Malformed request") from None
-        except SpiffeError as exc:
-            raise _Refusal(401, "unauthorized", str(exc)) from exc
-        return self.issuer._issue_jwt(identity, holder, task_id, proof)
+            work = asyncio.wrap_future(self._token_pool.submit(self._identity, credential))
+        except RuntimeError:
+            raise _Refusal(503, "unavailable", "Issuer is shutting down") from None
+        places.checking += 1
+
+        def checked(done: "asyncio.Future[SpiffeIdentity]") -> None:
+            places.checking -= 1
+            if not done.cancelled():
+                done.exception()  # Looked at, so a caller that left does not leave a warning behind.
+
+        work.add_done_callback(checked)
+        return credential, (await asyncio.shield(work)).spiffe_id
+
+    def _limit_key(self, credential: Tuple[bytes, str]) -> str:
+        return credential[1]
+
+    def _authorize(
+        self, credential: Tuple[bytes, str], holder: PublicKey, task_id: Any, proof: SpiffeJWTProof
+    ) -> Warrant:
+        # Checked again: the body may have taken seconds to arrive, and the keys can change meanwhile.
+        return self.issuer._issue_jwt(self._identity(credential[0]), holder, task_id, proof)
