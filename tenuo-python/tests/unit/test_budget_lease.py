@@ -1045,7 +1045,7 @@ class TestCloudLeases:
                     status, payload = 409, {"error": {"code": "token_budget_exhausted", "message": "all leased out",
                                                       "retry_at": "2030-01-01T00:00:00Z"}}
                 elif self.path.endswith("/fire") and "plain" in self.path:
-                    status, payload = 200, {"warrant": warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z"}
+                    status, payload = 200, {"warrant": warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z", "acquisition_id": body["acquisition_id"]}
                 elif self.path.endswith("/fire"):
                     status, payload = 200, {"warrant": warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z",
                                             "acquisition_id": body["acquisition_id"], "lease": {"unit": "usd", "granted_tokens": state.granted, "granted_usd_micros": 100000}}
@@ -1181,10 +1181,11 @@ class TestCloudLeases:
         source.acquire()
         assert cloud.requests[-1][2]["acquisition_id"] != "closed"
 
-    def test_old_server_fails_closed_without_repeated_allocations(self, cloud):
+    @pytest.mark.parametrize("metadata", [{"granted_tokens": 2500}, {"granted_tokens": "invalid"}, None])
+    def test_old_server_fails_closed_without_repeated_allocations(self, cloud, metadata):
         source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test")
         cloud.reply = (200, {"warrant": cloud.warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z",
-                             "lease": {"granted_tokens": 2500}})
+                             "lease": metadata})
         for _ in range(2):
             with pytest.raises(LeaseUnavailable, match="upgrade Cloud"):
                 source.acquire()

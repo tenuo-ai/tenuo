@@ -134,7 +134,8 @@ class CloudLeases:
         event_data: Sent with every fire, for triggers that bind from it.
         timeout: Seconds to wait on the control plane's socket.
         acquisition_id: Optional durable operation ID for recovering an unfinished
-            acquisition after a restart. Reuse it only for that acquisition, never
+            initial acquisition after a restart. Automatic renewals have no
+            durable checkpoint hook and are only retry-safe within this process. Reuse it only for that acquisition, never
             across independent workers. Cloud must support acquisition idempotency.
     """
 
@@ -154,7 +155,7 @@ class CloudLeases:
         if acquisition_id is not None and (not acquisition_id or len(acquisition_id) > 128 or
                 any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in acquisition_id)):
             raise ValueError("acquisition_id must be 1-128 ASCII letters, digits, underscores or hyphens")
-        self._pending_acquisition_id = acquisition_id or uuid.uuid4().hex
+        self._pending_acquisition_id: Optional[str] = acquisition_id or uuid.uuid4().hex
         self._pending_event_data: Optional[Dict[str, Any]] = None
         self._acquire_lock = threading.Lock()
         self._acquire_pid = os.getpid()
@@ -179,8 +180,9 @@ class CloudLeases:
 
     @property
     def pending_acquisition_id(self) -> Optional[str]:
-        """ID retained after an uncertain response; checkpoint before acquisition
-        or pass your own durable ID to the constructor for crash recovery."""
+        """ID retained after an uncertain response. Only the initial acquisition
+        can be checkpointed before sending; automatic renewals do not expose
+        a pre-send persistence hook."""
         return self._pending_acquisition_id
 
     def acquire(self) -> Lease:
@@ -237,6 +239,9 @@ class CloudLeases:
                 why = "the control plane did not grant a lease"
             detail = " ".join(part for part in (f"HTTP {status}", code, str(error.get("message") or "")) if part)
             raise LeaseUnavailable(f"{why} ({detail})")
+        if body.get("acquisition_id") != self._pending_acquisition_id:
+            self._protocol_error = "the control plane did not confirm acquisition idempotency; upgrade Cloud before using this SDK"
+            raise LeaseUnavailable(self._protocol_error)
         info = body.get("lease")
         if not isinstance(info, dict):
             raise LeaseUnavailable(f"trigger {self.trigger_id} has no token_budget, so its warrants are not leases")
@@ -249,9 +254,6 @@ class CloudLeases:
         if granted < 1 or carried is None or int(carried) != granted or expires_at is None:
             raise LeaseUnavailable("the control plane's reply is not a usable lease "
                                    f"(granted {granted}, warrant carries {carried}, expires {expires_at})")
-        if body.get("acquisition_id") != self._pending_acquisition_id:
-            self._protocol_error = "the control plane did not confirm acquisition idempotency; upgrade Cloud before using this SDK"
-            raise LeaseUnavailable(self._protocol_error)
         return Lease(warrant=warrant, warrant_id=str(warrant.id), expires_at=expires_at, granted_tokens=granted, info=info)
 
     def release(self, warrant_id: str, usage: List[Dict[str, Any]]) -> None:

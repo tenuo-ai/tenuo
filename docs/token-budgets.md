@@ -285,7 +285,7 @@ A budget for a period is kept by Cloud and handed out in *leases*: short-lived w
 - If a return does not get through, that lease stays closed and the same return is sent again later. Calls are refused until a new lease can be taken.
 - A lease is for one process. Another process takes its own lease from the same budget, and so does a forked child.
 - `CloudLeases` retains an acquisition ID and the original event data when a response is lost. Retrying recovers the same lease; a successful acquisition clears that ID so the next lease gets a new one. This requires Cloud acquisition-idempotency support; upgrade the Cloud server first.
-- For recovery across a process crash, persist the pending acquisition ID and event data before sending, and pass `acquisition_id=` when reconstructing `CloudLeases`. Only recover an unfinished acquisition: never reuse an ID for a lease already accepted or spent, or share it across workers. An expired or returned acquisition is closed; a subsequent attempt takes a new lease without refunding the old one.
+- For recovery of a caller-managed initial acquisition across a process crash, persist its acquisition ID and event data before sending, and pass `acquisition_id=` when reconstructing `CloudLeases`. Only recover an unfinished acquisition: never reuse an ID for a lease already accepted or spent, or share it across workers. Automatic renewals have no durable checkpoint hook: their IDs survive transport failures within the process, but not a process crash. An expired or returned acquisition is closed; a subsequent attempt takes a new lease without refunding the old one.
 - Leases work with `install()`; `metered_client()` takes a fixed warrant.
 
 ---
