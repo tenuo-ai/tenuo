@@ -47,6 +47,7 @@ from .test_spiffe import (  # noqa: E402
     SERVER,
     _field,
     eventually,
+    run_node_example,
     workload_api,  # noqa: F401  (fixture)
 )
 
@@ -1786,9 +1787,7 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, authority, serv
     environment = {**os.environ, "HOLDER_KEY_FILE": str(key_file)}
 
     def request(*arguments):
-        result = subprocess.run(
-            [node, str(script), *arguments], capture_output=True, text=True, timeout=60, env=environment
-        )
+        result = run_node_example(node, script, arguments, environment)
         if not result.stdout.strip():
             pytest.skip(f"this Node.js cannot run the example: {result.stderr.strip()[:200]}")
         return json.loads(result.stdout)

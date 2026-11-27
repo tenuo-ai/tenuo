@@ -1490,6 +1490,31 @@ def eventually(condition, seconds=5.0):
     return False
 
 
+def run_node_example(node, script, arguments, environment):
+    """Run the Node.js example client and return the completed process.
+
+    A run that produces nothing within a minute is tried once more. On a
+    Windows CI machine the first Node.js process of a job once hung that
+    way, while the same call passed in every other job. A second timeout
+    fails the test.
+    """
+    import subprocess
+
+    for attempt in (1, 2):
+        try:
+            return subprocess.run(
+                [node, str(script), *arguments],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=environment,
+                stdin=subprocess.DEVNULL,  # The example reads nothing; it must not wait on the test runner's input.
+            )
+        except subprocess.TimeoutExpired:
+            if attempt == 2:
+                raise
+
+
 def test_workload_api_supplies_and_renews_credentials(ca, pki, workload_api, from_api):
     api = workload_api()
     api.publish(x509_response(svid_entry(ca, SERVER)))
