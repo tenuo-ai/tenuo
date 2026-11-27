@@ -15,11 +15,20 @@ from pathlib import Path
 from aiosmtpd.controller import Controller
 from tenuo import SigningKey
 from tenuo.mcp import SecureMCPClient
-from tenuo.mcp._compat import call_tool_result_is_error
 from tenuo.oauth import OAuthError, OAuthWarrantIssuer, OAuthWarrantIssuerApp, SQLiteProofStore, request_warrant_oauth
 from tenuo_core import sign_meta
 
 from email_policy import policy_for
+
+
+def is_error(result):
+    """Whether an MCP tool result is an error. MCP SDK 1.x says ``isError``, 2.x says ``is_error``."""
+    for name in ("is_error", "isError"):
+        value = getattr(result, name, None)
+        if value is not None:
+            return value is True
+    return False
+
 
 HERE = Path(__file__).resolve().parent
 
@@ -149,19 +158,17 @@ async def exercise_mcp(directory, root, holder, warrant, ambiguous, inbox, port)
             before = counts()
             result = await call({**args, **change})
             check(
-                call_tool_result_is_error(result) and counts() == before,
+                is_error(result) and counts() == before,
                 "unapproved email arguments blocked before tool execution: " + next(iter(change)),
             )
         before = counts()
         result = await call(args, key=SigningKey.generate())
-        check(call_tool_result_is_error(result) and counts() == before, "email holder substitution refused")
+        check(is_error(result) and counts() == before, "email holder substitution refused")
         result = await client.session.call_tool("send_email", args)
-        check(call_tool_result_is_error(result) and counts() == before, "email without warrant refused")
+        check(is_error(result) and counts() == before, "email without warrant refused")
         captured = sign_meta([warrant], holder, "send_email", json.dumps(args), int(time.time()), None)
         result = await call(args, meta=captured)
-        check(
-            not call_tool_result_is_error(result) and len(inbox.messages) == 1, "approved email reaches real SMTP sink"
-        )
+        check(not is_error(result) and len(inbox.messages) == 1, "approved email reaches real SMTP sink")
         recipients, message = inbox.messages[0]
         check(
             recipients == (args["recipient"],)
@@ -174,14 +181,14 @@ async def exercise_mcp(directory, root, holder, warrant, ambiguous, inbox, port)
         # Concurrent fresh retries exercise the durable operation reservation too.
         results = await asyncio.gather(*(call(args) for _ in range(4)))
         check(
-            all(not call_tool_result_is_error(r) for r in results) and len(inbox.messages) == 1,
+            all(not is_error(r) for r in results) and len(inbox.messages) == 1,
             "captured and concurrent fresh retries do not duplicate email",
         )
         inbox.ambiguous = True
         uncertain_args = {**args, "operation_id": "email-ambiguous"}
         result = await call(uncertain_args, grant=ambiguous)
         check(
-            call_tool_result_is_error(result) and len(inbox.messages) == 2,
+            is_error(result) and len(inbox.messages) == 2,
             "SMTP acknowledgement failure surfaces after sink receipt",
         )
         with sqlite3.connect(ledger) as db:
@@ -199,5 +206,5 @@ async def exercise_mcp(directory, root, holder, warrant, ambiguous, inbox, port)
         for arguments, grant in ((args, warrant), (uncertain_args, ambiguous)):
             meta = sign_meta([grant], holder, "send_email", json.dumps(arguments), int(time.time()), None)
             result = await restarted.session.call_tool("send_email", arguments, meta={"tenuo": meta})
-            check(not call_tool_result_is_error(result), "persisted operation status survives tool restart")
+            check(not is_error(result), "persisted operation status survives tool restart")
         check(len(inbox.messages) == 2, "process restart cannot resend completed or ambiguous email")

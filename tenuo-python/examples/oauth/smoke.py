@@ -35,7 +35,6 @@ from playwright.sync_api import sync_playwright
 from tenuo import Exact, Range, SigningKey, Warrant
 from tenuo._issuance_http import _request_body
 from tenuo.mcp import SecureMCPClient
-from tenuo.mcp._compat import call_tool_result_is_error
 from tenuo.oauth import (
     KEYCLOAK,
     OAuthError,
@@ -50,7 +49,7 @@ from tenuo.oauth import (
 from tenuo_core import sign_meta
 
 from refund_policy import policy_for
-from email_smoke import exercise_email
+from email_smoke import exercise_email, is_error
 
 HERE = Path(__file__).resolve().parent
 IMAGE = "quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3"
@@ -187,16 +186,16 @@ async def exercise_mcp(directory, root, holder, warrant, delegated_root):
 
         good_meta = sign_meta([warrant], holder, "refund", json.dumps(args), int(time.time()), None)
         result = await call(args, meta=good_meta)
-        check(not call_tool_result_is_error(result) and counts()[0] == 1, "authorized refund reaches ledger")
+        check(not is_error(result) and counts()[0] == 1, "authorized refund reaches ledger")
         for changed in ({**args, "payment_id": "other"}, {**args, "amount_cents": 6000}, {**args, "currency": "EUR"}):
             before = counts()
             result = await call(changed)
-            check(call_tool_result_is_error(result) and counts() == before, "denied arguments never enter tool body")
+            check(is_error(result) and counts() == before, "denied arguments never enter tool body")
         before = counts()
         result = await call(args, key=SigningKey.generate())
-        check(call_tool_result_is_error(result) and counts() == before, "copied warrant fails with another holder key")
+        check(is_error(result) and counts() == before, "copied warrant fails with another holder key")
         result = await client.session.call_tool("refund", args)
-        check(call_tool_result_is_error(result) and counts() == before, "missing warrant fails before execution")
+        check(is_error(result) and counts() == before, "missing warrant fails before execution")
         await call(args, meta=good_meta)
         check(counts()[0] == 1, "captured invocation cannot duplicate the business operation")
         await call(args)  # a fresh proof must not bypass business idempotency either
@@ -219,7 +218,7 @@ async def exercise_mcp(directory, root, holder, warrant, delegated_root):
         )
         child_args = dict(operation_id="refund-456", payment_id="payment-456", currency="USD", amount_cents=800)
         result = await call(child_args, chain=[delegated_root, child], key=worker)
-        check(not call_tool_result_is_error(result) and counts()[0] == 2, "narrowed delegated refund succeeds")
+        check(not is_error(result) and counts()[0] == 2, "narrowed delegated refund succeeds")
         try:
             (
                 delegated_root.grant_builder()
