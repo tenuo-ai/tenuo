@@ -1,0 +1,41 @@
+# What the Tenuo authorizer checks for the recipe's one protected route.
+#
+# Envoy sends each request it is about to forward as /ext_authz/<original path>.
+# The authorizer reads the tool arguments out of the request, then checks the
+# warrant and the holder's signature over exactly those arguments.
+#
+# Only the fields mapped here are checked. Map every field that changes what
+# the call does, and have the backend refuse fields it does not know.
+#
+# The trusted issuer key comes from TENUO_TRUSTED_KEYS, so no key is written here.
+version: "1"
+settings:
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
+  clock_tolerance_secs: 30
+  # Recipe only: adds x-tenuo-deny-reason to denials. Turn off in production.
+  debug_mode: true
+  trusted_roots: []
+
+tools:
+  refund:
+    description: "Refund a payment"
+    constraints:
+      payment_id:
+        from: body
+        path: payment_id
+        required: true
+      currency:
+        from: body
+        path: currency
+        required: true
+      amount_cents:
+        from: body
+        path: amount_cents
+        required: true
+
+routes:
+  # POST /refunds {"payment_id": ..., "currency": ..., "amount_cents": ...}  ->  refund(...)
+  - pattern: "/ext_authz/refunds"
+    method: ["POST"]
+    tool: refund

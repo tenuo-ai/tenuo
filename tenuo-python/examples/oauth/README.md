@@ -48,6 +48,8 @@ TENUO_KEYCLOAK_SMOKE=1 PYTHONPATH=tenuo-python .venv-oauth/bin/python -m pytest 
 6. Wrong payment, currency, amount, holder and missing warrant are denied with
    no tool-body calls. Unknown/unapproved/cross-tenant tasks, wrong-audience,
    expired and ID tokens, missing scope, and repeated issuance proofs fail.
+   The same warrant request also succeeds as an OAuth 2.0 Token Exchange
+   (RFC 8693) with Keycloak's token as the subject token.
 7. A narrower child warrant succeeds; an attempted broader child is rejected.
 8. The actual Keycloak signing key rotates. Issuance discovers the new key.
    A paused provider works only within the existing JWKS cache lifetime; an
@@ -61,10 +63,15 @@ claim that the underlying MCP PoP format rejects every replay cryptographically.
 
 ## Bring your provider
 
-Start with [the adapter guide](../../../docs/oauth.md). Configure the expected
-issuer, audience, trusted JWKS URL and allowed client IDs. Keycloak support is
-explicit; other providers need an RFC 9068 access-token profile or a separately
-reviewed adapter profile. Changing a URL is not a claim of vendor compatibility.
+Start with [the adapter guide](../../../docs/oauth.md). A `Trust` names the
+issuer, the audience, the key location, the allowed clients and how the
+provider writes its tokens. Keycloak, RFC 9068 and GitHub Actions have tested
+presets; for another provider you write a `ClaimMap` from one of its tokens and
+test it. Changing a URL is not a claim of vendor compatibility.
+
+If your tokens are validated at an API gateway, see the
+[gateway recipe](gateway/README.md): it adds warrant checks to an Envoy that
+already checks Keycloak tokens.
 
 Keep task records and issuer signing keys on the server. Replace the fixture
 policy loader and audit list with your application database and durable audit

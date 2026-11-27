@@ -19,13 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Python OAuth adapter (`tenuo[oauth]`): explicit Keycloak and RFC 9068 JWT
-  access-token profiles, task templates bound to trusted approval records,
-  holder-bound HTTP warrant issuance, durable issuance replay protection, and
-  real Keycloak browser/PKCE-to-MCP smoke tests for refunds and approved email,
-  including SMTP acknowledgement failures and durable retry handling. An independent
-  node-oidc-provider smoke test covers RFC 9068, PKCE and refresh-token rotation.
-  See [the guide](docs/oauth.md).
+- **Python: OAuth adapter (`tenuo[oauth]`).** A caller with a token from your
+  identity provider names an approved task and gets a warrant for that task,
+  bound to its holder key. A `Trust` says whose tokens are accepted (issuer,
+  audience, claim layout, required claim values), with presets for Keycloak,
+  RFC 9068 and GitHub Actions, each tested against the real provider in CI.
+  The endpoint accepts a compact JSON request or an OAuth 2.0 Token Exchange
+  (RFC 8693) request. A recipe adds warrant checks to an Envoy gateway that
+  already validates Keycloak tokens. See [the guide](docs/oauth.md).
+- **Python: one issuance core.** The SPIFFE JWT-SVID and forwarded-identity
+  endpoints and the OAuth endpoint share holder-proof checking, proof memory,
+  policy and audit handling. `SpiffeWarrantIssuer(proof_store=)` accepts a
+  `SQLiteProofStore` so issuer processes on one host share proof memory. The
+  SPIFFE HTTP endpoints now answer 400 for a JSON body with a duplicated
+  member.
 
 - **Python: token budgets per period.** `llm_capability(total_tokens=N,
   period="day", timezone=...)` signs an allowance that starts again each hour,

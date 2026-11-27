@@ -1313,6 +1313,9 @@ class SpiffeWarrantIssuer:
     exact replays, and asks callers to retry when that memory is full. One
     SPIFFE ID may hold at most ``max_jwt_proofs_per_identity`` of them (a
     quarter by default), so one busy workload cannot keep the others out.
+    Pass ``proof_store`` to keep that memory somewhere else: a
+    ``SQLiteProofStore`` shares it between issuer processes on one host, and
+    its own limits then apply instead of these two.
     """
 
     def __init__(

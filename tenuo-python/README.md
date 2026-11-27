@@ -296,10 +296,11 @@ all_pubkeys = keyring.all_public_keys
 
 ## OAuth Integration
 
-For OAuth-protected applications, see the [OAuth adapter](../docs/oauth.md) and
-[Keycloak browser-to-MCP example](examples/oauth/README.md). The adapter checks
-access tokens and issues holder-bound warrants from trusted task templates;
-your application retains its existing login and approval policy.
+If your agents already sign in with OAuth (through Keycloak, an API gateway,
+or as a GitHub Actions run), the [OAuth adapter](../docs/oauth.md) gives each
+task a warrant for only what that task needs. Your login flow and gateway stay
+as they are. See the [gateway recipe](examples/oauth/gateway/README.md) and the
+[browser-to-MCP example](examples/oauth/README.md).
 
 ## SPIFFE Integration
 

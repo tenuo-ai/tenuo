@@ -1,50 +1,117 @@
-# OAuth access tokens and task-scoped warrants
+# OAuth tokens and task-scoped warrants
 
-`tenuo.oauth` is a JWT access-token resource-server adapter. It authenticates a
-caller, verifies an agent holder proof, invokes your task policy, and issues an
-ordinary Tenuo warrant. It is not an authorization server, OAuth Token Exchange,
-RAR endpoint, or AAT implementation.
+Your agents already sign in with OAuth 2.0 or OpenID Connect: through Keycloak,
+through an API gateway, or as a CI run. The token says who is calling, and its
+scope is usually broad (`refunds:write` covers every refund).
 
-Install `tenuo[oauth]`. Run [the Keycloak example](../tenuo-python/examples/oauth/README.md)
-for a complete browser-to-tool test. Python 3.9+ supports the adapter; the MCP
-browser example requires Python 3.10+ and the separately installed example dependencies.
+`tenuo.oauth` lets each task carry only what that task needs. The agent
+presents the token it already has and names a task. Your policy looks the task
+up in your own records. The agent gets back a warrant for that task: this
+payment, up to this amount, for two minutes, bound to a key the agent holds.
 
-## Configure the trusted credential source
+Your identity provider, your login flow and your gateway stay as they are. You
+add one service, the issuer, and a warrant check where the tool runs.
+
+```text
+agent ── token + task ID + holder proof ──▶ issuer ──▶ your policy(identity, task)
+agent ◀───────────── warrant ────────────── issuer
+agent ── call + warrant + signature ──▶ tool or gateway (checks the warrant)
+```
+
+The token carries no Tenuo permissions. It says who is asking, and nothing
+else is read from it. What a caller may do comes from your approved task.
+
+## Install and try it
+
+```sh
+pip install 'tenuo[oauth]'
+```
+
+Python 3.9 or later. Three examples run against real software, and CI runs all
+of them on every change to this adapter:
+
+| Example | What it shows |
+|---|---|
+| [Gateway recipe](../tenuo-python/examples/oauth/gateway/README.md) | An Envoy gateway that keeps checking Keycloak tokens and also checks warrants, with one filter and one route added |
+| [Browser login to MCP tools](../tenuo-python/examples/oauth/README.md) | A person signs in with Authorization Code and PKCE; an agent refunds and sends email through MCP servers that check warrants |
+| [GitHub Actions run](../tenuo-python/tests/e2e/test_oauth_github_actions.py) | A workflow run exchanges its own OIDC token for a warrant scoped to its repository |
+
+## Step 1: Say whose tokens you trust
+
+A `Trust` is the whole trust decision in one place: the issuer, the audience
+the token must be for, where the signing keys are, how that provider writes
+its tokens, and which claim values are required.
 
 ```python
-from tenuo.oauth import OAuthAccessTokens
+from tenuo.oauth import KEYCLOAK, OAuthTokens, Trust
 
-credentials = OAuthAccessTokens(
-    issuer="https://identity.example.com/realms/company",
-    audience="tenuo-authority",
-    jwks_url="https://identity.example.com/realms/company/protocol/openid-connect/certs",
-    allowed_clients=frozenset({"support-app"}),
-    profile="keycloak",
-    tenant_claim="tenant_id",
+people = OAuthTokens(
+    Trust(
+        issuer="https://identity.example.com/realms/company",
+        audience="tenuo-authority",
+        jwks_url="https://identity.example.com/realms/company/protocol/openid-connect/certs",
+        claims=KEYCLOAK,
+        clients=frozenset({"support-app"}),
+        tenant_claim="tenant_id",
+    )
 )
 ```
 
-The audience must name this issuance resource. A valid token intended for a
-different API is refused. The caller identity includes issuer, subject, client,
-tenant, scopes, and expiry. It is produced only after signature validation.
-Register the resource/audience with your provider; the adapter does not change
-provider configuration automatically. Only explicitly allowed clients can issue.
+- `audience` names this issuer. A valid token meant for another API is
+  refused. Register the audience with your provider; nothing here changes
+  provider configuration.
+- `clients` lists the OAuth clients allowed to ask for warrants.
+- `where` lists further claims that must match: one value, or one of a set.
+  Claims are compared as strings. A claim that is missing, or is not a string,
+  does not match.
+- `tenant_claim` names the claim holding the caller's tenant, if you have
+  tenants. It must be data an administrator controls. If a user can edit the
+  attribute behind it, they can choose their tenant.
+- `required_scopes` are scopes every caller must hold.
 
-Supported profiles:
+The key location is configuration. It is never read from a token, there is no
+discovery, and redirects are not followed.
 
-| Profile | Token contract |
+### Providers
+
+These three are tested against the real provider in CI:
+
+| Preset | Token it accepts |
 |---|---|
-| `keycloak` | Header `typ=JWT`, payload `typ=Bearer`, `azp` client identity, explicitly mapped tenant claim |
-| `rfc9068` | Header `typ=at+jwt`, `client_id`, standard access-token claims, explicitly mapped tenant claim |
+| `KEYCLOAK` | Keycloak access tokens: header `typ: JWT`, payload `typ: Bearer`, client in `azp`. An ID token is refused. |
+| `RFC9068` | JWT access tokens as [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068) defines them: header `typ: at+jwt`, `client_id`, `jti`. Tested with node-oidc-provider. |
+| `GITHUB_ACTIONS` | The OIDC token GitHub gives a workflow run. No client and no scopes: `where` says which runs you trust. |
 
-Both support RS256 (RSA >= 2048 bits) and ES256 (P-256), with an explicit key ID.
-They reject ID tokens, unsigned tokens, duplicate JSON members, unsupported
-headers, and unrecognized algorithms. Opaque tokens, encrypted JWTs,
-sender-constrained (`cnf`) tokens, and actor/delegation-chain claims are not
-supported and are rejected. Application login/refresh/consent remains with your
-existing OAuth client. Never interpret client credentials as user consent.
+Any other provider is a `ClaimMap` you write from one of its tokens. Okta,
+Entra ID, Auth0 and Cognito are not tested in this repository, so no preset
+for them is shipped. Decode one of your tokens and fill in what you see:
 
-## Author a reusable task template
+```python
+from tenuo.oauth import ClaimMap
+
+# An example of the shape, not a statement about any vendor.
+MY_PROVIDER = ClaimMap(
+    client=("cid", "azp"),  # The first of these claims that is present names the client.
+    scopes=("scp", "permissions"),  # A space-separated string or a list of strings.
+    header_type="JWT",  # The exact `typ` header.
+    constants={"token_use": "access"},  # Claims that must have exactly this value.
+)
+```
+
+Then test it with a real token from your tenant, and with an ID token from the
+same tenant, which must be refused.
+
+All providers: RS256 (RSA of 2048 bits or more) or ES256, with a key ID. The
+only headers accepted are `alg`, `kid`, `typ` and those the preset names.
+Refused: opaque tokens, encrypted tokens, unsigned tokens, tokens with
+duplicate JSON members, sender-constrained tokens (`cnf`), and tokens with an
+actor chain (`act`, `may_act`).
+
+## Step 2: Say what a task allows
+
+A policy is a function from a verified identity and a task ID to a grant, or
+`None` to deny. `TaskTemplate` covers the common case: an approval record in
+your database becomes argument constraints.
 
 ```python
 from tenuo.oauth import ExactFrom, MaximumFrom, TaskTemplate
@@ -59,47 +126,72 @@ refund = TaskTemplate(
     },
     required_scopes=frozenset({"refunds:write"}),
     ttl_seconds=120,
-    max_depth=1,
 )
 
-def policy(caller, task_id):
-    record = task_database.lookup(caller.tenant_id, task_id)
-    if record is None:
-        return None
-    return refund.compile(caller, task_id, record)
+
+def policy(identity, task_id):
+    record = task_database.lookup(identity.tenant_id, task_id)  # Your database. None if there is no such task.
+    return refund.compile(identity, task_id, record)
 ```
 
-`task_database` is your application's trusted database. The record must carry
-`task_id`, `issuer`, `subject`, `tenant_id`, `status="approved"`, integer
-`expires_at`, and the template's referenced fields. The template compares
-ownership with the verified caller; it never accepts agent-supplied authority.
-Required fields must exist. Integer limits reject booleans and values outside
-the exact interoperable integer range. Templates are user-task oriented;
-machine/client-only authorization requires an explicit custom policy.
+The record carries `task_id`, `status` (`"approved"`), an integer
+`expires_at`, the owner fields, and the fields the arguments refer to.
+`compile` returns `None` when there is no record, or it is not this caller's
+approved and unexpired task. It raises when the record itself is unusable (a
+field missing or of the wrong type): that is a fault in your data, and the
+endpoint answers 503 and logs it rather than blaming the caller.
 
-`MaximumFrom` is a per-invocation bound, not cumulative accounting. Use a
-transactional business ledger for total budgets and one-time approvals. Template
-bindings do not discover tool schemas: maintain the mapping alongside your tool
-schema and test allowed and denied arguments whenever that schema changes.
+`owner` says whose task it is. The default is a person's task:
+`("issuer", "subject", "tenant_id")`. For a service acting for itself, use
+`owner=("issuer", "client_id")`.
 
-## Serve and request warrants
+Arguments the template does not name stay unauthorized. `MaximumFrom` is a
+limit per call, not a running total: keep totals in your own ledger. The
+template does not read tool schemas, so test allowed and refused arguments
+whenever a tool's schema changes.
+
+For anything a template does not cover, return a `TaskGrant` yourself:
 
 ```python
-from tenuo.oauth import OAuthWarrantIssuer, OAuthWarrantIssuerApp, SQLiteReplayStore
+from tenuo import Exact
+from tenuo.oauth import TaskGrant
+
+
+def policy(identity, task_id):
+    if identity.claims.get("repository") == "acme/backend" and task_id == "deploy-staging":
+        return TaskGrant({"deploy": {"environment": Exact("staging")}}, ttl_seconds=60)
+    return None
+```
+
+`identity.claims` holds the token's other string claims. Everything in it was
+signed by the provider; nothing was supplied by the agent.
+
+## Step 3: Run the issuer
+
+```python
+from tenuo.oauth import OAuthWarrantIssuer, OAuthWarrantIssuerApp, SQLiteProofStore
 
 issuer = OAuthWarrantIssuer(
-    credentials=credentials,
+    credentials=people,
     signing_key=issuer_signing_key,
     policy=policy,
-    replay_store=SQLiteReplayStore("/var/lib/tenuo/oauth-proofs.sqlite"),
-    audit=write_durable_audit_record,
+    audit=write_audit_record,
+    proof_store=SQLiteProofStore("/var/lib/tenuo/oauth-proofs.sqlite"),
 )
 app = OAuthWarrantIssuerApp(issuer)
 ```
 
-Load `issuer_signing_key` from your protected application configuration. Supply a
-durable audit callback; failure prevents release of the warrant. Run `app` with
-an ASGI server behind HTTPS or mount it in an existing application. The agent uses:
+`app` is an ASGI application: run it with any ASGI server behind HTTPS, or
+mount it in an existing one. Load `issuer_signing_key` from wherever you keep
+secrets. `audit` is required and runs before a warrant is released: if it
+raises, no warrant is issued. It receives the verified identity, the task, the
+holder key, and the warrant's ID and expiry, never the token.
+
+To trust several providers at once, pass a list
+(`credentials=[people, services, ci_runs]`). A token is judged by the trust
+for the issuer it names, and by no other.
+
+## Step 4: Request a warrant in the agent
 
 ```python
 from tenuo.oauth import request_warrant_oauth
@@ -114,59 +206,204 @@ warrant = request_warrant_oauth(
 )
 ```
 
-The helper signs a fresh issuance proof and checks the returned warrant's
-signature, validity and holder. `arequest_warrant_oauth` runs the same operation
-in a worker thread. Tokens and private keys must never enter model prompts or
-logs. The access token is a bearer credential: warrant holder binding does not
-stop a thief with that token from requesting their own warrant if policy allows it.
+The helper signs a fresh holder proof, sends the request over verified HTTPS,
+and returns the warrant only if it is signed by `issuer_key` and bound to
+`holder_key`. `timeout` bounds the whole call. `arequest_warrant_oauth` does
+the same from async code. Keep the token and the holder key out of model
+prompts and logs.
 
-## HTTP and proof contract
+## Step 5: Check the warrant where the tool runs
 
-POST JSON to `/warrants`, with exactly one `Authorization: Bearer` header:
-`{"v":1,"holder":"<base64 raw Ed25519 public key>","task":"<ID>",
-"timestamp":<Unix seconds>,"nonce":"<base64 16 bytes>","signature":"<base64>"}`.
-The signed bytes are the ASCII context `tenuo.oauth.holder-binding.v1` followed
-by a zero byte, SHA-256(token UTF-8), SHA-256(audience UTF-8), SHA-256(task UTF-8),
-32 holder bytes, unsigned big-endian 64-bit timestamp, and 16 nonce bytes.
-Proofs have a 30-second clock window. All fields are bound; signature bytes are
-not the replay identity. A proof is consumed before policy runs and remains
-consumed on failure. Retry with a fresh proof. This does not make tasks single-use.
+A warrant is an ordinary Tenuo warrant, so every enforcement point works:
 
-Success is `200 {"warrant":"<base64>"}` with `Cache-Control: no-store`.
-Errors are 400 malformed request, 401 rejected credential, 403 rejected proof or
-grant, 408 body timeout, 413 body too large, 415 unsupported content type, or
-503 overload/dependency/internal failure. Clients must not blindly retry grants
-for side-effecting workflows without business idempotency.
+- **At your gateway.** The [gateway recipe](../tenuo-python/examples/oauth/gateway/README.md)
+  adds the Tenuo authorizer to an Envoy that already checks OAuth tokens. See
+  [Proxy configurations](enforcement.md#proxy-configurations) for Istio and nginx.
+- **In an MCP server.** See the [browser-to-MCP example](../tenuo-python/examples/oauth/README.md).
+- **In process**, with `Authorizer` or any framework adapter.
 
-## Operational boundaries
+## Behind an OAuth gateway
 
-- JWT verification is local while the configured JWKS cache is fresh (default
-  five minutes). Unknown-key refresh is throttled. Expired cache plus refresh
-  failure denies issuance; receiving malformed bytes does not renew freshness.
-  An accepted refresh replaces the complete key set, including withdrawals.
-  `credentials.refresh()` applies an operator-requested refresh immediately.
-- JWKS URLs are explicit configuration. No untrusted discovery, token-provided
-  URLs, environment proxies, or credential-bearing redirects are followed.
-- Warrant expiry is bounded by token expiry, task expiry, grant TTL, and the
-  issuer's maximum TTL. Revoking an OAuth session or modifying a task does not
-  revoke already-issued warrants automatically. Choose short lifetimes or add
-  your verifier-side revocation mechanism. The task decision is a snapshot.
-- SQLite replay state supports restarts and multiple processes on **one host**.
-  Multi-host deployments must supply a transactional shared `ReplayStore.claim`
-  implementation. Never put the SQLite file on a network filesystem.
-- HTTP work and body reads share one bounded concurrency limit. Cancellation
-  keeps a slot until running work completes. Policy/audit callbacks must enforce
-  their own database/network deadlines. Put per-client/IP rate limiting and
-  endpoint authentication controls at your ingress as appropriate.
-- Audit callbacks receive verified caller, task, holder, warrant ID and expiry;
-  they do not receive raw tokens. This adapter does not provide an audit backend,
-  key-management service, metrics backend, or immediate token revocation.
-- Shut down the ASGI app and close `credentials` when the host application exits.
+If a gateway already validates tokens for your APIs, nothing about that
+changes. You add:
 
-The smoke tests establish interoperability with the pinned Keycloak and
-node-oidc-provider configurations,
-not universal OAuth-provider compatibility or a complete production certification.
-Production deployments still own ingress TLS, protected signing keys, policy
-data, audit durability, rate limits, business idempotency, and revocation SLOs.
-The tenant claim must come from administrator-controlled identity data; users
-must not be able to edit the attribute that determines their tenant authority.
+1. A route to the issuer (`POST /warrants`). The gateway checks the token as
+   it does for any route, and the issuer checks it again for its own audience.
+   The gateway must pass the `Authorization` header through to the issuer.
+2. A warrant check on the routes that act: an `ext_authz` filter pointing at
+   the Tenuo authorizer, which maps each request to a tool and its arguments.
+
+A caller then needs both: the token your gateway has always required, and a
+warrant for this call signed with the agent's key. A valid token alone no
+longer moves money. The [recipe](../tenuo-python/examples/oauth/gateway/README.md)
+has the Envoy configuration and a script that checks each of these claims
+against real Keycloak, Envoy and the authorizer.
+
+## GitHub Actions
+
+A workflow run can ask GitHub for a signed token that says which repository,
+branch and workflow it is. Trust it by those claims:
+
+```python
+from tenuo.oauth import GITHUB_ACTIONS, OAuthTokens, Trust
+
+ci_runs = OAuthTokens(
+    Trust(
+        issuer="https://token.actions.githubusercontent.com",
+        audience="tenuo-authority",
+        jwks_url="https://token.actions.githubusercontent.com/.well-known/jwks",
+        claims=GITHUB_ACTIONS,
+        where={"repository": "acme/backend", "ref": "refs/heads/main"},
+    )
+)
+```
+
+In the workflow, the job needs `permissions: id-token: write`, and the agent
+fetches its token like this:
+
+```python
+import json
+import os
+import urllib.request
+
+request = urllib.request.Request(
+    os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=tenuo-authority",
+    headers={"Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]},
+)
+with urllib.request.urlopen(request, timeout=30) as response:
+    token = json.load(response)["value"]
+```
+
+Things to know:
+
+- Repository and owner names can be reassigned after a rename or a deletion.
+  `repository_id` and `repository_owner_id` cannot: add them to `where`.
+- A pull request from a fork gets no token.
+- `environment` is present only for jobs that run in an environment, and
+  `where` refuses a token that lacks a claim it names.
+- The policy reads the rest from `identity.claims`: `workflow`, `sha`,
+  `run_id`, `actor`, `event_name`.
+
+## OAuth 2.0 Token Exchange request shape
+
+For callers and gateways that already speak [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693),
+the same endpoint accepts a token-exchange request. The task and the holder
+proof travel as one [RFC 9396](https://www.rfc-editor.org/rfc/rfc9396)
+authorization detail of type `tenuo_task`:
+
+```text
+POST /warrants
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&subject_token=<the access token>
+&subject_token_type=urn:ietf:params:oauth:token-type:access_token
+&requested_token_type=urn:tenuo:params:oauth:token-type:warrant
+&authorization_details=[{"type":"tenuo_task","task":"refund-123","holder":"<base64>",
+   "timestamp":<unix seconds>,"nonce":"<base64>","signature":"<base64>"}]
+```
+
+(Values are form-encoded on the wire.) The answer is a token response:
+
+```json
+{"access_token": "<the warrant>",
+ "issued_token_type": "urn:tenuo:params:oauth:token-type:warrant",
+ "token_type": "N_A",
+ "expires_in": 119}
+```
+
+`token_type` is `N_A` because a warrant is not a bearer token: presenting it
+takes a signature from the holder key. Errors use the token-endpoint form,
+`{"error": ..., "error_description": ...}`: `invalid_grant` for a token that
+is not accepted, `invalid_authorization_details` for a task that is not
+granted or a proof that is refused, `invalid_request` for a malformed request.
+
+What this is not: the issuer is not an authorization server. It accepts
+exactly the five parameters above and refuses any other (`scope`, `audience`,
+`actor_token`), so nothing is accepted and then ignored. The authorization
+detail names a task. It cannot ask for permissions.
+
+In this shape the token is in the body, so the body is read before the caller
+is known. Such requests get a quarter of the endpoint's places, so they cannot
+crowd out callers whose token is checked first.
+
+## Wire protocol
+
+The compact shape, which `request_warrant_oauth` sends:
+
+```text
+POST /warrants
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"v": 1, "holder": "<base64 Ed25519 public key>", "task": "<task ID>",
+ "timestamp": <unix seconds>, "nonce": "<base64, 16 bytes>",
+ "signature": "<base64>"}
+```
+
+The token is checked before the body is read. Success is
+`200 {"warrant": "<base64>"}` with `Cache-Control: no-store`.
+
+The holder signs, with Ed25519: the ASCII bytes
+`tenuo.oauth.holder-binding.v1`, one zero byte, SHA-256 of the token, SHA-256
+of the audience, SHA-256 of the task ID, the 32 holder key bytes, the
+timestamp as 8 big-endian bytes, and the 16 nonce bytes. A proof is accepted
+for 60 seconds either side of the issuer's clock, and once. It is reserved
+while the request runs and kept only if a warrant is issued, so a request that
+was denied or failed can be sent again.
+
+| Status | Meaning |
+|---|---|
+| 400 | Malformed request, including JSON with a duplicated member |
+| 401 | Token not accepted |
+| 403 | Task not granted, or holder proof refused |
+| 408, 413, 415 | Body too slow, too large (64 KiB), or not `application/json` |
+| 503 | A limit was reached, signing keys are unavailable, or a policy or audit callback failed |
+
+## Limits and defaults
+
+| What | Default | Change it with |
+|---|---|---|
+| Warrant lifetime | The shortest of the grant's `ttl_seconds`, the token's expiry, the task approval's expiry and 120 seconds | `OAuthWarrantIssuer(max_ttl_seconds=)` |
+| Signing keys kept after a fetch | 300 seconds | `OAuthTokens(cache_seconds=)` |
+| Fetch for a key ID not yet known | At most one every 5 seconds | `OAuthTokens(refresh_interval=)` |
+| Clock leeway on token times | 5 seconds | `Trust(leeway_seconds=)` |
+| Requests in progress | 256, and 16 for one identity | `OAuthWarrantIssuerApp(max_concurrent=, max_per_identity=)` |
+| Proofs remembered | 16384 in a process, a quarter of them for one identity | `proof_store=` |
+
+- **Keys.** Tokens signed by a key already fetched are checked locally. A
+  token signed by an unknown key sends one caller to fetch, and does not hold
+  up the others. With the provider unreachable, known keys work until
+  `cache_seconds` runs out, and then tokens are refused. A fetched key set
+  replaces the one before it, so a withdrawn key stops working at the next
+  fetch. `OAuthTokens.refresh()` fetches at once.
+- **Several processes or hosts.** `SQLiteProofStore` shares proof memory
+  between processes on one host and keeps it across restarts. Do not put the
+  file on a network filesystem. For several hosts, implement `ProofStore`
+  (`claim` and `release`) on a store that claims atomically across them.
+  Without one, each replica remembers its own proofs.
+- **Callbacks.** Policy and audit run in worker threads and must set their own
+  deadlines on what they call. Whatever they raise is the issuer failing: it
+  is logged in full and the caller is told only `Issuer error`.
+- **Revocation.** Revoking a token or changing a task does not revoke a
+  warrant already issued. Lifetimes are short for that reason.
+- **The token is a bearer credential.** The warrant is bound to the agent's
+  key, but someone who steals the token before it expires can ask for a
+  warrant of their own for any task approved for that identity. Keep token
+  lifetimes short and treat every hop that sees the token as trusted.
+
+## What this adapter does not do
+
+- It is not an authorization server. It does not log users in, ask for
+  consent, refresh tokens, or issue OAuth access tokens.
+- It does not accept sender-constrained tokens (DPoP, mTLS-bound). The
+  holder proof binds the warrant, not the token.
+- It does not introspect opaque tokens or check token revocation lists.
+- It does not provide an audit backend, key management, or rate limiting by
+  network address. Put those at your ingress and in your own services.
+- The three tested providers are evidence about those providers at the pinned
+  versions. They are not a claim about every OAuth deployment.
+
+The SPIFFE adapter's JWT-SVID and forwarded-identity endpoints run on the same
+issuance code as this one. See [the SPIFFE guide](spiffe.md) if your workloads
+have SVIDs instead of OAuth tokens.

@@ -12,6 +12,8 @@ on:
       - 'tenuo-python/tests/adapters/test_oauth.py'
       - 'tenuo-python/tests/e2e/test_oauth_keycloak.py'
       - 'tenuo-python/tests/e2e/test_oauth_oidc_provider.py'
+      - 'tenuo-python/tests/e2e/test_oauth_github_actions.py'
+      - 'tenuo-python/tests/e2e/test_oauth_gateway.py'
       - 'tenuo-python/pyproject.toml'
       - 'tenuo-core/**'
       - '.github/workflows/oauth-integration.yml'
@@ -51,3 +53,42 @@ jobs:
           TENUO_KEYCLOAK_SMOKE: ${{ matrix.provider == 'keycloak' && '1' || '0' }}
           TENUO_OIDC_SMOKE: ${{ matrix.provider == 'oidc-provider' && '1' || '0' }}
         run: python -m pytest tenuo-python/tests/adapters/test_oauth.py tenuo-python/tests/e2e/test_oauth_keycloak.py tenuo-python/tests/e2e/test_oauth_oidc_provider.py -q --override-ini='addopts='
+
+  gateway:
+    name: OAuth gateway (Envoy and Keycloak) with warrant checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Build this checkout and install test dependencies
+        run: python -m pip install './tenuo-python[oauth]' pytest uvicorn
+      - name: Keycloak token through Envoy to the Tenuo authorizer
+        env:
+          PYTHONPATH: tenuo-python
+          TENUO_OAUTH_GATEWAY_SMOKE: '1'
+        run: python -m pytest tenuo-python/tests/e2e/test_oauth_gateway.py -q -s --override-ini='addopts='
+
+  github-actions-token:
+    name: OAuth GitHub Actions workflow token to warrant
+    # A pull request from a fork gets no workflow token.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write  # The test asks GitHub for this run's OIDC token.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Build this checkout and install test dependencies
+        run: python -m pip install './tenuo-python[oauth]' pytest uvicorn
+      - name: Exchange this run's token for a warrant
+        env:
+          PYTHONPATH: tenuo-python
+          TENUO_REQUIRE_GITHUB_OIDC: '1'
+        run: python -m pytest tenuo-python/tests/e2e/test_oauth_github_actions.py -q --override-ini='addopts='
