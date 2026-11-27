@@ -30,7 +30,7 @@ from tenuo.spiffe_forwarded import (  # noqa: E402
     sign_forwarded_holder_proof,
 )
 
-from .test_spiffe import AGENT, DOMAIN, REFUND, SERVER, eventually, pki  # noqa: E402, F401  (fixture)
+from .test_spiffe import AGENT, DOMAIN, REFUND, SERVER, eventually, pki, run_node_example  # noqa: E402, F401
 from .test_spiffe import ca as ca  # noqa: E402, F401  (fixture)
 
 AUDIENCE = "https://issuer.example.test/warrants"
@@ -1282,9 +1282,7 @@ def test_a_client_in_another_language_gets_a_usable_warrant(app, serve, tmp_path
     environment = {**os.environ, "HOLDER_KEY_FILE": str(key_file)}
 
     def request(*arguments):
-        result = subprocess.run(
-            [node, str(script), *arguments], capture_output=True, text=True, timeout=60, env=environment
-        )
+        result = run_node_example(node, script, arguments, environment)
         if not result.stdout.strip():
             pytest.skip(f"this Node.js cannot run the example: {result.stderr.strip()[:200]}")
         return json.loads(result.stdout)
