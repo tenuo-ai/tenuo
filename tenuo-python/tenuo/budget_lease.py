@@ -122,6 +122,9 @@ class _NoRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
+_CLOUD_SOURCES: "weakref.WeakSet[CloudLeases]" = weakref.WeakSet()
+
+
 class CloudLeases:
     """Leases from Tenuo Cloud: each one is a fire of a trigger that has a ``token_budget``.
 
@@ -160,6 +163,7 @@ class CloudLeases:
         self._acquire_lock = threading.Lock()
         self._acquire_pid = os.getpid()
         self._protocol_error: Optional[str] = None
+        _CLOUD_SOURCES.add(self)
 
     def _post(self, path: str, body: Mapping[str, Any]) -> Tuple[int, Dict[str, Any]]:
         # urllib, not httpx: this request must not pass through the meter it serves.
@@ -185,14 +189,16 @@ class CloudLeases:
         a pre-send persistence hook."""
         return self._pending_acquisition_id
 
+    def _reset_in_child(self) -> None:
+        self._acquire_lock = threading.Lock()
+        self._pending_acquisition_id = None
+        self._pending_event_data = None
+        self._acquire_pid = os.getpid()
+
     def acquire(self) -> Lease:
-        # Forked workers must neither inherit a locked mutex nor recover/spend
-        # their parent's pending lease. Each process acquires its own slice.
+        # The at-fork callback resets sources before child threads can run.
         if self._acquire_pid != os.getpid():
-            self._acquire_pid = os.getpid()
-            self._acquire_lock = threading.Lock()
-            self._pending_acquisition_id = None
-            self._pending_event_data = None
+            self._reset_in_child()
         with self._acquire_lock:
             if self._protocol_error:
                 raise LeaseUnavailable(self._protocol_error)
@@ -279,6 +285,8 @@ _BUDGETS: "weakref.WeakSet[LeasedBudget]" = weakref.WeakSet()
 
 
 def _reset_budgets_in_child() -> None:
+    for source in list(_CLOUD_SOURCES):
+        source._reset_in_child()
     for budget in list(_BUDGETS):
         budget._reset_in_child()
 

@@ -1197,3 +1197,48 @@ class TestCloudLeases:
         source._acquire_lock.acquire()
         source.acquire()
         assert cloud.requests[-1][2]["acquisition_id"] != "parent"
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    @pytest.mark.filterwarnings("ignore:This process:DeprecationWarning")
+    def test_concurrent_child_acquisitions_reset_before_threads_run(self):
+        import signal
+
+        source = CloudLeases("trg_budget", url="http://localhost", api_key="test", acquisition_id="parent")
+        inherited_lock = source._acquire_lock
+        inherited_lock.acquire()
+        read, write = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(read)
+            try:
+                signal.alarm(5)
+                # The reset must already be complete before the first acquire.
+                ready = (source._acquire_pid == os.getpid() and source._acquire_lock is not inherited_lock
+                         and source.pending_acquisition_id is None)
+                ids = []
+                def acquire_stub():
+                    ids.append(source.pending_acquisition_id)
+                    return object()
+                source._acquire = acquire_stub
+                start = threading.Barrier(3)
+                def worker():
+                    start.wait()
+                    source.acquire()
+                threads = [threading.Thread(target=worker) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                start.wait()
+                for thread in threads:
+                    thread.join()
+                ok = ready and len(set(ids)) == 2 and "parent" not in ids
+                os.write(write, b"ok" if ok else b"no")
+            finally:
+                os._exit(0)
+        os.close(write)
+        try:
+            _, status = os.waitpid(pid, 0)
+            assert status == 0 and os.read(read, 2) == b"ok"
+            assert source.pending_acquisition_id == "parent"
+        finally:
+            inherited_lock.release()
+            os.close(read)
