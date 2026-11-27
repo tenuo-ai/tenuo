@@ -1015,7 +1015,7 @@ def _locked(lock, fn, *args):
 class TestCloudLeases:
     @pytest.fixture
     def cloud(self, keys):
-        state = SimpleNamespace(requests=[], exhausted=False, raw=None, granted=2500, redirect=False, reply=None)
+        state = SimpleNamespace(requests=[], exhausted=False, raw=None, granted=2500, redirect=False, reply=None, drop_once=False)
         warrant = (Warrant.mint_builder().capability("llm.chat", llm_capability(total_tokens=2500, models=[MODEL]))
                    .holder(keys.agent.public_key).ttl(600).mint(keys.issuer))
 
@@ -1048,9 +1048,13 @@ class TestCloudLeases:
                     status, payload = 200, {"warrant": warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z"}
                 elif self.path.endswith("/fire"):
                     status, payload = 200, {"warrant": warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z",
-                                            "lease": {"unit": "usd", "granted_tokens": state.granted, "granted_usd_micros": 100000}}
+                                            "acquisition_id": body["acquisition_id"], "lease": {"unit": "usd", "granted_tokens": state.granted, "granted_usd_micros": 100000}}
                 else:
                     status, payload = 200, {"warrant_id": body["warrant_id"]}
+                if state.drop_once:
+                    state.drop_once = False
+                    self.close_connection = True
+                    return
                 data = json.dumps(payload).encode()
                 self.send_response(status)
                 self.send_header("Content-Length", str(len(data)))
@@ -1070,7 +1074,7 @@ class TestCloudLeases:
         assert lease.expires_at == 1893456600.0 and lease.info["unit"] == "usd"
         usage = [{"model": MODEL, "input_tokens": 10, "output_tokens": 20}]
         source.release(lease.warrant_id, usage)
-        assert cloud.requests[0] == ("/v1/triggers/trg_budget/fire", "Bearer tc_test", {"event_data": {"team": "research"}})
+        assert cloud.requests[0] == ("/v1/triggers/trg_budget/fire", "Bearer tc_test", {"event_data": {"team": "research"}, "acquisition_id": cloud.requests[0][2]["acquisition_id"]})
         path, auth, body = cloud.requests[1]
         assert (path, auth, body["warrant_id"], body["usage"]) == ("/v1/metrics/tokens/leases/release", "Bearer tc_test", lease.warrant_id, usage)
         # Signed by the agent over the warrant id and the figures: plain Ed25519.
@@ -1141,3 +1145,54 @@ class TestCloudLeases:
         monkeypatch.delenv("TENUO_API_KEY", raising=False)
         with pytest.raises(ValueError):
             CloudLeases("trg_budget")
+
+    def test_lost_response_recovers_same_acquisition_then_rotates(self, cloud):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
+        pending = source.pending_acquisition_id
+        cloud.drop_once = True
+        with pytest.raises(LeaseUnavailable):
+            source.acquire()
+        assert source.pending_acquisition_id == pending
+        source.event_data["team"] = "b"
+        source.acquire()
+        assert cloud.requests[0][2] == cloud.requests[1][2]
+        assert source.pending_acquisition_id is None
+        source.acquire()
+        assert cloud.requests[2][2]["acquisition_id"] != pending
+        assert cloud.requests[2][2]["event_data"] == {"team": "b"}
+
+    @pytest.mark.parametrize("reply", [(503, {}), (200, {}), (409, {"error": {"code": "acquisition_conflict"}})])
+    def test_uncertain_or_conflicting_response_preserves_id(self, cloud, reply):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", acquisition_id="checkpoint")
+        cloud.reply = reply
+        with pytest.raises(LeaseUnavailable):
+            source.acquire()
+        assert source.pending_acquisition_id == "checkpoint"
+        cloud.reply = None
+        source.acquire()
+        assert cloud.requests[0][2] == cloud.requests[1][2]
+
+    def test_closed_acquisition_allows_new_id(self, cloud):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", acquisition_id="closed")
+        cloud.reply = (410, {"error": {"code": "acquisition_closed"}})
+        with pytest.raises(LeaseUnavailable):
+            source.acquire()
+        cloud.reply = None
+        source.acquire()
+        assert cloud.requests[-1][2]["acquisition_id"] != "closed"
+
+    def test_old_server_fails_closed_without_repeated_allocations(self, cloud):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test")
+        cloud.reply = (200, {"warrant": cloud.warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z",
+                             "lease": {"granted_tokens": 2500}})
+        for _ in range(2):
+            with pytest.raises(LeaseUnavailable, match="upgrade Cloud"):
+                source.acquire()
+        assert len(cloud.requests) == 1
+
+    def test_fork_does_not_recover_parent_acquisition(self, cloud):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", acquisition_id="parent")
+        source._acquire_pid = -1  # exercise the same fork transition without forking the HTTP server
+        source._acquire_lock.acquire()
+        source.acquire()
+        assert cloud.requests[-1][2]["acquisition_id"] != "parent"

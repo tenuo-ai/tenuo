@@ -45,6 +45,7 @@ import time
 import urllib.error
 import urllib.request
 import weakref
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
@@ -132,11 +133,14 @@ class CloudLeases:
         api_key: Defaults to ``TENUO_API_KEY``.
         event_data: Sent with every fire, for triggers that bind from it.
         timeout: Seconds to wait on the control plane's socket.
+        acquisition_id: Optional durable operation ID for recovering an unfinished
+            acquisition after a restart. Reuse it only for that acquisition, never
+            across independent workers. Cloud must support acquisition idempotency.
     """
 
     def __init__(self, trigger_id: str, *, signing_key: Any = None, url: Optional[str] = None,
                  api_key: Optional[str] = None, event_data: Optional[Mapping[str, Any]] = None,
-                 timeout: float = 10.0) -> None:
+                 timeout: float = 10.0, acquisition_id: Optional[str] = None) -> None:
         self.trigger_id = trigger_id
         self.signing_key = signing_key
         self.url = (url or os.environ.get("TENUO_CONTROL_PLANE_URL") or "").rstrip("/")
@@ -147,6 +151,14 @@ class CloudLeases:
         self.event_data = dict(event_data or {})
         self.timeout = timeout
         self._opener = urllib.request.build_opener(_NoRedirects)
+        if acquisition_id is not None and (not acquisition_id or len(acquisition_id) > 128 or
+                any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in acquisition_id)):
+            raise ValueError("acquisition_id must be 1-128 ASCII letters, digits, underscores or hyphens")
+        self._pending_acquisition_id = acquisition_id or uuid.uuid4().hex
+        self._pending_event_data: Optional[Dict[str, Any]] = None
+        self._acquire_lock = threading.Lock()
+        self._acquire_pid = os.getpid()
+        self._protocol_error: Optional[str] = None
 
     def _post(self, path: str, body: Mapping[str, Any]) -> Tuple[int, Dict[str, Any]]:
         # urllib, not httpx: this request must not pass through the meter it serves.
@@ -165,21 +177,49 @@ class CloudLeases:
             parsed = {}
         return status, parsed if isinstance(parsed, dict) else {}
 
+    @property
+    def pending_acquisition_id(self) -> Optional[str]:
+        """ID retained after an uncertain response; checkpoint before acquisition
+        or pass your own durable ID to the constructor for crash recovery."""
+        return self._pending_acquisition_id
+
     def acquire(self) -> Lease:
-        try:
-            return self._acquire()
-        except LeaseUnavailable:
-            raise
-        except Exception as e:
-            # Whatever went wrong (network, a reply that is not what it should
-            # be), the answer for the caller is the same: no lease for now.
-            raise LeaseUnavailable(f"no lease from the control plane: {type(e).__name__}: {e}") from e
+        # Forked workers must neither inherit a locked mutex nor recover/spend
+        # their parent's pending lease. Each process acquires its own slice.
+        if self._acquire_pid != os.getpid():
+            self._acquire_pid = os.getpid()
+            self._acquire_lock = threading.Lock()
+            self._pending_acquisition_id = None
+            self._pending_event_data = None
+        with self._acquire_lock:
+            if self._protocol_error:
+                raise LeaseUnavailable(self._protocol_error)
+            if self._pending_acquisition_id is None:
+                self._pending_acquisition_id = uuid.uuid4().hex
+            try:
+                if self._pending_event_data is None:
+                    self._pending_event_data = json.loads(json.dumps(self.event_data))
+                lease = self._acquire()
+                self._pending_acquisition_id = None
+                self._pending_event_data = None
+                return lease
+            except LeaseUnavailable:
+                raise
+            except Exception as e:
+                # Preserve the ID and exact event data on an ambiguous failure.
+                raise LeaseUnavailable(f"no lease from the control plane: {type(e).__name__}: {e}") from e
 
     def _acquire(self) -> Lease:
         from tenuo import Warrant
 
-        status, body = self._post(f"/v1/triggers/{self.trigger_id}/fire", {"event_data": self.event_data})
+        status, body = self._post(f"/v1/triggers/{self.trigger_id}/fire", {"event_data": self._pending_event_data, "acquisition_id": self._pending_acquisition_id})
         error: Dict[str, Any] = body["error"] if isinstance(body.get("error"), dict) else {}
+        if status == 410 and error.get("code") == "acquisition_closed":
+            # The server positively identified a terminal acquisition. A later
+            # attempt may request a new lease; the old one remains accounted for.
+            self._pending_acquisition_id = None
+            self._pending_event_data = None
+            raise LeaseUnavailable(str(error.get("message") or "the previous acquisition is closed"))
         if status == 409 and error.get("code") == "token_budget_exhausted":
             raise LeaseUnavailable(str(error.get("message") or "the token budget for this period is spent"),
                                    exhausted=True, retry_at=_unix(error.get("retry_at")))
@@ -209,6 +249,9 @@ class CloudLeases:
         if granted < 1 or carried is None or int(carried) != granted or expires_at is None:
             raise LeaseUnavailable("the control plane's reply is not a usable lease "
                                    f"(granted {granted}, warrant carries {carried}, expires {expires_at})")
+        if body.get("acquisition_id") != self._pending_acquisition_id:
+            self._protocol_error = "the control plane did not confirm acquisition idempotency; upgrade Cloud before using this SDK"
+            raise LeaseUnavailable(self._protocol_error)
         return Lease(warrant=warrant, warrant_id=str(warrant.id), expires_at=expires_at, granted_tokens=granted, info=info)
 
     def release(self, warrant_id: str, usage: List[Dict[str, Any]]) -> None:
