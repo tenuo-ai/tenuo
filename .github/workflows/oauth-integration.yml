@@ -10,6 +10,7 @@ on:
       - 'tenuo-python/examples/oauth/**'
       - 'tenuo-python/tests/adapters/test_oauth.py'
       - 'tenuo-python/tests/e2e/test_oauth_keycloak.py'
+      - 'tenuo-python/tests/e2e/test_oauth_oidc_provider.py'
       - 'tenuo-python/pyproject.toml'
       - 'tenuo-core/**'
       - '.github/workflows/oauth-integration.yml'
@@ -19,8 +20,12 @@ permissions:
   contents: read
 
 jobs:
-  keycloak:
-    name: Keycloak PKCE and task-scoped MCP refunds and email
+  interoperability:
+    name: OAuth ${{ matrix.provider }} to enforced refunds and email
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [keycloak, oidc-provider]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -30,10 +35,18 @@ jobs:
           python-version: '3.13'
       - name: Build this checkout and install test dependencies
         run: python -m pip install './tenuo-python[oauth,fastmcp]' pytest pytest-asyncio uvicorn playwright aiosmtpd
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.provider == 'oidc-provider'
+        with:
+          node-version: '22'
+      - name: Install pinned independent OAuth provider
+        if: matrix.provider == 'oidc-provider'
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix tenuo-python/examples/oauth/oidc-provider-fixture
       - name: Install real browser
         run: python -m playwright install --with-deps chromium
       - name: Adapter security and real OAuth end-to-end tests
         env:
           PYTHONPATH: tenuo-python
-          TENUO_KEYCLOAK_SMOKE: '1'
-        run: python -m pytest tenuo-python/tests/adapters/test_oauth.py tenuo-python/tests/e2e/test_oauth_keycloak.py -q --override-ini='addopts='
+          TENUO_KEYCLOAK_SMOKE: ${{ matrix.provider == 'keycloak' && '1' || '0' }}
+          TENUO_OIDC_SMOKE: ${{ matrix.provider == 'oidc-provider' && '1' || '0' }}
+        run: python -m pytest tenuo-python/tests/adapters/test_oauth.py tenuo-python/tests/e2e/test_oauth_keycloak.py tenuo-python/tests/e2e/test_oauth_oidc_provider.py -q --override-ini='addopts='

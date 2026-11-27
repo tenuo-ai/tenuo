@@ -163,7 +163,8 @@ for side-effecting workflows without business idempotency.
   key-management service, metrics backend, or immediate token revocation.
 - Shut down the ASGI app and close `credentials` when the host application exits.
 
-The smoke test establishes interoperability with the pinned Keycloak version,
+The smoke tests establish interoperability with the pinned Keycloak and
+node-oidc-provider configurations,
 not universal OAuth-provider compatibility or a complete production certification.
 Production deployments still own ingress TLS, protected signing keys, policy
 data, audit durability, rate limits, business idempotency, and revocation SLOs.

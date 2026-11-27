@@ -103,3 +103,46 @@ API and delivery-status lookup would be preferable where available.
 
 This tests OAuth at the Tenuo issuance boundary, with an SMTP backend. It does
 not test Gmail/Microsoft Graph OAuth consent, refresh tokens, or vendor APIs.
+
+
+## Independent provider: no Keycloak or Docker
+
+`oidc_smoke.py` uses the independent [node-oidc-provider](https://github.com/panva/node-oidc-provider)
+authorization server, pinned to 9.15.1 with an npm lockfile. It exercises the
+adapter's `rfc9068` profile with the provider's actual `at+jwt` access tokens.
+It reuses both task templates and MCP tools without changing the adapter.
+
+After installing the Python/browser dependencies above, install Node.js 22+
+and run from the repository root:
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund --prefix tenuo-python/examples/oauth/oidc-provider-fixture
+PYTHONPATH=tenuo-python .venv-oauth/bin/python tenuo-python/examples/oauth/oidc_smoke.py
+```
+
+Or use the CI entrypoint:
+
+```sh
+TENUO_OIDC_SMOKE=1 PYTHONPATH=tenuo-python .venv-oauth/bin/python -m pytest tenuo-python/tests/e2e/test_oauth_oidc_provider.py -q --override-ini='addopts='
+```
+
+The server, browser, warrant issuer and tool processes use loopback endpoints
+and ephemeral state. The provider uses its **development-only login UI** with
+fixture Alice/Bob accounts; this is not a production user-authentication setup.
+Authorization codes, PKCE, consent, JWT signing, JWKS and refresh grants are
+handled by the actual provider implementation. No tokens are minted by the
+Python test, and no cloud account or external email delivery is involved.
+
+Checks include both enforced business workflows, OAuth state/response issuer,
+ID-token signature/nonce, wrong PKCE verifier, authorization-code replay,
+refresh-token rotation/reuse, wrong audience, missing tenant claims and opaque
+token rejection. Refund-only and mail-only clients have distinct scopes.
+
+A provider-specific finding: authorization-code replay invalidates its associated
+refresh grant. The destructive replay test therefore uses a separate login from
+the success path. JWT signature validation alone does not learn about provider
+session revocation; existing tokens/warrants can remain locally valid until
+expiry. This example does not add introspection or immediate revocation.
+
+CI runs Keycloak and this provider as independent matrix jobs. Passing this test
+does not establish Auth0, Entra ID, Okta, Gmail or Graph compatibility.
