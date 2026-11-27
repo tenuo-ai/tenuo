@@ -1015,7 +1015,7 @@ def _locked(lock, fn, *args):
 class TestCloudLeases:
     @pytest.fixture
     def cloud(self, keys):
-        state = SimpleNamespace(requests=[], exhausted=False, raw=None, granted=2500, redirect=False, reply=None, drop_once=False)
+        state = SimpleNamespace(requests=[], exhausted=False, raw=None, granted=2500, redirect=False, reply=None, drop_once=False, legacy=False)
         warrant = (Warrant.mint_builder().capability("llm.chat", llm_capability(total_tokens=2500, models=[MODEL]))
                    .holder(keys.agent.public_key).ttl(600).mint(keys.issuer))
 
@@ -1026,6 +1026,11 @@ class TestCloudLeases:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 state.requests.append((self.path, self.headers["Authorization"], body))
+                if state.legacy and self.path.endswith("/acquire"):
+                    self.send_response(404)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 if state.redirect:
                     self.send_response(302)
                     self.send_header("Location", f"http://127.0.0.1:{self.server.server_address[1]}/stolen")
@@ -1039,14 +1044,14 @@ class TestCloudLeases:
                     self.end_headers()
                     self.wfile.write(data)
                     return
-                if self.path.endswith("/fire") and state.reply is not None:
+                if self.path.endswith("/acquire") and state.reply is not None:
                     status, payload = state.reply
-                elif self.path.endswith("/fire") and state.exhausted:
+                elif self.path.endswith("/acquire") and state.exhausted:
                     status, payload = 409, {"error": {"code": "token_budget_exhausted", "message": "all leased out",
                                                       "retry_at": "2030-01-01T00:00:00Z"}}
-                elif self.path.endswith("/fire") and "plain" in self.path:
+                elif self.path.endswith("/acquire") and "plain" in self.path:
                     status, payload = 200, {"warrant": warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z", "acquisition_id": body["acquisition_id"]}
-                elif self.path.endswith("/fire"):
+                elif self.path.endswith("/acquire"):
                     status, payload = 200, {"warrant": warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z",
                                             "acquisition_id": body["acquisition_id"], "lease": {"unit": "usd", "granted_tokens": state.granted, "granted_usd_micros": 100000}}
                 else:
@@ -1074,7 +1079,7 @@ class TestCloudLeases:
         assert lease.expires_at == 1893456600.0 and lease.info["unit"] == "usd"
         usage = [{"model": MODEL, "input_tokens": 10, "output_tokens": 20}]
         source.release(lease.warrant_id, usage)
-        assert cloud.requests[0] == ("/v1/triggers/trg_budget/fire", "Bearer tc_test", {"event_data": {"team": "research"}, "acquisition_id": cloud.requests[0][2]["acquisition_id"]})
+        assert cloud.requests[0] == ("/v1/triggers/trg_budget/acquire", "Bearer tc_test", {"event_data": {"team": "research"}, "acquisition_id": cloud.requests[0][2]["acquisition_id"]})
         path, auth, body = cloud.requests[1]
         assert (path, auth, body["warrant_id"], body["usage"]) == ("/v1/metrics/tokens/leases/release", "Bearer tc_test", lease.warrant_id, usage)
         # Signed by the agent over the warrant id and the figures: plain Ed25519.
@@ -1112,7 +1117,7 @@ class TestCloudLeases:
         cloud.redirect = True
         with pytest.raises(LeaseUnavailable, match="HTTP 302"):
             CloudLeases("trg_budget", url=cloud.url, api_key="tc_test").acquire()
-        assert [path for path, _, _ in cloud.requests] == ["/v1/triggers/trg_budget/fire"]
+        assert [path for path, _, _ in cloud.requests] == ["/v1/triggers/trg_budget/acquire"]
 
     def test_a_spent_budget_says_when_to_ask_again(self, cloud):
         cloud.exhausted = True
@@ -1242,3 +1247,16 @@ class TestCloudLeases:
         finally:
             inherited_lock.release()
             os.close(read)
+
+    @pytest.mark.parametrize("legacy_reply", ["lost", "malformed"])
+    def test_unsupported_server_never_receives_allocating_request(self, cloud, legacy_reply):
+        cloud.legacy = True
+        cloud.drop_once = legacy_reply == "lost"
+        cloud.raw = "{}" if legacy_reply == "malformed" else None
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="test")
+        for _ in range(2):
+            with pytest.raises(LeaseUnavailable, match="upgrade Cloud"):
+                source.acquire()
+        assert [path for path, _, _ in cloud.requests] == ["/v1/triggers/trg_budget/acquire"] * 2
+        # The legacy fire behavior (dropped/malformed successful issuance) was never invoked.
+        assert cloud.drop_once == (legacy_reply == "lost")

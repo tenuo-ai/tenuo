@@ -220,7 +220,7 @@ class CloudLeases:
     def _acquire(self) -> Lease:
         from tenuo import Warrant
 
-        status, body = self._post(f"/v1/triggers/{self.trigger_id}/fire", {"event_data": self._pending_event_data, "acquisition_id": self._pending_acquisition_id})
+        status, body = self._post(f"/v1/triggers/{self.trigger_id}/acquire", {"event_data": self._pending_event_data, "acquisition_id": self._pending_acquisition_id})
         error: Dict[str, Any] = body["error"] if isinstance(body.get("error"), dict) else {}
         if status == 410 and error.get("code") == "acquisition_closed":
             # The server positively identified a terminal acquisition. A later
@@ -234,7 +234,7 @@ class CloudLeases:
         if status != 200 or not body.get("warrant"):
             code = str(error.get("code") or "")
             if status == 404:
-                why = f"trigger {self.trigger_id} was not found; check the trigger id"
+                why = f"trigger {self.trigger_id} was not found; check the trigger id and upgrade Cloud if it lacks the acquisition endpoint"
             elif status == 401:
                 why = "the control plane did not accept the API key (TENUO_API_KEY)"
             elif status == 403:
