@@ -554,6 +554,39 @@ def test_what_a_policy_returns_is_checked(provider, setup, grant):
     assert audits == []
 
 
+def test_a_grant_is_copied_when_it_is_checked(provider, setup):
+    """A policy may return mappings it keeps and changes. What was checked is what is minted."""
+    from collections.abc import Mapping
+
+    from tenuo.oauth import _validated
+
+    shared = {"refund": {"payment_id": Exact("p1")}}
+    checked = _validated(TaskGrant(shared))
+    shared["refund"].clear()
+    shared["transfer"] = {}
+    assert {tool: set(constraints) for tool, constraints in checked.capabilities.items()} == {"refund": {"payment_id"}}
+    with pytest.raises(TypeError):
+        checked.capabilities["refund"]["amount_cents"] = Exact(1)
+
+    class Changing(Mapping):
+        """Says it has a constraint when asked its size, and has none by the time it is read."""
+
+        def __len__(self):
+            return 1
+
+        def __iter__(self):
+            return iter(())
+
+        def __getitem__(self, name):
+            raise KeyError(name)
+
+    issuer, holder, _, _, audits, *_ = setup
+    issuer.policy = lambda identity, task_id: TaskGrant({"refund": Changing()})
+    with pytest.raises(OAuthError, match="explicit argument constraints"):
+        ask(issuer, provider["token"](), holder)
+    assert audits == []
+
+
 def test_a_proof_store_that_looks_empty_is_still_the_one_used(provider, validator):
     class Counting(MemoryProofStore):
         claims = 0

@@ -611,19 +611,33 @@ class TaskTemplate:
 
 
 def _validated(grant: Any) -> TaskGrant:
+    """Check what a policy returned, and return a copy of it.
+
+    The copy is what gets minted. A policy may hand out mappings it keeps and
+    changes (a cache, a shared default), and a change made after this check
+    must not reach the warrant.
+    """
     if not isinstance(grant, TaskGrant):
         raise OAuthError("Policy must return a TaskGrant or None")
-    if not isinstance(grant.capabilities, Mapping) or not grant.capabilities:
+    if not isinstance(grant.capabilities, Mapping):
         raise OAuthError("Grant is empty")
-    for tool, constraints in grant.capabilities.items():
+    capabilities: Dict[str, Mapping[str, Any]] = {}
+    for tool, constraints in dict(grant.capabilities).items():
         _text(tool, "tool")
-        if not isinstance(constraints, Mapping) or not constraints:
+        if not isinstance(constraints, Mapping):
             raise OAuthError("Tools must have explicit argument constraints")
-    _integer(grant.ttl_seconds, "TTL", 1, 3600)
-    _integer(grant.max_depth, "delegation depth", 0, 16)
-    if grant.expires_at is not None:
-        _integer(grant.expires_at, "task expiry")
-    return grant
+        copied = dict(constraints)
+        if not copied:
+            raise OAuthError("Tools must have explicit argument constraints")
+        capabilities[tool] = MappingProxyType(copied)
+    if not capabilities:
+        raise OAuthError("Grant is empty")
+    ttl, depth, expiry = grant.ttl_seconds, grant.max_depth, grant.expires_at
+    _integer(ttl, "TTL", 1, 3600)
+    _integer(depth, "delegation depth", 0, 16)
+    if expiry is not None:
+        _integer(expiry, "task expiry")
+    return TaskGrant(MappingProxyType(capabilities), expiry, ttl, depth)
 
 
 # ---------------------------------------------------------------------------
